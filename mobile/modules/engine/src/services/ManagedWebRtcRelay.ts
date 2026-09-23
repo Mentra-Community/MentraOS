@@ -93,6 +93,9 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     this.release = this.deps.acquire()
     this.listener = this.deps.native.addListener("onRelayState", (event) => {
       if (event.attemptId !== this.attemptId || this.cancelled) return
+      // Preserve native uplink stages in incident logs without SDP, URLs or credentials.
+      console.log("[ManagedRelay]", {attemptId: event.attemptId, state: event.state, reason: event.reason})
+      if (event.state === "diagnostic") return
       if (event.state === "failed") this.failed(new Error(event.reason))
       else this.onStatus(event.state, event.reason)
     })

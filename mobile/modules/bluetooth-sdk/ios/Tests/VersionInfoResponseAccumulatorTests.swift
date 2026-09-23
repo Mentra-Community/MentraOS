@@ -117,6 +117,71 @@ final class VersionInfoResponseAccumulatorTests: XCTestCase {
         }
     }
 
+    func testFactoryAsg27CompletesAfterItsTwoChunks() {
+        // Exact January wire shape after Bridge normalization; firmware can be unknown.
+        for firmware in ["", "17.26.1.13"] {
+            let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
+            _ = accumulator.accept(chunk("version_info_1", nil, ["buildNumber": "27", "appVersion": "27.0"]))
+            guard case let .complete(result) = accumulator.accept(chunk("version_info_2", nil, [
+                "buildNumber": "", "otaVersionUrl": "https://ota.example/live_version.json", "firmwareVersion": firmware,
+            ])) else { return XCTFail("ASG27 has no third chunk") }
+            XCTAssertEqual(result.buildNumber, "27")
+            XCTAssertEqual(result.otaVersionUrl, "https://ota.example/live_version.json")
+            XCTAssertEqual(result.firmwareVersion, firmware)
+        }
+    }
+
+    func testOtherLegacyBuildsStillRequireTheirThirdChunk() {
+        for build in ["", "26", "28", "31", "37", "42"] {
+            let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
+            _ = accumulator.accept(chunk("version_info_1", nil, ["buildNumber": build]))
+            guard case .waiting = accumulator.accept(chunk("version_info_2", nil, [
+                "otaVersionUrl": "https://ota.example/version.json",
+            ])) else { return XCTFail("Unknown or three-chunk builds must wait: " + build) }
+            guard case .complete = accumulator.accept(chunk("version_info_3", nil, ["besFirmwareVersion": "new"]))
+            else { return XCTFail("Legacy third chunk must complete") }
+        }
+    }
+
+    func testFactorySecondChunkCannotCompleteWithoutFirstChunkAndOtaUrl() {
+        let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
+        let second = chunk("version_info_2", nil, ["otaVersionUrl": "https://ota.example/version.json"])
+        guard case .ignored = accumulator.accept(second) else { return XCTFail("Trailing chunk is stale") }
+        _ = accumulator.accept(chunk("version_info_1", nil, ["buildNumber": "27"]))
+        for values in [[:], ["otaVersionUrl": ""], ["otaVersionUrl": " \n"]] as [[String: Any]] {
+            guard case .waiting = accumulator.accept(chunk("version_info_2", nil, values))
+            else { return XCTFail("Incomplete second chunk cannot complete") }
+        }
+        guard case .complete = accumulator.accept(second) else { return XCTFail("Actual terminal chunk") }
+    }
+
+    func testSecondChunkCannotChangeBuildIntoFactoryProtocol() {
+        let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
+        _ = accumulator.accept(chunk("version_info_1", nil, ["buildNumber": "31"]))
+        guard case .waiting = accumulator.accept(chunk("version_info_2", nil, [
+            "buildNumber": "27", "otaVersionUrl": "https://ota.example/version.json",
+        ])) else { return XCTFail("Only the first chunk declares the protocol") }
+    }
+
+    func testRepeatedFirstChunkClearsFactoryCompletionRule() {
+        let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
+        _ = accumulator.accept(chunk("version_info_1", nil, ["buildNumber": "27"]))
+        _ = accumulator.accept(chunk("version_info_1", nil, ["buildNumber": "31"]))
+        guard case .waiting = accumulator.accept(chunk("version_info_2", nil, [
+            "otaVersionUrl": "https://ota.example/version.json",
+        ])) else { return XCTFail("The latest first chunk determines the protocol") }
+    }
+
+    func testFactoryBuildCannotBypassModernCorrelation() {
+        let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
+        _ = accumulator.accept(chunk("version_info_1", "request-1", ["buildNumber": "27"]))
+        guard case .ignored = accumulator.accept(chunk("version_info_2", nil, [
+            "otaVersionUrl": "https://ota.example/version.json",
+        ])) else { return XCTFail("Uncorrelated terminal chunk cannot complete a modern request") }
+        guard case .complete = accumulator.accept(chunk("version_info_3", "request-1", ["besFirmwareVersion": "new"]))
+        else { return XCTFail("Modern completeness metadata remains authoritative") }
+    }
+
     func testModernFinalChunkWaitsForMissingFirstChunk() {
         let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
         guard case .waiting = accumulator.accept(chunk("version_info_3", "request-1", ["besFirmwareVersion": "new"])) else {

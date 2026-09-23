@@ -1,6 +1,13 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Packaged camera feedback format, matching the BES I2S output rate. */
+    public static final int CAMERA_PCM_SAMPLE_RATE = 48000;
+    /** Bound camera cue preload memory even if a packaged asset is replaced. */
+    public static final int CAMERA_PCM_MAX_ASSET_BYTES = 256 * 1024;
+    /** Fifty 900 ms periods preserve the existing 45-second prep safety bound. */
+    public static final int CAMERA_PCM_PREP_PERIODS = 50;
+
     /** Saved, default-off opt-in to unauthenticated HTTP gallery access on site Wi-Fi. */
     public static final String GALLERY_SERVER_ENABLED_PREFERENCE = "gallery_server_enabled";
     /** Retry persistent gallery server startup after a transient failure. */
@@ -202,8 +209,11 @@ public class AsgConstants {
     /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
     public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
 
-    /** Duration of the user-visible RGB photo indicator, triggered at the capture boundary. */
-    public static final int PHOTO_LIGHT_DURATION_MS = 2200;
+    /** Minimum paired photo-indicator duration from request acceptance. */
+    public static final int PHOTO_LIGHT_DURATION_MS = 1500;
+
+    /** BES auto-off backstop if Android dies; exceeds the 105-second photo job watchdog. */
+    public static final int PHOTO_LIGHT_FAILSAFE_MS = 120_000;
 
     /** Maximum wait for a submitted still capture to produce its final JPEG. */
     public static final long PHOTO_CAPTURE_TIMEOUT_MS = 45_000L;
@@ -280,6 +290,9 @@ public class AsgConstants {
      * inter-response gaps are under a second.
      */
     public static final long BES_OTA_RESPONSE_TIMEOUT_MS = 30000;
+
+    /** Maximum receive callbacks logged while waiting for the raw OTA protocol-version reply. */
+    public static final int BES_OTA_HANDSHAKE_DIAGNOSTIC_MAX_FRAMES = 12;
 
     /**
      * Resend schedule for the post-APK-restart OTA completion push

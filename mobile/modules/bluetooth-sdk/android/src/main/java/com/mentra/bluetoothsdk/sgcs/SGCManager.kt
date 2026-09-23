@@ -105,6 +105,10 @@ abstract class SGCManager {
 
     // Display Control
     abstract fun setBrightness(level: Int, autoMode: Boolean)
+    /** Whether settings should briefly replace the display with a brightness confirmation. */
+    open val showBrightnessConfirmation: Boolean = true
+    /** Whether connection readiness should briefly replace the display with a welcome message. */
+    open val showConnectionConfirmation: Boolean = true
     abstract fun clearDisplay()
     abstract fun sendText(text: String)
     abstract fun sendTextWall(text: String)
@@ -191,6 +195,10 @@ abstract class SGCManager {
      * device (e.g. NIMO-style) overrides this whole method instead and
      * serializes [SceneFrame.elements], ignoring the annotations.
      */
+    // Full-frame adapters replace both scenes and legacy layouts atomically;
+    // a preparatory clear would introduce a blank frame (or race the new frame).
+    open val sceneHandoffRequiresClear: Boolean = true
+
     open fun applySceneFrame(frame: SceneFrame) {
         if (frame.replay) {
             onSceneReplay(frame.appId)

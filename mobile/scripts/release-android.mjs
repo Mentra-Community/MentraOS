@@ -96,7 +96,7 @@ console.log('\n━━━ Step 5: Building APK ━━━');
 await withRetry(
   'gradlew assembleRelease',
   () => {
-    const p = $({ cwd: 'android' })`./gradlew assembleRelease -PreactNativeArchitectures=${APK_ARCHITECTURES}`;
+    const p = $({ cwd: 'android' })`./gradlew assembleRelease -PreactNativeArchitectures=${APK_ARCHITECTURES} --build-cache`;
     p.stdout.pipe(process.stdout);
     p.stderr.pipe(process.stderr);
     return p;
@@ -132,7 +132,7 @@ if (coordinatedOutputDir) {
   await withRetry(
     'gradlew bundleRelease',
     () => {
-      const p = $({ cwd: 'android' })`./gradlew bundleRelease -PreactNativeArchitectures=${AAB_ARCHITECTURES}`;
+      const p = $({ cwd: 'android' })`./gradlew bundleRelease -PreactNativeArchitectures=${AAB_ARCHITECTURES} --build-cache`;
       p.stdout.pipe(process.stdout);
       p.stderr.pipe(process.stderr);
       return p;
@@ -215,7 +215,7 @@ console.log(`AAB architectures: ${AAB_ARCHITECTURES}`);
 await withRetry(
   'gradlew bundleRelease',
   () => {
-    const p = $({ cwd: 'android' })`./gradlew bundleRelease -PreactNativeArchitectures=${AAB_ARCHITECTURES}`;
+    const p = $({ cwd: 'android' })`./gradlew bundleRelease -PreactNativeArchitectures=${AAB_ARCHITECTURES} --build-cache`;
     p.stdout.pipe(process.stdout);
     p.stderr.pipe(process.stderr);
     return p;

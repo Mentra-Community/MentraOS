@@ -5,6 +5,7 @@ import {
   beginOtaAutoChain,
   clearOtaAutoChainReconnectWait,
   isOtaAutoChainActive,
+  OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS,
   otaAutoChainFingerprint,
   otaAutoChainReleaseRange,
   otaAutoChainReconnectWaitRemaining,
@@ -237,7 +238,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const [checkState, setCheckState] = useState<CheckState>("checking")
   const [isUpdateRequired, setIsUpdateRequired] = useState(true)
   const [isVersionChange, setIsVersionChange] = useState(false)
-  const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable">("network")
+  const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable" | "version_info">("network")
   const [unofficialClientPackage, setUnofficialClientPackage] = useState<string | null>(null)
   const [updateFingerprint, setUpdateFingerprint] = useState<string | null>(null)
   const [offeredReleaseTransition, setOfferedReleaseTransition] = useState<MentraLiveOtaReleaseTransition | null>(null)
@@ -364,6 +365,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           waitForBuildNumberMs: MAX_WAIT_FOR_VERSION_INFO_MS,
           waitForBesVersionMs: 5000,
           waitForMtkVersionMs: 2000,
+          waitForLegacyMigrationMs: isOtaAutoChainActive() ? OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS : 0,
           refreshVersionInfo: true,
           fixClockBeforeCheck: false,
         }
@@ -411,9 +413,11 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           return
         }
         if (!result.hasCheckCompleted) {
-          stopOtaAutoChain()
+          // A failed device verification is not a completed chain. Retain its
+          // approval so Retry still verifies the release pin after legacy rescue.
+          if (result.checkFailureReason !== "version_info") stopOtaAutoChain()
           checkCompletedRef.current = true
-          setErrorKind(result.checkFailureReason === "pin_unavailable" ? "pin_unavailable" : "network")
+          setErrorKind(result.checkFailureReason ?? "network")
           setCheckState("error")
           return
         }
@@ -693,8 +697,11 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       if (screen === "check_failed") {
         error = {
           code: "check_failed",
-          message: "Couldn't check for updates. Please check your connection and try again.",
-          copyKey: "ota:checkFailedMessage",
+          message:
+            errorKind === "version_info"
+              ? "Couldn't read the glasses software versions. Keep the glasses connected and try again."
+              : "Couldn't check for updates. Please check your connection and try again.",
+          copyKey: errorKind === "version_info" ? "ota:versionInfoFailedMessage" : "ota:checkFailedMessage",
           glassesCode: null,
         }
       } else if (screen === "update_info_unavailable") {

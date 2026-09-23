@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.inOrder;
 
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -14,6 +15,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLog;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -113,6 +115,59 @@ public class OtaCommandHandlerTest {
 
         assertThat(handled).isTrue();
         verify(communicationManager).sendOtaStatus(state);
+        verify(otaHelper, never()).getOtaActivitySnapshot(anyString());
+        assertThat(state.has("activity")).isFalse();
+    }
+
+    @Test
+    public void activityOptInKeepsTerminalFieldsAndLogsCorrelatedSnapshotBeforeStatusProjection()
+            throws Exception {
+        OtaHelper helper = mock(OtaHelper.class);
+        ICommunicationManager communication = mock(ICommunicationManager.class);
+        JSONObject terminal = new JSONObject().put("type", "ota_status")
+                .put("status", "complete").put("sid", "owned-bes").put("st", "bes");
+        JSONObject activity = new JSONObject().put("request_id", "return-123")
+                .put("admission_held", true);
+        when(helper.getOtaSessionState()).thenReturn(terminal);
+        when(helper.getOtaActivitySnapshot("return-123")).thenReturn(activity);
+        OtaCommandHandler handler = new OtaCommandHandler(helper, communication);
+
+        assertThat(handler.handleCommand("ota_query_status", new JSONObject()
+                .put("include_activity", true).put("request_id", "return-123"))).isTrue();
+
+        var order = inOrder(helper, communication);
+        order.verify(helper).getOtaActivitySnapshot("return-123");
+        order.verify(helper).getOtaSessionState();
+        order.verify(communication).sendOtaStatus(terminal);
+        assertThat(terminal.getString("status")).isEqualTo("complete");
+        assertThat(terminal.getString("sid")).isEqualTo("owned-bes");
+        assertThat(terminal.getString("st")).isEqualTo("bes");
+        assertThat(terminal.getJSONObject("activity")).isSameAs(activity);
+        assertThat(ShadowLog.getLogsForTag("OtaCommandHandler"))
+                .anySatisfy(log -> assertThat(log.msg)
+                        .isEqualTo("OTA activity snapshot: " + activity));
+        verify(helper, never()).startOtaFromPhone(anyString());
+    }
+
+    @Test
+    public void malformedOrNonOptedInActivityRequestsKeepNormalResponse() throws Exception {
+        for (JSONObject request : new JSONObject[] {
+                new JSONObject().put("request_id", "return-123"),
+                new JSONObject().put("include_activity", "true").put("request_id", "return-123"),
+                new JSONObject().put("include_activity", true),
+                new JSONObject().put("include_activity", true).put("request_id", 123),
+                new JSONObject().put("include_activity", true).put("request_id", "bad\nlabel"),
+                new JSONObject().put("include_activity", true).put("request_id", "x".repeat(121))}) {
+            OtaHelper helper = mock(OtaHelper.class);
+            ICommunicationManager communication = mock(ICommunicationManager.class);
+            JSONObject state = new JSONObject().put("status", "idle");
+            when(helper.getOtaSessionState()).thenReturn(state);
+            assertThat(new OtaCommandHandler(helper, communication)
+                    .handleCommand("ota_query_status", request)).isTrue();
+            verify(helper, never()).getOtaActivitySnapshot(anyString());
+            verify(communication).sendOtaStatus(state);
+            assertThat(state.has("activity")).isFalse();
+        }
     }
 
     @Test

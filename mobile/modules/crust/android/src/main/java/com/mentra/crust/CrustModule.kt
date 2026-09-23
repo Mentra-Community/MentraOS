@@ -6,6 +6,7 @@ import com.mentra.crust.services.NotificationListener
 import com.mentra.crust.services.NotificationProcessBridge
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.functions.Queues
 import java.net.URL
 
 import com.mentra.crust.navigation.NavigationManager
@@ -922,7 +923,7 @@ class CrustModule : Module() {
         android.util.Log.e("CrustModule", "stopNavigation failed", e)
         mapOf("ok" to false, "error" to (e.message ?: "stop failed"))
       }
-    }
+    }.runOnQueue(Queues.MAIN)
 
     // Dev-only: nudge the simulated position ~offsetMeters off-route to
     // exercise the Nav SDK's onRerouting() pipeline without having to

@@ -2,6 +2,10 @@
 export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
 [
   {
+    "version": "3.3.0",
+    "markdown": "This release is under active development. User-facing changes will be documented as they land."
+  },
+  {
     "version": "3.2.1",
     "markdown": "This release is under active development. User-facing changes will be documented as they land."
   },

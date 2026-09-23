@@ -14,6 +14,8 @@ on:
       - ".github/workflows/mentra-asg-client-build.yml"
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/pr_mobile_config.py"
+      - ".github/scripts/prepare-pr-mobile.mjs"
       - ".github/scripts/repackage-pr-apk*"
       - ".github/scripts/test_repackage_pr_apk.py"
       - ".github/scripts/notify-pr-builds*"
@@ -142,12 +144,6 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Pin Android build number for this run
-        if: github.event_name == 'pull_request'
-        run: |
-          # shellcheck disable=SC2016
-          node --input-type=module -e 'import {getBuildNumber} from "./mobile/scripts/build-number.mjs"; console.log(`MENTRAOS_PINNED_BUILD_NUMBER=${getBuildNumber()}`)' >> "$GITHUB_ENV"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -309,6 +305,10 @@ jobs:
             sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_PRD secret not set."
           fi
 
+      - name: Prepare PR mobile configuration
+        if: github.event_name == 'pull_request'
+        run: node .github/scripts/prepare-pr-mobile.mjs
+
       - name: Inject release signing key
         uses: ./.github/actions/inject-signing
         with:
@@ -435,7 +435,7 @@ jobs:
           else
             cp mobile/android/app/build/outputs/apk/release/app-release.apk pr-mobile-base.apk
           fi
-          python3 .github/scripts/repackage-pr-apk.py package pr-mobile-base.apk "$MENTRA_PR_APK_FINGERPRINT" \
+          python3 .github/scripts/repackage-pr-apk.py package pr-mobile-base.apk "$MENTRA_PR_MOBILE_FINGERPRINT" \
             mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - name: Verify embedded OTA manifest pin
@@ -487,7 +487,7 @@ jobs:
           node .github/scripts/publish-immutable-release-asset.mjs \
             --file mobile/android/app/build/outputs/apk/release/app-release.apk --name "$name" --release-id "$release_id" \
             --repository "$GITHUB_REPOSITORY" --replace true \
-            --fingerprint "$MENTRA_PR_APK_FINGERPRINT"
+            --fingerprint "$MENTRA_PR_MOBILE_FINGERPRINT"
 
       - name: Cleanup old release assets
         if: github.event_name == 'pull_request'

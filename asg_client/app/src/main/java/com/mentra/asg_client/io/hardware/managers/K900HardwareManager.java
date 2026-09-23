@@ -196,6 +196,11 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public void prepareCameraAudioPlayback() {
+        if (audioController != null) audioController.prepareCameraAudioPlayback();
+    }
+
+    @Override
     public void playAudioAsset(String assetName) {
         if (audioController != null) {
             audioController.playAsset(assetName, AsgConstants.AUDIO_PLAYBACK_VOLUME);

@@ -33,6 +33,9 @@ export interface DisplayProfile {
   /** BLE chunk size for transmission */
   bleChunkSize: number
 
+  /** Native whole-frame limits and encoding costs, enforced before render acceptance. */
+  sceneBudget?: SceneBudget
+
   /** Font metrics for text measurement */
   fontMetrics: FontMetrics
 
@@ -130,3 +133,20 @@ export type ScriptType =
   | "numbers"
   | "punctuation"
   | "unsupported"
+
+/** Costs for adapters that encode each nonempty text row as a native object. */
+export interface SceneBudget {
+  maxObjects: number
+  maxTextBytes: number
+  maxImagePixels: number
+  maxEncodedBytes: number
+  frameOverheadBytes: number
+  textLineOverheadBytes: number
+  rectBytes: number
+  image: {
+    bitsPerPixel: number
+    overheadBytes: number
+    /** Upper bound uses literal RLE packets; never assumes compressible pixels. */
+    maxLiteralRunBytes: number
+  }
+}

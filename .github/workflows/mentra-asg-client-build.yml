@@ -2,10 +2,10 @@ name: MentraOS ASG Client Build
 
 # Pull requests: publish the ASG client a PR mobile build pins for glasses OTA.
 #
-# Every Mobile App Android Build PR APK embeds the OTA manifest URL
+# Every Android PR APK and signed iPhone/Mac PR app embeds the OTA manifest URL
 # https://artifactscdn.mentraglass.com/<repo>/releases/pr-builds/ota-pr-<n>-<head sha>.json
 # and this workflow is the only producer of that manifest, so its pull_request
-# paths must stay a superset of that workflow's. The manifest points at an ASG
+# paths must stay a superset of both mobile workflows'. The manifest points at an ASG
 # client built from the PR's own ASG sources: the `select` job fingerprints
 # those sources exactly like the coordinated release lane and reuses the
 # coordinated artifact when one exists (the common case for PRs that leave
@@ -27,6 +27,8 @@ on:
       - ".github/workflows/mentra-asg-client-build.yml"
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/pr_mobile_config.py"
+      - ".github/scripts/prepare-pr-mobile.mjs"
       - ".github/scripts/repackage-pr-apk*"
       - ".github/scripts/test_repackage_pr_apk.py"
       - ".github/scripts/notify-pr-builds*"
@@ -276,13 +278,24 @@ jobs:
         # (mobile/scripts/build-number.mjs: the family's non-release band from
         # the HEAD committer time), so the APK, the app built for the same PR
         # head and the OTA manifest written below agree, and the build is
-        # OTA-installable above every release of the family.
+        # OTA-installable above every release of the family. On PRs the
+        # versionName is <family base>-pr.<number> (e.g. 3.3.0-pr.4145) so the
+        # app's OTA screen names the PR instead of repeating the bare code.
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           code=$(node --input-type=module -e "import('./mobile/scripts/build-number.mjs').then(m => console.log(m.getBuildNumber()))")
           [[ "$code" =~ ^[1-9][0-9]*$ ]]
           echo "ASG_VERSION_CODE=$code" >> "$GITHUB_ENV"
           echo "ASG versionCode pinned to $code"
+          if [[ -n "${PR_NUMBER:-}" ]]; then
+            base=$(jq -er .version package.json)
+            [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            name="${base}-pr.${PR_NUMBER}"
+            echo "ASG_VERSION_NAME=$name" >> "$GITHUB_ENV"
+            echo "ASG versionName set to $name"
+          fi
 
       - name: Cache Gradle dependencies
         uses: actions/cache@v4

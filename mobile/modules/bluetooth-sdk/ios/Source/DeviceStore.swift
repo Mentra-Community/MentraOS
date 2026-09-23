@@ -192,14 +192,25 @@ class DeviceStore {
 
         // BLUETOOTH:
 
+        case ("bluetooth", "contextual_dashboard"):
+            if value is Bool {
+                Task { @MainActor in
+                    if self.store.get("glasses", "headUp") as? Bool == true {
+                        DeviceManager.shared.sendCurrentState()
+                    }
+                }
+            }
+
         case ("bluetooth", "brightness"):
             let b = value as? Int ?? 50
             let auto = store.get("bluetooth", "auto_brightness") as? Bool ?? true
             Task {
-                DeviceManager.shared.sgc?.setBrightness(b, autoMode: auto)
-                await DeviceManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
+                guard let device = DeviceManager.shared.sgc else { return }
+                device.setBrightness(b, autoMode: auto)
+                guard device.showBrightnessConfirmation else { return }
+                await device.sendTextWall("Set brightness to \(b)%")
                 try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
-                DeviceManager.shared.sgc?.clearDisplay()
+                if (DeviceManager.shared.sgc as AnyObject?) === (device as AnyObject) { device.clearDisplay() }
             }
 
         case ("bluetooth", "auto_brightness"):
@@ -207,13 +218,14 @@ class DeviceStore {
             let auto = value as? Bool ?? true
             let autoBrightnessChanged = (oldValue as? Bool) != auto
             Task {
-                DeviceManager.shared.sgc?.setBrightness(b, autoMode: auto)
-                if autoBrightnessChanged {
-                    await DeviceManager.shared.sgc?.sendTextWall(
+                guard let device = DeviceManager.shared.sgc else { return }
+                device.setBrightness(b, autoMode: auto)
+                if autoBrightnessChanged, device.showBrightnessConfirmation {
+                    await device.sendTextWall(
                         auto ? "Enabled auto brightness" : "Disabled auto brightness"
                     )
                     try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
-                    DeviceManager.shared.sgc?.clearDisplay()
+                    if (DeviceManager.shared.sgc as AnyObject?) === (device as AnyObject) { device.clearDisplay() }
                 }
             }
 

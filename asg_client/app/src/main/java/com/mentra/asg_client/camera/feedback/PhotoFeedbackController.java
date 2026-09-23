@@ -107,25 +107,19 @@ public final class PhotoFeedbackController {
         mAudioExecutor = audioExecutor;
     }
 
-    /**
-     * Test-only shorthand that treats every warm request as ready to fire the shutter now.
-     * Production callers must use {@link #start(String, boolean, boolean)} so a warm request that
-     * queues behind an in-flight capture does not get an immediate snap.
-     */
+    /** Test shorthand for a warm request that does not queue behind another capture. */
     @Nullable
     Token start(String requestId, boolean cameraWarm) {
         return start(requestId, cameraWarm, cameraWarm);
     }
 
     /**
-     * Starts request-time feedback and returns the token owed an exposure-time snap.
+     * Starts preparation feedback and returns the token owed an exposure-time snap.
      *
      * @param cameraWarm the capture will reuse the open HAL session, so no hold-still prep cue is
      *     owed. See {@code CameraNeoService#isCameraWarm}.
-     * @param shutterNow the capture will also start immediately rather than queue behind an
-     *     in-flight one, so the shutter can be played at request time. Warm but not ready still
-     *     skips the prep cue and takes its snap from the exposure callback, which is where a
-     *     queued capture's shutter actually belongs.
+     * @param shutterNow whether capture is immediately admissible, allowing early bridge
+     *     preparation. This never authorizes a shutter sound before the exposure callback.
      */
     @Nullable
     public Token start(String requestId, boolean cameraWarm, boolean shutterNow) {
@@ -156,29 +150,9 @@ public final class PhotoFeedbackController {
             }
 
             if (cameraWarm) {
-                // Device testing measured warm capture at <20ms. Immediate shutter feedback
-                // feels more responsive than waiting for the exposure callback.
-                //
-                // Dispatch off the caller's thread. start() runs inline on the UART reader
-                // thread (SerialPortBridge.RecvThread -> SerialSession.dispatch ->
-                // ButtonEventSubscriber -> takePhotoLocally). MediaPlayer.prepare() still
-                // blocks even though BES readiness is now awaited asynchronously. Running
-                // preparation here would stall MCU events and delay enqueuePhotoRequest().
-                // A capture that fails before this runs marks the token terminal, so playSnap
-                // correctly stays silent.
-                //
-                // execute() throws RejectedExecutionException once cleanup() has shut the
-                // executor down. start() is called inline on the UART reader thread, which has
-                // no catch-all above it (MediaCaptureService.takePhotoLocally does not guard
-                // this call), so an escaping unchecked exception there would take down the
-                // serial reader and with it every subsequent MCU event. Losing the shutter
-                // sound on a capture that raced service teardown is the cheaper failure.
-                try {
-                    mAudioExecutor.execute(
-                            () -> playSnap(feedbackToken, "warm camera — immediate button feedback"));
-                } catch (RejectedExecutionException e) {
-                    Log.w(TAG, "Audio executor is shut down; skipping warm shutter feedback", e);
-                }
+                // Reserve the bridge early, but a request is not evidence of exposure.
+                // All shutters now use onExposureStarted (or the final-frame fallback).
+                mHardwareManager.prepareCameraAudioPlayback();
                 return feedbackToken;
             }
 

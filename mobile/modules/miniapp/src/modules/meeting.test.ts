@@ -35,6 +35,35 @@ const joinArgs = {
 }
 
 describe("MeetingModule", () => {
+  test("creates and retires through the host without sending caller credentials", async () => {
+    const requests: unknown[] = []
+    const result = {
+      provider: "acs-teams",
+      joinUrl: "https://teams.microsoft.com/meet/123456",
+      meetingRef: "ownership",
+      identityMode: "guest",
+      guestReason: "no-entra-identity",
+    }
+    const {session} = mockSession(async (payload) => {
+      requests.push(payload)
+      return result
+    })
+    const meeting = new MeetingModule(session)
+    expect(await meeting.create({provider: "acs-teams", subject: "Standup", durationMinutes: 30})).toEqual(result)
+    await meeting.retire(result.meetingRef)
+    expect(requests).toEqual([
+      {type: MiniappRequestType.MEETING_CREATE, provider: "acs-teams", subject: "Standup", durationMinutes: 30},
+      {type: MiniappRequestType.MEETING_RETIRE, meetingRef: "ownership"},
+    ])
+  })
+  test("creation on an older host reports that the app must be updated", async () => {
+    const {session} = mockSession(async () => {
+      throw {code: MiniappErrorCode.NOT_IMPLEMENTED}
+    })
+    await expect(new MeetingModule(session).create({provider: "acs-teams"})).rejects.toMatchObject({
+      message: MEETING_HOST_UPDATE_MESSAGE,
+    })
+  })
   test("admission preserves guest identity and propagates host rejection", async () => {
     const requests: unknown[] = []
     const {session} = mockSession(async (payload) => {
@@ -51,9 +80,13 @@ describe("MeetingModule", () => {
   test("lobby permission distinguishes granted, denied and unreported", () => {
     expect(parseMeetingCapabilities({hangUpForEveryone: {}})?.manageLobby).toBeUndefined()
     for (const allowed of [true, false, null]) {
-      expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed}})?.manageLobby?.allowed).toBe(allowed)
+      expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed}})?.manageLobby?.allowed).toBe(
+        allowed,
+      )
     }
-    expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed: "true"}})?.manageLobby?.allowed).toBeNull()
+    expect(
+      parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed: "true"}})?.manageLobby?.allowed,
+    ).toBeNull()
   })
 
   test("getState preserves provider termination details", async () => {
@@ -389,5 +422,31 @@ describe("validateMeetingVideoSource", () => {
 
   test("rejects a non-string URL rather than coercing it", () => {
     expect(() => validateMeetingVideoSource({type: "whep", url: 42})).toThrow()
+  })
+})
+
+describe("host-owned meeting identity", () => {
+  test("joins without exposing a credential to the miniapp and retains the host identity", async () => {
+    const sent: unknown[] = []
+    const {session} = mockSession(async (payload) => {
+      sent.push(payload)
+      return {state: "connected", muted: false, identityMode: "guest", guestReason: "teams-license-unavailable"}
+    })
+    const {token: _token, ...options} = joinArgs
+    const meeting = new MeetingModule(session)
+    expect(await meeting.join(options)).toMatchObject({identityMode: "guest", guestReason: "teams-license-unavailable"})
+    expect(sent[0]).not.toHaveProperty("token")
+    expect(meeting.state).not.toHaveProperty("token")
+    expect(await meeting.getState()).toMatchObject({identityMode: "guest", guestReason: "teams-license-unavailable"})
+  })
+  test("asks the host for policy before choosing backend-dependent features", async () => {
+    const sent: unknown[] = []
+    const config = {enabled: true, credentialSource: "runtime", externalBackendAllowed: false, managedStreams: false}
+    const {session} = mockSession(async (payload) => {
+      sent.push(payload)
+      return config
+    })
+    expect(await new MeetingModule(session).getConfiguration()).toEqual(config)
+    expect(sent).toEqual([{type: MiniappRequestType.MEETING_GET_CONFIGURATION}])
   })
 })
