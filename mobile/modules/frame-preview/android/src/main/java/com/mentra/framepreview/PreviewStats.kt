@@ -149,6 +149,28 @@ class PreviewStats {
   var slotStarved = 0L
     private set
 
+  /** Pages that presented the current document's token. */
+  @Volatile
+  var handshakes = 0L
+    private set
+
+  /** Android fallback reloads because the listener was installed after navigation. Should stay 0. */
+  @Volatile
+  var installReloads = 0L
+    private set
+
+  /** Output tier changes applied without restarting production or the transport. */
+  @Volatile
+  var tierChanges = 0L
+    private set
+
+  /** Throwables caught from the tap sink on the decoder thread, accumulated across drains. */
+  @Volatile
+  var tapSinkExceptions = 0L
+    private set
+
+  private val packFailureCounts = LinkedHashMap<String, Long>()
+
   /**
    * Producing the source frame. Only the synthetic source pays this; a real decoder hands over a
    * buffer it has already made. Kept apart from [pack] so a slow test pattern cannot be read as
@@ -232,8 +254,33 @@ class PreviewStats {
   }
 
   @Synchronized
-  fun onPackFailure() {
+  fun onPackFailure(reason: PackFailureReason) {
     packFailures++
+    packFailureCounts[reason.wire] = (packFailureCounts[reason.wire] ?: 0L) + 1
+  }
+
+  /** Pack failures keyed by [PackFailureReason.wire]; only reasons that occurred are present. */
+  @Synchronized
+  fun packFailuresByReason(): Map<String, Long> = LinkedHashMap(packFailureCounts)
+
+  @Synchronized
+  fun onHandshake() {
+    handshakes++
+  }
+
+  @Synchronized
+  fun onInstallReload() {
+    installReloads++
+  }
+
+  @Synchronized
+  fun onTierChange() {
+    tierChanges++
+  }
+
+  @Synchronized
+  fun onTapSinkExceptions(count: Long) {
+    tapSinkExceptions += count
   }
 
   @Synchronized
@@ -328,6 +375,11 @@ class PreviewStats {
     transportErrors = 0
     preDispatchDrops = 0
     slotStarved = 0
+    handshakes = 0
+    installReloads = 0
+    tierChanges = 0
+    tapSinkExceptions = 0
+    packFailureCounts.clear()
     generate.reset()
     pack.reset()
     sendComplete.reset()

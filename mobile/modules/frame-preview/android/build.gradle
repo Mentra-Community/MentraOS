@@ -32,6 +32,7 @@ android {
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
+    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
   }
   compileOptions {
     coreLibraryDesugaringEnabled true
@@ -58,6 +59,17 @@ dependencies {
   // Binary WebMessage delivery (JavaScriptReplyProxy.postMessage(byte[])) and its feature
   // probes. react-native-webview already links the same artifact.
   implementation 'androidx.webkit:webkit:1.14.0'
+  // libyuv I420Scale through JavaI420Buffer. Same artifact and version glasses-media links.
+  implementation 'io.github.webrtc-sdk:android:137.7151.05'
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.assertj:assertj-core:3.24.2'
+  testImplementation 'org.json:json:20240303'
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+  androidTestImplementation 'junit:junit:4.13.2'
+}
+
+// Unit tests read the shared golden fixtures straight from the module's fixtures directory.
+tasks.withType(Test).configureEach {
+  systemProperty 'framePreview.fixturesDir', file('../fixtures').absolutePath
 }
