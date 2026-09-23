@@ -97,7 +97,7 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch) {
       const selection = await publishedCoordinatedBuild({identity: env.RELEASE_IDENTITY, channel: env.BRANCH, sourceCommit: env.SHA, fetchImpl})
       if (selection.archive.url !== env.MAC_URL) throw new Error("Notification refers to another Mac archive")
       const url = new URL("https://admin.dev.mentraglass.com/")
-      url.search = new URLSearchParams({testRuns: "1", repository: env.REPOSITORY, headSha: env.SHA,
+      url.search = new URLSearchParams({testRuns: "1", channel: env.BRANCH, repository: env.REPOSITORY, headSha: env.SHA,
         archiveSha256: selection.archive.sha256, routineId: "no-glasses", platform: "ios-mac"}).toString()
       results = ` · <${url.href}|Results for this exact build>`
       // Finalize already depends on the core release jobs. These sibling jobs can

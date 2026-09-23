@@ -184,6 +184,7 @@ test("coordinated routine links select the exact source and archive without clai
     assert.equal(results.searchParams.get("headSha"), state.plan.sourceCommit)
     assert.equal(results.searchParams.get("archiveSha256"), state.receipt.artifacts.mac.sha256)
     assert.equal(results.searchParams.get("routineId"), "no-glasses")
+    assert.equal(results.searchParams.get("channel"), channel)
     assert.equal(results.searchParams.has("pr"), false)
     const pipeline = new URL(text.match(/<(https:\/\/github\.com\/[^|]+)\|/)[1])
     assert.equal(pipeline.searchParams.get("query"), '"Device request callback 100 / attempt 2"')

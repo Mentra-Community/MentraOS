@@ -79,7 +79,9 @@ export function TestRunsPage({
         {scope ? (
           <div className="mt-4 rounded-lg bg-[#f2f7f3] p-3 text-sm">
             <p className="font-semibold">
-              Results for {scope.repository} PR #{scope.pr} · commit {scope.headSha.slice(0, 7)}
+              Results for {scope.repository}{" "}
+              {scope.channel === "pr" ? `PR #${scope.pr}` : scope.channel === "dev" ? "Dev build" : "Staging build"}
+              {" · "}commit {scope.headSha.slice(0, 7)}
             </p>
             <p className="mt-1 break-all text-xs text-[#68746d]">App archive SHA256: {scope.archiveSha256}</p>
             <Button className="mt-2" variant="outline" onClick={onClearScope}>
@@ -103,7 +105,7 @@ export function TestRunsPage({
             <Input
               className="w-28"
               inputMode="numeric"
-              value={scope?.pr ?? draft.pr}
+              value={scope ? scope.pr ?? "" : draft.pr}
               disabled={!!scope}
               onChange={(event) => update("pr", event.target.value)}
               placeholder="All PRs"
@@ -114,7 +116,7 @@ export function TestRunsPage({
             <select
               aria-label="Channel"
               className={INPUT}
-              value={scope ? "pr" : draft.channel}
+              value={scope?.channel ?? draft.channel}
               disabled={!!scope}
               onChange={(event) => update("channel", event.target.value)}>
               {[
