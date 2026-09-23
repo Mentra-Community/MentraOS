@@ -15,6 +15,8 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
     private var statusQuery: (id: String, revision: Int)?
     private var terminalRevision: Int?
     private var needsInspection = false
+    // Dismissing a safe result must not re-admit a delayed result from an unrelated SID.
+    private var hasTransactionHistory = false
     var launch: ((FirmwareStartRequest) throws -> Void)?
     var snapshot: FirmwareUpdateSnapshot {
         state.snapshot
@@ -33,6 +35,7 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
                     throw FirmwareUpdaterError("invalid_journal", "The recovery record belongs to another updater")
                 }
                 record = saved.request
+                hasTransactionHistory = true
                 state.update {
                     let updaterId = $0.updaterId
                     $0 = saved.snapshot; $0.updaterId = updaterId; $0.revision = 0; $0.connectionGeneration = generation
@@ -40,6 +43,7 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
                 }
             }
         } catch {
+            hasTransactionHistory = true
             state.update {
                 $0.phase = "interrupted"; $0.safeToRelease = false; $0.canReconcile = true
                 $0.error = "Firmware recovery information requires a fresh glasses status"
@@ -110,7 +114,7 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         let digest = SHA256.hash(data: Data(manifestUrl.utf8)).map { String(format: "%02x", $0) }.joined()
         let offerId = request?.offerId ?? digest
         let evidence = FirmwareStartRequest(deviceId: snapshot.deviceId, connectionGeneration: snapshot.connectionGeneration,
-                                            offerId: offerId, kind: "live-observation", metadata: ["manifestSha256": digest])
+                                            offerId: offerId, kind: "live-observation", metadata: ["manifestSha256": digest, "startedFromSafe": String(snapshot.safeToRelease)])
         var next = snapshot
         next.sessionId = UUID().uuidString; next.offerId = offerId; next.phase = "preparing"
         next.safeToRelease = false; next.canReconcile = true; next.error = nil; next.progress = nil
@@ -118,6 +122,7 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         // Never persist URLs, credentials or multi-pass approval. A saved record only authorizes inspection.
         try journal.write(.init(snapshot: next, request: evidence))
         record = evidence
+        hasTransactionHistory = true
         statusQuery = nil
         terminalRevision = nil; needsInspection = false
         let token = UUID(); commandToken = token
@@ -183,23 +188,30 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         // Owned work needs terminal/completion proof or a correlated quiet-worker snapshot.
         if status == "idle", ownsDevice, !confirmsQuiescence(activity) { return false }
         let terminal = ["idle", "complete", "failed"].contains(status)
-        if terminal, status != "idle", ownsDevice,
-           (!legacyEvent && snapshot.inventory["activeGlassesSessionId"] != sessionId) ||
+        // Pre-session failures (battery rejection, manifest fetch) have no SID and are
+        // delivered directly; ota_query_status returns idle rather than replaying them.
+        // A rejected retry cannot prove that an earlier, unresolved attempt stopped.
+        let preSessionFailure = !legacyEvent && ownsDevice && status == "failed" && sessionId.isEmpty &&
+            snapshot.inventory["activeGlassesSessionId"] == nil
+        let canRelease = terminal && (!preSessionFailure || record?.metadata["startedFromSafe"] == "true")
+        if terminal, status != "idle", ownsDevice || hasTransactionHistory,
+           (!legacyEvent && !preSessionFailure && snapshot.inventory["activeGlassesSessionId"] != sessionId) ||
            (activity != nil && !confirmsQuiescence(activity))
         {
             // ASG can retain the previous terminal session while fetching this Start's manifest.
             // Legacy progress events are transient; modern cached status needs attempt binding.
-            needsInspection = true
-            if commandToken == nil, statusQuery == nil { query() }
+            needsInspection = ownsDevice
+            if needsInspection, commandToken == nil, statusQuery == nil { query() }
             return false
         }
-        needsInspection = false
-        let safe = terminal && commandToken == nil
+        needsInspection = preSessionFailure && !canRelease
+        let safe = canRelease && commandToken == nil
         if !safe, record == nil {
             // A glasses-owned update can predate this phone process. Persist observation only,
             // even when this updater did not send its Start command.
             record = FirmwareStartRequest(deviceId: snapshot.deviceId, connectionGeneration: generation,
                                           offerId: "observed-" + UUID().uuidString, kind: "live-observation")
+            hasTransactionHistory = true
         }
         state.update {
             if !safe, $0.sessionId == nil { $0.sessionId = UUID().uuidString; $0.offerId = record?.offerId }
@@ -210,8 +222,9 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
             $0.progress = Double(max(0, min(100, progress))) / 100
             $0.error = status == "failed" ? "The glasses reported an update failure" : nil
         }
-        terminalRevision = terminal && !safe ? snapshot.revision : nil
+        terminalRevision = canRelease && !safe ? snapshot.revision : nil
         persist()
+        if needsInspection, commandToken == nil { query() }
         return true
     }
 

@@ -38,7 +38,7 @@ class LiveFirmwareUpdaterTest {
     assertEquals(1, h.writes); assertTrue(h.updater.ownsDevice)
     val saved = FirmwareJournal("live", h.directory).read()!!
     assertNull(saved.request.manifestUrl); assertNull(saved.request.artifact)
-    assertEquals(setOf("manifestSha256"), saved.request.metadata.keys)
+    assertEquals(setOf("manifestSha256", "startedFromSafe"), saved.request.metadata.keys)
     assertFalse(saved.snapshot.safeToRelease)
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.acknowledge() }
     Unit
@@ -179,6 +179,15 @@ class LiveFirmwareUpdaterTest {
     assertTrue(recovered.activity(quiet, 1))
     assertEquals("idle", recovered.snapshot.phase); assertFalse(recovered.ownsDevice)
     assertFalse(recovered.activity(quiet, 1))
+    for (terminal in listOf("complete", "failed")) {
+      assertFalse(recovered.status("previous", "install", terminal, 100, 1))
+      assertFalse(recovered.status("", "download", terminal, 100, 1))
+      assertEquals("idle", recovered.snapshot.phase)
+    }
+    assertEquals("idle", h.makeUpdater().snapshot.phase)
+    recovered.acknowledge()
+    assertFalse(recovered.status("previous", "install", "complete", 100, 1))
+    assertEquals("idle", recovered.snapshot.phase)
     recovered.start(h.request.copy(offerId = "next"))
     assertFalse(recovered.activity(quiet, 1)); assertTrue(recovered.ownsDevice)
   }
@@ -204,6 +213,41 @@ class LiveFirmwareUpdaterTest {
     assertTrue(h.updater.ownsDevice)
     assertTrue(h.updater.activity(quietActivity(h.updater.beginStatusQuery()), 1))
     assertEquals("idle", h.updater.snapshot.phase)
+  }
+
+  @Test fun preSessionRejectionAndManifestFailureReachCallerBeforeAndAfterAck() {
+    for (ackFirst in listOf(false, true)) Harness().use { h ->
+      h.updater.start(h.request)
+      if (ackFirst) h.updater.commandSettled(h.token!!, null)
+      assertTrue(h.updater.status("", "download", "failed", 0, 1))
+      assertEquals("failed", h.updater.snapshot.phase)
+      assertEquals(ackFirst, h.updater.snapshot.safeToRelease)
+      if (!ackFirst) h.updater.commandSettled(h.token!!, Exception("no start ACK"))
+      assertFalse(h.updater.ownsDevice)
+      assertEquals("failed", h.makeUpdater().snapshot.phase)
+      assertTrue(h.makeUpdater().snapshot.safeToRelease)
+      assertEquals(0, h.queries)
+    }
+  }
+
+  @Test fun preSessionFailureSurvivesColdRecoveryOfFirstStart() = Harness().use { h ->
+    h.updater.start(h.request); h.updater.commandSettled(h.token!!, null)
+    val recovered = h.makeUpdater()
+    assertTrue(recovered.status("", "download", "failed", 0, 1))
+    assertEquals("failed", recovered.snapshot.phase); assertFalse(recovered.ownsDevice)
+  }
+
+  @Test fun rejectingRetryCannotReleaseTheEarlierUnresolvedAttempt() = Harness().use { h ->
+    h.updater.start(h.request); h.updater.commandSettled(h.token!!, Exception("lost ACK"))
+    val token = h.updater.commandStarted("https://example.com/retry")
+    assertTrue(h.updater.status("", "download", "failed", 0, 1))
+    h.updater.commandSettled(token, Exception("battery rejection, no ACK"))
+    assertEquals("failed", h.updater.snapshot.phase); assertTrue(h.updater.ownsDevice)
+    val recovered = h.makeUpdater()
+    assertTrue(recovered.status("", "download", "failed", 0, 1))
+    assertTrue(recovered.ownsDevice)
+    assertTrue(recovered.activity(quietActivity(recovered.beginStatusQuery()), 1))
+    assertFalse(recovered.ownsDevice)
   }
 
   @Test fun transientLegacyTerminalRemainsSupportedButWaitsForPendingCommand() = Harness().use { h ->

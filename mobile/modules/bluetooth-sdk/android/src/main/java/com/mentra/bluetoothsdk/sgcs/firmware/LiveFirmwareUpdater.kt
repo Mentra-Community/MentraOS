@@ -21,6 +21,8 @@ internal class LiveFirmwareUpdater(
   private var statusQuery: Pair<String, Int>? = null
   private var terminalRevision: Int? = null
   private var needsInspection = false
+  // Dismissing a safe result must not re-admit a delayed result from an unrelated SID.
+  private var hasTransactionHistory = false
   var launch: ((FirmwareStartRequest) -> Unit)? = null
   override val snapshot get() = state.snapshot
   val ownsDevice get() = commandToken != null || !snapshot.safeToRelease
@@ -31,11 +33,13 @@ internal class LiveFirmwareUpdater(
       storage.read()?.let { saved ->
         require(saved.snapshot.integrationId == "mentra-live" && saved.request.kind == "live-observation")
         record = saved.request
+        hasTransactionHistory = true
         state.update { saved.snapshot.copy(updaterId = it.updaterId, revision = 0, connectionGeneration = generation,
           phase = if (saved.snapshot.safeToRelease) saved.snapshot.phase else "interrupted",
           canReconcile = !saved.snapshot.safeToRelease) }
       }
     } catch (_: Exception) {
+      hasTransactionHistory = true
       state.update { it.copy(phase = "interrupted", safeToRelease = false, canReconcile = true,
         error = "Firmware recovery information requires a fresh glasses status") }
     }
@@ -95,13 +99,14 @@ internal class LiveFirmwareUpdater(
     val digest = MessageDigest.getInstance("SHA-256").digest(manifestUrl.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 255) }
     val offerId = request?.offerId ?: digest
     val evidence = FirmwareStartRequest(snapshot.deviceId, snapshot.connectionGeneration, offerId, "live-observation",
-      metadata = mapOf("manifestSha256" to digest))
+      metadata = mapOf("manifestSha256" to digest, "startedFromSafe" to snapshot.safeToRelease.toString()))
     val next = snapshot.copy(sessionId = UUID.randomUUID().toString(), offerId = offerId, phase = "preparing",
       safeToRelease = false, canReconcile = true, error = null, progress = null,
       inventory = snapshot.inventory - "activeGlassesSessionId")
     // Never persist URLs, credentials or multi-pass approval. Reading this only authorizes inspection.
     storage.write(FirmwareRecoveryRecord(next, evidence))
     record = evidence
+    hasTransactionHistory = true
     statusQuery = null
     terminalRevision = null
     needsInspection = false
@@ -151,20 +156,27 @@ internal class LiveFirmwareUpdater(
     if (generation != snapshot.connectionGeneration) return false
     if (status == "idle" && ownsDevice && !confirmsQuiescence(activity)) return false
     val terminal = status in setOf("idle", "complete", "failed")
-    if (terminal && status != "idle" && ownsDevice &&
-      ((!legacyEvent && snapshot.inventory["activeGlassesSessionId"] != sessionId) ||
+    // Pre-session failures (battery rejection, manifest fetch) have no SID and are
+    // delivered directly; ota_query_status returns idle rather than replaying them.
+    // A rejected retry cannot prove that an earlier, unresolved attempt stopped.
+    val preSessionFailure = !legacyEvent && ownsDevice && status == "failed" && sessionId.isEmpty() &&
+      snapshot.inventory["activeGlassesSessionId"] == null
+    val canRelease = terminal && (!preSessionFailure || record?.metadata?.get("startedFromSafe") == "true")
+    if (terminal && status != "idle" && (ownsDevice || hasTransactionHistory) &&
+      ((!legacyEvent && !preSessionFailure && snapshot.inventory["activeGlassesSessionId"] != sessionId) ||
         (activity != null && !confirmsQuiescence(activity)))) {
       // ASG can retain the PREVIOUS terminal session during this Start's manifest fetch.
       // A legacy progress event is transient; modern cached status needs attempt binding.
-      needsInspection = true
-      if (commandToken == null && statusQuery == null) query()
+      needsInspection = ownsDevice
+      if (needsInspection && commandToken == null && statusQuery == null) query()
       return false
     }
-    needsInspection = false
-    val safe = terminal && commandToken == null
+    needsInspection = preSessionFailure && !canRelease
+    val safe = canRelease && commandToken == null
     if (!safe && record == null) {
       // The glasses-owned update may predate this phone process. Persist observation, never approval.
       record = FirmwareStartRequest(snapshot.deviceId, generation, "observed-" + UUID.randomUUID(), "live-observation")
+      hasTransactionHistory = true
     }
     state.update {
       it.copy(sessionId = if (!safe && it.sessionId == null) UUID.randomUUID().toString() else it.sessionId,
@@ -175,8 +187,9 @@ internal class LiveFirmwareUpdater(
         safeToRelease = safe, canReconcile = !safe, progress = progress.coerceIn(0, 100).toDouble() / 100,
         error = if (status == "failed") "The glasses reported an update failure" else null)
     }
-    terminalRevision = if (terminal && !safe) snapshot.revision else null
+    terminalRevision = if (canRelease && !safe) snapshot.revision else null
     persist()
+    if (needsInspection && commandToken == null) query()
     return true
   }
 

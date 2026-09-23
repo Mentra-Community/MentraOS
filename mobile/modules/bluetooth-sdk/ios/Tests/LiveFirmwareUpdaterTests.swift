@@ -41,7 +41,7 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
             XCTAssertEqual(h.writes, 1); XCTAssertTrue(h.updater.ownsDevice)
             let saved = try XCTUnwrap(FirmwareJournal(deviceId: "live", directory: h.directory).read())
             XCTAssertNil(saved.request.manifestUrl); XCTAssertNil(saved.request.artifact)
-            XCTAssertEqual(Set(saved.request.metadata.keys), ["manifestSha256"])
+            XCTAssertEqual(Set(saved.request.metadata.keys), ["manifestSha256", "startedFromSafe"])
             XCTAssertFalse(saved.snapshot.safeToRelease)
             XCTAssertThrowsError(try h.updater.acknowledge())
         }
@@ -212,6 +212,15 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
             XCTAssertTrue(recovered.activity(quiet, generation: 1))
             XCTAssertEqual(recovered.snapshot.phase, "idle"); XCTAssertFalse(recovered.ownsDevice)
             XCTAssertFalse(recovered.activity(quiet, generation: 1))
+            for terminal in ["complete", "failed"] {
+                XCTAssertFalse(recovered.status(sessionId: "previous", phase: "install", status: terminal, progress: 100, generation: 1))
+                XCTAssertFalse(recovered.status(sessionId: "", phase: "download", status: terminal, progress: 100, generation: 1))
+                XCTAssertEqual(recovered.snapshot.phase, "idle")
+            }
+            XCTAssertEqual(h.makeUpdater().snapshot.phase, "idle")
+            _ = try recovered.acknowledge()
+            XCTAssertFalse(recovered.status(sessionId: "previous", phase: "install", status: "complete", progress: 100, generation: 1))
+            XCTAssertEqual(recovered.snapshot.phase, "idle")
             _ = try recovered.commandStarted(manifestUrl: "https://example.com/next")
             XCTAssertFalse(recovered.activity(quiet, generation: 1)); XCTAssertTrue(recovered.ownsDevice)
         }
@@ -243,6 +252,51 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
             XCTAssertTrue(h.updater.ownsDevice)
             XCTAssertTrue(h.updater.activity(quietActivity(h.updater.beginStatusQuery()), generation: 1))
             XCTAssertEqual(h.updater.snapshot.phase, "idle")
+        }
+    }
+
+    func testPreSessionRejectionAndManifestFailureReachCallerBeforeAndAfterAck() async throws {
+        try await MainActor.run {
+            for ackFirst in [false, true] {
+                let h = Harness(); defer { h.cleanup() }
+                _ = try h.updater.start(h.request)
+                if ackFirst { h.updater.commandSettled(h.token!, error: nil) }
+                XCTAssertTrue(h.updater.status(sessionId: "", phase: "download", status: "failed", progress: 0, generation: 1))
+                XCTAssertEqual(h.updater.snapshot.phase, "failed")
+                XCTAssertEqual(h.updater.snapshot.safeToRelease, ackFirst)
+                if !ackFirst { h.updater.commandSettled(h.token!, error: FirmwareUpdaterError("timeout", "no start ACK")) }
+                XCTAssertFalse(h.updater.ownsDevice)
+                XCTAssertEqual(h.makeUpdater().snapshot.phase, "failed")
+                XCTAssertTrue(h.makeUpdater().snapshot.safeToRelease)
+                XCTAssertEqual(h.queries, 0)
+            }
+        }
+    }
+
+    func testPreSessionFailureSurvivesColdRecoveryOfFirstStart() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            _ = try h.updater.start(h.request); h.updater.commandSettled(h.token!, error: nil)
+            let recovered = h.makeUpdater()
+            XCTAssertTrue(recovered.status(sessionId: "", phase: "download", status: "failed", progress: 0, generation: 1))
+            XCTAssertEqual(recovered.snapshot.phase, "failed"); XCTAssertFalse(recovered.ownsDevice)
+        }
+    }
+
+    func testRejectingRetryCannotReleaseEarlierUnresolvedAttempt() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            _ = try h.updater.start(h.request)
+            h.updater.commandSettled(h.token!, error: FirmwareUpdaterError("timeout", "lost ACK"))
+            let token = try h.updater.commandStarted(manifestUrl: "https://example.com/retry")
+            XCTAssertTrue(h.updater.status(sessionId: "", phase: "download", status: "failed", progress: 0, generation: 1))
+            h.updater.commandSettled(token, error: FirmwareUpdaterError("timeout", "battery rejection, no ACK"))
+            XCTAssertEqual(h.updater.snapshot.phase, "failed"); XCTAssertTrue(h.updater.ownsDevice)
+            let recovered = h.makeUpdater()
+            XCTAssertTrue(recovered.status(sessionId: "", phase: "download", status: "failed", progress: 0, generation: 1))
+            XCTAssertTrue(recovered.ownsDevice)
+            XCTAssertTrue(recovered.activity(quietActivity(recovered.beginStatusQuery()), generation: 1))
+            XCTAssertFalse(recovered.ownsDevice)
         }
     }
 

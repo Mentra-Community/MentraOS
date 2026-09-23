@@ -304,7 +304,10 @@ BLE notification. Ordinary queries do not add an activity message. The phone bin
 completion to the observed update session; an old terminal session alone cannot
 release a new Start while its manifest is downloading. A fresh, correlated quiet
 activity snapshot can resolve an ambiguous attempt as idle without claiming an
-update succeeded. Verified legacy completion remains supported.
+update succeeded. Result identity remains guarded after ownership is released.
+Failures delivered before session creation still reach the phone's error handler;
+a rejected retry does not prove an earlier attempt has stopped. Verified legacy
+completion remains supported.
 
 MTK updates prefer an incremental patch whose start version matches the glasses.
 If no patch matches, a pinned `mtk_full_ota` can update a known older firmware
