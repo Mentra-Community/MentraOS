@@ -673,3 +673,48 @@ it("installs unsigned manual replacements under the same bundled package identit
   expect(registry.getReleaseIdentity(pkg, mockVersion)?.source).toBe("direct_download")
   expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, mockVersion))).toBe(false)
 })
+
+it("rejects same-version manual archive replacement without changing files or provenance", async () => {
+  selectDeployment(consumer)
+  mockScript = "broken same-version replacement"
+  const result = await registry.installFromUrl("https://manual.example/call.zip", {
+    expectedPackageName: pkg,
+    expectedVersion: version,
+    rejectExistingVersion: true,
+  })
+  expect(result.is_error()).toBe(true)
+  expect(installedScript()).toBe("verified call")
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+  expect(await registry.getActiveVersion(pkg)).toBe(version)
+})
+
+it("retains a developer snapshot for manual runtime recovery until explicit cleanup", async () => {
+  selectDeployment(consumer)
+  await registerDevApp({packageName: pkg, name: "Local Call", devUrl: "http://localhost:8081", iconUrl: ""})
+  expect(
+    (
+      await registry.installFromUrl("http://localhost:8081/bundle.zip", {
+        expectedPackageName: pkg,
+        versionOverride: "dev-123",
+        releaseIdentity: {source: "dev_snapshot"},
+      })
+    ).is_ok(),
+  ).toBe(true)
+  mockVersion = "2.1.30"
+  expect(
+    (
+      await registry.installFromUrl("https://manual.example/call.zip", {
+        expectedPackageName: pkg,
+        expectedVersion: mockVersion,
+        rejectExistingVersion: true,
+        preserveDevSnapshots: true,
+      })
+    ).is_ok(),
+  ).toBe(true)
+  expect(getDevAppRecords()).toEqual([])
+  expect(registry.hasDevSnapshot(pkg)).toBe(true)
+  expect(new File(Paths.document, "lmas", pkg, "dev-123", "call.js").textSync()).toBe("verified call")
+  registry.gcDevVersions(pkg, 0)
+  expect(registry.hasDevSnapshot(pkg)).toBe(false)
+  expect(registry.getReleaseIdentity(pkg, "dev-123")).toBeNull()
+})

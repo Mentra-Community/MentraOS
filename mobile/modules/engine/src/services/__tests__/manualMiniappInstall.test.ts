@@ -5,10 +5,21 @@ import {configure, resetForTests} from "../../runtime/bootstrap"
 let active = "1.0.0"
 let running = true
 let failInstall = false
+let failLaunch = false
+let devRecord: {packageName: string; devUrl: string; name: string; iconUrl: string} | undefined
+let retainedDevSnapshot = false
 const events: string[] = []
 let installOptions: Record<string, unknown> | undefined
 mock.module("../AppRegistry", () => ({
+  getDevAppRecords: () => (devRecord ? [devRecord] : []),
+  registerDevApp: async (record: NonNullable<typeof devRecord>) => {
+    devRecord = record
+  },
   default: {
+    getInstalledVersions: () => [active],
+    gcDevVersions: () => {
+      retainedDevSnapshot = false
+    },
     getActiveVersion: async () => active,
     setActiveVersion: (_pkg: string, version: string) => {
       active = version
@@ -18,6 +29,8 @@ mock.module("../AppRegistry", () => ({
       events.push("install")
       installOptions = options
       if (failInstall) return Res.error(new Error("Invalid archive"))
+      retainedDevSnapshot = Boolean(devRecord && options.preserveDevSnapshots)
+      devRecord = undefined
       active = "2.0.0"
       return Res.ok(undefined)
     },
@@ -36,6 +49,8 @@ mock.module("../MiniappLauncher", () => ({
     },
     ensureRunning: async () => {
       events.push(`launch ${active}`)
+      if (failLaunch && active === "2.0.0") throw new Error("Replacement cannot launch")
+      if (active.startsWith("dev-") && (!retainedDevSnapshot || !devRecord)) throw new Error("Missing prior dev build")
       running = true
     },
   },
@@ -58,6 +73,9 @@ beforeEach(() => {
   active = "1.0.0"
   running = true
   failInstall = false
+  failLaunch = false
+  devRecord = undefined
+  retainedDevSnapshot = false
   events.length = 0
   installOptions = undefined
   globalThis.fetch = (async () =>
@@ -75,6 +93,8 @@ test("release QR replaces a running bundled miniapp and binds the ZIP to its man
   expect(installOptions).toEqual({
     expectedPackageName: "com.mentra.notes",
     expectedVersion: "2.0.0",
+    rejectExistingVersion: true,
+    preserveDevSnapshots: true,
     releaseIdentity: {source: "direct_download"},
   })
 })
@@ -90,4 +110,24 @@ test("workspace manual installs are rejected before stopping or downloading a mi
   configure({auth: {}, config: {localMiniappPolicy: {systemPackageNames: null, managed: []}}})
   expect((await installMiniappFromJsonUrl("https://manual.example")).is_error()).toBe(true)
   expect(events).toEqual([])
+})
+
+test("same-version release QR is rejected without stopping the working miniapp", async () => {
+  active = "2.0.0"
+  const result = await installMiniappFromJsonUrl("https://manual.example")
+  expect(result.is_error()).toBe(true)
+  expect(events).toEqual([])
+  expect(running).toBe(true)
+})
+
+test("a release that cannot launch restores the live-dev registration and retained snapshot", async () => {
+  active = "dev-123"
+  devRecord = {packageName: "com.mentra.notes", devUrl: "http://localhost:8081", name: "Local Notes", iconUrl: ""}
+  failLaunch = true
+  expect((await installMiniappFromJsonUrl("https://manual.example")).is_error()).toBe(true)
+  expect(events).toEqual(["pause", "stop", "install", "launch 2.0.0", "launch 2.0.0", "launch dev-123"])
+  expect(running).toBe(true)
+  expect(active).toBe("dev-123")
+  expect(retainedDevSnapshot).toBe(true)
+  expect(devRecord?.devUrl).toBe("http://localhost:8081")
 })

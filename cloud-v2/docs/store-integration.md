@@ -114,7 +114,10 @@ Bundled package IDs remain usable through the consumer developer QR/URL flow.
 A live QR registration shadows its installed bundle, supports offline snapshots,
 and survives startup without being replaced by bundled installation. A release
 QR installs the matching unsigned ZIP under the same package ID and reloads a
-running miniapp. A manual release at the same or a newer version is preserved;
+running miniapp. Release versions are immutable: an already-installed version
+is rejected before replacement; use a new version or a live development QR.
+Development snapshots are retained until a manual release restarts successfully
+so a failed release can recover the previous developer registration and code. A manual release at the same or a newer version is preserved;
 a newer bundled release can replace it on a later Mentra App upgrade.
 
 Manual and development releases do not acquire privileged SYSTEM APIs from the

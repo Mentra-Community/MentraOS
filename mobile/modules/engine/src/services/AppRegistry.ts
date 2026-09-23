@@ -157,6 +157,8 @@ export interface InstallBundleOptions {
   expectedBundleSha256?: string
   /** Refuse to overwrite a version that is already installed. */
   rejectExistingVersion?: boolean
+  /** Keep dev snapshots until a manual release has restarted successfully. */
+  preserveDevSnapshots?: boolean
   /** Host-only adoption after verifying an exact deployment bundle. */
   adoptIdenticalInstalledVersion?: boolean
   compatibilityPolicy?: {
@@ -1024,6 +1026,7 @@ class AppRegistry {
             ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
           },
           (state) => activation.recordRecoveryState(state),
+          opts?.preserveDevSnapshots,
         )
       })
       console.log("APP_REGISTRY: Downloaded and installed mini app")
@@ -1111,6 +1114,7 @@ class AppRegistry {
     version: string,
     releaseIdentity: MiniappReleaseIdentity,
     recordRecoveryState: (serializedState: string) => void,
+    preserveDevSnapshots = false,
   ): InstallFinalization {
     const publisherKey = publisherIdentityKey(packageName)
     const releaseKey = releaseIdentityKey(packageName, version)
@@ -1179,7 +1183,7 @@ class AppRegistry {
         // release wouldn't run.
         const isDevInstall = version.startsWith("dev-")
         if (!isDevInstall) {
-          this.clearDevArtifacts(packageName)
+          this.clearDevArtifacts(packageName, preserveDevSnapshots)
         }
         // Any explicit successful install (Store, dev, or a new
         // build-owned bundle) reverses a prior user-uninstalled tombstone.
@@ -1226,10 +1230,10 @@ class AppRegistry {
    * release install (dev → released transition) and on uninstall, so a dev
    * package leaves nothing behind that `projectDevApps` could re-surface.
    */
-  private clearDevArtifacts(packageName: string): void {
+  private clearDevArtifacts(packageName: string, preserveSnapshots = false): void {
     try {
       const pkgDir = new Directory(Paths.document, "lmas", packageName)
-      if (pkgDir.exists) {
+      if (!preserveSnapshots && pkgDir.exists) {
         for (const item of pkgDir.list()) {
           if (item instanceof Directory && item.name.startsWith("dev-")) {
             try {
@@ -1272,6 +1276,7 @@ class AppRegistry {
       for (let i = keep; i < dirs.length; i++) {
         try {
           dirs[i].delete()
+          this.removeReleaseIdentity(packageName, dirs[i].name)
         } catch (e) {
           console.warn(`APP_REGISTRY: failed to delete ${dirs[i].name}:`, e)
         }

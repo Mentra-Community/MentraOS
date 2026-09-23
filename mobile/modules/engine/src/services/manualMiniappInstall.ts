@@ -2,7 +2,7 @@ import {result as Res, type AsyncResult} from "typesafe-ts"
 
 import {useAppStatusStore} from "../stores/apps"
 import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
-import appRegistry from "./AppRegistry"
+import appRegistry, {getDevAppRecords, registerDevApp} from "./AppRegistry"
 import {miniappLauncher} from "./MiniappLauncher"
 import {canUseManualMiniappRelease} from "./SystemMiniappPolicy"
 
@@ -23,6 +23,14 @@ export function installMiniappFromJsonUrl(
     if (!canUseManualMiniappRelease(packageName)) {
       throw new Error(`Miniapp ${packageName} cannot be manually updated in this workspace`)
     }
+    // Releases are immutable. Local edits without version bumps use a dev QR;
+    // replacing the same directory would destroy the runtime rollback target.
+    if (appRegistry.getInstalledVersions(packageName).includes(version)) {
+      throw new Error(
+        `Miniapp ${packageName}@${version} is already installed. Increase its version or use a development QR code.`,
+      )
+    }
+    const previousDev = getDevAppRecords().find((app) => app.packageName === packageName)
     const previousVersion = await appRegistry.getActiveVersion(packageName)
     await useAppStatusStore.getState().runUpdate(packageName, () =>
       installWithRuntimeReload(
@@ -32,19 +40,25 @@ export function installMiniappFromJsonUrl(
           const result = await appRegistry.installFromUrl(`${trimmed}/bundle.zip`, {
             expectedPackageName: packageName,
             expectedVersion: version,
+            rejectExistingVersion: true,
+            preserveDevSnapshots: true,
             releaseIdentity: {source: "direct_download"},
           })
           if (result.is_error()) throw result.error
         },
         {
-          restorePreviousVersion: () => {
-            if (!previousVersion) throw new Error(`No prior version is available for ${packageName}`)
-            const result = appRegistry.setActiveVersion(packageName, previousVersion)
-            if (result.is_error()) throw result.error
+          restorePreviousVersion: async () => {
+            if (!previousVersion && !previousDev) throw new Error(`No prior version is available for ${packageName}`)
+            if (previousVersion) {
+              const result = appRegistry.setActiveVersion(packageName, previousVersion)
+              if (result.is_error()) throw result.error
+            }
+            if (previousDev) await registerDevApp(previousDev)
           },
         },
       ),
     )
+    appRegistry.gcDevVersions(packageName, 0)
     await useAppStatusStore.getState().refresh()
     return {packageName, version, name}
   })
