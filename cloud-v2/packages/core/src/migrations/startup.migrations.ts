@@ -3,6 +3,8 @@ import {createLogger} from "@mentra/cloud-shared"
 import {OemModel} from "../models/oem.model"
 import {RefreshTokenModel} from "../models/refresh-token.model"
 import {UserModel} from "../models/user.model"
+import {TestAssetModel, TestRunModel} from "../models/test-run.model"
+import {TestRunClaimModel} from "../models/test-run-claim.model"
 
 const logger = createLogger("core").child({component: "startup-migrations"})
 const USERS = "users"
@@ -21,6 +23,10 @@ export async function runStartupMigrations(): Promise<void> {
   await dedupeUserIdentityRows()
   await UserModel.createIndexes()
   await RefreshTokenModel.createIndexes()
+  // Immutable evidence and execution grants require uniqueness before serving requests.
+  await TestRunModel.createIndexes()
+  await TestAssetModel.createIndexes()
+  await TestRunClaimModel.createIndexes()
   await ensureMentraAccountOem()
 }
 

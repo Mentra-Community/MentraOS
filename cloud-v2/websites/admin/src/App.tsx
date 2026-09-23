@@ -1,11 +1,27 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, FileText, History, Home, Loader2, MessageSquareWarning, RefreshCcw, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, RefreshCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { AppShell } from "@/components/app-shell";
+import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
+import { api, ApiError } from "./lib/api";
+import {
+  readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
+} from "./lib/test-run-links";
+import { TestRunsPage } from "./pages/test-runs";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
+type AdminPageKey = "incidents" | "test-runs";
+
+const ADMIN_NAV: readonly NavItem[] = [
+  { key: "incidents", label: "Incident system", icon: Bug },
+  { key: "test-runs", label: "Test runs", icon: FlaskConical },
+];
+
+const PAGE_META: Record<AdminPageKey, { title: string; body: string }> = {
+  incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
+  "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
+};
 interface AdminUser {
   developerId: string;
   email: string;
@@ -99,8 +115,15 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
+const initialTestRunLink = readTestRunLink(window.location.search);
+const initialTestRunListScope = readTestRunListScope(window.location.search);
 
 function AdminPage() {
+  const [page, setPage] = useState<AdminPageKey>(
+    initialTestRunLink || initialTestRunListScope ? "test-runs" : "incidents",
+  );
+  const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
+  const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<unknown>(null);
@@ -128,9 +151,33 @@ function AdminPage() {
     // the parameter to survive the auth round-trip. Idempotent on re-runs.
     if (me.isSuccess && pendingDeepLinkReportId) {
       pendingDeepLinkReportId = null;
-      window.history.replaceState(null, "", window.location.pathname);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("report");
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
   }, [me.isSuccess]);
+  useEffect(() => {
+    const restore = () => {
+      const selection = readTestRunLink(window.location.search);
+      const scope = readTestRunListScope(window.location.search);
+      setTestRunLink(selection);
+      setTestRunListScope(scope);
+      if (selection || scope) setPage("test-runs");
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+
+  function selectTestRun(selection: TestRunLink | null, replace = false) {
+    setTestRunLink(selection);
+    window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
+  }
+
+  function clearTestRunListScope() {
+    setTestRunListScope(null);
+    window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
+  }
+
   if (me.isLoading) return <Splash label="Checking admin session" />;
   if (me.isError) {
     // A 403 means the Mentra login itself worked but the account isn't on the
@@ -143,18 +190,29 @@ function AdminPage() {
       brandTitle="Core admin"
       brandSubtitle="MentraOS"
       badge={<EnvBadge env={ENVIRONMENT} />}
-      nav={[{key: "incidents", label: "Incident system", icon: Bug}]}
-      activeKey="incidents"
-      onSelect={() => setDeepLinkReportId(null)}
-      title="Incident system"
-      description="Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles."
+      nav={ADMIN_NAV}
+      activeKey={page}
+      onSelect={key => {
+        setPage(key as AdminPageKey);
+        setDeepLinkReportId(null);
+        if (key !== "test-runs") {
+          selectTestRun(null, true);
+          clearTestRunListScope();
+        }
+      }}
+      title={PAGE_META[page].title}
+      description={PAGE_META[page].body}
       userEmail={me.data?.user?.email ?? "Admin"}
       accountLabel="Admin"
       onSignOut={signOut}
       signingOut={signingOut}
     >
       {signOutError ? <ErrorText error={signOutError} /> : null}
-      <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} />
+      {page === "incidents" ? <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} /> : null}
+      {page === "test-runs" ? (
+        <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
+          scope={testRunListScope} onClearScope={clearTestRunListScope} />
+      ) : null}
     </AppShell>
   );
 }
@@ -543,7 +601,7 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function LoginGate({ denied = false }: { denied?: boolean }) {
-  // The full URL (not just the origin) so a /?report=… deep link survives the
+  // The full URL preserves report and testRun/step deep links through the
   // login round-trip; safeReturnTo on Core validates the origin either way.
   const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
 
@@ -646,34 +704,6 @@ function ErrorText({ error }: { error: unknown }) {
       {error instanceof Error ? error.message : "Request failed"}
     </p>
   );
-}
-
-class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-  }
-}
-
-async function api<T>(path: string, opts?: { method?: string; body?: unknown }): Promise<T> {
-  const res = await fetch(path, {
-    method: opts?.method ?? "GET",
-    headers: {
-      accept: "application/json",
-      ...(opts?.body ? { "content-type": "application/json" } : {}),
-    },
-    body: opts?.body ? JSON.stringify(opts.body) : undefined,
-  });
-  if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    try {
-      const body = await res.json() as { error_description?: string; message?: string };
-      detail = body.error_description ?? body.message ?? detail;
-    } catch {
-      // keep status detail
-    }
-    throw new ApiError(detail, res.status);
-  }
-  return res.json() as Promise<T>;
 }
 
 export default App;

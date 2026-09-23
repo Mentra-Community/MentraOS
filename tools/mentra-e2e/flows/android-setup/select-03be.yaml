@@ -1,5 +1,0 @@
-appId: com.mentra.mentra
----
-- assertVisible: "Choose your glasses"
-- tapOn: "Mentra Live, 03BE"
-- takeScreenshot: setup-03be-selected

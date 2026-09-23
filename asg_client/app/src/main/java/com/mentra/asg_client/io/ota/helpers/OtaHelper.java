@@ -8,6 +8,7 @@ import android.content.pm.Signature;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.content.Intent;
 
@@ -43,6 +44,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
@@ -53,6 +55,7 @@ import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.service.utils.SysProp;
+import com.mentra.asg_client.service.utils.ProcessSessionId;
 import com.mentra.asg_client.utils.WakeLockManager;
 
 public class OtaHelper {
@@ -87,6 +90,8 @@ public class OtaHelper {
     // window without changing the existing single-worker pipeline.
     private static final Semaphore otaAdmissionPermit = new Semaphore(1);
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
+    // Observation sequence only; the existing semaphore remains the sole admission owner.
+    private static final AtomicLong otaAdmissionGeneration = new AtomicLong();
 
     // Downgrade handoff verdict plumbing: the watchdog must be cancellable because recovery
     // answers every handoff synchronously (accepted/refused); "no answer" is reserved for a
@@ -121,7 +126,7 @@ public class OtaHelper {
     private PhoneConnectionProvider phoneConnectionProvider;
 
     // Session manager for persisting OTA state across APK restarts
-    private OtaSessionManager sessionManager;
+    private volatile OtaSessionManager sessionManager;
 
     // Track phone-initiated vs glasses-initiated OTA
     private static volatile boolean isPhoneInitiatedOta = false;
@@ -279,6 +284,47 @@ public class OtaHelper {
         } catch (JSONException e) {
             return null;
         }
+    }
+
+    /**
+     * Additive diagnostics for an explicitly requested status observation. No admission is
+     * acquired, no worker is started, and raw session reads do not expire or clear state.
+     * A missing owner is reported as null rather than guessed idle. The normal BES-first
+     * status projection remains independent of this process-local activity snapshot.
+     */
+    public JSONObject getOtaActivitySnapshot(String requestId) throws JSONException {
+        long admissionGeneration = otaAdmissionGeneration.get();
+        boolean admissionHeld = otaAdmissionPermit.availablePermits() != 1;
+        boolean updating = isUpdating;
+        boolean mtkInProgress = isMtkOtaInProgress;
+        IBesOtaController controller = getOtaController();
+        OtaSessionManager currentSessionManager = sessionManager;
+        JSONObject session = currentSessionManager != null
+                ? currentSessionManager.getActivitySnapshot() : null;
+        Object besInProgress = controller != null
+                ? controller.isBesOtaInProgress() : JSONObject.NULL;
+
+        JSONObject snapshot = new JSONObject();
+        snapshot.put("schema", 1);
+        snapshot.put("request_id", requestId);
+        snapshot.put("process_sid", ProcessSessionId.SID);
+        snapshot.put("admission_generation", admissionGeneration);
+        // Read flags again after the other owners. An admission observed on either side
+        // remains busy; observing status never takes the semaphore from a real update.
+        snapshot.put("updating", updating || isUpdating);
+        snapshot.put("mtk_in_progress", mtkInProgress || isMtkOtaInProgress);
+        snapshot.put("bes_in_progress", besInProgress);
+        snapshot.put("session", session != null ? session : JSONObject.NULL);
+        snapshot.put("admission_held", admissionHeld || otaAdmissionPermit.availablePermits() != 1);
+        snapshot.put("consistent", admissionGeneration == otaAdmissionGeneration.get());
+        snapshot.put("elapsed_realtime_ms", SystemClock.elapsedRealtime());
+        return snapshot;
+    }
+
+    private static boolean reserveOtaAdmission() {
+        if (!otaAdmissionPermit.tryAcquire()) return false;
+        otaAdmissionGeneration.incrementAndGet();
+        return true;
     }
 
     private JSONObject getAuthoritativeBesStatus() {
@@ -485,7 +531,7 @@ public class OtaHelper {
 
         // Reserve admission before arming phone state or the wake lease. Semaphore ownership can
         // cross threads, so the worker can release the reservation when the pipeline finishes.
-        if (!otaAdmissionPermit.tryAcquire()) {
+        if (!reserveOtaAdmission()) {
             Log.i(
                     TAG,
                     "📱 OTA already in progress - acknowledging ota_start and sending current"
@@ -560,7 +606,7 @@ public class OtaHelper {
             Log.e(TAG, "Refusing OTA version check without a manifest URL");
             return false;
         }
-        if (!otaAdmissionPermit.tryAcquire()) {
+        if (!reserveOtaAdmission()) {
             Log.w(TAG, "Version check admission is busy; refusing before worker dispatch");
             return false;
         }
@@ -3219,7 +3265,7 @@ public class OtaHelper {
             String targetVersion,
             String expectedSha256,
             String artifactId) {
-        if (!otaAdmissionPermit.tryAcquire()) {
+        if (!reserveOtaAdmission()) {
             Log.e(TAG, "DEBUG BES install blocked - phone OTA admission is active");
             return false;
         }
