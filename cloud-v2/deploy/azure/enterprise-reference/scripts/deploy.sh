@@ -78,6 +78,7 @@ jq -e '
   (.communicationName | nonempty) and
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
+  ((.coreAdminEmails // "") | type == "string") and
   ((.miniappConfiguration // {}) | miniapp_configuration_map) and
   ($minVersion | semver) and
   ($recommendedVersion | semver) and
@@ -153,6 +154,7 @@ jq -n \
       mentraJwtPublicKey:{value:$s.mentraJwtPublicKey},
       miniappJwtPrivateKey:{value:$s.miniappJwtPrivateKey},
       miniappJwtPublicKey:{value:$s.miniappJwtPublicKey},
+      coreAdminEmails:{value:($c.coreAdminEmails // "")},
       workspaceHostname:{value:($c.workspaceHostname // "")},
       clientMinVersion:{value:($c.clientMinVersion // "0.0.0")},
       clientRecommendedVersion:{value:($c.clientRecommendedVersion // $c.clientMinVersion // "0.0.0")},
@@ -189,12 +191,36 @@ az deployment group create \
   --query properties.provisioningState \
   --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
 
+# ARM completion precedes Container Apps readiness. Wait for the deployed Core
+# revision before probing its report token or claiming the storage upgrade works.
+CORE_NAME="$(jq -r .coreName "$CONFIG")"
+CORE_READY=false
+for attempt in $(seq 1 30); do
+  if az containerapp show --name "$CORE_NAME" --resource-group "$RESOURCE_GROUP" --output json | jq -e '
+    .properties | (.latestRevisionName != null and .latestRevisionName != "" and
+    .latestRevisionName == .latestReadyRevisionName)
+  ' >/dev/null; then
+    CORE_READY=true
+    break
+  fi
+  sleep 10
+done
+[[ "$CORE_READY" == true ]] || { printf 'Core revision did not become ready\n' >&2; exit 1; }
+
 WORKSPACE="$(az deployment group show \
   --name "$DEPLOYMENT_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --query properties.outputs.workspaceOrigin.value \
   --output tsv)"
 "$SCRIPT_DIR/smoke-test.sh" "$WORKSPACE"
+
+CORE_ORIGIN="$(az deployment group show --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+  --query properties.outputs.coreOrigin.value --output tsv)"
+if [[ -n "${MENTRA_ADMIN_TOKEN:-}" ]]; then
+  curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
+    -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
+    "$CORE_ORIGIN/api/admin/reports?limit=1" | jq -e '.reports | type == "array"' >/dev/null
+fi
 
 az deployment group show \
   --name "$DEPLOYMENT_NAME" \
