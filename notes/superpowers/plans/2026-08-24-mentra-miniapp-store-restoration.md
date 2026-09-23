@@ -186,9 +186,9 @@ data; each deployment may publish both stable and beta releases.
 
 - [x] Keep `com.mentra.store` bundled and SYSTEM so the install/update trust
       boundary is exercised by real builds before launch.
-- [x] Add a dedicated host-owned Mentra Miniapp Store preview flag to Debug
-      Settings. It defaults off in every build; `miniapp.json` cannot request
-      or override it.
+- [x] Add a dedicated host-owned Mentra Miniapp Store preview flag to Super
+      Settings, visible only with Super Mode enabled. It defaults off in every
+      build; `miniapp.json` cannot request or override it.
 - [x] Hide the Store from Home and the glasses menu when preview is off and do not start its
       transient update scheduler, so normal users see no Store UI, tray entry,
       catalog traffic, or scheduler warnings.

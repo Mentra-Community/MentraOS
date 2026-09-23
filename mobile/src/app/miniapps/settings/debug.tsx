@@ -34,9 +34,6 @@ export default function DebugSettingsScreen() {
   const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
-  const [miniappStorePreviewEnabled, setMiniappStorePreviewEnabled] = useSetting(
-    SETTINGS.miniapp_store_preview_enabled.key,
-  )
   const [androidNotificationListenerEnabled, setAndroidNotificationListenerEnabled] = useSetting(
     SETTINGS.android_notification_listener_enabled.key,
   )
@@ -80,12 +77,6 @@ export default function DebugSettingsScreen() {
               subtitle="Enable debug mode"
               value={debugMode}
               onValueChange={(value) => setDebugMode(value)}
-            />
-            <ToggleSetting
-              label="Mentra Miniapp Store"
-              subtitle="Preview the Store and enable its automatic update checks"
-              value={miniappStorePreviewEnabled}
-              onValueChange={(value) => setMiniappStorePreviewEnabled(value)}
             />
             {Platform.OS === "android" && (
               <ToggleSetting
