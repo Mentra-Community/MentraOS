@@ -60,9 +60,11 @@ function storedSidecarPort(packageName: string): number | undefined {
 export function queueDevSnapshot(packageName: string, baseUrl: string, sidecarPort?: number | null): void {
   if (!packageName || !baseUrl) return
   if (snapshotInFlight.has(packageName)) return
-  const promise = installDevSnapshot(packageName, baseUrl, sidecarPort ?? storedSidecarPort(packageName)).finally(() => {
-    snapshotInFlight.delete(packageName)
-  })
+  const promise = installDevSnapshot(packageName, baseUrl, sidecarPort ?? storedSidecarPort(packageName)).finally(
+    () => {
+      snapshotInFlight.delete(packageName)
+    },
+  )
   snapshotInFlight.set(packageName, promise)
 }
 
@@ -70,6 +72,7 @@ async function installDevSnapshot(packageName: string, baseUrl: string, sidecarP
   let lastError: unknown
   for (const url of snapshotCandidateUrls(baseUrl, sidecarPort)) {
     const res = await appRegistry.installFromUrl(url, {
+      expectedPackageName: packageName,
       versionOverride: `dev-${Date.now()}`,
       releaseIdentity: {source: "dev_snapshot"},
     })

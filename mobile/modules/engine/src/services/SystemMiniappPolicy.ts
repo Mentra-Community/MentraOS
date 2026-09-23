@@ -1,6 +1,7 @@
 import semver from "semver"
 
-import {getConfigValues} from "../runtime/bootstrap"
+import {getConfigValues, isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtime/bootstrap"
+import {isTrustedSystemMiniappRelease} from "./systemMiniappTrust"
 
 /**
  * SYSTEM identity comes from the host build's generated bundled-ZIP catalog,
@@ -25,18 +26,18 @@ export function isStoreMiniappPackage(packageName: string): boolean {
 
 /** Build-selected ownership prevents one bundled Store from replacing another Store's SYSTEM apps. */
 export function canStoreUpdateSystemMiniapp(storePackageName: string, targetPackageName: string): boolean {
-  return (
-    isStoreMiniappPackage(storePackageName) &&
-    isSystemMiniappPackage(targetPackageName) &&
-    !managedMiniapp(targetPackageName) &&
-    getConfigValues().bundledSystemMiniappStoreOwners?.[targetPackageName] === storePackageName
-  )
+  return isTrustedSystemMiniappRelease(getConfigValues(), targetPackageName, {source: "system_store", storePackageName})
+}
+
+/** Explicit consumer QR/URL installs are allowed, without granting SYSTEM authority. */
+export function canUseManualMiniappRelease(packageName: string): boolean {
+  return !getConfigValues().localMiniappPolicy && isLocalMiniappPackageAllowed(packageName)
 }
 
 /** Store selected by the host build to update this SYSTEM package, if any. */
 export function systemMiniappStoreOwner(packageName: string): string | undefined {
-  if (!isSystemMiniappPackage(packageName) || managedMiniapp(packageName)) return undefined
-  return getConfigValues().bundledSystemMiniappStoreOwners?.[packageName]
+  const owner = getConfigValues().bundledSystemMiniappStoreOwners?.[packageName]
+  return owner && canStoreUpdateSystemMiniapp(owner, packageName) ? owner : undefined
 }
 
 /**
@@ -51,7 +52,7 @@ export function systemMiniappStoreOwner(packageName: string): string | undefined
 export function canInstallMiniappRelease(
   packageName: string,
   releaseIdentity: {
-    source?: string
+    source: string
     storePackageName?: string
     bundleSha256?: string
     deploymentId?: string
@@ -61,6 +62,12 @@ export function canInstallMiniappRelease(
   candidate?: {version: string; verifiedBundleSha256?: string},
 ): boolean {
   const managed = managedMiniapp(packageName)
+  if (
+    getConfigValues().localMiniappPolicy &&
+    !isInstalledMiniappAllowed(packageName, candidate?.version, releaseIdentity)
+  ) {
+    return false
+  }
   if (managed || releaseIdentity.source === "deployment_manifest") {
     return Boolean(
       managed &&
@@ -76,6 +83,9 @@ export function canInstallMiniappRelease(
   }
   if (!isSystemMiniappPackage(packageName)) return true
   if (releaseIdentity.source === "bundled_asset") return localBundledAsset
+  if (releaseIdentity.source === "direct_download" || releaseIdentity.source === "dev_snapshot") {
+    return canUseManualMiniappRelease(packageName)
+  }
   return (
     releaseIdentity.source === "system_store" &&
     typeof releaseIdentity.storePackageName === "string" &&
@@ -83,13 +93,13 @@ export function canInstallMiniappRelease(
   )
 }
 
-/** Keep a newer trusted SYSTEM release active when an older ZIP ships in a later host build. */
+/** Keep a newer trusted or manually selected release when the host ships an older ZIP. */
 export function shouldActivateBundledVersion(
   bundledVersion: string,
   activeVersion: string | undefined,
-  activeIsTrustedSystem: boolean,
+  preserveNewerRelease: boolean,
 ): boolean {
-  if (!activeVersion || !activeIsTrustedSystem) return true
+  if (!activeVersion || !preserveNewerRelease) return true
   if (!semver.valid(bundledVersion) || !semver.valid(activeVersion)) return true
   return !semver.gt(activeVersion, bundledVersion)
 }
@@ -108,11 +118,11 @@ export function isHostTrustedSystemMiniapp(
   packageName: string,
   releaseIdentity?: {source?: string; storePackageName?: string} | null,
 ): boolean {
-  if (!isSystemMiniappPackage(packageName) || managedMiniapp(packageName)) return false
-  if (releaseIdentity?.source === "bundled_asset") return true
-  return (
-    releaseIdentity?.source === "system_store" &&
-    typeof releaseIdentity.storePackageName === "string" &&
-    canStoreUpdateSystemMiniapp(releaseIdentity.storePackageName, packageName)
+  return isTrustedSystemMiniappRelease(
+    getConfigValues(),
+    packageName,
+    releaseIdentity?.source
+      ? {source: releaseIdentity.source, storePackageName: releaseIdentity.storePackageName}
+      : null,
   )
 }

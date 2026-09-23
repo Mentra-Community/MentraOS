@@ -18,6 +18,7 @@ import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import {
   appRegistry,
+  getDevAppRecords,
   audioPlaybackService,
   localDisplayManager,
   localMiniappRuntime,
@@ -726,6 +727,59 @@ describe("MantleManager", () => {
       Object.assign(appRegistry, originals)
     }
   })
+
+  it.each(["live dev", "same version manual", "newer manual", "newer Store"])(
+    "preserves a %s bundled-package override on startup",
+    async (kind) => {
+      const bootstrap = require("../../modules/engine/src/runtime/bootstrap")
+      const previousConfig = bootstrap.getConfigValues()
+      bootstrap.configure({
+        auth: {},
+        config: {
+          ...previousConfig,
+          bundledSystemMiniappPackages: ["com.mentra.notes", "com.mentra.store"],
+          bundledStoreMiniappPackages: ["com.mentra.store"],
+          bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
+        },
+      })
+      const methods = [
+        "getInstalledVersions",
+        "getActiveVersion",
+        "getReleaseIdentity",
+        "wasUserUninstalled",
+        "installFromLocalZip",
+      ] as const
+      const originals = Object.fromEntries(methods.map((key) => [key, appRegistry[key]]))
+      const devRecords = getDevAppRecords as jest.Mock
+      const deployment = jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+      const install = jest.fn()
+      const active = kind === "same version manual" ? "1.0.0" : "2.0.0"
+      Object.assign(appRegistry, {
+        getInstalledVersions: () => [active],
+        getActiveVersion: async () => active,
+        getReleaseIdentity: () =>
+          kind === "newer Store"
+            ? {source: "system_store", storePackageName: "com.mentra.store"}
+            : {source: "direct_download"},
+        wasUserUninstalled: () => false,
+        installFromLocalZip: install,
+      })
+      devRecords.mockReturnValue(kind === "live dev" ? [{packageName: "com.mentra.notes"}] : [])
+      const asset = {name: "com.mentra.notes-1.0.0.zip", downloadAsync: jest.fn()} as unknown as Asset
+      try {
+        await (mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}).installBundledMiniapp(
+          asset,
+        )
+        expect(asset.downloadAsync).not.toHaveBeenCalled()
+        expect(install).not.toHaveBeenCalled()
+      } finally {
+        Object.assign(appRegistry, originals)
+        devRecords.mockReturnValue([])
+        bootstrap.configure({auth: {}, config: previousConfig})
+        deployment.mockRestore()
+      }
+    },
+  )
 
   it("continues startup bundle installation after one asset fails", async () => {
     const instance = new (mantle.constructor as new () => {

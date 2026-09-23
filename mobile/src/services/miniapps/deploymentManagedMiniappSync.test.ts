@@ -11,7 +11,11 @@ import type {ActiveDeployment} from "@/services/deployment/types"
 import {createMMKV} from "react-native-mmkv"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import {storage} from "@/utils/storage"
-import registry from "../../../modules/engine/src/services/AppRegistry"
+import registry, {
+  getDevAppRecords,
+  registerDevApp,
+  unregisterDevApp,
+} from "../../../modules/engine/src/services/AppRegistry"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import {deploymentStore} from "@/services/deployment/store"
 import type {WorkspaceDeployment} from "@/services/deployment/types"
@@ -166,7 +170,9 @@ jest.mock("react-native-zip-archive", () => ({
   unzip: async (_zip: string, target: string) => {
     await mockUnzip()
     const {File} = require("expo-file-system")
-    new File(target, "miniapp.json").write(JSON.stringify({packageName: "com.mentra.call", version: mockVersion}))
+    new File(target, "miniapp.json").write(
+      JSON.stringify({packageName: "com.mentra.call", version: mockVersion, entry: {background: "call.js"}}),
+    )
     new File(target, "call.js").write(mockScript)
     new File(target, "ui", "index.js").write("verified nested UI")
   },
@@ -591,3 +597,79 @@ it.each(["Store", "bundled"])(
     expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
   },
 )
+
+it.each(["inside workspace", "before entering workspace"])(
+  "keeps a Store update visible when installed %s and the package is approved without a pin",
+  async (when) => {
+    const unpinned: WorkspaceDeployment = {
+      ...workspace,
+      manifest: {
+        ...workspace.manifest,
+        miniapps: {configuration: {}, managed: []},
+        systemMiniapps: {approvedPackageNamesOverride: [pkg]},
+      },
+    }
+    selectDeployment(when === "inside workspace" ? unpinned : consumer)
+    mockVersion = "2.1.30"
+    expect(
+      (
+        await registry.installFromUrl("https://store.example/call.zip", {
+          releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+        })
+      ).is_ok(),
+    ).toBe(true)
+    selectDeployment(unpinned)
+    await deploymentManagedMiniappSync.sync(unpinned)
+    expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe("2.1.30")
+    expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, "2.1.30"))).toBe(true)
+    // A later workspace pin still takes precedence over the consumer update.
+    mockVersion = version
+    selectDeployment(workspace)
+    await deploymentManagedMiniappSync.sync(workspace)
+    expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
+  },
+)
+
+it("allows QR dev overrides and snapshots of bundled packages without privileged identity", async () => {
+  selectDeployment(consumer)
+  await registerDevApp({packageName: pkg, name: "Local Call", devUrl: "http://localhost:8081", iconUrl: ""})
+  expect(getDevAppRecords().some((app) => app.packageName === pkg)).toBe(true)
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.devUrl).toBe(
+    "http://localhost:8081",
+  )
+  expect(
+    (
+      await registry.installFromUrl("http://localhost:8081/bundle.zip", {
+        expectedPackageName: pkg,
+        versionOverride: "dev-123",
+        releaseIdentity: {source: "dev_snapshot"},
+      })
+    ).is_ok(),
+  ).toBe(true)
+  expect(registry.hasDevSnapshot(pkg)).toBe(true)
+  expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, "dev-123"))).toBe(false)
+  selectDeployment(workspace)
+  expect(getDevAppRecords()).toEqual([])
+  await expect(
+    registerDevApp({packageName: pkg, name: "Local Call", devUrl: "http://localhost:8081", iconUrl: ""}),
+  ).rejects.toThrow("workspace")
+  selectDeployment(consumer)
+  expect(getDevAppRecords().some((app) => app.packageName === pkg)).toBe(true)
+  unregisterDevApp(pkg)
+})
+
+it("installs unsigned manual replacements under the same bundled package identity", async () => {
+  selectDeployment(consumer)
+  mockVersion = "2.1.30"
+  expect(
+    (
+      await registry.installFromUrl("https://manual.example/call.zip", {
+        expectedPackageName: pkg,
+        expectedVersion: mockVersion,
+      })
+    ).is_ok(),
+  ).toBe(true)
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(mockVersion)
+  expect(registry.getReleaseIdentity(pkg, mockVersion)?.source).toBe("direct_download")
+  expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, mockVersion))).toBe(false)
+})

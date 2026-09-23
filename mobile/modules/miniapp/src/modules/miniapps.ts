@@ -49,7 +49,7 @@ export interface MiniappInfo {
   system: boolean
   /** Store package that owns this active release, if it was Store-installed. */
   storeOwnerPackageName?: string
-  /** Store package selected by the host build to update this SYSTEM identity. */
+  /** Store assigned to this active trusted SYSTEM release; absent for manual/dev overrides. */
   systemStoreOwnerPackageName?: string
   /** Declared actions (empty if the miniapp declares none). */
   actions: MiniappActionInfo[]

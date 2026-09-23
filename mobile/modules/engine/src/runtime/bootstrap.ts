@@ -6,6 +6,8 @@
  * directly instead of exposing host-facing adapter bags.
  */
 
+import {isTrustedSystemMiniappRelease} from "../services/systemMiniappTrust"
+
 export type SubjectTokenType = "supabase" | "authing" | (string & {})
 
 export interface IslandAuth {
@@ -157,6 +159,7 @@ export function isInstalledMiniappAllowed(
   version: string | undefined,
   releaseIdentity: {
     source: string
+    storePackageName?: string
     bundleSha256?: string
     deploymentId?: string
     deploymentOrigin?: string
@@ -168,6 +171,7 @@ export function isInstalledMiniappAllowed(
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
   const workspaceManaged = policy.managed.some((entry) => entry.packageName === packageName)
   if (systemApproved && !workspaceManaged && releaseIdentity?.source === "bundled_asset") return true
+  if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 
   return policy.managed.some(

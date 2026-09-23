@@ -55,6 +55,7 @@ import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {sameMiniappBundle} from "./sameMiniappBundle"
 import {
   canInstallMiniappRelease,
+  canUseManualMiniappRelease,
   isSystemMiniappPackage,
   isStoreMiniappPackage,
   requiresConnectedGlasses,
@@ -1219,31 +1220,6 @@ class AppRegistry {
     return releases
   }
 
-  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
-    return Res.try_async(async () => {
-      const trimmed = baseUrl.replace(/\/$/, "")
-
-      const manifestRes = await fetch(`${trimmed}/miniapp.json`)
-      if (!manifestRes.ok) {
-        throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
-      }
-      const manifest = (await manifestRes.json()) as Record<string, unknown>
-      const packageName = manifest.packageName as string | undefined
-      const version = manifest.version as string | undefined
-      const name = (manifest.name as string | undefined) ?? packageName ?? "Mini app"
-      if (!packageName) throw new Error("miniapp.json missing packageName")
-      if (!version) throw new Error("miniapp.json missing version")
-      if (isSystemMiniappPackage(packageName)) {
-        throw new Error(`Protected SYSTEM package ${packageName} cannot be installed from a developer URL`)
-      }
-
-      const installRes = await appRegistry.installFromUrl(`${trimmed}/bundle.zip`)
-      if (installRes.is_error()) throw installRes.error
-
-      return {packageName, version, name}
-    })
-  }
-
   /**
    * Drop every dev-* version directory for a package plus ALL dev MMKV keys
    * (URL/port/reachability + the home-tile metadata record). Called on a
@@ -1996,14 +1972,8 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   migrateLegacyDevSlot()
   const packageName = record.packageName.trim()
   if (!packageName) throw new Error("Dev miniapp manifest is missing packageName")
-  if (isSystemMiniappPackage(packageName)) {
-    // Clean up records created by older builds before rejecting the new
-    // registration so a protected dev URL can never shadow the bundled app.
-    removeDevRecordKeys(packageName)
-    const index = getDevAppIndex().filter((item) => item !== packageName)
-    storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(index))
-    appRegistry.markRefreshNeeded()
-    throw new Error(`Protected SYSTEM package ${packageName} cannot be registered as a developer miniapp`)
+  if (!canUseManualMiniappRelease(packageName)) {
+    throw new Error(`Miniapp ${packageName} cannot use a developer override in this workspace`)
   }
 
   const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
@@ -2074,13 +2044,8 @@ export function getDevAppRecords(): DevAppRecord[] {
   migrateLegacyDevSlot()
   const out: DevAppRecord[] = []
   const index = getDevAppIndex()
-  const allowedPackages = index.filter((pkg) => !isSystemMiniappPackage(pkg))
-  if (allowedPackages.length !== index.length) {
-    for (const pkg of index) {
-      if (isSystemMiniappPackage(pkg)) removeDevRecordKeys(pkg)
-    }
-    storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(allowedPackages))
-  }
+  // Keep consumer dev records intact while a workspace hides them.
+  const allowedPackages = index.filter(canUseManualMiniappRelease)
   for (const pkg of allowedPackages) {
     const res = storage.load<string>(`${pkg}_dev_meta`)
     if (!res.is_ok()) continue

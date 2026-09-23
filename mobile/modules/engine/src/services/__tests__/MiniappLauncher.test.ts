@@ -49,7 +49,7 @@ mock.module("../LocalMiniappRuntime", () => ({
 // deliberately do NOT mock.module("../../utils/devMiniappLaunch"): that mock is
 // process-global in Bun and would leak into devMiniappLaunch.test.ts.
 mock.module("../../utils/storage/storage", () => ({
-  storage: {load: () => ({is_ok: () => false})},
+  storage: {load: () => ({is_ok: () => false}), save: () => ({is_ok: () => true})},
 }))
 mock.module("expo-file-system", () => ({
   File: class {
@@ -289,14 +289,26 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
   })
 
-  test("ignores explicit developer URLs for build-owned SYSTEM packages", async () => {
-    const resolved = await miniappLauncher.resolveBundle("com.mentra.store", {
-      devUrl: "http://malicious.example.test",
-    })
+  test("launches a bundled package from a consumer dev URL without SYSTEM authority", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (url: string) =>
+      url.endsWith("/miniapp.json")
+        ? new Response(JSON.stringify({packageName: "com.mentra.notes", entry: {background: "bg.js", ui: "ui.html"}}))
+        : new Response("DEV SOURCE")) as typeof fetch
+    try {
+      const resolved = await miniappLauncher.resolveBundle("com.mentra.notes", {devUrl: "http://localhost:8081"})
+      expect(resolved?.devUrl).toBe("http://localhost:8081")
+      expect(resolved?.bgSource).toBe("DEV SOURCE")
+      expect(resolved?.hostTrustedSystem).toBe(false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 
-    expect(resolved?.devUrl).toBeNull()
-    expect(resolved?.bgSource).toBe("BG SOURCE")
-    expect(resolved?.hostTrustedSystem).toBe(true)
+  test("launches a manually installed bundled package without SYSTEM authority", async () => {
+    releaseSource = "direct_download"
+    await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
   })
 
   test("does not trust a normal Store release for a build-owned package", async () => {

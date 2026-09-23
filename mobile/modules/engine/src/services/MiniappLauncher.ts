@@ -29,11 +29,11 @@ import {isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtim
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
-import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState, unregisterDevApp} from "./AppRegistry"
+import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
-import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
+import {canUseManualMiniappRelease, isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 
 interface LauncherDeps {
   /** The host-constructed router (needs the native Crust binding). */
@@ -162,13 +162,11 @@ class MiniappLauncher {
    * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
   async resolveBundle(packageName: string, hints?: LaunchHints): Promise<ResolvedBundle | null> {
-    // A dev URL must never shadow a package identity owned by the host build,
-    // including explicit launch hints and records persisted by older builds.
-    if (isSystemMiniappPackage(packageName)) {
-      const legacyDevUrl = storage.load<string>(`${packageName}_dev_url`)
-      if (legacyDevUrl.is_ok()) unregisterDevApp(packageName)
-    }
-    const devUrl = isSystemMiniappPackage(packageName) ? undefined : (hints?.devUrl ?? this.storedDevUrl(packageName))
+    // QR-selected local code can override a bundled identity, but receives no
+    // SYSTEM privileges. Workspace pins never follow consumer dev URLs.
+    const devUrl = canUseManualMiniappRelease(packageName)
+      ? (hints?.devUrl ?? this.storedDevUrl(packageName))
+      : undefined
 
     // --- Dev: live HTTP, then the last on-disk snapshot if the laptop is gone. ---
     if (devUrl) {

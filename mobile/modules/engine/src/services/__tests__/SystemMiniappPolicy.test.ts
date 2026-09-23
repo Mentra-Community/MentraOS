@@ -4,6 +4,7 @@ import {afterAll, beforeAll, describe, expect, test} from "bun:test"
 import {configure, resetForTests} from "../../runtime/bootstrap"
 import {
   canInstallMiniappRelease,
+  canUseManualMiniappRelease,
   canStoreUpdateSystemMiniapp,
   isHostTrustedSystemMiniapp,
   isStoreMiniappPackage,
@@ -92,11 +93,14 @@ describe("SYSTEM miniapp policy", () => {
     expect(canStoreUpdateSystemMiniapp("com.mentra.store", "com.example.weather")).toBe(false)
   })
 
-  test("rejects direct, dev, remote-bundled, and wrong-Store SYSTEM replacements", () => {
+  test("allows consumer manual/dev builds without trusting them, and rejects forged Store/bundled provenance", () => {
     expect(canInstallMiniappRelease("com.mentra.notes", {source: "bundled_asset"}, true)).toBe(true)
     expect(canInstallMiniappRelease("com.mentra.notes", {source: "bundled_asset"}, false)).toBe(false)
-    expect(canInstallMiniappRelease("com.mentra.notes", {source: "direct_download"}, false)).toBe(false)
-    expect(canInstallMiniappRelease("com.mentra.notes", {source: "dev_snapshot"}, false)).toBe(false)
+    expect(canInstallMiniappRelease("com.mentra.notes", {source: "direct_download"}, false)).toBe(true)
+    expect(isHostTrustedSystemMiniapp("com.mentra.notes", {source: "direct_download"})).toBe(false)
+    expect(canInstallMiniappRelease("com.mentra.notes", {source: "dev_snapshot"}, false)).toBe(true)
+    expect(isHostTrustedSystemMiniapp("com.mentra.notes", {source: "dev_snapshot"})).toBe(false)
+    expect(canUseManualMiniappRelease("com.mentra.notes")).toBe(true)
     expect(
       canInstallMiniappRelease(
         "com.mentra.notes",
@@ -173,6 +177,9 @@ describe("workspace-owned preinstalled package policy", () => {
   })
 
   test("does not grant SYSTEM or Store ownership to a workspace pin", () => {
+    expect(canUseManualMiniappRelease("com.mentra.call")).toBe(false)
+    expect(canInstallMiniappRelease("com.mentra.call", {source: "direct_download"}, false)).toBe(false)
+    expect(canInstallMiniappRelease("com.mentra.call", {source: "dev_snapshot"}, false)).toBe(false)
     expect(isHostTrustedSystemMiniapp("com.mentra.call", identity)).toBe(false)
     expect(isHostTrustedSystemMiniapp("com.mentra.call", {source: "bundled_asset"})).toBe(false)
     expect(canStoreUpdateSystemMiniapp("com.mentra.store", "com.mentra.call")).toBe(false)

@@ -76,8 +76,7 @@ Core owns browser login, callback, organization selection and logout at
 `ADMIN_URL` and `PORTAL_URL` (included in the environment Porter files) and
 its existing `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`.
 Allowlist both website origins plus `/api/console/auth/callback` in WorkOS,
-and their origins as sign-out return URLs. Local callbacks use ports 5174 and
-5175. These routes do not call Store and preserve incident report deep links.
+and their origins as sign-out return URLs. Local callbacks use ports 5174 and 5175. These routes do not call Store and preserve incident report deep links.
 
 ## First-party miniapp release repositories
 
@@ -108,3 +107,19 @@ This verifies the package/version, replaces the bundled ZIP, and regenerates
 Use the named mapping (for example `bun scripts/sync-miniapp.mjs maps`) for an
 intentional local production build and version bump. Maps requires the public
 `PUBLIC_MAPBOX_TOKEN` build variable.
+
+### Manual updates and local development
+
+Bundled package IDs remain usable through the consumer developer QR/URL flow.
+A live QR registration shadows its installed bundle, supports offline snapshots,
+and survives startup without being replaced by bundled installation. A release
+QR installs the matching unsigned ZIP under the same package ID and reloads a
+running miniapp. A manual release at the same or a newer version is preserved;
+a newer bundled release can replace it on a later Mentra App upgrade.
+
+Manual and development releases do not acquire privileged SYSTEM APIs from the
+package name. The Store's automatic updater leaves these overrides alone.
+Workspace-managed versions retain their exact version/hash/deployment policy;
+consumer developer URLs and manual release installs cannot override them.
+Approved, non-managed system miniapps can use their build-assigned Store releases
+inside a workspace, including releases installed before entering the workspace.

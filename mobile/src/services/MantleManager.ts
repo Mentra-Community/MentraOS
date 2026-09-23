@@ -31,6 +31,7 @@ import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
 import {engine, BgTimer, isSystemMiniappPackage, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
+  getDevAppRecords,
   audioPlaybackService,
   displayProcessor,
   gallerySyncService,
@@ -791,6 +792,10 @@ class MantleManager {
     if (approved !== null && !approved.includes(packageName)) return
     if (shouldHideMiniapp(packageName)) return
 
+    // A QR-selected live build (including its offline snapshot) remains the
+    // consumer's choice across restarts and Mentra App upgrades.
+    if (deployment.kind === "consumer" && getDevAppRecords().some((app) => app.packageName === packageName)) return
+
     // Bundling is an initial-delivery/update channel, not a way to undo a
     // user's uninstall choice. SYSTEM packages are the deliberate
     // exception: the build owns them and AppRegistry does not permit their
@@ -803,12 +808,16 @@ class MantleManager {
     if (installedVersions.length > 0) {
       const activeVersion = await appRegistry.getActiveVersion(packageName)
       const activeIdentity = appRegistry.getReleaseIdentity(packageName, activeVersion)
+      const manuallyInstalled = deployment.kind === "consumer" && activeIdentity?.source === "direct_download"
+      if (manuallyInstalled && activeVersion === version) return
       if (
-        !shouldActivateBundledVersion(version, activeVersion, isHostTrustedSystemMiniapp(packageName, activeIdentity))
-      ) {
-        console.log(
-          `MANTLE: preserving newer trusted SYSTEM miniapp ${packageName}@${activeVersion} over bundled ${version}`,
+        !shouldActivateBundledVersion(
+          version,
+          activeVersion,
+          manuallyInstalled || isHostTrustedSystemMiniapp(packageName, activeIdentity),
         )
+      ) {
+        console.log(`MANTLE: preserving newer selected miniapp ${packageName}@${activeVersion} over bundled ${version}`)
         return
       }
     }

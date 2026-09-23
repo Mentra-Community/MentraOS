@@ -31,6 +31,7 @@ mock.module("react-native-mmkv", () => ({
 mock.module("../../runtime/bootstrap", () => ({
   getConfigValues: () => ({}),
   isInstalledMiniappAllowed: () => true,
+  isLocalMiniappPackageAllowed: () => true,
   isOfflineSystemMiniappAllowed: () => true,
 }))
 mock.module("expo/fetch", () => ({fetch: mock()}))

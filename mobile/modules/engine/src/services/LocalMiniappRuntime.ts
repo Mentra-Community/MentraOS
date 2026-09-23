@@ -92,7 +92,7 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
-import appRegistry, {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
+import appRegistry, {getDevAppAttestation, getDevAppSourcePackage, getDevAppRecords} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
@@ -101,6 +101,7 @@ import {
   canStoreUpdateSystemMiniapp,
   isStoreMiniappPackage,
   isSystemMiniappPackage,
+  isHostTrustedSystemMiniapp,
   systemMiniappStoreOwner,
 } from "./SystemMiniappPolicy"
 import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
@@ -5244,7 +5245,7 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
-    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
+    const whepUrl = videoSource?.type === "whep" ? (videoSource.url ?? "") : ""
     if (!whepUrl) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INVALID_ARGUMENT,
@@ -6004,7 +6005,10 @@ class LocalMiniappRuntime {
     }
     const releaseIdentity =
       app.local && app.version ? appRegistry.getReleaseIdentity(app.packageName, app.version) : null
-    const systemStoreOwnerPackageName = systemMiniappStoreOwner(app.packageName)
+    const systemStoreOwnerPackageName =
+      !app.isMiniappDev && isHostTrustedSystemMiniapp(app.packageName, releaseIdentity)
+        ? systemMiniappStoreOwner(app.packageName)
+        : undefined
     return {
       packageName: app.packageName,
       name: app.name,
@@ -6283,7 +6287,12 @@ class LocalMiniappRuntime {
 
       const install = async (beforeActivate?: () => void) => {
         const installed = await appRegistry.installFromUrl(bundleUrl, {
-          beforeActivate,
+          beforeActivate: () => {
+            if (payload.onlyIfStopped === true && getDevAppRecords().some((app) => app.packageName === target)) {
+              throw new Error(`${target} uses a manually selected build`)
+            }
+            beforeActivate?.()
+          },
           expectedPackageName: target,
           expectedVersion: version,
           expectedBundleSha256: bundleSha256,
@@ -6312,6 +6321,11 @@ class LocalMiniappRuntime {
         return installed
       }
       if (payload.onlyIfStopped === true) {
+        if (
+          this.interopApps().find((app) => app.packageName === target)?.isMiniappDev ||
+          (isSystemMiniappPackage(target) && !isHostTrustedSystemMiniapp(target, currentIdentity))
+        )
+          throw new Error(`${target} uses a manually selected build`)
         // Only mark an automatic update after the idle guard accepts it. A
         // deferred update must not make the running miniapp appear unavailable.
         await miniappLauncher.installWhenIdle(target, (beforeActivate) =>

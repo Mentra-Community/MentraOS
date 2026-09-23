@@ -40,6 +40,7 @@ export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
 export {miniappLauncher, type LaunchHints, type LaunchResult, type ResolvedBundle} from "./services/MiniappLauncher"
+export {installMiniappFromJsonUrl} from "./services/manualMiniappInstall"
 export {
   MentraJSRouter,
   type MentraJSCrustBinding,
