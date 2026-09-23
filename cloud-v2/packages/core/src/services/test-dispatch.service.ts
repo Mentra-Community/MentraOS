@@ -116,8 +116,13 @@ export class TestDispatchService {
     const source = value.input.source;
     const requestId = `routine-${value.requestRunId}-1-${source.channel === "pr" ? source.prNumber : source.channel}-${value.input.routineId}`;
     const claim = await this.repository.claim(requestId);
-    if (claim?.state === "recovery-required") return { ...value, requestId, state: "recovery-required",
-      message: "The worker retained this fixture for recovery. Review the worker evidence before reuse." };
+    if (claim?.state === "recovery-required") {
+      let workerUrl: string | undefined;
+      try { workerUrl = (await this.github.progress(value.requestRunId, value.input)).workerUrl; }
+      catch { /* Recovery ownership remains authoritative when GitHub status is unavailable. */ }
+      return { ...value, requestId, state: "recovery-required", ...(workerUrl ? { workerUrl } : {}),
+        message: "The worker retained this fixture for recovery. Review the worker evidence before reuse." };
+    }
     if (claim?.state === "terminal" && claim.resultRunId) {
       const result = await this.repository.result(claim.resultRunId);
       if (result.requestId !== requestId || result.provenance.archiveSha256 !== value.input.archiveSha256)

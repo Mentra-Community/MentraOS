@@ -179,6 +179,32 @@ describe("durable dispatch ownership", () => {
     f.repository.state = { state: "recovery-required" };
     expect((await f.service.detail(input.idempotencyKey)).state).toBe("recovery-required");
   });
+  test("recovery retains the worker evidence link without adopting the workflow verdict or resending", async () => {
+    for (const state of ["running", "failed"] as const) {
+      const f = fixture(); await f.service.create(input, "admin@example.test");
+      f.repository.state = { state: "recovery-required" };
+      const workerUrl = "https://github.com/Mentra-Community/Mentra-Automated-Testing/actions/runs/80";
+      f.github.progress = async (runId, savedInput) => {
+        expect(runId).toBe(70); expect(savedInput).toEqual(input);
+        return { state, requestId: "routine-70-1-12-no-glasses", workerUrl, message: "Workflow status" };
+      };
+      const result = await f.service.detail(input.idempotencyKey);
+      expect(result).toMatchObject({ state: "recovery-required", workerUrl, requestId: "routine-70-1-12-no-glasses" });
+      expect(result.message).toContain("retained this fixture for recovery"); expect(result.result).toBeUndefined();
+      expect(await f.service.create(input, "admin@example.test")).toEqual(result);
+      expect(f.sends()).toBe(1); expect(f.resolveCount()).toBe(1);
+    }
+  });
+  test("unavailable workflow evidence cannot clear a recovery hold or authorize another send", async () => {
+    const f = fixture(); await f.service.create(input, "admin@example.test");
+    f.repository.state = { state: "recovery-required" };
+    f.github.progress = async () => { throw new Error("GitHub unavailable; private transport details"); };
+    const result = await f.service.detail(input.idempotencyKey);
+    expect(result.state).toBe("recovery-required"); expect(result.workerUrl).toBeUndefined();
+    expect(result.message).not.toContain("private transport details");
+    expect(await f.service.create(input, "admin@example.test")).toEqual(result);
+    expect(f.sends()).toBe(1); expect(f.resolveCount()).toBe(1);
+  });
 });
 
 test("all dispatch endpoints require the same admin authentication as recorded results", async () => {
