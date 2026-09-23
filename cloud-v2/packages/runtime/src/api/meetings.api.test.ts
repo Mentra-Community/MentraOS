@@ -142,6 +142,19 @@ describe("Runtime ACS credential API", () => {
     }
   })
 
+  test("explains missing Graph configuration to clients without exposing provider secrets", async () => {
+    deleteEnv("TEAMS_GRAPH_CLIENT_ID")
+    const response = await app().request("/api/meetings/teams/create", {
+      method: "POST",
+      headers: {authorization: `Bearer ${await runtimeToken()}`},
+    })
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: "Teams meeting creation is not configured on this Runtime",
+      message: "Teams meeting creation is not configured on this Runtime",
+    })
+  })
+
   test("issues a guest credential without requiring Entra configuration", async () => {
     const response = await app().request("/api/meetings/acs/token", {
       method: "POST",
@@ -157,8 +170,8 @@ describe("Runtime ACS credential API", () => {
     })
   })
 
-  test("does not reinterpret a supplied employee token as a guest request", async () => {
-    const response = await app().request("/api/meetings/acs/token", {
+  test.each(["acs/token", "teams/create"])("explains identity rejection without guest fallback on %s", async (path) => {
+    const response = await app().request(`/api/meetings/${path}`, {
       method: "POST",
       headers: {
         "authorization": `Bearer ${await runtimeToken()}`,
@@ -170,6 +183,7 @@ describe("Runtime ACS credential API", () => {
     expect(response.status).toBe(403)
     expect(await response.json()).toEqual({
       error: "Teams identity exchange rejected",
+      message: "Teams identity exchange rejected",
     })
   })
 

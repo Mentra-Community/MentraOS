@@ -726,9 +726,8 @@ class MantleManager {
     )
       return
     const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
-    if (approved !== null && !approved.includes(packageName)) {
-      throw new Error(`${packageName} is outside the workspace allowlist`)
-    }
+    // Bundled consumer assets excluded by the workspace are expected skips.
+    if (approved !== null && !approved.includes(packageName)) return
     if (shouldHideMiniapp(packageName) || appRegistry.getInstalledVersions(packageName).includes(version)) return
     if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
 
