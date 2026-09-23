@@ -64,6 +64,25 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         return snapshot
     }
 
+    func reconcileCompletion(_ evidence: FirmwareCompletionEvidence) throws -> FirmwareUpdateSnapshot {
+        guard ["live-bes-reboot", "live-apk-build-increase", "live-apk-target-convergence"].contains(evidence.kind),
+              evidence.deviceId == snapshot.deviceId, evidence.updaterId == snapshot.updaterId,
+              !evidence.sessionId.isEmpty, evidence.sessionId == snapshot.sessionId,
+              evidence.connectionGeneration == snapshot.connectionGeneration, evidence.revision == snapshot.revision
+        else {
+            throw FirmwareUpdaterError("stale_evidence", "The Live completion belongs to another transaction or observation")
+        }
+        guard connected(), commandToken == nil else { throw FirmwareUpdaterError("busy", "Wait for the current Live command and connection") }
+        if snapshot.safeToRelease { return snapshot }
+        guard let journal, let record else { throw FirmwareUpdaterError("invalid_journal", "The Live recovery record is unavailable") }
+        var next = snapshot
+        next.phase = "complete"; next.safeToRelease = true; next.canReconcile = false; next.progress = 1; next.error = nil
+        // Commit the terminal recovery record before releasing native ownership.
+        try journal.write(.init(snapshot: next, request: record))
+        state.update { $0 = next }
+        return snapshot
+    }
+
     func cancel() throws -> FirmwareUpdateSnapshot {
         throw FirmwareUpdaterError("action_unavailable", "Live's active transaction must be reconciled with the glasses")
     }

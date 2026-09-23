@@ -10,7 +10,9 @@ import {
   type MentraLiveOtaScreen,
 } from "@mentra/engine/ota"
 import {otaLocalNetwork, otaServer} from "@mentra/engine/bluetooth-sdk/ota-transport"
+import BluetoothSdk from "@mentra/engine/bluetooth-sdk"
 import {
+  type NativeFirmwareCompletionEvidence,
   DEVICE_FIRMWARE_CATALOGUE,
   type NativeFirmwareUpdateSnapshot,
 } from "@mentra/engine/bluetooth-sdk/firmware-updates"
@@ -100,3 +102,7 @@ export const lowLevelOtaTransportAvailability = () => ({
   localNetwork: otaLocalNetwork.isAvailable(),
   stopServer: otaServer.stop,
 })
+
+// Custom providers can reconcile verified outcomes through the public, session-fenced boundary.
+export const reconcileVerifiedCompletion = (evidence: NativeFirmwareCompletionEvidence) =>
+  BluetoothSdk.reconcileFirmwareUpdateCompletion(evidence)

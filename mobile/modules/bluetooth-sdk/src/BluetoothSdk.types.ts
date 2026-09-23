@@ -1,4 +1,8 @@
-import type {NativeFirmwareStartRequest, NativeFirmwareUpdateSnapshot} from "./firmware-updates"
+import type {
+  NativeFirmwareStartRequest,
+  NativeFirmwareUpdateSnapshot,
+  NativeFirmwareCompletionEvidence,
+} from "./firmware-updates"
 import type {PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 export type {PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 
@@ -1370,6 +1374,7 @@ export interface BluetoothSdkPublicModule {
   startFirmwareUpdate(request: NativeFirmwareStartRequest): Promise<NativeFirmwareUpdateSnapshot>
   /** Provider-defined inspection/adoption; never a generic fresh-start retry. */
   reconcileFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+  reconcileFirmwareUpdateCompletion(evidence: NativeFirmwareCompletionEvidence): Promise<NativeFirmwareUpdateSnapshot>
   cancelFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
   acknowledgeFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
 

@@ -8,6 +8,9 @@
  * driven by mutating the real island glasses store and emitting on island's
  * GlobalEventEmitter (what OtaService does with the BLE events).
  */
+import type {NativeFirmwareUpdateSnapshot} from "@mentra/bluetooth-sdk/firmware-updates"
+import {acquireManagedLiveOwner} from "@/../modules/engine/src/devices/mentra-live/ownership"
+
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {otaInstallCoordinator} from "@/../modules/engine/src/services/OtaInstallCoordinator"
@@ -37,7 +40,7 @@ import {
 import {useGlassesStore} from "@/../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/../modules/engine/src/utils/GlobalEventEmitter"
 
-import {bluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+import {bluetoothSdkMock, emitBluetoothSdkEvent} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@/../modules/engine/src/services/HotspotOtaTransport", () => ({
   hotspotOtaTransport: {
@@ -1905,4 +1908,89 @@ describe("OtaInstallCoordinator legacy APK completion settle hold (WP 8C-g)", ()
 
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
   })
+})
+
+describe("Live coordinator completion reconciles native ownership", () => {
+  it.each(["bes", "apk"] as const)(
+    "releases the matching native record after the established %s proof",
+    async (step) => {
+      let native: NativeFirmwareUpdateSnapshot = {
+        schemaVersion: 1,
+        integrationId: "mentra-live",
+        deviceId: "live",
+        updaterId: "updater",
+        revision: 0,
+        connectionGeneration: 1,
+        phase: "idle",
+        safeToRelease: true,
+        canCancel: false,
+        canReconcile: false,
+        inventory: {},
+      }
+      const read = bluetoothSdkMock.getFirmwareUpdateSnapshot as jest.Mock
+      read.mockImplementation(async () => native)
+      bluetoothSdkMock.reconcileFirmwareUpdateCompletion.mockImplementation(async (evidence) => {
+        expect(evidence).toEqual({
+          deviceId: "live",
+          updaterId: "updater",
+          sessionId: "native-session",
+          connectionGeneration: 2,
+          revision: native.revision,
+          kind: step === "bes" ? "live-bes-reboot" : "live-apk-build-increase",
+        })
+        native = {...native, safeToRelease: true, phase: "complete", revision: native.revision + 1}
+        emitBluetoothSdkEvent("firmware_update", native)
+        return native
+      })
+      bluetoothSdkMock.startOtaUpdate.mockImplementation(async () => {
+        native = {...native, sessionId: "native-session", phase: "installing", safeToRelease: false, revision: 1}
+        emitBluetoothSdkEvent("firmware_update", native)
+      })
+      const release = acquireManagedLiveOwner(
+        async () => {},
+        () => {},
+        "live",
+      )
+      try {
+        setLegacyGlassesConnected(step === "bes" ? "39" : "33")
+        useGlassesStore
+          .getState()
+          .setOtaUpdateAvailable({available: true, versionCode: 45, versionName: "45", updates: [step], totalSize: 0})
+        otaInstallCoordinator.attach()
+        await flushNativeStartPromise()
+        if (step === "bes") {
+          useGlassesStore.getState().setOtaStatus(
+            inProgressStatus({
+              stepType: "bes",
+              phase: "install",
+              status: "step_complete",
+              stepPercent: 100,
+              overallPercent: 100,
+            }),
+          )
+          expect(otaInstallCoordinator.snapshot().displayState).not.toBe("complete")
+          expect(bluetoothSdkMock.reconcileFirmwareUpdateCompletion).not.toHaveBeenCalled()
+          useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+          native = {...native, connectionGeneration: 2, revision: 2, phase: "interrupted"}
+          emitBluetoothSdkEvent("firmware_update", native)
+          setGlassesConnected()
+        } else {
+          emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 80, currentUpdate: "apk"})
+          native = {...native, connectionGeneration: 2, revision: 2, phase: "interrupted"}
+          emitBluetoothSdkEvent("firmware_update", native)
+          useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+        }
+        expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+        expect(native.safeToRelease).toBe(false)
+        await otaInstallCoordinator.finish()
+        expect(native.safeToRelease).toBe(true)
+        expect(bluetoothSdkMock.reconcileFirmwareUpdateCompletion).toHaveBeenCalledTimes(1)
+      } finally {
+        otaInstallCoordinator.detach()
+        release()
+        read.mockReset().mockRejectedValue(Object.assign(new Error("No native updater"), {code: "unsupported"}))
+        bluetoothSdkMock.reconcileFirmwareUpdateCompletion.mockReset()
+      }
+    },
+  )
 })

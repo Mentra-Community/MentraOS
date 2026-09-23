@@ -97,6 +97,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   configureFirmwareUpdater: bindPublicMethod("configureFirmwareUpdater"),
   startFirmwareUpdate: bindPublicMethod("startFirmwareUpdate"),
   reconcileFirmwareUpdate: bindPublicMethod("reconcileFirmwareUpdate"),
+  reconcileFirmwareUpdateCompletion: bindPublicMethod("reconcileFirmwareUpdateCompletion"),
   cancelFirmwareUpdate: bindPublicMethod("cancelFirmwareUpdate"),
   acknowledgeFirmwareUpdate: bindPublicMethod("acknowledgeFirmwareUpdate"),
 

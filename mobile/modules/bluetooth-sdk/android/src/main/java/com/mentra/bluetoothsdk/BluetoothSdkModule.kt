@@ -805,6 +805,12 @@ class BluetoothSdkModule : Module() {
         SdkCoroutineFunction("reconcileFirmwareUpdate") { deviceId: String ->
             withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).reconcile().toMap() }
         }
+        SdkCoroutineFunction("reconcileFirmwareUpdateCompletion") { values: Map<String, Any> ->
+            withContext(Dispatchers.Main.immediate) {
+                val evidence = FirmwareWire.completion(values)
+                requireSdk().getFirmwareUpdater(evidence.deviceId).reconcileCompletion(evidence).toMap()
+            }
+        }
         SdkCoroutineFunction("cancelFirmwareUpdate") { deviceId: String ->
             withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).cancel().toMap() }
         }

@@ -56,6 +56,23 @@ internal class LiveFirmwareUpdater(
     return snapshot
   }
 
+  override fun reconcileCompletion(evidence: FirmwareCompletionEvidence): FirmwareUpdateSnapshot {
+    if (evidence.kind !in setOf("live-bes-reboot", "live-apk-build-increase", "live-apk-target-convergence") ||
+      evidence.deviceId != snapshot.deviceId || evidence.updaterId != snapshot.updaterId ||
+      evidence.sessionId.isEmpty() || evidence.sessionId != snapshot.sessionId ||
+      evidence.connectionGeneration != snapshot.connectionGeneration || evidence.revision != snapshot.revision)
+      throw FirmwareUpdaterException("stale_evidence", "The Live completion belongs to another transaction or observation")
+    if (!connected() || commandToken != null) throw FirmwareUpdaterException("busy", "Wait for the current Live command and connection")
+    if (snapshot.safeToRelease) return snapshot
+    val storage = journal ?: throw FirmwareUpdaterException("invalid_journal", "The Live recovery record is unavailable")
+    val saved = record ?: throw FirmwareUpdaterException("invalid_journal", "The Live recovery record is unavailable")
+    val next = snapshot.copy(phase = "complete", safeToRelease = true, canReconcile = false, progress = 1.0, error = null)
+    // Commit the terminal recovery record before releasing native ownership.
+    storage.write(FirmwareRecoveryRecord(next, saved))
+    state.update { next }
+    return snapshot
+  }
+
   override fun cancel(): FirmwareUpdateSnapshot =
     throw FirmwareUpdaterException("action_unavailable", "Live's active transaction must be reconciled with the glasses")
 

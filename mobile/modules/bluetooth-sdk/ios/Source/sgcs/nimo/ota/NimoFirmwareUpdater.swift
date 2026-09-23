@@ -157,7 +157,7 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
             guard let request else { throw FirmwareUpdaterError("invalid_journal", "The update target is unavailable") }
             manager = try makeManager(firmware: Data(), target: target(from: request), connection: connection, recoveringReboot: true)
         }
-        prepare { [weak self] in self?.manager?.reconcileAfterReboot() }
+        prepareRecovery()
         return snapshot
     }
 
@@ -190,10 +190,7 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
         guard connection.deviceId == snapshot.deviceId else { return }
         connectionChanged(deviceId: connection.deviceId, generation: connection.generation)
         if manager != nil, rebootEvidence, !snapshot.safeToRelease {
-            prepare { [weak self] in
-                guard let self, let ready = self.ports.connection() else { return }
-                self.manager?.reconnected(connectionGeneration: ready.generation, writeCapacity: ready.writeCapacity)
-            }
+            prepareRecovery()
         }
     }
 
@@ -238,6 +235,15 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
                                       }
                                   }
                               ))
+    }
+
+    private func prepareRecovery() {
+        prepare { [weak self] in
+            guard let self, let ready = self.ports.connection() else { return }
+            // Preparation can fail on one link and succeed on a later retry. Bind before readback.
+            self.manager?.reconnected(connectionGeneration: ready.generation, writeCapacity: ready.writeCapacity)
+            self.manager?.reconcileAfterReboot()
+        }
     }
 
     private func prepare(_ completion: @escaping () -> Void) {

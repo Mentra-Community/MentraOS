@@ -44,7 +44,11 @@ Logs are under `.context/ota-implementation/`; earlier research is in `.context/
 - Native follow-up: 13 Swift recovery/DeviceManager tests pass; Android SDK compile and targeted Live/NIMO/DeviceManager tests pass. The new Live observation record survives a second phone restart without restoring Start approval.
 - [x] Finish public package, build and type checks after the setup-result API addition.
 - GitHub Codex also found that an initial provider-open failure had Retry but no exit. The generic view now releases a safely idle failed provider and closes, preserving cancelled setup as a distinct outcome; three generic UI tests pass.
-- [ ] Push review fixes, merge latest `dev`, rerun independent Codex review on the final head, and address supported findings.
+- Third independent review found that Live's established BES reboot and legacy APK version completion did not release the new native journal, and that NIMO recovery preparation retries could retain the old manager connection generation. Both are fixed. Live binds the existing coordinator verdict to the native device/updater/session/generation/revision, persists completion before releasing ownership, and keeps the flow retained until native confirms it. Unsupported providers reject host completion evidence. NIMO rebinds the manager only after the current channel is prepared; stale-generation replies cannot complete recovery.
+- Follow-up validation: 95 mobile coordinator tests (including actual BES/APK completion), five Engine completion-fence tests, 21 Swift updater tests, and Android SDK compile with the new Live/NIMO recovery tests pass. Full Engine suite and ten package/script tests pass. Public completion evidence is exported through the SDK/Engine facade.
+- The third review posted findings but its receipt verification failed because the branch advanced during the run. It is not counted as a final-head review; keep the next review head fixed.
+- iOS checkpoint CI failed on artifact-storage network timeouts before compilation; the failed job has been rerun. Android app and other checkpoint checks passed.
+- [ ] Merge latest `dev`, push review fixes, rerun independent Codex review on the fixed final head, and address supported findings.
 - [x] Mark PR #4149 ready for review (not hardware-accepted or ready to merge).
 - [ ] Monitor final CI and review bots and resolve supported findings.
 - [ ] Request permission before Live phone testing and record actual hardware acceptance. Keep unavailable AR99/iPhone and NIMO release gates explicit.

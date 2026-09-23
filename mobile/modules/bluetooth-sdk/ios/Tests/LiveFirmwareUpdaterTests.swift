@@ -101,6 +101,43 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
         }
     }
 
+    func testProviderCompletionReleasesOnlyTheMatchingSettledTransactionAndSurvivesRestart() async throws {
+        try await MainActor.run {
+            for kind in ["live-bes-reboot", "live-apk-build-increase", "live-apk-target-convergence"] {
+                let h = Harness(); defer { h.cleanup() }
+                func evidence(_ value: FirmwareUpdateSnapshot, kind: String) -> FirmwareCompletionEvidence {
+                    .init(deviceId: value.deviceId, updaterId: value.updaterId, sessionId: value.sessionId!,
+                          connectionGeneration: value.connectionGeneration, revision: value.revision, kind: kind)
+                }
+                _ = try h.updater.start(h.request)
+                XCTAssertThrowsError(try h.updater.reconcileCompletion(evidence(h.updater.snapshot, kind: kind)))
+                h.updater.commandSettled(h.token!, error: nil)
+                h.updater.status(sessionId: "legacy", phase: "install", status: "step_complete", progress: 100, generation: 1)
+                let old = h.updater.snapshot
+                h.updater.connectionChanged(generation: 2, disconnected: true)
+                XCTAssertTrue(h.updater.ownsDevice)
+                XCTAssertThrowsError(try h.updater.reconcileCompletion(evidence(old, kind: kind)))
+                let current = h.updater.snapshot
+                XCTAssertThrowsError(try h.updater.reconcileCompletion(evidence(current, kind: "generic-reconnect")))
+                for stale in ["device", "updater", "session", "revision"] {
+                    var value = current
+                    if stale == "device" { value.deviceId = "other" }
+                    if stale == "updater" { value.updaterId = "other" }
+                    if stale == "session" { value.sessionId = "other" }
+                    if stale == "revision" { value.revision -= 1 }
+                    XCTAssertThrowsError(try h.updater.reconcileCompletion(evidence(value, kind: kind)))
+                }
+                let proof = evidence(current, kind: kind)
+                XCTAssertEqual(try h.updater.reconcileCompletion(proof).phase, "complete")
+                XCTAssertFalse(h.updater.ownsDevice)
+                XCTAssertTrue(h.makeUpdater().snapshot.safeToRelease)
+                _ = try h.updater.commandStarted(manifestUrl: "http://local/next")
+                XCTAssertThrowsError(try h.updater.reconcileCompletion(proof))
+                XCTAssertTrue(h.updater.ownsDevice)
+            }
+        }
+    }
+
     func testExplicitLowLevelRetryKeepsExistingCommandSemantics() async throws {
         try await MainActor.run {
             let h = Harness(); defer { h.cleanup() }

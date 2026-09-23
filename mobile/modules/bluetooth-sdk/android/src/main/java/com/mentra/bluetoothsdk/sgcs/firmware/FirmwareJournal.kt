@@ -57,6 +57,11 @@ internal class FirmwareJournal(private val deviceId: String, directory: File) {
 
 /** Strict parsing shared by the native bridge and versioned recovery records. */
 internal object FirmwareWire {
+  fun completion(values: Map<String, Any?>) = FirmwareCompletionEvidence(
+    values.string("deviceId"), values.string("updaterId"), values.string("sessionId"),
+    values.integer("connectionGeneration"), values.integer("revision"), values.string("kind"),
+  )
+
   private fun Map<String, Any?>.string(key: String) = this[key] as? String ?: error("Missing firmware field $key")
   private fun Map<String, Any?>.integer(key: String): Int {
     val number = this[key] as? Number ?: error("Missing firmware field $key")

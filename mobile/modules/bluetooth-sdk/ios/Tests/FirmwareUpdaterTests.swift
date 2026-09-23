@@ -11,6 +11,7 @@ final class FirmwareUpdaterTests: XCTestCase {
         var generation = 1
         var capacity = 20
         var prepareCallbacks: [(Error?) -> Void] = []
+        var inventoryCallbacks: [(Result<NimoOtaManager.Inventory, Error>) -> Void] = []
         var writes: [Data] = []
         var releases = 0
         var timers: [() -> Void] = []
@@ -19,7 +20,7 @@ final class FirmwareUpdaterTests: XCTestCase {
             prepare: { [unowned self] in prepareCallbacks.append($0) },
             release: { [unowned self] in releases += 1 },
             write: { [unowned self] data, done in writes.append(data); done(nil) },
-            readInventory: { _ in },
+            readInventory: { [unowned self] in inventoryCallbacks.append($0) },
             schedule: { [unowned self] _, callback in
                 var cancelled = false
                 timers.append { if !cancelled { callback() } }
@@ -141,6 +142,33 @@ final class FirmwareUpdaterTests: XCTestCase {
             h.capacity = 244; h.prepareCallbacks[0](nil)
             XCTAssertEqual(h.updater.snapshot.phase, "verifying")
             XCTAssertTrue(h.writes.isEmpty) // Inventory callback, never ENTER or RESET.
+        }
+    }
+
+    func testRecoveryRetryRebindsAfterPreparationFailsOnANewConnection() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            var interrupted = FirmwareUpdateSnapshot(integrationId: "nimo", deviceId: "device", connectionGeneration: 1)
+            interrupted.phase = "interrupted"; interrupted.safeToRelease = false; interrupted.sessionId = "native-session"
+            try FirmwareJournal(deviceId: "device", directory: h.directory).write(.init(snapshot: interrupted, request: h.request, recoveryStage: "synchronized"))
+            _ = try h.updater.reconcile()
+            h.prepareCallbacks[0](FirmwareUpdaterError("prepare", "not ready"))
+            h.generation = 2
+            h.updater.connected(.init(deviceId: "device", generation: 2, writeCapacity: 244))
+            h.prepareCallbacks[1](FirmwareUpdaterError("prepare", "not ready yet"))
+            _ = try h.updater.reconcile()
+            h.capacity = 244; h.prepareCallbacks[2](nil)
+            h.inventoryCallbacks.last?(.success(.init(firmwareDetail: "full-target", packedVersion: "0.1.1.1")))
+            let sent = try XCTUnwrap(h.writes.last)
+            let body = Data([0x06, 0, 0, 1, 0, 1, 2, 5, 1, 0, 0, 2, 1, 3, 2, 0x64, 0x64, 2, 3, 1, 2, 4, 0, 2, 5, 1])
+            let length = body.count + 2
+            let reply = Data([0x70, 7, 0x6E, 0, sent[4], UInt8(length >> 8), UInt8(length & 255), 0, sent[7]]) + body + Data([0x33])
+            h.updater.receive(reply, connectionGeneration: 1)
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
+            h.updater.receive(reply, connectionGeneration: 2)
+            XCTAssertEqual(h.updater.snapshot.phase, "complete")
+            XCTAssertTrue(h.updater.snapshot.safeToRelease)
+            XCTAssertEqual(h.writes.count, 1) // INFO only: no resumed ENTER or RESET.
         }
     }
 

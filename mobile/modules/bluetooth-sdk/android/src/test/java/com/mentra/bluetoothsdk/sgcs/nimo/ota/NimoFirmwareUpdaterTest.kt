@@ -22,6 +22,7 @@ class NimoFirmwareUpdaterTest {
     var generation = 1
     var capacity = 20
     val prepareCallbacks = mutableListOf<(Throwable?) -> Unit>()
+    val inventoryCallbacks = mutableListOf<(Result<NimoOtaManager.Inventory>) -> Unit>()
     val writes = mutableListOf<ByteArray>()
     val timers = mutableListOf<() -> Unit>()
     var releases = 0
@@ -30,7 +31,7 @@ class NimoFirmwareUpdaterTest {
     override fun prepare(completion: (Throwable?) -> Unit) { prepareCallbacks += completion }
     override fun release() { releases++ }
     override fun write(data: ByteArray, completion: (Throwable?) -> Unit) { writes += data; completion(null) }
-    override fun readInventory(completion: (Result<NimoOtaManager.Inventory>) -> Unit) {}
+    override fun readInventory(completion: (Result<NimoOtaManager.Inventory>) -> Unit) { inventoryCallbacks += completion }
     override fun schedule(delayMs: Long, callback: () -> Unit): () -> Unit {
       var cancelled = false; timers += { if (!cancelled) callback() }; return { cancelled = true }
     }
@@ -81,6 +82,29 @@ class NimoFirmwareUpdaterTest {
     h.updater.acknowledge(); h.updater.start(h.request)
     h.generation = 2; h.prepareCallbacks[1](null)
     assertTrue(h.writes.isEmpty()); assertTrue(h.updater.snapshot.safeToRelease)
+  }
+
+  @Test fun recoveryRetryRebindsAfterPreparationFailsOnNewConnection() = Harness().use { h ->
+    val interrupted = FirmwareUpdateSnapshot("nimo", "device", 1, phase = "interrupted", safeToRelease = false, sessionId = "native-session")
+    FirmwareJournal("device", h.directory).write(FirmwareRecoveryRecord(interrupted, h.request, recoveryStage = "synchronized"))
+    h.updater.reconcile()
+    h.prepareCallbacks[0](Exception("not ready"))
+    h.generation = 2
+    h.updater.connected(NimoFirmwareUpdater.Connection("device", 2, 244))
+    h.prepareCallbacks[1](Exception("not ready yet"))
+    h.updater.reconcile()
+    h.capacity = 244; h.prepareCallbacks[2](null)
+    h.inventoryCallbacks.last()(Result.success(NimoOtaManager.Inventory("full-target", "0.1.1.1")))
+    val sent = h.writes.last()
+    val body = "0600000100010205010000020103026464020301020400020501".chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    val length = body.size + 2
+    val reply = byteArrayOf(0x70, 7, 0x6e, 0, sent[4], (length shr 8).toByte(), length.toByte(), 0, sent[7]) + body + 0x33.toByte()
+    h.updater.receive(reply, 1)
+    assertFalse(h.updater.snapshot.safeToRelease)
+    h.updater.receive(reply, 2)
+    assertEquals("complete", h.updater.snapshot.phase)
+    assertTrue(h.updater.snapshot.safeToRelease)
+    assertEquals(1, h.writes.size)
   }
 
   @Test fun corruptJournalNeverAuthorizesStartOrAcknowledgement() = Harness().use { h ->

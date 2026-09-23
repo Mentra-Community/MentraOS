@@ -17,8 +17,9 @@
  * state written mid-pass queues a follow-up pass — the same way a setState
  * during React effects scheduled a re-render after the current effect batch.
  */
+import {LiveNativeCompletion} from "../devices/mentra-live/nativeCompletion"
 import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
-import {validateManagedLiveTarget} from "../devices/mentra-live/ownership"
+import {managedLiveDeviceId, validateManagedLiveTarget} from "../devices/mentra-live/ownership"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {BgTimer} from "../utils/timers"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
@@ -190,9 +191,14 @@ interface OtaStartOwnership {
 }
 
 class OtaInstallCoordinator {
+  private nativeCompletion: LiveNativeCompletion | null = null
   private observationOnly = false
   /** A phone-side timeout does not establish that the glasses stopped writing. */
   isSafeToRelease(): boolean {
+    return this.isLegacySafeToRelease() && (this.nativeCompletion?.isSafeToRelease() ?? true)
+  }
+
+  private isLegacySafeToRelease(): boolean {
     if (this.otaStartOwnership?.outcome === "pending") return false
     if (this.isInVersionChangeDetour()) return false
     const snapshot = this.snapshot()
@@ -341,6 +347,20 @@ class OtaInstallCoordinator {
     this.observationOnly = options.observationOnly === true
     this.attached = true
     this.resetSessionState()
+    const deviceId = managedLiveDeviceId()
+    if (deviceId)
+      this.nativeCompletion = new LiveNativeCompletion(
+        deviceId,
+        {
+          read: () => BluetoothSdk.getFirmwareUpdateSnapshot(deviceId),
+          listen: (listener) => {
+            const subscription = BluetoothSdk.addListener("firmware_update", listener)
+            return () => subscription.remove()
+          },
+          complete: (evidence) => BluetoothSdk.reconcileFirmwareUpdateCompletion(evidence),
+        },
+        () => this.emitInternalChange(),
+      )
     const initialState = useGlassesStore.getState()
     this.protocolProfile = selectOtaProtocolProfile(
       initialState.otaStatus,
@@ -377,6 +397,8 @@ class OtaInstallCoordinator {
   detach(): void {
     if (!this.attached) return
     this.attached = false
+    this.nativeCompletion?.dispose()
+    this.nativeCompletion = null
     if (this.storeUnsubscribe) {
       this.storeUnsubscribe()
       this.storeUnsubscribe = null
@@ -486,6 +508,20 @@ class OtaInstallCoordinator {
    * clear the stale build number so the next check re-reads version_info.
    */
   async finish(): Promise<void> {
+    // Keep the established legacy completion policy in one place. Native only fences and
+    // persists this verdict; it must not infer success from a generic reconnect/step_complete.
+    const complete = this.snapshot().displayState === "complete" && this.isLegacySafeToRelease()
+    const proof = !complete
+      ? null
+      : this.versionChangeConverged
+        ? "live-apk-target-convergence"
+        : this.apkCompletedViaBuildIncrease
+          ? "live-apk-build-increase"
+          : this.besRestartRecovery === "complete"
+            ? "live-bes-reboot"
+            : null
+    if (this.nativeCompletion) await this.nativeCompletion.finish(proof)
+
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
     }
@@ -1578,6 +1614,8 @@ class OtaInstallCoordinator {
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
       const finalValidation = validateManagedLiveTarget()
       if (finalValidation) await finalValidation
+      if (this.otaStartOwnership !== ownership) return
+      if (this.nativeCompletion) await this.nativeCompletion.beforeStart()
       if (this.otaStartOwnership !== ownership) return
       nativeStartAttempted = true
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)

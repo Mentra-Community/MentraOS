@@ -119,7 +119,7 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
       val saved = request ?: throw FirmwareUpdaterException("invalid_journal", "The update target is unavailable")
       manager = makeManager(byteArrayOf(), target(saved), connection, true)
     }
-    prepare { manager?.reconcileAfterReboot() }
+    prepareRecovery()
     return snapshot
   }
 
@@ -143,7 +143,7 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
     if (connection.deviceId != snapshot.deviceId) return
     connectionChanged(connection.deviceId, connection.generation)
     if (manager != null && rebootEvidence && !snapshot.safeToRelease) {
-      prepare { ports.connection()?.let { ready -> manager?.reconnected(ready.generation, ready.writeCapacity) } }
+      prepareRecovery()
     }
   }
   /** Ordinary version replies must use the new link before OTA channel preparation is relevant. */
@@ -182,6 +182,15 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
           observedFirmware = snapshot.observedFirmware ?: it.observedFirmware) }
       }
     }, recoveringReboot)
+  }
+
+  private fun prepareRecovery() {
+    prepare {
+      val ready = ports.connection() ?: return@prepare
+      // Preparation may fail on one link and succeed on a later retry. Bind before readback.
+      manager?.reconnected(ready.generation, ready.writeCapacity)
+      manager?.reconcileAfterReboot()
+    }
   }
 
   private fun prepare(completion: () -> Unit) {

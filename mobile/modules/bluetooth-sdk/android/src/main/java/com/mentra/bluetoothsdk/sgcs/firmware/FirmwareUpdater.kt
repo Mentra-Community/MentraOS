@@ -54,11 +54,19 @@ class FirmwareUpdaterException(val code: String, message: String) : IllegalState
 
 /** Methods and callbacks run on the SGC's serial executor. Observation never starts or cancels work. */
 @androidx.annotation.MainThread
+data class FirmwareCompletionEvidence(
+  val deviceId: String, val updaterId: String, val sessionId: String,
+  val connectionGeneration: Int, val revision: Int, val kind: String,
+)
+
 interface FirmwareUpdater {
   val snapshot: FirmwareUpdateSnapshot
   fun observe(listener: (FirmwareUpdateSnapshot) -> Unit): () -> Unit
   fun start(request: FirmwareStartRequest): FirmwareUpdateSnapshot
   fun reconcile(): FirmwareUpdateSnapshot
+  fun reconcileCompletion(evidence: FirmwareCompletionEvidence): FirmwareUpdateSnapshot {
+    throw FirmwareUpdaterException("unsupported", "This updater requires native completion verification")
+  }
   fun cancel(): FirmwareUpdateSnapshot
   fun acknowledge(): FirmwareUpdateSnapshot
   /** Device-defined host policy; this never implicitly starts or retries an update. */

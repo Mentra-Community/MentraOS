@@ -28,6 +28,21 @@ public struct FirmwareStartRequest: Codable {
     }
 }
 
+/// Provider-verified completion is accepted only for the current native transaction and revision.
+public struct FirmwareCompletionEvidence: Codable {
+    public let deviceId: String
+    public let updaterId: String
+    public let sessionId: String
+    public let connectionGeneration: Int
+    public let revision: Int
+    public let kind: String
+
+    public init(deviceId: String, updaterId: String, sessionId: String, connectionGeneration: Int, revision: Int, kind: String) {
+        self.deviceId = deviceId; self.updaterId = updaterId; self.sessionId = sessionId
+        self.connectionGeneration = connectionGeneration; self.revision = revision; self.kind = kind
+    }
+}
+
 public struct FirmwareArtifact: Codable {
     public let path: String
     public let targetVersion: String
@@ -92,6 +107,7 @@ public protocol FirmwareUpdater: AnyObject {
     func start(_ request: FirmwareStartRequest) throws -> FirmwareUpdateSnapshot
     /// Query/adopt work. A provider must never implement this as a blind fresh start.
     func reconcile() throws -> FirmwareUpdateSnapshot
+    func reconcileCompletion(_ evidence: FirmwareCompletionEvidence) throws -> FirmwareUpdateSnapshot
     func cancel() throws -> FirmwareUpdateSnapshot
     func acknowledge() throws -> FirmwareUpdateSnapshot
     /// Device-defined host policy, validated by the integration. Never an implicit Start or recovery command.
@@ -99,6 +115,10 @@ public protocol FirmwareUpdater: AnyObject {
 }
 
 public extension FirmwareUpdater {
+    func reconcileCompletion(_: FirmwareCompletionEvidence) throws -> FirmwareUpdateSnapshot {
+        throw FirmwareUpdaterError("unsupported", "This updater requires native completion verification")
+    }
+
     func configure(_: [String: String]) throws -> FirmwareUpdateSnapshot {
         throw FirmwareUpdaterError("unsupported", "This updater does not accept host configuration")
     }

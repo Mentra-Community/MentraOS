@@ -37,3 +37,14 @@ export interface NativeFirmwareUpdateSnapshot {
   inventory: Record<string, string>
   error?: string
 }
+
+/** A device provider's verified completion, fenced to the exact native transaction and revision. */
+export interface NativeFirmwareCompletionEvidence {
+  deviceId: string
+  updaterId: string
+  sessionId: string
+  connectionGeneration: number
+  revision: number
+  /** Integration-defined proof; unsupported kinds are rejected by native. */
+  kind: string
+}

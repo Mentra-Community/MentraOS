@@ -86,6 +86,34 @@ class LiveFirmwareUpdaterTest {
     assertEquals(1, h.queries); assertEquals(0, h.writes)
   }
 
+  @Test fun providerCompletionReleasesOnlyMatchingSettledTransactionAndSurvivesRestart() {
+    for (kind in listOf("live-bes-reboot", "live-apk-build-increase", "live-apk-target-convergence")) Harness().use { h ->
+      fun evidence(value: FirmwareUpdateSnapshot, proofKind: String = kind) = FirmwareCompletionEvidence(
+        value.deviceId, value.updaterId, value.sessionId!!, value.connectionGeneration, value.revision, proofKind)
+      h.updater.start(h.request)
+      assertThrows(FirmwareUpdaterException::class.java) { h.updater.reconcileCompletion(evidence(h.updater.snapshot)) }
+      h.updater.commandSettled(h.token!!, null)
+      h.updater.status("legacy", "install", "step_complete", 100, 1)
+      val old = h.updater.snapshot
+      h.updater.connectionChanged(2, true)
+      assertTrue(h.updater.ownsDevice)
+      assertThrows(FirmwareUpdaterException::class.java) { h.updater.reconcileCompletion(evidence(old)) }
+      val current = h.updater.snapshot
+      assertThrows(FirmwareUpdaterException::class.java) { h.updater.reconcileCompletion(evidence(current, "generic-reconnect")) }
+      for (value in listOf(current.copy(deviceId = "other"), current.copy(updaterId = "other"),
+        current.copy(sessionId = "other"), current.copy(revision = current.revision - 1))) {
+        assertThrows(FirmwareUpdaterException::class.java) { h.updater.reconcileCompletion(evidence(value)) }
+      }
+      val proof = evidence(current)
+      assertEquals("complete", h.updater.reconcileCompletion(proof).phase)
+      assertFalse(h.updater.ownsDevice)
+      assertTrue(h.makeUpdater().snapshot.safeToRelease)
+      h.updater.commandStarted("http://local/next")
+      assertThrows(FirmwareUpdaterException::class.java) { h.updater.reconcileCompletion(proof) }
+      assertTrue(h.updater.ownsDevice)
+    }
+  }
+
   @Test fun explicitLowLevelRetryKeepsExistingCommandSemantics() = Harness().use { h ->
     val first = h.updater.commandStarted("http://local/manifest")
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.commandStarted("http://local/manifest") }
