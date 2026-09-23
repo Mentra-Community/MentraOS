@@ -173,6 +173,7 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
         this.unsubscribe?.()
         this.session.dispose()
         this.release()
+        this.snapshots.publish(this.project())
       }
       return
     }
@@ -217,10 +218,11 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
     const s = snapshot.state
     const terminalSafe = (s.screen === "complete" || s.screen === "failed") && this.safeToRelease()
     const active =
-      this.admitted ||
-      this.session.requiresCleanup ||
-      (snapshot.page === "progress" && !terminalSafe) ||
-      this.session.chain.isOtaAutoChainActive()
+      !this.session.isDisposed &&
+      (this.admitted ||
+        this.session.requiresCleanup ||
+        (snapshot.page === "progress" && !terminalSafe) ||
+        this.session.chain.isOtaAutoChainActive())
     const actions: FirmwareSnapshot["presentation"]["actions"][number][] = []
     if (!active && s.screen !== "checking" && s.screen !== "initializing")
       actions.push({id: "check", label: {text: "Check for updates", key: "ota:checkingForUpdates"}})

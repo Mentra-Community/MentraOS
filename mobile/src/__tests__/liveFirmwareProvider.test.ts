@@ -170,6 +170,16 @@ describe("managed Live provider contract", () => {
     expect(provider.snapshot()).toMatchObject({phase: "complete", active: false, safeToRelease: true})
   })
 
+  it("publishes an inactive retained record after safe pre-start suspension", async () => {
+    await service.open(target, {entryPoint: "settings", initializeRuntime: false, legacyProgressEntry: true})
+    f.install({displayState: "disconnected", connected: false})
+    service.suspendNewWork()
+    await jest.advanceTimersByTimeAsync(0)
+    expect(provider.session.isDisposed).toBe(true)
+    expect(provider.snapshot()).toMatchObject({active: false, safeToRelease: true})
+    expect(service.retainedSnapshots()[0]).toMatchObject({active: false, safeToRelease: true})
+  })
+
   it("waits for suspended cleanup before reopening without restoring prior approval", async () => {
     const offerId = await openOffer()
     safe = false

@@ -59,6 +59,7 @@ describe("Live suspended hotspot cleanup", () => {
   let service: FirmwareUpdateService
   let failFinishRead: boolean
   let useBesProof: boolean
+  let observationOnly: boolean
   let stopServer: (() => void) | undefined
   let check: jest.Mock
   const read = bluetoothSdkMock.getFirmwareUpdateSnapshot as jest.Mock
@@ -91,6 +92,7 @@ describe("Live suspended hotspot cleanup", () => {
     }
     failFinishRead = false
     useBesProof = false
+    observationOnly = false
     stopServer = undefined
     read.mockImplementation(async () => {
       if (failFinishRead) throw new Error("Completion read unavailable")
@@ -135,6 +137,7 @@ describe("Live suspended hotspot cleanup", () => {
                 async () => {},
                 () => otaInstallCoordinator.isSafeToRelease(),
                 (validate, retry) => acquireManagedLiveOwner(validate, retry, "live"),
+                async () => observationOnly,
               )
               return provider
             },
@@ -167,13 +170,94 @@ describe("Live suspended hotspot cleanup", () => {
     jest.useRealTimers()
   })
 
+  it("finishes observation-only idle recovery before offering an explicit new install", async () => {
+    observationOnly = true
+    native = {...native, revision: 1, sessionId: "recovered", phase: "interrupted", safeToRelease: false}
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "recovered",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "download",
+      stepPercent: 0,
+      overallPercent: 0,
+      status: "in_progress",
+    })
+    await service.open(target, {entryPoint: "recovery", initializeRuntime: false})
+    expect(check).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    native = {...native, revision: 2, phase: "idle", sessionId: undefined, safeToRelease: true}
+    emitBluetoothSdkEvent("firmware_update", native)
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "",
+      totalSteps: 0,
+      currentStep: 0,
+      stepType: "apk",
+      phase: "download",
+      stepPercent: 0,
+      overallPercent: 0,
+      status: "idle",
+    })
+    await jest.advanceTimersByTimeAsync(1100)
+    expect(provider.session.requiresCleanup).toBe(false)
+    expect(provider.snapshot()).toMatchObject({active: false, phase: "available"})
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    await service.perform(target, {action: "install", offerId: provider.snapshot().offer!.id})
+    await jest.advanceTimersByTimeAsync(0)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps an open progress host attached if native becomes unsafe during cleanup", async () => {
+    await service.open(target, {entryPoint: "settings", initializeRuntime: false})
+    await jest.advanceTimersByTimeAsync(1100)
+    await service.perform(target, {action: "install", offerId: provider.snapshot().offer!.id})
+    await jest.advanceTimersByTimeAsync(0)
+    provider.session.chain.stopOtaAutoChain()
+    native = {...native, revision: 2, phase: "complete", safeToRelease: true}
+    emitBluetoothSdkEvent("firmware_update", native)
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "install",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "install",
+      stepPercent: 100,
+      overallPercent: 100,
+      status: "complete",
+    })
+    const finished = Promise.resolve(provider.session.finish()).then(
+      () => null,
+      (error) => error,
+    )
+    await jest.advanceTimersByTimeAsync(1000)
+    native = {...native, revision: 3, phase: "installing", safeToRelease: false}
+    emitBluetoothSdkEvent("firmware_update", native)
+    stopServer!()
+    await jest.advanceTimersByTimeAsync(0)
+    expect(await finished).toBeInstanceOf(Error)
+    expect(provider.session.snapshot().page).toBe("progress")
+    expect(provider.snapshot().safeToRelease).toBe(false)
+    expect(() => service.release(target)).toThrow("owns")
+    expect(check).toHaveBeenCalledTimes(1)
+
+    native = {...native, revision: 4, phase: "complete", safeToRelease: true}
+    emitBluetoothSdkEvent("firmware_update", native)
+    await service.perform(target, {action: "retry"})
+    await jest.advanceTimersByTimeAsync(1100)
+    expect(provider.session.snapshot().page).toBe("check")
+    expect(check).toHaveBeenCalledTimes(2)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it.each([
-    {failRead: false, legacy: false},
-    {failRead: true, legacy: false},
-    {failRead: false, legacy: true},
+    {failRead: false, legacy: false, late: "none"},
+    {failRead: true, legacy: false, late: "none"},
+    {failRead: false, legacy: true, late: "none"},
+    {failRead: false, legacy: false, late: "ble"},
+    {failRead: false, legacy: false, late: "native"},
   ])(
-    "retains resources through terminal cleanup (read failure=$failRead, legacy BES=$legacy)",
-    async ({failRead, legacy}) => {
+    "retains resources through terminal cleanup (read failure=$failRead, legacy BES=$legacy, late=$late)",
+    async ({failRead, legacy, late}) => {
       useBesProof = legacy
       await service.open(target, {entryPoint: "settings", initializeRuntime: false})
       await jest.advanceTimersByTimeAsync(1100)
@@ -236,10 +320,34 @@ describe("Live suspended hotspot cleanup", () => {
       expect(stopped).not.toHaveBeenCalled()
       expect(() => acquireGlassesHotspot()).toThrow("already in use")
       expect(localNetworkTransport.disconnect).not.toHaveBeenCalled()
+      if (late === "ble") {
+        useGlassesStore.getState().setOtaStatus({
+          sessionId: "install",
+          totalSteps: 1,
+          currentStep: 1,
+          stepType: "apk",
+          phase: "download",
+          stepPercent: 5,
+          overallPercent: 5,
+          status: "in_progress",
+        })
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      } else if (late === "native") {
+        native = {...native, revision: native.revision + 1, phase: "installing", safeToRelease: false}
+        emitBluetoothSdkEvent("firmware_update", native)
+      }
       stopServer!()
       await jest.advanceTimersByTimeAsync(0)
       expect(localNetworkTransport.disconnect).toHaveBeenCalledTimes(1)
       expect(cleanupArtifacts).toHaveBeenCalledTimes(1)
+      if (late === "native") {
+        expect(stopped).not.toHaveBeenCalled()
+        expect(provider.snapshot().safeToRelease).toBe(false)
+        native = {...native, revision: native.revision + 1, phase: "complete", safeToRelease: true}
+        emitBluetoothSdkEvent("firmware_update", native)
+        await jest.advanceTimersByTimeAsync(0)
+      }
       expect(stopped).toHaveBeenCalledTimes(1)
       expect(provider.session.isDisposed).toBe(true)
       expect(provider.snapshot().safeToRelease).toBe(true)

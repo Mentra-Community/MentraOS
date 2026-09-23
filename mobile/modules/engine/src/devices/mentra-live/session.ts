@@ -1,7 +1,7 @@
 import type {ota as liveOta} from "../../facades/ota"
 import {BgTimer} from "../../utils/timers"
 import {RevisionedSnapshot} from "../../ota/RevisionedSnapshot"
-import type {FirmwareActionResult} from "../../ota/types"
+import {FirmwareUpdateError, type FirmwareActionResult} from "../../ota/types"
 import {
   createOtaAutoChain,
   OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS,
@@ -54,6 +54,7 @@ export interface LiveSessionSnapshot {
   readonly exitRequest: number
   readonly offerId: string | null
   readonly pass: number
+  readonly installSafeToRelease?: boolean
 }
 
 export const MINIMUM_OTA_BATTERY_LEVEL = 25
@@ -122,6 +123,7 @@ export class MentraLiveOtaSession {
       exitRequest: 0,
       offerId: null,
       pass: 0,
+      installSafeToRelease: ports.installSession.snapshot().safeToRelease,
     })
   }
 
@@ -370,7 +372,13 @@ export class MentraLiveOtaSession {
       this.cleanupRequired = false
       // Suspended providers dispose only after this promise resolves. Keep the
       // coordinator's terminal proof attached until that final ownership handoff.
-      if (!this.disposed && !this.suspended) this.returnToCheck()
+      if (!this.disposed && !this.suspended) {
+        // A newer native observation can withhold release while transport cleanup
+        // is pending. Keep observing it instead of detaching for the next check.
+        if (this.ports.installSession.snapshot().safeToRelease === false)
+          throw new FirmwareUpdateError("busy", "The Live update still owns the glasses")
+        this.returnToCheck()
+      }
       return NONE
     })()
       .catch((error) => {
@@ -401,11 +409,12 @@ export class MentraLiveOtaSession {
           if (snapshot.status && !["idle", "complete", "failed"].includes(snapshot.status.status))
             this.observedRecoveryActivity = true
           if (this.observedRecoveryActivity && snapshot.status?.status === "idle") {
-            // A fresh idle reply ends passive recovery, but never starts another pass.
+            // Idle ends this observation-only transaction. Complete its cleanup
+            // before checking again; a new install still requires a new approval.
             this.observationOnly = false
-            this.ports.clearProgress()
-            this.returnToCheck()
-            continue
+            void Promise.resolve()
+              .then(() => this.finishPass(false))
+              .catch((error) => console.warn("Live idle recovery cleanup failed", error))
           }
         }
         if (snapshot.connected !== this.lastConnected) this.connectionGeneration++
@@ -478,6 +487,7 @@ export class MentraLiveOtaSession {
           exitRequest: this.exitRequest,
           offerId: this.updateFingerprint,
           pass: this.pass,
+          installSafeToRelease: install.safeToRelease,
         }
         const {revision: _revision, ...previous} = this.snapshots.snapshot()
         if (JSON.stringify(value) !== JSON.stringify(previous)) this.snapshots.publish(value)

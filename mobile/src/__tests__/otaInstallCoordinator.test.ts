@@ -877,7 +877,7 @@ describe("OtaInstallCoordinator finish()", () => {
     expect(finished).toBe(true)
   })
 
-  it("after an APK step clears the update prompt and the stale build number", () => {
+  it("after an APK step clears the update prompt and the stale build number", async () => {
     setGlassesConnected()
     useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
     useGlassesStore.getState().setOtaUpdateAvailable({
@@ -890,13 +890,13 @@ describe("OtaInstallCoordinator finish()", () => {
     otaInstallCoordinator.attach()
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepType: "apk", stepPercent: 30, overallPercent: 30}))
 
-    otaInstallCoordinator.finish()
+    await otaInstallCoordinator.finish()
 
     expect(useGlassesStore.getState().buildNumber).toBe("")
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
   })
 
-  it("without an APK step leaves the build number alone", () => {
+  it("without an APK step leaves the build number alone", async () => {
     setGlassesConnected()
     useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
     otaInstallCoordinator.attach()
@@ -904,7 +904,7 @@ describe("OtaInstallCoordinator finish()", () => {
       .getState()
       .setOtaStatus(inProgressStatus({stepType: "bes", phase: "install", stepPercent: 30, overallPercent: 30}))
 
-    otaInstallCoordinator.finish()
+    await otaInstallCoordinator.finish()
 
     expect(useGlassesStore.getState().buildNumber).toBe("40")
   })
@@ -1485,7 +1485,7 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
     })
   }
 
-  it("legacy apk session completes on build-number increase when no explicit status arrives", () => {
+  it("legacy apk session completes on build-number increase when no explicit status arrives", async () => {
     setLegacyGlassesConnected("33")
     seedLegacyApkUpdateAvailable()
     otaInstallCoordinator.attach()
@@ -1501,7 +1501,7 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
 
     // finish() must clear the stale build number exactly like an explicit APK step.
-    otaInstallCoordinator.finish()
+    await otaInstallCoordinator.finish()
     expect(useGlassesStore.getState().buildNumber).toBe("")
   })
 
@@ -1558,7 +1558,7 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
 
     useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
-    otaInstallCoordinator.finish()
+    await otaInstallCoordinator.finish()
 
     bluetoothSdkMock.startOtaUpdate.mockRejectedValue(new Error("fresh native rejection"))
     otaInstallCoordinator.retry()
@@ -2118,6 +2118,75 @@ describe("legacy facade preparation cleanup", () => {
     }
     const release = acquireNext()
     release()
+  })
+
+  it("coalesces completion and retains the legacy owner through delayed cleanup", async () => {
+    let native: NativeFirmwareUpdateSnapshot = {
+      schemaVersion: 1,
+      integrationId: "mentra-live",
+      deviceId: "live",
+      updaterId: "updater",
+      revision: 0,
+      connectionGeneration: 1,
+      phase: "idle",
+      safeToRelease: true,
+      canCancel: false,
+      canReconcile: false,
+      inventory: {},
+    }
+    const read = bluetoothSdkMock.getFirmwareUpdateSnapshot as jest.Mock
+    mockGetDefaultDevice.mockResolvedValue({id: "live", model: "Mentra Live"})
+    read.mockImplementation(async () => native)
+    bluetoothSdkMock.startOtaUpdate.mockImplementation(async () => {
+      native = {...native, revision: 1, sessionId: "admitted", phase: "installing", safeToRelease: false}
+      emitBluetoothSdkEvent("firmware_update", native)
+    })
+    let stopTransport!: () => void
+    let finish: Promise<void> | undefined
+    try {
+      setGlassesConnected()
+      useGlassesStore.getState().setGlassesInfo({hotspotOtaVersion: 1, wifi: {state: "disconnected"}})
+      legacyOta.installSession.prepare(checkResult())
+      legacyOta.installSession.attach()
+      await flushNativeStartPromise()
+      native = {...native, revision: 2, phase: "complete", safeToRelease: true}
+      emitBluetoothSdkEvent("firmware_update", native)
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "complete", phase: "install"}))
+      // The terminal reaction also requests teardown; count the two explicit
+      // Finish calls below independently of that existing automatic request.
+      mockHotspotTeardown.mockClear()
+      mockHotspotTeardown.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            stopTransport = resolve
+          }),
+      )
+      finish = legacyOta.installSession.finish()
+      const sameCompletion = legacyOta.installSession.finish()
+      await flushNativeStartPromise()
+      expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+      expect(otaInstallCoordinator.isSafeToRelease()).toBe(false)
+
+      useGlassesStore.getState().setOtaStatus(inProgressStatus())
+      legacyOta.installSession.retry()
+      legacyOta.installSession.detach()
+      expect(() => acquireNext()).toThrow("already owns")
+      expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+      stopTransport()
+      await Promise.all([finish, sameCompletion])
+      expect(otaInstallCoordinator.isSafeToRelease()).toBe(true)
+      legacyOta.installSession.detach()
+      const release = acquireNext()
+      release()
+    } finally {
+      stopTransport?.()
+      await finish
+      legacyOta.installSession.detach()
+      read.mockReset().mockRejectedValue(Object.assign(new Error("No native updater"), {code: "unsupported"}))
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+    }
   })
 
   it.each([false, true])("unwinds a partially failed attachment (prepared=%s)", async (prepared) => {
