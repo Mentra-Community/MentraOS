@@ -213,4 +213,21 @@ test("Store availability excludes All Apps discovery and rejects stale open/fore
   expect(await apps.getState().start(store)).toBe(true)
   await apps.getState().setForeground(store.packageName)
   expect(apps.getState().foregroundedPackage).toBe(store.packageName)
+
+  preview = false
+  await apps.getState().refresh()
+  expect(apps.getState().foregroundedPackage).toBeNull()
+  expect(apps.getState().apps.some((app) => app.foregrounded)).toBe(false)
+  preview = true
+  await apps.getState().refresh()
+  expect(apps.getState().apps.find((app) => app.packageName === store.packageName)?.foregrounded).toBe(false)
+})
+
+test("a temporary registry omission retains an available miniapp's foreground selection", async () => {
+  await apps.getState().setForeground(target.packageName)
+  installedApps.mockResolvedValueOnce([])
+  await apps.getState().refresh()
+  expect(apps.getState().foregroundedPackage).toBe(target.packageName)
+  await apps.getState().refresh()
+  expect(apps.getState().apps[0].foregrounded).toBe(true)
 })

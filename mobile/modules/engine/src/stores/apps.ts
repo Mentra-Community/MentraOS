@@ -294,7 +294,17 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   refresh: async () => {
     const localApps = await appRegistry.getInstalledMiniapps()
     // Installation/foreground state may have changed while reading the registry.
-    set((state) => ({apps: projectApps(state, localApps)}))
+    set((state) => {
+      // Explicitly unavailable apps lose foreground ownership. Keep ownership
+      // across temporary registry omissions so ordinary refreshes do not reopen
+      // or restart the hosted UI.
+      const foregroundedPackage =
+        state.foregroundedPackage && isMiniappAvailable(state.foregroundedPackage) ? state.foregroundedPackage : null
+      return {
+        foregroundedPackage,
+        apps: projectApps({...state, foregroundedPackage}, localApps),
+      }
+    })
   },
 
   runUpdate: async (packageName, update) => {
