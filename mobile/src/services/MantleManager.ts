@@ -466,6 +466,9 @@ class MantleManager {
         bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
         bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
         bundledSystemMiniappPublisherKeys: BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
+        isMiniappAvailable: (packageName) =>
+          !BUNDLED_STORE_MINIAPP_PACKAGES.some((store) => store === packageName) ||
+          Boolean(engine.settings.get(SETTINGS.miniapp_store_preview_enabled.key)),
       },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
@@ -704,6 +707,7 @@ class MantleManager {
       // Store maintenance is a host-triggered transient action. It wakes each
       // bundled Store without projecting it into the running tray and tears the
       // context down after reconciliation unless the user opens it.
+      await engine.miniapps.refresh()
       void storeUpdateScheduler.start(BUNDLED_STORE_MINIAPP_PACKAGES)
       return
     }
@@ -722,7 +726,12 @@ class MantleManager {
       // Also clears the persisted running bit so a Store opened in preview
       // cannot reappear in the tray after preview is later disabled.
       if (app) await engine.miniapps.stop(packageName)
+      // Availability may already have removed the tile during a refresh.
+      // Stop the context and clear autostart even when it is no longer listed.
+      saveLocalAppRunningState(packageName, false)
+      await miniappLauncher.stop(packageName)
     }
+    await engine.miniapps.refresh()
   }
 
   /**

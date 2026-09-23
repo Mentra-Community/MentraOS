@@ -25,6 +25,7 @@ import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import {isMiniappAvailable} from "../runtime/bootstrap"
 import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
 import {SETTINGS, useSettingsStore} from "./settings"
@@ -193,6 +194,7 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[]): Cli
   // Dedupe by packageName, keep first occurrence.
   const byPackage = new Map<string, ClientApp>()
   for (const app of localApps) {
+    if (!isMiniappAvailable(app.packageName)) continue
     if (!byPackage.has(app.packageName)) byPackage.set(app.packageName, app)
   }
 
@@ -320,6 +322,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   start: async (clientApp: ClientApp, opts?: StartOptions) => {
     const state = get()
     const packageName = clientApp.packageName
+    if (!isMiniappAvailable(packageName)) return false
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
@@ -484,6 +487,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   setForeground: async (packageName: string) => {
+    if (!isMiniappAvailable(packageName)) return
     const app = get().apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: setForeground — app not found: ${packageName}`)

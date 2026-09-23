@@ -44,6 +44,8 @@ export interface IslandConfigValues {
   localMiniappAllowlist?: readonly string[] | null
   /** Provenance-aware policy for workspace SYSTEM and managed miniapps. */
   localMiniappPolicy?: LocalMiniappPolicy
+  /** Live host availability for discovery/launch, independent of installation or Home hiding. */
+  isMiniappAvailable?: (packageName: string) => boolean
   /** Optional per-package configuration supplied by the host deployment. */
   miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
@@ -133,6 +135,10 @@ export interface IslandConfigureOptions {
   config?: IslandConfigValues
   analytics?: IslandAnalytics
   ui?: IslandUiSeams
+}
+
+export function isMiniappAvailable(packageName: string): boolean {
+  return options?.config?.isMiniappAvailable?.(packageName) ?? true
 }
 
 export function isLocalMiniappPackageAllowed(packageName: string): boolean {

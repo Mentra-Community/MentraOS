@@ -22,6 +22,7 @@ import {
   audioPlaybackService,
   localDisplayManager,
   localMiniappRuntime,
+  miniappLauncher,
   saveLocalAppRunningState,
   useAppStatusStore,
   useCoreStore,
@@ -118,6 +119,7 @@ function resetMantleTestState() {
   useDisplayStore.setState({view: "main"})
 }
 
+let miniappAvailability: (packageName: string) => boolean
 let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
 let routerPushSpy: jest.SpiedFunction<typeof router.push>
 let syncCoreDisplayOwner: () => void
@@ -155,6 +157,7 @@ describe("MantleManager", () => {
     }))
     await mantle.init()
     requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
+    miniappAvailability = (engine.configure as jest.Mock).mock.calls[0][0].config.isMiniappAvailable
     syncCoreDisplayOwner = (engine.miniapps.onChanged as jest.Mock).mock.calls.at(-1)![0]
     syncGlassesPresentationState = (engine.glasses.onStatus as jest.Mock).mock.calls.at(-1)![0]
   })
@@ -691,6 +694,30 @@ describe("MantleManager", () => {
 
     start.mockRestore()
     stop.mockRestore()
+  })
+
+  it("wires Store preview as a live availability policy and stops an already-filtered Store", async () => {
+    const availability = miniappAvailability
+    const get = engine.settings.get as jest.Mock
+    const list = engine.miniapps.list as jest.Mock
+    const originalGet = get.getMockImplementation()!
+    const originalList = list.getMockImplementation()!
+    let preview = false
+    get.mockImplementation((key) => (key === SETTINGS.miniapp_store_preview_enabled.key ? preview : originalGet(key)))
+    list.mockReturnValue([])
+    const instance = mantle as unknown as {applyStorePreview: (enabled: boolean) => Promise<void>}
+    try {
+      expect(availability("com.mentra.store")).toBe(false)
+      expect(availability("com.mentra.notes")).toBe(true)
+      await instance.applyStorePreview(false)
+      expect(miniappLauncher.stop).toHaveBeenCalledWith("com.mentra.store")
+      expect(saveLocalAppRunningState).toHaveBeenCalledWith("com.mentra.store", false)
+      preview = true
+      expect(availability("com.mentra.store")).toBe(true)
+    } finally {
+      get.mockImplementation(originalGet)
+      list.mockImplementation(originalList)
+    }
   })
 
   it("does not reinstall an unsigned bundled version on subsequent startups", async () => {

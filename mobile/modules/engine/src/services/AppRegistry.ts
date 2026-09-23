@@ -25,7 +25,12 @@ import {createMMKV, type MMKV} from "react-native-mmkv"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import {getConfigValues, isInstalledMiniappAllowed, isOfflineSystemMiniappAllowed} from "../runtime/bootstrap"
+import {
+  getConfigValues,
+  isInstalledMiniappAllowed,
+  isMiniappAvailable,
+  isOfflineSystemMiniappAllowed,
+} from "../runtime/bootstrap"
 import type {AppletType, ClientApp} from "../types/applet"
 import {type Capabilities, HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {readBoundedByteStream} from "../utils/boundedByteStream"
@@ -1538,7 +1543,7 @@ class AppRegistry {
         !offlinePackages.has(app.packageName) &&
         !devPackages.has(app.packageName),
     )
-    return [...installed, ...dev, ...offline]
+    return [...installed, ...dev, ...offline].filter((app) => isMiniappAvailable(app.packageName))
   }
 
   public async getInstalledMiniapps(): Promise<ClientApp[]> {

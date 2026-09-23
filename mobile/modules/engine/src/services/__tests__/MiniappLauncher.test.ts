@@ -10,6 +10,7 @@ import type {MentraJSRouter} from "../MentraJSRouter"
 
 // getActiveVersion is mutable so a test can force an "unresolvable" bundle.
 let activeVersion = "1.0.0"
+let available = true
 let releaseSource = "bundled_asset"
 let releaseStorePackageName: string | undefined
 
@@ -69,6 +70,7 @@ beforeAll(async () => {
   configure({
     auth: {getSubjectToken: async () => ({token: "test", type: "test"})},
     config: {
+      isMiniappAvailable: () => available,
       bundledSystemMiniappPackages: ["com.mentra.store", "com.mentra.notes"],
       bundledStoreMiniappPackages: ["com.mentra.store"],
       bundledSystemMiniappStoreOwners: {
@@ -129,11 +131,26 @@ describe("MiniappLauncher", () => {
 
   beforeEach(() => {
     activeVersion = "1.0.0"
+    available = true
     releaseSource = "bundled_asset"
     releaseStorePackageName = undefined
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
     miniappLauncher.configure({router: mockRouter.router})
+  })
+
+  test("a disabled Store cannot resolve UI or launch through the runtime", async () => {
+    available = false
+    expect(await miniappLauncher.resolveBundle("com.mentra.store")).toBeNull()
+    await expect(miniappLauncher.ensureRunning("com.mentra.store")).rejects.toThrow("disabled")
+    expect(mockRouter.spawnCalls).toHaveLength(0)
+  })
+
+  test("disabling availability during bundle resolution prevents the pending spawn", async () => {
+    const launch = miniappLauncher.ensureRunning("com.mentra.store")
+    available = false
+    await expect(launch).rejects.toThrow()
+    expect(mockRouter.spawnCalls).toHaveLength(0)
   })
 
   test.each([false, true])("explicit updates hold launches through install/rollback (failure=%s)", async (fail) => {
@@ -157,6 +174,7 @@ describe("MiniappLauncher", () => {
       {
         restorePreviousVersion: () => {
           activeVersion = "1.0.0"
+          available = true
         },
       },
     )
@@ -184,6 +202,7 @@ describe("MiniappLauncher", () => {
       {
         restorePreviousVersion: () => {
           activeVersion = "1.0.0"
+          available = true
         },
       },
     )

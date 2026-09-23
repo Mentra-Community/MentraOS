@@ -25,7 +25,7 @@
 
 import {File} from "expo-file-system"
 
-import {isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtime/bootstrap"
+import {isInstalledMiniappAllowed, isLocalMiniappPackageAllowed, isMiniappAvailable} from "../runtime/bootstrap"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
@@ -162,6 +162,7 @@ class MiniappLauncher {
    * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
   async resolveBundle(packageName: string, hints?: LaunchHints): Promise<ResolvedBundle | null> {
+    if (!isMiniappAvailable(packageName)) return null
     // QR-selected local code can override a bundled identity, but receives no
     // SYSTEM privileges. Workspace pins never follow consumer dev URLs.
     const devUrl = canUseManualMiniappRelease(packageName)
@@ -329,7 +330,7 @@ class MiniappLauncher {
   ): Promise<LaunchResult> {
     const installation = this.installing.get(packageName)
     if (installation) await installation
-    if (!isLocalMiniappPackageAllowed(packageName)) {
+    if (!isMiniappAvailable(packageName) || !isLocalMiniappPackageAllowed(packageName)) {
       throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
     }
     const router = this.requireRouter()
@@ -374,6 +375,7 @@ class MiniappLauncher {
     }
     const version = resolved.installedManifest?.version
     if (
+      !isMiniappAvailable(packageName) ||
       !isInstalledMiniappAllowed(
         packageName,
         version,

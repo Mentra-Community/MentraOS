@@ -128,3 +128,13 @@ Workspace-managed versions retain their exact version/hash/deployment policy;
 consumer developer URLs and manual release installs cannot override them.
 Approved, non-managed system miniapps can use their build-assigned Store releases
 inside a workspace, including releases installed before entering the workspace.
+
+### Store preview availability
+
+The Mentra App supplies a live host availability rule for its bundled Store.
+With preview disabled, the Store remains installed but is excluded from registry
+and app-list discovery (including All Apps and inter-miniapp discovery), and
+both launch and foreground requests are blocked. The launcher rechecks after
+asynchronous resolution. This rule is separate from the user's Home-hidden flag.
+Enabling preview refreshes discovery before scheduling maintenance; disabling
+preview stops the runtime and clears autostart even if the tile is already absent.

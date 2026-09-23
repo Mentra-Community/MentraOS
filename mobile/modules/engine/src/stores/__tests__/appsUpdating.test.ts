@@ -1,6 +1,7 @@
-import {beforeAll, beforeEach, describe, expect, mock, test} from "bun:test"
+import {afterAll, beforeAll, beforeEach, describe, expect, mock, test} from "bun:test"
 import {result as Res} from "typesafe-ts"
 
+import {configure, resetForTests} from "../../runtime/bootstrap"
 import type {ClientApp} from "../../types/applet"
 
 const compatible = {isCompatible: true, missingRequired: [], missingOptional: [], warnings: []}
@@ -71,7 +72,11 @@ beforeAll(async () => {
   installHooks = module.installAppStoreHooks
 })
 
+afterAll(resetForTests)
+
 beforeEach(() => {
+  resetForTests()
+  configure({auth: {}})
   blocked.mockClear()
   opened.mockClear()
   ensureRunning.mockClear()
@@ -185,4 +190,27 @@ describe("miniapp update availability", () => {
       await update
     }
   })
+})
+
+test("Store availability excludes All Apps discovery and rejects stale open/foreground requests", async () => {
+  const store = {...target, packageName: "com.mentra.store", hidden: true}
+  const hiddenNotes = {...target, hidden: true}
+  let preview = false
+  configure({auth: {}, config: {isMiniappAvailable: (pkg) => pkg !== store.packageName || preview}})
+  installedApps.mockResolvedValue([hiddenNotes, store])
+  await apps.getState().refresh()
+  expect(apps.getState().apps.map((app) => app.packageName)).toEqual([target.packageName])
+  expect(apps.getState().apps[0].hidden).toBe(true) // ordinary Home hiding still permits All Apps
+  apps.setState({apps: [store]}) // stale UI object from before disabling preview
+  expect(await apps.getState().start(store)).toBe(false)
+  await apps.getState().setForeground(store.packageName)
+  expect(ensureRunning).not.toHaveBeenCalled()
+  expect(opened).not.toHaveBeenCalled()
+  expect(apps.getState().foregroundedPackage).toBeNull()
+  preview = true
+  await apps.getState().refresh()
+  expect(apps.getState().apps.some((app) => app.packageName === store.packageName)).toBe(true)
+  expect(await apps.getState().start(store)).toBe(true)
+  await apps.getState().setForeground(store.packageName)
+  expect(apps.getState().foregroundedPackage).toBe(store.packageName)
 })

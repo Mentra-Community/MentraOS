@@ -756,3 +756,14 @@ it("prevents an earlier dev download from changing the active release after manu
   expect(registry.getReleaseIdentity(pkg, "2.1.30")?.source).toBe("direct_download")
   expect(registry.hasDevSnapshot(pkg)).toBe(false)
 })
+
+it("keeps an unavailable bundled release installed while excluding it from registry discovery", async () => {
+  selectDeployment(consumer)
+  const config = require("../../../modules/engine/src/runtime/bootstrap").getConfigValues()
+  let available = false
+  configure({auth: {}, config: {...config, isMiniappAvailable: () => available}})
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)).toBeUndefined()
+  expect(registry.getInstalledVersions(pkg)).toContain(version)
+  available = true
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
+})
