@@ -208,7 +208,11 @@ object DecodedFrameTap {
 
     if (failure != null) {
       if (firstFailure) {
-        Log.w(TAG, "preview sink threw generation=${current.generation}; call frame unaffected", failure)
+        try {
+          Log.w(TAG, "preview sink threw generation=${current.generation}; call frame unaffected", failure)
+        } catch (ignored: Throwable) {
+          // Logging renders the sink's throwable, whose message and stack are preview code too.
+        }
       }
       try {
         current.onSinkError?.invoke(failure)

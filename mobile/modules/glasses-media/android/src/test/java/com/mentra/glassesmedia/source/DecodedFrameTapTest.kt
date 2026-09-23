@@ -68,6 +68,21 @@ class DecodedFrameTapTest {
   }
 
   @Test
+  fun aSinkThrowableThatCannotBeRenderedIsContained() {
+    val unrenderable = object : RuntimeException() {
+      override val message: String get() = throw IllegalStateException("message")
+      override fun toString(): String = throw IllegalStateException("toString")
+    }
+    var reported: Throwable? = null
+    val generation = DecodedFrameTap.attach({ throw unrenderable }) { reported = it }
+    DecodedFrameTap.drainMetrics()
+    DecodedFrameTap.offer(planes())
+    assertEquals(1L, DecodedFrameTap.drainMetrics().sinkExceptions)
+    assertTrue(reported === unrenderable)
+    DecodedFrameTap.detach(generation)
+  }
+
+  @Test
   fun aLateDetachCannotRemoveANewerSink() {
     var newerFrames = 0
     val older = DecodedFrameTap.attach({})
