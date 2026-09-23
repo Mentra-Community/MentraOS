@@ -19,7 +19,12 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const [openError, setOpenError] = useState<Error | null>(null)
   const [openGeneration, setOpenGeneration] = useState(0)
   const session = provider?.session ?? initial
-  const snapshot = useSyncExternalStore(session.subscribe, session.snapshot, session.snapshot)
+  const subscribe = useCallback(
+    (listener: () => void) => (provider ? provider.subscribe(listener) : initial.subscribe(listener)),
+    [provider, initial],
+  )
+  const getSnapshot = useCallback(() => (provider?.session ?? initial).snapshot(), [provider, initial])
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   const callbacks = useRef(options)
   callbacks.current = options
 
@@ -44,8 +49,14 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   }, [openGeneration])
 
   useEffect(() => {
-    if (provider && snapshot.exitRequest && session.claimExitRequest(snapshot.exitRequest))
-      callbacks.current.onFinished?.()
+    if (provider && snapshot.exitRequest && session.claimExitRequest(snapshot.exitRequest)) {
+      void firmwareUpdates
+        .perform(provider.target, {action: "finish"})
+        .then((result) => {
+          if (result.kind === "finished") callbacks.current.onFinished?.()
+        })
+        .catch((error) => console.warn("Could not finish the Live check", error))
+    }
   }, [provider, session, snapshot.exitRequest])
 
   useEffect(() => {

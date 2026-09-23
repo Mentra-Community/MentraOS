@@ -138,4 +138,62 @@ describe("managed Live provider contract", () => {
     expect(provider.snapshot().presentation.releaseNotes).toEqual([{version: "3.3.1", markdown: "Notes"}])
     expect(await service.perform(target, {action: "finish"})).toEqual({kind: "finished"})
   })
+
+  it("stops new passes on auth/runtime teardown and releases inputs only once native work is safe", async () => {
+    const offerId = await openOffer()
+    safe = false
+    await service.perform(target, {action: "install", offerId})
+    const stopProjection = jest.fn()
+    deferStopForFirmware(stopProjection)
+    service.suspendNewWork()
+    expect(provider.session.chain.isOtaAutoChainActive()).toBe(false)
+    expect(provider.snapshot().safeToRelease).toBe(false)
+    expect(stopProjection).not.toHaveBeenCalled()
+    safe = true
+    f.install({displayState: "complete"})
+    expect(stopProjection).toHaveBeenCalledTimes(1)
+    expect(provider.session.isDisposed).toBe(true)
+    await jest.advanceTimersByTimeAsync(5000)
+    expect(f.ports.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(provider.snapshot()).toMatchObject({phase: "complete", active: false, safeToRelease: true})
+  })
+
+  it("cannot start after the host stops during target validation", async () => {
+    const offerId = await openOffer()
+    let resume!: () => void
+    validate.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resume = resolve
+        }),
+    )
+    const start = service.perform(target, {action: "install", offerId})
+    const failed = expect(start).rejects.toThrow("runtime stopped")
+    await jest.advanceTimersByTimeAsync(0)
+    service.suspendNewWork()
+    resume()
+    await failed
+    expect(f.ports.installSession.prepare).not.toHaveBeenCalled()
+  })
+
+  it("can explicitly reopen a retained terminal provider without restoring old chain approval", async () => {
+    await openOffer()
+    service.suspendNewWork()
+    expect(provider.session.isDisposed).toBe(true)
+    await service.open(target, {entryPoint: "settings", initializeRuntime: false})
+    await jest.advanceTimersByTimeAsync(1100)
+    expect(provider.session.isDisposed).toBe(false)
+    expect(provider.snapshot().phase).toBe("available")
+    expect(provider.session.chain.isOtaAutoChainActive()).toBe(false)
+    expect(f.ports.installSession.prepare).not.toHaveBeenCalled()
+  })
+
+  it("rechecks an offer after observed firmware or connection generation changes", async () => {
+    const offerId = await openOffer()
+    f.device({buildNumber: "33000002"})
+    await service.perform(target, {action: "install", offerId})
+    expect(f.ports.installSession.prepare).not.toHaveBeenCalled()
+    expect(f.ports.checkForUpdates).toHaveBeenCalledTimes(2)
+    expect(provider.snapshot().phase).toBe("checking")
+  })
 })

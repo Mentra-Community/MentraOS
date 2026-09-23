@@ -80,6 +80,7 @@ export class MentraLiveOtaSession {
   private unsubscribers: Array<() => void> = []
   private started = false
   private disposed = false
+  private suspended = false
   private attached = false
   private reacting = false
   private reactQueued = false
@@ -88,6 +89,9 @@ export class MentraLiveOtaSession {
   private checkStarted = false
   private checkCompleted = false
   private selectedResult: OtaCheckCurrentGlassesResult | null = null
+  private selectedContext: string | null = null
+  private connectionGeneration = 0
+  private lastConnected: boolean
   private updateFingerprint: string | null = null
   private installPending = false
   private autoChainAdvanced = false
@@ -100,6 +104,7 @@ export class MentraLiveOtaSession {
   private delays = new Map<ReturnType<typeof setTimeout>, () => void>()
 
   constructor(private readonly ports: LiveOtaPorts, chain = createOtaAutoChain()) {
+    this.lastConnected = ports.snapshot().connected
     this.chain = chain
     this.snapshots = new RevisionedSnapshot<LiveSessionSnapshot>({
       revision: 0,
@@ -148,6 +153,7 @@ export class MentraLiveOtaSession {
   }
 
   check = (): void => {
+    if (this.suspended) return
     this.data.batteryBlocked = false
     this.data.offeredReleaseTransition = null
     this.data.completedReleaseTransition = null
@@ -157,12 +163,17 @@ export class MentraLiveOtaSession {
   }
 
   install = (): FirmwareActionResult => {
+    if (this.suspended) return NONE
     if (this.installPending || this.data.page !== "check") return NONE
     const result = this.selectedResult
     if (!result) {
       this.data.errorKind = "network"
       this.data.checkState = "error"
       this.react()
+      return NONE
+    }
+    if (this.selectedContext !== this.deviceContext()) {
+      this.check()
       return NONE
     }
     const snapshot = this.ports.snapshot()
@@ -194,6 +205,7 @@ export class MentraLiveOtaSession {
   }
 
   retryInstall = (): void => {
+    if (this.suspended) return
     if (this.data.page === "progress") this.ports.installSession.retry()
     this.react()
   }
@@ -223,6 +235,21 @@ export class MentraLiveOtaSession {
     if (this.data.page === "progress") this.chain.stopOtaAutoChain()
     this.react()
     return {kind: "wifi-required"}
+  }
+
+  suspendNewWork(): void {
+    this.suspended = true
+    this.checkGeneration++
+    this.chain.stopOtaAutoChain()
+    if (this.data.page === "check") this.data.checkState = "error"
+    this.react()
+  }
+
+  resumeNewWork(): void {
+    if (!this.suspended) return
+    this.suspended = false
+    if (this.data.page === "check") this.returnToCheck()
+    else this.react()
   }
 
   /** Execution disposal is explicit; a React unsubscription never calls this. */
@@ -264,6 +291,7 @@ export class MentraLiveOtaSession {
     this.checkStarted = false
     this.checkCompleted = false
     this.selectedResult = null
+    this.selectedContext = null
     this.checkInputs = ""
     this.checkGeneration++
     this.react()
@@ -278,7 +306,12 @@ export class MentraLiveOtaSession {
   }
 
   private continueApprovedChain(result: OtaCheckCurrentGlassesResult): boolean {
+    if (this.suspended) return false
     if (this.installPending || !this.chain.isOtaAutoChainActive() || !result.updateInfo) return false
+    if (this.selectedContext !== this.deviceContext()) {
+      this.returnToCheck()
+      return true
+    }
     const snapshot = this.ports.snapshot()
     if (!snapshot.wifiStatusKnown || (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1)) return false
     const admission = this.chain.tryAdvanceOtaAutoChain(
@@ -317,6 +350,8 @@ export class MentraLiveOtaSession {
       do {
         this.reactQueued = false
         const snapshot = this.ports.snapshot()
+        if (snapshot.connected !== this.lastConnected) this.connectionGeneration++
+        this.lastConnected = snapshot.connected
         if (
           this.data.batteryBlocked &&
           (snapshot.batteryLevel === null || snapshot.batteryLevel >= MINIMUM_OTA_BATTERY_LEVEL)
@@ -341,7 +376,8 @@ export class MentraLiveOtaSession {
           const generation = ++this.checkGeneration
           if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
           this.reconnectTimer = null
-          if (this.data.runtimeReady && this.data.page === "check") void this.performCheck(generation)
+          if (!this.suspended && this.data.runtimeReady && this.data.page === "check")
+            void this.performCheck(generation)
         }
         if (
           this.data.runtimeReady &&
@@ -440,6 +476,7 @@ export class MentraLiveOtaSession {
       }
       if (cancelled()) return
       this.selectedResult = result
+      this.selectedContext = this.deviceContext()
       await this.delay(Math.max(0, 1100 - (Date.now() - startedAt)))
       if (cancelled()) return
       this.applyCheckResult(result)
@@ -505,5 +542,16 @@ export class MentraLiveOtaSession {
     this.chain.stopOtaAutoChain()
     this.ports.clearUpdateAvailable()
     this.data.checkState = "no_update"
+  }
+
+  private deviceContext(): string {
+    const s = this.ports.snapshot()
+    return JSON.stringify([
+      this.connectionGeneration,
+      s.manifestUrl,
+      s.buildNumber,
+      s.mtkFirmwareVersion,
+      s.besFirmwareVersion,
+    ])
   }
 }

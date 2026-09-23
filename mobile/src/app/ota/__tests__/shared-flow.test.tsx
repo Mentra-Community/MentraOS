@@ -1,4 +1,11 @@
-import {act, fireEvent, render as renderNow, renderHook as renderHookNow, waitFor} from "@testing-library/react-native"
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderNow,
+  renderHook as renderHookNow,
+  waitFor,
+} from "@testing-library/react-native"
 
 import {MentraLiveOtaFlow, useMentraLiveOta} from "@mentra/engine/ota"
 
@@ -35,8 +42,9 @@ describe("MentraLiveOtaFlow", () => {
   })
 
   afterEach(() => {
+    cleanup()
     stopOtaAutoChain()
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    useGlassesStore.getState().reset()
     getMentraLiveOtaSession()!.check()
     releaseMentraLiveOtaSession()
     jest.restoreAllMocks()

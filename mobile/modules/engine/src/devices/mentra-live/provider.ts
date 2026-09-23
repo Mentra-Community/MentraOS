@@ -36,11 +36,13 @@ const phases: Record<MentraLiveOtaState["screen"], FirmwarePhase> = {
 
 /** The Live implementation of the same managed-provider boundary used by file-based updaters. */
 export class MentraLiveFirmwareProvider implements FirmwareProvider {
-  readonly session: MentraLiveOtaSession
+  session: MentraLiveOtaSession
   private snapshots: RevisionedSnapshot<FirmwareSnapshot>
   private unsubscribe: () => void
   private opened = false
   private admitted = false
+  private suspended = false
+  private lifecycleGeneration = 0
   private allowDevelopmentSkip = false
   private readonly flowId = `live-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
@@ -53,7 +55,7 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
   ) {
     this.session = new MentraLiveOtaSession(ports)
     this.snapshots = new RevisionedSnapshot(this.project())
-    this.unsubscribe = this.session.subscribe(() => this.snapshots.publish(this.project()))
+    this.unsubscribe = this.session.subscribe(this.refresh)
   }
 
   private releaseOwner: (() => void) | null = null
@@ -61,9 +63,21 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
   subscribe = (listener: (snapshot: FirmwareSnapshot) => void) => this.snapshots.subscribe(listener)
 
   async open(options: FirmwareOpenOptions): Promise<void> {
+    const generation = this.lifecycleGeneration
     this.allowDevelopmentSkip = options.allowDevelopmentSkip === true
-    if (this.opened) return this.session.open()
+    if (this.opened) {
+      this.suspended = false
+      this.session.resumeNewWork()
+      return this.session.open()
+    }
     await this.validateTarget()
+    if (generation !== this.lifecycleGeneration)
+      throw new FirmwareUpdateError("action_unavailable", "The host runtime stopped")
+    this.suspended = false
+    if (this.session.isDisposed) {
+      this.session = new MentraLiveOtaSession(this.ports)
+      this.unsubscribe = this.session.subscribe(this.refresh)
+    }
     this.releaseOwner = this.acquireOwner(this.validateTarget, () => this.ports.installSession.retry())
     this.opened = true
     try {
@@ -78,6 +92,9 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
   }
 
   async perform(request: FirmwareActionRequest): Promise<FirmwareActionResult> {
+    const generation = this.lifecycleGeneration
+    if (this.suspended)
+      throw new FirmwareUpdateError("action_unavailable", "Reopen this update flow to recover the device")
     if (!this.opened) throw new FirmwareUpdateError("action_unavailable", "Open this update flow first")
     const state = this.snapshot()
     if (request.action === "install") {
@@ -89,6 +106,8 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
     if (!action || action.disabled)
       throw new FirmwareUpdateError("action_unavailable", "This update action is unavailable")
     if (["check", "install", "retry"].includes(request.action)) await this.validateTarget()
+    if (generation !== this.lifecycleGeneration || this.suspended)
+      throw new FirmwareUpdateError("action_unavailable", "The host runtime stopped")
     const current = this.snapshot()
     if (request.action === "install" && request.offerId !== current.offer?.id)
       throw new FirmwareUpdateError("stale_offer", "The update changed while verifying the paired device")
@@ -130,6 +149,22 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
     this.release()
   }
 
+  suspendNewWork(): void {
+    this.lifecycleGeneration++
+    this.suspended = true
+    this.session.suspendNewWork()
+    this.refresh()
+  }
+
+  private refresh = (): void => {
+    this.snapshots.publish(this.project())
+    if (this.suspended && this.snapshot().safeToRelease) {
+      this.unsubscribe?.()
+      this.session.dispose()
+      this.release()
+    }
+  }
+
   private release(): void {
     this.releaseOwner?.()
     this.releaseOwner = null
@@ -139,7 +174,9 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
   private project(): FirmwareSnapshot {
     const snapshot = this.session.snapshot()
     const s = snapshot.state
-    const active = this.admitted || snapshot.page === "progress" || this.session.chain.isOtaAutoChainActive()
+    const terminalSafe = (s.screen === "complete" || s.screen === "failed") && this.safeToRelease()
+    const active =
+      this.admitted || (snapshot.page === "progress" && !terminalSafe) || this.session.chain.isOtaAutoChainActive()
     const actions: FirmwareSnapshot["presentation"]["actions"][number][] = []
     if (!active && s.screen !== "checking" && s.screen !== "initializing")
       actions.push({id: "check", label: {text: "Check for updates", key: "ota:checkingForUpdates"}})
@@ -147,7 +184,12 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
       actions.push({id: "install", label: {text: "Update Now", key: "ota:updateNow"}, disabled: !s.canInstall})
     if (s.canRetry) actions.push({id: "retry", label: {text: "Retry"}})
     if (s.canOpenWifiSetup) actions.push({id: "wifi", label: {text: "Set up Wi-Fi", key: "ota:setupWifi"}})
-    if (s.canFinish || s.canDismiss || (this.allowDevelopmentSkip && snapshot.page === "check" && !active))
+    if (
+      s.canFinish ||
+      s.canDismiss ||
+      snapshot.exitRequest > 0 ||
+      (this.allowDevelopmentSkip && snapshot.page === "check" && !active)
+    )
       actions.push({
         id: "finish",
         label: {text: s.canDismiss ? "Later" : "Continue", key: s.canDismiss ? "ota:updateLater" : "common:continue"},

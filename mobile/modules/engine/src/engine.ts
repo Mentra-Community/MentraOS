@@ -148,6 +148,7 @@ export const engine = {
    * Each step is guarded so one failing teardown can't skip the rest and leak
    * the remaining runtime services. */
   async stop() {
+    firmwareUpdates.suspendNewWork()
     stopLiveAvailability()
     const safely = async (label: string, step: () => unknown): Promise<void> => {
       try {

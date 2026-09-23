@@ -23,5 +23,6 @@ export const firmwareUpdates = {
   subscribe: firmwareUpdateService.subscribe.bind(firmwareUpdateService),
   perform: firmwareUpdateService.perform.bind(firmwareUpdateService),
   assertSafeToRelease: firmwareUpdateService.assertSafeToRelease.bind(firmwareUpdateService),
+  suspendNewWork: firmwareUpdateService.suspendNewWork.bind(firmwareUpdateService),
   diagnosticSnapshot: firmwareUpdateService.diagnosticSnapshot.bind(firmwareUpdateService),
 }

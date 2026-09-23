@@ -19,6 +19,7 @@ export class FirmwareUpdateService {
   private commands = new Map<string, Promise<FirmwareActionResult>>()
   private requests = new Map<string, FirmwareActionRequest>()
   private openings = new Map<string, Promise<FirmwareProvider>>()
+  private lifecycleGeneration = 0
 
   constructor(private readonly registry: DeviceIntegrationRegistry) {}
 
@@ -55,7 +56,10 @@ export class FirmwareUpdateService {
       }
     }
     const provider = this.provider(target)
+    const generation = this.lifecycleGeneration
     const opening = Promise.resolve().then(async () => {
+      if (generation !== this.lifecycleGeneration)
+        throw new FirmwareUpdateError("action_unavailable", "The host runtime stopped")
       await provider.open(options)
       return provider
     })
@@ -105,24 +109,32 @@ export class FirmwareUpdateService {
       return Promise.reject(error)
     }
     // Reserve synchronously, before provider code can await or publish a reentrant snapshot.
-    const command = Promise.resolve().then(() => provider.perform(request))
+    const generation = this.lifecycleGeneration
+    const clearCommand = () => {
+      if (this.commands.get(key) === command) {
+        this.commands.delete(key)
+        this.requests.delete(key)
+      }
+    }
+    const command = Promise.resolve()
+      .then(() => {
+        if (generation !== this.lifecycleGeneration)
+          throw new FirmwareUpdateError("action_unavailable", "The host runtime stopped")
+        return provider.perform(request)
+      })
+      .then(
+        (result) => {
+          clearCommand()
+          if (result.kind === "finished" && provider.snapshot().safeToRelease) this.release(target)
+          return result
+        },
+        (error) => {
+          clearCommand()
+          throw error
+        },
+      )
     this.commands.set(key, command)
     this.requests.set(key, {...request})
-    void command
-      .then((result) => {
-        if (this.commands.get(key) === command) {
-          this.commands.delete(key)
-          this.requests.delete(key)
-          if (result.kind === "finished" && provider.snapshot().safeToRelease) this.release(target)
-        }
-      })
-      .finally(() => {
-        if (this.commands.get(key) === command) {
-          this.commands.delete(key)
-          this.requests.delete(key)
-        }
-      })
-      .catch(() => {})
     return command
   }
 
@@ -134,6 +146,11 @@ export class FirmwareUpdateService {
     ) {
       throw new FirmwareUpdateError("busy", "The glasses are updating; wait before disconnecting or resetting them")
     }
+  }
+
+  suspendNewWork(): void {
+    this.lifecycleGeneration++
+    for (const provider of this.providers.values()) provider.suspendNewWork()
   }
 
   diagnosticSnapshot() {

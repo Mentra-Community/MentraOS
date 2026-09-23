@@ -48,6 +48,7 @@ class TestProvider implements FirmwareProvider {
     this.update({phase: "installing", active: true, safeToRelease: false})
     return {kind: "none" as const}
   }
+  suspendNewWork() {}
   dispose() {
     this.calls.push("dispose")
   }

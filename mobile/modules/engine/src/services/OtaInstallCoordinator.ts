@@ -197,6 +197,8 @@ class OtaInstallCoordinator {
     const snapshot = this.snapshot()
     if (snapshot.displayState === "complete") return true
     if (snapshot.otaStatus?.status === "failed" || snapshot.otaProgress?.status === "FAILED") return true
+    if (snapshot.otaStatus && snapshot.otaStatus.status !== "idle") return false
+    if (snapshot.otaProgress) return false
     return !this.hasFirstActivity && this.otaStartOwnership?.outcome !== "acknowledged"
   }
   private attached = false

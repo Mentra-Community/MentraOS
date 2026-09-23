@@ -98,6 +98,8 @@ export interface FirmwareProvider {
   /** Idempotently opens/adopts this target's flow; subscription alone never starts it. */
   open(options: FirmwareOpenOptions): Promise<void>
   perform(request: FirmwareActionRequest): Promise<FirmwareActionResult>
+  /** Stop optional checks/new passes when the host runtime or account ends; keep unsafe device work observable. */
+  suspendNewWork(): void
   /** Stops observation only when no device work needs this provider. */
   dispose(): void
 }

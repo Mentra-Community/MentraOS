@@ -12,9 +12,13 @@ export function validateManagedLiveTarget(): Promise<void> | undefined {
 
 /** A managed flow retries through its coordinator, preserving its selected hotspot URL. */
 export async function recoverManagedLiveClock(): Promise<boolean> {
-  if (!owner || !recoverClock) return false
+  const token = owner
+  const retry = recoverClock
+  if (!token || !retry) return false
   await validateTarget?.()
-  await recoverClock()
+  if (owner !== token)
+    throw new FirmwareUpdateError("action_unavailable", "The update owner changed during clock recovery")
+  await retry()
   return true
 }
 
