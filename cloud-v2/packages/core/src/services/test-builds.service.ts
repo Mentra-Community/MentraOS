@@ -98,7 +98,7 @@ export interface TestBuildGateway {
 
 export class GithubTestBuildGateway implements TestBuildGateway {
   constructor(private readonly options: {
-    token?: string; privateReadToken?: string; fetch?: typeof fetch; channels?: string[];
+    token?: string; privateReadToken?: string; fetch?: typeof fetch; channels?: string[]; routines?: string[];
   } = {}) {}
   private fetcher = (input: string, init: RequestInit = {}) => (this.options.fetch ?? fetch)(input,
     { ...init, redirect: "error", signal: AbortSignal.timeout(20_000) });
@@ -146,12 +146,13 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   private routines(channel: TestBuildSource["channel"], available: boolean) {
     const channels = this.options.channels ?? (process.env.TEST_RUN_DISPATCH_CHANNELS ?? "pr").split(",");
+    const enabledRoutines = this.options.routines ?? (process.env.TEST_RUN_DISPATCH_ROUTINES ?? "no-glasses").split(",");
     return TEST_ROUTINES.map(routine => {
-      const compatible = channel === "pr" || routine.id === "no-glasses";
+      const compatible = enabledRoutines.includes(routine.id);
       return { id: routine.id, available: available && channels.includes(channel) && compatible,
         ...(!available ? { reason: "A verified published Mac build is required" }
           : !channels.includes(channel) ? { reason: "Dispatch for this channel is not enabled on the trusted issuer yet" }
-          : !compatible ? { reason: "This routine is not yet available for coordinated release builds" } : {}) };
+          : !compatible ? { reason: "This routine is not enabled on the test workers yet" } : {}) };
     });
   }
   async inventory(query: TestBuildQuery): Promise<TestBuild[]> {

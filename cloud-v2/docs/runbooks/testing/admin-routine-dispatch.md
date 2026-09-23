@@ -5,13 +5,14 @@ Mac build. They do not compile an app or send commands to a device. A request
 goes through the trusted `request-e2e-routine.yml` workflow on MentraOS `dev`,
 then the existing private GitHub queue and worker claims.
 
-The first supported dispatch sources are open same-repository PRs targeting
-`dev`, with `no-glasses` or `day1-ota`. A label is not required for an explicit
-admin request. Dev and staging build inventory uses the coordinated release
+Supported dispatch sources are open same-repository PRs targeting `dev`, and
+coordinated dev/staging releases. The catalog contains `no-glasses`, `day1-ota`
+and `mentra-call`; only commissioned routines should be enabled. A label is not
+required for an explicit admin request. Dev and staging build inventory uses the coordinated release
 plan and Apple download receipt. Version-two request progress binds the selected
 channel, run and attempt. Channel dispatch stays disabled by default until the
-coordinated issuer and private worker are deployed; its initial supported routine
-is no-glasses. Unsupported coordinated routines remain unavailable.
+coordinated issuer and private worker are deployed. The default enabled routine
+is no-glasses. Other routines are shown with an unavailable reason until enabled.
 
 ## Deployment configuration
 
@@ -28,6 +29,10 @@ Configure these values on the **Core deployment**, never in the browser bundle:
   Set `pr,dev,staging` only after the trusted issuer and private worker support
   coordinated source requests. Merely changing this variable does not add that
   support.
+- `TEST_RUN_DISPATCH_ROUTINES`: comma-separated enabled routines. Default
+  `no-glasses`. Add `day1-ota` and `mentra-call` only after their private adapters,
+  fixture enrollment, network setup and stream budget are ready. This controls
+  the dashboard catalog; it does not enroll a worker or authorize hardware.
 
 The public callback still uses its existing `E2E_PRIVATE_DISPATCH_TOKEN` GitHub
 secret. The worker still uses separate `TEST_RUN_CLAIM_TOKEN` and

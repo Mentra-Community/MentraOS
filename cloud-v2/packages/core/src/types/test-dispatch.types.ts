@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const positive = z.number().int().positive().safe();
-export const testRoutineIdSchema = z.enum(["no-glasses", "day1-ota"]);
+export const testRoutineIdSchema = z.enum(["no-glasses", "day1-ota", "mentra-call"]);
 export const testBuildSourceSchema = z.discriminatedUnion("channel", [
   z.object({ channel: z.literal("pr"), prNumber: positive, buildRunId: positive, publicationAttempt: positive }).strict(),
   z.object({ channel: z.literal("dev"), buildRunId: positive, publicationAttempt: positive }).strict(),
@@ -28,6 +28,7 @@ export type TestRoutineId = z.infer<typeof testRoutineIdSchema>;
 export const TEST_ROUTINES = [
   { id: "no-glasses" as const, name: "UI walkthrough without glasses", description: "Open the app and verify navigation, settings and account screens." },
   { id: "day1-ota" as const, name: "Day-one OTA update", description: "Prepare day-one firmware, update it, then verify and restore the selected build's firmware." },
+  { id: "mentra-call" as const, name: "Mentra Call", description: "Join a call with the glasses and a browser peer, recording both views and checking the connection." },
 ];
 
 export interface TestBuild {

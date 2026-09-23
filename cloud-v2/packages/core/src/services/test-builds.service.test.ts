@@ -55,7 +55,7 @@ describe("exact PR build inventory", () => {
     const selected = await f.gateway.resolve(input.source);
     expect(selected.availability).toBe("available");
     expect(selected.archive?.sha256).toBe(HASH);
-    expect(selected.routines.every(routine => routine.available)).toBe(true);
+    expect(selected.routines.filter(routine => routine.available).map(routine => routine.id)).toEqual(["no-glasses"]);
     expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
   });
   test("closed/forked PR and mismatched exact attempts are refused", async () => {
@@ -111,7 +111,11 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
   const available = (await enabled.inventory({ channel }))[0]!;
   expect(available.routines.find(routine => routine.id === "no-glasses")?.available).toBe(true);
   expect(available.routines.find(routine => routine.id === "day1-ota")?.available).toBe(false);
-  expect(available.routines.find(routine => routine.id === "day1-ota")?.reason).toContain("not yet available");
+  expect(available.routines.find(routine => routine.id === "day1-ota")?.reason).toContain("not enabled");
+  expect(available.routines.find(routine => routine.id === "mentra-call")?.available).toBe(false);
+  const commissioned = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
+    routines: ["no-glasses", "day1-ota", "mentra-call"] });
+  expect((await commissioned.inventory({ channel }))[0]!.routines.every(routine => routine.available)).toBe(true);
 });
 
 test("dispatch fixes the repository/workflow/ref and passes only exact explicit request selectors", async () => {
