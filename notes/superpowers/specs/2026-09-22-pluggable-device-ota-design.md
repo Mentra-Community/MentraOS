@@ -253,6 +253,8 @@ Device ID stays stable across reconnect; connection generation changes with each
 
 For managed updates, duplicate Start for the same approved offer adopts the active session; a different offer/device gets a busy/conflict result. For phone-driven NIMO/AR99, a JS-side lock alone is insufficient: acquire native ownership before notification setup and keep it through preparing/transfer/verification, including periods when the existing manager still reports idle. Enforce it before native legacy wrappers can cancel or replace work. Live retains its existing native pending-command guard and authoritative glasses session protocol; Engine admission surrounds its existing coordinator rather than replacing its ACK/query arbitration.
 
+Live's `idle` status is not proof that admitted work ended: ASG acknowledges Start before fetching the manifest and creating its session. Idle cannot release an existing native owner, even after ACK, a query or phone-process recovery. Release requires terminal status or the coordinator's verified legacy completion evidence. A fresh unowned idle observation remains safe; unresolved recovery stays retained rather than granting permission to replace the glasses.
+
 ### Lifetimes and recovery
 
 - One active glasses update is admitted through the app at a time. Route/device switching cannot silently abandon it. Preserve the current single-active-glasses product model.

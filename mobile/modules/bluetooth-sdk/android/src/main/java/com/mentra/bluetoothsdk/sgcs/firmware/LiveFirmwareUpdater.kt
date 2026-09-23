@@ -114,7 +114,10 @@ internal class LiveFirmwareUpdater(
   }
 
   fun status(sessionId: String, phase: String, status: String, progress: Int, generation: Int) {
-    if (generation != snapshot.connectionGeneration || (status == "idle" && commandToken != null)) return
+    // Idle only means ASG has no session to report. It can still be fetching an
+    // acknowledged Start's manifest, including after this phone restarts. Owned
+    // work needs a terminal status or the coordinator's completion proof.
+    if (generation != snapshot.connectionGeneration || (status == "idle" && ownsDevice)) return
     val safe = status in setOf("idle", "complete", "failed")
     if (!safe && record == null) {
       // The glasses-owned update may predate this phone process. Persist observation, never approval.

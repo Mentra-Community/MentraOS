@@ -134,7 +134,10 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
 
     func status(sessionId: String, phase: String, status: String, progress: Int, generation: Int) {
         guard generation == snapshot.connectionGeneration else { return }
-        if status == "idle", commandToken != nil { return }
+        // Idle only means ASG has no session to report. It can still be fetching
+        // an acknowledged Start's manifest, including after this phone restarts.
+        // Owned work needs a terminal status or the coordinator's completion proof.
+        if status == "idle", ownsDevice { return }
         let safe = ["idle", "complete", "failed"].contains(status)
         if !safe, record == nil {
             // A glasses-owned update can predate this phone process. Persist observation only,

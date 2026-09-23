@@ -53,7 +53,31 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
             _ = try recovered.reconcile()
             XCTAssertEqual(h.queries, 1); XCTAssertEqual(h.writes, 1)
             recovered.status(sessionId: "", phase: "download", status: "idle", progress: 0, generation: 1)
+            XCTAssertFalse(recovered.snapshot.safeToRelease)
+            recovered.status(sessionId: "", phase: "download", status: "failed", progress: 0, generation: 1)
             XCTAssertTrue(recovered.snapshot.safeToRelease)
+        }
+    }
+
+    func testIdleAfterStartAckCannotReleaseOwnershipBeforeTerminalStatus() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            h.updater.status(sessionId: "", phase: "download", status: "idle", progress: 0, generation: 1)
+            XCTAssertFalse(h.updater.ownsDevice)
+            _ = try h.updater.start(h.request)
+            h.updater.commandSettled(h.token!, error: nil)
+            // ASG acknowledges Start before fetching the manifest and creating its session.
+            _ = try h.updater.reconcile()
+            h.updater.status(sessionId: "", phase: "download", status: "idle", progress: 0, generation: 1)
+            XCTAssertTrue(h.updater.ownsDevice)
+            XCTAssertThrowsError(try h.updater.acknowledge())
+            h.updater.status(sessionId: "new", phase: "download", status: "in_progress", progress: 10, generation: 1)
+            h.updater.status(sessionId: "", phase: "download", status: "idle", progress: 0, generation: 1)
+            XCTAssertTrue(h.updater.ownsDevice)
+            h.updater.status(sessionId: "new", phase: "install", status: "complete", progress: 100, generation: 1)
+            XCTAssertFalse(h.updater.ownsDevice)
+            _ = try h.updater.acknowledge()
+            XCTAssertNil(try FirmwareJournal(deviceId: "live", directory: h.directory).read())
         }
     }
 

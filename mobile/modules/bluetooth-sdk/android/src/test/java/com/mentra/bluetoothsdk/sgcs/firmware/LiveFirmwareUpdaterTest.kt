@@ -47,7 +47,28 @@ class LiveFirmwareUpdaterTest {
     recovered.reconcile()
     assertEquals(1, h.queries); assertEquals(1, h.writes)
     recovered.status("", "download", "idle", 0, 1)
+    assertFalse(recovered.snapshot.safeToRelease)
+    recovered.status("", "download", "failed", 0, 1)
     assertTrue(recovered.snapshot.safeToRelease)
+  }
+
+  @Test fun idleAfterStartAckCannotReleaseOwnershipBeforeTerminalStatus() = Harness().use { h ->
+    h.updater.status("", "download", "idle", 0, 1)
+    assertFalse(h.updater.ownsDevice)
+    h.updater.start(h.request)
+    h.updater.commandSettled(h.token!!, null)
+    // ASG acknowledges Start before fetching the manifest and creating its session.
+    h.updater.reconcile()
+    h.updater.status("", "download", "idle", 0, 1)
+    assertTrue(h.updater.ownsDevice)
+    assertThrows(FirmwareUpdaterException::class.java) { h.updater.acknowledge() }
+    h.updater.status("new", "download", "in_progress", 10, 1)
+    h.updater.status("", "download", "idle", 0, 1)
+    assertTrue(h.updater.ownsDevice)
+    h.updater.status("new", "install", "complete", 100, 1)
+    assertFalse(h.updater.ownsDevice)
+    h.updater.acknowledge()
+    assertNull(FirmwareJournal("live", h.directory).read())
   }
 
   @Test fun statusBeforeAckAndSidChangePreserveOutcome() = Harness().use { h ->
