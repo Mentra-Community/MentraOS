@@ -2,9 +2,9 @@ import {findNodeHandle, type View} from "react-native"
 
 import {
   FramePreviewModule,
-  type FramePreviewConfigureOptions,
-  type FramePreviewDocumentConfig,
-  type FramePreviewStatus,
+  type PreviewConfigureOptions,
+  type PreviewDocumentConfig,
+  type PreviewStatusPayload,
 } from "@mentra/frame-preview"
 
 /**
@@ -44,12 +44,14 @@ class FramePreviewHost {
   private packageName: string | null = null
   private inject: Injector | null = null
   private hostViewTag: number | null = null
+  /** Stamped on every native PREVIEW_TRACE line so a run can be correlated in logs. */
+  private traceId = FRAME_PREVIEW_PACKAGE
   private bound = false
   private installReloadDone = false
   private documentGeneration = 0
-  private preparing: Promise<FramePreviewDocumentConfig | null> | null = null
+  private preparing: Promise<PreviewDocumentConfig | null> | null = null
   private preparedFor = -1
-  private lastConfig: FramePreviewDocumentConfig | null = null
+  private lastConfig: PreviewDocumentConfig | null = null
   private unsupportedReason: string | null = null
   private statusSubscription: {remove: () => void} | null = null
   private stoppedSubscription: {remove: () => void} | null = null
@@ -71,13 +73,17 @@ class FramePreviewHost {
     this.packageName = packageName
     this.inject = inject
     this.hostViewTag = tag
+    this.traceId = `${packageName}:${tag}`
     this.attachEvents()
 
     try {
-      const result = await FramePreviewModule.bind({hostViewTag: tag, packageName})
-      this.bound = result.supported
-      this.unsupportedReason = result.supported ? null : (result.unavailableReason ?? "unsupported")
-      if (!result.supported) {
+      const result = await FramePreviewModule.bind({hostViewTag: tag, packageName, traceId: this.traceId})
+      // The native contract signals unsupported by returning an `unavailableReason` rather than a
+      // `supported` flag.
+      const supported = result.unavailableReason == null
+      this.bound = supported
+      this.unsupportedReason = supported ? null : (result.unavailableReason ?? "unsupported")
+      if (!supported) {
         console.warn(`FramePreviewHost: unavailable (${this.unsupportedReason})`)
         return
       }
@@ -126,7 +132,7 @@ class FramePreviewHost {
         void this.sendConfig()
         break
       case "configure":
-        void FramePreviewModule.configure(command.args as unknown as FramePreviewConfigureOptions).catch((error) =>
+        void FramePreviewModule.configure(command.args as unknown as PreviewConfigureOptions).catch((error) =>
           console.warn("FramePreviewHost: configure failed", error),
         )
         break
@@ -166,7 +172,7 @@ class FramePreviewHost {
     this.inject = null
     this.hostViewTag = null
     try {
-      await FramePreviewModule.unbind()
+      await FramePreviewModule.unbind(reason)
     } catch {
       // The module may already be gone (content process terminated); nothing to recover.
     }
@@ -196,7 +202,7 @@ class FramePreviewHost {
     }
     if (!this.preparing) {
       const generation = this.documentGeneration
-      this.preparing = FramePreviewModule.prepareDocument({docGen: generation})
+      this.preparing = FramePreviewModule.prepareDocument({docGen: generation, traceId: this.traceId})
         .then((config) => {
           if (generation !== this.documentGeneration) return null
           this.preparedFor = generation
@@ -215,13 +221,14 @@ class FramePreviewHost {
   }
 
   /** The page only accepts host envelopes that carry `t`. Native prepareDocument does not. */
-  private postPageConfig(config: FramePreviewDocumentConfig): void {
-    this.post({t: "config", ...config, supported: config.supported !== false})
+  private postPageConfig(config: PreviewDocumentConfig): void {
+    // A resolved prepareDocument means the transport is armed, so the page config is supported.
+    this.post({t: "config", ...config, supported: true})
   }
 
   private attachEvents(): void {
     if (this.statusSubscription) return
-    this.statusSubscription = FramePreviewModule.addListener("onStatus", (status: FramePreviewStatus) => {
+    this.statusSubscription = FramePreviewModule.addListener("onStatus", (status: PreviewStatusPayload) => {
       this.post(status)
     })
     this.stoppedSubscription = FramePreviewModule.addListener("onStopped", (event: {reason: string}) => {
