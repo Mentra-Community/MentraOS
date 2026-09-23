@@ -431,12 +431,26 @@ export const deploymentManagedMiniappSync = {
           return
         }
         // Recover installs created before the ownership state file was flushed.
-        const orphaned = appRegistry.getDeploymentOwnedReleases()
-        for (const {packageName, version} of orphaned) {
+        const orphanedStates = new Map<string, ManagedInstallState>()
+        for (const {packageName, version, identity, storageScope} of appRegistry.getDeploymentOwnedReleases()) {
+          const {deploymentId, deploymentOrigin, bundleSha256} = identity
+          if (!deploymentId || !deploymentOrigin || !bundleSha256) {
+            console.warn(`${LOG_TAG}: refusing to remove orphan ${packageName}@${version} without complete ownership`)
+            continue
+          }
+          const key = JSON.stringify([deploymentId, deploymentOrigin])
+          const recovered = orphanedStates.get(key) ?? {
+            schemaVersion: 1,
+            deploymentId,
+            workspaceOrigin: deploymentOrigin,
+            entries: [],
+          }
+          recovered.entries.push({packageName, version, sha256: bundleSha256, storageScope})
+          orphanedStates.set(key, recovered)
+        }
+        for (const recovered of orphanedStates.values()) {
           context.assertCurrent()
-          const result = await appRegistry.uninstall(packageName, version)
-          if (result.is_error())
-            console.warn(`${LOG_TAG}: failed to remove orphan ${packageName}@${version}`, result.error)
+          await uninstallOwnedEntries(recovered, context)
         }
       } catch (error) {
         if (!(error instanceof SupersededSync)) console.warn(`${LOG_TAG}: reconciliation failed`, error)

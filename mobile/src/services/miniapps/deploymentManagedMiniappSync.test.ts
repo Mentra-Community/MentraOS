@@ -1,5 +1,5 @@
 import {Directory, File, Paths} from "expo-file-system"
-import {configure, resetForTests} from "../../../modules/engine/src/runtime/bootstrap"
+import {configure, getConfigValues, resetForTests} from "../../../modules/engine/src/runtime/bootstrap"
 import {createDevSnapshotRequest} from "../../../modules/engine/src/utils/devSnapshotRequests"
 import {runInstallFilesystemTransaction} from "../../../modules/engine/src/services/installOperation"
 import {
@@ -976,6 +976,76 @@ it("migrates legacy workspace-owned files without removing an independent consum
   expect(new File(registry.getBundleDir(pkg, "2.1.30"), "call.js").textSync()).toBe("consumer customized build")
   expect(registry.getDeploymentOwnedReleases()).toEqual([])
 })
+
+it.each([
+  ["missing", true],
+  ["corrupt", true],
+  ["missing", false],
+  ["corrupt", false],
+])(
+  "cleans orphan workspace storage with %s state while preserving a consumer copy (SYSTEM=%s)",
+  async (state, system) => {
+    selectDeployment(consumer)
+    mockVersion = "2.1.30"
+    mockScript = "consumer customized build"
+    expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
+    const consumerPath = registry.getBundleDir(pkg, mockVersion)
+    const pinned: WorkspaceDeployment = {
+      ...workspace,
+      manifest: {
+        ...workspace.manifest,
+        miniapps: {configuration: {}, managed: [{...workspace.manifest.miniapps.managed[0], version: mockVersion}]},
+      },
+    }
+    selectDeployment(pinned)
+    mockScript = "workspace build"
+    await deploymentManagedMiniappSync.sync(pinned)
+    const workspacePath = registry.getBundleDir(pkg, mockVersion)
+    const stateFile = new File(Paths.document, "deployment-managed-miniapps.json")
+    if (state === "missing") stateFile.delete()
+    else stateFile.write("{broken")
+    selectDeployment(consumer)
+    if (!system)
+      configure({
+        auth: {},
+        config: {
+          ...getConfigValues(),
+          bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES.filter((name) => name !== pkg),
+        },
+      })
+    await deploymentManagedMiniappSync.sync(consumer)
+    expect(new File(consumerPath, "call.js").textSync()).toBe("consumer customized build")
+    expect(registry.getReleaseIdentity(pkg, mockVersion, "consumer")?.source).toBe("direct_download")
+    expect(new Directory(workspacePath).exists).toBe(false)
+    expect(registry.getDeploymentOwnedReleases()).toEqual([])
+    await deploymentManagedMiniappSync.sync(consumer)
+    expect(new File(consumerPath, "call.js").textSync()).toBe("consumer customized build")
+  },
+)
+
+it.each(["missing", "corrupt"])(
+  "cleans legacy deployment artifacts with %s state without removing consumer releases",
+  async (state) => {
+    createMMKV({id: "mentra-miniapp-installations"}).set(
+      `miniapp_release_identity:${pkg}:${version}`,
+      JSON.stringify({
+        source: "deployment_manifest",
+        deploymentId: workspace.manifest.deploymentId,
+        deploymentOrigin: workspace.workspaceOrigin,
+        bundleSha256: "a".repeat(64),
+      }),
+    )
+    selectDeployment(consumer)
+    mockVersion = "2.1.30"
+    mockScript = "consumer customized build"
+    expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
+    if (state === "corrupt") new File(Paths.document, "deployment-managed-miniapps.json").write("{broken")
+    await deploymentManagedMiniappSync.sync(consumer)
+    expect(new Directory(Paths.document, "lmas", pkg, version).exists).toBe(false)
+    expect(new File(registry.getBundleDir(pkg, mockVersion), "call.js").textSync()).toBe("consumer customized build")
+    expect(registry.getDeploymentOwnedReleases()).toEqual([])
+  },
+)
 
 it("rejects same-version manual archive replacement without changing files or provenance", async () => {
   selectDeployment(consumer)
