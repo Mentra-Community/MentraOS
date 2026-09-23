@@ -4,14 +4,26 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        description: Current PR number to test
+        description: Current PR number (PR channel only)
         type: number
+        required: false
+      channel:
+        description: Build source channel
+        type: choice
+        options: [pr, dev, staging]
+        default: pr
         required: true
       routine:
         description: Requested device routine
         type: choice
-        options: [day1-ota]
+        options: [day1-ota, no-glasses, mentra-call]
         default: day1-ota
+        required: true
+      request_origin:
+        description: Explicit dispatch, current PR label, or successful coordinated build
+        type: choice
+        options: [workflow-dispatch, pr-label, successful-build]
+        default: workflow-dispatch
         required: true
       source_build_run_id:
         description: Optional exact source build run ID (requires publication attempt)
@@ -19,6 +31,14 @@ on:
         required: false
       source_publication_attempt:
         description: Optional exact publication attempt (requires source build run ID)
+        type: string
+        required: false
+      nightly_run_id:
+        description: Optional authenticated nightly sequence run ID (internal)
+        type: string
+        required: false
+      nightly_run_attempt:
+        description: Optional authenticated nightly sequence attempt (internal)
         type: string
         required: false
   # Bootstrap before this workflow reaches dev. The private worker must allowlist
@@ -37,7 +57,9 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       contains(github.event.pull_request.labels.*.name, 'routine:day1-ota'))
+       (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') ||
+        contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') ||
+        contains(github.event.pull_request.labels.*.name, 'routine:mentra-call')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -49,21 +71,27 @@ jobs:
         with:
           node-version: "20"
       - name: Verify public request selection
-        run: node --test .github/scripts/request-e2e-routine.test.mjs
+        run: node --test .github/scripts/request-e2e-routine.test.mjs .github/scripts/coordinated-routine-request.test.mjs
       - name: Resolve the selected build without running PR application code
         uses: actions/github-script@v7
         env:
           REQUEST_PR: ${{ inputs.pr || github.event.pull_request.number }}
-          REQUEST_ROUTINE: ${{ inputs.routine || 'day1-ota' }}
+          REQUEST_CHANNEL: ${{ inputs.channel || 'pr' }}
+          REQUEST_ROUTINE: ${{ inputs.routine || (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') && 'day1-ota' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') && 'no-glasses' || 'mentra-call') }}
+          REQUEST_ORIGIN: ${{ inputs.request_origin || 'pr-label' }}
           SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
           SOURCE_PUBLICATION_ATTEMPT: ${{ inputs.source_publication_attempt }}
+          NIGHTLY_RUN_ID: ${{ inputs.nightly_run_id }}
+          NIGHTLY_RUN_ATTEMPT: ${{ inputs.nightly_run_attempt }}
         with:
           script: |
             const {createRoutineRequest, writeRoutineRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
             const request = await createRoutineRequest({
-              github, context, number: Number(process.env.REQUEST_PR), routine: process.env.REQUEST_ROUTINE,
+              github, context, number: Number(process.env.REQUEST_PR), channel: process.env.REQUEST_CHANNEL, routine: process.env.REQUEST_ROUTINE,
+              requestOrigin: process.env.REQUEST_ORIGIN,
               sourceBuildRunId: process.env.SOURCE_BUILD_RUN_ID,
               sourcePublicationAttempt: process.env.SOURCE_PUBLICATION_ATTEMPT,
+              nightlyRunId: process.env.NIGHTLY_RUN_ID, nightlyRunAttempt: process.env.NIGHTLY_RUN_ATTEMPT,
               source: {
                 runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
                 ref: process.env.GITHUB_REF,

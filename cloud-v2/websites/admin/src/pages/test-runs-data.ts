@@ -130,8 +130,8 @@ export function testRunListPath(filters: TestRunFilters, cursor?: string, scope?
   if (filters.startedAfter && filters.startedBefore && filters.startedAfter > filters.startedBefore)
     throw new Error("The start date must not follow the end date.");
   if (scope) {
+    query.delete("pr");
     for (const [key, value] of Object.entries(scope)) query.set(key, value);
-    query.set("channel", "pr");
   }
   if (cursor) query.set("cursor", cursor);
   return `/api/admin/test-runs?${query}`;

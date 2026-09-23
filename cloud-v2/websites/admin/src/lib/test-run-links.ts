@@ -1,21 +1,26 @@
 export type TestRunLink = { runID: string; stepID?: string };
 export type TestRunListScope = {
   repository: string;
-  pr: string;
   headSha: string;
   archiveSha256: string;
   routineId: string;
   platform: "ios-mac" | "ios" | "android";
-};
+} & ({ channel: "pr"; pr: string } | { channel: "dev" | "staging"; pr?: never });
 const RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/;
-const LIST_KEYS = ["testRuns", "repository", "pr", "headSha", "archiveSha256", "routineId", "platform"] as const;
+const COMMON_LIST_KEYS = ["testRuns", "repository", "headSha", "archiveSha256", "routineId", "platform"] as const;
+const LIST_KEYS = [...COMMON_LIST_KEYS, "channel", "pr"] as const;
 
-/** The whole scope is required: a malformed build link must not show older PR results. */
+/** The whole scope is required: a malformed build link must not show another build's results. */
 export function readTestRunListScope(search: string): TestRunListScope | null {
   const query = new URLSearchParams(search);
-  if (LIST_KEYS.some((key) => query.getAll(key).length !== 1) || query.get("testRuns") !== "1") return null;
+  if (
+    COMMON_LIST_KEYS.some((key) => query.getAll(key).length !== 1) || query.get("testRuns") !== "1" ||
+    query.getAll("channel").length > 1 || query.getAll("pr").length > 1
+  ) return null;
+  // Existing PR notification URLs predate the explicit channel discriminator.
+  const channel = query.get("channel") ?? "pr";
   const repository = query.get("repository")!;
-  const pr = query.get("pr")!;
+  const pr = query.get("pr");
   const headSha = query.get("headSha")!;
   const archiveSha256 = query.get("archiveSha256")!;
   const routineId = query.get("routineId")!;
@@ -23,15 +28,19 @@ export function readTestRunListScope(search: string): TestRunListScope | null {
   if (
     !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
     repository.length > 200 ||
-    !/^[1-9]\d*$/.test(pr) ||
-    !Number.isSafeInteger(Number(pr)) ||
     !/^[a-f0-9]{40}$/.test(headSha) ||
     !/^[a-f0-9]{64}$/.test(archiveSha256) ||
     !RESOURCE_ID.test(routineId) ||
     !["ios-mac", "ios", "android"].includes(platform)
   )
     return null;
-  return { repository, pr, headSha, archiveSha256, routineId, platform: platform as TestRunListScope["platform"] };
+  const common = { repository, headSha, archiveSha256, routineId, platform: platform as TestRunListScope["platform"] };
+  if (channel === "pr") {
+    if (!pr || !/^[1-9]\d*$/.test(pr) || !Number.isSafeInteger(Number(pr))) return null;
+    return { ...common, channel, pr };
+  }
+  if ((channel === "dev" || channel === "staging") && pr === null) return { ...common, channel };
+  return null;
 }
 
 export function testRunListLocation(current: string, scope: TestRunListScope | null): string {

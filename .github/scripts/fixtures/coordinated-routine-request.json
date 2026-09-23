@@ -1,0 +1,171 @@
+{
+  "request": {
+    "schemaVersion": 2,
+    "kind": "mentra-routine-request",
+    "requestId": "routine-500-1-dev-no-glasses",
+    "createdAt": "2026-09-23T01:00:00.000Z",
+    "status": "ready",
+    "reason": "Verified exact coordinated run, channel ancestry, immutable release plan, Mac receipt and OTA pin",
+    "trigger": {
+      "kind": "workflow_dispatch",
+      "repository": "Mentra-Community/MentraOS",
+      "workflow": ".github/workflows/request-e2e-routine.yml",
+      "runId": 500,
+      "runAttempt": 1,
+      "ref": "refs/heads/dev",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "workflowSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "workflowRef": "Mentra-Community/MentraOS/.github/workflows/request-e2e-routine.yml@refs/heads/dev",
+      "actor": "synthetic-operator"
+    },
+    "source": {
+      "kind": "coordinated-release",
+      "channel": "dev",
+      "buildRunId": 100,
+      "publicationAttempt": 2
+    },
+    "routine": {
+      "id": "no-glasses",
+      "authorization": "workflow-dispatch",
+      "reason": "Explicit workflow_dispatch opt-in",
+      "harnessRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "selection": {
+      "platform": "ios-on-mac",
+      "releasePlan": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentra-release-plan-3.3.0-dev.223.json",
+        "sha256": "27469f0955585c43c5a7467500a082b94f0972b7d902969f39802d54d82ab280",
+        "size": 342
+      },
+      "receipt": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentraos-3.3.0-dev.223-apple-downloads.json",
+        "sha256": "7d79a886e249b584dc7db893462540f583e42a7a2c477c16406e1e7aca345dc4",
+        "size": 1500
+      },
+      "archive": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentraos-3.3.0-dev.223-mac.zip",
+        "name": "mentraos-3.3.0-dev.223-mac.zip",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "size": 1234
+      },
+      "otaManifest": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentra-live-ota-3.3.0-dev.223.json",
+        "sha256": "bee81d9e9d40ae42ebe4bde03b1e8397072f2ddb9a1c320d07b258d9cd15c528",
+        "size": 412
+      },
+      "app": {
+        "bundleId": "com.mentra.mentra",
+        "app": "Mentra.app",
+        "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "buildSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "releaseIdentity": "3.3.0-dev.223",
+        "backend": "dev",
+        "otaManifestUrl": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentra-live-ota-3.3.0-dev.223.json",
+        "version": "3.3.0",
+        "build": "303000223",
+        "executableSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "javascriptSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "profileUUID": "12345678-1234-4234-8234-123456789abc",
+        "launcherPath": "launch-ios-on-mac",
+        "launcherSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "profileExpires": "2030-01-01T00:00:00",
+        "teamId": "T5XXXL6N36"
+      },
+      "build": {
+        "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "releaseIdentity": "3.3.0-dev.223",
+        "artifactContainerTag": "mentra-builds-v3.3.0"
+      },
+      "producer": {
+        "workflow": ".github/workflows/coordinated-release.yml",
+        "runId": 100,
+        "publicationAttempt": 2,
+        "url": "https://github.com/Mentra-Community/MentraOS/actions/runs/100"
+      }
+    },
+    "attempts": [
+      {
+        "runId": 100,
+        "reason": "Verified exact coordinated run, channel ancestry, immutable release plan, Mac receipt and OTA pin"
+      }
+    ]
+  },
+  "plan": {
+    "schemaVersion": 1,
+    "releaseIdentity": "3.3.0-dev.223",
+    "releaseSetId": "mentra-3.3.0-dev.223",
+    "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "channel": "dev",
+    "artifactContainerTag": "mentra-builds-v3.3.0",
+    "native": {
+      "marketingVersion": "3.3.0",
+      "buildNumber": 303000223
+    },
+    "artifactNames": {
+      "otaManifest": "mentra-live-ota-3.3.0-dev.223.json"
+    }
+  },
+  "receipt": {
+    "schemaVersion": 1,
+    "releaseIdentity": "3.3.0-dev.223",
+    "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "app": {
+      "bundleId": "com.mentra.mentra",
+      "app": "Mentra.app",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "buildSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "releaseIdentity": "3.3.0-dev.223",
+      "backend": "dev",
+      "otaManifestUrl": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentra-live-ota-3.3.0-dev.223.json",
+      "version": "3.3.0",
+      "build": "303000223",
+      "executableSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "javascriptSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "profileUUID": "12345678-1234-4234-8234-123456789abc",
+      "launcherPath": "launch-ios-on-mac",
+      "launcherSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "profileExpires": "2030-01-01T00:00:00",
+      "teamId": "T5XXXL6N36"
+    },
+    "artifacts": {
+      "iphone": {
+        "name": "mentraos-3.3.0-dev.223-iphone.ipa",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "size": 1234
+      },
+      "mac": {
+        "name": "mentraos-3.3.0-dev.223-mac.zip",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "size": 1234
+      },
+      "manifest": {
+        "name": "mentraos-3.3.0-dev.223-install.plist",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "size": 1234
+      },
+      "install": {
+        "name": "mentraos-3.3.0-dev.223-install.html",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "size": 1234
+      }
+    }
+  },
+  "ota": {
+    "releaseVersion": "3.3.0-dev.223",
+    "apps": {
+      "com.mentra.asg_client": {
+        "versionName": "3.3.0",
+        "versionCode": 303000223,
+        "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "apkSize": 456,
+        "apkUrl": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/asg.apk"
+      }
+    },
+    "bes_firmware": {
+      "version": "26.9.23.4"
+    },
+    "mtk_full_ota": {
+      "end_firmware": "MentraLive_20260921.0"
+    }
+  }
+}
