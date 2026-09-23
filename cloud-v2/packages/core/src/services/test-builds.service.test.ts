@@ -128,7 +128,7 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
 });
 
 for (const channel of ["dev", "staging"] as const) test(`${channel} retained artifacts cannot qualify a non-publishing attempt`, async () => {
-  for (const scenario of ["earlier-attempt", "later-skipped", "dry-run", "missing-step", "ambiguous-finalizer"]) {
+  for (const scenario of ["earlier-attempt", "later-skipped", "later-failed", "dry-run", "missing-step", "ambiguous-finalizer"]) {
     const f = releaseFixture(channel, 2);
     const published = structuredClone(f.publicationJobs[0]!);
     if (scenario === "earlier-attempt") {
@@ -136,9 +136,9 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} retained art
       f.rows.set(`${API}/actions/runs/50/attempts/1`, f.releaseRun);
       f.publicationJobs.unshift({ ...published, id: 99, run_attempt: 1, conclusion: "skipped", steps: [] });
     }
-    if (scenario === "later-skipped") {
+    if (scenario === "later-skipped" || scenario === "later-failed") {
       f.publicationJobs.unshift({ ...published, id: 99, run_attempt: 1 });
-      f.publicationJobs[1]!.conclusion = "skipped";
+      f.publicationJobs[1]!.conclusion = scenario === "later-skipped" ? "skipped" : "failure";
     }
     if (scenario === "dry-run") f.publicationJobs[0]!.steps[0]!.conclusion = "skipped";
     if (scenario === "missing-step") f.publicationJobs[0]!.steps = [];
@@ -155,6 +155,42 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} retained art
     }
     expect(f.calls.some(call => call.url.startsWith(CDN) || call.url.includes("/artifacts?"))).toBe(false);
   }
+});
+
+for (const channel of ["dev", "staging"] as const) test(`${channel} retains the actual publication through downstream failure and notification-only retries`, async () => {
+  for (const conclusion of ["success", "failure"]) for (const clonedJob of [false, true]) {
+    const f = releaseFixture(channel);
+    f.releaseRun.conclusion = "failure";
+    const latest = { ...f.releaseRun, run_attempt: 2, conclusion };
+    f.rows.set(`${API}/actions/runs/50/attempts/2`, latest);
+    f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=${channel}&per_page=10`, { workflow_runs: [latest] });
+    if (clonedJob) f.publicationJobs.push({ ...structuredClone(f.publicationJobs[0]!), id: 99, run_attempt: 2 });
+    f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
+    const gateway = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel] });
+    const inventoried = (await gateway.inventory({ channel }))[0]!;
+    expect(inventoried.availability).toBe("available");
+    expect(inventoried.source.publicationAttempt).toBe(1);
+    expect(inventoried.routines.find(routine => routine.id === "no-glasses")?.available).toBe(true);
+    expect((await gateway.resolve(inventoried.source)).availability).toBe("available");
+    await expect(gateway.resolve({ channel, buildRunId: 50, publicationAttempt: 2 }))
+      .rejects.toThrow("retained a different publication");
+    f.rows.set(`POST ${API}/actions/workflows/request-e2e-routine.yml/dispatches`, {
+      workflow_run_id: 70, html_url: `https://github.com/${REPO}/actions/runs/70`, run_url: `${API}/actions/runs/70`,
+    });
+    await gateway.dispatch({ ...input, source: inventoried.source });
+    expect(JSON.parse(String(f.calls.at(-1)!.init?.body)).inputs.source_publication_attempt).toBe("1");
+  }
+});
+
+test("a new finalizer execution selects its own publication attempt", async () => {
+  const f = releaseFixture("dev", 2);
+  f.publicationJobs[0]!.started_at = "2026-09-23T02:00:00Z";
+  f.publicationJobs[0]!.completed_at = "2026-09-23T02:10:00Z";
+  f.publicationJobs.unshift({ ...f.publicationJobs[0]!, id: 99, run_attempt: 1,
+    started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z" });
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
+  expect((await f.gateway.inventory({ channel: "dev" }))[0]!.source.publicationAttempt).toBe(2);
+  expect((await f.gateway.resolve({ channel: "dev", buildRunId: 50, publicationAttempt: 2 })).availability).toBe("available");
 });
 
 test("the actual successful producing retry is available with its original attempt number", async () => {
