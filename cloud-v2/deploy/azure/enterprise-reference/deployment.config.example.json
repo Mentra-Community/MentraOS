@@ -14,6 +14,7 @@
   "environmentName": "cae-acme-mentra",
   "runtimeName": "ca-acme-mentra",
   "coreName": "ca-acme-mentra-core",
+  "coreAdminEmails": "",
   "pullIdentityName": "id-acme-mentra-pull",
   "communicationName": "acme-mentra-acs",
   "communicationDataLocation": "United States",

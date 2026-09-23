@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR-only ad hoc export validation and portable iPhone/Mac packaging."""
+"""Ad hoc export validation and PR/coordinated iPhone and Mac packaging."""
 import argparse
 import base64
 import datetime as dt
@@ -14,6 +14,7 @@ import sys
 import subprocess
 import tempfile
 import zipfile
+from mac_installer import DEVELOPER_ID_REQUIREMENT, package_installer
 
 BUNDLE_ID = "com.mentra.mentra"
 PROFILE_NAME = f"match AdHoc {BUNDLE_ID}"
@@ -81,22 +82,9 @@ def verify_pr_ota(app, repository, pr, head_sha):
     return expected
 
 
-def configure(output, keychain):
-    encoded = os.environ.get("IOS_PR_PROFILE_BASE64")
-    if not encoded:
-        raise ValueError("Missing IOS_PR_PROFILE_BASE64 Actions secret; upload the registered-device ad hoc profile first")
-    output.mkdir(parents=True, exist_ok=True)
-    file = output / "PR.mobileprovision"
-    file.write_bytes(base64.b64decode(encoded, validate=True))
-    profile = read_profile(file)
-    if profile.get("Name") != PROFILE_NAME:
-        raise ValueError(f"Expected {PROFILE_NAME}")
-    team = validate_profile(profile)
-    identities = run("security", "find-identity", "-v", "-p", "codesigning", keychain).decode()
-    certificates = [hashlib.sha1(cert).hexdigest().upper() for cert in profile["DeveloperCertificates"]]
-    certificate = next((cert for cert in certificates if cert in identities), None)
-    if certificate is None:
-        raise ValueError("No usable private signing identity matches the ad hoc profile in the job keychain")
+def verify_private_signing(keychain, certificate):
+    if not isinstance(certificate, str) or not re.fullmatch(r"[A-F0-9]{40}", certificate):
+        raise ValueError("Expected the selected iOS signing certificate SHA-1")
     # Listing an identity does not prove codesign can use its private key in a
     # headless runner session. Fail here instead of after compiling the app.
     with tempfile.TemporaryDirectory(prefix="mentra-signing-probe-") as temporary:
@@ -121,6 +109,56 @@ def configure(output, keychain):
         run("codesign", "--verify", "--strict", "-R", "=anchor apple generic", probe)
         if signer_certificate(probe) != certificate:
             raise ValueError("Signing probe used a different certificate")
+    print("Verified iOS private-key signing access", flush=True)
+
+
+def probe_framework_copy(framework, keychain, certificate):
+    # Inspect only code-signature metadata. Re-sign an owned copy with Xcode's
+    # flags so this diagnostic cannot change the failed build output.
+    if framework.is_symlink() or not framework.is_dir():
+        raise ValueError("Expected a framework directory, not a symlink")
+    root = framework.resolve()
+    for item in framework.rglob("*"):
+        if item.is_symlink() and (Path(os.readlink(item)).is_absolute() or not item.resolve().is_relative_to(root)):
+            raise ValueError("Framework contains an external symlink")
+    subprocess.run(["codesign", "-d", "--verbose=4", str(framework)], check=False, timeout=20)
+    with tempfile.TemporaryDirectory(prefix="mentra-framework-signing-probe-") as temporary:
+        probe = Path(temporary) / framework.name
+        shutil.copytree(framework, probe, symlinks=True)
+        run(sys.executable, HERE / "keychain-search.py", "run", keychain,
+            "codesign", "--force", "--sign", certificate, "--keychain", keychain,
+            "--timestamp=none", "--preserve-metadata=identifier,entitlements,flags",
+            "--generate-entitlement-der", probe)
+        run("codesign", "--verify", "--strict", "-R", "=anchor apple generic", probe)
+        if signer_certificate(probe) != certificate:
+            raise ValueError("Framework probe used a different certificate")
+    print("Verified signing on a temporary copy of the failed framework", flush=True)
+
+
+def probe_signing(output, keychain, framework=None):
+    certificate = json.loads((output / "signing.json").read_text())["certificate"]
+    verify_private_signing(keychain, certificate)
+    if framework is not None:
+        probe_framework_copy(framework, keychain, certificate)
+
+
+def configure(output, keychain):
+    encoded = os.environ.get("IOS_PR_PROFILE_BASE64")
+    if not encoded:
+        raise ValueError("Missing IOS_PR_PROFILE_BASE64 Actions secret; upload the registered-device ad hoc profile first")
+    output.mkdir(parents=True, exist_ok=True)
+    file = output / "PR.mobileprovision"
+    file.write_bytes(base64.b64decode(encoded, validate=True))
+    profile = read_profile(file)
+    if profile.get("Name") != PROFILE_NAME:
+        raise ValueError(f"Expected {PROFILE_NAME}")
+    team = validate_profile(profile)
+    identities = run("security", "find-identity", "-v", "-p", "codesigning", keychain).decode()
+    certificates = [hashlib.sha1(cert).hexdigest().upper() for cert in profile["DeveloperCertificates"]]
+    certificate = next((cert for cert in certificates if cert in identities), None)
+    if certificate is None:
+        raise ValueError("No usable private signing identity matches the ad hoc profile in the job keychain")
+    verify_private_signing(keychain, certificate)
     # Xcode 16+ reads profiles here. Keep the named profile separate from the
     # App Store profile; concurrent jobs can use the same Apple-issued UUID.
     installed = Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles"
@@ -146,6 +184,7 @@ def package_mac_app(app, output, manifest, folder_name="Mentra PR", readme=None)
         mac.mkdir()
         run("ditto", app, mac / "Mentra.app")
         shutil.copy2(HERE.parent.parent / "scripts/install-ios-mac.mjs", mac / "install.mjs")
+        shutil.copy2(HERE.parent.parent / "scripts/app-ownership.mjs", mac / "app-ownership.mjs")
         launcher = mac / "launch-ios-on-mac"
         run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
             HERE.parent.parent / "scripts/launch-ios-on-mac.swift", "-o", launcher)
@@ -170,7 +209,7 @@ def package_mac_app(app, output, manifest, folder_name="Mentra PR", readme=None)
             raise ValueError("Mac ZIP configuration changed")
 
 
-def package(ipa, output):
+def package(ipa, output, mac_signing):
     output.mkdir(parents=True, exist_ok=True)
     context = {"pr": int(os.environ["PR_NUMBER"]), "headSha": os.environ["PR_HEAD_SHA"],
                "buildSha": run("git", "rev-parse", "HEAD").decode().strip(),
@@ -201,16 +240,35 @@ def package(ipa, output):
         if executable.parent != app:
             raise ValueError("Invalid executable name")
         manifest = {**context, "bundleId": BUNDLE_ID, "app": "Mentra.app", "backend": "dev", "otaManifestUrl": ota_url,
+                    "macPackageVersion": 2, "macInstaller": "Install Mentra.app",
                     "mobileFingerprint": compilation["mobileFingerprint"],
                     "mobileSourceCommit": compilation["mobileSourceCommit"],
                     "reusedCompilation": os.environ.get("PR_IOS_REUSED") == "true",
                     "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"],
                     "executableSha256": digest(executable), "javascriptSha256": digest(app / "main.jsbundle"),
                     "profileUUID": profile["UUID"], "profileExpires": profile["ExpirationDate"].isoformat(), "teamId": team}
+        mac = root / "Mentra PR"
+        mac.mkdir()
+        run("ditto", app, mac / "Mentra.app")
+        (mac / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        installer = package_installer(mac, manifest, mac_signing, output.parent / "mac-installer-diagnostics")
+        shutil.copy2(HERE / "README.md", mac / "README.md")
         files = {"iphone": f"mentra-ios-iphone-{suffix}.ipa", "mac": f"mentra-ios-mac-{suffix}.zip"}
         shutil.copy2(ipa, output / files["iphone"])
-        package_mac_app(app, output / files["mac"], manifest)
-        receipt = {"schemaVersion": 1, **context, "app": manifest,
+        run("ditto", "-c", "-k", "--keepParent", mac, output / files["mac"])
+        # Verify the delivered Mac ZIP, not only the source staging directory.
+        run("ditto", "-x", "-k", output / files["mac"], root / "verify")
+        delivered = root / "verify/Mentra PR/Mentra.app"
+        delivered_installer = root / "verify/Mentra PR/Install Mentra.app"
+        run("codesign", "--verify", "--deep", "--strict", "-R", DEVELOPER_ID_REQUIREMENT, delivered_installer)
+        run("xcrun", "stapler", "validate", delivered_installer)
+        if (delivered_installer / "Contents/Resources/build.json").read_bytes() != (mac / "build.json").read_bytes():
+            raise ValueError("Delivered installer is not bound to this exact PR manifest")
+        run("codesign", "--verify", "--deep", "--strict", delivered)
+        verify_pr_ota(delivered, os.environ["GITHUB_REPOSITORY"], context["pr"], context["headSha"])
+        if digest(delivered / info["CFBundleExecutable"]) != manifest["executableSha256"] or digest(delivered / "main.jsbundle") != manifest["javascriptSha256"]:
+            raise ValueError("Mac ZIP no longer contains the exported signed app")
+        receipt = {"schemaVersion": 1, **context, "app": manifest, "macInstaller": installer,
                    "artifacts": {kind: {"name": name, "size": (output / name).stat().st_size,
                                         "sha256": digest(output / name)} for kind, name in files.items()}}
         (output / f"mentra-ios-{suffix}.json").write_text(json.dumps(receipt, indent=2) + "\n")
@@ -218,16 +276,22 @@ def package(ipa, output):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["configure", "package"])
+    parser.add_argument("mode", choices=["configure", "package", "probe"])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--keychain")
     parser.add_argument("--ipa", type=Path)
+    parser.add_argument("--mac-signing", type=Path)
+    parser.add_argument("--framework", type=Path)
     args = parser.parse_args()
     if args.mode == "configure":
         if not args.keychain:
             parser.error("configure requires --keychain")
         configure(args.output, args.keychain)
+    elif args.mode == "probe":
+        if not args.keychain:
+            parser.error("probe requires --keychain")
+        probe_signing(args.output, args.keychain, args.framework)
     else:
-        if not args.ipa:
-            parser.error("package requires --ipa")
-        package(args.ipa, args.output)
+        if not args.ipa or not args.mac_signing:
+            parser.error("package requires --ipa and --mac-signing")
+        package(args.ipa, args.output, args.mac_signing)

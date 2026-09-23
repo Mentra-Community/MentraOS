@@ -4,6 +4,8 @@ import {Platform} from "react-native"
 import {isIosCallBuildEnabled} from "@/constants/miniapps"
 import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
+import {deploymentStore} from "@/services/deployment/store"
+import {isDeploymentManagedCall} from "@/services/miniapps/miniappVisibility"
 
 import ToggleSetting from "./ToggleSetting"
 
@@ -12,6 +14,7 @@ export default function IosMiniappSettings() {
   const [showIosNotify, setShowIosNotify] = useSetting<boolean>(SETTINGS.show_notify_ios.key)
   if (Platform.OS !== "ios") return null
   const callBuildEnabled = isIosCallBuildEnabled()
+  const workspace = deploymentStore.getActive().kind === "workspace"
 
   const updateSetting = async (value: boolean, setSetting: typeof setShowIosCall) => {
     const result = await setSetting(value)
@@ -26,10 +29,14 @@ export default function IosMiniappSettings() {
         testID="debug-show-mentra-call-ios"
         label={translate("debugSettings:showMentraCallIos")}
         subtitle={translate(
-          callBuildEnabled ? "debugSettings:mentraCallBuildOverride" : "debugSettings:showMentraCallIosSubtitle",
+          workspace
+            ? "debugSettings:mentraCallWorkspacePolicy"
+            : callBuildEnabled
+              ? "debugSettings:mentraCallBuildOverride"
+              : "debugSettings:showMentraCallIosSubtitle",
         )}
-        value={callBuildEnabled || showIosCall}
-        disabled={callBuildEnabled}
+        value={workspace ? isDeploymentManagedCall() : callBuildEnabled || showIosCall}
+        disabled={workspace || callBuildEnabled}
         onValueChange={(value) => void updateSetting(value, setShowIosCall)}
       />
       <ToggleSetting

@@ -1,0 +1,85 @@
+name: Request device routine
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Current PR number to test
+        type: number
+        required: true
+      routine:
+        description: Requested device routine
+        type: choice
+        options: [day1-ota]
+        default: day1-ota
+        required: true
+      source_build_run_id:
+        description: Optional exact source build run ID (requires publication attempt)
+        type: string
+        required: false
+      source_publication_attempt:
+        description: Optional exact publication attempt (requires source build run ID)
+        type: string
+        required: false
+  # Bootstrap before this workflow reaches dev. The private worker must allowlist
+  # this exact workflow/checkout SHA; a PR label alone never authorizes hardware.
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+jobs:
+  request:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'routine:day1-ota'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify public request selection
+        run: node --test .github/scripts/request-e2e-routine.test.mjs
+      - name: Resolve the selected build without running PR application code
+        uses: actions/github-script@v7
+        env:
+          REQUEST_PR: ${{ inputs.pr || github.event.pull_request.number }}
+          REQUEST_ROUTINE: ${{ inputs.routine || 'day1-ota' }}
+          SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
+          SOURCE_PUBLICATION_ATTEMPT: ${{ inputs.source_publication_attempt }}
+        with:
+          script: |
+            const {createRoutineRequest, writeRoutineRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
+            const request = await createRoutineRequest({
+              github, context, number: Number(process.env.REQUEST_PR), routine: process.env.REQUEST_ROUTINE,
+              sourceBuildRunId: process.env.SOURCE_BUILD_RUN_ID,
+              sourcePublicationAttempt: process.env.SOURCE_PUBLICATION_ATTEMPT,
+              source: {
+                runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+                ref: process.env.GITHUB_REF,
+                sha: process.env.GITHUB_SHA,
+                workflowSha: process.env.GITHUB_WORKFLOW_SHA,
+                workflowRef: process.env.GITHUB_WORKFLOW_REF,
+                actor: process.env.GITHUB_ACTOR,
+              },
+            });
+            await writeRoutineRequest('routine-request', request);
+            await core.summary.addHeading(`Device routine: ${request.status}`)
+              .addRaw(`${request.reason}\n\nNo device test ran in this workflow.\n`).write();
+      - name: Publish immutable request generation
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-routine-request-${{ github.run_id }}-${{ github.run_attempt }}
+          path: routine-request/request.json
+          if-no-files-found: error
+          retention-days: 14

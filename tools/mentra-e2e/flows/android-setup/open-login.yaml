@@ -1,7 +1,0 @@
-appId: com.mentra.mentra
----
-- assertVisible: "The future of smart glasses starts here"
-- takeScreenshot: setup-welcome
-- tapOn: "Log In"
-- assertVisible: "Email address"
-- takeScreenshot: setup-login
