@@ -48,6 +48,7 @@ import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
+import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {assertPublisherIdentityPolicy} from "./publisherIdentityPolicy"
 import {normalizeManifestPermissions} from "./manifestPermissions"
 import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
@@ -1161,6 +1162,7 @@ class AppRegistry {
     // that lack their verified release identity and publisher continuity pin.
     return {
       apply: () => {
+        if (!version.startsWith("dev-")) invalidateDevSnapshotRequests(packageName)
         // Development snapshots bypass publisher continuity and must not bind
         // future releases to a laptop's key. Keep their fingerprint only in
         // the per-version identity below.

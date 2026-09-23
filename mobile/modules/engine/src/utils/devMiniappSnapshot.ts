@@ -11,6 +11,7 @@
  */
 
 import appRegistry from "../services/AppRegistry"
+import {createDevSnapshotRequest} from "./devSnapshotRequests"
 import {storage} from "./storage/storage"
 import {
   decideDevLaunchRoute,
@@ -29,7 +30,8 @@ export type DevBundleSource =
   | {kind: "snapshot"; version: string}
   | {kind: "none"}
 
-const snapshotInFlight = new Map<string, Promise<void>>()
+type SnapshotRequest = ReturnType<typeof createDevSnapshotRequest>
+const snapshotInFlight = new Map<string, {promise: Promise<void>; isCurrent: () => boolean}>()
 
 /** Candidate zip URLs: same-origin `/bundle.zip`, then the sidecar path. */
 export function snapshotCandidateUrls(baseUrl: string, sidecarPort?: number | null): string[] {
@@ -57,25 +59,41 @@ function storedSidecarPort(packageName: string): number | undefined {
  * Download the current live-dev zip into `lmas/<pkg>/dev-<ms>/` and keep
  * only the newest snapshot. Coalesces concurrent calls per package.
  */
-export function queueDevSnapshot(packageName: string, baseUrl: string, sidecarPort?: number | null): void {
-  if (!packageName || !baseUrl) return
-  if (snapshotInFlight.has(packageName)) return
-  const promise = installDevSnapshot(packageName, baseUrl, sidecarPort ?? storedSidecarPort(packageName)).finally(
-    () => {
-      snapshotInFlight.delete(packageName)
-    },
-  )
-  snapshotInFlight.set(packageName, promise)
+export function queueDevSnapshot(
+  packageName: string,
+  baseUrl: string,
+  sidecarPort?: number | null,
+  request: SnapshotRequest = createDevSnapshotRequest(packageName),
+): void {
+  if (!packageName || !baseUrl || !request.isCurrent()) return
+  if (snapshotInFlight.get(packageName)?.isCurrent()) return
+  const promise = installDevSnapshot(
+    packageName,
+    baseUrl,
+    request,
+    sidecarPort ?? storedSidecarPort(packageName),
+  ).finally(() => {
+    if (snapshotInFlight.get(packageName)?.promise === promise) snapshotInFlight.delete(packageName)
+  })
+  snapshotInFlight.set(packageName, {promise, isCurrent: request.isCurrent})
 }
 
-async function installDevSnapshot(packageName: string, baseUrl: string, sidecarPort?: number | null): Promise<void> {
+async function installDevSnapshot(
+  packageName: string,
+  baseUrl: string,
+  request: SnapshotRequest,
+  sidecarPort?: number | null,
+): Promise<void> {
   let lastError: unknown
   for (const url of snapshotCandidateUrls(baseUrl, sidecarPort)) {
+    if (!request.isCurrent()) return
     const res = await appRegistry.installFromUrl(url, {
       expectedPackageName: packageName,
+      beforeActivate: request.beforeActivate,
       versionOverride: `dev-${Date.now()}`,
       releaseIdentity: {source: "dev_snapshot"},
     })
+    if (!request.isCurrent()) return
     if (res.is_ok()) {
       appRegistry.gcDevVersions(packageName, 1)
       return
@@ -91,9 +109,10 @@ export async function decideDevOpenRoute(
   devUrl: string,
   options?: DecideDevLaunchOptions,
 ): Promise<DevOpenDecision> {
+  const request = createDevSnapshotRequest(packageName)
   const route = await decideDevLaunchRoute(packageName, devUrl, options)
   if (route.decision === "live") {
-    queueDevSnapshot(packageName, route.resolvedUrl)
+    queueDevSnapshot(packageName, route.resolvedUrl, undefined, request)
     return route
   }
   if (packageName && appRegistry.hasDevSnapshot(packageName)) {
@@ -111,9 +130,10 @@ export async function resolveDevBundleSource(
   devUrl: string,
   options?: DecideDevLaunchOptions,
 ): Promise<DevBundleSource> {
+  const request = createDevSnapshotRequest(packageName)
   const route: DevLaunchResult = await decideDevLaunchRoute(packageName, devUrl, options)
   if (route.decision === "live" && route.manifest) {
-    queueDevSnapshot(packageName, route.resolvedUrl)
+    queueDevSnapshot(packageName, route.resolvedUrl, undefined, request)
     return {kind: "live", resolvedUrl: route.resolvedUrl, manifest: route.manifest}
   }
   const version = appRegistry.getLatestDevSnapshotVersion(packageName)

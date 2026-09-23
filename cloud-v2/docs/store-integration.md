@@ -117,7 +117,9 @@ QR installs the matching unsigned ZIP under the same package ID and reloads a
 running miniapp. Release versions are immutable: an already-installed version
 is rejected before replacement; use a new version or a live development QR.
 Development snapshots are retained until a manual release restarts successfully
-so a failed release can recover the previous developer registration and code. A manual release at the same or a newer version is preserved;
+so a failed release can recover the previous developer registration and code.
+Release selection also invalidates earlier dev probes/downloads; an obsolete
+snapshot cannot reactivate development code after the release commits. A manual release at the same or a newer version is preserved;
 a newer bundled release can replace it on a later Mentra App upgrade.
 
 Manual and development releases do not acquire privileged SYSTEM APIs from the

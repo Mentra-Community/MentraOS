@@ -1,5 +1,6 @@
 import {Directory, File, Paths} from "expo-file-system"
 import {configure, resetForTests} from "../../../modules/engine/src/runtime/bootstrap"
+import {createDevSnapshotRequest} from "../../../modules/engine/src/utils/devSnapshotRequests"
 import {runInstallFilesystemTransaction} from "../../../modules/engine/src/services/installOperation"
 import {
   isHostTrustedSystemMiniapp,
@@ -26,6 +27,7 @@ let mockDigest = "a".repeat(64)
 let mockScript = "verified call"
 let mockVersion = "2.1.29"
 const mockDownload = jest.fn()
+const mockRemoteRead = jest.fn()
 const mockUnzip = jest.fn()
 const mockMove = jest.fn()
 let mockFailNextActiveWrite = false
@@ -52,6 +54,7 @@ jest.mock("expo/fetch", () => ({
         getReader: () => ({
           read: async () => {
             if (read) return {done: true}
+            await mockRemoteRead()
             read = true
             return {done: false, value: Uint8Array.from(Buffer.from("archive"))}
           },
@@ -252,6 +255,7 @@ beforeEach(async () => {
   const fs = require("node:fs")
   for (const dir of [Paths.document, Paths.cache]) fs.rmSync(dir, {recursive: true, force: true})
   mockDownload.mockReset()
+  mockRemoteRead.mockReset()
   mockUnzip.mockReset()
   mockMove.mockReset()
   mockFailNextActiveWrite = false
@@ -717,4 +721,38 @@ it("retains a developer snapshot for manual runtime recovery until explicit clea
   registry.gcDevVersions(pkg, 0)
   expect(registry.hasDevSnapshot(pkg)).toBe(false)
   expect(registry.getReleaseIdentity(pkg, "dev-123")).toBeNull()
+})
+
+it("prevents an earlier dev download from changing the active release after manual installation", async () => {
+  selectDeployment(consumer)
+  const entered = deferred()
+  const release = deferred()
+  const request = createDevSnapshotRequest(pkg)
+  mockRemoteRead.mockImplementationOnce(() => {
+    entered.resolve()
+    return release.promise
+  })
+  const snapshot = registry.installFromUrl("http://localhost:8081/bundle.zip", {
+    expectedPackageName: pkg,
+    versionOverride: "dev-456",
+    releaseIdentity: {source: "dev_snapshot"},
+    beforeActivate: request.beforeActivate,
+  })
+  await entered.promise
+  mockVersion = "2.1.30"
+  expect(
+    (
+      await registry.installFromUrl("https://manual.example/call.zip", {
+        expectedPackageName: pkg,
+        expectedVersion: mockVersion,
+        rejectExistingVersion: true,
+      })
+    ).is_ok(),
+  ).toBe(true)
+  mockVersion = version
+  release.resolve()
+  expect((await snapshot).is_error()).toBe(true)
+  expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
+  expect(registry.getReleaseIdentity(pkg, "2.1.30")?.source).toBe("direct_download")
+  expect(registry.hasDevSnapshot(pkg)).toBe(false)
 })

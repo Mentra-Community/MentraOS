@@ -1,8 +1,10 @@
 import {result as Res, type AsyncResult} from "typesafe-ts"
 
 import {useAppStatusStore} from "../stores/apps"
+import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
 import appRegistry, {getDevAppRecords, registerDevApp} from "./AppRegistry"
+import {runInstallFilesystemTransaction} from "./installOperation"
 import {miniappLauncher} from "./MiniappLauncher"
 import {canUseManualMiniappRelease} from "./SystemMiniappPolicy"
 
@@ -30,8 +32,13 @@ export function installMiniappFromJsonUrl(
         `Miniapp ${packageName}@${version} is already installed. Increase its version or use a development QR code.`,
       )
     }
-    const previousDev = getDevAppRecords().find((app) => app.packageName === packageName)
-    const previousVersion = await appRegistry.getActiveVersion(packageName)
+    invalidateDevSnapshotRequests(packageName)
+    // A snapshot may already have passed its activation guard. Let that
+    // filesystem transaction settle before capturing the recovery target.
+    const {previousDev, previousVersion} = await runInstallFilesystemTransaction(async () => ({
+      previousDev: getDevAppRecords().find((app) => app.packageName === packageName),
+      previousVersion: await appRegistry.getActiveVersion(packageName),
+    }))
     await useAppStatusStore.getState().runUpdate(packageName, () =>
       installWithRuntimeReload(
         miniappLauncher,
