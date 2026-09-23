@@ -18,13 +18,17 @@ is no-glasses. Other routines are shown with an unavailable reason until enabled
 
 Configure these values on the **Core deployment**, never in the browser bundle:
 
-- `TEST_RUN_DISPATCH_GITHUB_TOKEN`: a GitHub credential with Actions write and
-  pull-request/contents read on `Mentra-Community/MentraOS`. Core can dispatch
-  only the fixed request workflow on `dev` through this API. Use a dedicated
-  fine-grained credential or installation token and manage its rotation.
-- `TEST_RUN_PRIVATE_READ_TOKEN`: optional Actions read on
-  `Mentra-Community/Mentra-Automated-Testing`. It enables queued/running job
-  visibility; it grants no private repository dispatch access.
+- `TEST_RUN_GITHUB_APP_ID`: the GitHub App's numeric ID.
+- `TEST_RUN_GITHUB_APP_PRIVATE_KEY`: the App's RSA private key in PEM format,
+  stored as a Core secret. Literal `\n` line separators are also accepted.
+- `TEST_RUN_GITHUB_INSTALLATION_ID`: the App installation on Mentra-Community,
+  authorized for both `MentraOS` and `Mentra-Automated-Testing`. Core mints
+  separate short-lived installation tokens: `MentraOS` gets Actions write,
+  contents read and pull requests read; `Mentra-Automated-Testing` gets only
+  Actions read for queued/running job visibility. The App installation must
+  grant those permissions. Core requests each token for exactly one repository.
+  Tokens remain in memory, refresh one minute before expiry, and are never sent
+  to the browser or artifact CDN. Static PAT environment variables are not used.
 - `TEST_RUN_DISPATCH_CHANNELS`: comma-separated enabled sources. Default `pr`.
   Set `pr,dev,staging` only after the trusted issuer and private worker support
   coordinated source requests. Merely changing this variable does not add that
@@ -34,8 +38,8 @@ Configure these values on the **Core deployment**, never in the browser bundle:
   fixture enrollment, network setup and stream budget are ready. This controls
   the dashboard catalog; it does not enroll a worker or authorize hardware.
 
-The public callback still uses its existing `E2E_PRIVATE_DISPATCH_TOKEN` GitHub
-secret. The worker still uses separate `TEST_RUN_CLAIM_TOKEN` and
+The public callback authenticates separately inside GitHub Actions. The worker
+still uses separate `TEST_RUN_CLAIM_TOKEN` and
 `TEST_RUN_INGEST_TOKEN` capabilities. Admin sessions use the existing Mentra
 login and `CLOUD_CORE_ADMIN_EMAILS`/domain authorization; worker tokens cannot
 browse or dispatch from this UI.

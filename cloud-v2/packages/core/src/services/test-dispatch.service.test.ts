@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
+import { generateKeyPairSync } from "node:crypto";
 import { createTestDispatchAdminApi } from "../api/admin/test-dispatches.api";
 import { adminAuth } from "../api/middleware/admin-auth.middleware";
 import { TestDispatchService, type TestDispatchRepository } from "./test-dispatch.service";
-import { TestDispatchError, type TestBuildGateway } from "./test-builds.service";
+import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
+import { TestRunGithubApp } from "./test-run-github-app";
 import type { TestDispatchInput, TestDispatchReceipt, TestDispatchView } from "../types/test-dispatch.types";
 import type { AppEnv } from "../types/hono.types";
 
@@ -70,6 +72,29 @@ describe("durable dispatch ownership", () => {
     expect((await f.service.create(input, "admin@example.test")).state).toBe("unknown");
     expect((await f.service.create(input, "admin@example.test")).state).toBe("unknown");
     expect(f.sends()).toBe(1);
+  });
+  test("GitHub App token refresh never retries a dispatch whose response was lost", async () => {
+    const f = fixture();
+    let now = Date.parse("2026-09-23T12:00:00Z"), mints = 0, sends = 0;
+    const fetch = (async (url: string) => {
+      if (url.endsWith("/access_tokens")) {
+        mints++;
+        return Response.json({ token: `token-${mints}`, expires_at: new Date(now + 3600_000).toISOString() }, { status: 201 });
+      }
+      expect(url).toBe("https://api.github.com/repos/Mentra-Community/MentraOS/actions/workflows/request-e2e-routine.yml/dispatches");
+      sends++; throw new Error("Connection lost after accepted send; private transport details");
+    }) as typeof globalThis.fetch;
+    const appAuth = new TestRunGithubApp({ fetch, now: () => now, credentials: { appId: "12345", installationId: "67890",
+      privateKey: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "pem", type: "pkcs1" }).toString() } });
+    const gateway = new GithubTestBuildGateway({ fetch, appAuth });
+    gateway.resolve = f.github.resolve;
+    const service = new TestDispatchService(f.repository, gateway);
+    expect((await service.create(input, "admin@example.test")).state).toBe("unknown");
+    now += 3600_000;
+    expect(await appAuth.token("source")).toBe("token-2");
+    const replay = await service.create(input, "admin@example.test");
+    expect(replay.state).toBe("unknown"); expect(replay.message).not.toContain("private transport details");
+    expect(sends).toBe(1); expect(mints).toBe(2);
   });
   test("unavailable, incompatible and changed builds save a rejection that exact retries cannot send", async () => {
     for (const scenario of ["unavailable", "incompatible", "changed"]) {

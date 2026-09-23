@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { zipSync, strToU8 } from "fflate";
 import { GithubTestBuildGateway, readRequestZip, readTestMetadata } from "./test-builds.service";
 import { testBuildQuerySchema, testDispatchInputSchema, type TestDispatchInput } from "../types/test-dispatch.types";
+import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPO = "Mentra-Community/MentraOS";
 const API = `https://api.github.com/repos/${REPO}`;
 const CDN = `https://artifactscdn.mentraglass.com/${REPO}/releases/`;
 const HEAD = "a".repeat(40), BASE = "b".repeat(40), MERGE = "c".repeat(40), HASH = "d".repeat(64);
+const appCredentials = { appId: "12345", installationId: "67890", privateKey:
+  generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "pem", type: "pkcs1" }).toString() };
 const input: TestDispatchInput = { source: { channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1 },
   routineId: "no-glasses", archiveSha256: HASH, idempotencyKey: "ad616c04-c5e5-4dcd-b7c4-d9d4a626166d" };
 const run = (extra = {}) => ({ id: 50, run_attempt: 1, head_sha: HEAD, head_branch: "candidate", path: ".github/workflows/mentra-app-ios-build.yml",
@@ -254,6 +257,23 @@ for (const channel of ["pr", "dev", "staging"] as const) test(`${channel} ready 
     expect(progress.state).toBe(status === "ready" ? "requesting" : "unavailable");
     const download = f.calls.find(call => call.url.includes("blob.core.windows.net"));
     expect(download?.init?.headers).toBeUndefined();
+    if (status === "ready") {
+      const calls: { url: string; authorization: string | null }[] = [];
+      const fetch = (async (url: string, init?: RequestInit) => {
+        calls.push({ url, authorization: new Headers(init?.headers).get("Authorization") });
+        if (url === "https://api.github.com/app/installations/67890/access_tokens") {
+          const scope = JSON.parse(String(init?.body)).repositories[0];
+          return Response.json({ token: `token-${scope}`, expires_at: new Date(Date.now() + 3600_000).toISOString() }, { status: 201 });
+        }
+        return f.fetch(url, init);
+      }) as typeof globalThis.fetch;
+      f.rows.set("https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/actions/workflows/device-routine.yml/runs?event=workflow_dispatch&branch=main&per_page=100", { workflow_runs: [] });
+      const gateway = new GithubTestBuildGateway({ fetch, appAuth: new TestRunGithubApp({ credentials: appCredentials, fetch }) });
+      expect((await gateway.progress(70, selected)).state).toBe("requesting");
+      expect(calls.filter(call => call.url.startsWith(`${API}/`)).every(call => call.authorization === "Bearer token-MentraOS")).toBe(true);
+      expect(calls.find(call => call.url.includes("/repos/Mentra-Community/Mentra-Automated-Testing/"))?.authorization).toBe("Bearer token-Mentra-Automated-Testing");
+      expect(calls.find(call => call.url.includes("blob.core.windows.net"))?.authorization).toBeNull();
+    }
     if (channel !== "pr") {
       for (const source of [{ ...selected.source, channel: channel === "dev" ? "staging" as const : "dev" as const },
         { ...selected.source, buildRunId: 51 }, { ...selected.source, publicationAttempt: 2 }])

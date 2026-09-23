@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { unzipSync } from "fflate";
 import { z } from "zod";
 import { TEST_ROUTINES, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
+import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPOSITORY = "Mentra-Community/MentraOS";
 const PRIVATE_REPOSITORY = "Mentra-Community/Mentra-Automated-Testing";
@@ -101,18 +102,21 @@ export interface TestBuildGateway {
 
 export class GithubTestBuildGateway implements TestBuildGateway {
   constructor(private readonly options: {
-    token?: string; privateReadToken?: string; fetch?: typeof fetch; channels?: string[]; routines?: string[];
-  } = {}) {}
+    token?: string; privateReadToken?: string; appAuth?: TestRunGithubApp; fetch?: typeof fetch; channels?: string[]; routines?: string[];
+  } = {}) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
+  private readonly appAuth: TestRunGithubApp;
   private fetcher = (input: string, init: RequestInit = {}) => (this.options.fetch ?? fetch)(input,
     { ...init, redirect: "error", signal: AbortSignal.timeout(20_000) });
-  private token() {
-    const token = this.options.token ?? process.env.TEST_RUN_DISPATCH_GITHUB_TOKEN;
-    if (!token) throw new TestDispatchError(503, "Routine dispatch GitHub access is not configured");
-    return token;
+  private async token(scope: "source" | "private" = "source") {
+    const injected = scope === "source" ? this.options.token : this.options.privateReadToken;
+    if (injected) return injected;
+    try { return await this.appAuth.token(scope); }
+    catch { throw new TestDispatchError(503, "Routine GitHub App authentication is unavailable; check the Core GitHub App configuration"); }
   }
-  private async api(path: string, init: RequestInit = {}, token = this.token()) {
+  private async api(path: string, init: RequestInit = {}, token?: string) {
+    const credential = token ?? await this.token();
     const response = await this.fetcher(`https://api.github.com/repos/${path}`, {
-      ...init, headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json",
+      ...init, headers: { Authorization: `Bearer ${credential}`, Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28", ...(init.body ? { "Content-Type": "application/json" } : {}) },
     });
     if (response.status === 404) throw new TestDispatchError(404, "Selected GitHub build was not found");
@@ -301,7 +305,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && matches[0]!.workflow_run.id === run.id && matches[0]!.workflow_run.head_sha === run.head_sha, "Request artifact is missing or ambiguous");
     const artifact = matches[0]!;
     const redirect = await (this.options.fetch ?? fetch)(`https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${artifact.id}/zip`, {
-      headers: { Authorization: `Bearer ${this.token()}`, Accept: "application/vnd.github+json" },
+      headers: { Authorization: `Bearer ${await this.token()}`, Accept: "application/vnd.github+json" },
       redirect: "manual", signal: AbortSignal.timeout(20_000),
     });
     requireThat(redirect.status === 302, "Request artifact download did not return its expected redirect");
@@ -335,9 +339,9 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     if (request.status === "no-artifact") return { state: "unavailable", requestId: request.requestId, message: request.reason };
     requireThat(request.selection?.archive.sha256 === input.archiveSha256 && request.selection.producer.runId === input.source.buildRunId
       && request.selection.producer.publicationAttempt === input.source.publicationAttempt, "Request selected a different Mac publication");
-    const privateToken = this.options.privateReadToken ?? process.env.TEST_RUN_PRIVATE_READ_TOKEN;
-    if (!privateToken) return { state: "requesting", requestId: request.requestId,
+    if (!this.options.privateReadToken && !this.appAuth.configured) return { state: "requesting", requestId: request.requestId,
       message: "Request published. Private queue visibility is not configured; awaiting a recorded result." };
+    const privateToken = await this.token("private");
     const privateRuns = z.object({ workflow_runs: z.array(runSchema) }).parse(await this.api(
       `${PRIVATE_REPOSITORY}/actions/workflows/device-routine.yml/runs?event=workflow_dispatch&branch=main&per_page=100`, {}, privateToken));
     const titles = [`Device routine request ${run.id} / attempt 1`, `Day-one OTA request ${run.id} / attempt 1`];
