@@ -69,7 +69,7 @@ meetingsApi.post("/acs/token", async (c) => {
 
   const contentLength = Number.parseInt(c.req.header("content-length") ?? "0", 10)
   if (Number.isFinite(contentLength) && contentLength > MAX_CREDENTIAL_REQUEST_BYTES) {
-    return c.json({error: "ACS credential request is too large"}, 413)
+    return c.json(meetingError("ACS credential request is too large"), 413)
   }
   let body: unknown = {}
   try {
@@ -77,22 +77,22 @@ meetingsApi.post("/acs/token", async (c) => {
     if (text.trim()) body = JSON.parse(text)
   } catch (error) {
     if (error instanceof CredentialRequestTooLargeError) {
-      return c.json({error: "ACS credential request is too large"}, 413)
+      return c.json(meetingError("ACS credential request is too large"), 413)
     }
-    return c.json({error: "invalid JSON body"}, 400)
+    return c.json(meetingError("invalid JSON body"), 400)
   }
   const parsed = credentialRequestSchema.safeParse(body)
-  if (!parsed.success) return c.json({error: "invalid ACS credential request"}, 400)
+  if (!parsed.success) return c.json(meetingError("invalid ACS credential request"), 400)
 
   if (!parsed.data.teamsUserAadToken) {
     try {
       return c.json(await mintAcsGuestToken(`${auth.identity.tenantId}:${auth.identity.mentraUserId}`), 200)
     } catch (error) {
       if (error instanceof AcsCredentialError) {
-        return c.json({error: error.message}, error.status)
+        return c.json(meetingError(error.message), error.status)
       }
       console.error("ACS guest credential unavailable", error)
-      return c.json({error: "Teams meeting provider unavailable"}, 502)
+      return c.json(meetingError("Teams meeting provider unavailable"), 502)
     }
   }
 
@@ -101,13 +101,13 @@ meetingsApi.post("/acs/token", async (c) => {
     subject = await verifiedSubject(auth.identity, parsed.data.teamsUserAadToken)
   } catch (error) {
     if (error instanceof AcsCredentialError) {
-      return c.json({error: error.message}, error.status)
+      return c.json(meetingError(error.message), error.status)
     }
     if (!(error instanceof TeamsIdentityRejectedError)) {
       console.error("Teams identity provider unavailable", error)
-      return c.json({error: "Teams identity provider unavailable"}, 503)
+      return c.json(meetingError("Teams identity provider unavailable"), 503)
     }
-    return c.json({error: "Teams identity exchange rejected"}, 403)
+    return c.json(meetingError(error.message, "Teams identity exchange rejected"), 403)
   }
 
   try {
@@ -117,10 +117,10 @@ meetingsApi.post("/acs/token", async (c) => {
     )
   } catch (error) {
     if (error instanceof AcsCredentialError) {
-      return c.json({error: error.message}, error.status)
+      return c.json(meetingError(error.message), error.status)
     }
     console.error("ACS token exchange unavailable", error)
-    return c.json({error: "Teams meeting provider unavailable"}, 502)
+    return c.json(meetingError("Teams meeting provider unavailable"), 502)
   }
 })
 
@@ -129,7 +129,7 @@ meetingsApi.post("/teams/create", async (c) => {
   if ("error" in auth) return auth.error
   try {
     const parsed = createRequestSchema.safeParse(await readMeetingJson(c.req.raw))
-    if (!parsed.success) return c.json({error: "invalid Teams meeting request"}, 400)
+    if (!parsed.success) return c.json(meetingError("invalid Teams meeting request"), 400)
     const subject = parsed.data.teamsUserAadToken
       ? await verifiedSubject(auth.identity, parsed.data.teamsUserAadToken)
       : undefined
@@ -142,12 +142,14 @@ meetingsApi.post("/teams/create", async (c) => {
       }),
     )
   } catch (error) {
-    if (error instanceof CredentialRequestTooLargeError) return c.json({error: "meeting request is too large"}, 413)
-    if (error instanceof InvalidMeetingRequestError) return c.json({error: "invalid meeting request"}, 400)
-    if (error instanceof TeamsIdentityRejectedError) return c.json({error: "Teams identity exchange rejected"}, 403)
+    if (error instanceof CredentialRequestTooLargeError)
+      return c.json(meetingError("meeting request is too large"), 413)
+    if (error instanceof InvalidMeetingRequestError) return c.json(meetingError("invalid meeting request"), 400)
+    if (error instanceof TeamsIdentityRejectedError)
+      return c.json(meetingError(error.message, "Teams identity exchange rejected"), 403)
     if (error instanceof TeamsMeetingError || error instanceof AcsCredentialError)
-      return c.json({error: error.message}, error.status)
-    return c.json({error: "Teams meeting provider unavailable"}, 502)
+      return c.json(meetingError(error.message), error.status)
+    return c.json(meetingError("Teams meeting provider unavailable"), 502)
   }
 })
 
@@ -156,16 +158,24 @@ meetingsApi.post("/teams/retire", async (c) => {
   if ("error" in auth) return auth.error
   try {
     const parsed = retireRequestSchema.safeParse(await readMeetingJson(c.req.raw))
-    if (!parsed.success) return c.json({error: "invalid meeting ownership reference"}, 400)
+    if (!parsed.success) return c.json(meetingError("invalid meeting ownership reference"), 400)
     await retireTeamsMeeting(meetingActor(auth.identity), parsed.data.meetingRef)
     return c.json({retired: true})
   } catch (error) {
-    if (error instanceof CredentialRequestTooLargeError) return c.json({error: "meeting request is too large"}, 413)
-    if (error instanceof InvalidMeetingRequestError) return c.json({error: "invalid meeting request"}, 400)
-    if (error instanceof TeamsMeetingError) return c.json({error: error.message}, error.status)
-    return c.json({error: "Teams meeting provider unavailable"}, 502)
+    if (error instanceof CredentialRequestTooLargeError)
+      return c.json(meetingError("meeting request is too large"), 413)
+    if (error instanceof InvalidMeetingRequestError) return c.json(meetingError("invalid meeting request"), 400)
+    if (error instanceof TeamsMeetingError) return c.json(meetingError(error.message), error.status)
+    return c.json(meetingError("Teams meeting provider unavailable"), 502)
   }
 })
+
+// Keep the existing error field for older clients; message is surfaced by
+// Cloud Client in the SDK/UI instead of a bare HTTP status. Only call this
+// with the bounded errors below, never raw Microsoft/provider responses.
+function meetingError(message: string, error = message) {
+  return {error, message}
+}
 
 function meetingActor(identity: VerifiedAccessToken): string {
   return JSON.stringify([identity.tenantId, identity.mentraUserId])

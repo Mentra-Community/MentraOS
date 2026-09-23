@@ -674,6 +674,43 @@ describe("MantleManager", () => {
     }
   })
 
+  it("skips excluded bundled miniapps without logging startup errors", async () => {
+    const consumer = createConsumerDeployment()
+    const workspace: WorkspaceDeployment = {
+      kind: "workspace",
+      source: "manual",
+      activatedAt: "2026-09-22T00:00:00Z",
+      workspaceOrigin: "https://enterprise.example",
+      manifestUrl: "https://enterprise.example/.well-known/mentra-deployment.json",
+      manifest: {
+        ...consumer.manifest,
+        systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings", "com.mentra.feedback"]},
+      },
+    }
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
+    const asset = {
+      name: "com.mentra.ai-1.0.0.zip",
+      downloadAsync: jest.fn(),
+    } as unknown as Asset
+    const fromModule = jest.spyOn(Asset, "fromModule").mockReturnValue(asset)
+    const originalInstall = appRegistry.installFromLocalZip
+    const install = jest.fn()
+    appRegistry.installFromLocalZip = install
+    const log = jest.spyOn(console, "error").mockImplementation(() => {})
+    const instance = new (mantle.constructor as new () => {installBundledMiniapps: () => Promise<void>})()
+    try {
+      await instance.installBundledMiniapps()
+      expect(asset.downloadAsync).not.toHaveBeenCalled()
+      expect(install).not.toHaveBeenCalled()
+      expect(log).not.toHaveBeenCalled()
+    } finally {
+      active.mockRestore()
+      fromModule.mockRestore()
+      appRegistry.installFromLocalZip = originalInstall
+      log.mockRestore()
+    }
+  })
+
   it.each(["ios", "android"])("restores consumer bundles after workspace cleanup on %s", async (platform) => {
     const originalPlatform = Platform.OS
     Object.defineProperty(Platform, "OS", {configurable: true, value: platform})
