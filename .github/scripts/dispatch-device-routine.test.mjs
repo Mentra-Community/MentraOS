@@ -450,6 +450,30 @@ test("workflow matrix preserves trusted code, independent routine fences and dis
   assert.match(workflow, /Coordinated Mentra Release/)
 })
 
+test("observed automatic request metadata selects dispatch while the unrelated push callback skips", async () => {
+  // Sanitized API metadata from 2026-09-23. The ready request had no callback;
+  // replaying its hypothetical callback verifies selection without sending it.
+  const sha = "a0ab47d9ccccba7b5d6177ccce816f1e16f051d3"
+  const run = {...producer, id: 35922337673, run_attempt: 1, head_sha: sha}
+  const observedArtifact = {...artifact, id: 10777751569, name: "mentra-routine-request-35922337673-1",
+    size_in_bytes: 1496, digest: "sha256:9ae30b9dc05cf1a463e199a7afca45a2f8c6f347e4b141196bfbf3527a302e29",
+    workflow_run: {id: run.id, head_sha: sha}}
+  const ready = fake({run, artifacts: [observedArtifact]})
+  const plans = await planDeviceDispatches({...ready,
+    context: {...context, sha, payload: {workflow_run: {id: run.id, run_attempt: 1}}}})
+  assert.deepEqual(plans, [{mode: "dispatch", runId: run.id, runAttempt: 1, sourceSha: sha,
+    artifactId: observedArtifact.id, artifactName: observedArtifact.name}])
+  assert.equal(ready.calls.some(([kind]) => kind === "dispatch"), false)
+
+  const push = {...build, id: 35921148279, run_attempt: 1, event: "push", head_branch: "dev",
+    head_sha: sha, pull_requests: []}
+  const unrelated = fake({run: push})
+  const skipped = await planDeviceDispatches({...unrelated, context: {...context, runId: 35922478698,
+    sha, payload: {workflow_run: {id: push.id, run_attempt: 1}}}})
+  assert.ok(skipped.every(plan => plan.mode === "skip"))
+  assert.equal(unrelated.calls.some(([kind]) => kind === "dispatch" || kind === "read-artifacts"), false)
+})
+
 const coordinatedJob = (attempt = 2) => ({id: 1000 + attempt, name: COORDINATED_FINALIZE_JOB, run_attempt: attempt,
   status: "completed", conclusion: "success", steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "success"}]})
 
@@ -596,4 +620,24 @@ test("private callback mints a repo-scoped App token only after artifact downloa
   assert.match(workflow, /TEST_RUN_DISPATCH_TOKEN: \$\{\{ steps.dispatch-token.outputs.token \}\}/)
   assert.doesNotMatch(workflow, /E2E_PRIVATE_DISPATCH_TOKEN|secrets.*PAT/)
   assert.doesNotMatch(producer, /TEST_RUN_GITHUB_APP_PRIVATE_KEY|create-github-app-token|TEST_RUN_DISPATCH_TOKEN/)
+})
+
+test("automatic requests use a separate public-repository App token for the callback-producing send", async () => {
+  const workflow = await readFile(new URL("../workflows/dispatch-device-routine.yml", import.meta.url), "utf8")
+  const step = name => workflow.split(`      - name: ${name}\n`)[1]?.split("      - name: ")[0]
+  const token = step("Create scoped public request token"), send = step("Send trusted publication request")
+  assert.ok(token && send)
+  assert.match(token, /if: matrix.mode == 'request'/)
+  assert.match(token, /id: request-token/)
+  assert.match(token, /uses: actions\/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3/)
+  assert.match(token, /app-id: \$\{\{ vars.TEST_RUN_GITHUB_APP_ID \}\}/)
+  assert.match(token, /private-key: \$\{\{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY \}\}/)
+  assert.match(token, /owner: Mentra-Community\n          repositories: MentraOS\n/)
+  assert.deepEqual(token.match(/permission-[a-z-]+: [a-z]+/g), ["permission-actions: write"])
+  assert.doesNotMatch(token, /skip-token-revoke/)
+  assert.ok(workflow.indexOf("- name: Create scoped public request token") < workflow.indexOf("- name: Send trusted publication request"))
+  assert.match(send, /if: matrix.mode == 'request'/)
+  assert.match(send, /github-token: \$\{\{ steps.request-token.outputs.token \}\}/)
+  assert.doesNotMatch(send, /github\.token|GITHUB_TOKEN|dispatch-token|PRIVATE_KEY/)
+  assert.doesNotMatch(step("Queue the ready request in the private repository"), /request-token/)
 })
