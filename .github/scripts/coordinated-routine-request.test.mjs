@@ -56,12 +56,24 @@ test("changed or mismatched publication files cannot become ready", async () => 
 test("malformed selectors, PR mixing, untrusted issuer and automatic OTA fail before selection", async () => {
   for (const override of [{number: 42}, {channel: "main"}, {sourceBuildRunId: ""}, {sourcePublicationAttempt: "1.2"},
     {sourcePublicationAttempt: "9007199254740992"}, {requestOrigin: "pr-label"},
-    {requestOrigin: "successful-build", routine: "day1-ota"}])
+    {requestOrigin: "successful-build", routine: "day1-ota"}, {requestOrigin: "successful-build", routine: "mentra-call"}])
     await assert.rejects(createRoutineRequest({...coordinatedFixture().options, ...override}))
   const {options} = coordinatedFixture()
   await assert.rejects(createRoutineRequest({...options, source: {...options.source, ref: "refs/heads/staging"}}))
   await assert.rejects(createRoutineRequest({...options, source: {...options.source, workflowSha: "c".repeat(40)}}))
 })
+
+for (const channel of ["dev", "staging"]) for (const routine of ["day1-ota", "mentra-call"])
+  test(`explicit ${channel} ${routine} requests use the exact coordinated publication`, async () => {
+    const {options} = coordinatedFixture(channel)
+    const request = await createRoutineRequest({...options, routine})
+    assert.equal(request.requestId, `routine-500-1-${channel}-${routine}`)
+    assert.equal(request.status, "ready")
+    assert.equal(request.routine.authorization, "workflow-dispatch")
+    assert.equal(request.selection.producer.runId, 100)
+    assert.equal(request.selection.producer.publicationAttempt, 2)
+    await verifyCoordinatedReadyRequest({...options, request})
+  })
 
 test("ready callback revalidates the selected artifacts and exact trusted issuer", async () => {
   const {state, options} = coordinatedFixture()

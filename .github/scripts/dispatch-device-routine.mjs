@@ -178,7 +178,7 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
   return {mode: "skip", reason: "Not an eligible build or trusted dev request workflow"}
 }
 
-/** An automatic publication can request both registered routines. A completed
+/** An automatic publication can request all registered routines. A completed
  * request already names one routine, so its private callback remains singular. */
 export async function planDeviceDispatches(options) {
   const plans = []

@@ -1,6 +1,7 @@
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({label: "routine:day1-ota", name: "Day-one OTA"}),
   "no-glasses": Object.freeze({label: "routine:no-glasses", name: "No-glasses UI"}),
+  "mentra-call": Object.freeze({label: "routine:mentra-call", name: "Mentra Call"}),
 })
 
 export function deviceRoutine(id) {

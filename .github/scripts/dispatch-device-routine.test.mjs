@@ -366,16 +366,18 @@ test("mismatched producer JSON and missing dispatch capability fail before priva
   assert.equal(remote.calls.length, 0)
 })
 
-test("both routine labels create independent fenced generations for one exact publication", async () => {
-  const pull = {...pr, labels: [{name: "routine:day1-ota"}, {name: "routine:no-glasses"}]}
-  const jobs = ["day1-ota", "no-glasses"].map(routine => ({...publicationJob, name: publicationJobName(123, 2, routine)}))
+test("all routine labels create independent fenced generations for one exact publication", async () => {
+  const routines = ["day1-ota", "no-glasses", "mentra-call"]
+  const pull = {...pr, labels: routines.map(routine => ({name: `routine:${routine}`}))}
+  const jobs = routines.map(routine => ({...publicationJob, name: publicationJobName(123, 2, routine)}))
   const f = fake({pull, callbackJobs: {[callback.id]: jobs}})
   const plans = await planDeviceDispatches({...f, context})
-  assert.deepEqual(plans.map(plan => plan.routine), ["day1-ota", "no-glasses"])
+  assert.deepEqual(plans.map(plan => plan.routine), routines)
   for (const plan of plans) assert.equal((await requestAfterPublication({...f, context, plan})).status, "request-dispatched")
   assert.deepEqual(f.calls.filter(([kind]) => kind === "dispatch").map(([, call]) => call.inputs), [
     {pr: "42", routine: "day1-ota", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
     {pr: "42", routine: "no-glasses", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
+    {pr: "42", routine: "mentra-call", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
   ])
 })
 
@@ -406,14 +408,14 @@ test("a completed trusted request has one private callback regardless of registe
   assert.equal(f.calls.filter(([kind]) => kind === "read-artifacts").length, 1)
 })
 
-test("explicit trusted no-glasses request queues without a label but retains current PR and base checks", async () => {
-  const manual = {...request, requestId: "routine-123-2-42-no-glasses",
-    routine: {...request.routine, id: "no-glasses", authorization: "workflow-dispatch"}}
+for (const routine of ["no-glasses", "mentra-call"]) test(`explicit trusted ${routine} request queues without a label but retains current PR and base checks`, async () => {
+  const manual = {...request, requestId: `routine-123-2-42-${routine}`,
+    routine: {...request.routine, id: routine, authorization: "workflow-dispatch"}}
   const f = fake({run: producer, pull: {...pr, labels: []}}), remote = fake()
   const plan = await planDeviceDispatch({...f, context})
   assert.equal((await dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(manual)})).status,
     "private-job-requested")
-  assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "123", request_attempt: "2", routine_id: "no-glasses"})
+  assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "123", request_attempt: "2", routine_id: routine})
   for (const setup of [{pull: {...pr, state: "closed", labels: []}}, {pull: {...pr, head: {...pr.head, sha: source}, labels: []}},
     {baseSha: source}, {pull: {...pr, base: {ref: "staging"}, labels: []}}]) {
     const changed = fake(setup), privateGithub = fake()
@@ -477,15 +479,15 @@ test("coordinated reruns retain one automatic generation even after an ambiguous
   assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
 })
 
-test("coordinated ready requests keep private dispatch limited to authenticated request IDs", async () => {
+for (const routine of ["no-glasses", "mentra-call"]) test(`coordinated ${routine} ready requests keep private dispatch limited to authenticated request IDs`, async () => {
   const {options, state} = coordinatedFixture("staging")
-  const request = await createRoutineRequest(options)
+  const request = await createRoutineRequest({...options, routine})
   const plan = {mode: "dispatch", runId: 500, runAttempt: 1, sourceSha: options.source.sha}
   const remote = fake()
   const args = {...options, plan, privateGithub: remote.github, bytes: bytes(request)}
   assert.equal((await dispatchReadyRequest(args)).status, "private-job-requested")
   assert.deepEqual(remote.calls[0][1], {owner: "Mentra-Community", repo: "Mentra-Automated-Testing", workflow_id: "device-routine.yml",
-    ref: "main", inputs: {source_repository: repo, request_run_id: "500", request_attempt: "1", routine_id: "no-glasses"}})
+    ref: "main", inputs: {source_repository: repo, request_run_id: "500", request_attempt: "1", routine_id: routine}})
   for (const changed of [{...request, pullRequest: {number: 42}}, {...request, schemaVersion: 1},
     {...request, source: {...request.source, channel: "main"}},
     {...request, selection: {...request.selection, archive: {...request.selection.archive, sha256: "a".repeat(64)}}}])

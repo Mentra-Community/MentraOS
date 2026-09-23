@@ -674,3 +674,18 @@ test("no-glasses and day-one labels link their own exact build results without a
     assert.equal(h.posts.length, 1)
   }
 })
+
+test("Mentra Call opt-in adds its exact results link without posting again on retry", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}],
+    currentPr: {...pr, labels: [{name: "routine:mentra-call"}]}})
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+  assert.match(text, /Requested tests:\* Mentra Call · iOS on Mac/)
+  const results = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(results.searchParams.get("routineId"), "mentra-call")
+  assert.equal(results.searchParams.get("headSha"), sha)
+  assert.equal(results.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
+  assert.equal(results.searchParams.get("pr"), String(pr.number))
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+})

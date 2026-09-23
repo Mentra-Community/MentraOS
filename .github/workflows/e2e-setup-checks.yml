@@ -6,10 +6,13 @@ on:
       - ".github/scripts/request-e2e-routine*"
       - ".github/scripts/device-routines.mjs"
       - ".github/scripts/dispatch-device-routine*"
+      - ".github/scripts/nightly-device-routines*"
+      - ".github/scripts/coordinated-routine-*"
       - ".github/scripts/notify-pr-builds*"
       - ".github/scripts/pr-ios-artifacts*"
       - ".github/workflows/request-e2e-routine.yml"
       - ".github/workflows/dispatch-device-routine.yml"
+      - ".github/workflows/nightly-device-routines.yml"
       - "mobile/scripts/install-ios-mac*"
       - "mobile/scripts/app-ownership.*"
       - "mobile/ci/pr-ios/mac_installer.py"
@@ -21,10 +24,13 @@ on:
       - ".github/scripts/request-e2e-routine*"
       - ".github/scripts/device-routines.mjs"
       - ".github/scripts/dispatch-device-routine*"
+      - ".github/scripts/nightly-device-routines*"
+      - ".github/scripts/coordinated-routine-*"
       - ".github/scripts/notify-pr-builds*"
       - ".github/scripts/pr-ios-artifacts*"
       - ".github/workflows/request-e2e-routine.yml"
       - ".github/workflows/dispatch-device-routine.yml"
+      - ".github/workflows/nightly-device-routines.yml"
       - "mobile/scripts/install-ios-mac*"
       - "mobile/scripts/app-ownership.*"
       - "mobile/ci/pr-ios/mac_installer.py"
@@ -52,6 +58,8 @@ jobs:
           node --test
           .github/scripts/request-e2e-routine.test.mjs
           .github/scripts/dispatch-device-routine.test.mjs
+          .github/scripts/nightly-device-routines.test.mjs
+          .github/scripts/coordinated-routine-request.test.mjs
           .github/scripts/notify-pr-builds.test.mjs
           .github/scripts/pr-ios-artifacts.test.mjs
       - name: Verify shared Mac installer and ownership
