@@ -491,6 +491,7 @@ const en = {
     checkAgain: "Check again",
     continue: "Continue",
     close: "Close",
+    cancelSetup: "Cancel setup",
     couldNotContinue: "NIMO update could not continue",
   },
   ota: {

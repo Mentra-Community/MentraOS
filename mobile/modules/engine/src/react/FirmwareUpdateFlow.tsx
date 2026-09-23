@@ -3,7 +3,13 @@ import {ActivityIndicator, Pressable, ScrollView, Text, View, type StyleProp, ty
 import {SafeAreaView} from "react-native-safe-area-context"
 
 import {firmwareUpdates} from "../facades/firmwareUpdates"
-import type {FirmwareCopy, FirmwareOpenOptions, FirmwareSnapshot, FirmwareTarget} from "../ota/types"
+import type {
+  FirmwareCopy,
+  FirmwareFinishResult,
+  FirmwareOpenOptions,
+  FirmwareSnapshot,
+  FirmwareTarget,
+} from "../ota/types"
 import {useFirmwareUpdate} from "./useFirmwareUpdate"
 
 export interface FirmwareUpdateTheme {
@@ -19,7 +25,7 @@ export interface FirmwareUpdateTheme {
 export interface FirmwareUpdateFlowProps extends FirmwareOpenOptions {
   /** Omit to resolve the paired native device. A model name alone never authorizes an update. */
   target?: FirmwareTarget
-  onFinished: () => void
+  onFinished: (result?: FirmwareFinishResult) => void
   onOpenWifiSetup?: () => void
   onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
   onSnapshot?: (snapshot: FirmwareSnapshot) => void
@@ -88,7 +94,9 @@ export function FirmwareUpdateFlow(props: FirmwareUpdateFlowProps & {views?: Fir
                 onPress={() => {
                   try {
                     firmwareUpdates.assertSafeToRelease()
-                    props.onFinished()
+                    props.onFinished(
+                      props.entryPoint === "pairing" ? {kind: "finished", outcome: "cancelled"} : undefined,
+                    )
                   } catch (failure) {
                     setError(failure instanceof Error ? failure : new Error(String(failure)))
                   }

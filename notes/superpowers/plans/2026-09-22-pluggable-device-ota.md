@@ -30,8 +30,8 @@ Logs are under `.context/ota-implementation/`; earlier research is in `.context/
 - Full Swift SDK package: 190 tests pass, including Live journal/context and NIMO reconnect inventory. Extended AR99 timeout/old-readback/restart suite: six tests pass.
 - Full Android SDK compile and unit suite: 456 tests across 74 suites pass. Extended AR99 recovery tests also pass.
 - Mobile OTA regression run: 198 tests across 14 suites pass. Follow-up identity/navigation/recovery UI run: 52 tests across seven suites pass; additional Live dismissed-host and AR99 configuration cases pass.
-- Isolated Live hook: 16 tests pass. File-provider/shared contracts, native observation, staging, gallery and synthetic fourth-provider suites passed earlier; final package sweep remains tracked below.
-- Engine build and mobile typechecking pass after rebuilding the public declaration output. Changed-file lint retains existing errors in the unrelated `focusEffectPreventBack` hook; new code's errors are being checked separately.
+- Engine sweep: 1,071 tests passed across 91 files; its sole failing file was the Live hook test initialization. After fixing the formatting-induced statement join, all 16 hook tests pass. The ten Engine script/package tests pass. NIMO safe-exit coverage adds four cases, and the synthetic fourth-provider UI still passes.
+- Engine build and mobile typechecking pass after rebuilding the public declaration output. Changed-file lint retains existing errors in the unrelated `focusEffectPreventBack` hook; new code's lint errors are fixed.
 - PR checkpoint CI: Android app build, Swift package, Android tests, quality, public boundary, lockfile and release-family checks pass. iOS app build reached successful build steps and was uploading its post-job cache at the latest inspection. Revalidate the final pushed head.
 - Manual Maestro firmware-check flow exists but has **not** been run.
 
@@ -39,9 +39,13 @@ Logs are under `.context/ota-implementation/`; earlier research is in `.context/
 
 - First independent Codex review requested changes for idle NIMO reconnect inventory, completion navigation blocked by the screen lock, and AR99 uncertain-transfer recovery. The first two are fixed with native/UI regression tests; AR99 rollout is gated and the existing flow restored.
 - Live custom presentation now preserves the host's selected native target and entry point. Late completion callbacks do not navigate an unmounted host.
-- [ ] Finish final public package, type/lint and regression checks.
+- Second independent review and Bugbot identified explicit recovery reconnect rejection and mismatched native progress units. Both platforms now delegate same-device recovery reconnects to the retained SGC and use fractional progress. Tests verify that a different native identity is rejected without replacing the owner.
+- The second review also found the NIMO setup lockout and broken hook test initialization. Safe setup cancellation now returns to device selection without onboarding success; missing-source, unknown-version, failed-check and unsafe-transfer cases have provider coverage plus actual host navigation coverage.
+- Native follow-up: 13 Swift recovery/DeviceManager tests pass; Android SDK compile and targeted Live/NIMO/DeviceManager tests pass. The new Live observation record survives a second phone restart without restoring Start approval.
+- [ ] Finish final public package and type checks after the setup-result API addition.
 - [ ] Push review fixes, merge latest `dev`, rerun independent Codex review on the final head, and address supported findings.
-- [ ] Monitor final CI and review bots; mark the implementation ready for review when those checks are complete.
+- [x] Mark PR #4149 ready for review (not hardware-accepted or ready to merge).
+- [ ] Monitor final CI and review bots and resolve supported findings.
 - [ ] Request permission before Live phone testing and record actual hardware acceptance. Keep unavailable AR99/iPhone and NIMO release gates explicit.
 
 This is not a production firmware release or a claim of regression-free hardware behavior. The architecture can be reviewed before hardware acceptance; merging/enabling unvalidated device migrations remains a separate gate.

@@ -85,6 +85,22 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
         }
     }
 
+    func testObservedGlassesOwnedUpdateSurvivesAnotherPhoneRestartWithoutApproval() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            h.updater.status(sessionId: "already-running", phase: "install", status: "in_progress", progress: 40, generation: 1)
+            XCTAssertEqual(h.updater.snapshot.progress, 0.4)
+            let recovered = h.makeUpdater()
+            XCTAssertFalse(recovered.snapshot.safeToRelease)
+            XCTAssertEqual(recovered.snapshot.phase, "interrupted")
+            XCTAssertEqual(recovered.snapshot.inventory["glassesSessionId"], "already-running")
+            XCTAssertEqual(h.writes, 0)
+            XCTAssertThrowsError(try recovered.start(h.request))
+            _ = try recovered.reconcile()
+            XCTAssertEqual(h.queries, 1); XCTAssertEqual(h.writes, 0)
+        }
+    }
+
     func testExplicitLowLevelRetryKeepsExistingCommandSemantics() async throws {
         try await MainActor.run {
             let h = Harness(); defer { h.cleanup() }

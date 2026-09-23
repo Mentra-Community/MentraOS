@@ -13,9 +13,8 @@ import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckSe
 // Load the hook against the renderer's React or every hook throws.
 const rendererRequire = createRequire(require.resolve("react-test-renderer"))
 mock.module("react", () => rendererRequire("react"))
-mock.module("../../utils/timers", () => ({BgTimer: {setTimeout, clearTimeout, setInterval, clearInterval}}))(
-  globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean},
-).IS_REACT_ACT_ENVIRONMENT = true
+mock.module("../../utils/timers", () => ({BgTimer: {setTimeout, clearTimeout, setInterval, clearInterval}}))
+Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT: true})
 
 const checkResult: OtaCheckCurrentGlassesResult = {
   hasCheckCompleted: true,

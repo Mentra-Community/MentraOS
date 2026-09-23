@@ -30,6 +30,7 @@ export interface NativeFirmwareUpdateSnapshot {
   safeToRelease: boolean
   canCancel: boolean
   canReconcile: boolean
+  /** Fraction from 0 to 1; legacy ota_status events retain their percent fields. */
   progress?: number
   observedFirmware?: string
   targetFirmware?: string

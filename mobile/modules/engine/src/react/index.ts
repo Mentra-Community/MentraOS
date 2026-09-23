@@ -29,4 +29,5 @@ export type {
   FirmwareEntryPoint,
   FirmwareOpenOptions,
   FirmwareAction,
+  FirmwareFinishResult,
 } from "../ota/types"

@@ -1,14 +1,14 @@
-import {DeviceIntegrationRegistry} from "../../modules/engine/src/devices/types"
-import {MentraLiveFirmwareProvider} from "../../modules/engine/src/devices/mentra-live/provider"
+import {DeviceIntegrationRegistry} from "@/../modules/engine/src/devices/types"
+import {MentraLiveFirmwareProvider} from "@/../modules/engine/src/devices/mentra-live/provider"
 import {
   acquireManagedLiveOwner,
   recoverManagedLiveClock,
   validateManagedLiveTarget,
-} from "../../modules/engine/src/devices/mentra-live/ownership"
-import {ota} from "../../modules/engine/src/facades/ota"
-import {FirmwareUpdateService} from "../../modules/engine/src/ota/UpdateService"
-import {deferStopForFirmware} from "../../modules/engine/src/ota/RuntimeLease"
-import {fixture, current} from "../test-utils/liveOtaFixture"
+} from "@/../modules/engine/src/devices/mentra-live/ownership"
+import {ota} from "@/../modules/engine/src/facades/ota"
+import {FirmwareUpdateService} from "@/../modules/engine/src/ota/UpdateService"
+import {deferStopForFirmware} from "@/../modules/engine/src/ota/RuntimeLease"
+import {fixture, current} from "@/test-utils/liveOtaFixture"
 
 describe("managed Live provider contract", () => {
   const target = {integrationId: "mentra-live", deviceId: "native-device-1", displayName: "Mentra Live"}
@@ -95,6 +95,16 @@ describe("managed Live provider contract", () => {
     await expect(service.perform(target, {action: "install", offerId})).rejects.toThrow("different native device")
     await expect(validateManagedLiveTarget()).rejects.toThrow("different native device")
     expect(f.ports.installSession.prepare).not.toHaveBeenCalled()
+  })
+
+  it("validates the native target again before resuming a retained provider", async () => {
+    await openOffer()
+    validate.mockRejectedValue(new Error("different native device"))
+    await expect(service.open(target, {entryPoint: "recovery", initializeRuntime: false})).rejects.toThrow(
+      "different native device",
+    )
+    expect(f.ports.installSession.prepare).not.toHaveBeenCalled()
+    expect(f.ports.checkForUpdates).toHaveBeenCalledTimes(1)
   })
 
   it("rechecks battery after asynchronous native identity validation", async () => {

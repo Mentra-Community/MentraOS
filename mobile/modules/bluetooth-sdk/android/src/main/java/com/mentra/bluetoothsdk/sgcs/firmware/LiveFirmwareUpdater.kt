@@ -99,10 +99,16 @@ internal class LiveFirmwareUpdater(
   fun status(sessionId: String, phase: String, status: String, progress: Int, generation: Int) {
     if (generation != snapshot.connectionGeneration || (status == "idle" && commandToken != null)) return
     val safe = status in setOf("idle", "complete", "failed")
+    if (!safe && record == null) {
+      // The glasses-owned update may predate this phone process. Persist observation, never approval.
+      record = FirmwareStartRequest(snapshot.deviceId, generation, "observed-" + UUID.randomUUID(), "live-observation")
+    }
     state.update {
-      it.copy(inventory = if (sessionId.isNotEmpty()) it.inventory + ("glassesSessionId" to sessionId) else it.inventory,
+      it.copy(sessionId = if (!safe && it.sessionId == null) UUID.randomUUID().toString() else it.sessionId,
+        offerId = if (!safe && it.offerId == null) record?.offerId else it.offerId,
+        inventory = if (sessionId.isNotEmpty()) it.inventory + ("glassesSessionId" to sessionId) else it.inventory,
         phase = when (status) { "idle", "complete", "failed" -> status; else -> if (phase == "download") "transferring" else "installing" },
-        safeToRelease = safe, canReconcile = !safe, progress = progress.coerceIn(0, 100).toDouble(),
+        safeToRelease = safe, canReconcile = !safe, progress = progress.coerceIn(0, 100).toDouble() / 100,
         error = if (status == "failed") "The glasses reported an update failure" else null)
     }
     persist()

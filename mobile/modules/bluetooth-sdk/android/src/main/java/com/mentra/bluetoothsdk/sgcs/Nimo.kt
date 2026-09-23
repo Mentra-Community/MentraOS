@@ -1079,8 +1079,24 @@ class Nimo : SGCManager() {
         startScan()
     }
 
+    override fun reconnectFirmwareOwner() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            mainHandler.post { reconnectFirmwareOwner() }
+            return
+        }
+        if (!firmwareOwnsDevice || gatt != null) return
+        val id = nimoFirmwareUpdater?.snapshot?.deviceId ?: return
+        val device = try { bluetoothAdapter?.getRemoteDevice(id) } catch (_: Exception) { null } ?: return
+        isDisconnecting = false
+        stopScan()
+        connectCompanionGatt(device)
+    }
+
     override fun connectById(id: String) {
-        if (firmwareOwnsDevice) return
+        if (firmwareOwnsDevice) {
+            if (id == nimoFirmwareUpdater?.snapshot?.deviceId) reconnectFirmwareOwner()
+            return
+        }
         Bridge.log("NIMO: connectById($id)")
         DEVICE_SEARCH_ID = id
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
@@ -1613,6 +1629,7 @@ class Nimo : SGCManager() {
     }
 
     private fun onDeviceFound(device: android.bluetooth.BluetoothDevice, name: String) {
+        if (firmwareOwnsDevice && device.address != nimoFirmwareUpdater?.snapshot?.deviceId) return
         Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, device.address ?: "")
 
         if (DEVICE_SEARCH_ID == "NOT_SET") return
@@ -1632,6 +1649,7 @@ class Nimo : SGCManager() {
      * canvas data channel. This matches the vendor transport=BREDR connection path.
      */
     private fun connectCompanionGatt(device: android.bluetooth.BluetoothDevice) {
+        if (firmwareOwnsDevice && device.address != nimoFirmwareUpdater?.snapshot?.deviceId) return
         if (isDisconnecting || gatt != null) return
         // Classic discovery degrades/aborts connections — always cancel first.
         try {
@@ -1703,6 +1721,7 @@ class Nimo : SGCManager() {
     }
 
     private fun connectBredrTransport(device: android.bluetooth.BluetoothDevice) {
+        if (firmwareOwnsDevice && device.address != nimoFirmwareUpdater?.snapshot?.deviceId) return
         if (isDisconnecting || gatt != null) return
         // GATT over BR/EDR: the glasses pair with a legacy (non-SC) link key, so no LE
         // keys exist (le_linkkey_known:F) and the controller records the device as
@@ -1809,6 +1828,7 @@ class Nimo : SGCManager() {
     }
 
     private fun connectByAddress(): Boolean {
+        if (firmwareOwnsDevice) { reconnectFirmwareOwner(); return true }
         if (DEVICE_SEARCH_ID == "NOT_SET" || DEVICE_SEARCH_ID.isEmpty()) return false
         if (lastDeviceName != DEVICE_SEARCH_ID) return false
         val address = lastDeviceAddress ?: return false

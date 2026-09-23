@@ -6526,6 +6526,13 @@ class MentraLive : SGCManager() {
         }
     }
 
+    override fun reconnectFirmwareOwner() {
+        if (postGattLifecycle { reconnectFirmwareOwner() }) return
+        if (!firmwareUpdateOwnsDevice || isConnected) return
+        val name = DeviceStore.get("bluetooth", "device_name") as? String ?: return
+        if (name.isNotEmpty()) connectById(name)
+    }
+
     override fun connectById(id: String) {
         if (postGattLifecycle { connectById(id) }) return
         if (pairingYieldActive) {

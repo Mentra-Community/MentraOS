@@ -71,7 +71,10 @@ export class NimoFirmwareProvider implements FirmwareProvider {
   private file: StagedFirmwareArtifact | null = null
   private releaseRuntime: (() => void) | null = null
 
-  constructor(readonly target: FirmwareTarget, private readonly ports: NimoFirmwarePorts) {
+  constructor(
+    readonly target: FirmwareTarget,
+    private readonly ports: NimoFirmwarePorts,
+  ) {
     this.state = new RevisionedSnapshot<FirmwareSnapshot>({
       target,
       flowId: ports.id(),
@@ -110,16 +113,16 @@ export class NimoFirmwareProvider implements FirmwareProvider {
     if (this.disposed || this.suspended)
       throw new FirmwareUpdateError("action_unavailable", "The firmware flow is suspended")
     const native = this.observation.snapshot()
-    if (request.action === "finish") {
+    if (request.action === "finish" || request.action === "discard") {
       if (
         !this.snapshot().safeToRelease ||
-        !this.snapshot().presentation.actions.some((action) => action.id === "finish")
+        !this.snapshot().presentation.actions.some((action) => action.id === request.action)
       )
         throw new FirmwareUpdateError("busy", "The device still requires firmware recovery")
       if (native?.sessionId) this.observation.accept(await this.ports.acknowledge())
       if (!this.snapshot().safeToRelease) throw new FirmwareUpdateError("busy", "A native update still owns the device")
       await this.releaseFile()
-      return {kind: "finished"}
+      return request.action === "discard" ? {kind: "finished", outcome: "cancelled"} : {kind: "finished"}
     }
     if (request.action === "retry" && native && !native.safeToRelease) {
       if (!native.canReconcile)
@@ -246,8 +249,8 @@ export class NimoFirmwareProvider implements FirmwareProvider {
           release.error
             ? "Could not check the required firmware. Reconnect to the Internet and try again."
             : manifest
-            ? "This firmware version has no approved upgrade path. Contact support before updating."
-            : "No approved NIMO firmware source is configured for this deployment.",
+              ? "This firmware version has no approved upgrade path. Contact support before updating."
+              : "No approved NIMO firmware source is configured for this deployment.",
           {offer: null},
         )
       }
@@ -377,10 +380,10 @@ export class NimoFirmwareProvider implements FirmwareProvider {
       native.phase === "transferring"
         ? "installing"
         : native.phase === "validating"
-        ? "verifying"
-        : nativePhases.has(native.phase as FirmwarePhase)
-        ? (native.phase as FirmwarePhase)
-        : "interrupted"
+          ? "verifying"
+          : nativePhases.has(native.phase as FirmwarePhase)
+            ? (native.phase as FirmwarePhase)
+            : "interrupted"
     const titles: Partial<Record<FirmwarePhase, string>> = {
       preparing: "Preparing NIMO update",
       installing: "Updating NIMO",
@@ -438,6 +441,7 @@ export class NimoFirmwareProvider implements FirmwareProvider {
           label: nimoFirmwareCopy(phase === "complete" ? "Continue" : "Close"),
           secondary: phase !== "complete",
         })
+      else actions.push({id: "discard", label: nimoFirmwareCopy("Cancel setup"), secondary: true})
     }
     this.state.publish({
       ...next,

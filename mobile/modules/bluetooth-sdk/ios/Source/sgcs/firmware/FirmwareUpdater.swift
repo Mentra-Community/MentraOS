@@ -54,6 +54,7 @@ public struct FirmwareUpdateSnapshot: Codable {
     public var safeToRelease = true
     public var canCancel = false
     public var canReconcile = false
+    /// Fraction from 0 to 1, independent of legacy device-specific event units.
     public var progress: Double?
     public var observedFirmware: String?
     public var targetFirmware: String?

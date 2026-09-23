@@ -2301,9 +2301,9 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
 
     fun connectDefault() {
         if (!firmwareReplacementAllowed) {
-            val live = sgc as? MentraLive
-            if (live?.liveFirmwareUpdater?.snapshot?.deviceId == deviceAddress && hasBluetoothPermissions()) {
-                live?.connectById(deviceName)
+            val owner = sgc
+            if (owner?.firmwareUpdater?.snapshot?.deviceId == deviceAddress && hasBluetoothPermissions()) {
+                owner?.reconnectFirmwareOwner()
             }
             return
         }

@@ -82,7 +82,7 @@ describe("headless NIMO firmware policy", () => {
     const f = fixture()
     await f.provider.open({entryPoint: "pairing"})
     expect(f.provider.snapshot().offer?.required).toBe(true)
-    expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toEqual(["install"])
+    expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toEqual(["install", "discard"])
     await f.provider.perform({action: "install", offerId: f.provider.snapshot().offer!.id})
     expect(f.requests).toHaveLength(1)
     expect(f.requests[0]?.metadata.peerVersion).toBe("0001")
@@ -125,7 +125,35 @@ describe("headless NIMO firmware policy", () => {
     f.emit({observedFirmware: "FW-VERSION-v0.2.0.0-unknown", inventory: {packedVersion: "0.2.0.0"}})
     await f.provider.open({entryPoint: "pairing"})
     expect(f.provider.snapshot().phase).toBe("blocked")
-    expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toEqual(["check"])
+    expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toEqual(["check", "discard"])
+  })
+
+  test.each(["no-source", "unknown-version", "failed-check"])(
+    "%s can leave setup without bypassing compatibility",
+    async (reason) => {
+      const f = fixture()
+      if (reason === "no-source") f.ports.source = () => null
+      if (reason === "unknown-version")
+        f.emit({observedFirmware: "FW-VERSION-v0.2.0.0-unknown", inventory: {packedVersion: "0.2.0.0"}})
+      if (reason === "failed-check")
+        f.ports.refreshInventory = async () => {
+          throw new Error("inventory unavailable")
+        }
+      await f.provider.open({entryPoint: "pairing"})
+      expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toContain("discard")
+      expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).not.toContain("finish")
+      expect(await f.provider.perform({action: "discard"})).toEqual({kind: "finished", outcome: "cancelled"})
+      expect(f.requests).toHaveLength(0)
+      expect(f.provider.snapshot().presentation.success).toBe(false)
+    },
+  )
+
+  test("cannot cancel setup while a native transaction requires recovery", async () => {
+    const f = fixture()
+    f.emit({phase: "interrupted", sessionId: "retained", safeToRelease: false, canReconcile: true})
+    await f.provider.open({entryPoint: "pairing"})
+    expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).not.toContain("discard")
+    await expect(f.provider.perform({action: "discard"})).rejects.toThrow("recovery")
   })
 
   test("reopening observes the existing native session without checking or starting another", async () => {

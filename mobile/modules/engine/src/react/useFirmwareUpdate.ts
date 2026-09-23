@@ -1,10 +1,16 @@
 import {useCallback, useEffect, useRef, useState, useSyncExternalStore} from "react"
 
 import {firmwareUpdates} from "../facades/firmwareUpdates"
-import type {FirmwareAction, FirmwareOpenOptions, FirmwareSnapshot, FirmwareTarget} from "../ota/types"
+import type {
+  FirmwareAction,
+  FirmwareFinishResult,
+  FirmwareOpenOptions,
+  FirmwareSnapshot,
+  FirmwareTarget,
+} from "../ota/types"
 
 export interface UseFirmwareUpdateOptions extends FirmwareOpenOptions {
-  onFinished?: () => void
+  onFinished?: (result?: FirmwareFinishResult) => void
   onOpenWifiSetup?: () => void
   onSnapshot?: (snapshot: FirmwareSnapshot) => void
 }
@@ -79,7 +85,7 @@ export function useFirmwareUpdate(target: FirmwareTarget, options: UseFirmwareUp
           currentTarget.current !== requestedTarget
         )
           return
-        if (result.kind === "finished") callbacks.current.onFinished?.()
+        if (result.kind === "finished") callbacks.current.onFinished?.(result)
         else if (result.kind === "wifi-required") callbacks.current.onOpenWifiSetup?.()
       } catch (failure) {
         if (

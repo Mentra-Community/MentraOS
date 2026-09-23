@@ -827,3 +827,9 @@ unchanged. A supplied `null` or other invalid value is rejected. Stored presets
 containing removed values are invalid; replace their compression with one of the
 four supported values before replaying the complete preset. There is no automatic
 migration or substitution. Fresh valid preset updates remain available.
+
+Firmware recovery reconnects use `connectDefault()` with the same saved native
+identity. The retained SGC reconnects its owner without cancelling its current
+connection attempt or replacing the updater; a different device stays blocked.
+The shared firmware snapshot's `progress` is a fraction from 0 to 1 on every
+provider. Existing Live `ota_status` percent fields retain their original units.

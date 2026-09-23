@@ -647,6 +647,17 @@ public class Ar99 extends SGCManager {
   }
 
   @Override
+  public void reconnectFirmwareOwner() {
+    if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+      handler.post(this::reconnectFirmwareOwner);
+      return;
+    }
+    if (getFirmwareUpdateOwnsDevice() && controlGatt == null && !isScanning) {
+      connectById(ar99FirmwareUpdater.getSnapshot().getDeviceId());
+    }
+  }
+
+  @Override
   public void connectById(String id) {
     if (getFirmwareUpdateOwnsDevice() && !ar99FirmwareUpdater.getSnapshot().getDeviceId().equals(id)) return;
     targetIdentifier = id != null ? id.trim() : null;

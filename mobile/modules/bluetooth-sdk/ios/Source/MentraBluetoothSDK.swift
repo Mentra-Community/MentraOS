@@ -542,7 +542,17 @@ public final class MentraBluetoothSDK {
     }
 
     public func connectDefault(options: ConnectOptions = ConnectOptions()) throws {
-        try assertFirmwareReplacementAllowed()
+        if !DeviceManager.shared.firmwareReplacementAllowed {
+            guard let device = currentDefaultDevice(),
+                  device.id == DeviceManager.shared.sgc?.firmwareUpdater?.snapshot.deviceId else {
+                try assertFirmwareReplacementAllowed()
+                return
+            }
+            try BluetoothAvailability.shared.requirePoweredOn(operation: "reconnect updating glasses")
+            // A reconnect cannot cancel or replace the active firmware owner's connection attempt.
+            DeviceManager.shared.connectDefault(requiresAncs: options.requiresAncs)
+            return
+        }
         clearBluetoothRestoreIntent()
         requiresAncsForBluetoothRestore = options.requiresAncs
         guard let device = currentDefaultDevice() else {

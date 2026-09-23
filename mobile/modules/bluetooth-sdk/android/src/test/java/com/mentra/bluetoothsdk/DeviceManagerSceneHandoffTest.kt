@@ -24,6 +24,35 @@ import java.util.concurrent.TimeUnit
 class DeviceManagerSceneHandoffTest {
     @Before fun setup() { Bridge.initialize(ApplicationProvider.getApplicationContext()) }
 
+    @Test fun firmwareReconnectRetainsOwnerAndRejectsAnotherDefaultIdentity() {
+        Shadows.shadowOf(ApplicationProvider.getApplicationContext<android.app.Application>()).grantPermissions(
+            android.Manifest.permission.BLUETOOTH_CONNECT, android.Manifest.permission.BLUETOOTH_SCAN)
+        val manager = DeviceManager(initializeHardware = false)
+        val device = RecordingSGC(false)
+        val directory = java.nio.file.Files.createTempDirectory("firmware-reconnect-test").toFile()
+        val previousAddress = DeviceStore.get("bluetooth", "device_address") as? String ?: ""
+        try {
+            val updater = com.mentra.bluetoothsdk.sgcs.firmware.LiveFirmwareUpdater("native-owner", 1, { false }, {}, directory)
+            updater.status("active", "install", "in_progress", 40, 1)
+            device.firmware = updater
+            manager.sgc = device
+            DeviceStore.set("bluetooth", "device_address", "native-owner")
+            manager.connectDefault()
+            assertEquals(listOf("firmware-reconnect"), device.calls)
+            assertSame(device, manager.sgc)
+            assertFalse(manager.firmwareReplacementAllowed)
+            DeviceStore.set("bluetooth", "device_address", "different-device")
+            manager.connectDefault()
+            assertEquals(listOf("firmware-reconnect"), device.calls)
+            assertSame(device, manager.sgc)
+        } finally {
+            manager.sgc = null
+            manager.cleanup()
+            DeviceStore.set("bluetooth", "device_address", previousAddress)
+            directory.deleteRecursively()
+        }
+    }
+
     @Test @LooperMode(LooperMode.Mode.PAUSED)
     fun nimoBrightnessChangesDoNotReplaceTheSelectedScene() {
         for (headUp in listOf(false, true)) for ((key, value) in brightnessChanges()) {
@@ -499,6 +528,10 @@ class DeviceManagerSceneHandoffTest {
     }
 
     private open class RecordingSGC(override val sceneHandoffRequiresClear: Boolean) : SGCManager() {
+        var firmware: com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdater? = null
+        override val firmwareUpdater get() = firmware
+        override val firmwareUpdateOwnsDevice get() = firmware?.snapshot?.safeToRelease == false
+        override fun reconnectFirmwareOwner() { calls += "firmware-reconnect" }
         val calls = CopyOnWriteArrayList<String>()
         val brightnessCalls = mutableListOf<String>()
         val textSent = CountDownLatch(1)

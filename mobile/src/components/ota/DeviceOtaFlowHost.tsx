@@ -2,6 +2,7 @@ import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {
   FirmwareUpdateFlow,
   type FirmwareEntryPoint,
+  type FirmwareFinishResult,
   type FirmwareSnapshot,
   type MentraLiveOtaFlowPage,
 } from "@mentra/engine/ota"
@@ -38,33 +39,41 @@ export function DeviceOtaFlowHost({
   const allowCompletedExit = focusEffectLockScreen()
   useEffect(() => clearConfig, [clearConfig])
 
-  const handleFinished = useCallback(() => {
-    if (entryPoint !== "pairing" && !setup.onboardingFlowId) {
-      allowCompletedExit()
-      goBack()
-      return
-    }
-    const nextRoute = getNextOnboardingRoute({
-      includeMentraLive: setup.onboardingFlowId === "mentra-live",
+  const handleFinished = useCallback(
+    (result?: FirmwareFinishResult) => {
+      if (result?.outcome === "cancelled") {
+        // The provider has released safe local work. Do not mark required firmware/onboarding complete.
+        replace("/pairing/select-glasses-model")
+        return
+      }
+      if (entryPoint !== "pairing" && !setup.onboardingFlowId) {
+        allowCompletedExit()
+        goBack()
+        return
+      }
+      const nextRoute = getNextOnboardingRoute({
+        includeMentraLive: setup.onboardingFlowId === "mentra-live",
+        onboardingLiveCompleted,
+        onboardingOsCompleted: onboardingOsCompleted || !setup.includeOsOnboarding,
+      })
+      if (nextRoute) {
+        replace(nextRoute)
+        return
+      }
+      clearHistoryAndGoHome()
+    },
+    [
+      clearHistoryAndGoHome,
+      allowCompletedExit,
+      goBack,
+      entryPoint,
       onboardingLiveCompleted,
-      onboardingOsCompleted: onboardingOsCompleted || !setup.includeOsOnboarding,
-    })
-    if (nextRoute) {
-      replace(nextRoute)
-      return
-    }
-    clearHistoryAndGoHome()
-  }, [
-    clearHistoryAndGoHome,
-    allowCompletedExit,
-    goBack,
-    entryPoint,
-    onboardingLiveCompleted,
-    onboardingOsCompleted,
-    replace,
-    setup.onboardingFlowId,
-    setup.includeOsOnboarding,
-  ])
+      onboardingOsCompleted,
+      replace,
+      setup.onboardingFlowId,
+      setup.includeOsOnboarding,
+    ],
+  )
 
   const handleFirmwareRestartingChange = useCallback(
     (restarting: boolean, progressActive: boolean) => {

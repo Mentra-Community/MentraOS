@@ -34,6 +34,7 @@ export const NIMO_OTA_ENGLISH_COPY = {
   checkAgain: "Check again",
   continue: "Continue",
   close: "Close",
+  cancelSetup: "Cancel setup",
   couldNotContinue: "NIMO update could not continue",
 } as const
 

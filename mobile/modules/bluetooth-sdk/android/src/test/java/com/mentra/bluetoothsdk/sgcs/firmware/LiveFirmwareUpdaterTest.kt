@@ -73,6 +73,19 @@ class LiveFirmwareUpdaterTest {
     Unit
   }
 
+  @Test fun observedGlassesOwnedUpdateSurvivesPhoneRestartWithoutApproval() = Harness().use { h ->
+    h.updater.status("already-running", "install", "in_progress", 40, 1)
+    val recovered = h.makeUpdater()
+    assertFalse(recovered.snapshot.safeToRelease)
+    assertEquals("interrupted", recovered.snapshot.phase)
+    assertEquals(0.4, recovered.snapshot.progress!!, 0.0001)
+    assertEquals("already-running", recovered.snapshot.inventory["glassesSessionId"])
+    assertEquals(0, h.writes)
+    assertThrows(FirmwareUpdaterException::class.java) { recovered.start(h.request) }
+    recovered.reconcile()
+    assertEquals(1, h.queries); assertEquals(0, h.writes)
+  }
+
   @Test fun explicitLowLevelRetryKeepsExistingCommandSemantics() = Harness().use { h ->
     val first = h.updater.commandStarted("http://local/manifest")
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.commandStarted("http://local/manifest") }

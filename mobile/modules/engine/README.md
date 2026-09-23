@@ -79,6 +79,10 @@ An explicit `target` can be supplied; model names alone never authorize a write.
 Hosts render allowed actions and delegate them to `engine.firmwareUpdates`.
 `pairingPolicy(model)` declares Bluetooth Classic, firmware-check and onboarding
 requirements independently. An OTA capability does not imply Live's Wi-Fi setup.
+For pairing, handle `onFinished(result)` with `result?.outcome === "cancelled"`
+by returning to device selection, without completing onboarding. This is a safe
+exit before an incompatible device can update; it does not remove the native
+firmware compatibility restriction or cancel an unsafe transfer.
 
 `snapshot`/`subscribe` observe a provider; `open` checks or adopts it; `perform`
 admits an allowed action against the displayed offer. `safeToRelease` governs

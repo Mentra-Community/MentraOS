@@ -88,7 +88,9 @@ export interface FirmwareActionRequest {
   readonly offerId?: string
 }
 
-export type FirmwareActionResult = {kind: "none"} | {kind: "finished"} | {kind: "wifi-required"}
+/** A cancelled setup is an exit, never evidence that required firmware is ready. */
+export type FirmwareFinishResult = {kind: "finished"; outcome?: "cancelled"}
+export type FirmwareActionResult = {kind: "none"} | FirmwareFinishResult | {kind: "wifi-required"}
 
 export interface FirmwareProvider {
   readonly target: FirmwareTarget

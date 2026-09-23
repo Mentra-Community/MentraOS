@@ -34,6 +34,7 @@ data class FirmwareUpdateSnapshot(
   val safeToRelease: Boolean = true,
   val canCancel: Boolean = false,
   val canReconcile: Boolean = false,
+  /** Fraction from 0 to 1, independent of legacy device-specific event units. */
   val progress: Double? = null,
   val observedFirmware: String? = null,
   val targetFirmware: String? = null,

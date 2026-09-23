@@ -66,12 +66,14 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
   async open(options: FirmwareOpenOptions): Promise<void> {
     const generation = this.lifecycleGeneration
     this.allowDevelopmentSkip = options.allowDevelopmentSkip === true
+    await this.validateTarget()
+    if (generation !== this.lifecycleGeneration)
+      throw new FirmwareUpdateError("action_unavailable", "The host runtime stopped")
     if (this.opened) {
       this.suspended = false
       this.session.resumeNewWork()
       return this.session.open()
     }
-    await this.validateTarget()
     const observationOnly = (await this.inspectRecovery?.(options)) ?? false
     if (generation !== this.lifecycleGeneration)
       throw new FirmwareUpdateError("action_unavailable", "The host runtime stopped")

@@ -736,8 +736,23 @@ class Nimo: NSObject, SGCManager {
         startScan()
     }
 
+    func reconnectFirmwareOwner() {
+        guard firmwareOwnsDevice, let id = nimoFirmwareUpdater?.snapshot.deviceId,
+              let uuid = UUID(uuidString: id), centralManager?.state == .poweredOn else { return }
+        if let peripheral, peripheral.state == .connected || peripheral.state == .connecting { return }
+        guard let known = centralManager?.retrievePeripherals(withIdentifiers: [uuid]).first else { return }
+        isDisconnecting = false
+        stopScan()
+        peripheral = known
+        known.delegate = self
+        centralManager?.connect(known, options: nil)
+    }
+
     func connectById(_ id: String) {
-        guard !firmwareOwnsDevice else { return }
+        if firmwareOwnsDevice {
+            if id == nimoFirmwareUpdater?.snapshot.deviceId { reconnectFirmwareOwner() }
+            return
+        }
         Bridge.log("NIMO: connectById(\(id))")
         DEVICE_SEARCH_ID = id
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTING)
@@ -1152,6 +1167,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func connectByUUID() -> Bool {
+        if firmwareOwnsDevice { reconnectFirmwareOwner(); return peripheral != nil }
         guard DEVICE_SEARCH_ID != "NOT_SET", !DEVICE_SEARCH_ID.isEmpty else { return false }
         guard lastDeviceName == DEVICE_SEARCH_ID,
               let uuidString = lastDeviceUUID,
@@ -1803,6 +1819,7 @@ extension Nimo: CBCentralManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             guard self.isNimoMainDevice(name) else { return }
+            if self.firmwareOwnsDevice, peripheral.identifier.uuidString != self.nimoFirmwareUpdater?.snapshot.deviceId { return }
 
             Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssiValue)
 

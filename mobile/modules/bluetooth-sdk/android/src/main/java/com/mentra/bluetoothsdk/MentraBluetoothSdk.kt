@@ -521,7 +521,17 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connectDefault(options: ConnectOptions = ConnectOptions()) {
-        assertFirmwareReplacementAllowed()
+        if (!deviceManager.firmwareReplacementAllowed) {
+            val device = currentDefaultDevice()
+            if (device == null || device.id != deviceManager.sgc?.firmwareUpdater?.snapshot?.deviceId) {
+                assertFirmwareReplacementAllowed()
+                return
+            }
+            requireBluetoothReady("reconnect updating glasses")
+            // A reconnect cannot cancel or replace the active firmware owner's connection attempt.
+            deviceManager.connectDefault()
+            return
+        }
         val defaultDevice =
             currentDefaultDevice()
                 ?: throw BluetoothSdkException(

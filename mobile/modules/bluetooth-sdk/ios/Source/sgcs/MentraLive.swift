@@ -1956,6 +1956,13 @@ class MentraLive: NSObject, SGCManager {
         Bridge.sendTypedMessage("owner_replaced", body: ["reason": reason])
     }
 
+    func reconnectFirmwareOwner() {
+        guard firmwareUpdateOwnsDevice, !connected else { return }
+        if let name = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME), !name.isEmpty {
+            connectById(name)
+        }
+    }
+
     func connectById(_ deviceName: String) {
         if pairingYieldActive {
             Bridge.log("LIVE: connectById blocked — pairing yield active")

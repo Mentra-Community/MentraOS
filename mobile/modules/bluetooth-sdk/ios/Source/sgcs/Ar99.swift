@@ -759,6 +759,12 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         startScan(forConnection: false)
     }
 
+    func reconnectFirmwareOwner() {
+        guard firmwareUpdateOwnsDevice, peripheral == nil, !isScanning,
+              let id = ar99FirmwareUpdater?.snapshot.deviceId else { return }
+        connectById(id)
+    }
+
     func connectById(_ id: String) {
         if firmwareUpdateOwnsDevice, id != ar99FirmwareUpdater?.snapshot.deviceId { return }
         Bridge.log("AR99: connectById(\(id))")

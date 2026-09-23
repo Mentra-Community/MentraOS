@@ -72,9 +72,14 @@ const service = new FirmwareUpdateService(
     },
   ]),
 )
+let resolveFailure = false
 mock.module("../../facades/firmwareUpdates", () => ({
   firmwareUpdates: {
-    currentTarget: async () => target,
+    currentTarget: async () => {
+      if (resolveFailure) throw new Error("No current device")
+      return target
+    },
+    assertSafeToRelease: service.assertSafeToRelease.bind(service),
     snapshot: service.snapshot.bind(service),
     subscribe: service.subscribe.bind(service),
     open: service.open.bind(service),
@@ -109,4 +114,27 @@ test("a fourth provider renders and runs through generic UI, then reattaches wit
   await act(async () => {
     view.unmount()
   })
+})
+
+test("a failed pairing target lookup cancels setup only when retained work is safe", async () => {
+  resolveFailure = true
+  const finished = mock(() => {})
+  let view!: TestRenderer.ReactTestRenderer
+  await act(async () => {
+    view = TestRenderer.create(<FirmwareUpdateFlow entryPoint="pairing" onFinished={finished} />)
+  })
+  const close = view.root.findAllByType("Pressable" as never)[1]!
+  await act(async () => {
+    close.props.onPress()
+  })
+  expect(finished).not.toHaveBeenCalled()
+  state.publish({...state.snapshot(), active: false, safeToRelease: true})
+  await act(async () => {
+    close.props.onPress()
+  })
+  expect(finished).toHaveBeenCalledWith({kind: "finished", outcome: "cancelled"})
+  await act(async () => {
+    view.unmount()
+  })
+  resolveFailure = false
 })

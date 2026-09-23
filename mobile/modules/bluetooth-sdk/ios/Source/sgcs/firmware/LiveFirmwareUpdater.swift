@@ -117,11 +117,18 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         guard generation == snapshot.connectionGeneration else { return }
         if status == "idle", commandToken != nil { return }
         let safe = ["idle", "complete", "failed"].contains(status)
+        if !safe, record == nil {
+            // A glasses-owned update can predate this phone process. Persist observation only,
+            // even when this updater did not send its Start command.
+            record = FirmwareStartRequest(deviceId: snapshot.deviceId, connectionGeneration: generation,
+                                          offerId: "observed-" + UUID().uuidString, kind: "live-observation")
+        }
         state.update {
+            if !safe, $0.sessionId == nil { $0.sessionId = UUID().uuidString; $0.offerId = record?.offerId }
             if !sessionId.isEmpty { $0.inventory["glassesSessionId"] = sessionId }
             $0.phase = status == "idle" ? "idle" : status == "complete" ? "complete" : status == "failed" ? "failed" : phase == "download" ? "transferring" : "installing"
             $0.safeToRelease = safe; $0.canReconcile = !safe
-            $0.progress = Double(max(0, min(100, progress)))
+            $0.progress = Double(max(0, min(100, progress))) / 100
             $0.error = status == "failed" ? "The glasses reported an update failure" : nil
         }
         persist()
