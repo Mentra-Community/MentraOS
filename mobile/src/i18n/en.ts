@@ -17,7 +17,7 @@ const en = {
     recommended: "Recommended",
     autoBrightness: "Auto brightness",
     autoPowerOff: "Turn off automatically",
-    autoPowerOffSubtitle: "Powers down about 20 minutes after you take your glasses off. Paused while charging.",
+    autoPowerOffSubtitle: "Powers down about 1 minute after you take the glasses off. Charging or a call holds the shutdown.",
     brightness: "Brightness",
     display: "Display",
     disconnectGlasses: "Disconnect glasses",

@@ -3463,7 +3463,14 @@ class MentraLive: NSObject, SGCManager {
 
         case "sr_wrst":
             if let body = k900ParseBody(json["B"]) {
-                Bridge.sendWearState(worn: (k900JsonInt(body, "on") ?? 0) != 0)
+                Bridge.sendWearState(
+                    worn: (k900JsonInt(body, "on") ?? 0) != 0,
+                    elapsedMs: k900JsonInt(body, "elapsed_ms"),
+                    timeoutMs: k900JsonInt(body, "timeout_ms"),
+                    enabled: body["enabled"] == nil ? nil : (k900JsonInt(body, "enabled") ?? 0) != 0,
+                    armed: body["armed"] == nil ? nil : (k900JsonInt(body, "armed") ?? 0) != 0,
+                    inhibited: body["inhibited"] == nil ? nil : (k900JsonInt(body, "inhibited") ?? 0) != 0
+                )
             }
 
         case "sr_micrms":

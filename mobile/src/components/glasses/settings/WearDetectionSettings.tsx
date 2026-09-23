@@ -7,6 +7,7 @@ import {DeviceTypes, SETTINGS, useSetting} from "@mentra/engine"
 
 import {Text} from "@/components/ignite"
 import {SettingsCommandButton} from "@/components/glasses/settings/SettingsCommandButton"
+import {UnwornPowerOffSetting} from "@/components/glasses/settings/UnwornPowerOffSetting"
 import SelectSetting from "@/components/settings/SelectSetting"
 import SliderSetting from "@/components/settings/SliderSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -127,6 +128,7 @@ export function WearDetectionSettings() {
 
   return (
     <View className="gap-6">
+      <UnwornPowerOffSetting />
       <View className="gap-1">
         <Text
           text={`Worn: ${worn === null ? "unknown" : worn ? "yes" : "no"}`}

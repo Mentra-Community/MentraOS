@@ -543,6 +543,15 @@ export type WearTuning = {
 export type WearStateEvent = {
   type: "wear_state"
   worn: boolean
+  /** Unworn countdown, present on firmware that reports it. Milliseconds. */
+  elapsedMs?: number
+  timeoutMs?: number
+  /** cs_swit type 11. Absent on older firmware. */
+  enabled?: boolean
+  /** Countdown is running (glasses are off the face and the feature is on). */
+  armed?: boolean
+  /** Clock is running, but charging, a call, OTA, or factory test is holding shutdown. */
+  inhibited?: boolean
 }
 
 /**

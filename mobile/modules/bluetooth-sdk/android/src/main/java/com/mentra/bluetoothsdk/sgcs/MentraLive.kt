@@ -5581,7 +5581,13 @@ class MentraLive : SGCManager() {
                 try {
                     val bodyObj = optK900Body(json)
                     if (bodyObj != null) {
-                        Bridge.sendWearState(bodyObj.optInt("on", 0) != 0)
+                        val extras = HashMap<String, Any>()
+                        if (bodyObj.has("elapsed_ms")) extras["elapsedMs"] = bodyObj.optInt("elapsed_ms")
+                        if (bodyObj.has("timeout_ms")) extras["timeoutMs"] = bodyObj.optInt("timeout_ms")
+                        if (bodyObj.has("enabled")) extras["enabled"] = bodyObj.optInt("enabled") != 0
+                        if (bodyObj.has("armed")) extras["armed"] = bodyObj.optInt("armed") != 0
+                        if (bodyObj.has("inhibited")) extras["inhibited"] = bodyObj.optInt("inhibited") != 0
+                        Bridge.sendWearState(bodyObj.optInt("on", 0) != 0, extras)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_wrst response", e)

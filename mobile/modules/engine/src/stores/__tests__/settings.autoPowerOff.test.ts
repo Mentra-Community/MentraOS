@@ -30,20 +30,13 @@ describe("auto power-off setting", () => {
     saved.clear()
   })
 
-  /*
-   * This is the load-bearing one. The firmware defaults auto power-off on, and
-   * GlassesSettingsSync re-pushes every Bluetooth setting on connect, so the
-   * phone's value wins. A false default here would silently disable the
-   * feature on every pair the app ever connects to, and it would read as a
-   * firmware bug rather than an app one.
-   */
-  test("defaults on so connecting a phone never disables the firmware feature", async () => {
+  test("defaults off so a new install does not power the glasses down", async () => {
     const {SETTINGS, useSettingsStore} = restartSettings()
-    expect(SETTINGS[AUTO_POWER_OFF_KEY].defaultValue()).toBe(true)
+    expect(SETTINGS[AUTO_POWER_OFF_KEY].defaultValue()).toBe(false)
 
     const result = await useSettingsStore.getState().loadAllSettings()
     expect(result.is_error()).toBe(false)
-    expect(useSettingsStore.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(true)
+    expect(useSettingsStore.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(false)
   })
 
   test("is synced to the glasses rather than kept app-side", async () => {
@@ -53,14 +46,14 @@ describe("auto power-off setting", () => {
     expect(AUTO_POWER_OFF_KEY in useSettingsStore.getState().getBluetoothSettings()).toBe(true)
   })
 
-  test("an opt-out survives a restart instead of snapping back to the default", async () => {
+  test("an opt-in survives a restart instead of snapping back to the default", async () => {
     const {useSettingsStore} = restartSettings()
     await useSettingsStore.getState().loadAllSettings()
-    await useSettingsStore.getState().setSetting(AUTO_POWER_OFF_KEY, false)
-    expect(saved.get(AUTO_POWER_OFF_KEY)).toBe(false)
+    await useSettingsStore.getState().setSetting(AUTO_POWER_OFF_KEY, true)
+    expect(saved.get(AUTO_POWER_OFF_KEY)).toBe(true)
 
     const restarted = restartSettings().useSettingsStore
     await restarted.getState().loadAllSettings()
-    expect(restarted.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(false)
+    expect(restarted.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(true)
   })
 })
