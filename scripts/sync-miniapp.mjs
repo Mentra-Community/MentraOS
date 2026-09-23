@@ -107,6 +107,7 @@ export function parseArgs(argv) {
     noBump: false,
     dryRun: false,
     packScript: null,
+    artifact: null,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -119,6 +120,9 @@ export function parseArgs(argv) {
       if (!args.packScript || !/^[a-zA-Z0-9:_-]+$/.test(args.packScript)) {
         die("--pack-script requires a package.json script name")
       }
+    } else if (a === "--artifact") {
+      args.artifact = argv[++i]
+      if (!args.artifact || args.artifact.startsWith("--")) die("--artifact requires a ZIP path")
     } else if (a === "--no-bump") {
       args.noBump = true
     } else if (a === "--dry-run") {
@@ -134,6 +138,8 @@ export function parseArgs(argv) {
   if (args.bump && !["patch", "minor", "major"].includes(args.bump)) {
     die(`--bump must be patch, minor, or major (got ${args.bump})`)
   }
+  if (args.artifact && !args.noBump) die("--artifact requires --no-bump to preserve the published version")
+  if (args.artifact && args.packScript) die("--artifact cannot be combined with --pack-script")
   return args
 }
 
@@ -322,6 +328,7 @@ function syncMiniappInner(rawArgs, ctx) {
 Options:
   --bump patch|minor|major   Semver part to bump (default: patch)
   --no-bump                  Keep the current miniapp.json version
+  --artifact <path>          Install an existing CI ZIP without rebuilding (requires --no-bump)
   --dry-run                  Print plan only; write nothing
   --repo <path>              External miniapp repo root (skips name map)
   --pack-script <name>       Select a package script (e.g. pack:prod; default: pack)
@@ -397,7 +404,10 @@ Never commits or pushes. Prepares local changes only.`)
   const mentraBin = findMentraMiniappBin(repoPath)
   let packCommand
   let packCwd
-  if (packInfo) {
+  if (args.artifact) {
+    packCommand = "use validated CI artifact"
+    packCwd = repoPath
+  } else if (packInfo) {
     packCommand = `bun run ${scriptName}`
     packCwd = packInfo.cwd
   } else if (mentraBin && scriptName === "pack") {
@@ -411,7 +421,7 @@ Never commits or pushes. Prepares local changes only.`)
   }
 
   const zipName = `${packageName}-${newVersion}.zip`
-  const zipPath = join(miniappDir, "build", zipName)
+  const zipPath = args.artifact ? resolve(args.artifact) : join(miniappDir, "build", zipName)
   const destZip = join(ctx.assetsDir, zipName)
 
   console.log(`Miniapp:     ${packageName}`)
@@ -445,7 +455,10 @@ Never commits or pushes. Prepares local changes only.`)
 
   // 6. Build+pack
   let packResult
-  if (packInfo) {
+  if (args.artifact) {
+    if (!existsSync(zipPath)) die(`artifact does not exist: ${zipPath}`)
+    packResult = {status: 0}
+  } else if (packInfo) {
     packResult = spawnSync("bun", ["run", scriptName], {
       cwd: packCwd,
       stdio: "inherit",
@@ -493,7 +506,7 @@ Never commits or pushes. Prepares local changes only.`)
     verifyZip(producedZip, packageName, newVersion)
   } catch (err) {
     try {
-      unlinkSync(producedZip)
+      if (!args.artifact) unlinkSync(producedZip)
     } catch {
       // ignore
     }
@@ -501,7 +514,7 @@ Never commits or pushes. Prepares local changes only.`)
       restoreManifestVersion(manifestPath, manifest, originalVersion)
     }
     die(
-      `${err.message}. Deleted the bad zip` +
+      `${err.message}. ${args.artifact ? "Preserved the supplied artifact" : "Deleted the bad zip"}` +
         (newVersion !== originalVersion
           ? ` and restored miniapp.json version to ${originalVersion}.`
           : "."),

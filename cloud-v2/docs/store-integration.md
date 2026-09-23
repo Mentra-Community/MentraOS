@@ -78,3 +78,33 @@ its existing `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`.
 Allowlist both website origins plus `/api/console/auth/callback` in WorkOS,
 and their origins as sign-out return URLs. Local callbacks use ports 5174 and
 5175. These routes do not call Store and preserve incident report deep links.
+
+## First-party miniapp release repositories
+
+Captions, Translation, Teleprompter, Mentra Maps, and Recorder now own their
+source in separate repositories, alongside Notes, Call, Livestreamer, Mentra AI,
+and Merge. See the root `AGENTS.md` for repository links and
+`scripts/miniapp-repos.json` for local checkout mappings. Mentra Maps keeps
+`com.mentra.navigation`. Public SDK examples remain in MentraOS.
+
+Each repository versions its Store listing and artwork, validates an unsigned
+production ZIP, and publishes new `miniapp.json` versions on `main`. Apps with
+backends wait for their production deployment before publishing. The private
+Store repository supplies a shared publishing action pinned by commit, with an
+isolated source-pinned CLI until the npm release. Each repository has a separate
+app-restricted publishing credential in GitHub Secrets. Already-published
+versions skip listing changes and publication; unfinished uploads can resume
+only with identical bundle bytes.
+
+MentraOS still preinstalls the ZIPs in `mobile/assets/miniapps/`. Download the
+successful release workflow's artifact and preserve its exact bytes:
+
+```sh
+bun scripts/sync-miniapp.mjs --repo /path/to/miniapp --no-bump --artifact /path/to/release.zip
+```
+
+This verifies the package/version, replaces the bundled ZIP, and regenerates
+`mobile/src/generated/bundledMiniapps.ts` without rebuilding or signing it.
+Use the named mapping (for example `bun scripts/sync-miniapp.mjs maps`) for an
+intentional local production build and version bump. Maps requires the public
+`PUBLIC_MAPBOX_TOKEN` build variable.

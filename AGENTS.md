@@ -40,15 +40,15 @@ Consult module-specific AGENTS.md when working within that module.
 
 Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
-First-party miniapps and their backends also live in `miniapps/`. All of those
-miniapps are part of this repository's source scope. For example,
-`com.mentra.merge` is owned by this monorepo: its client is in
-`miniapps/merge/miniapp/` and its backend is in `miniapps/merge/backend/`.
-Package identifiers can be found in `miniapps/**/miniapp.json`; the surrounding
-component directories contain backend and deployment files. A separate backend
-hostname does not imply a separate repository or third-party ownership.
-The external first-party miniapp repositories are listed under
-"Related Miniapp Repositories" below; their source can be private.
+First-party product miniapps and their backends live in the external repositories
+listed under "Related Miniapp Repositories" below. Their source can be private.
+`miniapps/` retains public SDK examples and development tools. The Mentra App
+continues to preinstall first-party miniapps from `mobile/assets/miniapps/*.zip`;
+source extraction does not remove those bundles. Package identifiers stay stable
+across repository moves (Mentra Maps remains `com.mentra.navigation`).
+
+Use `scripts/miniapp-repos.json` for named source mappings and
+`scripts/sync-miniapp.mjs` to refresh bundled ZIPs and their generated index.
 
 ## Build Commands
 
@@ -192,6 +192,12 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
 - [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
 - [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
+- [Captions](https://github.com/Mentra-Community/captions-miniapp)
+- [Translation](https://github.com/Mentra-Community/translation-miniapp)
+- [Teleprompter](https://github.com/Mentra-Community/teleprompter-miniapp)
+- [Mentra Maps](https://github.com/Mentra-Community/maps-miniapp)
+- [Recorder](https://github.com/Mentra-Community/recorder-miniapp)
+- [Merge](https://github.com/Mentra-Community/merge-miniapp)
 
 If a MentraOS PR also requires changes to one of the external miniapps above, or
 you are otherwise asked to change one of those miniapps:
@@ -200,7 +206,10 @@ you are otherwise asked to change one of those miniapps:
    branch if it is already available locally.
 2. Make the changes in the external miniapp repository, bump its version, and
    push the changes directly to that repository's `main` branch.
-3. Package the updated miniapp as a ZIP archive.
+3. Use the unsigned production ZIP validated and published by that repository’s CI.
+   Install its exact bytes with `bun scripts/sync-miniapp.mjs --repo PATH --no-bump --artifact PATH_TO_CI_ZIP`.
+   For a local build, use the named mapping
+   or `--pack-script pack:prod`.
 4. Add the new ZIP archive to `mobile/assets/miniapps/` in the MentraOS
    monorepo so the external miniapp update is included in the MentraOS mobile
    PR.

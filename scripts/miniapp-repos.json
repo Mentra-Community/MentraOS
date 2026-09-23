@@ -1,14 +1,56 @@
 {
   "call": {
     "repo": "../Mentra-Call",
+    "packageName": "com.mentra.call",
     "packScript": "pack:prod"
   },
   "livestreamer": {
     "repo": "../Livestreamer-Miniapp",
+    "packageName": "com.mentra.livestreamer",
     "packScript": "pack:prod"
   },
   "store": {
     "repo": "../miniapp-store",
     "packScript": "pack"
+  },
+  "notes": {
+    "repo": "../Mentra-Notes-Miniapp",
+    "packageName": "com.mentra.notes",
+    "packScript": "pack:prod"
+  },
+  "ai": {
+    "repo": "../Mentra-AI-Miniapp",
+    "packageName": "com.mentra.ai",
+    "packScript": "pack:prod"
+  },
+  "merge": {
+    "repo": "../merge-miniapp",
+    "packageName": "com.mentra.merge",
+    "packScript": "pack:prod"
+  },
+  "captions": {
+    "repo": "../captions-miniapp",
+    "packageName": "com.mentra.captions",
+    "packScript": "pack:prod"
+  },
+  "translation": {
+    "repo": "../translation-miniapp",
+    "packageName": "com.mentra.translation",
+    "packScript": "pack:prod"
+  },
+  "teleprompter": {
+    "repo": "../teleprompter-miniapp",
+    "packageName": "com.mentra.teleprompter",
+    "packScript": "pack:prod"
+  },
+  "maps": {
+    "repo": "../maps-miniapp",
+    "packageName": "com.mentra.navigation",
+    "packScript": "pack:prod"
+  },
+  "recorder": {
+    "repo": "../recorder-miniapp",
+    "packageName": "com.mentra.recorder",
+    "packScript": "pack:prod"
   }
 }

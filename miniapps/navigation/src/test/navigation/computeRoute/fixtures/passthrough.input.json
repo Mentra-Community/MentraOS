@@ -1,9 +1,0 @@
-{
-  "origin": {"lat": 1, "lng": 2},
-  "stops": [
-    {"lat": 3, "lng": 4},
-    {"lat": 5, "lng": 6}
-  ],
-  "alternatives": 3,
-  "mode": "cycling"
-}
