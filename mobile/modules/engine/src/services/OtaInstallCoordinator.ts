@@ -520,7 +520,11 @@ class OtaInstallCoordinator {
           : this.besRestartRecovery === "complete"
             ? "live-bes-reboot"
             : null
-    if (this.nativeCompletion) await this.nativeCompletion.finish(proof)
+    const nativeCompletion = this.nativeCompletion
+    if (nativeCompletion) {
+      await nativeCompletion.finish(proof)
+      if (nativeCompletion !== this.nativeCompletion) return
+    }
 
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
