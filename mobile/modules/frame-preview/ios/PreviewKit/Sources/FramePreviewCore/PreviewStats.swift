@@ -98,6 +98,16 @@ public final class PreviewStats {
   public private(set) var preDispatchDrops: Int = 0
   /// The pack worker wanted a send buffer and both were still held by the transport.
   public private(set) var slotStarved: Int = 0
+  /// Pages that presented the current document's token.
+  public private(set) var handshakes: Int = 0
+  /// Android-only fallback reloads; always 0 on iOS, reported so both platforms share a schema.
+  public private(set) var installReloads: Int = 0
+  /// Output tier changes applied without restarting production or the transport.
+  public private(set) var tierChanges: Int = 0
+  /// Errors caught from the tap sink on the decoder thread, accumulated across drains.
+  public private(set) var tapSinkExceptions: Int = 0
+  /// Pack failures keyed by `PackFailureReason.rawValue`; only reasons that occurred are present.
+  public private(set) var packFailuresByReason: [String: Int] = [:]
 
   /// Producing the source frame. Only the synthetic source pays this; a real decoder hands over
   /// a buffer it has already made. Kept apart from `pack` so a slow test pattern cannot be read
@@ -144,7 +154,13 @@ public final class PreviewStats {
   public func onStaleAck() { staleAcks += 1 }
   public func onUnsupportedFormat() { unsupportedFormat += 1 }
   public func onTransportError() { transportErrors += 1 }
-  public func onPackFailure() { packFailures += 1 }
+  public func onPackFailure(_ reason: PackFailureReason) {
+    packFailures += 1
+    packFailuresByReason[reason.rawValue, default: 0] += 1
+  }
+  public func onHandshake() { handshakes += 1 }
+  public func onTierChange() { tierChanges += 1 }
+  public func onTapSinkExceptions(_ count: Int) { tapSinkExceptions += count }
   public func onPreDispatchDrop() { preDispatchDrops += 1 }
   public func onSlotStarved() { slotStarved += 1 }
 
@@ -227,6 +243,11 @@ public final class PreviewStats {
     packFailures = 0
     preDispatchDrops = 0
     slotStarved = 0
+    handshakes = 0
+    installReloads = 0
+    tierChanges = 0
+    tapSinkExceptions = 0
+    packFailuresByReason = [:]
     generate.reset()
     pack.reset()
     sendEnqueue.reset()

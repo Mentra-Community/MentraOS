@@ -27,17 +27,20 @@ import org.json.JSONObject
  *    the old reply proxy, and revokes credit, so a page that is on its way out cannot keep
  *    receiving frames.
  */
-class FramePreviewPort {
+class FramePreviewPort : PreviewFrameTransport {
   data class InstallResult(
     val supported: Boolean,
+    /** Contract reason when unsupported: `webview_feature_missing`. */
     val unavailableReason: String?,
+    /** The precise cause, for the native log only. */
+    val detail: String?,
     val listenerInstalled: Boolean,
     val installReloadRequired: Boolean,
   )
 
-  var onAuthenticated: (() -> Unit)? = null
-  var onAck: ((Int, Int) -> Unit)? = null
-  var onFailure: ((String, String) -> Unit)? = null
+  override var onAuthenticated: (() -> Unit)? = null
+  override var onAck: ((Int, Int) -> Unit)? = null
+  override var onFailure: ((String, String) -> Unit)? = null
 
   private val main = Handler(Looper.getMainLooper())
 
@@ -54,15 +57,15 @@ class FramePreviewPort {
    */
   fun install(target: WebView): InstallResult {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-      return InstallResult(false, "web_message_listener_unsupported", false, false)
+      return InstallResult(false, FEATURE_MISSING, "web_message_listener_unsupported", false, false)
     }
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_ARRAY_BUFFER)) {
       // Without binary payloads the only alternative is base64 over the JSON bridge, which is
       // the thing this experiment exists to avoid. Report it rather than silently degrade.
-      return InstallResult(false, "web_message_array_buffer_unsupported", false, false)
+      return InstallResult(false, FEATURE_MISSING, "web_message_array_buffer_unsupported", false, false)
     }
     if (webView === target && listenerInstalled) {
-      return InstallResult(true, null, true, false)
+      return InstallResult(true, null, null, true, false)
     }
     if (webView !== target) {
       removeListener()
@@ -75,18 +78,17 @@ class FramePreviewPort {
       // A listener registered after the document loaded does not exist inside that document.
       // One reload fixes it; the identity check above stops this from repeating.
       val needsReload = target.url != null
-      Log.i(TAG, "port installed reloadRequired=$needsReload url=${target.url}")
-      InstallResult(true, null, true, needsReload)
+      InstallResult(true, null, null, true, needsReload)
     } catch (error: Throwable) {
       Log.w(TAG, "addWebMessageListener failed", error)
-      InstallResult(false, "listener_install_failed", false, false)
+      InstallResult(false, FEATURE_MISSING, "listener_install_failed", false, false)
     }
   }
 
   /**
    * A new document invalidates the old page's credential and its reply proxy. The listener stays.
    */
-  fun rotateToken(token: String) {
+  override fun rotateToken(token: String) {
     this.token = token
     replyProxy = null
   }
@@ -99,7 +101,7 @@ class FramePreviewPort {
    * to claim or to hide: a long wait means the app's UI thread was busy with something else, and
    * that is exactly the interference the experiment is looking for.
    */
-  fun send(bytes: ByteArray, onSendMeasured: (queueWaitNs: Long, postNs: Long) -> Unit): Boolean {
+  override fun send(bytes: ByteArray, onSendMeasured: (queueWaitNs: Long, postNs: Long) -> Unit): Boolean {
     val proxy = replyProxy ?: return false
     // postMessage must run on the thread that owns the WebView. Packing already happened on the
     // worker; only this hop is on the UI thread, and it is timed because "does this block the
@@ -110,8 +112,7 @@ class FramePreviewPort {
       try {
         proxy.postMessage(bytes)
       } catch (error: Throwable) {
-        Log.w(TAG, "postMessage(byte[]) failed", error)
-        onFailure?.invoke("send_failed", error.message ?: error.toString())
+        onFailure?.invoke("send_failed", error.javaClass.simpleName)
       }
       onSendMeasured(started - postedAtNs, System.nanoTime() - started)
     }
@@ -120,7 +121,12 @@ class FramePreviewPort {
 
   fun isAuthenticated(): Boolean = replyProxy != null
 
-  fun destroy() {
+  /** Forget the consumer as if its page had gone away. The listener and token stay. */
+  override fun dropConsumer() {
+    replyProxy = null
+  }
+
+  override fun destroy() {
     replyProxy = null
     token = ""
     removeListener()
@@ -165,12 +171,11 @@ class FramePreviewPort {
       "hello" -> {
         val supplied = json.optString("token")
         if (token.isEmpty() || supplied != token) {
-          Log.w(TAG, "hello rejected: token mismatch")
-          onFailure?.invoke("auth_failed", "token mismatch")
+          // The reason only; the token itself never reaches a log.
+          onFailure?.invoke("auth_failed", if (token.isEmpty()) "no_document" else "token_mismatch")
           return
         }
         replyProxy = proxy
-        Log.i(TAG, "consumer authenticated")
         onAuthenticated?.invoke()
       }
       "ack" -> onAck?.invoke(json.optInt("gen", -1), json.optInt("seq", -1))
@@ -182,5 +187,29 @@ class FramePreviewPort {
 
     /** Injected into the page as `window.MentraFramePreviewPort`. */
     const val PORT_NAME = "MentraFramePreviewPort"
+
+    const val FEATURE_MISSING = "webview_feature_missing"
   }
+}
+
+/**
+ * The binary channel the session sends frames over. [FramePreviewPort] on Android; tests supply a
+ * fake so the pipeline runs on the JVM.
+ */
+interface PreviewFrameTransport {
+  var onAuthenticated: (() -> Unit)?
+  var onAck: ((Int, Int) -> Unit)?
+
+  /** `(reason, detail)`: `auth_failed` or `send_failed`. Never carries a token. */
+  var onFailure: ((String, String) -> Unit)?
+
+  /** A new document: drop the old consumer and accept only [token] from now on. */
+  fun rotateToken(token: String)
+
+  /** Queue one frame. False when no consumer is authenticated for the current document. */
+  fun send(bytes: ByteArray, onSendMeasured: (queueWaitNs: Long, postNs: Long) -> Unit): Boolean
+
+  fun dropConsumer()
+
+  fun destroy()
 }

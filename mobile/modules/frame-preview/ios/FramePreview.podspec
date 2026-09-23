@@ -15,7 +15,7 @@ Pod::Spec.new do |s|
   # DecodedFrameTap lives beside the existing decoders rather than here, so the preview can
   # attach without the media pod knowing anything about WebViews.
   s.dependency 'GlassesMedia'
-  s.frameworks = 'CoreVideo', 'CoreMedia', 'Network'
+  s.frameworks = 'Accelerate', 'CoreVideo', 'CoreMedia', 'Network'
   # PreviewKit is a Swift package so its pure logic can be unit tested with `swift test`, and its
   # sources are compiled straight into this pod the way GlassesMedia does with CoreKit.
   s.source_files = '*.{swift,h,m,mm}', 'PreviewKit/Sources/FramePreviewCore/*.swift'

@@ -594,7 +594,7 @@ final class AcsMeetingSession {
             // Preview first, deliberately: the tap must see frames the ACS sender's pacing and
             // readiness gates would otherwise hide, and it cannot delay or break this call.
             DecodedFrameTap.shared.offer(buffer)
-            frameSender.send(buffer)
+            if frameSender.send(buffer) { DecodedFrameTap.shared.recordAcsSend() }
         }
         source.onPcm = { [weak self] pcm, rate, channels in
             self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)

@@ -1,53 +1,101 @@
-# Frame preview (experiment)
+# Frame preview
 
-Forks decoded video out of the existing call pipeline and pushes it into the Mentra Call
-miniapp's WebView as raw binary, so we can answer one question with measurements instead of
-opinion: **can the miniapp WebView receive and render 1280×720 YUV at up to 15 fps without
-hurting the call?**
+Native transport behind `<StreamPreview>`: forks decoded call video out of the existing ACS
+pipeline and pushes it into the miniapp's WebView as raw binary YUV, sized to the view and paced
+by the page. There is no second encoder, no extra WebRTC connection and no native overlay, and
+frame bytes never touch React Native JavaScript, JSON or base64.
 
-This is an experiment, not a product path. There is no second encoder, no extra WebRTC
-connection, no native overlay, and no public SDK surface.
+The rule this module is built around: **the preview must cost the call nothing**. A slow page
+lowers the preview's frame rate; a preview bug stops the preview. Neither reaches the ACS sender.
 
 ## Shape
 
 ```text
 existing decoder
-  ├── existing ACS sender → Teams          (unchanged)
+  ├── existing ACS sender → Teams          (unchanged; counted as acsSendFps)
   └── DecodedFrameTap (optional)
-        → admission: one credit, absolute fps schedule, one free slot
-        → single pack worker (tight YUV, stride-aware)
+        → CallSource (PreviewSourcePort: attach → generation, generation-checked detach)
+        → admission: one credit, absolute fps schedule, one queued frame
+        → single pack worker: validate geometry → downscale into a preallocated slot → header
         → binary transport
         → WebGL renderer in the miniapp page
         → ack (gen, seq) → credit returns
 ```
 
-Control and status travel as JSON on the WebView bridge the miniapp already has. Frame bytes
-never touch React Native JavaScript, the miniapp's background JSContext, JSON, or base64.
-
-## Transports
-
-| Platform | Mechanism | Why |
+| Platform | Transport | Downscale |
 |---|---|---|
-| Android | `WebViewCompat.addWebMessageListener` + `JavaScriptReplyProxy.postMessage(byte[])` | Chromium hands the page an `ArrayBuffer` directly. Requires `WEB_MESSAGE_LISTENER` and `WEB_MESSAGE_ARRAY_BUFFER`; the experiment reports itself unavailable otherwise. |
-| iOS | Loopback WebSocket (`NWListener` + `NWProtocolWebSocket`) on `127.0.0.1` | WKWebView has no native → page binary channel. The socket is bound to loopback with an ephemeral port and a per-document token. |
+| Android | `WebViewCompat.addWebMessageListener` + `JavaScriptReplyProxy.postMessage(byte[])`. Requires `WEB_MESSAGE_LISTENER` and `WEB_MESSAGE_ARRAY_BUFFER`, otherwise `bind` reports `webview_feature_missing`. | libyuv box scale via WebRTC's `JavaI420Buffer` (area-average Kotlin fallback if the native library is unavailable). |
+| iOS | Loopback WebSocket (`NWListener`) bound to `127.0.0.1` on an ephemeral port, per-document token. | vImage (`vImageScale_Planar8` / `vImageScale_CbCr8`). |
 
-Two lifetimes are kept apart, and conflating them is the bug this design exists to avoid:
+## JS API
 
-- **Binding** belongs to a native WebView. An Android message listener cannot be added to a
-  document that has already loaded, so the first bind may need exactly one reload. Re-binding
-  the same view never asks for another.
-- **Document** belongs to one page load. A new document mints a new token, drops the old reply
-  proxy or connection, and revokes credit. It is bumped where the host already resets its ready
-  handshake — launch, reload, hot reload, content-process termination — and deliberately **not**
-  from `onLoadEnd`, which fires several times per load.
+`@mentra/frame-preview` exports `FramePreviewModule` (native name `MentraFramePreview`):
 
-`stop()` halts frame production but keeps the authenticated transport, so `start()` needs no new
-handshake. `unbind()` destroys the transport; the page must handshake again.
+| Call | Notes |
+|---|---|
+| `bind({hostViewTag, packageName, traceId})` | Android installs the listener; the host calls it before the first navigation. Returns `{installReloadRequired, unavailableReason?}`. |
+| `prepareDocument({docGen, traceId})` | New token per document, idempotent per `docGen`. Returns `{protocolVersion: 1, transport, url?, portName?, token, docGen}`. Rejects `not_bound`. |
+| `configure({source, mode, targetWidth, targetHeight, maxFps, diagnostics?})` | Rejects `diagnostics_disabled` when needed. A tier change never restarts production or the transport. |
+| `start()` / `stop(reason)` | `stop` keeps the authenticated transport. |
+| `unbind(reason)` | Destroys the transport. |
+| `setDiagnosticsEnabled`, `setTapTelemetry`, `setRunLogEnabled` | See below. |
+| `injectFault({kind, ms?})` | Diagnostics only: `ack_delay`, `ack_drop`, `transport_close`, `pack_throw`, `sink_throw`, `clear`. |
+| `resetStats()`, `runLogPath()` | |
+
+Events: `onStatus` (1 Hz), `onStopped({reason, docGen})` with `ack_timeout`, `pack_failed`,
+`transport_failed`, `source_detached`, `diagnostics_disabled` or the caller's reason, and `onLog`
+(`PREVIEW_TRACE` lines for the host to forward to the console).
+
+## Lifetimes
+
+- **Binding** belongs to a native WebView. An Android listener registered after a document loaded
+  does not exist in that document; `installReloadRequired` is the fallback and is counted as
+  `installReloads`, which should stay 0 because the host binds before navigating.
+- **Document** belongs to one page load: a new token, the old consumer dropped, credit revoked.
+- **Production** is `start`/`stop`. Stopping keeps the transport, so restarting needs no handshake.
+
+## Failure isolation
+
+- Declared errors (Kotlin `Throwable`, Swift `throws`) from the tap sink are caught in
+  `DecodedFrameTap`; those from the pack worker are caught in the worker. Both are counted
+  (`tapSinkExceptions`, `packFailures`) and stop the subscription with `pack_failed`.
+- Swift runtime traps cannot be caught, so they are prevented: geometry is validated before any
+  copy (non-zero size, stride at least the row, every plane inside its buffer, payload equal to
+  the header length), frames are packed only into preallocated slots, and the tap, pacer and pack
+  code avoid force-unwraps (`ios/.swiftlint.yml`).
+- Slots are sized to one produced frame and replaced only when that size changes (tier change or
+  source resolution change), never per frame and never while a worker or the transport holds one.
+
+## Sizing
+
+The host sends a target box already quantized to a tier (`320x180`, `640x360`). Native fits the
+source inside it with the source's aspect ratio, rounds to even sizes, never upscales, and the
+header and `outWidth`/`outHeight` report what was produced. Native also enforces a ceiling:
+640x360 at 15 fps normally, 1920x1080 at 30 fps with diagnostics on.
+
+## Diagnostics, telemetry and logs
+
+| Setting | Debug default | Release default | Controls |
+|---|---|---|---|
+| Diagnostics | on | off | synthetic source, non-`render` modes, `noiseAmplitude`, `consumerDelayMs`, fault hooks, the higher ceiling |
+| Run log | on | off | NDJSON file and the 1 Hz `PREVIEW_TRACE phase=status` line |
+| Tap telemetry | off | off | tap cadence, offer cost and `acsSendFps` with no preview attached |
+
+With tap telemetry off and no preview attached, `DecodedFrameTap.offer` returns after one state
+read. With it on, a stopped preview records a `runKind: "telemetry"` NDJSON run, which is the
+preview-off baseline for the same counters.
+
+Lifecycle lines use the `PREVIEW_TRACE` marker and `phase=` key-values with `previewTraceId`,
+`docGen`, `gen` and a monotonic `t`. Tokens and meeting URLs are redacted and URL query strings
+stripped. Nothing is logged per frame; repeated warnings log once and then a count every 10 s.
+
+Run logs: Android `<external files>/frame-preview/<runId>.ndjson` (`adb pull`), iOS
+`Application Support/frame-preview/<runId>.ndjson`. Lines are `meta`, `status`, `event` and
+`end`; `end` repeats the contract counters.
 
 ## Frame protocol
 
-64-byte little-endian header, then tightly packed 8-bit YUV. Golden bytes are asserted in Kotlin,
-Swift and TypeScript, so a drift in any one of them fails a named test.
+64-byte little-endian header, then tightly packed 8-bit YUV.
 
 | offset | size | field |
 |---|---|---|
@@ -69,20 +117,28 @@ Swift and TypeScript, so a drift in any one of them fails a named test.
 | 40 | 8 | monotonic clock immediately before the send call |
 | 48 | 16 | reserved |
 
-Payload size for both formats is `width*height + 2*ceil(width/2)*ceil(height/2)`; 1280×720 is
-1,382,400 bytes, so 15 fps is 20,736,000 bytes per second. I420 is `Y | U | V`; NV12 is
-`Y | UVUV…`. A reader validates version, lengths, dimensions and format before touching a pixel.
+Payload size for both formats is `width*height + 2*ceil(width/2)*ceil(height/2)`. I420 is
+`Y | U | V`; NV12 is `Y | UVUV…`. Native timestamps are only compared with other native
+timestamps.
 
-Native timestamps are only ever compared with other native timestamps. The page measures its own
-work with `performance.now()` and the two are never subtracted from each other.
+### Golden fixtures
+
+`fixtures/` holds MFPV frames and `manifest.json`, generated by `fixtures/generate.mjs`: valid
+I420 and NV12 at odd and even sizes, every rotation, colour matrix and range, the fallback flag,
+and one malformed file per parser reason (`short-buffer`, `bad-magic`, `unsupported-version`,
+`bad-header-length`, `bad-dimensions`, `unknown-pixel-format`, `payload-size-mismatch`,
+`truncated-payload`). Kotlin, Swift and TypeScript assert the same files.
+
+```sh
+node mobile/modules/frame-preview/fixtures/generate.mjs --check
+```
 
 ## Backpressure
 
 One credit. A frame is admitted only when production is running, a consumer has authenticated
-for the current document, nothing is in flight, and the wall clock says the slot is due. The
-schedule is absolute (`nextDue += period`), not "wait one period after finishing", which would
-add the consumer's latency to every interval. A slow consumer therefore lowers delivered fps and
-never builds a queue. An unacknowledged frame past the 2 s deadline stops the subscription; it
+for the current document, nothing is in flight, and the schedule says the slot is due. The
+schedule is absolute (`nextDue += period`), so a slow consumer lowers delivered fps and never
+builds a queue. An unacknowledged frame past 2 s stops the subscription with `ack_timeout`; it
 never mints a replacement credit.
 
 ## Diagnostic modes
@@ -90,106 +146,26 @@ never mints a replacement credit.
 | Mode | Runs | Isolates |
 |---|---|---|
 | `off` | nothing | — |
-| `generate_only` | source frame only | cost of producing a 720p picture |
-| `pack_only` | + stride-aware pack | the copy |
+| `generate_only` | source frame only | cost of producing a picture |
+| `pack_only` | + validate, downscale, pack | the copy |
 | `receive_discard` | + transport, page validates | transport and parse |
 | `render` | + page draws | upload, shader, draw submit |
-
-`generate_only` is the baseline for synthetic comparisons: without it the difference between
-modes would include the cost of inventing the picture. For real-call comparisons the call and
-its incoming video are left alone and only the mode changes.
-
-Real frames are reported at whatever the decoder actually produced. Android scales to the
-negotiated ACS profile before I420, so a call requesting 540p previews at 540p and says so; it is
-never upscaled and relabelled 720p.
-
-## Stress defaults
-
-The panel defaults to **1280×720 at 30 fps**, which is double the product target and about
-41.5 MB/s of packed YUV through the transport. A run that holds there has headroom; a run that
-does not can be walked down through 15, 10 and 5 to find where it breaks.
-
-Two things had to change before that number meant anything. The synthetic pattern was a
-per-pixel loop costing ~175 ms a frame in a debug build, which capped the source near 5 fps and
-made every reported number really a number about the generator — it is now built two rows at a
-time and copied. And the reporter sorted each percentile ring once per percentile, seven rings a
-second, on the queue that packs frames; each ring is now sorted once per report.
-
-Both are measurement-correctness fixes rather than optimisations: the first made the pipeline
-unmeasurable, the second put the measurement inside the measurement.
-
-## What gets measured, and where it lands
-
-Every run writes one NDJSON file. The same object that goes to the panel at 1 Hz is appended to
-that file, so the screen and the file can never disagree about what a second looked like, and
-`pack_only` vs `render` becomes a diff rather than an argument.
-
-| | |
-|---|---|
-| Android | `<external files>/frame-preview/<runId>.ndjson` — `adb pull`, no root |
-| iOS | `Application Support/frame-preview/<runId>.ndjson` — path is `NSLog`ged at `start()` |
-
-`runId` is shown in the panel and is the file name. Lines are `t: "meta"` (device, OS, mode,
-target fps — written once), `t: "status"` (one per second), `t: "event"` (document generations,
-consumer auth, transport failures, stale acks, ack timeouts, configure) and `t: "end"`. Each
-line is flushed as it is written: the tail of a run that ended in a crash or a thermal shutdown
-is the part worth having.
-
-Three groups of counters matter for different questions.
-
-**Is anything compressing.** The synthetic pattern carries grain, which cannot change the
-bandwidth — raw YUV is the same size whatever it contains — but flat colour bars are enormously
-compressible and noise is not. If `sendCompleteMs*` and `deliveredFps` hold with grain on, then
-nothing in the path is quietly deflating and the throughput figure is real. That is the only
-reason the noise is there.
-
-**Is the source itself the limit.** `generateMs*` is the synthetic generator's own cost and
-nothing else's; a real decoder never pays it. If it approaches the frame period, the run is
-measuring the test pattern and every other number is downstream of that.
-
-**Is the preview keeping up.** `deliveredFps` against `targetFps`, and the skip reasons that
-explain the difference: `skippedPacing` (not due yet), `skippedBusy` (consumer or worker busy),
-with `preDispatchDrops` and `slotStarved` as sub-reasons of the latter — they are already
-included in `skippedBusy` and must not be added to it. `outstanding` should be 0 or 1 forever.
-
-**Is it smooth.** `deliveryGapMs*` rather than the mean. A steady 14.8 fps and a 14.8 fps made of
-alternating 30 ms and 100 ms gaps are the same number above and very different to look at. Every
-timing carries `p95` and a `Max` that is not windowed, because the worst frame of the run is the
-one that was visible. The page reports the same cadence from its own clock as `arrivalGapMs*`,
-and `markerMismatches` compares the pattern drawn into the pixels against the header's sequence —
-the only check that can catch a buffer reused while the page was still reading it.
-
-**Did the call suffer.** This is the group the decision actually turns on, and the only one that
-describes something other than the preview. `tapOfferMeanUs` / `tapOfferMaxUs` is time spent on
-the decoder thread; `tapCadenceMeanMs` / `tapCadenceMaxMs` is the decoder's own rhythm and is
-counted whether or not a preview sink is attached, so a run with preview off is a usable
-baseline. On Android `mainQueueWaitMs*` shows how long the send sat behind the app's own UI work,
-and `tapSinkExceptions` must stay zero.
-
-Send timing is reported differently per platform on purpose. Chromium copies inside
-`postMessage`, so Android's `sendCompleteMs*` is the whole send. Network framework's enqueue
-returns before the copy happens, so iOS reports `sendEnqueueMs*` and `sendCompleteMs*`
-separately; averaging them under one name would make iOS look an order of magnitude faster than
-Android for no reason. Keys a platform cannot honestly measure are absent rather than zero.
-
-Native timings only ever come from the native monotonic clock and page timings only from
-`performance.now()`; the two are never subtracted. `drawToRafMs` is draw submission to the next
-animation frame, which is the closest honest proxy for presentation — it is not a measurement of
-what the display actually showed.
 
 ## Verification
 
 ```sh
 swift test --package-path mobile/modules/frame-preview/ios/PreviewKit
 cd mobile/android && ./gradlew :mentra-frame-preview:testDebugUnitTest
+cd mobile/android && ./gradlew :mentra-frame-preview:connectedDebugAndroidTest   # device or emulator
+swift test --package-path mobile/modules/glasses-media/ios/CoreKit                # macOS
 ```
 
-Unit tests cover the header's golden bytes, the pacer (credit, absolute schedule, stall resync,
-stale and duplicate acks, timeout, stop/restart), stride-aware packing, the header surviving
-`I420Packer.pack`'s `clear()`, the synthetic lease pool refusing to overwrite a buffer a worker
-still holds, and the statistics layer: percentile rings that lap without losing their maximum,
-delivery-gap cadence, first-frame latencies, a rate window that restarts with each run, and a
-run-log encoder that drops a non-finite number rather than the twenty good counters beside it.
-
-Neither proves the module links into the app. That needs an app build on each platform, and the
-transport question itself can only be answered on physical hardware.
+JVM and SwiftPM suites cover the golden fixtures, the pacer, geometry validation, downscale
+sizing, the slot pool, diagnostics gating, tap telemetry, the trace format and redaction, and
+the full pipeline with a fake transport: sink and worker throws, malformed geometry, ack drop,
+ack delay, transport close and tier changes. The instrumented Android test runs a real WebView
+with the listener installed before navigation and checks a binary frame and its ack round-trip
+with `installReloads == 0`. `LoopbackFrameSocketTests` (macOS) connects a real
+`URLSessionWebSocketTask`, checks token auth, rejects a wrong token, and asserts the listener is
+reachable on 127.0.0.1 only. The vImage path and the loopback socket compile only on Apple
+platforms.
