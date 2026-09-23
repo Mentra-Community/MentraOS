@@ -87,9 +87,13 @@ describe("exact PR build inventory", () => {
   });
 });
 
-for (const channel of ["dev", "staging"] as const) test(`${channel} inventories coordinated Mac receipts without fabricating PR provenance`, async () => {
+function releaseFixture(channel: "dev" | "staging", attempt = 1) {
   const f = fixture(), releaseChannel = channel === "dev" ? "dev" : "beta", identity = `3.3.0-${releaseChannel}.325`, tag = "mentra-builds-v3.3.0";
-  const releaseRun = run({ event: "push", head_branch: channel, path: ".github/workflows/coordinated-release.yml" });
+  const releaseRun = run({ run_attempt: attempt, event: "push", head_branch: channel, path: ".github/workflows/coordinated-release.yml" });
+  const publicationJobs = [{ ...jobs[0]!, name: "Finalize immutable release bill of materials", run_attempt: attempt,
+    steps: [{ name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success" }] }];
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: publicationJobs.length, jobs: publicationJobs });
+  f.rows.set(`${API}/actions/runs/50/attempts/${attempt}`, releaseRun);
   f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=${channel}&per_page=10`, { workflow_runs: [releaseRun] });
   f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, { artifacts: [{ name: `coordinated-release-plan-mentra-${identity}`, expired: false,
     workflow_run: { id: 50, head_sha: HEAD } }] });
@@ -101,9 +105,14 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
     artifacts: { mac: { name: `mentraos-${identity}-mac.zip`, size: 100, sha256: HASH } } });
   f.rows.set(`${CDN}${tag}/mentra-live-ota-${identity}.json`, { releaseVersion: identity });
   f.rows.set(`HEAD ${CDN}${tag}/mentraos-${identity}-mac.zip`, new Response(null, { headers: { "Content-Length": "100" } }));
+  return { ...f, identity, publicationJobs, releaseRun };
+}
+
+for (const channel of ["dev", "staging"] as const) test(`${channel} inventories coordinated Mac receipts without fabricating PR provenance`, async () => {
+  const f = releaseFixture(channel);
   const builds = await f.gateway.inventory({ channel });
   expect(builds[0]?.availability).toBe("available");
-  expect(builds[0]?.release).toBe(identity);
+  expect(builds[0]?.release).toBe(f.identity);
   expect(builds[0]?.source).toEqual({ channel, buildRunId: 50, publicationAttempt: 1 });
   expect(builds[0]?.routines[0]?.available).toBe(false);
   expect(builds[0]?.routines[0]?.reason).toContain("not enabled");
@@ -116,6 +125,46 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
   const commissioned = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
     routines: ["no-glasses", "day1-ota", "mentra-call"] });
   expect((await commissioned.inventory({ channel }))[0]!.routines.every(routine => routine.available)).toBe(true);
+});
+
+for (const channel of ["dev", "staging"] as const) test(`${channel} retained artifacts cannot qualify a non-publishing attempt`, async () => {
+  for (const scenario of ["earlier-attempt", "later-skipped", "dry-run", "missing-step", "ambiguous-finalizer"]) {
+    const f = releaseFixture(channel, 2);
+    const published = structuredClone(f.publicationJobs[0]!);
+    if (scenario === "earlier-attempt") {
+      f.releaseRun.run_attempt = 1;
+      f.rows.set(`${API}/actions/runs/50/attempts/1`, f.releaseRun);
+      f.publicationJobs.unshift({ ...published, id: 99, run_attempt: 1, conclusion: "skipped", steps: [] });
+    }
+    if (scenario === "later-skipped") {
+      f.publicationJobs.unshift({ ...published, id: 99, run_attempt: 1 });
+      f.publicationJobs[1]!.conclusion = "skipped";
+    }
+    if (scenario === "dry-run") f.publicationJobs[0]!.steps[0]!.conclusion = "skipped";
+    if (scenario === "missing-step") f.publicationJobs[0]!.steps = [];
+    if (scenario === "ambiguous-finalizer") f.publicationJobs.push({ ...published, id: 99 });
+    f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
+    const gateway = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
+      routines: ["no-glasses", "day1-ota", "mentra-call"] });
+    const selected = await gateway.resolve({ channel, buildRunId: 50, publicationAttempt: f.releaseRun.run_attempt });
+    const inventoried = (await gateway.inventory({ channel }))[0]!;
+    for (const build of [selected, inventoried]) {
+      expect(build.availability).toBe("unavailable");
+      expect(build.reason).toContain("did not publish immutable assets");
+      expect(build.routines.every(routine => !routine.available)).toBe(true);
+    }
+    expect(f.calls.some(call => call.url.startsWith(CDN) || call.url.includes("/artifacts?"))).toBe(false);
+  }
+});
+
+test("the actual successful producing retry is available with its original attempt number", async () => {
+  const f = releaseFixture("dev", 2);
+  f.publicationJobs.unshift({ ...f.publicationJobs[0]!, id: 99, run_attempt: 1, conclusion: "skipped", steps: [] });
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
+  const selected = await f.gateway.resolve({ channel: "dev", buildRunId: 50, publicationAttempt: 2 });
+  expect(selected.availability).toBe("available");
+  expect(selected.source.publicationAttempt).toBe(2);
+  expect(selected.archive?.sha256).toBe(HASH);
 });
 
 test("dispatch fixes the repository/workflow/ref and passes only exact explicit request selectors", async () => {

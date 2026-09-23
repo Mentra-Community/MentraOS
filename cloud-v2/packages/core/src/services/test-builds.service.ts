@@ -8,6 +8,8 @@ const PRIVATE_REPOSITORY = "Mentra-Community/Mentra-Automated-Testing";
 const REQUEST_WORKFLOW = "request-e2e-routine.yml";
 const PR_WORKFLOW = "mentra-app-ios-build.yml";
 const RELEASE_WORKFLOW = "coordinated-release.yml";
+const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
+const RELEASE_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets";
 const CDN = `https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/`;
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -22,7 +24,8 @@ const runSchema = z.object({
 type GithubRun = z.infer<typeof runSchema>;
 const assetSchema = z.object({ name: z.string(), sha256: digest, size: positive });
 const jobSchema = z.object({ id: positive, name: z.string(), run_attempt: positive, status: z.string(),
-  conclusion: z.string().nullable(), started_at: z.string().nullable(), completed_at: z.string().nullable() });
+  conclusion: z.string().nullable(), started_at: z.string().nullable(), completed_at: z.string().nullable(),
+  steps: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })).optional() });
 type Job = z.infer<typeof jobSchema>;
 const prSchema = z.object({ number: positive, state: z.string(), title: z.string(),
   head: z.object({ sha, ref: z.string(), repo: repositorySchema }), base: z.object({ ref: z.string() }) });
@@ -227,6 +230,12 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"]) {
     requireThat(run.conclusion === "success", "Coordinated release has not succeeded");
+    // Artifacts are scoped to the whole run, including retries. A successful
+    // attempt must have actually published them; dry runs are not publications.
+    const published = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt === run.run_attempt);
+    requireThat(published.length === 1 && published[0]!.status === "completed" && published[0]!.conclusion === "success"
+      && published[0]!.steps?.some(step => step.name === RELEASE_PUBLISH_STEP && step.status === "completed" && step.conclusion === "success"),
+      "Selected coordinated attempt did not publish immutable assets");
     const listed = z.object({ artifacts: z.array(z.object({ name: z.string(), expired: z.boolean(),
       workflow_run: z.object({ id: positive, head_sha: sha }) })) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
     const plans = listed.artifacts.filter(item => item.name.startsWith("coordinated-release-plan-mentra-"));
