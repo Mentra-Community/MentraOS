@@ -2,6 +2,9 @@ import React from "react"
 
 import {
   MentraLiveOtaFlow,
+  FirmwareUpdateFlow,
+  useFirmwareUpdate,
+  type FirmwareTarget,
   useMentraLiveOta,
   type MentraLiveOtaController,
   type MentraLiveOtaScreen,
@@ -10,6 +13,15 @@ import {otaLocalNetwork, otaServer} from "@mentra/engine/bluetooth-sdk/ota-trans
 
 export function StockOtaConsumer({onDone, onSetupWifi}: {onDone: () => void; onSetupWifi: () => void}) {
   return <MentraLiveOtaFlow onFinished={onDone} onOpenWifiSetup={onSetupWifi} />
+}
+
+export function DeviceOtaConsumer({onDone}: {onDone: () => void}) {
+  return <FirmwareUpdateFlow entryPoint="settings" onFinished={onDone} />
+}
+
+export function useDeviceOtaConsumer(target: FirmwareTarget) {
+  const controller = useFirmwareUpdate(target, {entryPoint: "settings"})
+  return {phase: controller.snapshot.phase, install: () => controller.perform("install")}
 }
 
 function screenLabel(screen: MentraLiveOtaScreen): string {

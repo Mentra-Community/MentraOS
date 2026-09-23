@@ -124,6 +124,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await MainActor.run { try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: deviceId).snapshot.dictionary() } }
         }
 
+        AsyncFunction("configureFirmwareUpdater") { (deviceId: String, metadata: [String: String]) in
+            try await MainActor.run { try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: deviceId).configure(metadata).dictionary() } }
+        }
+
         AsyncFunction("startFirmwareUpdate") { (values: [String: Any]) in
             let request = try JSONDecoder().decode(FirmwareStartRequest.self, from: JSONSerialization.data(withJSONObject: values))
             return try await MainActor.run {

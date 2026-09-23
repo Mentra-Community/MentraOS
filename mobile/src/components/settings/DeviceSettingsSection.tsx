@@ -1,4 +1,3 @@
-import {useEffect, useState} from "react"
 import {Image, View} from "react-native"
 
 import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
@@ -11,12 +10,10 @@ import {showAlert} from "@/contexts/ModalContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
-import {deploymentStore} from "@/services/deployment"
 import {SETTINGS, useSetting, Capabilities, DeviceTypes, getModelCapabilities, engine} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
-import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
 
 const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
@@ -69,7 +66,6 @@ export function DeviceSettingsSection() {
   // )
   // const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const [ar99OtaVisible, setAr99OtaVisible] = useState(false)
   const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const otaSnapshot = useEngineSnapshot(engine.ota.snapshot, engine.ota.onSnapshot)
   const glassesConnected = glassesStatus.state === "connected"
@@ -82,19 +78,6 @@ export function DeviceSettingsSection() {
     isAr99Identifier(defaultWearable) ||
     isAr99Identifier(glassesInfo.model) ||
     isAr99Identifier(glassesInfo.bluetoothName)
-  const showAr99OtaEntry =
-    deploymentStore.getActive().kind === "consumer" &&
-    glassesConnected &&
-    (isAr99Identifier(defaultWearable) ||
-      isAr99Identifier(glassesInfo.model) ||
-      isAr99Identifier(glassesInfo.bluetoothName))
-
-  useEffect(() => {
-    if (!showAr99OtaEntry && ar99OtaVisible) {
-      setAr99OtaVisible(false)
-    }
-  }, [ar99OtaVisible, showAr99OtaEntry])
-
   const confirmForgetGlasses = async () => {
     let result = await showAlert({
       title: translate("settings:forgetGlasses"),
@@ -235,15 +218,12 @@ export function DeviceSettingsSection() {
         )}
 
       {/* WiFi — connected glasses that support WiFi */}
-      {showAr99OtaEntry && (
-        <>
-          <RouteButton
-            icon={<Icon name="world-download" size={24} color={theme.colors.secondary_foreground} />}
-            label="Firmware Update"
-            onPress={() => setAr99OtaVisible(true)}
-          />
-          <Ar99OtaModal visible={ar99OtaVisible} onClose={() => setAr99OtaVisible(false)} />
-        </>
+      {engine.firmwareUpdates.supports(defaultWearable, "settings") && (
+        <RouteButton
+          icon={<Icon name="refresh" size={24} color={theme.colors.secondary_foreground} />}
+          label={translate("deviceSettings:checkForUpdates")}
+          onPress={() => push("/ota/check-for-updates", {entryPoint: "settings"})}
+        />
       )}
 
       {glassesConnected && features?.hasWifi && (
@@ -257,9 +237,11 @@ export function DeviceSettingsSection() {
       )}
 
       {/* OTA Progress — OTA-capable glasses in super mode */}
-      {superMode && glassesConnected && features?.hasOta && otaProgress?.progress && otaProgress?.progress < 100 && (
-        <OtaProgressSection otaProgress={otaProgress} />
-      )}
+      {superMode &&
+        glassesConnected &&
+        defaultWearable === DeviceTypes.LIVE &&
+        otaProgress?.progress &&
+        otaProgress?.progress < 100 && <OtaProgressSection otaProgress={otaProgress} />}
 
       {/* Nex Developer Settings — Mentra Display only */}
       {defaultWearable && defaultWearable.includes(DeviceTypes.NEX) && (

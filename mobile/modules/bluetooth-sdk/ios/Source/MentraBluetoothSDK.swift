@@ -1567,6 +1567,7 @@ public final class MentraBluetoothSDK {
     }
 
     func sendAr99FactoryReset() throws {
+        try assertFirmwareReplacementAllowed()
         try requireGlassesConnected(operation: "factory reset AR99")
         try DeviceManager.shared.sendAr99FactoryReset()
     }

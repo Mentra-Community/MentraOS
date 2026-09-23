@@ -1359,6 +1359,8 @@ export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 export interface BluetoothSdkPublicModule {
   /** Passive retained native snapshot. This never starts or cancels an update. */
   getFirmwareUpdateSnapshot(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+  /** Apply device-defined policy from a trusted host/source. Does not start or retry firmware installation. */
+  configureFirmwareUpdater(deviceId: string, metadata: Record<string, string>): Promise<NativeFirmwareUpdateSnapshot>
   startFirmwareUpdate(request: NativeFirmwareStartRequest): Promise<NativeFirmwareUpdateSnapshot>
   /** Provider-defined inspection/adoption; never a generic fresh-start retry. */
   reconcileFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>

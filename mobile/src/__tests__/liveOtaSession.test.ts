@@ -1,4 +1,5 @@
 import {MentraLiveOtaSession} from "../../modules/engine/src/devices/mentra-live/session"
+import type {OtaCheckCurrentGlassesResult} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {fixture, offer, current} from "../test-utils/liveOtaFixture"
 
 describe("headless Live OTA session", () => {

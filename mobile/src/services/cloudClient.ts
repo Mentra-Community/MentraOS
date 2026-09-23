@@ -1,3 +1,4 @@
+import {getAr99ApiConfig} from "./ar99ApiConfig"
 /**
  * @fileoverview Thin host wrapper over island's cloud client (keystone #5).
  *
@@ -63,7 +64,7 @@ export function cloudConfigValues(): {
   cloudAuthStorageKey?: string
   otaManifestUrl?: string | null
   allowLegacyOtaFallback?: boolean
-  firmwareSources?: {allowBundled: boolean}
+  firmwareSources?: {allowBundled: boolean; vendorSources?: Readonly<Record<string, unknown>>}
   features?: {
     managedStreams: boolean
     nativeMeetings: boolean
@@ -112,7 +113,10 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
     // Preserve official legacy-glasses/embedded-engine OTA fallback semantics.
     otaManifestUrl: manifest.artifacts.mentraLiveOtaManifestUrl,
     allowLegacyOtaFallback: deployment.kind === "consumer",
-    firmwareSources: {allowBundled: deployment.kind === "consumer"},
+    firmwareSources: {
+      allowBundled: deployment.kind === "consumer",
+      ...(deployment.kind === "consumer" ? {vendorSources: {ar99: getAr99ApiConfig()}} : {}),
+    },
     cloudDebugScope: deploymentDebugScope(deployment),
     resolveCloudEndpoints: resolvedEndpoints,
     features: {

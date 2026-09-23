@@ -1,5 +1,9 @@
-import {MentraLiveOtaFlowHost} from "@/components/ota/MentraLiveOtaFlowHost"
+import {useLocalSearchParams} from "expo-router"
+import {DeviceOtaFlowHost} from "@/components/ota/DeviceOtaFlowHost"
 
 export default function OtaCheckForUpdatesScreen() {
-  return <MentraLiveOtaFlowHost initialPage="check" />
+  const {entryPoint} = useLocalSearchParams<{entryPoint?: string}>()
+  const entry =
+    entryPoint === "settings" || entryPoint === "background" || entryPoint === "recovery" ? entryPoint : "pairing"
+  return <DeviceOtaFlowHost initialPage="check" entryPoint={entry} />
 }

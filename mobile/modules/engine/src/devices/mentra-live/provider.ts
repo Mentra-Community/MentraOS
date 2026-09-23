@@ -196,7 +196,13 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
         disabled: s.continueDisabled,
         secondary: s.canDismiss,
       })
-    // Debug-only discard stays on the explicit compatibility surface; generic UI cannot abandon uncertain work.
+    if (
+      this.allowDevelopmentSkip &&
+      snapshot.page === "progress" &&
+      !this.session.chain.isOtaAutoChainActive() &&
+      this.safeToRelease()
+    )
+      actions.push({id: "discard", label: {text: "Skip (super)"}, secondary: true})
     return {
       target: this.target,
       flowId: this.flowId,

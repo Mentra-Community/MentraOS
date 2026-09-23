@@ -29,15 +29,15 @@ owner: Mentra
 
 ## C. NIMO integration
 
-- [ ] Implement native Swift/Kotlin protocol/updater and public native session boundary.
-- [ ] Add source/integrity/version policy, provider, operational compatibility restriction and device-aware UI routing.
-- [ ] Add shared captured-protocol fixtures and native session tests.
+- [x] Implement native Swift/Kotlin protocol/updater and public native session boundary.
+- [x] Add source/integrity/version policy, provider, operational compatibility restriction and device-aware UI routing.
+- [x] Add shared captured-protocol fixtures and native session tests.
 - [ ] Validate phone builds and eligible-device iOS/Android OTA including readback and recovery gates.
 
 ## D. AR99 migration and common integration
 
-- [ ] Add native identity/snapshot/ownership around existing managers without changing wire behavior.
-- [ ] Move vendor lookup, download and modal execution into provider; preserve organization policy.
+- [x] Add native identity/snapshot/ownership around existing managers, retaining wire bytes and reconnect negotiation.
+- [x] Move vendor lookup, download and modal execution into provider; preserve organization network policy.
 - [ ] Verify activation contract and native reconnect/restart behavior.
 - [ ] Integrate provider diagnostics and finalize shared routing/UI/SDK docs.
 
@@ -83,3 +83,52 @@ Current evidence: 49 Swift NIMO/firmware tests passed; 131 Android NIMO tests an
 Added the NIMO provider, strict four-component/full-identity compatibility and manifest parsing, device/source/generation-bound offers, native snapshot replay/adoption, and scoped verified artifact staging. A new generated SDK catalogue has matching TypeScript/Swift/Kotlin values alongside unchanged Live release metadata. It carries the previously bench-verified firmware identity but no remote manifest pin or firmware distribution URL. Organization deployments explicitly disable bundled-source fallback. Native inventory now publishes a fresh sequence only after both version responses arrive.
 
 Evidence: 29 provider/manifest/observation/shared-contract tests pass, six artifact integrity/cleanup tests pass, two catalogue-generator tests pass, 21 deployment-policy tests pass, and Engine/SDK TypeScript passes. Shared UI/routing implementation is underway; the independent fourth-provider render/adoption test passes. Live screen tests are being adapted to explicit native identity and retained-session lifetimes; their assertions still need to be fully green. NIMO native operation restrictions/cached compatibility, AR99, Live remaining lifecycle work, full platform builds and hardware acceptance are still outstanding. This checkpoint is not ready to merge.
+
+### Shared presentation, NIMO compatibility and AR99 checkpoint
+
+The common firmware screen now resolves the registered native device. Pairing
+uses explicit setup requirements; AR99 remains settings-only. Settings, debug,
+background prompts and Wi-Fi return carry provider/entry context. Live retains
+its existing specialized presentation over the headless provider. The generic
+view works with a synthetic fourth provider. Wi-Fi return now carries native
+device identity, and Live explicitly declares its existing post-Wi-Fi check.
+
+NIMO enforces compatibility below the miniapp boundary on both platforms.
+Version/pairing commands remain available; display, microphone and normal
+controls await an exact supported identity. Verified host compatibility metadata
+is cached per device for offline use. The SDK catalogue still contains no firmware
+distribution pin. Shared staging uses the existing iOS background downloader and
+Android RNFS path, preserving AR99 request headers. Gallery cleanup now retains
+its network lease until pending native joins finish and cleanup completes.
+
+AR99's vendor request semantics now live in its Engine provider. The old app
+modal and execution service were removed. Swift/Kotlin wrappers admit native
+ownership before notification preparation, verify staged bytes, journal attempts,
+retain ordered snapshots and preserve device-requested reconnect offsets. They
+protect managed updates from legacy start/cancel and factory reset. The existing
+legacy SDK entry points retain their explicit behavior when no managed session
+owns the glasses. Driver-owned reconnects stay pinned to the same device while
+ordinary replacement is blocked. Preparation now counts as manager ownership;
+old delayed callbacks cannot negotiate a later attempt prematurely.
+
+The AR99 managed result distinguishes image validation from running-version
+verification and never substitutes the target for the observed version. A cold
+restart or failed/uncertain transfer does not authorize a reflash or speculative
+remote abort. **This is a material recovery/rollout gate:** the old UI offered a
+local cancel/retry, but that command does not prove that device-side writes
+stopped. Hardware/vendor evidence is still needed before claiming preserved safe
+cancel/retry behavior or production readiness. No AR99 hardware is available.
+
+Evidence so far: 46 isolated file-provider/shared-service tests, eight staging
+transport/integrity tests, 16 isolated Live hook tests, 53 gallery tests, and the
+fourth-provider UI test pass. The app's broader run passed 186 tests with one
+expected Wi-Fi parameter assertion updated; its 31-test Live progress suite then
+passed. Full mobile typechecking passes. Swift passed 61 NIMO/AR99/firmware tests;
+Android passed 136 NIMO tests and eight AR99 tests with an SDK AAR compile. Later
+small reconnect/factory-reset changes still require the final combined build run.
+The manual Maestro firmware-check flow was added but has not been run.
+
+Remaining work: Live native context/journal and auth-independent recovery surface,
+full regression/public-package/phone builds, review of AR99 recovery enablement,
+hardware authorization/acceptance, and PR/CI/review. Nothing here is a production
+firmware release or a claim that the PR is ready to merge.

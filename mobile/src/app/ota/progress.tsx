@@ -1,5 +1,5 @@
-import {MentraLiveOtaFlowHost} from "@/components/ota/MentraLiveOtaFlowHost"
+import {DeviceOtaFlowHost} from "@/components/ota/DeviceOtaFlowHost"
 
 export default function OtaProgressScreen() {
-  return <MentraLiveOtaFlowHost initialPage="progress" />
+  return <DeviceOtaFlowHost initialPage="progress" entryPoint="recovery" />
 }

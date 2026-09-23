@@ -158,15 +158,28 @@ class GallerySyncService {
   private syncStartPromise: Promise<void> | null = null
   private releaseHotspot: (() => void) | null = null
   private networkCleanup: Promise<void> | null = null
+  private pendingNetworkJoin: Promise<unknown> | null = null
+  private lifecycleGeneration = 0
+  private closeHotspotOnRelease = false
 
-  private releaseNetwork(): Promise<void> {
+  private releaseNetwork(closeHotspot = false): Promise<void> {
+    this.closeHotspotOnRelease ||= closeHotspot
     if (this.networkCleanup) return this.networkCleanup
     const release = this.releaseHotspot
     if (!release) return Promise.resolve()
     this.networkCleanup = (async () => {
       try {
+        // A native join can finish after JS cleanup. Keep the lease until it settles and is undone.
+        await this.pendingNetworkJoin?.catch(() => {})
         await localNetworkTransport.disconnect()
+        if (this.closeHotspotOnRelease) {
+          await BluetoothSdk.setHotspotState(false)
+          const store = useGallerySyncStore.getState()
+          store.setSyncServiceOpenedHotspot(false)
+          store.setHotspotInfo(null)
+        }
       } finally {
+        this.closeHotspotOnRelease = false
         if (this.releaseHotspot === release) this.releaseHotspot = null
         release()
       }
@@ -228,6 +241,7 @@ class GallerySyncService {
    * Cleanup - remove event listeners
    */
   cleanup(): void {
+    this.lifecycleGeneration++
     this.startAborted = true
     this.abortController?.abort()
     void this.releaseNetwork()
@@ -259,11 +273,9 @@ class GallerySyncService {
       this.hotspotRequestTimeout = null
     }
 
-    this.syncStartPromise = null
     useGallerySyncStore.getState().setSyncStarting(false)
     this.waitingForWifiRetry = false
     this.wifiSettingsOpenedAt = null
-    this.startAborted = false
     this.ssidReadable = true
     this.isInitialized = false
     console.log("[GallerySyncService] Cleaned up")
@@ -491,9 +503,12 @@ class GallerySyncService {
       return this.syncStartPromise
     }
 
+    const generation = this.lifecycleGeneration
+    this.startAborted = false
     useGallerySyncStore.getState().setSyncStarting(true)
     this.syncStartPromise = (async () => {
       if (this.networkCleanup) await this.networkCleanup
+      if (generation !== this.lifecycleGeneration) return
       this.releaseHotspot ??= acquireGlassesHotspot()
       await this.runStartSync()
     })().finally(async () => {
@@ -558,7 +573,6 @@ class GallerySyncService {
 
   private shouldAbortPreFlight(): boolean {
     if (this.startAborted) {
-      this.startAborted = false
       return true
     }
     if (!isGlassesConnected(useGlassesStore.getState().connection)) {
@@ -568,11 +582,6 @@ class GallerySyncService {
   }
 
   private async runStartSync(): Promise<void> {
-    // Clear stale abort flag — it can persist when a prior pre-flight exited through
-    // a non-shouldAbortPreFlight path (e.g. connectivity failed, disk full), which
-    // would otherwise cause the next sync attempt to abort spuriously.
-    this.startAborted = false
-
     console.log("[GallerySyncService] ========================================")
     console.log("[GallerySyncService] 🚀 SYNC START INITIATED")
     console.log("[GallerySyncService] ========================================")
@@ -611,6 +620,7 @@ class GallerySyncService {
       emitGalleryNotice({code: "bluetooth_off"})
       return
     }
+    if (this.shouldAbortPreFlight()) return
 
     console.log("[GallerySyncService] ✅ Pre-flight check passed - BT enabled, Glasses connected")
     console.log("[GallerySyncService] 📊 Glasses info:", {
@@ -1008,6 +1018,10 @@ class GallerySyncService {
    */
   private async connectToHotspotWifi(hotspotInfo: HotspotInfo): Promise<void> {
     const store = useGallerySyncStore.getState()
+    const generation = this.lifecycleGeneration
+    const lease = this.releaseHotspot
+    const isCurrent = () => generation === this.lifecycleGeneration && this.releaseHotspot === lease && Boolean(lease)
+    if (!isCurrent()) return
 
     // Pre-flight: do not attempt WiFi connection if Bluetooth already disconnected
     if (!isGlassesConnected(useGlassesStore.getState().connection)) {
@@ -1019,6 +1033,7 @@ class GallerySyncService {
 
     // Show explanation dialog on first sync (user must acknowledge before proceeding)
     await this.showWifiJoinExplanation(hotspotInfo.ssid)
+    if (!isCurrent()) return
 
     let lastError: any = null
     const wifiConnectStartTime = Date.now()
@@ -1061,6 +1076,7 @@ class GallerySyncService {
     // L2: Wrap retry loop in try/finally to guarantee listener cleanup on all exit paths
     try {
       for (let attempt = 1; attempt <= TIMING.IOS_WIFI_MAX_RETRIES; attempt++) {
+        if (!isCurrent()) return
         const attemptStartTime = Date.now()
 
         // Check if cancelled
@@ -1086,6 +1102,7 @@ class GallerySyncService {
           } else {
             try {
               const preConnectSSID = await WifiManager.getCurrentWifiSSID()
+              if (!isCurrent()) return
               console.log(`[GallerySyncService] 📡 Current WiFi SSID: "${preConnectSSID}"`)
 
               // Check if already connected (shouldn't happen, but good to verify)
@@ -1123,7 +1140,15 @@ class GallerySyncService {
           appBackgrounded = false // Reset flag for this attempt
           appBackgroundTime = null
 
-          await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password)
+          if (!isCurrent()) return
+          const join = localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password)
+          this.pendingNetworkJoin = join
+          try {
+            await join
+          } finally {
+            if (this.pendingNetworkJoin === join) this.pendingNetworkJoin = null
+          }
+          if (!isCurrent()) return
 
           const connectCallDuration = Date.now() - connectCallStartTime
           console.log(`[GallerySyncService] ✅ Glasses-local transport connected successfully`)
@@ -1261,6 +1286,7 @@ class GallerySyncService {
                 probeTimeout = BgTimer.setTimeout(() => probeController.abort(), 1000) // 1 second timeout per probe
 
                 const probeStartTime = Date.now()
+                if (!isCurrent()) return
                 const probeResponse = await localNetworkTransport.fetch(`http://${hotspotInfo.ip}:8089/api/health`, {
                   method: "GET",
                   signal: probeController.signal,
@@ -1316,9 +1342,11 @@ class GallerySyncService {
           console.log(`[GallerySyncService] 🎯 Attempts used: ${attempt}/${TIMING.IOS_WIFI_MAX_RETRIES}`)
           console.log(`[GallerySyncService] 🚀 Proceeding to file download from ${hotspotInfo.ip}:8089`)
 
+          if (!isCurrent()) return
           await this.startFileDownload(hotspotInfo)
           return // Success - exit the retry loop
         } catch (error: any) {
+          if (!isCurrent()) return
           lastError = error
           const attemptDuration = Date.now() - attemptStartTime
 
@@ -2368,14 +2396,10 @@ class GallerySyncService {
    */
   private async closeHotspot(): Promise<void> {
     if (!this.releaseHotspot) return
-    const store = useGallerySyncStore.getState()
 
     try {
       console.log("[GallerySyncService] Closing hotspot...")
-      await localNetworkTransport.disconnect()
-      await BluetoothSdk.setHotspotState(false)
-      store.setSyncServiceOpenedHotspot(false)
-      store.setHotspotInfo(null)
+      await this.releaseNetwork(true)
       console.log("[GallerySyncService] Hotspot closed")
     } catch (error) {
       console.error("[GallerySyncService] Failed to close hotspot:", error)

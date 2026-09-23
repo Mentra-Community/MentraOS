@@ -16,6 +16,7 @@ import {
 } from "../../ota/types"
 import {nimoCompatibility, type NimoCompatibleFirmware} from "./firmwareVersion"
 import type {NimoFirmwareManifest} from "./manifest"
+import {nimoFirmwareCopy} from "./copy"
 
 export interface NimoFirmwarePorts extends NativeFirmwareObservationPorts {
   validateTarget(): Promise<void>
@@ -25,6 +26,7 @@ export interface NimoFirmwarePorts extends NativeFirmwareObservationPorts {
   acknowledge(): Promise<NativeFirmwareUpdateSnapshot>
   source(): FirmwareManifestPin | null
   loadManifest(pin: FirmwareManifestPin): Promise<NimoFirmwareManifest>
+  configureCompatibility(manifest: NimoFirmwareManifest, pin: FirmwareManifestPin): Promise<void>
   readonly compatible: readonly NimoCompatibleFirmware[]
   stage(manifest: NimoFirmwareManifest, progress: (percent: number | null) => void): Promise<StagedFirmwareArtifact>
   acquireRuntime(): () => void
@@ -81,7 +83,7 @@ export class NimoFirmwareProvider implements FirmwareProvider {
       safeToRelease: true,
       offer: null,
       error: null,
-      presentation: {title: {text: "NIMO firmware"}, busy: false, success: false, actions: []},
+      presentation: {title: nimoFirmwareCopy("NIMO firmware"), busy: false, success: false, actions: []},
     })
     this.observation = new NativeFirmwareObservation(target, ports, this.onNative, (error) => {
       this.fail("observation_failed", error, !this.snapshot().safeToRelease)
@@ -115,6 +117,7 @@ export class NimoFirmwareProvider implements FirmwareProvider {
       )
         throw new FirmwareUpdateError("busy", "The device still requires firmware recovery")
       if (native?.sessionId) this.observation.accept(await this.ports.acknowledge())
+      if (!this.snapshot().safeToRelease) throw new FirmwareUpdateError("busy", "A native update still owns the device")
       await this.releaseFile()
       return {kind: "finished"}
     }
@@ -190,9 +193,24 @@ export class NimoFirmwareProvider implements FirmwareProvider {
       if (this.nativeOwnsFlow()) return
       if (source !== firmwareSourceIdentity(this.ports.source()))
         throw new FirmwareUpdateError("stale_offer", "Firmware source changed; check again")
+      if (release.manifest && pin) {
+        await this.ports.configureCompatibility(release.manifest, pin)
+        if (!this.isCurrent(generation)) return
+        const current = await this.ports.read()
+        if (
+          current.updaterId !== native.updaterId ||
+          current.connectionGeneration !== native.connectionGeneration ||
+          inventoryIdentity(current) !== inventoryIdentity(native) ||
+          source !== firmwareSourceIdentity(this.ports.source())
+        )
+          throw new FirmwareUpdateError("stale_offer", "NIMO changed during the compatibility check")
+      }
       const observed = {fullVersion: native.observedFirmware ?? "", packedVersion: native.inventory.packedVersion ?? ""}
       const compatible = [...this.ports.compatible, ...(release.manifest?.compatible ?? [])]
-      const compatibility = nimoCompatibility(observed, compatible, release.manifest?.upgradeFrom ?? [])
+      const compatibility =
+        native.inventory.compatible === "true"
+          ? "compatible"
+          : nimoCompatibility(observed, compatible, release.manifest?.upgradeFrom ?? [])
       const manifest = release.manifest
       if (manifest && manifest.upgradeFrom.includes(observed.packedVersion) && compatibility !== "unknown") {
         const id = this.ports.id()
@@ -234,7 +252,7 @@ export class NimoFirmwareProvider implements FirmwareProvider {
         )
       }
     } catch (error) {
-      if (this.isCurrent(generation)) this.fail("check_failed", error)
+      if (this.isCurrent(generation) && !this.nativeOwnsFlow()) this.fail("check_failed", error)
     }
   }
 
@@ -331,6 +349,14 @@ export class NimoFirmwareProvider implements FirmwareProvider {
   private onNative = (native: NativeFirmwareUpdateSnapshot): void => {
     if (this.disposed) return
     if (
+      !this.pendingStart &&
+      ((native.sessionId && native.sessionId !== this.snapshot().nativeSessionId) ||
+        (!native.safeToRelease && this.snapshot().safeToRelease))
+    ) {
+      // Another native caller or retained transaction takes precedence over optional JS check/download work.
+      this.generation++
+    }
+    if (
       this.offer &&
       !this.snapshot().active &&
       (native.updaterId !== this.offer.updaterId ||
@@ -400,23 +426,24 @@ export class NimoFirmwareProvider implements FirmwareProvider {
       "verifying",
     ].includes(phase)
     if (!next.safeToRelease) {
-      if (native?.canReconcile && phase === "interrupted") actions.push({id: "retry", label: {text: "Check recovery"}})
+      if (native?.canReconcile && phase === "interrupted")
+        actions.push({id: "retry", label: nimoFirmwareCopy("Check recovery")})
     } else if (!busy) {
-      if (phase === "available" && next.offer) actions.push({id: "install", label: {text: "Update now"}})
+      if (phase === "available" && next.offer) actions.push({id: "install", label: nimoFirmwareCopy("Update now")})
       if (phase !== "available")
-        actions.push({id: "check", label: {text: "Check again"}, secondary: phase === "complete"})
+        actions.push({id: "check", label: nimoFirmwareCopy("Check again"), secondary: phase === "complete"})
       if (phase === "complete" || this.entryPoint !== "pairing" || next.offer?.required === false)
         actions.push({
           id: "finish",
-          label: {text: phase === "complete" ? "Continue" : "Close"},
+          label: nimoFirmwareCopy(phase === "complete" ? "Continue" : "Close"),
           secondary: phase !== "complete",
         })
     }
     this.state.publish({
       ...next,
       presentation: {
-        title: {text: title},
-        message: message ? {text: message} : undefined,
+        title: nimoFirmwareCopy(title),
+        message: message ? nimoFirmwareCopy(message) : undefined,
         busy,
         success: phase === "complete",
         progress: progress ?? null,

@@ -9,7 +9,13 @@ export function acquireFirmwareRuntime(): () => void {
     if (!owners.delete(token) || owners.size) return
     const stops = [...deferredStops]
     deferredStops.clear()
-    for (const stop of stops) stop()
+    for (const stop of stops) {
+      try {
+        stop()
+      } catch (error) {
+        console.warn("Firmware runtime cleanup failed", error)
+      }
+    }
   }
 }
 

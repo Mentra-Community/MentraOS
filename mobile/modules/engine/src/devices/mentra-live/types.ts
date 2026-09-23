@@ -1,4 +1,5 @@
 import type {ReleaseChangelog} from "../../facades/ota"
+import type {FirmwareSnapshot} from "../../ota/types"
 
 export type MentraLiveOtaFlowPage = "check" | "progress"
 
@@ -115,6 +116,7 @@ export type UseMentraLiveOtaOptions = {
   onOpenWifiSetup?: () => void
   /** Lets a host coordinate its connection overlay with OTA firmware restarts. */
   onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
+  onSnapshot?: (snapshot: FirmwareSnapshot) => void
 }
 
 export type MentraLiveOtaController = {

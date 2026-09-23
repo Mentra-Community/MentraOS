@@ -608,13 +608,20 @@ class Nimo: NSObject, SGCManager {
     var firmwareUpdater: FirmwareUpdater? {
         guard let id = peripheral?.identifier.uuidString ?? lastDeviceUUID, !id.isEmpty else { return nil }
         if nimoFirmwareUpdater == nil {
+            firmwareCompatibility = NimoFirmwareCompatibility(deviceId: id)
             nimoFirmwareUpdater = NimoFirmwareUpdater(deviceId: id, connectionGeneration: firmwareConnectionGeneration, ports: .init(
                 connection: { [weak self] in self?.otaConnection() },
                 prepare: { [weak self] callback in self?.prepareOtaChannel(callback) },
                 release: { [weak self] in self?.releaseOtaChannel() },
                 write: { [weak self] data, callback in self?.writeOta(data, completion: callback) },
                 readInventory: { [weak self] callback in self?.readOtaInventory(callback) },
-                schedule: Self.scheduler(.main), now: { ProcessInfo.processInfo.systemUptime }
+                schedule: Self.scheduler(.main), now: { ProcessInfo.processInfo.systemUptime },
+                isCompatible: { [weak self] full, packed in self?.firmwareCompatibility?.allows(fullVersion: full, packedVersion: packed) == true },
+                configureCompatibility: { [weak self] metadata in
+                    guard let self, let policy = self.firmwareCompatibility else { throw FirmwareUpdaterError("disconnected", "NIMO is unavailable") }
+                    try policy.configure(metadata)
+                    self.refreshFirmwareCompatibility()
+                }
             ))
         }
         return nimoFirmwareUpdater
@@ -707,6 +714,8 @@ class Nimo: NSObject, SGCManager {
     // Version info
     private var firmwareVersionPacked = ""
     private var firmwareVersionDetail = ""
+    private var firmwareCompatibility: NimoFirmwareCompatibility?
+    private var firmwareOperational = false
 
     // Mic audio
     private var opusDecoder: NimoOpusDecoder?
@@ -798,6 +807,7 @@ class Nimo: NSObject, SGCManager {
 
     func setMicEnabled(_ enabled: Bool) {
         guard !otaTrafficPaused, !firmwareOwnsDevice else { return }
+        guard !enabled || firmwareOperational else { return }
         Bridge.log("NIMO: setMicEnabled(\(enabled))")
         guard let micChar else {
             Bridge.log("NIMO: mic characteristic not available")
@@ -1180,6 +1190,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func sendFrame(_ frame: Data) {
+        guard firmwareOperational || (frame.count >= 10 && NimoFirmwareCompatibility.permitsBeforeCompatibility(command: Int(frame[8]), key: Int(frame[9]))) else { return }
         guard let txChar else { return }
         enqueueWrite(txChar, frame)
     }
@@ -1187,7 +1198,7 @@ class Nimo: NSObject, SGCManager {
     private func enqueueFrames(_ frames: [Data], finalStarted: @escaping () -> Void,
                                completed: @escaping () -> Void) -> Bool
     {
-        guard !otaTrafficPaused, !firmwareOwnsDevice, let peripheral, let txChar else { return false }
+        guard firmwareOperational, !otaTrafficPaused, !firmwareOwnsDevice, let peripheral, let txChar else { return false }
         return writes.enqueue(peripheral, characteristic: txChar, frames: frames,
                               finalStarted: finalStarted, completed: completed)
     }
@@ -1300,11 +1311,33 @@ class Nimo: NSObject, SGCManager {
 
     private func resolveFirmwareInventory() {
         guard inventoryPackedReceived, inventoryDetailReceived else { return }
+        refreshFirmwareCompatibility()
         let inventory = NimoOtaManager.Inventory(firmwareDetail: firmwareVersionDetail, packedVersion: firmwareVersionPacked)
         nimoFirmwareUpdater?.inventoryChanged(inventory, connectionGeneration: firmwareConnectionGeneration)
         guard let completion = pendingFirmwareInventory else { return }
         pendingFirmwareInventory = nil
         completion(.success(inventory))
+    }
+
+    private func refreshFirmwareCompatibility() {
+        let allowed = firmwareCompatibility?.allows(fullVersion: firmwareVersionDetail, packedVersion: firmwareVersionPacked) == true
+        guard allowed != firmwareOperational else { return }
+        firmwareOperational = allowed
+        canvas.readiness(allowed && twsConnected && peerCompanionReady == true)
+        if !allowed { setMicEnabled(false) }
+        else { restoreCompatibleDeviceState() }
+    }
+
+    private func restoreCompatibleDeviceState() {
+        if firmwareOperational, handshakeState == .ready, !firmwareOwnsDevice, !otaTrafficPaused {
+            // The connection edge may have happened while firmware was still unknown.
+            setBrightness(DeviceStore.shared.get("bluetooth", "brightness") as? Int ?? 50,
+                          autoMode: DeviceStore.shared.get("bluetooth", "auto_brightness") as? Bool ?? true)
+            setDashboardPosition(DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4,
+                                 DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2)
+            setHeadUpAngle(DeviceStore.shared.get("bluetooth", "head_up_angle") as? Int ?? 30)
+            DeviceManager.shared.updateMicState()
+        }
     }
 
     private func failOtaChannel(_ message: String) {
@@ -1436,7 +1469,8 @@ class Nimo: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "fullyBooted", true)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         startTimers()
-        canvas.readiness(twsConnected && peerCompanionReady == true)
+        canvas.readiness(firmwareOperational && twsConnected && peerCompanionReady == true)
+        restoreCompatibleDeviceState()
         DeviceManager.shared.updateMicState()
     }
 
@@ -1449,6 +1483,9 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func resetSessionState() {
+        firmwareOperational = false
+        firmwareVersionPacked = ""; firmwareVersionDetail = ""
+        inventoryPackedReceived = false; inventoryDetailReceived = false
         handshakeState = .idle
         cancelTwsTimeout()
         twsConnected = false
@@ -1575,7 +1612,7 @@ class Nimo: NSObject, SGCManager {
                 peerCompanionReady = v[9] != 0
                 onTwsState(Int(v[8]) >= 1)
                 if handshakeState == .ready {
-                    canvas.readiness(twsConnected && peerCompanionReady == true, confirmed: true)
+                    canvas.readiness(firmwareOperational && twsConnected && peerCompanionReady == true, confirmed: true)
                 }
             }
         case NimoProtocol.BUSINESS_BATTERY:
@@ -1598,10 +1635,11 @@ class Nimo: NSObject, SGCManager {
         if !connected, handshakeState == .ready {
             Bridge.log("NIMO: TWS service dropped mid-session (arm removed/off?)")
         }
-        if handshakeState == .ready { canvas.readiness(connected && peerCompanionReady == true) }
+        if handshakeState == .ready { canvas.readiness(firmwareOperational && connected && peerCompanionReady == true) }
     }
 
     private func handleInputEvent(_ code: Int) {
+        guard firmwareOperational else { return }
         let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
         switch code {
         case NimoProtocol.INPUT_HEAD_UP:
@@ -1703,6 +1741,7 @@ class Nimo: NSObject, SGCManager {
     // MARK: - Mic Audio
 
     private func handleMicPacket(_ data: Data) {
+        guard firmwareOperational, !firmwareOwnsDevice, !otaTrafficPaused else { return }
         guard let packet = NimoAudioParser.parse(data) else { return }
         let now = Date()
         switch packet.type {

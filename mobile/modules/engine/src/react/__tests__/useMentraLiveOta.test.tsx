@@ -139,6 +139,9 @@ const fakeOta = {
 }
 
 mock.module("../../devices/mentra-live/ports", () => ({liveOtaPorts: fakeOta}))
+// This suite isolates Live's public hook; NIMO's native file transport is covered separately.
+mock.module("../../devices/nimo/definition", () => ({nimoIntegration: {id: "nimo", models: ["NIMO"]}}))
+mock.module("../../devices/ar99/definition", () => ({ar99Integration: {id: "ar99", models: ["AR99"]}}))
 mock.module("@mentra/bluetooth-sdk", () => ({
   default: {getDefaultDevice: async () => ({id: "live-test", model: "Mentra Live", name: "Live"})},
 }))

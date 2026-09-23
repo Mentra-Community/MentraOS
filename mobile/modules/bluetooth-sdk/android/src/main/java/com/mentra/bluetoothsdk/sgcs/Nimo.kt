@@ -5,6 +5,7 @@ import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException
 import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareConnectionGeneration
 import com.mentra.bluetoothsdk.sgcs.nimo.ota.NimoFirmwareUpdater
 import com.mentra.bluetoothsdk.sgcs.nimo.ota.NimoOtaManager
+import com.mentra.bluetoothsdk.sgcs.nimo.NimoFirmwareCompatibility
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
@@ -966,6 +967,7 @@ class Nimo : SGCManager() {
       get() {
         val id = gatt?.device?.address ?: lastDeviceAddress ?: return null
         if (nimoFirmwareUpdater == null) {
+          firmwareCompatibility = NimoFirmwareCompatibility(id, context.getSharedPreferences("nimo-firmware", Context.MODE_PRIVATE))
           nimoFirmwareUpdater = NimoFirmwareUpdater(id, firmwareConnectionGeneration, object : NimoFirmwareUpdater.Ports {
             override fun connection() = otaConnection()
             override fun prepare(completion: (Throwable?) -> Unit) = prepareOtaChannel(completion)
@@ -974,6 +976,12 @@ class Nimo : SGCManager() {
             override fun readInventory(completion: (Result<NimoOtaManager.Inventory>) -> Unit) = readOtaInventory(completion)
             override fun schedule(delayMs: Long, callback: () -> Unit) = mainScheduler.post(delayMs, callback)
             override fun nowMs() = android.os.SystemClock.elapsedRealtime()
+            override fun isCompatible(fullVersion: String, packedVersion: String) = firmwareCompatibility?.allows(fullVersion, packedVersion) == true
+            override fun configureCompatibility(metadata: Map<String, String>) {
+              val policy = firmwareCompatibility ?: throw FirmwareUpdaterException("disconnected", "NIMO is unavailable")
+              policy.configure(metadata)
+              refreshFirmwareCompatibility()
+            }
           }, java.io.File(context.filesDir, "firmware-updates"))
         }
         return nimoFirmwareUpdater
@@ -1046,13 +1054,15 @@ class Nimo : SGCManager() {
     // Version info
     private var firmwareVersionPacked: String = ""
     private var firmwareVersionDetail: String = ""
+    private var firmwareCompatibility: NimoFirmwareCompatibility? = null
+    @Volatile private var firmwareOperational = false
 
     // Mic audio (vendor GlassesAudioClient structure)
     private val audioClient =
             NimoAudioClient(
-                    sendCommand = { bytes -> micChar?.let { enqueueWrite(it, bytes) } },
-                    onPcm = { pcm -> DeviceManager.getInstance().handlePcm(pcm) },
-                    onActivity = { DeviceManager.getInstance().reportGlassesAudioActivity() }
+                    sendCommand = { bytes -> if (firmwareOperational || bytes.getOrNull(1) == 0.toByte()) micChar?.let { enqueueWrite(it, bytes) } },
+                    onPcm = { pcm -> if (firmwareOperational && !firmwareOwnsDevice && !otaTrafficPaused) DeviceManager.getInstance().handlePcm(pcm) },
+                    onActivity = { if (firmwareOperational && !firmwareOwnsDevice && !otaTrafficPaused) DeviceManager.getInstance().reportGlassesAudioActivity() }
             )
 
     // ---------- SGCManager: Connection Management ----------
@@ -1181,6 +1191,7 @@ class Nimo : SGCManager() {
 
     override fun setMicEnabled(enabled: Boolean) {
         if (otaTrafficPaused || firmwareOwnsDevice) return
+        if (enabled && !firmwareOperational) return
         Bridge.log("NIMO: setMicEnabled($enabled)")
         if (micChar == null) {
             Bridge.log("NIMO: mic characteristic not available")
@@ -1999,13 +2010,14 @@ class Nimo : SGCManager() {
     }
 
     private fun sendFrame(frame: ByteArray) {
+        if (!firmwareOperational && !(frame.size >= 10 && NimoFirmwareCompatibility.permitsBeforeCompatibility(frame[8].toInt() and 255, frame[9].toInt() and 255))) return
         val tx = txChar ?: return
         enqueueWrite(tx, frame)
     }
 
     private fun enqueueFrames(frames: List<ByteArray>, finalStarted: () -> Unit,
                               completed: () -> Unit): Boolean {
-        if (otaTrafficPaused || firmwareOwnsDevice) return false
+        if (!firmwareOperational || otaTrafficPaused || firmwareOwnsDevice) return false
         val tx = txChar ?: return false
         val connection = gatt ?: return false
         // Coordinator and GATT callbacks are Main-confined: enqueue the complete chain atomically.
@@ -2127,10 +2139,31 @@ class Nimo : SGCManager() {
 
     private fun resolveFirmwareInventory() {
         if (!inventoryPackedReceived || !inventoryDetailReceived) return
+        refreshFirmwareCompatibility()
         val inventory = NimoOtaManager.Inventory(firmwareVersionDetail, firmwareVersionPacked)
         nimoFirmwareUpdater?.inventoryChanged(inventory, firmwareConnectionGeneration)
         val completion = pendingFirmwareInventory; pendingFirmwareInventory = null
         completion?.invoke(Result.success(inventory))
+    }
+
+    private fun refreshFirmwareCompatibility() {
+        val allowed = firmwareCompatibility?.allows(firmwareVersionDetail, firmwareVersionPacked) == true
+        if (allowed == firmwareOperational) return
+        firmwareOperational = allowed
+        canvas.readiness(allowed && twsConnected && peerCompanionReady == true)
+        if (!allowed) setMicEnabled(false)
+        else restoreCompatibleDeviceState()
+    }
+
+    private fun restoreCompatibleDeviceState() {
+        if (firmwareOperational && handshakeState == HandshakeState.READY && !firmwareOwnsDevice && !otaTrafficPaused) {
+            setBrightness((DeviceStore.get("bluetooth", "brightness") as? Number)?.toInt() ?: 50,
+                DeviceStore.get("bluetooth", "auto_brightness") as? Boolean ?: true)
+            setDashboardPosition((DeviceStore.get("bluetooth", "dashboard_height") as? Number)?.toInt() ?: 4,
+                (DeviceStore.get("bluetooth", "dashboard_depth") as? Number)?.toInt() ?: 2)
+            setHeadUpAngle((DeviceStore.get("bluetooth", "head_up_angle") as? Number)?.toInt() ?: 30)
+            DeviceManager.getInstance().updateMicState()
+        }
     }
 
     private fun failOtaChannel(message: String) {
@@ -2285,7 +2318,8 @@ class Nimo : SGCManager() {
             )
         }
         diagnostics?.connected((negotiatedMtu - 3).coerceIn(20, 512))
-        canvas.readiness(twsConnected && peerCompanionReady == true)
+        canvas.readiness(firmwareOperational && twsConnected && peerCompanionReady == true)
+        restoreCompatibleDeviceState()
         DeviceManager.getInstance().updateMicState()
     }
 
@@ -2296,6 +2330,9 @@ class Nimo : SGCManager() {
     }
 
     private fun resetSessionState() {
+        firmwareOperational = false
+        firmwareVersionPacked = ""; firmwareVersionDetail = ""
+        inventoryPackedReceived = false; inventoryDetailReceived = false
         diagnostics?.disconnected()
         handshakeState = HandshakeState.IDLE
         cancelTwsTimeout()
@@ -2430,7 +2467,7 @@ class Nimo : SGCManager() {
                     // Both predicates were sampled by this device report. TWS-only
                     // reports and cached state cannot release a status-7 wait.
                     if (handshakeState == HandshakeState.READY) {
-                        canvas.confirmedReadiness(twsConnected && peerCompanionReady == true)
+                        canvas.confirmedReadiness(firmwareOperational && twsConnected && peerCompanionReady == true)
                     }
                 }
             }
@@ -2456,10 +2493,11 @@ class Nimo : SGCManager() {
         if (!connected && handshakeState == HandshakeState.READY) {
             Bridge.log("NIMO: TWS service dropped mid-session (arm removed/off?)")
         }
-        if (handshakeState == HandshakeState.READY) canvas.readiness(connected && peerCompanionReady == true)
+        if (handshakeState == HandshakeState.READY) canvas.readiness(firmwareOperational && connected && peerCompanionReady == true)
     }
 
     private fun handleInputEvent(code: Int) {
+        if (!firmwareOperational) return
         val timestamp = System.currentTimeMillis()
         when (code) {
             NimoProtocol.INPUT_HEAD_UP -> {

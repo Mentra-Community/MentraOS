@@ -16,9 +16,20 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
     fun readInventory(completion: (Result<NimoOtaManager.Inventory>) -> Unit)
     fun schedule(delayMs: Long, callback: () -> Unit): () -> Unit
     fun nowMs(): Long
+    fun isCompatible(fullVersion: String, packedVersion: String): Boolean = false
+    fun configureCompatibility(metadata: Map<String, String>) {
+      throw FirmwareUpdaterException("unsupported", "NIMO compatibility policy is unavailable")
+    }
   }
   private val state = FirmwareSessionState(FirmwareUpdateSnapshot("nimo", deviceId, connectionGeneration))
   override val snapshot: FirmwareUpdateSnapshot get() = state.snapshot
+  override fun configure(metadata: Map<String, String>): FirmwareUpdateSnapshot {
+    if (!snapshot.safeToRelease || preparing) throw FirmwareUpdaterException("busy", "The active NIMO update owns its policy")
+    connected()
+    ports.configureCompatibility(metadata)
+    state.update { it.copy(inventory = it.inventory + ("compatible" to ports.isCompatible(it.observedFirmware.orEmpty(), it.inventory["packedVersion"].orEmpty()).toString())) }
+    return snapshot
+  }
   private var journal: FirmwareJournal? = null
   private var request: FirmwareStartRequest? = null
   private var manager: NimoOtaManager? = null
@@ -137,6 +148,7 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
     if (snapshot.connectionGeneration != connectionGeneration) return
     state.update { it.copy(observedFirmware = inventory.firmwareDetail, inventory = it.inventory + mapOf(
       "packedVersion" to inventory.packedVersion,
+      "compatible" to ports.isCompatible(inventory.firmwareDetail, inventory.packedVersion).toString(),
       "revision" to ((it.inventory["revision"]?.toLongOrNull() ?: 0L) + 1).toString(),
     )) }
   }

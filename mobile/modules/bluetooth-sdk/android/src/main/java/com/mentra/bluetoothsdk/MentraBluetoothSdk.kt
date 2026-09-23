@@ -1490,6 +1490,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun sendAr99FactoryReset() {
+        assertFirmwareReplacementAllowed()
         requireGlassesConnected("factory reset AR99")
         deviceManager.sendAr99FactoryReset()
     }

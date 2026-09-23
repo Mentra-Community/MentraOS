@@ -57,7 +57,9 @@ export function OtaUpdateChecker() {
           text: translate(wifi ? "ota:setupWifi" : "ota:install"),
           onPress: () => {
             if (liveAvailability.snapshot().prompt?.id !== prompt.id) return
-            useNavigationStore.getState().push(wifi ? "/wifi/scan" : "/ota/check-for-updates")
+            useNavigationStore
+              .getState()
+              .push(wifi ? "/wifi/scan" : "/ota/check-for-updates", {entryPoint: "background"})
           },
         },
       ],

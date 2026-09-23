@@ -18,6 +18,10 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
         var readInventory: (@escaping (Result<NimoOtaManager.Inventory, Error>) -> Void) -> Void
         var schedule: (TimeInterval, @escaping () -> Void) -> (() -> Void)
         var now: () -> TimeInterval
+        var isCompatible: (String, String) -> Bool = { _, _ in false }
+        var configureCompatibility: ([String: String]) throws -> Void = { _ in
+            throw FirmwareUpdaterError("unsupported", "NIMO compatibility policy is unavailable")
+        }
     }
 
     private let state: FirmwareSessionState
@@ -70,6 +74,16 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
 
     func observe(_ listener: @escaping (FirmwareUpdateSnapshot) -> Void) -> () -> Void {
         state.observe(listener)
+    }
+
+    func configure(_ metadata: [String: String]) throws -> FirmwareUpdateSnapshot {
+        guard snapshot.safeToRelease, !preparing else { throw FirmwareUpdaterError("busy", "The active NIMO update owns its policy") }
+        _ = try connected()
+        try ports.configureCompatibility(metadata)
+        state.update {
+            $0.inventory["compatible"] = ports.isCompatible($0.observedFirmware ?? "", $0.inventory["packedVersion"] ?? "") ? "true" : "false"
+        }
+        return snapshot
     }
 
     func start(_ request: FirmwareStartRequest) throws -> FirmwareUpdateSnapshot {
@@ -183,6 +197,7 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
         state.update {
             $0.observedFirmware = inventory.firmwareDetail
             $0.inventory["packedVersion"] = inventory.packedVersion
+            $0.inventory["compatible"] = ports.isCompatible(inventory.firmwareDetail, inventory.packedVersion) ? "true" : "false"
             $0.inventory["revision"] = String((Int($0.inventory["revision"] ?? "0") ?? 0) + 1)
         }
     }

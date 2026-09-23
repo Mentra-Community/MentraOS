@@ -412,7 +412,15 @@ const mockIslandEntries = () => {
     // The namespaced (A) host API. Mirrors the real `engine` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     engine: {
-      firmwareUpdates: {assertSafeToRelease: jest.fn()},
+      firmwareUpdates: {
+        assertSafeToRelease: jest.fn(),
+        pairingPolicy: jest.fn((model) =>
+          require("./modules/engine/src/facades/firmwareUpdates").firmwareUpdates.pairingPolicy(model),
+        ),
+        supports: jest.fn((model, entryPoint) =>
+          require("./modules/engine/src/facades/firmwareUpdates").firmwareUpdates.supports(model, entryPoint),
+        ),
+      },
       configure: jest.fn(),
       start: jest.fn(() => {
         realGlassesStatusProjection.startGlassesStatusProjection()

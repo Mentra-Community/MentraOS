@@ -15,6 +15,7 @@ import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
 import {OTA_ERROR_ENGLISH_COPY} from "../services/OtaErrorMapping"
+import type {FirmwareSnapshot} from "../ota/types"
 import {
   MINIMUM_OTA_BATTERY_LEVEL,
   useMentraLiveOta,
@@ -51,6 +52,7 @@ export type MentraLiveOtaFlowProps = {
   onOpenWifiSetup: () => void
   /** Lets a host coordinate its global connection overlay with OTA progress and firmware restarts. */
   onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
+  onSnapshot?: (snapshot: FirmwareSnapshot) => void
   /** Enables the existing developer-only escape hatches. */
   allowDevSkip?: boolean
   /** Enables the existing super-mode interrupted-session escape hatch. */
@@ -178,6 +180,7 @@ export function MentraLiveOtaFlow({
   initializeRuntime = true,
   onFinished,
   onFirmwareRestartingChange,
+  onSnapshot,
   onOpenWifiSetup,
   style,
   superMode = false,
@@ -186,11 +189,12 @@ export function MentraLiveOtaFlow({
 }: MentraLiveOtaFlowProps) {
   const colors = useMemo(() => ({...DEFAULT_THEME, ...theme}), [theme])
   const controller = useMentraLiveOta({
-    allowDevelopmentSkip: allowDevSkip,
+    allowDevelopmentSkip: allowDevSkip || superMode,
     initialPage,
     initializeRuntime,
     onFinished,
     onFirmwareRestartingChange,
+    onSnapshot,
     onOpenWifiSetup,
   })
 
@@ -630,7 +634,7 @@ function OtaFlowContent({
   return (
     <FlowPage
       actions={
-        superMode ? (
+        superMode && state.canDiscard ? (
           <FlowButton colors={colors} label="Skip (super)" onPress={controller.discard} secondary />
         ) : undefined
       }

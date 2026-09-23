@@ -19,6 +19,10 @@ export default function WifiPasswordScreen() {
   const returnTo = params.returnTo as string | undefined
   const nextRoute = params.nextRoute as string | undefined
   const returnToMiniapp = params.returnToMiniapp as string | undefined
+  const firmwareReturn = params.firmwareReturn as string | undefined
+  const firmwareEntryPoint = params.firmwareEntryPoint as string | undefined
+  const firmwareDeviceId = params.firmwareDeviceId as string | undefined
+  const firmwareIntegrationId = params.firmwareIntegrationId as string | undefined
 
   const {theme} = useAppTheme()
   const {push, goBack} = useNavigationStore.getState()
@@ -67,6 +71,10 @@ export default function WifiPasswordScreen() {
       returnTo,
       nextRoute,
       returnToMiniapp,
+      firmwareReturn,
+      firmwareEntryPoint,
+      firmwareDeviceId,
+      firmwareIntegrationId,
     })
   }
 

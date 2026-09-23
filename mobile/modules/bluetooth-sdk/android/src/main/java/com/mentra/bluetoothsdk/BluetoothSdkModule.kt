@@ -793,6 +793,9 @@ class BluetoothSdkModule : Module() {
         SdkCoroutineFunction("getFirmwareUpdateSnapshot") { deviceId: String ->
             withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).snapshot.toMap() }
         }
+        SdkCoroutineFunction("configureFirmwareUpdater") { deviceId: String, metadata: Map<String, String> ->
+            withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).configure(metadata).toMap() }
+        }
         SdkCoroutineFunction("startFirmwareUpdate") { values: Map<String, Any> ->
             withContext(Dispatchers.Main.immediate) {
                 val request = FirmwareWire.request(values)
@@ -809,9 +812,9 @@ class BluetoothSdkModule : Module() {
             withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).acknowledge().toMap() }
         }
 
-        AsyncFunction("startAr99OtaFromFile") { path: String -> requireSdk().startAr99OtaFromFile(path) }
+        SdkCoroutineFunction("startAr99OtaFromFile") { path: String -> withContext(Dispatchers.Main.immediate) { requireSdk().startAr99OtaFromFile(path) } }
 
-        AsyncFunction("cancelAr99Ota") { requireSdk().cancelAr99Ota() }
+        SdkCoroutineFunction("cancelAr99Ota") { -> withContext(Dispatchers.Main.immediate) { requireSdk().cancelAr99Ota() } }
 
         AsyncFunction("sendAr99FactoryReset") { requireSdk().sendAr99FactoryReset() }
 

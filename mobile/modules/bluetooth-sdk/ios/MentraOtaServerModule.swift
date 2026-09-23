@@ -35,8 +35,8 @@ public class MentraOtaServerModule: Module {
             try await self.waitForWifiAddress(gateway: gateway, timeoutMs: timeoutMs)
         }
 
-        AsyncFunction("downloadArtifact") { (source: String, destination: String) in
-            try await self.artifactDownloader.download(from: source, to: destination)
+        AsyncFunction("downloadArtifact") { (source: String, destination: String, headers: [String: String]?) in
+            try await self.artifactDownloader.download(from: source, to: destination, headers: headers ?? [:])
         }
 
         OnDestroy {

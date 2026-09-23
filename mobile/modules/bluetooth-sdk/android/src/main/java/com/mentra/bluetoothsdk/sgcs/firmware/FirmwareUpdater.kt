@@ -60,6 +60,10 @@ interface FirmwareUpdater {
   fun reconcile(): FirmwareUpdateSnapshot
   fun cancel(): FirmwareUpdateSnapshot
   fun acknowledge(): FirmwareUpdateSnapshot
+  /** Device-defined host policy; this never implicitly starts or retries an update. */
+  fun configure(metadata: Map<String, String>): FirmwareUpdateSnapshot {
+    throw FirmwareUpdaterException("unsupported", "This updater does not accept host configuration")
+  }
 }
 
 internal class FirmwareSessionState(initial: FirmwareUpdateSnapshot,

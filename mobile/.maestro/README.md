@@ -52,6 +52,16 @@ npm run test:maestro:ci
 
 - `helpers/login-helper.yaml` - Reusable login flow
 
+### Manual firmware validation
+
+`manual/device-firmware-check.yaml` is excluded from the default suite. With the
+device owner's permission, open Settings with the intended glasses paired and
+run it with `OTA_EXPECTED_TITLE` set to the expected check result or offer title.
+It exercises the shared settings route and a real device version check without
+starting an update. Actual transfer, disconnect/resume, activation readback and
+pairing acceptance require the device-specific gates in
+`notes/superpowers/specs/2026-09-22-pluggable-device-ota-design.md`.
+
 ## Environment Variables
 
 - `MAESTRO_APP_ID` - App bundle ID (default: com.mentra.mentra)

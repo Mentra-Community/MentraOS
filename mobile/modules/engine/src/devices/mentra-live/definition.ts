@@ -9,6 +9,7 @@ import {MentraLiveFirmwareProvider} from "./provider"
 export const mentraLiveIntegration: DeviceIntegration = {
   id: "mentra-live",
   models: ["Mentra Live"],
+  setup: {requiresBluetoothClassic: true, checkFirmwareAfterWifi: true, onboardingFlowId: "mentra-live"},
   firmware: {
     entryPoints: ["pairing", "settings", "background", "recovery"],
     createProvider: (target) =>

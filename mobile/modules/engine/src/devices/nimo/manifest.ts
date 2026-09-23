@@ -31,6 +31,7 @@ function identity(value: unknown): NimoCompatibleFirmware {
   const data = object(value)
   const fullVersion = string(data.fullVersion)
   const packedVersion = string(data.packedVersion)
+  if (fullVersion.length > 512) throw new Error("NIMO firmware identity is too long")
   const detail = parseNimoFirmwareDetail(fullVersion)
   const packed = parseNimoVersion(packedVersion)
   if (!detail || !packed || compareNimoVersions(detail.version, packed) !== 0)

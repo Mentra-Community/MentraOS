@@ -8,6 +8,8 @@ export interface FirmwareSourcePolicy {
   readonly allowBundled?: boolean
   /** An own property replaces the bundle entry; null explicitly disables this integration's network source. */
   readonly sources?: Readonly<Record<string, FirmwareManifestPin | null>>
+  /** Device-owned vendor inputs. The selected integration validates its own schema. No generic fetch/fallback. */
+  readonly vendorSources?: Readonly<Record<string, unknown>>
 }
 
 export function validateFirmwarePin(pin: FirmwareManifestPin): FirmwareManifestPin {

@@ -62,7 +62,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   useEffect(() => {
     if (snapshot.page === "progress")
       callbacks.current.onFirmwareRestartingChange?.(snapshot.state.firmwareRestarting, true)
-  }, [snapshot.page, snapshot.state.firmwareRestarting])
+  }, [snapshot.page, snapshot.state.screen, snapshot.state.firmwareRestarting])
+  useEffect(() => {
+    if (provider) callbacks.current.onSnapshot?.(provider.snapshot())
+  }, [provider, snapshot])
   useEffect(() => {
     if (snapshot.page !== "progress") return
     return () => callbacks.current.onFirmwareRestartingChange?.(false, false)
@@ -94,7 +97,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
             canRetry: true,
             error: {code: "check_failed" as const, message: openError.message},
           }
-        : snapshot.state,
+        : {
+            ...snapshot.state,
+            canDiscard: provider?.snapshot().presentation.actions.some((action) => action.id === "discard") ?? false,
+          },
       check: () => perform("check"),
       retryCheck: () => perform("retry"),
       install: () => perform("install"),

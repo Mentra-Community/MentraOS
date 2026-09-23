@@ -18,6 +18,7 @@ describe("NIMO firmware identity and release policy", () => {
     expect(parseNimoVersion("0.1.0.14")).toEqual([0, 1, 0, 14])
     expect(parseNimoVersion("0.1.1")).toBeNull()
     expect(parseNimoVersion("0.1.1.4096")).toBeNull()
+    expect(parseNimoVersion("0.01.1.1")).toBeNull()
     const manifest = parseNimoManifest(fixture())
     expect(manifest.target.peerVersion).toBe("0001")
     expect(nimoCompatibility({fullVersion, packedVersion: "0.1.1.1"}, manifest.compatible, manifest.upgradeFrom)).toBe(

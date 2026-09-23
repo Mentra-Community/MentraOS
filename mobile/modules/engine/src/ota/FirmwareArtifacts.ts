@@ -1,3 +1,4 @@
+import {Platform} from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {otaServer} from "@mentra/bluetooth-sdk/ota-transport"
 
@@ -5,6 +6,7 @@ import {validateFirmwarePin, type FirmwareManifestPin} from "./sourcePolicy"
 
 export interface FirmwareArtifactDescriptor {
   readonly url: string
+  readonly headers?: Readonly<Record<string, string>>
   readonly size?: number
   readonly sha256?: string
   readonly md5?: string
@@ -38,14 +40,35 @@ export async function stageFirmwareArtifact(
   const release = async () => {
     if (await RNFS.exists(directory)) await RNFS.unlink(directory)
   }
-  const subscription = otaServer.onArtifactDownloadProgress((event) => {
-    if (event.destination !== partial) return
-    progress(
-      event.contentLength > 0 ? Math.min(100, Math.max(0, (event.bytesWritten / event.contentLength) * 100)) : null,
-    )
-  })
+  const subscription =
+    Platform.OS === "ios"
+      ? otaServer.onArtifactDownloadProgress((event) => {
+          if (event.destination !== partial) return
+          progress(
+            event.contentLength > 0
+              ? Math.min(100, Math.max(0, (event.bytesWritten / event.contentLength) * 100))
+              : null,
+          )
+        })
+      : null
   try {
-    const downloaded = await otaServer.downloadArtifact(url.toString(), partial)
+    const downloaded =
+      Platform.OS === "ios"
+        ? await otaServer.downloadArtifact(url.toString(), partial, descriptor.headers)
+        : await RNFS.downloadFile({
+            fromUrl: url.toString(),
+            toFile: partial,
+            headers: descriptor.headers,
+            connectionTimeout: 30_000,
+            readTimeout: 30_000,
+            progressDivider: 1,
+            progress: (event) =>
+              progress(
+                event.contentLength > 0
+                  ? Math.min(100, Math.max(0, (event.bytesWritten / event.contentLength) * 100))
+                  : null,
+              ),
+          }).promise
     if (downloaded.statusCode < 200 || downloaded.statusCode >= 300) throw new Error("Firmware download failed")
     const stat = await RNFS.stat(partial)
     if (Number(stat.size) < 1 || (descriptor.size !== undefined && Number(stat.size) !== descriptor.size))
@@ -60,7 +83,7 @@ export async function stageFirmwareArtifact(
     await release().catch(() => {})
     throw error
   } finally {
-    subscription.remove()
+    subscription?.remove()
   }
 }
 

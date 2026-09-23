@@ -64,6 +64,10 @@ export default function WifiConnectingScreen() {
   const rememberPassword = (params.rememberPassword as string) === "true"
   const returnTo = params.returnTo as string | undefined
   const returnToMiniapp = params.returnToMiniapp as string | undefined
+  const firmwareReturn = params.firmwareReturn === "true"
+  const firmwareEntryPoint = params.firmwareEntryPoint as string | undefined
+  const firmwareDeviceId = params.firmwareDeviceId as string | undefined
+  const firmwareIntegrationId = params.firmwareIntegrationId as string | undefined
   const _nextRoute = params.nextRoute as string | undefined
 
   const {theme} = useAppTheme()
@@ -115,6 +119,20 @@ export default function WifiConnectingScreen() {
       return
     }
 
+    // Wi-Fi completion only re-enters an updater when that device owns the return flow.
+    // Live historically rechecked after any Wi-Fi join; preserve that policy through its setup descriptor.
+    const target = await engine.firmwareUpdates.currentTarget().catch(() => null)
+    const checkAfterWifi = target
+      ? engine.firmwareUpdates.pairingPolicy(target.displayName).checkFirmwareAfterWifi
+      : false
+    if (
+      !target ||
+      (!firmwareReturn && !checkAfterWifi) ||
+      (firmwareReturn && (target.deviceId !== firmwareDeviceId || target.integrationId !== firmwareIntegrationId))
+    ) {
+      goBack()
+      return
+    }
     const history = useNavigationStore.getState().history
     // Check if OTA check-for-updates is already in the stack (initial pairing flow)
     const otaIndex = history.indexOf("/ota/check-for-updates")
@@ -131,9 +149,19 @@ export default function WifiConnectingScreen() {
     } else {
       // OTA not in stack (home OTA alert flow) - push it
       console.log("WiFi success: OTA not in stack, pushing /ota/check-for-updates")
-      push("/ota/check-for-updates")
+      push("/ota/check-for-updates", {entryPoint: firmwareEntryPoint || "pairing"})
     }
-  }, [clearHistoryAndGoHome, pushPrevious, push, returnToMiniapp])
+  }, [
+    clearHistoryAndGoHome,
+    pushPrevious,
+    push,
+    goBack,
+    returnToMiniapp,
+    firmwareReturn,
+    firmwareEntryPoint,
+    firmwareDeviceId,
+    firmwareIntegrationId,
+  ])
 
   const handleHeaderBack = useCallback(() => {
     goBack()

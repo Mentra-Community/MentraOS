@@ -15,6 +15,16 @@ async function currentTarget(): Promise<FirmwareTarget> {
 
 export const firmwareUpdates = {
   currentTarget,
+  pairingPolicy(model: string) {
+    const integration = deviceIntegrations.forModel(model)
+    return {
+      checkFirmware: integration?.firmware?.entryPoints.includes("pairing") ?? false,
+      requiresBluetoothClassic: integration?.setup?.requiresBluetoothClassic ?? false,
+      checkFirmwareAfterWifi: integration?.setup?.checkFirmwareAfterWifi ?? false,
+      onboardingFlowId: integration?.setup?.onboardingFlowId ?? null,
+      includeOsOnboarding: integration?.setup?.includeOsOnboarding ?? true,
+    }
+  },
   supports(model: string, entryPoint: FirmwareEntryPoint): boolean {
     return deviceIntegrations.forModel(model)?.firmware?.entryPoints.includes(entryPoint) ?? false
   },

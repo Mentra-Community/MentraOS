@@ -4,6 +4,7 @@ export type NimoVersion = readonly [number, number, number, number]
 export function parseNimoVersion(value: string): NimoVersion | null {
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(value)) return null
   const parts = value.split(".").map(Number)
+  if (parts.map(String).join(".") !== value) return null
   if (parts.some((part, index) => !Number.isSafeInteger(part) || part < 0 || part > [15, 127, 511, 4095][index]!))
     return null
   return parts as unknown as NimoVersion

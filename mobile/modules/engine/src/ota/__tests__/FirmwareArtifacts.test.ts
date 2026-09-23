@@ -1,5 +1,8 @@
 import {beforeEach, expect, mock, test} from "bun:test"
 
+const platform = {OS: "ios"}
+mock.module("react-native", () => ({Platform: platform}))
+let lastHeaders: Readonly<Record<string, string>> | undefined
 const files = new Map<string, {bytes: number; digest: string; body: string}>()
 const requests: string[] = []
 let downloaded = {bytes: 123, digest: "a".repeat(64), body: "{}"}
@@ -10,6 +13,17 @@ let subscriptions = 0
 
 mock.module("@dr.pogodin/react-native-fs", () => ({
   DocumentDirectoryPath: "/documents",
+  downloadFile: (options: {
+    toFile: string
+    headers?: Readonly<Record<string, string>>
+    progress: (event: {bytesWritten: number; contentLength: number}) => void
+  }) => {
+    lastHeaders = options.headers
+    requests.push(options.toFile)
+    files.set(options.toFile, {...downloaded})
+    options.progress({bytesWritten: downloaded.bytes, contentLength: downloaded.bytes})
+    return {promise: Promise.resolve({statusCode, bytesWritten: downloaded.bytes})}
+  },
   mkdir: async (path: string) => {
     files.set(path, {bytes: 0, digest: "", body: ""})
   },
@@ -37,7 +51,8 @@ mock.module("@mentra/bluetooth-sdk/ota-transport", () => ({
         },
       }
     },
-    downloadArtifact: async (_source: string, destination: string) => {
+    downloadArtifact: async (_source: string, destination: string, headers?: Readonly<Record<string, string>>) => {
+      lastHeaders = headers
       requests.push(destination)
       files.set(destination, {...downloaded})
       progressListener?.({destination: "/another-session/image.part", bytesWritten: 999, contentLength: 999})
@@ -50,6 +65,8 @@ mock.module("@mentra/bluetooth-sdk/ota-transport", () => ({
 const {stageFirmwareArtifact, fetchPinnedFirmwareManifest} = await import("../FirmwareArtifacts")
 const descriptor = {url: "https://example.invalid/image", sha256: "a".repeat(64), size: 123}
 beforeEach(() => {
+  platform.OS = "ios"
+  lastHeaders = undefined
   files.clear()
   requests.length = 0
   statusCode = 200
@@ -99,3 +116,18 @@ test("AR99's optional MD5 is honored without imposing a new required SHA-256", a
   downloaded.digest = "f".repeat(32)
   await expect(stageFirmwareArtifact({url: descriptor.url, md5: "E".repeat(32)})).rejects.toThrow("MD5")
 })
+
+test.each(["ios", "android"])(
+  "%s preserves vendor headers and stages through its available native transport",
+  async (os) => {
+    platform.OS = os
+    const progress: (number | null)[] = []
+    const file = await stageFirmwareArtifact({...descriptor, headers: {"Accept-Language": "en-US"}}, (value) =>
+      progress.push(value),
+    )
+    expect(lastHeaders).toEqual({"Accept-Language": "en-US"})
+    expect(progress).toEqual([100])
+    expect(subscriptions).toBe(0)
+    await file.release()
+  },
+)

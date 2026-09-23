@@ -20,7 +20,9 @@ export function validateDeviceFirmware(input) {
       !match ||
       match[1] !== packedVersion ||
       fullVersion.length > 512 ||
-      packedVersion.split(".").some((part, index) => Number(part) > [15, 127, 511, 4095][index])
+      packedVersion
+        .split(".")
+        .some((part, index) => String(Number(part)) !== part || Number(part) > [15, 127, 511, 4095][index])
     )
       throw new Error("Invalid NIMO compatible firmware identity")
     return {fullVersion, packedVersion}

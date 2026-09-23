@@ -3,6 +3,13 @@ import type {FirmwareEntryPoint, FirmwareProvider, FirmwareTarget} from "../ota/
 export interface DeviceIntegration {
   readonly id: string
   readonly models: readonly string[]
+  /** Host navigation policy; the device integration declares requirements, never app route paths. */
+  readonly setup?: {
+    readonly requiresBluetoothClassic?: boolean
+    readonly checkFirmwareAfterWifi?: boolean
+    readonly onboardingFlowId?: string
+    readonly includeOsOnboarding?: boolean
+  }
   readonly firmware?: {
     readonly entryPoints: readonly FirmwareEntryPoint[]
     readonly createProvider: (target: FirmwareTarget) => FirmwareProvider

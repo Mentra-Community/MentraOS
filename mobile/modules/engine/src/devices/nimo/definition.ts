@@ -64,6 +64,13 @@ function portsFor(target: FirmwareTarget): NimoFirmwarePorts {
     source: () =>
       resolveFirmwareSource("nimo", getConfigValues().firmwareSources, DEVICE_FIRMWARE_CATALOGUE.nimo.manifest),
     loadManifest: async (pin) => parseNimoManifest(await fetchPinnedFirmwareManifest(pin)),
+    configureCompatibility: async (manifest, pin) => {
+      await validateTarget()
+      await BluetoothSdk.configureFirmwareUpdater(target.deviceId, {
+        compatibleFirmware: JSON.stringify(manifest.compatible),
+        manifestSha256: pin.sha256,
+      })
+    },
     compatible: DEVICE_FIRMWARE_CATALOGUE.nimo.compatible,
     stage: (manifest, progress) => stageFirmwareArtifact(manifest.artifact, progress),
     acquireRuntime: acquireFirmwareRuntime,

@@ -57,6 +57,7 @@ function fixture() {
     acknowledge: async () => emit({sessionId: undefined, offerId: undefined, phase: "idle"}),
     source: () => ({url: "https://example.invalid/manifest", sha256: "b".repeat(64)}),
     loadManifest: async () => manifest,
+    configureCompatibility: async () => {},
     compatible: manifest.compatible,
     stage: async () => ({
       path: "/staged/image.bin",
@@ -102,6 +103,18 @@ describe("headless NIMO firmware policy", () => {
     const f = fixture()
     f.ports.source = () => null
     f.emit({observedFirmware: fullVersion, inventory: {packedVersion: "0.1.1.1"}})
+    await f.provider.open({entryPoint: "pairing"})
+    expect(f.provider.snapshot().phase).toBe("complete")
+    expect(f.requests).toHaveLength(0)
+  })
+
+  test("fresh native inventory can recognize cached verified compatibility while offline", async () => {
+    const f = fixture()
+    f.ports.source = () => null
+    f.emit({
+      observedFirmware: "FW-VERSION-v0.1.2.0-approved",
+      inventory: {packedVersion: "0.1.2.0", compatible: "true"},
+    })
     await f.provider.open({entryPoint: "pairing"})
     expect(f.provider.snapshot().phase).toBe("complete")
     expect(f.requests).toHaveLength(0)
@@ -183,5 +196,18 @@ describe("headless NIMO firmware policy", () => {
     expect(f.provider.snapshot().presentation.actions).toEqual([])
     await expect(f.provider.perform({action: "retry"})).rejects.toThrow("No verified recovery")
     expect(f.held()).toBe(1)
+  })
+
+  test("native admission during a compatibility check cannot be overwritten by a safe check failure", async () => {
+    const f = fixture()
+    f.ports.configureCompatibility = async () => {
+      f.emit({sessionId: "native-other-caller", phase: "preparing", safeToRelease: false})
+      throw new Error("Native update owns its policy")
+    }
+    await f.provider.open({entryPoint: "settings"})
+    expect(f.provider.snapshot().nativeSessionId).toBe("native-other-caller")
+    expect(f.provider.snapshot().safeToRelease).toBe(false)
+    expect(f.provider.snapshot().phase).toBe("preparing")
+    expect(f.requests).toHaveLength(0)
   })
 })

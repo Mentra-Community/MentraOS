@@ -21,6 +21,12 @@ test("invalid source and unsupported compatibility metadata are rejected before 
   assert.throws(() =>
     validateDeviceFirmware({
       ...source,
+      nimo: {...source.nimo, compatible: [{fullVersion: "FW-VERSION-v0.01.1.1-build", packedVersion: "0.01.1.1"}]},
+    }),
+  )
+  assert.throws(() =>
+    validateDeviceFirmware({
+      ...source,
       nimo: {...source.nimo, manifest: {url: "http://example.invalid", sha256: "a".repeat(64)}},
     }),
   )

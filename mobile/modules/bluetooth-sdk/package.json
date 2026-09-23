@@ -77,7 +77,8 @@
     "scripts",
     "src",
     "!src/__tests__",
-    "test-fixtures"
+    "test-fixtures",
+    "device-firmware.json"
   ],
   "scripts": {
     "build": "expo-module build",
@@ -89,6 +90,8 @@
     "prepack": "node scripts/inject-ios-sdk-version.mjs",
     "postpack": "node scripts/inject-ios-sdk-version.mjs --restore",
     "write:release-metadata": "node scripts/write-release-metadata.mjs",
+    "write:device-firmware": "node scripts/write-device-firmware.mjs",
+    "check:device-firmware": "node scripts/write-device-firmware.mjs --check",
     "verify:release-package": "node scripts/verify-release-package.mjs",
     "prepublishOnly": "expo-module prepublishOnly",
     "lint": "expo-module lint",

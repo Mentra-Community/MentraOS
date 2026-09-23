@@ -94,6 +94,7 @@ const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): Bl
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   getFirmwareUpdateSnapshot: bindPublicMethod("getFirmwareUpdateSnapshot"),
+  configureFirmwareUpdater: bindPublicMethod("configureFirmwareUpdater"),
   startFirmwareUpdate: bindPublicMethod("startFirmwareUpdate"),
   reconcileFirmwareUpdate: bindPublicMethod("reconcileFirmwareUpdate"),
   cancelFirmwareUpdate: bindPublicMethod("cancelFirmwareUpdate"),

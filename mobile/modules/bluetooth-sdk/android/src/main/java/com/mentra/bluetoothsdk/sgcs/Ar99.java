@@ -26,6 +26,9 @@ import com.mentra.bluetoothsdk.DeviceManager;
 import com.mentra.bluetoothsdk.DeviceStore;
 import com.mentra.bluetoothsdk.PhotoRequest;
 import com.mentra.bluetoothsdk.sgcs.ar99.ota.Ar99OtaManager;
+import com.mentra.bluetoothsdk.sgcs.ar99.ota.Ar99FirmwareUpdater;
+import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdater;
+import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareConnectionGeneration;
 import com.mentra.bluetoothsdk.sgcs.ar99.ota.OtaGattTransport;
 import com.mentra.bluetoothsdk.utils.ConnTypes;
 import com.mentra.bluetoothsdk.utils.DeviceTypes;
@@ -149,6 +152,47 @@ public class Ar99 extends SGCManager {
   private ScanCallback scanCallback;
   private Runnable scanTimeoutRunnable;
   private String targetIdentifier;
+  private Runnable firmwareReconnectRunnable;
+  private long firmwareReconnectDeadline;
+  private int legacyOtaGeneration = 0;
+  private int firmwareConnectionGeneration = 0;
+  private Ar99FirmwareUpdater ar99FirmwareUpdater;
+  @Override public FirmwareUpdater getFirmwareUpdater() { return ar99FirmwareUpdater; }
+  @Override public boolean getFirmwareUpdateOwnsDevice() {
+    return ar99FirmwareUpdater != null && ar99FirmwareUpdater.getOwnsDevice();
+  }
+  private void scheduleFirmwareReconnect(boolean renew) {
+    if (!getFirmwareUpdateOwnsDevice() || controlGatt != null) return;
+    if (renew) firmwareReconnectDeadline = android.os.SystemClock.elapsedRealtime() + 90000;
+    if (android.os.SystemClock.elapsedRealtime() >= firmwareReconnectDeadline) return;
+    if (firmwareReconnectRunnable != null) handler.removeCallbacks(firmwareReconnectRunnable);
+    firmwareReconnectRunnable = () -> {
+      if (!getFirmwareUpdateOwnsDevice() || controlGatt != null || isScanning) return;
+      connectById(ar99FirmwareUpdater.getSnapshot().getDeviceId());
+      if (!isScanning && controlGatt == null) scheduleFirmwareReconnect(false);
+    };
+    handler.postDelayed(firmwareReconnectRunnable, 2000);
+  }
+  private void bindFirmwareUpdater(String id) {
+    firmwareConnectionGeneration = FirmwareConnectionGeneration.INSTANCE.next();
+    if (ar99FirmwareUpdater == null) {
+      ar99FirmwareUpdater = new Ar99FirmwareUpdater(id, firmwareConnectionGeneration, new Ar99FirmwareUpdater.Ports() {
+        @Override public boolean connected() {
+          return getConnected() && controlGatt != null && otaWriteCharacteristic != null && otaNotifyCharacteristic != null;
+        }
+        @Override public boolean start(byte[] bytes, Ar99OtaManager.OTACallback callback) {
+          Ar99OtaManager manager = Ar99OtaManager.getInstance();
+          if (manager.isOTAInProgress()) return false;
+          manager.setCallback(callback);
+          return manager.startOTA(bytes);
+        }
+        @Override public void queryInventory() { requestDeviceInfo(); }
+        @Override public void reconnect() { scheduleFirmwareReconnect(true); }
+      }, new File(context.getFilesDir(), "firmware-updates"));
+    }
+    ar99FirmwareUpdater.connectionChanged(firmwareConnectionGeneration);
+  }
+
   private String currentProjectName;
   private String currentBroadcastMacAddress;
 
@@ -267,6 +311,8 @@ public class Ar99 extends SGCManager {
       new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+          if (Looper.myLooper() != Looper.getMainLooper()) { handler.post(() -> onConnectionStateChange(gatt, status, newState)); return; }
+          if (gatt != controlGatt) return;
           if (newState == BluetoothProfile.STATE_CONNECTED) {
             Bridge.log(TAG + ": connected to " + (gatt.getDevice() != null ? gatt.getDevice().getName() : ""));
             controlGatt = gatt;
@@ -278,11 +324,14 @@ public class Ar99 extends SGCManager {
             }
             cleanupGatt();
             updateConnectionState(ConnTypes.DISCONNECTED);
+            scheduleFirmwareReconnect(true);
           }
         }
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+          if (Looper.myLooper() != Looper.getMainLooper()) { handler.post(() -> onServicesDiscovered(gatt, status)); return; }
+          if (gatt != controlGatt) return;
           if (status != BluetoothGatt.GATT_SUCCESS) {
             Bridge.log(TAG + ": service discovery failed status=" + status);
             return;
@@ -313,6 +362,8 @@ public class Ar99 extends SGCManager {
 
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+          if (Looper.myLooper() != Looper.getMainLooper()) { handler.post(() -> onDescriptorWrite(gatt, descriptor, status)); return; }
+          if (gatt != controlGatt) return;
           isNotifyWriteInFlight = false;
           if (status != BluetoothGatt.GATT_SUCCESS) {
             Bridge.log(TAG + ": descriptor write failed status=" + status);
@@ -330,6 +381,8 @@ public class Ar99 extends SGCManager {
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+          if (Looper.myLooper() != Looper.getMainLooper()) { handler.post(() -> onCharacteristicWrite(gatt, characteristic, status)); return; }
+          if (gatt != controlGatt) return;
           if (characteristic != null && OTA_WRITE_UUID.equals(characteristic.getUuid())) {
             synchronized (otaWriteQueue) {
               if (otaWriteUsesNoResponseMode) {
@@ -358,17 +411,23 @@ public class Ar99 extends SGCManager {
           if (data == null) return;
 
           UUID uuid = characteristic.getUuid();
-          if (OTA_NOTIFY_UUID.equals(uuid)) {
-            Ar99OtaManager.getInstance().handleOTAResponse(data);
-          } else if (CTRL_SLAVE_TO_HOST.equals(uuid)) {
-            handleControlNotifyChunk(data);
-          } else if (OPUS_SLAVE_TO_HOST.equals(uuid)) {
-            handleOpusData(data);
-          }
+          byte[] captured = data.clone();
+          handler.post(() -> {
+            if (gatt != controlGatt) return;
+            if (OTA_NOTIFY_UUID.equals(uuid)) {
+              Ar99OtaManager.getInstance().handleOTAResponse(captured);
+            } else if (CTRL_SLAVE_TO_HOST.equals(uuid)) {
+              handleControlNotifyChunk(captured);
+            } else if (OPUS_SLAVE_TO_HOST.equals(uuid)) {
+              handleOpusData(captured);
+            }
+          });
         }
 
         @Override
         public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
+          if (Looper.myLooper() != Looper.getMainLooper()) { handler.post(() -> onMtuChanged(gatt, mtu, status)); return; }
+          if (gatt != controlGatt) return;
           if (Ar99OtaManager.getInstance().handleGattMtuChangedForOta(status)) {
             return;
           }
@@ -545,6 +604,7 @@ public class Ar99 extends SGCManager {
   public void sendReboot() {}
 
   public void sendFactoryReset() {
+    if (getFirmwareUpdateOwnsDevice()) return;
     Bridge.log(TAG + ": sending factory reset");
     enqueueMessage(
         FUNC_COMM_DISPLAY,
@@ -584,6 +644,7 @@ public class Ar99 extends SGCManager {
 
   @Override
   public void connectById(String id) {
+    if (getFirmwareUpdateOwnsDevice() && !ar99FirmwareUpdater.getSnapshot().getDeviceId().equals(id)) return;
     targetIdentifier = id != null ? id.trim() : null;
     discoveredNames.clear();
     startScan(true);
@@ -687,7 +748,7 @@ public class Ar99 extends SGCManager {
     if (localScanner == null || localCallback == null) return;
 
     localScanner.startScan(Collections.emptyList(), settings, localCallback);
-    scanTimeoutRunnable = this::stopScan;
+    scanTimeoutRunnable = () -> { stopScan(); scheduleFirmwareReconnect(false); };
     handler.postDelayed(scanTimeoutRunnable, SCAN_DURATION_MS);
   }
 
@@ -781,9 +842,13 @@ public class Ar99 extends SGCManager {
   }
 
   private void connectGatt(BluetoothDevice device) {
+    if (Looper.myLooper() != Looper.getMainLooper()) { handler.post(() -> connectGatt(device)); return; }
+    if (ar99FirmwareUpdater != null && ar99FirmwareUpdater.getOwnsDevice() &&
+        !ar99FirmwareUpdater.getSnapshot().getDeviceId().equals(device.getAddress())) return;
     cleanupGatt();
     updateConnectionState(ConnTypes.CONNECTING);
     connecting = true;
+    bindFirmwareUpdater(device.getAddress());
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
       controlGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
@@ -835,6 +900,8 @@ public class Ar99 extends SGCManager {
       sendAr99OtaStatus("failed", 0, 0, 0, "Firmware path is empty");
       return false;
     }
+    if (ar99FirmwareUpdater != null) ar99FirmwareUpdater.beginLegacy();
+    final int admitted = ++legacyOtaGeneration;
     Ar99OtaManager manager = Ar99OtaManager.getInstance();
     // Match the validated c100_client flow: if the user manually restarts OTA after a
     // BLE disconnect, abandon the paused/in-progress native session first so the fresh
@@ -850,6 +917,7 @@ public class Ar99 extends SGCManager {
 
           @Override
           public void onProgress(int offset, int total, int progress) {
+            if (legacyOtaGeneration != admitted) return;
             lastOffset = offset;
             lastTotal = total;
             sendAr99OtaStatus("transferring", progress, offset, total, null);
@@ -857,24 +925,31 @@ public class Ar99 extends SGCManager {
 
           @Override
           public void onCompleted(boolean needReboot) {
+            if (legacyOtaGeneration != admitted) return;
+            if (ar99FirmwareUpdater != null) ar99FirmwareUpdater.endLegacy();
             sendAr99OtaStatus("success", 100, lastTotal, lastTotal, null);
             manager.setCallback(null);
           }
 
           @Override
           public void onError(int errorCode, String message) {
+            if (legacyOtaGeneration != admitted) return;
+            if (ar99FirmwareUpdater != null) ar99FirmwareUpdater.endLegacy();
             sendAr99OtaStatus("failed", manager.getProgress(), lastOffset, lastTotal, message);
             manager.setCallback(null);
           }
 
           @Override
           public void onCancelled() {
+            if (legacyOtaGeneration != admitted) return;
+            if (ar99FirmwareUpdater != null) ar99FirmwareUpdater.endLegacy();
             sendAr99OtaStatus("cancelled", manager.getProgress(), lastOffset, lastTotal, null);
             manager.setCallback(null);
           }
 
           @Override
           public void onPausedWaitingReconnect() {
+            if (legacyOtaGeneration != admitted) return;
             sendAr99OtaStatus(
                 "paused", manager.getProgress(), lastOffset, lastTotal, "Waiting for reconnect");
           }
@@ -882,6 +957,7 @@ public class Ar99 extends SGCManager {
     sendAr99OtaStatus("preparing", 0, 0, 0, null);
     boolean started = manager.startOTA(new File(path));
     if (!started) {
+      if (ar99FirmwareUpdater != null) ar99FirmwareUpdater.endLegacy();
       sendAr99OtaStatus("failed", 0, 0, 0, "Unable to start AR99 OTA");
       manager.setCallback(null);
     }
@@ -889,6 +965,7 @@ public class Ar99 extends SGCManager {
   }
 
   public void cancelAr99Ota() {
+    if (ar99FirmwareUpdater != null) ar99FirmwareUpdater.assertLegacyControlAllowed();
     Ar99OtaManager.getInstance().cancelOTA();
   }
 
@@ -1487,6 +1564,9 @@ public class Ar99 extends SGCManager {
         if (info.serialNumber != null) {
           DeviceStore.INSTANCE.apply("glasses", "serialNumber", info.serialNumber);
         }
+        if (ar99FirmwareUpdater != null) ar99FirmwareUpdater.inventoryChanged(
+          info.firmwareVersion == null ? "" : info.firmwareVersion, info.serialNumber == null ? "" : info.serialNumber,
+          currentProjectName == null ? "AR99" : currentProjectName, firmwareConnectionGeneration);
         sendVersionInfo(info);
       }
     } else if (cmd == CMD_DISPLAY_GET_BRIGHT) {

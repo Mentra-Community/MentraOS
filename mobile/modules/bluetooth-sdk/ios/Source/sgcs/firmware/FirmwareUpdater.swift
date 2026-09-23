@@ -93,6 +93,14 @@ public protocol FirmwareUpdater: AnyObject {
     func reconcile() throws -> FirmwareUpdateSnapshot
     func cancel() throws -> FirmwareUpdateSnapshot
     func acknowledge() throws -> FirmwareUpdateSnapshot
+    /// Device-defined host policy, validated by the integration. Never an implicit Start or recovery command.
+    func configure(_ metadata: [String: String]) throws -> FirmwareUpdateSnapshot
+}
+
+public extension FirmwareUpdater {
+    func configure(_: [String: String]) throws -> FirmwareUpdateSnapshot {
+        throw FirmwareUpdaterError("unsupported", "This updater does not accept host configuration")
+    }
 }
 
 @MainActor
