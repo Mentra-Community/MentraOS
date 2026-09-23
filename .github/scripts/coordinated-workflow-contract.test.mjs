@@ -383,8 +383,8 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
 })
 
-for (const stuckApp of ["", "runtime", "core"]) {
-  test(`private deployment waits for both release images before HTTP probes (${stuckApp || "successful rollout"})`, () => {
+for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", false], ["", true]]) {
+  test(`private deployment waits for both release images before HTTP probes (${stuckApp || (sameImage ? "configuration-only rollout" : "successful rollout")})`, () => {
     const directory = mkdtempSync(path.join(tmpdir(), "private-rollout-"))
     const digest = `sha256:${"a".repeat(64)}`
     const image = `registry.example/cloud@${digest}`
@@ -409,6 +409,10 @@ for (const stuckApp of ["", "runtime", "core"]) {
           "containerapp show"*)
             local app=core count=0
             [[ "$*" != *"--name runtime "* ]] || app=runtime
+            if [[ "$*" == *properties.latestRevisionName* ]]; then
+              echo "$app-new"
+              return 0
+            fi
             [[ ! -f "$app-count" ]] || read -r count < "$app-count"
             count=$((count + 1))
             echo "$count" > "$app-count"
@@ -423,6 +427,8 @@ for (const stuckApp of ["", "runtime", "core"]) {
               touch runtime-ready; echo "$TARGET_IMAGE"
             elif [[ "$*" == *"--revision core-new "* ]]; then
               touch core-ready; echo "$TARGET_IMAGE"
+            elif [[ "$SAME_IMAGE" == true ]]; then
+              echo "$TARGET_IMAGE"
             else
               echo registry.example/cloud:previous
             fi
@@ -445,7 +451,7 @@ for (const stuckApp of ["", "runtime", "core"]) {
         cwd: directory,
         env: {...process.env, AZURE_RESOURCE_GROUP: "group", AZURE_REGISTRY: "registry",
           AZURE_CONTAINER_APP: "runtime", AZURE_CORE_CONTAINER_APP: "core", RUNNER_TEMP: directory,
-          TARGET_DIGEST: digest, TARGET_IMAGE: image, STUCK_APP: stuckApp},
+          TARGET_DIGEST: digest, TARGET_IMAGE: image, STUCK_APP: stuckApp, SAME_IMAGE: String(sameImage)},
         encoding: "utf8", timeout: 10_000,
       })
       assert.ifError(result.error)

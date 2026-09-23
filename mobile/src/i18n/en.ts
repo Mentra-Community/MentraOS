@@ -842,6 +842,7 @@ const en = {
   debugSettings: {
     showMentraCallIos: "Show Mentra Call (experimental)",
     showMentraCallIosSubtitle: "Show Mentra Call on this device for testing.",
+    mentraCallWorkspacePolicy: "Mentra Call availability is managed by your workspace.",
     mentraCallBuildOverride: "Enabled by this build's EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS override.",
     showNotifyIos: "Show Notify (experimental)",
     showNotifyIosSubtitle: "Show Notify on this device for testing.",
@@ -1268,6 +1269,9 @@ const en = {
   feedback: {
     thankYou: "Thank You!",
     feedbackReceived: "Your feedback has been received.",
+    reportReceived: "Your feedback has been received.\n\nReport ID: {{reportId}}",
+    copyReportId: "Copy report ID",
+    copyReportIdFailed: "Could not copy the report ID. You can copy it from the confirmation message.",
     submitFeedback: "Submit Feedback",
     shareYourThoughts: "Share your thoughts, suggestions, or report issues…",
     giveFeedback: "Give Feedback",

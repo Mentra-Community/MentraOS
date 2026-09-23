@@ -63,6 +63,7 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
+import { getReport } from "../packages/core/src/services/report.service";
 import {
   createStorageService,
   sha256Hex,
@@ -217,6 +218,23 @@ describe("reports artifact asset store", () => {
     const res = await postArtifacts("rep_does_not_exist", form);
     expect(res.status).toBe(404);
     expect(await ReportAssetModel.countDocuments({})).toBe(0);
+  });
+
+  test("retrieves ordered report assets using an available sort index", async () => {
+    const reportId = await submitBugReport();
+    const form = new FormData();
+    form.append("files", new File([new Uint8Array([1])], "one.png", { type: "image/png" }));
+    form.append("files", new File([new Uint8Array([2])], "two.png", { type: "image/png" }));
+    expect((await postArtifacts(reportId, form)).status).toBe(200);
+    // Force a known order that differs from insertion order. The explicit hint
+    // reproduces Cosmos's requirement: ordinary Mongo otherwise permits an
+    // unindexed sort and would miss this deployment failure.
+    await ReportAssetModel.collection.updateOne({ reportId, fileName: "one.png" }, { $set: { createdAt: new Date(2000) } });
+    await ReportAssetModel.collection.updateOne({ reportId, fileName: "two.png" }, { $set: { createdAt: new Date(1000) } });
+    const indexed = await ReportAssetModel.find({ reportId }).sort({ createdAt: 1 }).hint({ createdAt: 1 }).lean();
+    expect(indexed.map(asset => asset.fileName)).toEqual(["two.png", "one.png"]);
+    const detail = await getReport(reportId);
+    expect(detail?.assets.map(asset => asset.artifactId)).toEqual(indexed.map(asset => asset.artifactId));
   });
 });
 
