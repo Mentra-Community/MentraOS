@@ -73,6 +73,10 @@ public final class FramePreviewModule: Module {
       promise.resolve(nil)
     }
 
+    AsyncFunction("runLogPath") { (promise: Promise) in
+      promise.resolve(self.session.runLogPath)
+    }
+
     AsyncFunction("unbind") { (promise: Promise) in
       self.boundPackage = nil
       self.session.teardown(reason: "unbind")

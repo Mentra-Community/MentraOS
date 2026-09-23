@@ -103,6 +103,80 @@ Real frames are reported at whatever the decoder actually produced. Android scal
 negotiated ACS profile before I420, so a call requesting 540p previews at 540p and says so; it is
 never upscaled and relabelled 720p.
 
+## Stress defaults
+
+The panel defaults to **1280×720 at 30 fps**, which is double the product target and about
+41.5 MB/s of packed YUV through the transport. A run that holds there has headroom; a run that
+does not can be walked down through 15, 10 and 5 to find where it breaks.
+
+Two things had to change before that number meant anything. The synthetic pattern was a
+per-pixel loop costing ~175 ms a frame in a debug build, which capped the source near 5 fps and
+made every reported number really a number about the generator — it is now built two rows at a
+time and copied. And the reporter sorted each percentile ring once per percentile, seven rings a
+second, on the queue that packs frames; each ring is now sorted once per report.
+
+Both are measurement-correctness fixes rather than optimisations: the first made the pipeline
+unmeasurable, the second put the measurement inside the measurement.
+
+## What gets measured, and where it lands
+
+Every run writes one NDJSON file. The same object that goes to the panel at 1 Hz is appended to
+that file, so the screen and the file can never disagree about what a second looked like, and
+`pack_only` vs `render` becomes a diff rather than an argument.
+
+| | |
+|---|---|
+| Android | `<external files>/frame-preview/<runId>.ndjson` — `adb pull`, no root |
+| iOS | `Application Support/frame-preview/<runId>.ndjson` — path is `NSLog`ged at `start()` |
+
+`runId` is shown in the panel and is the file name. Lines are `t: "meta"` (device, OS, mode,
+target fps — written once), `t: "status"` (one per second), `t: "event"` (document generations,
+consumer auth, transport failures, stale acks, ack timeouts, configure) and `t: "end"`. Each
+line is flushed as it is written: the tail of a run that ended in a crash or a thermal shutdown
+is the part worth having.
+
+Three groups of counters matter for different questions.
+
+**Is anything compressing.** The synthetic pattern carries grain, which cannot change the
+bandwidth — raw YUV is the same size whatever it contains — but flat colour bars are enormously
+compressible and noise is not. If `sendCompleteMs*` and `deliveredFps` hold with grain on, then
+nothing in the path is quietly deflating and the throughput figure is real. That is the only
+reason the noise is there.
+
+**Is the source itself the limit.** `generateMs*` is the synthetic generator's own cost and
+nothing else's; a real decoder never pays it. If it approaches the frame period, the run is
+measuring the test pattern and every other number is downstream of that.
+
+**Is the preview keeping up.** `deliveredFps` against `targetFps`, and the skip reasons that
+explain the difference: `skippedPacing` (not due yet), `skippedBusy` (consumer or worker busy),
+with `preDispatchDrops` and `slotStarved` as sub-reasons of the latter — they are already
+included in `skippedBusy` and must not be added to it. `outstanding` should be 0 or 1 forever.
+
+**Is it smooth.** `deliveryGapMs*` rather than the mean. A steady 14.8 fps and a 14.8 fps made of
+alternating 30 ms and 100 ms gaps are the same number above and very different to look at. Every
+timing carries `p95` and a `Max` that is not windowed, because the worst frame of the run is the
+one that was visible. The page reports the same cadence from its own clock as `arrivalGapMs*`,
+and `markerMismatches` compares the pattern drawn into the pixels against the header's sequence —
+the only check that can catch a buffer reused while the page was still reading it.
+
+**Did the call suffer.** This is the group the decision actually turns on, and the only one that
+describes something other than the preview. `tapOfferMeanUs` / `tapOfferMaxUs` is time spent on
+the decoder thread; `tapCadenceMeanMs` / `tapCadenceMaxMs` is the decoder's own rhythm and is
+counted whether or not a preview sink is attached, so a run with preview off is a usable
+baseline. On Android `mainQueueWaitMs*` shows how long the send sat behind the app's own UI work,
+and `tapSinkExceptions` must stay zero.
+
+Send timing is reported differently per platform on purpose. Chromium copies inside
+`postMessage`, so Android's `sendCompleteMs*` is the whole send. Network framework's enqueue
+returns before the copy happens, so iOS reports `sendEnqueueMs*` and `sendCompleteMs*`
+separately; averaging them under one name would make iOS look an order of magnitude faster than
+Android for no reason. Keys a platform cannot honestly measure are absent rather than zero.
+
+Native timings only ever come from the native monotonic clock and page timings only from
+`performance.now()`; the two are never subtracted. `drawToRafMs` is draw submission to the next
+animation frame, which is the closest honest proxy for presentation — it is not a measurement of
+what the display actually showed.
+
 ## Verification
 
 ```sh
@@ -112,8 +186,10 @@ cd mobile/android && ./gradlew :mentra-frame-preview:testDebugUnitTest
 
 Unit tests cover the header's golden bytes, the pacer (credit, absolute schedule, stall resync,
 stale and duplicate acks, timeout, stop/restart), stride-aware packing, the header surviving
-`I420Packer.pack`'s `clear()`, and the synthetic lease pool refusing to overwrite a buffer a
-worker still holds.
+`I420Packer.pack`'s `clear()`, the synthetic lease pool refusing to overwrite a buffer a worker
+still holds, and the statistics layer: percentile rings that lap without losing their maximum,
+delivery-gap cadence, first-frame latencies, a rate window that restarts with each run, and a
+run-log encoder that drops a non-finite number rather than the twenty good counters beside it.
 
 Neither proves the module links into the app. That needs an app build on each platform, and the
 transport question itself can only be answered on physical hardware.

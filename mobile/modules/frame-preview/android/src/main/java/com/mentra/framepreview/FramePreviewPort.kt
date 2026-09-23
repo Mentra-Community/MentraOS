@@ -91,12 +91,20 @@ class FramePreviewPort {
     replyProxy = null
   }
 
-  /** Send one frame. False when there is no authenticated consumer for the current document. */
-  fun send(bytes: ByteArray, onSendMeasured: (Long) -> Unit): Boolean {
+  /**
+   * Send one frame. False when there is no authenticated consumer for the current document.
+   *
+   * [onSendMeasured] receives how long the runnable waited in the main looper before it ran, and
+   * how long `postMessage` then took. The wait is reported separately because it is not our cost
+   * to claim or to hide: a long wait means the app's UI thread was busy with something else, and
+   * that is exactly the interference the experiment is looking for.
+   */
+  fun send(bytes: ByteArray, onSendMeasured: (queueWaitNs: Long, postNs: Long) -> Unit): Boolean {
     val proxy = replyProxy ?: return false
     // postMessage must run on the thread that owns the WebView. Packing already happened on the
     // worker; only this hop is on the UI thread, and it is timed because "does this block the
     // UI" is one of the questions the experiment has to answer.
+    val postedAtNs = System.nanoTime()
     main.post {
       val started = System.nanoTime()
       try {
@@ -105,7 +113,7 @@ class FramePreviewPort {
         Log.w(TAG, "postMessage(byte[]) failed", error)
         onFailure?.invoke("send_failed", error.message ?: error.toString())
       }
-      onSendMeasured(System.nanoTime() - started)
+      onSendMeasured(started - postedAtNs, System.nanoTime() - started)
     }
     return true
   }

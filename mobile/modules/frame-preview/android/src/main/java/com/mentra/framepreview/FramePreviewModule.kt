@@ -81,10 +81,15 @@ class FramePreviewModule : Module() {
         width = (options["width"] as? Number)?.toInt(),
         height = (options["height"] as? Number)?.toInt(),
         consumerDelayMs = (options["consumerDelayMs"] as? Number)?.toInt(),
+        noiseAmplitude = (options["noiseAmplitude"] as? Number)?.toInt(),
       )
     }
 
-    AsyncFunction("start") { session.start() }
+    // The run log needs an app context for its output directory, and the module is the only
+    // thing here that has one.
+    AsyncFunction("start") { session.start(appContext.reactContext) }
+
+    AsyncFunction("runLogPath") { session.runLogPath }
 
     AsyncFunction("stop") { reason: String? -> session.stop(reason ?: "host") }
 

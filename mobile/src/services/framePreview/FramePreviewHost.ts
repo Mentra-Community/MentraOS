@@ -81,6 +81,9 @@ class FramePreviewHost {
         console.warn(`FramePreviewHost: unavailable (${this.unsupportedReason})`)
         return
       }
+      // The page may already have asked for a handshake while bind was still in flight.
+      // Replay the real config now so it is not stuck on the earlier not_bound reply.
+      void this.sendConfig()
       if (result.installReloadRequired && !this.installReloadDone) {
         this.installReloadDone = true
         // Exactly once per view. Signalled to the caller through the returned flag rather than
@@ -188,7 +191,7 @@ class FramePreviewHost {
     // Idempotent per document: a page that asks twice gets the same credential rather than
     // invalidating the credit it is already using.
     if (this.preparedFor === this.documentGeneration && this.lastConfig) {
-      this.post(this.lastConfig)
+      this.postPageConfig(this.lastConfig)
       return
     }
     if (!this.preparing) {
@@ -208,7 +211,12 @@ class FramePreviewHost {
     }
     const config = await this.preparing
     if (!config) return
-    this.post({...config, supported: true})
+    this.postPageConfig(config)
+  }
+
+  /** The page only accepts host envelopes that carry `t`. Native prepareDocument does not. */
+  private postPageConfig(config: FramePreviewDocumentConfig): void {
+    this.post({t: "config", ...config, supported: config.supported !== false})
   }
 
   private attachEvents(): void {

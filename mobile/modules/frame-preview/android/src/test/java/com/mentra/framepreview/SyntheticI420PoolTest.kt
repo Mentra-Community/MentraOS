@@ -67,18 +67,43 @@ class SyntheticI420PoolTest {
   @Test
   fun `the pattern round trips through a tight pack`() {
     val pool = SyntheticI420Pool(width, height, slots = 1)
-    for (index in listOf(0, 1, 42, 65_535)) {
+    // 320px carries 13 of the counter's 16 cells, so only indices that fit in 13 bits survive
+    // a round trip at this size. The full range is covered below at a width that can hold it.
+    for (index in listOf(0, 1, 42, 8_191)) {
       val lease = pool.acquire(index, 0)!!
-      val packed = ByteArray(PreviewPixelFormat.I420.packedSize(width, height))
-      I420Packer.pack(
-        lease.planes.y, lease.planes.strideY,
-        lease.planes.u, lease.planes.strideU,
-        lease.planes.v, lease.planes.strideV,
-        width, height,
-        ByteBuffer.wrap(packed),
-      )
-      assertThat(PreviewTestPattern.readFrameMarker(packed, width)).isEqualTo(index and 0xFFFF)
+      assertThat(PreviewTestPattern.readFrameMarker(packTightly(lease, width, height), width))
+        .isEqualTo(index)
       lease.release()
     }
+  }
+
+  /**
+   * The counter is 16 cells of 24px, so a frame narrower than 384px cannot carry all of it and
+   * `readFrameMarker` returns only the bits that fit. The synthetic source runs at 1280×720
+   * where the whole counter is present, which is the case that has to round trip exactly.
+   */
+  @Test
+  fun `the full counter survives at the synthetic source's own width`() {
+    val wide = 1280
+    val tall = 720
+    val pool = SyntheticI420Pool(wide, tall, slots = 1)
+    for (index in listOf(0, 1, 42, 65_535)) {
+      val lease = pool.acquire(index, 0)!!
+      assertThat(PreviewTestPattern.readFrameMarker(packTightly(lease, wide, tall), wide))
+        .isEqualTo(index)
+      lease.release()
+    }
+  }
+
+  private fun packTightly(lease: SyntheticI420Pool.Lease, width: Int, height: Int): ByteArray {
+    val packed = ByteArray(PreviewPixelFormat.I420.packedSize(width, height))
+    I420Packer.pack(
+      lease.planes.y, lease.planes.strideY,
+      lease.planes.u, lease.planes.strideU,
+      lease.planes.v, lease.planes.strideV,
+      width, height,
+      ByteBuffer.wrap(packed),
+    )
+    return packed
   }
 }

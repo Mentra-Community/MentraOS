@@ -2,6 +2,35 @@ import XCTest
 
 @testable import FramePreviewCore
 
+/// The synthetic timer ticks at half the frame period so the pacer, not the timer, decides when
+/// a frame is due. That only works if the tick divides the period exactly — and the obvious
+/// millisecond arithmetic does not, which cost a measured 32/48 ms alternation at 30 fps behind
+/// a perfectly healthy-looking 30.0 fps average.
+final class PreviewPacerPeriodTests: XCTestCase {
+  /// A nanosecond period is not always even — 1e9/30 is 33,333,333 — so two ticks can miss by a
+  /// nanosecond. What matters is the size of the miss: a nanosecond a frame is 30 ns of drift
+  /// per second and never crosses a slot boundary.
+  func testTwoTicksCoverTheFramePeriodToWithinAMicrosecond() {
+    for fps in [5, 10, 15, 24, 30] {
+      let period = PreviewPacer.period(forFps: fps)
+      let residual = abs((period / 2) * 2 - period)
+      XCTAssertLessThan(residual, 1_000, "tick misses the period by \(residual) ns at \(fps) fps")
+    }
+  }
+
+  /// The shape of the old bug, pinned so nobody reintroduces it: at 30 fps the truncated
+  /// millisecond tick is 16 ms, and two of those fall 1.33 ms short of the real period. The
+  /// pacer's absolute schedule then lands on the beat between ticks, and the delivered cadence
+  /// alternates 32/48 ms behind a perfectly healthy-looking 30.0 fps average.
+  func testMillisecondTruncationMissesByThreeOrdersOfMagnitudeMore() {
+    let period = PreviewPacer.period(forFps: 30)
+    let truncated = abs(Int64(1000 / 30 / 2) * 1_000_000 * 2 - period)
+    let nanosecond = abs((period / 2) * 2 - period)
+    XCTAssertGreaterThan(truncated, 1_000_000)
+    XCTAssertLessThan(nanosecond, 1_000)
+  }
+}
+
 final class PreviewPacerTests: XCTestCase {
   private let period = PreviewPacer.period(forFps: 15)
 

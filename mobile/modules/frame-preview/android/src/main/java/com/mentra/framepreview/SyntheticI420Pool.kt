@@ -15,7 +15,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * the generator cannot get a buffer and the tick is skipped instead of overwriting pixels
  * somebody is reading.
  */
-class SyntheticI420Pool(private val width: Int, private val height: Int, slots: Int = 2) {
+class SyntheticI420Pool(
+  private val width: Int,
+  private val height: Int,
+  slots: Int = 2,
+  noiseAmplitude: Int = PreviewTestPattern.DEFAULT_NOISE_AMPLITUDE,
+) {
   class Lease internal constructor(val planes: I420Planes, private val slot: Slot) {
     fun release() = slot.release()
   }
@@ -60,12 +65,13 @@ class SyntheticI420Pool(private val width: Int, private val height: Int, slots: 
 
   private val slots = List(slots) { Slot(width, height) }
   private val scratch = ByteArray(PreviewPixelFormat.I420.packedSize(width, height))
+  private val pattern = PreviewTestPattern(width, height, noiseAmplitude)
 
   /** Null when every lease is still out — the caller counts that as a skip, not an error. */
   @Synchronized
   fun acquire(frameIndex: Int, timestampNs: Long): Lease? {
     val slot = slots.firstOrNull { it.tryAcquire() } ?: return null
-    PreviewTestPattern.writeI420(scratch, width, height, frameIndex)
+    pattern.writeI420(scratch, frameIndex)
     slot.fill(scratch, width, height)
     val planes = I420Planes(
       y = slot.y,

@@ -106,11 +106,10 @@ final class PixelPackTests: XCTestCase {
 
   func testTestPatternCarriesADecodableFrameCounter() {
     let width = 1280, height = 720
+    let pattern = PreviewTestPattern(width: width, height: height, format: .nv12)
     var frame = [UInt8](repeating: 0, count: PreviewPixelFormat.nv12.packedSize(width: width, height: height))
     for index in [0, 1, 42, 65535] {
-      frame.withUnsafeMutableBytes {
-        PreviewTestPattern.write(into: $0, width: width, height: height, frameIndex: index, format: .nv12)
-      }
+      frame.withUnsafeMutableBytes { pattern.write(into: $0, frameIndex: index) }
       let read = frame.withUnsafeBytes { PreviewTestPattern.readFrameMarker($0, width: width) }
       XCTAssertEqual(read, index & 0xFFFF, "marker must identify the exact frame on screen")
     }

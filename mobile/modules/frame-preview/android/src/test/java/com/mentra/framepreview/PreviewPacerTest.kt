@@ -3,6 +3,42 @@ package com.mentra.framepreview
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
+/**
+ * The synthetic timer ticks at half the frame period so the pacer, not the timer, decides when a
+ * frame is due. That only works if the tick divides the period exactly — and the obvious
+ * millisecond arithmetic does not, which cost a measured 32/48 ms alternation at 30 fps behind a
+ * perfectly healthy-looking 30.0 fps average.
+ */
+class PreviewPacerPeriodTest {
+  /**
+   * A nanosecond period is not always even — 1e9/30 is 33,333,333 — so two ticks can miss by a
+   * nanosecond. What matters is the size of the miss: a nanosecond a frame is 30 ns of drift per
+   * second and never crosses a slot boundary.
+   */
+  @Test
+  fun `two ticks cover the frame period to within a microsecond`() {
+    for (fps in listOf(5, 10, 15, 24, 30)) {
+      val period = PreviewPacer.periodForFps(fps)
+      assertThat(Math.abs((period / 2) * 2 - period)).isLessThan(1_000L)
+    }
+  }
+
+  /**
+   * The shape of the old bug, pinned so nobody reintroduces it: at 30 fps the truncated
+   * millisecond tick is 16 ms, and two of those fall 1.33 ms short of the real period. The
+   * pacer's absolute schedule then lands on the beat between ticks, and the delivered cadence
+   * alternates 32/48 ms behind a perfectly healthy-looking 30.0 fps average.
+   */
+  @Test
+  fun `millisecond truncation misses by three orders of magnitude more`() {
+    val period = PreviewPacer.periodForFps(30)
+    val truncated = Math.abs((1000L / 30 / 2) * 1_000_000 * 2 - period)
+    val nanosecond = Math.abs((period / 2) * 2 - period)
+    assertThat(truncated).isGreaterThan(1_000_000L)
+    assertThat(nanosecond).isLessThan(1_000L)
+  }
+}
+
 class PreviewPacerTest {
   private val period = PreviewPacer.periodForFps(15)
 

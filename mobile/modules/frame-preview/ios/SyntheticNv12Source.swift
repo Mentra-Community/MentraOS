@@ -15,10 +15,16 @@ final class SyntheticNv12Source {
   private let height: Int
   private var pool: CVPixelBufferPool?
   private let auxiliaryAttributes: CFDictionary
+  private let pattern: PreviewTestPattern
+  /// Reused across frames. Allocating and zeroing 1.4 MB per frame is 41 MB/s of allocator
+  /// churn at 30 fps, and it lands inside the generator's own timing.
+  private var scratch: [UInt8]
 
-  init(width: Int, height: Int) {
+  init(width: Int, height: Int, noiseAmplitude: Int = PreviewTestPattern.defaultNoiseAmplitude) {
     self.width = width
     self.height = height
+    pattern = PreviewTestPattern(width: width, height: height, format: .nv12, noiseAmplitude: noiseAmplitude)
+    scratch = [UInt8](repeating: 0, count: PreviewPixelFormat.nv12.packedSize(width: width, height: height))
     auxiliaryAttributes = [
       kCVPixelBufferPoolAllocationThresholdKey as String: 2,
     ] as CFDictionary
@@ -53,11 +59,8 @@ final class SyntheticNv12Source {
     // padded strides rather than assuming the pool handed back a tight allocation.
     let lumaStride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
     let chromaStride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
-    var tight = [UInt8](repeating: 0, count: PreviewPixelFormat.nv12.packedSize(width: width, height: height))
-    tight.withUnsafeMutableBytes {
-      PreviewTestPattern.write(into: $0, width: width, height: height, frameIndex: index, format: .nv12)
-    }
-    tight.withUnsafeBytes { source in
+    scratch.withUnsafeMutableBytes { pattern.write(into: $0, frameIndex: index) }
+    scratch.withUnsafeBytes { source in
       let base = source.baseAddress!
       for row in 0 ..< height {
         luma.advanced(by: row * lumaStride).copyMemory(from: base.advanced(by: row * width), byteCount: width)

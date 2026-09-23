@@ -21,6 +21,11 @@ declare class FramePreviewNativeModule extends NativeModule<FramePreviewModuleEv
   /** Halt production. The authenticated transport survives, so `start` needs no new handshake. */
   stop(reason?: string): Promise<void>
   resetStats(): Promise<void>
+  /**
+   * Absolute path of the current run's NDJSON file, or null before the first `start`. Surfaced
+   * so the panel can tell you where to look instead of making you guess at a container path.
+   */
+  runLogPath(): Promise<string | null>
   /** Destroy the transport as well. The page must handshake again afterwards. */
   unbind(): Promise<void>
 }

@@ -1,10 +1,17 @@
 package com.mentra.framepreview
 
+import android.content.Context
+import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import com.mentra.glassesmedia.source.DecodedFrameTap
 import com.mentra.glassesmedia.source.I420Planes
 import com.mentra.glassesmedia.video.I420Packer
 import java.nio.ByteBuffer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
@@ -47,7 +54,17 @@ class FramePreviewSession {
 
   val port = FramePreviewPort()
   private val stats = PreviewStats()
+  private val runLog = PreviewRunLog()
   private val pacer = PreviewPacer(DEFAULT_FPS)
+
+  @Volatile private var runId = ""
+
+  @Volatile private var runStartedAtNs = 0L
+
+  @Volatile private var appContext: Context? = null
+
+  /** Path of the current run's NDJSON file, surfaced so the panel can tell you where to look. */
+  val runLogPath: String? get() = runLog.path
 
   /**
    * Zero-length queue on purpose. A bounded queue would still let one slow pack push the
@@ -71,6 +88,13 @@ class FramePreviewSession {
   @Volatile private var height = 720
 
   @Volatile private var consumerDelayMs = 0
+
+  /**
+   * Synthetic grain. A control rather than a constant so a run can be compared against the same
+   * picture with grain off — which is the only way to tell content-dependent cost (a transport
+   * quietly compressing) apart from run-to-run variance.
+   */
+  @Volatile private var noiseAmplitude = PreviewTestPattern.DEFAULT_NOISE_AMPLITUDE
 
   @Volatile private var syntheticPool: SyntheticI420Pool? = null
 
@@ -97,11 +121,13 @@ class FramePreviewSession {
     port.onAuthenticated = {
       pacer.setConsumerReady(true)
       Log.i(TAG, "credit granted to authenticated consumer")
+      logEvent("consumer", mapOf("authenticated" to true, "generation" to pacer.generation))
     }
     port.onAck = { generation, sequence -> handleAck(generation, sequence) }
     port.onFailure = { reason, detail ->
       stats.onTransportError()
       Log.w(TAG, "transport failure=$reason detail=$detail")
+      logEvent("transport", mapOf("failure" to reason, "detail" to detail))
       if (reason == "auth_failed") pacer.setConsumerReady(false)
     }
   }
@@ -110,6 +136,7 @@ class FramePreviewSession {
     val generation = pacer.beginGeneration()
     port.rotateToken(token)
     releaseAllSlots()
+    logEvent("document", mapOf("sessionGen" to generation, "tokenRotated" to true))
     return generation
   }
 
@@ -120,6 +147,7 @@ class FramePreviewSession {
     width: Int?,
     height: Int?,
     consumerDelayMs: Int?,
+    noiseAmplitude: Int? = null,
   ) {
     source?.let { this.source = if (it == "call") Source.CALL else Source.SYNTHETIC }
     mode?.let { raw -> Mode.entries.firstOrNull { it.wire == raw }?.let { this.mode = it } }
@@ -127,16 +155,34 @@ class FramePreviewSession {
     width?.let { this.width = it }
     height?.let { this.height = it }
     consumerDelayMs?.let { this.consumerDelayMs = it }
+    noiseAmplitude?.let { this.noiseAmplitude = it.coerceIn(0, 96) }
     pacer.setTargetFps(this.targetFps, System.nanoTime())
-    if (scheduler != null || tapGeneration != null) restartProduction()
+    val restarted = scheduler != null || tapGeneration != null
+    if (restarted) restartProduction()
+    logEvent(
+      "configure",
+      mapOf(
+        "sourceTo" to this.source.name.lowercase(Locale.US),
+        "modeTo" to this.mode.wire,
+        "targetFps" to this.targetFps,
+        "consumerDelayMs" to this.consumerDelayMs,
+        "productionRestarted" to restarted,
+      ),
+    )
   }
 
-  fun start() {
-    pacer.setTargetFps(targetFps, System.nanoTime())
-    pacer.start(System.nanoTime())
+  fun start(context: Context?) {
+    val now = System.nanoTime()
+    context?.let { appContext = it.applicationContext }
+    runId = makeRunId()
+    runStartedAtNs = now
+    stats.onRunStart(now)
+    beginRunLog()
+    pacer.setTargetFps(targetFps, now)
+    pacer.start(now)
     restartProduction()
     startStatusTicker()
-    Log.i(TAG, "start source=$source mode=${mode.wire} fps=$targetFps")
+    Log.i(TAG, "start runId=$runId source=$source mode=${mode.wire} fps=$targetFps")
   }
 
   fun stop(reason: String) {
@@ -147,6 +193,17 @@ class FramePreviewSession {
     statusTicker = null
     releaseAllSlots()
     Log.i(TAG, "stop reason=$reason")
+    // One last status line before the file closes, so the run's tail is not missing the second
+    // that explains why it ended.
+    emitStatus()
+    runLog.end(
+      reason,
+      mapOf(
+        "durationMs" to if (runStartedAtNs > 0) (System.nanoTime() - runStartedAtNs) / 1_000_000.0 else 0.0,
+        "delivered" to stats.delivered,
+        "sourceFrames" to stats.sourceFrames,
+      ),
+    )
     onStopped?.invoke(reason)
   }
 
@@ -171,13 +228,18 @@ class FramePreviewSession {
     if (!mode.producesFrames) return
     when (source) {
       Source.SYNTHETIC -> {
-        syntheticPool = SyntheticI420Pool(width, height)
+        syntheticPool = SyntheticI420Pool(width, height, noiseAmplitude = noiseAmplitude)
         val executor = Executors.newSingleThreadScheduledExecutor { runnable ->
           Thread(runnable, "frame-preview-synthetic").apply { isDaemon = true }
         }
-        // Tick faster than the target so the pacer, not the timer, owns the schedule.
-        val periodMs = (1000L / targetFps.coerceAtLeast(1) / 2).coerceAtLeast(4L)
-        executor.scheduleAtFixedRate({ onSyntheticTick() }, 0, periodMs, TimeUnit.MILLISECONDS)
+        // Tick twice per frame period so the pacer, not the timer, owns the schedule.
+        //
+        // In microseconds, not milliseconds, because the tick has to divide the period exactly.
+        // Integer milliseconds do not: at 30 fps `1000/30/2` truncates to 16 ms, two ticks make
+        // 32 ms against a 33.33 ms period, and the pacer's absolute schedule then lands on the
+        // beat between them — delivering a measured 30.0 fps whose gaps alternate 32/48 ms.
+        val tickUs = (PreviewPacer.periodForFps(targetFps.coerceAtLeast(1)) / 2 / 1000).coerceAtLeast(2000L)
+        executor.scheduleAtFixedRate({ onSyntheticTick() }, 0, tickUs, TimeUnit.MICROSECONDS)
         scheduler = executor
       }
       Source.CALL -> {
@@ -212,12 +274,17 @@ class FramePreviewSession {
         syntheticIndex += 1
         // Pool exhaustion means the previous frame is still being read. Skipping is correct;
         // overwriting it would tear the picture the consumer is drawing.
+        val generateStart = System.nanoTime()
         val lease = pool.acquire(syntheticIndex, now)
         if (lease == null) {
           stats.onSkippedBusy()
           pacer.onPacked(admission.sequence, sent = false, nowNs = System.nanoTime())
           return
         }
+        // Inventing a 720p picture is the synthetic source's own cost and has nothing to do with
+        // moving one. Timed separately, or it would be charged to the pipeline it is only a
+        // stand-in for — and `generate_only` would have nothing to subtract.
+        stats.generate.record(System.nanoTime() - generateStart)
         dispatch(AdmittedFrame(lease.planes) { lease.release() }, admission.sequence, now)
       }
     }
@@ -255,20 +322,30 @@ class FramePreviewSession {
   }
 
   private fun dispatch(frame: AdmittedFrame, sequence: Int, timestampNs: Long) {
+    val admittedAtNs = System.nanoTime()
     try {
-      worker.execute { process(frame, sequence, timestampNs) }
+      worker.execute { process(frame, sequence, timestampNs, admittedAtNs) }
     } catch (rejected: RejectedExecutionException) {
       // The single worker is busy. Releasing here is not optional: a retained frame dropped on
       // the floor is a decoder buffer that never comes back.
       frame.releaseSource()
+      // Refused before the worker, which is a different problem from a slow consumer even though
+      // both end up as a skip. `preDispatchDrops` is a sub-reason of `skippedBusy`, not a second
+      // skip: do not add them.
       stats.onSkippedBusy()
+      stats.onPreDispatchDrop()
       pacer.onPacked(sequence, sent = false, nowNs = System.nanoTime())
     }
   }
 
-  private fun process(frame: AdmittedFrame, sequence: Int, timestampNs: Long) {
+  private fun process(frame: AdmittedFrame, sequence: Int, timestampNs: Long, admittedAtNs: Long) {
     var slot = -1
     try {
+      // Admission happens on the decoder (or synthetic) thread, packing on this one. The gap is
+      // the handoff, measured apart from the pack so a scheduling problem cannot be read as a
+      // slow memcpy.
+      stats.admitToPack.record(System.nanoTime() - admittedAtNs)
+
       if (!mode.packs) {
         // generate_only: the source frame existed and that is the whole measurement.
         pacer.onPacked(sequence, sent = false, nowNs = System.nanoTime())
@@ -286,7 +363,9 @@ class FramePreviewSession {
       val total = PreviewFrameHeader.BYTE_COUNT + payloadLength
       slot = acquireSlot(total, sequence)
       if (slot < 0) {
+        // `slotStarved` is a sub-reason of `skippedBusy`, not a second skip: do not add them.
         stats.onSkippedBusy()
+        stats.onSlotStarved()
         pacer.onPacked(sequence, sent = false, nowNs = System.nanoTime())
         return
       }
@@ -334,9 +413,12 @@ class FramePreviewSession {
         return
       }
 
-      val accepted = port.send(bytes) { sendNs -> stats.send.record(sendNs) }
+      val accepted = port.send(bytes) { queueWaitNs, postNs ->
+        stats.mainQueueWait.record(queueWaitNs)
+        stats.sendComplete.record(postNs)
+      }
       if (accepted) {
-        stats.onDelivered(total)
+        stats.onDelivered(total, System.nanoTime())
         pacer.onPacked(sequence, sent = true, nowNs = System.nanoTime())
         slot = -1 // freed when the acknowledgement arrives
       } else {
@@ -357,18 +439,23 @@ class FramePreviewSession {
   }
 
   private fun handleAck(generation: Int, sequence: Int) {
-    when (val result = pacer.onAck(generation, sequence, System.nanoTime())) {
+    val now = System.nanoTime()
+    when (val result = pacer.onAck(generation, sequence, now)) {
       is PreviewAckResult.Accepted -> {
-        stats.roundTrip.record(result.roundTripNs)
+        stats.onAckAccepted(result.roundTripNs, now)
         releaseSlotForSequence(sequence)
       }
-      is PreviewAckResult.Stale -> stats.onStaleAck()
+      is PreviewAckResult.Stale -> {
+        stats.onStaleAck()
+        logEvent("staleAck", mapOf("gen" to generation, "seq" to sequence))
+      }
     }
   }
 
   private fun checkAckTimeout(nowNs: Long) {
     if (!pacer.hasAckTimedOut(nowNs)) return
     stats.onAckTimeout()
+    logEvent("ackTimeout", mapOf("generation" to pacer.generation, "outstanding" to pacer.outstandingFrames))
     // The consumer stopped answering. Stop the subscription rather than mint a replacement
     // credit, which is how an unbounded queue gets built one "recovery" at a time.
     stop("ack_timeout")
@@ -422,51 +509,174 @@ class FramePreviewSession {
   private fun emitStatus() {
     val now = System.nanoTime()
     val window = stats.takeWindow(now)
+    val tap = DecodedFrameTap.drainMetrics()
+    // One sort per ring, not one per percentile: at 30 fps this must not become part of what
+    // it reports.
+    val generate = stats.generate.distribution()
+    val pack = stats.pack.distribution()
+    val complete = stats.sendComplete.distribution()
+    val queueWait = stats.mainQueueWait.distribution()
+    val handoff = stats.admitToPack.distribution()
+    val gap = stats.deliveryGap.distribution()
+    val rtt = stats.roundTrip.distribution()
     val hasSource = source == Source.SYNTHETIC ||
       (lastSourceFrameAtNs > 0 && now - lastSourceFrameAtNs < 2_000_000_000L)
-    onStatus?.invoke(
+    val status = mapOf(
+      "t" to "status",
+      "platform" to "android",
+      "runId" to runId,
+      "running" to pacer.isRunning,
+      "source" to if (source == Source.CALL) "call" else "synthetic",
+      "mode" to mode.wire,
+      "targetFps" to targetFps,
+      "width" to lastWidth,
+      "height" to lastHeight,
+      "pixelFormat" to "i420",
+      "sourceFrames" to stats.sourceFrames,
+      "admitted" to stats.admitted,
+      "skippedPacing" to stats.skippedPacing,
+      "skippedBusy" to stats.skippedBusy,
+      "preDispatchDrops" to stats.preDispatchDrops,
+      "slotStarved" to stats.slotStarved,
+      "delivered" to stats.delivered,
+      "sourceFps" to round1(window.sourceFps),
+      "deliveredFps" to round1(window.deliveredFps),
+      "bytesPerSecond" to window.bytesPerSecond.toLong(),
+      "generateMsP50" to generate.p50,
+      "generateMsP95" to generate.p95,
+      "generateMsMax" to generate.max,
+      "packMsP50" to pack.p50,
+      "packMsP95" to pack.p95,
+      "packMsP99" to pack.p99,
+      "packMsMax" to pack.max,
+      // Chromium copies inside postMessage, so this is the whole send. iOS reports an enqueue
+      // and a completion instead, because there the first returns before the copy happens.
+      "sendCompleteMsP50" to complete.p50,
+      "sendCompleteMsP95" to complete.p95,
+      "sendCompleteMsMax" to complete.max,
+      // How long our send runnable sat behind the app's own UI work. Interference, not our cost.
+      "mainQueueWaitMsP95" to queueWait.p95,
+      "mainQueueWaitMsMax" to queueWait.max,
+      "admitToPackMsP95" to handoff.p95,
+      "admitToPackMsMax" to handoff.max,
+      // Cadence, not rate. A steady 29.5 fps and an alternating 20/45 ms 29.5 fps are the same
+      // number above and very different to look at.
+      "deliveryGapMsP50" to gap.p50,
+      "deliveryGapMsP95" to gap.p95,
+      "deliveryGapMsMax" to gap.max,
+      "firstDeliveredMs" to round1(stats.firstDeliveredLatencyMs),
+      "firstAckMs" to round1(stats.firstAckLatencyMs),
+      "rttMsP50" to rtt.p50,
+      "rttMsP95" to rtt.p95,
+      "rttMsP99" to rtt.p99,
+      "rttMsMax" to rtt.max,
+      // The call's numbers, not the preview's. These are the ones that decide the experiment.
+      "tapFramesOffered" to tap.framesOffered,
+      "tapFramesWithSink" to tap.framesWithSink,
+      "tapOfferMeanUs" to round2(tap.offerMeanUs),
+      "tapOfferMaxUs" to round2(tap.offerMaxUs),
+      "tapCadenceMeanMs" to round2(tap.cadenceMeanMs),
+      "tapCadenceMaxMs" to round2(tap.cadenceMaxMs),
+      "tapSinkExceptions" to tap.sinkExceptions,
+      "thermalState" to thermalStateName(),
+      "memoryFootprintMb" to memoryFootprintMb(),
+      "outstanding" to pacer.outstandingFrames,
+      "ackTimeouts" to stats.ackTimeouts,
+      "staleAcks" to stats.staleAcks,
+      "packFailures" to stats.packFailures,
+      "transportErrors" to stats.transportErrors,
+      "consumerReady" to pacer.consumerReady,
+      "noSource" to !hasSource,
+      "generation" to pacer.generation,
+      "consumerDelayMs" to consumerDelayMs,
+      "noiseAmplitude" to noiseAmplitude,
+    )
+    onStatus?.invoke(status)
+    runLog.write(status)
+  }
+
+  // region Run log
+
+  private fun beginRunLog() {
+    val context = appContext ?: return
+    runLog.begin(
+      context,
+      runId,
       mapOf(
-        "t" to "status",
         "platform" to "android",
-        "running" to pacer.isRunning,
-        "source" to if (source == Source.CALL) "call" else "synthetic",
+        "schema" to RUN_LOG_SCHEMA,
+        "startedAt" to SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(Date()),
+        "deviceModel" to "${Build.MANUFACTURER} ${Build.MODEL}",
+        "osVersion" to Build.VERSION.RELEASE,
+        "sdkInt" to Build.VERSION.SDK_INT,
+        "source" to source.name.lowercase(Locale.US),
         "mode" to mode.wire,
         "targetFps" to targetFps,
-        "width" to lastWidth,
-        "height" to lastHeight,
-        "pixelFormat" to "i420",
-        "sourceFrames" to stats.sourceFrames,
-        "admitted" to stats.admitted,
-        "skippedPacing" to stats.skippedPacing,
-        "skippedBusy" to stats.skippedBusy,
-        "delivered" to stats.delivered,
-        "sourceFps" to round1(window.sourceFps),
-        "deliveredFps" to round1(window.deliveredFps),
-        "bytesPerSecond" to window.bytesPerSecond.toLong(),
-        "packMsP50" to stats.pack.percentileMs(0.50),
-        "packMsP95" to stats.pack.percentileMs(0.95),
-        "sendMsP50" to stats.send.percentileMs(0.50),
-        "sendMsP95" to stats.send.percentileMs(0.95),
-        "rttMsP50" to stats.roundTrip.percentileMs(0.50),
-        "rttMsP95" to stats.roundTrip.percentileMs(0.95),
-        "outstanding" to pacer.outstandingFrames,
-        "ackTimeouts" to stats.ackTimeouts,
-        "staleAcks" to stats.staleAcks,
-        "unsupportedFormat" to 0,
-        "packFailures" to stats.packFailures,
-        "transportErrors" to stats.transportErrors,
-        "consumerReady" to pacer.consumerReady,
-        "noSource" to !hasSource,
-        "generation" to pacer.generation,
+        "width" to width,
+        "height" to height,
         "consumerDelayMs" to consumerDelayMs,
+        "transport" to "webmessage",
       ),
     )
   }
 
+  /**
+   * A discrete thing that happened, on the same file as the 1 Hz lines. State changes are what
+   * turn "the numbers got worse at second 40" into "the numbers got worse when the page
+   * reconnected at second 40".
+   */
+  private fun logEvent(event: String, fields: Map<String, Any?>) {
+    runLog.write(
+      fields + mapOf(
+        "t" to "event",
+        "event" to event,
+        "runId" to runId,
+        "atMs" to if (runStartedAtNs > 0) (System.nanoTime() - runStartedAtNs) / 1_000_000.0 else 0.0,
+      ),
+    )
+  }
+
+  private fun makeRunId(): String =
+    "android-${System.currentTimeMillis() / 1000}-${UUID.randomUUID().toString().take(8)}"
+
+  private fun thermalStateName(): String {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return "unavailable"
+    val power = appContext?.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return "unavailable"
+    return when (power.currentThermalStatus) {
+      PowerManager.THERMAL_STATUS_NONE -> "none"
+      PowerManager.THERMAL_STATUS_LIGHT -> "light"
+      PowerManager.THERMAL_STATUS_MODERATE -> "moderate"
+      PowerManager.THERMAL_STATUS_SEVERE -> "severe"
+      PowerManager.THERMAL_STATUS_CRITICAL -> "critical"
+      PowerManager.THERMAL_STATUS_EMERGENCY -> "emergency"
+      PowerManager.THERMAL_STATUS_SHUTDOWN -> "shutdown"
+      else -> "unknown"
+    }
+  }
+
+  /**
+   * JVM heap in use. Sampled every second so growth over a soak is a slope rather than two
+   * endpoints. This is not the process RSS — the packed frames live in `ByteArray`s on the heap,
+   * which is the allocation this experiment can actually be blamed for.
+   */
+  private fun memoryFootprintMb(): Double {
+    val runtime = Runtime.getRuntime()
+    return round1((runtime.totalMemory() - runtime.freeMemory()) / 1_048_576.0)
+  }
+
+  // endregion
+
   private fun round1(value: Double): Double = Math.round(value * 10.0) / 10.0
+
+  private fun round2(value: Double): Double = Math.round(value * 100.0) / 100.0
 
   companion object {
     private const val TAG = "FRAME-PREVIEW"
-    private const val DEFAULT_FPS = 15
+    /**
+     * The page always configures before starting; this only covers the window before it does.
+     * 30 matches the panel's default so a run that somehow skips configure still stresses.
+     */
+    private const val DEFAULT_FPS = 30
+    private const val RUN_LOG_SCHEMA = 1
   }
 }

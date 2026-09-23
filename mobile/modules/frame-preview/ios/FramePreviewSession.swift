@@ -1,6 +1,7 @@
 import CoreVideo
 import Foundation
 import GlassesMedia
+import UIKit
 
 /// Owns one preview subscription on iOS: admission, packing, transport, and the numbers.
 ///
@@ -39,14 +40,23 @@ final class FramePreviewSession {
   private let queue = DispatchQueue(label: "com.mentra.framepreview.session", qos: .userInitiated)
   private let socket = LoopbackFrameSocket()
   private let stats = PreviewStats()
-  private var pacer = PreviewPacer(targetFps: 15)
+  private let runLog = PreviewRunLog()
+  /// The page always configures before starting; this only covers the window before it does.
+  /// 30 matches the panel's default so a run that somehow skips configure still stresses.
+  private var pacer = PreviewPacer(targetFps: 30)
+  private var runId = ""
+  private var runStartedAtNs: Int64 = 0
 
   private var source: Source = .synthetic
   private var mode: Mode = .off
-  private var targetFps = 15
+  private var targetFps = 30
   private var width = 1280
   private var height = 720
   private var consumerDelayMs = 0
+  /// Synthetic grain. A control rather than a constant so a run can be compared against the
+  /// same picture with grain off — which is the only way to tell content-dependent cost (a
+  /// transport quietly compressing) apart from run-to-run variance.
+  private var noiseAmplitude = PreviewTestPattern.defaultNoiseAmplitude
 
   private var timer: DispatchSourceTimer?
   private var synthetic: SyntheticNv12Source?
@@ -69,12 +79,16 @@ final class FramePreviewSession {
   var onStatus: (([String: Any]) -> Void)?
   var onStopped: ((String) -> Void)?
 
+  /// Path of the current run's NDJSON file, surfaced so the panel can tell you where to look.
+  var runLogPath: String? { runLog.path }
+
   init() {
     socket.onAuthenticated = { [weak self] in
       self?.queue.async {
         guard let self else { return }
         self.pacer.setConsumerReady(true)
         NSLog("FRAME-PREVIEW ios credit granted to authenticated consumer")
+        self.logEvent("consumer", ["authenticated": true, "generation": Int(self.pacer.generation)])
       }
     }
     socket.onAck = { [weak self] generation, sequence in
@@ -85,6 +99,7 @@ final class FramePreviewSession {
         guard let self else { return }
         self.stats.onTransportError()
         NSLog("FRAME-PREVIEW ios transport failure=\(failure.rawValue) detail=\(detail)")
+        self.logEvent("transport", ["failure": failure.rawValue, "detail": detail])
         if failure == .authFailed || failure == .connectionClosed {
           self.pacer.setConsumerReady(false)
         }
@@ -98,10 +113,19 @@ final class FramePreviewSession {
   func prepareDocument(token: String, completion: @escaping (Result<[String: Any], Error>) -> Void) {
     queue.async {
       self.pacer.beginGeneration()
+      self.logEvent("document", [
+        "sessionGen": Int(self.pacer.generation),
+        "tokenRotated": true,
+      ])
       self.socket.rotateToken(token)
       self.socket.start(token: token) { result in
         switch result {
         case let .success(url):
+          // Recorded so the bind address is auditable after the fact. It must always read
+          // 127.0.0.1: the listener sets `requiredLocalEndpoint`, and anything else in this
+          // field would mean raw camera frames were reachable from the network the phone is
+          // attached to — which during a call is the glasses hotspot.
+          self.logEvent("listener", ["url": url])
           completion(.success([
             "transport": "websocket",
             "url": url,
@@ -117,24 +141,44 @@ final class FramePreviewSession {
 
   func configure(_ options: [String: Any]) {
     queue.async {
+      let previousMode = self.mode
+      let previousSource = self.source
       if let raw = options["source"] as? String, let value = Source(rawValue: raw) { self.source = value }
       if let raw = options["mode"] as? String, let value = Mode(rawValue: raw) { self.mode = value }
       if let fps = options["targetFps"] as? NSNumber { self.targetFps = max(1, min(fps.intValue, 30)) }
       if let value = options["width"] as? NSNumber { self.width = value.intValue }
       if let value = options["height"] as? NSNumber { self.height = value.intValue }
       if let value = options["consumerDelayMs"] as? NSNumber { self.consumerDelayMs = value.intValue }
+      if let value = options["noiseAmplitude"] as? NSNumber {
+        self.noiseAmplitude = max(0, min(value.intValue, 96))
+      }
       self.pacer.setTargetFps(self.targetFps, nowNs: Self.nowNs())
-      if self.timer != nil { self.restartProductionLocked() }
+      let restarted = self.timer != nil
+      if restarted { self.restartProductionLocked() }
+      self.logEvent("configure", [
+        "sourceFrom": previousSource.rawValue,
+        "sourceTo": self.source.rawValue,
+        "modeFrom": previousMode.rawValue,
+        "modeTo": self.mode.rawValue,
+        "targetFps": self.targetFps,
+        "consumerDelayMs": self.consumerDelayMs,
+        "productionRestarted": restarted,
+      ])
     }
   }
 
   func start() {
     queue.async {
-      self.pacer.setTargetFps(self.targetFps, nowNs: Self.nowNs())
-      self.pacer.start(nowNs: Self.nowNs())
+      let now = Self.nowNs()
+      self.runId = Self.makeRunId()
+      self.runStartedAtNs = now
+      self.stats.onRunStart(nowNs: now)
+      self.beginRunLogLocked()
+      self.pacer.setTargetFps(self.targetFps, nowNs: now)
+      self.pacer.start(nowNs: now)
       self.restartProductionLocked()
       self.startStatusTimerLocked()
-      NSLog("FRAME-PREVIEW ios start source=\(self.source.rawValue) mode=\(self.mode.rawValue) fps=\(self.targetFps)")
+      NSLog("FRAME-PREVIEW ios start runId=\(self.runId) source=\(self.source.rawValue) mode=\(self.mode.rawValue) fps=\(self.targetFps)")
     }
   }
 
@@ -168,6 +212,14 @@ final class FramePreviewSession {
       tapGeneration = nil
     }
     NSLog("FRAME-PREVIEW ios stop reason=\(reason)")
+    // One last status line before the file closes, so the run's tail is not missing the second
+    // that explains why it ended.
+    emitStatus()
+    runLog.end(reason: reason, summary: [
+      "durationMs": runStartedAtNs > 0 ? Double(Self.nowNs() - runStartedAtNs) / 1_000_000.0 : 0,
+      "delivered": stats.delivered,
+      "sourceFrames": stats.sourceFrames,
+    ])
     onStopped?(reason)
   }
 
@@ -183,11 +235,17 @@ final class FramePreviewSession {
 
     switch source {
     case .synthetic:
-      synthetic = SyntheticNv12Source(width: width, height: height)
+      synthetic = SyntheticNv12Source(width: width, height: height, noiseAmplitude: noiseAmplitude)
       let timer = DispatchSource.makeTimerSource(queue: queue)
-      // Tick faster than the target so the pacer, not the timer, owns the schedule.
-      let interval = Int(1000 / max(targetFps, 1) / 2)
-      timer.schedule(deadline: .now(), repeating: .milliseconds(max(interval, 4)), leeway: .milliseconds(2))
+      // Tick twice per frame period so the pacer, not the timer, owns the schedule.
+      //
+      // In nanoseconds, not milliseconds, because the tick has to divide the period exactly.
+      // Integer milliseconds do not: at 30 fps `1000/30/2` truncates to 16 ms, two ticks make
+      // 32 ms against a 33.33 ms period, and the pacer's absolute schedule then lands on the
+      // beat between them — delivering a measured 30.0 fps whose gaps alternate 32/48 ms.
+      let periodNs = PreviewPacer.period(forFps: max(targetFps, 1))
+      let tickNs = max(periodNs / 2, 2_000_000)
+      timer.schedule(deadline: .now(), repeating: .nanoseconds(Int(tickNs)), leeway: .nanoseconds(500_000))
       timer.setEventHandler { [weak self] in self?.onSyntheticTick() }
       timer.resume()
       self.timer = timer
@@ -224,16 +282,22 @@ final class FramePreviewSession {
     case .notRunning:
       return
     case let .admit(sequence):
-      stats.onAdmitted()
-      syntheticIndex &+= 1
-      // Pool exhaustion means the previous frame is still being read. Skipping is the correct
-      // answer; overwriting it would tear the picture the consumer is drawing.
-      guard let buffer = synthetic.makeFrame(index: syntheticIndex) else {
-        stats.onSkippedBusy()
-        pacer.onPacked(sequence: sequence, sent: false, nowNs: now)
-        return
-      }
-      process(buffer: buffer, sequence: sequence, timestampNs: now)
+        stats.onAdmitted()
+        syntheticIndex &+= 1
+        // Pool exhaustion means the previous frame is still being read. Skipping is the correct
+        // answer; overwriting it would tear the picture the consumer is drawing.
+        let generateStart = Self.nowNs()
+        guard let buffer = synthetic.makeFrame(index: syntheticIndex) else {
+          stats.onSkippedBusy()
+          pacer.onPacked(sequence: sequence, sent: false, nowNs: now)
+          return
+        }
+        let generated = Self.nowNs()
+        // Inventing a 720p picture is the synthetic source's own cost and has nothing to do with
+        // moving one. Timed separately, or it would be charged to the pipeline it is only a
+        // stand-in for — and `generate_only` would have nothing to subtract.
+        stats.generate.record(generated - generateStart)
+        process(buffer: buffer, sequence: sequence, timestampNs: now, admittedAtNs: generated)
     }
   }
 
@@ -264,19 +328,24 @@ final class FramePreviewSession {
         return
       case let .admit(sequence):
         self.stats.onAdmitted()
-        self.process(buffer: pixelBuffer, sequence: sequence, timestampNs: now)
+        self.process(buffer: pixelBuffer, sequence: sequence, timestampNs: now, admittedAtNs: now)
       }
     }
   }
 
-  private func process(buffer: CVPixelBuffer, sequence: UInt32, timestampNs: Int64) {
+  private func process(buffer: CVPixelBuffer, sequence: UInt32, timestampNs: Int64, admittedAtNs: Int64) {
+    // Admission happens on the producing thread, packing on this one. The gap is the handoff,
+    // and it is measured separately from the pack so a scheduling problem cannot be read as a
+    // slow memcpy.
+    let packStart = Self.nowNs()
+    stats.admitToPack.record(packStart - admittedAtNs)
+
     guard mode.packs else {
       // generate_only: the source frame existed and that is the whole measurement.
       pacer.onPacked(sequence: sequence, sent: false, nowNs: Self.nowNs())
       return
     }
 
-    let packStart = Self.nowNs()
     guard let packed = pack(buffer: buffer, sequence: sequence, timestampNs: timestampNs) else {
       pacer.onPacked(sequence: sequence, sent: false, nowNs: Self.nowNs())
       return
@@ -292,11 +361,18 @@ final class FramePreviewSession {
     let sendStart = Self.nowNs()
     let data = Data(bytesNoCopy: packed.buffer.baseAddress!, count: packed.byteCount, deallocator: .none)
     let accepted = socket.send(data) { [weak self] _ in
-      self?.queue.async { self?.releaseSlot(packed.slot) }
+      self?.queue.async {
+        guard let self else { return }
+        // `send` returning is not the same as Network framework being finished with the buffer.
+        // Timing only the enqueue would report iOS as an order of magnitude faster than Android,
+        // where the measured hop is the real one.
+        self.stats.sendComplete.record(Self.nowNs() - sendStart)
+        self.releaseSlot(packed.slot)
+      }
     }
-    stats.send.record(Self.nowNs() - sendStart)
+    stats.sendEnqueue.record(Self.nowNs() - sendStart)
     if accepted {
-      stats.onDelivered(bytes: packed.byteCount)
+      stats.onDelivered(bytes: packed.byteCount, nowNs: Self.nowNs())
       pacer.onPacked(sequence: sequence, sent: true, nowNs: Self.nowNs())
     } else {
       releaseSlot(packed.slot)
@@ -339,7 +415,9 @@ final class FramePreviewSession {
     let payloadLength = format.packedSize(width: frameWidth, height: frameHeight)
     let total = PreviewFrameHeader.byteCount + payloadLength
     guard let slot = acquireSlot(byteCount: total) else {
+      // `slotStarved` is a sub-reason of `skippedBusy`, not a second skip: do not add them.
       stats.onSkippedBusy()
+      stats.onSlotStarved()
       return nil
     }
 
@@ -420,15 +498,17 @@ final class FramePreviewSession {
     let now = Self.nowNs()
     switch pacer.onAck(generation: generation, sequence: sequence, nowNs: now) {
     case let .accepted(roundTripNs):
-      stats.roundTrip.record(roundTripNs)
+      stats.onAckAccepted(roundTripNs: roundTripNs, nowNs: now)
     case .stale:
       stats.onStaleAck()
+      logEvent("staleAck", ["gen": Int(generation), "seq": Int(sequence)])
     }
   }
 
   private func checkAckTimeout(nowNs: Int64) {
     guard pacer.hasAckTimedOut(nowNs: nowNs) else { return }
     stats.onAckTimeout()
+    logEvent("ackTimeout", ["generation": Int(pacer.generation), "outstanding": pacer.outstandingFrames])
     // The consumer stopped answering. Stop the subscription rather than mint a replacement
     // credit, which would be how an unbounded queue gets built one "recovery" at a time.
     stopLocked(reason: "ack_timeout")
@@ -475,14 +555,27 @@ final class FramePreviewSession {
     preDispatchDrops = 0
     preDispatchLock.unlock()
     for _ in 0 ..< dropped {
+      // The frame really did arrive from the decoder, so it counts as a source frame. It was
+      // refused before the worker, which is its own reason and not the consumer being slow.
       stats.onSourceFrame()
-      stats.onSkippedBusy()
+      stats.onPreDispatchDrop()
     }
+    let tap = DecodedFrameTap.shared.drainMetrics()
+    // One sort per ring, not one per percentile: at 30 fps this runs on the same queue that
+    // packs frames, and the reporter must not become part of what it reports.
+    let generate = stats.generate.distribution()
+    let pack = stats.pack.distribution()
+    let enqueue = stats.sendEnqueue.distribution()
+    let complete = stats.sendComplete.distribution()
+    let handoff = stats.admitToPack.distribution()
+    let gap = stats.deliveryGap.distribution()
+    let rtt = stats.roundTrip.distribution()
     let hasSource = source == .synthetic
       || (lastSourceFrameAtNs > 0 && now - lastSourceFrameAtNs < 2_000_000_000)
-    onStatus?([
+    let status: [String: Any] = [
       "t": "status",
       "platform": "ios",
+      "runId": runId,
       "running": pacer.isRunning,
       "source": source.rawValue,
       "mode": mode.rawValue,
@@ -494,26 +587,144 @@ final class FramePreviewSession {
       "admitted": stats.admitted,
       "skippedPacing": stats.skippedPacing,
       "skippedBusy": stats.skippedBusy,
+      "preDispatchDrops": stats.preDispatchDrops,
+      "slotStarved": stats.slotStarved,
       "delivered": stats.delivered,
       "sourceFps": round(window.sourceFps * 10) / 10,
       "deliveredFps": round(window.deliveredFps * 10) / 10,
       "bytesPerSecond": Int(window.bytesPerSecond),
-      "packMsP50": stats.pack.percentileMs(0.5),
-      "packMsP95": stats.pack.percentileMs(0.95),
-      "sendMsP50": stats.send.percentileMs(0.5),
-      "sendMsP95": stats.send.percentileMs(0.95),
-      "rttMsP50": stats.roundTrip.percentileMs(0.5),
-      "rttMsP95": stats.roundTrip.percentileMs(0.95),
+      "generateMsP50": generate.p50,
+      "generateMsP95": generate.p95,
+      "generateMsMax": generate.max,
+      "packMsP50": pack.p50,
+      "packMsP95": pack.p95,
+      "packMsP99": pack.p99,
+      "packMsMax": pack.max,
+      // Two different questions on iOS: how long until we could move on, and how long until the
+      // transport was actually finished with the buffer. Android has only the second.
+      "sendEnqueueMsP50": enqueue.p50,
+      "sendEnqueueMsP95": enqueue.p95,
+      "sendCompleteMsP50": complete.p50,
+      "sendCompleteMsP95": complete.p95,
+      "sendCompleteMsMax": complete.max,
+      "admitToPackMsP95": handoff.p95,
+      "admitToPackMsMax": handoff.max,
+      // Cadence, not rate. A steady 29.5 fps and an alternating 20/45 ms 29.5 fps are the same
+      // number above and very different to look at.
+      "deliveryGapMsP50": gap.p50,
+      "deliveryGapMsP95": gap.p95,
+      "deliveryGapMsMax": gap.max,
+      "firstDeliveredMs": stats.firstDeliveredLatencyMs,
+      "firstAckMs": stats.firstAckLatencyMs,
+      "rttMsP50": rtt.p50,
+      "rttMsP95": rtt.p95,
+      "rttMsP99": rtt.p99,
+      "rttMsMax": rtt.max,
+      // The call's numbers, not the preview's. These are the ones that decide the experiment.
+      "tapFramesOffered": tap.framesOffered,
+      "tapFramesWithSink": tap.framesWithSink,
+      "tapOfferMeanUs": round(tap.offerMeanUs * 100) / 100,
+      "tapOfferMaxUs": round(tap.offerMaxUs * 100) / 100,
+      "tapCadenceMeanMs": round(tap.cadenceMeanMs * 100) / 100,
+      "tapCadenceMaxMs": round(tap.cadenceMaxMs * 100) / 100,
+      "thermalState": Self.thermalStateName(),
+      "memoryFootprintMb": Self.memoryFootprintMb(),
       "outstanding": pacer.outstandingFrames,
       "ackTimeouts": stats.ackTimeouts,
       "staleAcks": stats.staleAcks,
       "unsupportedFormat": stats.unsupportedFormat,
+      "packFailures": stats.packFailures,
       "transportErrors": stats.transportErrors,
       "consumerReady": pacer.consumerReady,
       "noSource": !hasSource,
       "generation": NSNumber(value: pacer.generation),
       "consumerDelayMs": consumerDelayMs,
-    ])
+      "noiseAmplitude": noiseAmplitude,
+    ]
+    onStatus?(status)
+    runLog.write(status)
+  }
+
+  // MARK: - Run log
+
+  private func beginRunLogLocked() {
+    let directory = FileManager.default
+      .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+      .first?
+      .appendingPathComponent("frame-preview")
+    guard let directory else { return }
+    let device = UIDevice.current
+    runLog.begin(runId: runId, meta: [
+      "platform": "ios",
+      "schema": Self.runLogSchema,
+      "startedAt": ISO8601DateFormatter().string(from: Date()),
+      "deviceModel": Self.hardwareModel(),
+      "deviceName": device.name,
+      "osVersion": device.systemVersion,
+      "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
+      "build": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "",
+      "source": source.rawValue,
+      "mode": mode.rawValue,
+      "targetFps": targetFps,
+      "width": width,
+      "height": height,
+      "consumerDelayMs": consumerDelayMs,
+      "transport": "websocket",
+    ], directory: directory)
+  }
+
+  /// A discrete thing that happened, on the same file as the 1 Hz lines. State changes are what
+  /// turn "the numbers got worse at second 40" into "the numbers got worse when the page
+  /// reconnected at second 40".
+  private func logEvent(_ event: String, _ fields: [String: Any]) {
+    var record = fields
+    record["t"] = "event"
+    record["event"] = event
+    record["runId"] = runId
+    record["atMs"] = runStartedAtNs > 0 ? Double(Self.nowNs() - runStartedAtNs) / 1_000_000.0 : 0
+    runLog.write(record)
+  }
+
+  private static let runLogSchema = 1
+
+  private static func makeRunId() -> String {
+    let stamp = Int(Date().timeIntervalSince1970)
+    let suffix = UUID().uuidString.prefix(8)
+    return "ios-\(stamp)-\(suffix)"
+  }
+
+  private static func hardwareModel() -> String {
+    var info = utsname()
+    uname(&info)
+    let mirror = Mirror(reflecting: info.machine)
+    return mirror.children.reduce(into: "") { result, element in
+      guard let value = element.value as? Int8, value != 0 else { return }
+      result.append(Character(UnicodeScalar(UInt8(value))))
+    }
+  }
+
+  private static func thermalStateName() -> String {
+    switch ProcessInfo.processInfo.thermalState {
+    case .nominal: return "nominal"
+    case .fair: return "fair"
+    case .serious: return "serious"
+    case .critical: return "critical"
+    @unknown default: return "unknown"
+    }
+  }
+
+  /// Physical footprint, the number Xcode's memory gauge shows. Sampled every second so growth
+  /// over a soak is a slope rather than two endpoints.
+  private static func memoryFootprintMb() -> Double {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+    let result = withUnsafeMutablePointer(to: &info) { pointer in
+      pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+        task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
+      }
+    }
+    guard result == KERN_SUCCESS else { return 0 }
+    return round(Double(info.phys_footprint) / 1_048_576.0 * 10) / 10
   }
 
   static func nowNs() -> Int64 {
