@@ -25,6 +25,8 @@ internal class NimoGattQueue<C : Any>(
     private var descriptorCompletion: (() -> Unit)? = null
     private var cancelDeadline: (() -> Unit)? = null
 
+    val isIdle: Boolean get() = connection != null && current == null && descriptor == null && queue.isEmpty()
+
     fun connected(connection: Any) { reset(); this.connection = connection }
 
     fun reset() {

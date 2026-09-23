@@ -47,7 +47,12 @@
     "./src/*": null,
     "./app.plugin": "./app.plugin.js",
     "./app.plugin.js": "./app.plugin.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./firmware-updates": {
+      "react-native": "./src/firmware-updates/index.ts",
+      "types": "./build/firmware-updates/index.d.ts",
+      "default": "./build/firmware-updates/index.js"
+    }
   },
   "files": [
     "android",
@@ -71,7 +76,8 @@
     "README.md",
     "scripts",
     "src",
-    "!src/__tests__"
+    "!src/__tests__",
+    "test-fixtures"
   ],
   "scripts": {
     "build": "expo-module build",

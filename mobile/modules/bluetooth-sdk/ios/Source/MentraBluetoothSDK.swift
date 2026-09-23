@@ -379,7 +379,23 @@ public final class MentraBluetoothSDK {
         currentDefaultDevice()
     }
 
+    /// Returns the SGC-owned optional updater; native clients use the same session as React Native.
+    public func getFirmwareUpdater(deviceId: String) throws -> FirmwareUpdater {
+        guard let updater = DeviceManager.shared.sgc?.firmwareUpdater else {
+            throw FirmwareUpdaterError("unsupported", "This device has no firmware updater")
+        }
+        guard updater.snapshot.deviceId == deviceId else { throw FirmwareUpdaterError("wrong_device", "The selected updater belongs to another device") }
+        return updater
+    }
+
+    public func assertFirmwareReplacementAllowed() throws {
+        guard DeviceManager.shared.firmwareReplacementAllowed else {
+            throw FirmwareUpdaterError("busy", "A firmware update still owns the glasses")
+        }
+    }
+
     public func setDefaultDevice(_ device: Device?) {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         guard let device else {
             clearDefaultDevice()
             return
@@ -398,6 +414,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func clearDefaultDevice() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         defaultDeviceApplyGeneration += 1
         let generation = defaultDeviceApplyGeneration
         suppressDefaultDeviceEvents = true
@@ -412,6 +429,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func startScan(model: DeviceModel) throws {
+        try assertFirmwareReplacementAllowed()
         if model != .simulated {
             try BluetoothAvailability.shared.requirePoweredOn(operation: "scan for glasses")
         }
@@ -425,6 +443,7 @@ public final class MentraBluetoothSDK {
     }
 
     private func stopScan(reason: ScanStopReason) {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         DeviceManager.shared.stopScan()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searching", false)
         delegate?.mentraBluetoothSDK(self, didStopScan: reason)
@@ -482,6 +501,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func connect(to device: Device, options: ConnectOptions = ConnectOptions()) throws {
+        try assertFirmwareReplacementAllowed()
         clearBluetoothRestoreIntent()
         if device.model != .simulated {
             try BluetoothAvailability.shared.requirePoweredOn(operation: "connect to glasses")
@@ -513,6 +533,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func connectDefault(options: ConnectOptions = ConnectOptions()) throws {
+        try assertFirmwareReplacementAllowed()
         clearBluetoothRestoreIntent()
         requiresAncsForBluetoothRestore = options.requiresAncs
         guard let device = currentDefaultDevice() else {
@@ -531,6 +552,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func cancelConnectionAttempt() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         clearBluetoothRestoreIntent()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
@@ -539,11 +561,13 @@ public final class MentraBluetoothSDK {
     }
 
     func connectSimulated() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         clearBluetoothRestoreIntent()
         DeviceManager.shared.connectSimulated()
     }
 
     public func disconnect() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         clearBluetoothRestoreIntent()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
@@ -552,6 +576,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func forget() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         clearBluetoothRestoreIntent()
         DeviceManager.shared.forget()
     }

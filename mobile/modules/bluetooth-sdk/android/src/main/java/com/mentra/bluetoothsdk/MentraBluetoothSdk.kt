@@ -294,6 +294,19 @@ class MentraBluetoothSdk private constructor(
 
     fun getDefaultDevice(): Device? = currentDefaultDevice()
 
+    /** The same SGC-owned updater is available to native clients and React Native. */
+    fun getFirmwareUpdater(deviceId: String): com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdater {
+        check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) { "Firmware updater access requires the main executor" }
+        val updater = deviceManager.sgc?.firmwareUpdater
+            ?: throw com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException("unsupported", "This device has no firmware updater")
+        if (updater.snapshot.deviceId != deviceId) throw com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException("wrong_device", "The selected updater belongs to another device")
+        return updater
+    }
+
+    fun assertFirmwareReplacementAllowed() {
+        if (!deviceManager.firmwareReplacementAllowed) throw com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException("busy", "A firmware update still owns the glasses")
+    }
+
     private fun requireGlassesConnected(operation: String) {
         if (!getRawGlassesStatus().connected) {
             throw BluetoothSdkException(
@@ -304,6 +317,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun setDefaultDevice(device: Device?) {
+        assertFirmwareReplacementAllowed()
         if (device == null) {
             clearDefaultDevice()
             return
@@ -324,6 +338,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun clearDefaultDevice() {
+        assertFirmwareReplacementAllowed()
         suppressDefaultDeviceEvents = true
         try {
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", "")
@@ -340,6 +355,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startScan(model: DeviceModel) {
+        assertFirmwareReplacementAllowed()
         if (model != DeviceModel.SIMULATED) {
             requireBluetoothReady("scan for glasses")
         }
@@ -353,6 +369,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     private fun stopScan(reason: ScanStopReason) {
+        if (!deviceManager.firmwareReplacementAllowed) return
         deviceManager.stopScan()
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "searching", false)
         dispatchToListeners { it.onScanStopped(reason) }
@@ -446,6 +463,7 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connect(device: Device, options: ConnectOptions = ConnectOptions()) {
+        assertFirmwareReplacementAllowed()
         if (device.model != DeviceModel.SIMULATED) {
             requireBluetoothReady("connect to glasses")
         }
@@ -487,6 +505,7 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connectDefault(options: ConnectOptions = ConnectOptions()) {
+        assertFirmwareReplacementAllowed()
         val defaultDevice =
             currentDefaultDevice()
                 ?: throw BluetoothSdkException(
@@ -503,6 +522,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun cancelConnectionAttempt() {
+        assertFirmwareReplacementAllowed()
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
@@ -510,10 +530,12 @@ class MentraBluetoothSdk private constructor(
     }
 
     internal fun connectSimulated() {
+        assertFirmwareReplacementAllowed()
         deviceManager.connectSimulated()
     }
 
     fun disconnect() {
+        assertFirmwareReplacementAllowed()
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
@@ -521,6 +543,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun forget() {
+        assertFirmwareReplacementAllowed()
         deviceManager.forget()
     }
 

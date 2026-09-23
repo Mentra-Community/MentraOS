@@ -3,6 +3,8 @@
 package com.mentra.bluetoothsdk
 
 import androidx.lifecycle.Lifecycle
+import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException
+import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareWire
 import androidx.lifecycle.LifecycleOwner
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
@@ -21,6 +23,8 @@ import java.security.MessageDigest
 private inline fun <T> withExpoSdkError(block: () -> T): T =
         try {
             block()
+        } catch (error: FirmwareUpdaterException) {
+            throw CodedException(error.code, error.message ?: error.code, error)
         } catch (error: BluetoothSdkException) {
             throw CodedException(error.code, error.message ?: error.code, error)
         }
@@ -28,6 +32,8 @@ private inline fun <T> withExpoSdkError(block: () -> T): T =
 private suspend inline fun <T> withExpoSdkErrorSuspend(crossinline block: suspend () -> T): T =
         try {
             block()
+        } catch (error: FirmwareUpdaterException) {
+            throw CodedException(error.code, error.message ?: error.code, error)
         } catch (error: BluetoothSdkException) {
             throw CodedException(error.code, error.message ?: error.code, error)
         }
@@ -336,6 +342,7 @@ class BluetoothSdkModule : Module() {
             "log",
             "device_discovered",
             "default_device_changed",
+            "firmware_update",
             // Individual event handlers
             "glasses_not_ready",
             "button_press",
@@ -782,6 +789,25 @@ class BluetoothSdkModule : Module() {
         }
 
         SdkCoroutineFunction("sendOtaQueryStatus") { -> requireSdk().sendOtaQueryStatus().values }
+
+        SdkCoroutineFunction("getFirmwareUpdateSnapshot") { deviceId: String ->
+            withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).snapshot.toMap() }
+        }
+        SdkCoroutineFunction("startFirmwareUpdate") { values: Map<String, Any> ->
+            withContext(Dispatchers.Main.immediate) {
+                val request = FirmwareWire.request(values)
+                requireSdk().getFirmwareUpdater(request.deviceId).start(request).toMap()
+            }
+        }
+        SdkCoroutineFunction("reconcileFirmwareUpdate") { deviceId: String ->
+            withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).reconcile().toMap() }
+        }
+        SdkCoroutineFunction("cancelFirmwareUpdate") { deviceId: String ->
+            withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).cancel().toMap() }
+        }
+        SdkCoroutineFunction("acknowledgeFirmwareUpdate") { deviceId: String ->
+            withContext(Dispatchers.Main.immediate) { requireSdk().getFirmwareUpdater(deviceId).acknowledge().toMap() }
+        }
 
         AsyncFunction("startAr99OtaFromFile") { path: String -> requireSdk().startAr99OtaFromFile(path) }
 

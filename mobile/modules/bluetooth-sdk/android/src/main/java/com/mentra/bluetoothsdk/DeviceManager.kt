@@ -82,6 +82,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // MARK: - Properties
     // Read by the welcome executor as well as device lifecycle handlers.
     @Volatile var sgc: SGCManager? = null
+    val firmwareReplacementAllowed: Boolean get() = sgc?.firmwareUpdateOwnsDevice != true
     var controller: ControllerManager? = null
 
     // settings:
@@ -1356,6 +1357,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // MARK: - Auxiliary Commands
 
     fun initSGC(wearable: String) {
+        if (!firmwareReplacementAllowed) return
         Bridge.log("Initializing manager for wearable: $wearable")
         if (sgc != null && sgc?.type != wearable) {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
@@ -2298,6 +2300,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDefault() {
+        if (!firmwareReplacementAllowed) return
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -2349,6 +2352,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectByName(dName: String) {
+        if (!firmwareReplacementAllowed) return
         Bridge.log("MAN: Connecting to wearable: $dName")
 
         var name = dName
@@ -2387,6 +2391,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDevice(deviceModel: String, deviceName: String) {
+        if (!firmwareReplacementAllowed) return
         Bridge.log("MAN: Connecting to device: $deviceModel $deviceName")
         if (DeviceTypes.ALL.contains(deviceModel)) {
             pendingWearable = deviceModel
@@ -2404,6 +2409,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectSimulated() {
+        if (!firmwareReplacementAllowed) return
         defaultWearable = DeviceTypes.SIMULATED
         deviceName = DeviceTypes.SIMULATED
         initSGC(defaultWearable)
@@ -2411,6 +2417,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun disconnect(clearPendingIdentity: Boolean = true) {
+        if (!firmwareReplacementAllowed) return
         sgc?.clearDisplay()
         // NIMO owns a background canvas encoder and this path discards its instance.
         // A link-level reconnect keeps the instance (and encoder) through disconnect().
@@ -2465,6 +2472,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun forget() {
+        if (!firmwareReplacementAllowed) return
         Bridge.log("MAN: Forgetting smart glasses")
 
         val live = sgc as? MentraLive

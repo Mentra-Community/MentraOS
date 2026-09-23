@@ -1,3 +1,4 @@
+import type {NativeFirmwareStartRequest, NativeFirmwareUpdateSnapshot} from "./firmware-updates"
 import type {PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 export type {PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 
@@ -1112,6 +1113,7 @@ export type MiniappSelectedEvent = {
 export type BluetoothSdkInternalEvent = Parameters<BluetoothSdkModuleEvents[keyof BluetoothSdkModuleEvents]>[0]
 
 export type BluetoothSdkModuleEvents = {
+  firmware_update: (event: NativeFirmwareUpdateSnapshot) => void
   glasses_status: (changed: Partial<GlassesStatus>) => void
   bluetooth_status: (changed: Partial<BluetoothStatus>) => void
   log: (event: LogEvent) => void
@@ -1288,6 +1290,7 @@ export type BluetoothSdkEventMap = {
   log: LogEvent
   device_discovered: Device
   default_device_changed: {device?: Device}
+  firmware_update: NativeFirmwareUpdateSnapshot
   glasses_not_ready: GlassesNotReadyEvent
   button_press: ButtonPressEvent
   touch_event: TouchEvent
@@ -1354,6 +1357,14 @@ export type BluetoothSdkSubscription = {
 export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 
 export interface BluetoothSdkPublicModule {
+  /** Passive retained native snapshot. This never starts or cancels an update. */
+  getFirmwareUpdateSnapshot(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+  startFirmwareUpdate(request: NativeFirmwareStartRequest): Promise<NativeFirmwareUpdateSnapshot>
+  /** Provider-defined inspection/adoption; never a generic fresh-start retry. */
+  reconcileFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+  cancelFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+  acknowledgeFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+
   configureNativeNotifications(config: NativeNotificationConfig): Promise<void>
   getNativeNotificationStatus(): Promise<NativeNotificationStatus>
   addListener<EventName extends BluetoothSdkEventName>(

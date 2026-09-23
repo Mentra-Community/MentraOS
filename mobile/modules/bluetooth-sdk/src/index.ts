@@ -1,3 +1,4 @@
+export type {NativeFirmwareStartRequest, NativeFirmwareUpdateSnapshot} from "./firmware-updates"
 import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 import PrivateBluetoothSdkModule from "./_private/BluetoothSdkModule"
 import type {
@@ -17,6 +18,7 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "log",
   "device_discovered",
   "default_device_changed",
+  "firmware_update",
   "glasses_not_ready",
   "button_press",
   "touch_event",
@@ -91,6 +93,12 @@ const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): Bl
 }
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
+  getFirmwareUpdateSnapshot: bindPublicMethod("getFirmwareUpdateSnapshot"),
+  startFirmwareUpdate: bindPublicMethod("startFirmwareUpdate"),
+  reconcileFirmwareUpdate: bindPublicMethod("reconcileFirmwareUpdate"),
+  cancelFirmwareUpdate: bindPublicMethod("cancelFirmwareUpdate"),
+  acknowledgeFirmwareUpdate: bindPublicMethod("acknowledgeFirmwareUpdate"),
+
   configureNativeNotifications: bindPublicMethod("configureNativeNotifications"),
   getNativeNotificationStatus: bindPublicMethod("getNativeNotificationStatus"),
   addListener,

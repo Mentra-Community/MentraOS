@@ -10,6 +10,7 @@ internal class NimoOtaManager(
   writeCapacity: Int,
   connectionGeneration: Int,
   private val ports: Ports,
+  recoveringReboot: Boolean = false,
 ) {
   data class Target(val sha256: String, val size: Int, val hardwareId: ByteArray,
     val firmwareDetail: String, val packedVersion: String, val peerVersion: ByteArray)
@@ -50,6 +51,20 @@ internal class NimoOtaManager(
   private var syncPending = 0
   private var syncFailures = 0
   private var operation = 0
+
+  init {
+    if (recoveringReboot) {
+      entered = true; rebootAttempted = true
+      snapshot = snapshot.copy(phase = "interrupted", safeToRelease = false)
+    }
+  }
+
+  /** Inspection only, including after process restart with a validated reboot-stage journal. */
+  fun reconcileAfterReboot() {
+    if (!rebootAttempted || (snapshot.phase != "interrupted" && snapshot.phase != "restarting")) return
+    clearExchange(); cancelDelay?.invoke(); cancelDelay = null
+    verifyReadback()
+  }
 
   fun start() {
     if (snapshot.phase != "idle") return

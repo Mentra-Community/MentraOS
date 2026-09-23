@@ -61,13 +61,24 @@ final class NimoOtaManager {
     private var syncFailures = 0
     private var operation = 0
 
-    init(firmware: Data, target: Target, writeCapacity: Int, connectionGeneration: Int, ports: Ports) {
+    init(firmware: Data, target: Target, writeCapacity: Int, connectionGeneration: Int, recoveringReboot: Bool = false, ports: Ports) {
         self.firmware = firmware
         self.target = target
         capacity = min(512, writeCapacity)
         generation = connectionGeneration
         self.ports = ports
         covered = Array(repeating: false, count: firmware.count)
+        if recoveringReboot {
+            entered = true; rebootAttempted = true
+            snapshot.phase = "interrupted"; snapshot.safeToRelease = false
+        }
+    }
+
+    /// Inspection only, including after a process restart with a validated reboot-stage journal.
+    func reconcileAfterReboot() {
+        guard rebootAttempted, snapshot.phase == "interrupted" || snapshot.phase == "restarting" else { return }
+        clearExchange(); cancelDelay?(); cancelDelay = nil
+        verifyReadback()
     }
 
     func start() {

@@ -46,6 +46,10 @@ struct SceneFrame {
 
 @MainActor
 protocol SGCManager {
+    /// Optional device-owned updater; absence means unsupported, never a Live fallback.
+    var firmwareUpdater: FirmwareUpdater? { get }
+    var firmwareUpdateOwnsDevice: Bool { get }
+
     // MARK: - hard coded device properties:
 
     var type: String { get set }
@@ -258,6 +262,14 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
+    var firmwareUpdateOwnsDevice: Bool {
+        false
+    }
+
+    var firmwareUpdater: FirmwareUpdater? {
+        nil
+    }
+
     var showBrightnessConfirmation: Bool {
         true
     }
