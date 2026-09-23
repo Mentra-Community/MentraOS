@@ -8,8 +8,10 @@ then the existing private GitHub queue and worker claims.
 The first supported dispatch sources are open same-repository PRs targeting
 `dev`, with `no-glasses` or `day1-ota`. A label is not required for an explicit
 admin request. Dev and staging build inventory uses the coordinated release
-plan and Apple download receipt; dispatch for those channels remains disabled
-until the coordinated issuer and private worker source adapter are deployed.
+plan and Apple download receipt. Version-two request progress binds the selected
+channel, run and attempt. Channel dispatch stays disabled by default until the
+coordinated issuer and private worker are deployed; its initial supported routine
+is no-glasses. Unsupported coordinated routines remain unavailable.
 
 ## Deployment configuration
 

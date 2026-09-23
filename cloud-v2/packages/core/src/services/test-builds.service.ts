@@ -146,9 +146,13 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   private routines(channel: TestBuildSource["channel"], available: boolean) {
     const channels = this.options.channels ?? (process.env.TEST_RUN_DISPATCH_CHANNELS ?? "pr").split(",");
-    return TEST_ROUTINES.map(routine => ({ id: routine.id, available: available && channels.includes(channel),
-      ...(!available ? { reason: "A verified published Mac build is required" }
-        : !channels.includes(channel) ? { reason: "Dispatch for this channel is not enabled on the trusted issuer yet" } : {}) }));
+    return TEST_ROUTINES.map(routine => {
+      const compatible = channel === "pr" || routine.id === "no-glasses";
+      return { id: routine.id, available: available && channels.includes(channel) && compatible,
+        ...(!available ? { reason: "A verified published Mac build is required" }
+          : !channels.includes(channel) ? { reason: "Dispatch for this channel is not enabled on the trusted issuer yet" }
+          : !compatible ? { reason: "This routine is not yet available for coordinated release builds" } : {}) };
+    });
   }
   async inventory(query: TestBuildQuery): Promise<TestBuild[]> {
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
@@ -287,13 +291,22 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     // Never forward the GitHub token to the signed artifact URL.
     const bytes = await readTestMetadata(await this.fetcher(location.href), 2 * 1024 * 1024);
     requireThat(`sha256:${hash(bytes)}` === artifact.digest, "Request artifact digest changed");
-    const request = z.object({ schemaVersion: z.literal(1), kind: z.literal("mentra-routine-request"),
+    const requestFields = z.object({ kind: z.literal("mentra-routine-request"),
       requestId: z.string(), status: z.enum(["ready", "no-artifact"]), reason: z.string(),
       routine: z.object({ id: z.string(), authorization: z.literal("workflow-dispatch") }),
       trigger: z.object({ repository: z.literal(REPOSITORY), kind: z.literal("workflow_dispatch"), runId: positive, runAttempt: positive,
         sha, workflowSha: sha, ref: z.literal("refs/heads/dev"), workflow: z.literal(`.github/workflows/${REQUEST_WORKFLOW}`) }),
       selection: z.object({ archive: assetSchema, producer: z.object({ runId: positive, publicationAttempt: positive }) }).passthrough().nullable(),
-    }).parse(readRequestZip(bytes));
+    });
+    const request = z.discriminatedUnion("schemaVersion", [
+      requestFields.extend({ schemaVersion: z.literal(1) }),
+      requestFields.extend({ schemaVersion: z.literal(2), source: z.object({ kind: z.literal("coordinated-release"),
+        channel: z.enum(["dev", "staging"]), buildRunId: positive, publicationAttempt: positive }) }),
+    ]).parse(readRequestZip(bytes));
+    requireThat(input.source.channel === "pr" ? request.schemaVersion === 1
+      : request.schemaVersion === 2 && request.source.channel === input.source.channel
+        && request.source.buildRunId === input.source.buildRunId
+        && request.source.publicationAttempt === input.source.publicationAttempt, "Published request source differs");
     const suffix = input.source.channel === "pr" ? input.source.prNumber : input.source.channel;
     requireThat(request.requestId === `routine-${requestRunId}-1-${suffix}-${input.routineId}` && request.routine.id === input.routineId
       && request.trigger.runId === run.id && request.trigger.runAttempt === 1 && request.trigger.sha === run.head_sha

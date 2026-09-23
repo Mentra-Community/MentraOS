@@ -107,6 +107,11 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
   expect(builds[0]?.source).toEqual({ channel, buildRunId: 50, publicationAttempt: 1 });
   expect(builds[0]?.routines[0]?.available).toBe(false);
   expect(builds[0]?.routines[0]?.reason).toContain("not enabled");
+  const enabled = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: ["pr", "dev", "staging"] });
+  const available = (await enabled.inventory({ channel }))[0]!;
+  expect(available.routines.find(routine => routine.id === "no-glasses")?.available).toBe(true);
+  expect(available.routines.find(routine => routine.id === "day1-ota")?.available).toBe(false);
+  expect(available.routines.find(routine => routine.id === "day1-ota")?.reason).toContain("not yet available");
 });
 
 test("dispatch fixes the repository/workflow/ref and passes only exact explicit request selectors", async () => {
@@ -128,11 +133,14 @@ test("request artifact reads are bounded and reject other files before decompres
   expect(() => readRequestZip(zipSync({ "request.json": new Uint8Array(1024 * 1024 + 1) }))).toThrow("Unexpected");
 });
 
-test("ready and no-artifact request status is authenticated against the source artifact digest", async () => {
+for (const channel of ["pr", "dev", "staging"] as const) test(`${channel} ready and no-artifact requests authenticate the exact source and artifact digest`, async () => {
+  const selected: TestDispatchInput = { ...input, source: channel === "pr" ? input.source : { channel, buildRunId: 50, publicationAttempt: 1 } };
   for (const status of ["ready", "no-artifact"] as const) {
     const f = fixture();
     f.rows.set(`${API}/actions/runs/70/attempts/1`, run({ id: 70, event: "workflow_dispatch", head_branch: "dev", path: ".github/workflows/request-e2e-routine.yml" }));
-    const request = { schemaVersion: 1, kind: "mentra-routine-request", requestId: "routine-70-1-12-no-glasses", status, reason: "No artifact for this revision", routine: { id: "no-glasses", authorization: "workflow-dispatch" },
+    const request = { schemaVersion: channel === "pr" ? 1 : 2,
+      ...(channel === "pr" ? {} : { source: { ...selected.source, kind: "coordinated-release" } }),
+      kind: "mentra-routine-request", requestId: `routine-70-1-${channel === "pr" ? 12 : channel}-no-glasses`, status, reason: "No artifact for this revision", routine: { id: "no-glasses", authorization: "workflow-dispatch" },
       trigger: { repository: REPO, kind: "workflow_dispatch", runId: 70, runAttempt: 1, sha: HEAD, workflowSha: HEAD, ref: "refs/heads/dev", workflow: ".github/workflows/request-e2e-routine.yml" },
       selection: status === "ready" ? { archive: f.receipt.artifacts.mac, producer: { runId: 50, publicationAttempt: 1 } } : null };
     const bytes = zipSync({ "request.json": strToU8(JSON.stringify(request)) });
@@ -140,9 +148,18 @@ test("ready and no-artifact request status is authenticated against the source a
       size_in_bytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, workflow_run: { id: 70, head_sha: HEAD } }] });
     f.rows.set(`${API}/actions/artifacts/80/zip`, new Response(null, { status: 302, headers: { location: "https://test.blob.core.windows.net/request.zip?signature=synthetic" } }));
     f.rows.set("https://test.blob.core.windows.net/request.zip?signature=synthetic", new Response(bytes));
-    const progress = await f.gateway.progress(70, input);
+    const progress = await f.gateway.progress(70, selected);
     expect(progress.state).toBe(status === "ready" ? "requesting" : "unavailable");
     const download = f.calls.find(call => call.url.includes("blob.core.windows.net"));
     expect(download?.init?.headers).toBeUndefined();
+    if (channel !== "pr") {
+      for (const source of [{ ...selected.source, channel: channel === "dev" ? "staging" as const : "dev" as const },
+        { ...selected.source, buildRunId: 51 }, { ...selected.source, publicationAttempt: 2 }])
+        await expect(f.gateway.progress(70, { ...selected, source })).rejects.toThrow("Published request source differs");
+      await expect(f.gateway.progress(70, input)).rejects.toThrow("Published request source differs");
+    } else {
+      await expect(f.gateway.progress(70, { ...input, source: { channel: "dev", buildRunId: 50, publicationAttempt: 1 } }))
+        .rejects.toThrow("Published request source differs");
+    }
   }
 });
