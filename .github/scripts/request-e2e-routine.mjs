@@ -14,7 +14,7 @@ const HASH = /^[a-f0-9]{64}$/
 const positive = (value) => Number.isSafeInteger(value) && value > 0
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex")
 
-function sourcePublication(runId, publicationAttempt) {
+export function sourcePublication(runId, publicationAttempt) {
   const absent = (value) => value === undefined || value === ""
   if (absent(runId) && absent(publicationAttempt)) return null
   const valid = (value) =>
@@ -63,7 +63,7 @@ export function successfulMacPublication(run, all) {
   return {buildAttempt: firstExecution(all, build), publicationAttempt: firstExecution(all, publish)}
 }
 
-async function jsonArtifact(url, fetchImpl) {
+export async function jsonArtifact(url, fetchImpl) {
   const response = await fetchImpl(url, {redirect: "error", signal: AbortSignal.timeout(30_000)})
   if (!response.ok) throw new Error(`Published metadata unavailable (HTTP ${response.status})`)
   const reader = response.body?.getReader()
@@ -153,6 +153,7 @@ export async function createRoutineRequest({
   github,
   context,
   number,
+  channel = "pr",
   routine = "day1-ota",
   requestOrigin,
   source,
@@ -161,6 +162,11 @@ export async function createRoutineRequest({
   fetchImpl = fetch,
   now = () => new Date(),
 }) {
+  if (channel !== "pr") {
+    const {createCoordinatedRoutineRequest} = await import("./coordinated-routine-request.mjs")
+    return createCoordinatedRoutineRequest({github, context, number, channel, routine, requestOrigin, source,
+      sourceBuildRunId, sourcePublicationAttempt, fetchImpl, now})
+  }
   const repository = `${context.repo.owner}/${context.repo.repo}`
   const selectedSource = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
   const registered = deviceRoutine(routine)

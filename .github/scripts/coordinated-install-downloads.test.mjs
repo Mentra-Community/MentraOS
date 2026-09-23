@@ -5,7 +5,8 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {downloadNames, prepareDownloads, publishDownloads, restoreDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
-import {platformDownloads, otaTargetText} from "./coordinated-downloads-slack.mjs"
+import {platformDownloads, otaTargetText, coordinatedRoutineLinks} from "./coordinated-downloads-slack.mjs"
+import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 import {createIosRecord} from "./coordinated-mobile-records.mjs"
 
 const repository = "Mentra-Community/MentraOS"
@@ -166,4 +167,30 @@ test("restore accepts only a complete matching published receipt and its origina
   )
   bytes.set(names.iphone, Buffer.from("different signed bytes"))
   await assert.rejects(restoreDownloads(restored, plan, repository, ota, deps), /bytes disagree/)
+})
+
+test("coordinated routine links select the exact source and archive without claiming execution", async () => {
+  for (const channel of ["dev", "staging"]) {
+    const {state, options} = coordinatedFixture(channel)
+    const env = {BRANCH: channel, RELEASE_SCOPE: "core", FINALIZE_RESULT: "success", RELEASE_IDENTITY: state.plan.releaseIdentity,
+      REPOSITORY: "Mentra-Community/MentraOS", SHA: state.plan.sourceCommit, RUN_ID: "100", RUN_ATTEMPT: "2",
+      MAC_URL: state.receipt.app.otaManifestUrl.replace(state.plan.artifactNames.otaManifest, state.receipt.artifacts.mac.name)}
+    const blocks = await coordinatedRoutineLinks(env, options.fetchImpl)
+    const text = blocks[0].text.text
+    assert.match(text, /execution and results are pending/)
+    assert.doesNotMatch(text, /test passed|test succeeded|queued/i)
+    const results = new URL(text.match(/<(https:\/\/admin\.dev\.[^|]+)\|/)[1])
+    assert.equal(results.searchParams.get("headSha"), state.plan.sourceCommit)
+    assert.equal(results.searchParams.get("archiveSha256"), state.receipt.artifacts.mac.sha256)
+    assert.equal(results.searchParams.get("routineId"), "no-glasses")
+    assert.equal(results.searchParams.has("pr"), false)
+    const pipeline = new URL(text.match(/<(https:\/\/github\.com\/[^|]+)\|/)[1])
+    assert.equal(pipeline.searchParams.get("query"), '"Device request callback 100 / attempt 2"')
+    for (const override of [{FINALIZE_RESULT: "failure"}, {MAC_URL: "https://other.example/app.zip"}, {SHA: "f".repeat(40)}]) {
+      const unavailable = JSON.stringify(await coordinatedRoutineLinks({...env, ...override}, options.fetchImpl))
+      assert.match(unavailable, /Unavailable/)
+      assert.doesNotMatch(unavailable, /Results for this exact build/)
+    }
+    assert.deepEqual(await coordinatedRoutineLinks({...env, RELEASE_SCOPE: "examples"}, options.fetchImpl), [])
+  }
 })

@@ -4,6 +4,7 @@ import {readFile} from "node:fs/promises"
 import {callbackRunName, dispatchReadyRequest, planDeviceDispatch, planDeviceDispatches, publicationJobName, PUBLICATION_SEND_STEP, requestAfterPublication} from "./dispatch-device-routine.mjs"
 import {createRoutineRequest} from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
+import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 
 const repo = "Mentra-Community/MentraOS"
 const source = "a".repeat(40), head = "b".repeat(40), base = "c".repeat(40)
@@ -439,4 +440,57 @@ test("workflow matrix preserves trusted code, independent routine fences and dis
   assert.doesNotMatch(workflow, /ref: \$\{\{ github\.event\.workflow_run\.head_sha/)
   assert.equal((workflow.match(/retries: 0/g) ?? []).length, 3)
   assert.match(workflow, /retry: \{enabled: false\}/)
+  assert.match(workflow, /device-coordinated-\{0\}-\{1\}/)
+  assert.match(workflow, /Coordinated Mentra Release/)
+})
+
+test("successful dev and staging builds automatically request only no-glasses through dev", async () => {
+  for (const channel of ["dev", "staging"]) {
+    const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: channel, pull_requests: []}
+    const job = {...publicationJob, name: publicationJobName(123, 2, "no-glasses", channel)}
+    const f = fake({run, callbackJobs: {[callback.id]: [job]}})
+    const work = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
+    assert.equal(work.length, 1)
+    assert.equal(work[0].routine, "no-glasses")
+    assert.equal(work[0].pr, undefined)
+    assert.equal((await requestAfterPublication({...f, context, plan: work[0]})).status, "request-dispatched")
+    assert.deepEqual(f.calls.at(-1)[1].inputs, {channel, routine: "no-glasses", request_origin: "successful-build",
+      source_build_run_id: "123", source_publication_attempt: "2"})
+  }
+  for (const delta of [{head_branch: "main"}, {conclusion: "failure"}, {event: "pull_request"}]) {
+    const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: "dev", ...delta}
+    assert.equal((await planDeviceDispatches({...fake({run}), context})).some(plan => plan.mode === "request"), false)
+  }
+})
+
+test("coordinated reruns retain one automatic generation even after an ambiguous send", async () => {
+  const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: "dev", run_attempt: 3}
+  const nextContext = {...context, runId: 778, payload: {workflow_run: {id: 123, run_attempt: 3}}}
+  const next = {...callback, id: 778, run_number: 101, display_title: callbackRunName(123, 3)}
+  const job = {...publicationJob, name: publicationJobName(123, 2, "no-glasses", "dev")}
+  assert.equal(job.name, publicationJobName(123, 3, "no-glasses", "dev"))
+  assert.notEqual(job.name, publicationJobName(124, 3, "no-glasses", "dev"))
+  const f = fake({run, history: [callback, next], callbackJobs: {
+    [callback.id]: [{...job, status: "completed", conclusion: "failure"}], [next.id]: [job]}})
+  const plan = await planDeviceDispatch({...f, context: nextContext, routine: "no-glasses"})
+  assert.equal((await requestAfterPublication({...f, context: nextContext, plan})).status, "request-reconcile")
+  assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
+})
+
+test("coordinated ready requests keep private dispatch limited to authenticated request IDs", async () => {
+  const {options, state} = coordinatedFixture("staging")
+  const request = await createRoutineRequest(options)
+  const plan = {mode: "dispatch", runId: 500, runAttempt: 1, sourceSha: options.source.sha}
+  const remote = fake()
+  const args = {...options, plan, privateGithub: remote.github, bytes: bytes(request)}
+  assert.equal((await dispatchReadyRequest(args)).status, "private-job-requested")
+  assert.deepEqual(remote.calls[0][1], {owner: "Mentra-Community", repo: "Mentra-Automated-Testing", workflow_id: "device-routine.yml",
+    ref: "main", inputs: {source_repository: repo, request_run_id: "500", request_attempt: "1"}})
+  for (const changed of [{...request, pullRequest: {number: 42}}, {...request, schemaVersion: 1},
+    {...request, source: {...request.source, channel: "main"}},
+    {...request, selection: {...request.selection, archive: {...request.selection.archive, sha256: "a".repeat(64)}}}])
+    await assert.rejects(dispatchReadyRequest({...args, bytes: bytes(changed)}))
+  state.ancestry = "diverged"
+  await assert.rejects(dispatchReadyRequest(args), /ancestor/)
+  assert.equal(remote.calls.length, 1)
 })

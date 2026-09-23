@@ -3,7 +3,7 @@ run-name: Device request callback ${{ github.event.workflow_run.id }} / attempt 
 
 on:
   workflow_run:
-    workflows: [Mobile App iOS Build, Request device routine]
+    workflows: [Mobile App iOS Build, Coordinated Mentra Release, Request device routine]
     types: [completed]
 
 permissions:
@@ -50,11 +50,11 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
     # This name binds the retained send step to one routine/build/publication.
-    name: ${{ matrix.mode == 'request' && format('Request publication {0} / attempt {1} / routine {2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine) || 'Dispatch trusted request' }}
+    name: ${{ matrix.mode == 'request' && (matrix.channel && format('Request coordinated source {0} / routine {1}', matrix.sourceRunId, matrix.routine) || format('Request publication {0} / attempt {1} / routine {2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine)) || 'Dispatch trusted request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
-      group: ${{ matrix.mode == 'request' && format('device-publication-{0}-{1}-{2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine) || format('device-request-callback-{0}-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt) }}
+      group: ${{ matrix.mode == 'request' && (matrix.channel && format('device-coordinated-{0}-{1}', matrix.sourceRunId, matrix.routine) || format('device-publication-{0}-{1}-{2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine)) || format('device-request-callback-{0}-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt) }}
       cancel-in-progress: false
     # Never delete callback history to authorize replay; unknown sends need reconciliation.
     steps:

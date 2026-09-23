@@ -2,6 +2,7 @@ import {execFileSync} from "node:child_process"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
+import {publishedCoordinatedBuild} from "./coordinated-routine-request.mjs"
 
 const text = (value) => ({type: "text", text: value})
 const link = (url, label) => ({type: "link", url, text: label})
@@ -82,8 +83,33 @@ export function otaTargetText(manifest, identity) {
   return `ASG: *${escape(asg.versionName)}* · build ${asg.versionCode}\nBES: *${escape(manifest.bes_firmware.version)}*\nMTK: *${escape(manifest.mtk_full_ota.end_firmware)}*`
 }
 
+/** Posted with the existing release notification, before its completion callback.
+ * A request or release success is never reported as a device-test outcome. */
+export async function coordinatedRoutineLinks(env, fetchImpl = fetch) {
+  if (!["dev", "staging"].includes(env.BRANCH) || env.RELEASE_SCOPE === "examples") return []
+  const pipeline = new URL("https://github.com/Mentra-Community/MentraOS/actions/workflows/dispatch-device-routine.yml")
+  if (/^[1-9]\d*$/.test(env.RUN_ID ?? "") && /^[1-9]\d*$/.test(env.RUN_ATTEMPT ?? ""))
+    pipeline.searchParams.set("query", `\"Device request callback ${env.RUN_ID} / attempt ${env.RUN_ATTEMPT}\"`)
+  let detail = "Unavailable: no verified successful Mac publication."
+  let results = ""
+  if (env.FINALIZE_RESULT === "success" && env.MAC_URL && env.REPOSITORY === "Mentra-Community/MentraOS") {
+    try {
+      const selection = await publishedCoordinatedBuild({identity: env.RELEASE_IDENTITY, channel: env.BRANCH, sourceCommit: env.SHA, fetchImpl})
+      if (selection.archive.url !== env.MAC_URL) throw new Error("Notification refers to another Mac archive")
+      const url = new URL("https://admin.dev.mentraglass.com/")
+      url.search = new URLSearchParams({testRuns: "1", repository: env.REPOSITORY, headSha: env.SHA,
+        archiveSha256: selection.archive.sha256, routineId: "no-glasses", platform: "ios-mac"}).toString()
+      results = ` · <${url.href}|Results for this exact build>`
+      detail = "Automatic request follows successful workflow completion; execution and results are pending."
+    } catch { detail = "Unavailable: published Mac metadata could not be verified." }
+  }
+  return [{type: "section", text: {type: "mrkdwn", text:
+    `*Requested tests*\nNo-glasses UI — ${detail}\n<${pipeline.href}|Request pipeline>${results}`}}]
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === "platforms") console.log(JSON.stringify(platformDownloads(process.env)))
+  else if (process.argv[2] === "routines") console.log(JSON.stringify(await coordinatedRoutineLinks(process.env)))
   else if (process.argv[2] === "ota") {
     try {
       const response = await fetch(process.env.OTA_MANIFEST_URL, {signal: AbortSignal.timeout(20_000)})
