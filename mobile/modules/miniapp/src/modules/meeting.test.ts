@@ -35,6 +35,23 @@ const joinArgs = {
 }
 
 describe("MeetingModule", () => {
+  test("checks identity through the host with no caller credentials", async () => {
+    const {session} = mockSession(async (payload) => {
+      expect(payload).toEqual({type: MiniappRequestType.MEETING_GET_IDENTITY})
+      return {identityMode: "teams-user", account: {email: "alex@example.com"}}
+    })
+    expect(await new MeetingModule(session).getIdentity()).toEqual({
+      identityMode: "teams-user",
+      account: {email: "alex@example.com"},
+    })
+  })
+  test("identity checks on an older host request an update instead of claiming guest mode", async () => {
+    const {session} = mockSession(async () => {
+      throw {code: MiniappErrorCode.NOT_IMPLEMENTED}
+    })
+    await expect(new MeetingModule(session).getIdentity()).rejects.toMatchObject({message: MEETING_HOST_UPDATE_MESSAGE})
+  })
+
   test("creates and retires through the host without sending caller credentials", async () => {
     const requests: unknown[] = []
     const result = {

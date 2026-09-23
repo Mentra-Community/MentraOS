@@ -207,6 +207,7 @@ export type {
   MeetingCreateOptions,
   CreatedMeeting,
   MeetingConfiguration,
+  MeetingIdentity,
   MeetingIdentityMode,
   MeetingGuestReason,
   MeetingState,

@@ -382,6 +382,12 @@ class MantleManager {
     engine.configure({
       auth: workspaceAuth
         ? {
+            getMeetingAccount: async () => {
+              const session = await workspaceAuth.getSession()
+              if (!session) throw new Error("Sign in to your workspace to use Teams")
+              const {displayName, email} = session.identity
+              return {displayName, email}
+            },
             getTeamsToken: async () => {
               if (deployment.manifest.auth.mode !== "microsoft-entra") {
                 throw new Error("This workspace does not have a Microsoft Entra identity")

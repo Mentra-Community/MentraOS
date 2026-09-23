@@ -1,6 +1,6 @@
 import {createHash, createHmac, timingSafeEqual} from "node:crypto"
 
-import {exchangeAcsTeamsUserToken, isTeamsLicenseUnavailable, type VerifiedTeamsSubject} from "./acs-teams.service"
+import {exchangeAcsTeamsUserToken, isTeamsLicenseUnavailable, type TeamsSubject} from "./acs-teams.service"
 
 const GRAPH = "https://graph.microsoft.com/v1.0"
 const TIMEOUT_MS = 15_000
@@ -9,7 +9,10 @@ const createWindows = new Map<string, {started: number; count: number}>()
 let cachedToken: {key: string; token: string; expiresAt: number} | undefined
 
 export class TeamsMeetingError extends Error {
-  constructor(message: string, readonly status: 403 | 429 | 502 | 503) {
+  constructor(
+    message: string,
+    readonly status: 403 | 429 | 502 | 503,
+  ) {
     super(message)
   }
 }
@@ -41,7 +44,7 @@ function configuration(): GraphConfiguration {
 
 export async function createTeamsMeeting(input: {
   actor: string
-  subject?: VerifiedTeamsSubject
+  subject?: TeamsSubject
   title: string
   durationMinutes: number
 }): Promise<CreatedTeamsMeeting> {

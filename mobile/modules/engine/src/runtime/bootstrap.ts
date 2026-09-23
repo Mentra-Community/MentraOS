@@ -11,6 +11,8 @@ import {isTrustedSystemMiniappRelease} from "../services/systemMiniappTrust"
 export type SubjectTokenType = "supabase" | "authing" | (string & {})
 
 export interface IslandAuth {
+  /** Public profile of the selected Entra account, never bearer credentials. */
+  getMeetingAccount?: () => Promise<{displayName?: string; email?: string} | undefined>
   /** Host-owned Teams subject token from the selected deployment account. */
   getTeamsToken?: () => Promise<string>
   /** Returns the host's current (auto-refreshed) subject token for the backend. */
