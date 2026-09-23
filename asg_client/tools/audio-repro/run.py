@@ -252,9 +252,10 @@ def run_stage0(args: argparse.Namespace) -> int:
             if args.bes_logs:
                 # One immediate mh_logs poll through the existing debug receiver, outside audio.
                 note("bes_log_pull", index=index)
-                device.shell("am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled true --ei interval_ms 60000")
+                target = f"-p {device.package}"
+                device.shell(f"am broadcast -a com.mentra.DEBUG_BES_TRACE {target} --ez enabled true --ei interval_ms 60000")
                 time.sleep(4)
-                device.shell("am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled false")
+                device.shell(f"am broadcast -a com.mentra.DEBUG_BES_TRACE {target} --ez enabled false")
             if args.snapshot_every and (index + 1) % args.snapshot_every == 0:
                 snapshot(device, out / "snapshots", f"after-{index:03d}", not args.no_tinymix)
             print(f"stage0 {args.flow} {index + 1}/{args.count}", flush=True)
