@@ -1626,11 +1626,18 @@ class AppRegistry {
     if (res.is_ok() && versions.includes(res.value)) {
       return res.value
     }
-    // Dev versions take precedence over semver-installed versions.
-    const devVersions = versions
-      .filter((v) => v.startsWith("dev-"))
-      .sort()
-      .reverse()
+    // Cache files alone never select a dev build. A release can commit before
+    // disposable snapshot cleanup finishes, and logout clears the active hint.
+    // Only a current dev session may recover its offline snapshot in that case.
+    const devUrl = storage.load<string>(`${packageName}_dev_url`)
+    const hasDevSession =
+      !workspace && Boolean(readDevAppRecord(packageName)?.devUrl || (devUrl.is_ok() && devUrl.value))
+    const devVersions = hasDevSession
+      ? versions
+          .filter((v) => v.startsWith("dev-"))
+          .sort()
+          .reverse()
+      : []
     if (devVersions.length > 0) {
       this.setActiveVersion(packageName, devVersions[0])
       return devVersions[0]

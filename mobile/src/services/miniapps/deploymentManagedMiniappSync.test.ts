@@ -1251,6 +1251,12 @@ it.each(["after commit", "during cleanup"])("keeps committed release routing whe
   expect(storage.load(`${pkg}_dev_url`).is_error()).toBe(true)
   expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.isMiniappDev).not.toBe(true)
   expect(registry.hasDevSnapshot(pkg)).toBe(true)
+  await LogoutUtils.performCompleteLogout()
+  selectDeployment(consumer)
+  registry["recoverInterruptedActivations"]()
+  expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
+  expect(getDevAppRecords()).toEqual([])
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe("2.1.30")
 })
 
 it.each(["metadata failure", "process interruption"])(
@@ -1293,5 +1299,8 @@ it.each(["metadata failure", "process interruption"])(
     expect(storage.load<string>(`${pkg}_dev_mdns`)).toMatchObject({value: "laptop.local"})
     expect(await registry.getActiveVersion(pkg)).toBe("dev-123")
     expect(registry.hasDevSnapshot(pkg)).toBe(true)
+    storage.remove(`${pkg}_active_version`)
+    registry["recoverInterruptedActivations"]()
+    expect(await registry.getActiveVersion(pkg)).toBe("dev-123")
   },
 )
