@@ -21,37 +21,16 @@ spec.loader.exec_module(manifest)
 SOURCE, TARGET = "MentraLive_20260921.0", "MentraLive_20260113"
 
 
-def varint(value):
-    result = bytearray()
-    while value >= 128:
-        result.append((value & 127) | 128)
-        value >>= 7
-    return bytes(result + bytes([value]))
-
-
-def scalar(number, value):
-    return varint(number << 3) + varint(value)
-
-
-def blob(number, value):
-    return varint((number << 3) | 2) + varint(len(value)) + value
-
-
-def partition(operation=None, extra=b"", name=b"system"):
-    info = scalar(1, 4096) + blob(2, b"x" * 32)
-    return blob(1, name) + blob(7, info) + blob(8, scalar(1, 0) if operation is None else operation) + extra
-
-
-def ota(path, *, minor=0, partitions=None, metadata=None, properties=None, duplicate=None, signature=b""):
-    partitions = [partition()] if partitions is None else partitions
-    wire = scalar(12, minor) + b"".join(blob(13, item) for item in partitions)
-    header = b"CrAU" + struct.pack(">QQI", 2, len(wire), len(signature))
-    payload = header + wire + signature + b"synthetic replacement data"
+def ota(path, *, metadata=None, properties=None, duplicate=None, signature=b"", header=None):
+    # Deliberately opaque: native Update Engine owns payload manifest parsing.
+    payload_manifest = b"synthetic manifest"
+    header = header if header is not None else b"CrAU" + struct.pack(">QQI", 2, len(payload_manifest), len(signature))
+    payload = header + payload_manifest + signature + b"synthetic replacement data"
     encoded = lambda value: base64.b64encode(hashlib.sha256(value).digest()).decode()
     meta = {"ota-type": "AB", "ota-wipe": "yes", "ota-downgrade": "yes"}
     meta.update(metadata or {})
     props = {"POWERWASH": "1", "FILE_SIZE": str(len(payload)), "FILE_HASH": encoded(payload),
-             "METADATA_SIZE": str(len(header + wire)), "METADATA_HASH": encoded(header + wire)}
+             "METADATA_SIZE": str(len(header + payload_manifest)), "METADATA_HASH": encoded(header + payload_manifest)}
     props.update(properties or {})
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("payload.bin", payload)
@@ -67,7 +46,7 @@ class ManifestTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.path = self.root / "signed-january-full.zip"
+        self.path = self.root / "selected-january-full.zip"
 
     def prepare(self, **kwargs):
         with redirect_stderr(io.StringIO()):
@@ -96,11 +75,9 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ota-downgrade"):
             self.prepare()
 
-    def test_metadata_signature_bytes_and_full_compressed_replacement_types(self):
-        for kind in (0, 1, 8):
-            with self.subTest(kind=kind):
-                ota(self.path, signature=b"synthetic metadata signature", partitions=[partition(operation=scalar(1, kind))])
-                self.assertEqual(self.prepare()["mtk_patches"][0]["end_firmware"], TARGET)
+    def test_metadata_hash_excludes_signature_bytes(self):
+        ota(self.path, signature=b"synthetic metadata signature")
+        self.assertEqual(self.prepare()["mtk_patches"][0]["end_firmware"], TARGET)
 
     def test_incremental_filename_and_target_contract_remains(self):
         path = self.root / "mtk_firmware_20260113_20260921.0.zip"
@@ -112,22 +89,17 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "end version"):
             manifest.prepare(path, TARGET, end="MentraLive_20260922.0")
 
-    def test_delta_or_source_dependent_payload_is_not_full(self):
-        variants = [{"minor": 2}, {"partitions": []}, {"partitions": [partition(extra=blob(6, b""))]}]
-        variants += [{"partitions": [partition(operation=scalar(1, kind))]} for kind in (2, 3, 4, 5, 6, 7)]
-        variants += [{"partitions": [partition(operation=scalar(1, 0) + blob(field, b""))]} for field in (4, 5, 9)]
-        for variant in variants:
-            with self.subTest(variant=variant):
-                ota(self.path, **variant)
+    def test_invalid_ab_header_is_rejected(self):
+        for header in (b"bad", b"CrAU" + struct.pack(">QQI", 1, 17, 0),
+                       b"CrAU" + struct.pack(">QQI", 2, 1024, 0)):
+            with self.subTest(header=header):
+                ota(self.path, header=header)
                 with self.assertRaises(ValueError):
                     self.prepare()
 
     def test_metadata_hashes_sizes_duplicates_and_wipe_must_agree(self):
         variants = [{"metadata": {"ota-type": "BLOCK"}}, {"metadata": {"ota-wipe": "no"}},
-                    {"properties": {"POWERWASH": "2"}}, {"duplicate": "key"}, {"duplicate": "entry"},
-                    {"partitions": [partition(), partition()]},
-                    {"partitions": [partition(extra=blob(1, b"boot"))]},
-                    {"partitions": [partition(operation=scalar(1, 0) + scalar(1, 1))]}]
+                    {"properties": {"POWERWASH": "2"}}, {"duplicate": "key"}, {"duplicate": "entry"}]
         variants += [{"properties": {name: "wrong"}} for name in ("FILE_SIZE", "FILE_HASH", "METADATA_SIZE", "METADATA_HASH")]
         for variant in variants:
             with self.subTest(variant=variant):

@@ -26,13 +26,15 @@ ANDROID_SERIAL="$GLASSES_SERIAL" ./scripts/test-mtk-ota.sh \
   /verified/january-full.zip --full --end-firmware MentraLive_20260113
 ```
 
-The script never invents a firmware version or modifies the ZIP. Full mode checks
-the actual A/B payload manifest, full replacement operations, payload and metadata
-hashes/sizes, and agreement between `ota-wipe` and `POWERWASH`. A downgrade also
-requires `ota-downgrade=yes`. It prints whether POWERWASH will erase userdata.
-These structural checks do not authenticate a release or independently verify
-partition contents; use the intended, authenticated artifact. Native signature
-and compatibility checks remain with the existing installer.
+The caller must authenticate the intended full package and verify its release
+SHA-256 before invoking `--full`. The script checks the A/B header, payload and
+metadata hashes/sizes, duplicate ZIP entries/metadata keys, and agreement between
+`ota-wipe` and `POWERWASH`. A downgrade also requires `ota-downgrade=yes`. It prints
+whether POWERWASH will erase userdata and serves the exact bytes it hashes.
+These checks do not prove full versus incremental payloads or authenticate a
+release. Payload parsing and compatibility checks remain with the native
+installer; its signature enforcement depends on the installed build. The script
+never invents a firmware version or modifies the ZIP.
 
 For explicit maintenance, the generated `apps: {}` manifest contains one
 `mtk_patches` route from the freshly read current version to the requested target,

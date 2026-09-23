@@ -9,7 +9,7 @@
 #   --start-firmware VALUE   Override start_firmware in generated version.json
 #   --end-firmware VALUE     Override end_firmware in generated version.json
 #   --port PORT              Override local HTTP server port (default: 9876)
-#   --full                   Use a verified full A/B ZIP; --end-firmware is required
+#   --full                   Use a selected full A/B ZIP; --end-firmware is required
 # Requires an ASG build with the MTK-only self-reboot behavior (current builds).
 #
 
