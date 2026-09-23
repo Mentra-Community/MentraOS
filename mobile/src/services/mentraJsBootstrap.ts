@@ -17,6 +17,7 @@ import * as Sentry from "@sentry/react-native"
 
 import {ensureMiniappEngine, getMiniappEngine} from "@mentra/engine-host-internal"
 
+import {installStreamPreviewCoordinator} from "@/services/streamPreview"
 import showAlert from "@/utils/AlertUtils"
 
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
@@ -32,7 +33,8 @@ export function bootstrapMentraJS() {
   if (hostAttached) return miniappEngine
   hostAttached = true
 
-  const {router} = miniappEngine
+  const {router, uiRouter} = miniappEngine
+  installStreamPreviewCoordinator(uiRouter)
 
   // Surface crashloop transitions as Sentry events tagged with the
   // miniapp packageName + engine + host version + platform so on-call

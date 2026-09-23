@@ -232,6 +232,10 @@ protocol SGCManager {
 
     func sendLoudnessGateSetting()
 
+    // MARK: - Auto power-off when unworn
+
+    func sendAutoPowerOffSetting()
+
     // MARK: - Mic tuning (super-mode only)
 
     func sendMicTuningSetting()
@@ -450,6 +454,10 @@ extension SGCManager {
     // MARK: - Loudness / Barrier Gate (default no-op — Mentra Live supports this)
 
     func sendLoudnessGateSetting() {}
+
+    // MARK: - Auto power-off (default no-op — Mentra Live supports this)
+
+    func sendAutoPowerOffSetting() {}
 
     // MARK: - Mic tuning (default no-op — Mentra Live supports this)
 

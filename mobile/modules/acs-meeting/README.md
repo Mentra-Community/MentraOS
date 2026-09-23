@@ -237,6 +237,7 @@ Audio and video control:
 | Function | Notes |
 |---|---|
 | `setMuted(muted)` | Gates the uplink chain synchronously, then applies ACS policy |
+| `setVideoEnabled(enabled)` | ACS `stopVideo`/`startVideo` on the virtual outgoing stream. Glasses source and preview tap keep running; `videoEnabled` resets to true per join |
 | `setAudioSource(source)` | **No-op.** The source is locked for the call at join |
 | `pushOutgoingPcm(base64, rate, ch)` | Synchronous `Function`, ~100 calls/s. Returns whether it entered the uplink |
 | `updateVideoSource(whepUrl)` | WHEP only |
