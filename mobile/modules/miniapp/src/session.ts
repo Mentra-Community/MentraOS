@@ -729,6 +729,11 @@ export class MiniappSession<TChannels extends object = any> {
         return
       }
 
+      case MiniappResponseType.STREAM_PREVIEW_STATUS: {
+        this.stream._applyPreviewStatus(payload)
+        return
+      }
+
       case MiniappRequestType.PING: {
         // Phone → miniapp keepalive ping. Auto-reply with PONG.
         const pong: object = {type: MiniappResponseType.PONG}
