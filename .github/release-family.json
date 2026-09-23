@@ -89,7 +89,7 @@
         "@mentra/jspolyfill",
         "@mentra/miniapp"
       ],
-      "privateWorkspaceDependencies": ["@mentra/engine-host-internal", "@mentra/entra-auth"]
+      "privateWorkspaceDependencies": ["@mentra/engine-host-internal", "@mentra/entra-auth", "@mentra/frame-preview"]
     }
   ]
 }

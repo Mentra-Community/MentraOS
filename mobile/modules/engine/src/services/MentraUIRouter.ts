@@ -50,6 +50,14 @@ interface BoundWebView {
 }
 
 /**
+ * A UI channel the host answers itself. Messages on it never reach the background JSContext,
+ * and the background cannot send on it either.
+ */
+export type MentraUIHostChannelHandler = (packageName: string, message: {payload: unknown; requestId?: string}) => void
+
+export type MentraUIHostReply = {ok: true; result?: unknown} | {ok: false; error: {code: string; message: string}}
+
+/**
  * The host mounts at most one miniapp UI WebView at a time. Its background
  * JSContext runs separately on the phone and can remain alive after UI closure.
  * UI closure unbinds the WebView and sends UI_CLOSE; on iOS the host also exits
@@ -62,9 +70,47 @@ interface BoundWebView {
 export class MentraUIRouter {
   private readonly bindings: Map<string, BoundWebView> = new Map()
   private readonly crust: MentraUICrustBinding
+  private readonly hostChannels: Map<string, MentraUIHostChannelHandler> = new Map()
+  private readonly readyListeners = new Set<(packageName: string) => void>()
 
   constructor(crust: MentraUICrustBinding) {
     this.crust = crust
+  }
+
+  /** Reserve `channel` for the host. Pass null to release it. */
+  setHostChannel(channel: string, handler: MentraUIHostChannelHandler | null): void {
+    if (handler) this.hostChannels.set(channel, handler)
+    else this.hostChannels.delete(channel)
+  }
+
+  /**
+   * Observe the WebView shim's `ready` envelope. It is posted exactly once per document, so this
+   * is the host's signal that a new document exists — unlike `onLoadEnd`, which fires several
+   * times per load.
+   */
+  onWebViewReady(listener: (packageName: string) => void): () => void {
+    this.readyListeners.add(listener)
+    return () => this.readyListeners.delete(listener)
+  }
+
+  /** Answer a `mentra.request` on a host channel. */
+  replyToWebView(packageName: string, channel: string, requestId: string, reply: MentraUIHostReply): void {
+    const binding = this.bindings.get(packageName)
+    if (!binding) return
+    this.injectFrame(binding, {type: "msg", seq: 0, channel, requestId, payload: reply})
+  }
+
+  /** Push an event on a host channel; the page receives it through `mentra.on(channel)`. */
+  pushToWebView(packageName: string, channel: string, payload: unknown): void {
+    const binding = this.bindings.get(packageName)
+    if (!binding) return
+    this.injectFrame(binding, {type: "msg", seq: 0, channel, payload})
+  }
+
+  private injectFrame(binding: BoundWebView, frame: Record<string, unknown>): void {
+    const literal = JSON.stringify(frame)
+    const escaped = JSON.stringify(literal)
+    binding.inject(`if (window.__mentra && window.__mentra.recv) window.__mentra.recv(JSON.parse(${escaped})); true;`)
   }
 
   /**
@@ -138,10 +184,26 @@ export class MentraUIRouter {
     if (typeof env.type !== "string") return
 
     if (env.type === "ready") {
+      for (const listener of [...this.readyListeners]) {
+        try {
+          listener(packageName)
+        } catch (error) {
+          console.warn("MentraUIRouter: ready listener threw", error)
+        }
+      }
       this.deliverToBackground(packageName, {type: "UI_OPEN"})
       return
     }
     if (env.type === "msg" && typeof env.channel === "string") {
+      const hostChannel = this.hostChannels.get(env.channel)
+      if (hostChannel) {
+        try {
+          hostChannel(packageName, {payload: env.payload, requestId: env.requestId})
+        } catch (error) {
+          console.warn(`MentraUIRouter: host channel ${env.channel} threw`, error)
+        }
+        return
+      }
       const out: Record<string, unknown> = {
         type: "UI_MESSAGE",
         channel: env.channel,
@@ -186,6 +248,8 @@ export class MentraUIRouter {
   ): void {
     const binding = this.bindings.get(packageName)
     if (!binding) return
+    // A background cannot impersonate the host on a reserved channel.
+    if (typeof uiSendPayload.channel === "string" && this.hostChannels.has(uiSendPayload.channel)) return
     if (uiSendPayload.type === "UI_CANCEL" && typeof uiSendPayload.requestId === "string") {
       const cancel = {type: "cancel", requestId: uiSendPayload.requestId}
       const literal = JSON.stringify(cancel)

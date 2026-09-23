@@ -164,6 +164,19 @@ public class AcsMeetingModule: Module {
             session.setMuted(muted) { promise.resolve($0) }
         }
 
+        AsyncFunction("setVideoEnabled") { (enabled: Bool, promise: Promise) in
+            guard let session = self.session else {
+                promise.reject(AcsMeetingError("No active meeting"))
+                return
+            }
+            session.setVideoEnabled(enabled) { result in
+                switch result {
+                case let .success(state): promise.resolve(state)
+                case let .failure(error): promise.reject(error)
+                }
+            }
+        }
+
         AsyncFunction("setAudioSource") { (source: String, promise: Promise) in
             guard let session = self.session else {
                 promise.resolve(["state": "idle", "muted": false, "audioSource": source]); return
@@ -236,6 +249,9 @@ final class AcsMeetingSession {
     private lazy var applier = AudioPolicyApplier(controller: controller, scheduler: scheduler) { NSLog("ACS-SPIKE \($0)") }
     private var phase = "idle"
     private var muted = false
+    /// Whether ACS is sending `videoStream`. Only `setVideoEnabled` turns it off; every call starts on.
+    private var videoEnabled = true
+    private var videoStream: VirtualOutgoingVideoStream?
     private var meetingUrl: String?
     private var lastError: String?
     private var callEndReason: (code: Int, subcode: Int)?
@@ -315,6 +331,7 @@ final class AcsMeetingSession {
         var result: [String: Any] = [
             "state": phase,
             "muted": muted,
+            "videoEnabled": videoEnabled,
             "provider": "acs-teams",
             "audioSource": audioSource,
             "activeStream": controller.readActive().rawValue,
@@ -471,6 +488,7 @@ final class AcsMeetingSession {
         let videoOptions = RawOutgoingVideoStreamOptions()
         videoOptions.formats = [videoFormat]
         let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
+        self.videoStream = videoStream
         frameSender = AcsFrameSender()
         frameSender.attach(videoStream)
 
@@ -590,7 +608,12 @@ final class AcsMeetingSession {
             self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)
         }
         let source: DecodedGlassesMediaSource = sourceConfig.kind == .softap ? LocalWhipIngestSource() : WhepVideoSource()
-        source.onFrame = { [frameSender] buffer in frameSender.send(buffer) }
+        source.onFrame = { [frameSender] buffer in
+            // Preview first, deliberately: the tap must see frames the ACS sender's pacing and
+            // readiness gates would otherwise hide, and it cannot delay or break this call.
+            DecodedFrameTap.shared.offer(buffer)
+            if frameSender.send(buffer) { DecodedFrameTap.shared.recordAcsSend() }
+        }
         source.onPcm = { [weak self] pcm, rate, channels in
             self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)
         }
@@ -723,6 +746,46 @@ final class AcsMeetingSession {
             self.muted = next
             self.applyAudioPolicyOnQueue("set-muted")
             completion(self.snapshotLocked())
+        }
+    }
+
+    /// Stop or resume the camera Teams receives without leaving the call. The glasses source, the
+    /// preview tap and the WHEP/WHIP transport keep running; `AcsFrameSender` drops frames while
+    /// ACS reports the stream stopped. `videoEnabled` only moves once ACS accepts the change.
+    func setVideoEnabled(_ next: Bool, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        queue.async {
+            guard let call = self.call, let stream = self.videoStream else {
+                completion(.failure(AcsMeetingError("No active meeting")))
+                return
+            }
+            guard self.videoEnabled != next else {
+                completion(.success(self.snapshotLocked()))
+                return
+            }
+            let generation = self.joinGeneration
+            let finished: (Error?) -> Void = { error in
+                self.queue.async {
+                    guard self.joinGeneration == generation, self.call === call else {
+                        completion(.failure(AcsMeetingError("The meeting ended before the camera changed")))
+                        return
+                    }
+                    if let error {
+                        NSLog("ACS-SPIKE setVideoEnabled=\(next) failed: \(error)")
+                        completion(.failure(error))
+                        return
+                    }
+                    NSLog("ACS-SPIKE setVideoEnabled=\(next)")
+                    self.videoEnabled = next
+                    let snapshot = self.snapshotLocked()
+                    self.onState(snapshot)
+                    completion(.success(snapshot))
+                }
+            }
+            if next {
+                call.startVideo(stream: stream, completionHandler: finished)
+            } else {
+                call.stopVideo(stream: stream, completionHandler: finished)
+            }
         }
     }
 
@@ -1014,6 +1077,8 @@ final class AcsMeetingSession {
         pcmBridge = nil
         outgoingReady = false
         muted = false
+        videoEnabled = true
+        videoStream = nil
         audioSource = "glasses"
         lastSafety = .degraded
         meetingUrl = nil

@@ -8,7 +8,7 @@
  * to your own ingest URL with no relay.
  */
 
-import {MiniappRequestType} from "../protocol"
+import {MiniappRequestType, type PreviewErrorCode, type PreviewSource} from "../protocol"
 import {MiniappSession} from "../session"
 
 export interface StreamVideoConfig {
@@ -133,8 +133,160 @@ export interface StreamStatus {
   stats?: StreamLiveStats
 }
 
+export interface StreamPreviewOptions {
+  /** Defaults to `"call"`. `"glasses"` is reserved and rejects with `unsupported`. */
+  source?: PreviewSource
+}
+
+export type PreviewHandleState = "held" | "ended"
+
+export interface PreviewHandleStatus {
+  state: PreviewHandleState
+  /** Set when `state` is `"ended"`: `stopped`, `source_ended`, `runtime_stopped`, ... */
+  reason?: string
+}
+
+/** A preview request or lease failed. `code` is one of {@link PreviewErrorCode} when the host sent one. */
+export class PreviewError extends Error {
+  readonly code: PreviewErrorCode | string
+
+  constructor(code: PreviewErrorCode | string, message?: string) {
+    super(message ?? code)
+    this.name = "PreviewError"
+    this.code = code
+  }
+}
+
+/**
+ * The background-owned lease on a preview source.
+ *
+ * The lease is what lets a `<StreamPreview>` in the UI show frames. It survives the UI closing and
+ * the WebView being destroyed, and ends on `stop()`, when the source ends (the meeting is over), or
+ * when the background runtime stops. Hiding the component does not release it.
+ */
+export interface PreviewHandle {
+  readonly source: PreviewSource
+  readonly handleId: string
+  /** Correlation id stamped on every `PREVIEW_TRACE` log line for this lease. */
+  readonly previewTraceId: string
+  readonly state: PreviewHandleState
+  /** Release the lease. Idempotent. */
+  stop(): Promise<void>
+  /** Lease transitions. Fires `{state: "ended", reason}` exactly once. */
+  onStatus(cb: (status: PreviewHandleStatus) => void): () => void
+}
+
+interface PreviewStartResult {
+  handleId: string
+  previewTraceId: string
+  source: PreviewSource
+}
+
+function toPreviewError(error: unknown): PreviewError {
+  if (error instanceof PreviewError) return error
+  const value = (error ?? {}) as {code?: unknown; message?: unknown}
+  const code = typeof value.code === "string" ? value.code : "unsupported"
+  const message = typeof value.message === "string" ? value.message : undefined
+  return new PreviewError(code, message)
+}
+
+class PreviewHandleImpl implements PreviewHandle {
+  state: PreviewHandleState = "held"
+  private readonly listeners = new Set<(status: PreviewHandleStatus) => void>()
+
+  constructor(
+    readonly source: PreviewSource,
+    readonly handleId: string,
+    readonly previewTraceId: string,
+    private readonly release: (handle: PreviewHandleImpl) => Promise<void>,
+  ) {}
+
+  async stop(): Promise<void> {
+    if (this.state === "ended") return
+    this.end("stopped")
+    await this.release(this)
+  }
+
+  onStatus(cb: (status: PreviewHandleStatus) => void): () => void {
+    this.listeners.add(cb)
+    return () => this.listeners.delete(cb)
+  }
+
+  /** @internal */
+  end(reason: string): void {
+    if (this.state === "ended") return
+    this.state = "ended"
+    this.emit({state: "ended", reason})
+  }
+
+  private emit(status: PreviewHandleStatus): void {
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(status)
+      } catch {
+        // A throwing listener must not stop the others from hearing that the lease ended.
+      }
+    }
+  }
+}
+
 export class StreamModule {
+  private readonly previewHandles = new Map<string, PreviewHandleImpl>()
+
   constructor(private readonly session: MiniappSession) {}
+
+  /**
+   * Take the preview lease on a source so a `<StreamPreview>` in the UI can show its frames.
+   *
+   * For `"call"` the caller must declare `CAMERA` and own the active meeting (`session.meeting`).
+   * Only one lease exists at a time; a second request fails with `preview_busy`. Rejects with a
+   * {@link PreviewError}. Never await this on a call's connect path: preview is additive.
+   */
+  async preview(options: StreamPreviewOptions = {}): Promise<PreviewHandle> {
+    const source = options.source ?? "call"
+    if (source !== "call") {
+      throw new PreviewError("unsupported", `Preview source "${String(source)}" is not supported yet`)
+    }
+    let result: PreviewStartResult
+    try {
+      result = await this.session.sendRequest<PreviewStartResult>({
+        type: MiniappRequestType.STREAM_PREVIEW_START,
+        source,
+      })
+    } catch (error) {
+      throw toPreviewError(error)
+    }
+    const handle = new PreviewHandleImpl(result.source ?? source, result.handleId, result.previewTraceId, (h) =>
+      this.releasePreview(h),
+    )
+    this.previewHandles.set(handle.handleId, handle)
+    handle.onStatus((status) => {
+      if (status.state === "ended") this.previewHandles.delete(handle.handleId)
+    })
+    return handle
+  }
+
+  private async releasePreview(handle: PreviewHandleImpl): Promise<void> {
+    this.previewHandles.delete(handle.handleId)
+    try {
+      await this.session.sendRequest<void>({
+        type: MiniappRequestType.STREAM_PREVIEW_STOP,
+        handleId: handle.handleId,
+      })
+    } catch (error) {
+      throw toPreviewError(error)
+    }
+  }
+
+  /** @internal — applied by MiniappSession on inbound STREAM_PREVIEW_STATUS. */
+  _applyPreviewStatus(payload: Record<string, unknown>): void {
+    if (typeof payload.handleId !== "string") return
+    const handle = this.previewHandles.get(payload.handleId)
+    if (!handle) return
+    if (payload.state === "ended") {
+      handle.end(typeof payload.reason === "string" ? payload.reason : "ended")
+    }
+  }
 
   /**
    * Start a live video stream from the glasses camera.

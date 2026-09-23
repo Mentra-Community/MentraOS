@@ -131,7 +131,14 @@ export type {
   StreamResult,
   StreamStatus,
   StreamVideoConfig,
+  StreamPreviewOptions,
+  PreviewHandle,
+  PreviewHandleState,
+  PreviewHandleStatus,
 } from "./modules/stream"
+export {PreviewError} from "./modules/stream"
+export {PREVIEW_ERROR_CODES, PREVIEW_UI_CHANNEL, isPreviewErrorCode} from "./protocol"
+export type {PreviewErrorCode, PreviewSource, PreviewStatus} from "./protocol"
 export type {
   ShareOptions,
   ShareResult,

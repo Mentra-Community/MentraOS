@@ -39,6 +39,15 @@ jest.mock("@mentra/engine", () => ({
   engine: {miniapps: {clearForeground: jest.fn()}},
 }))
 jest.mock("@mentra/engine-host-internal/devtools", () => ({devServerBridge: {onReload: jest.fn()}}))
+jest.mock("@/services/streamPreview", () => {
+  const coordinator = {
+    bindView: jest.fn(),
+    documentEnded: jest.fn(),
+    noteInstallReload: jest.fn(),
+    viewDestroyed: jest.fn(),
+  }
+  return {STREAM_PREVIEW_BIND_TIMEOUT_MS: 0, getStreamPreviewCoordinator: () => coordinator}
+})
 
 const props = {
   packageName: "com.mentra.test",
