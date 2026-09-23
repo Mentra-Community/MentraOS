@@ -1,15 +1,16 @@
 name: Mobile App Android Unit Tests
 
-# The acs-meeting, glasses-media, and bluetooth-sdk modules carry JVM suites that
-# ran nowhere in CI: mentra-app-android-build.yml builds with `-x test`, and the
-# mobile quality workflow is Jest/bun only. This job runs them on every PR that
-# touches any of these modules.
+# The acs-meeting, glasses-media, frame-preview, and bluetooth-sdk modules carry
+# JVM suites that ran nowhere in CI: mentra-app-android-build.yml builds with
+# `-x test`, and the mobile quality workflow is Jest/bun only. This job runs them
+# on every PR that touches any of these modules.
 
 on:
   pull_request:
     paths:
       - "mobile/modules/acs-meeting/**"
       - "mobile/modules/glasses-media/**"
+      - "mobile/modules/frame-preview/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "scripts/softap-call-proof*.mjs"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
@@ -20,6 +21,7 @@ on:
     paths:
       - "mobile/modules/acs-meeting/**"
       - "mobile/modules/glasses-media/**"
+      - "mobile/modules/frame-preview/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "scripts/softap-call-proof*.mjs"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
@@ -95,7 +97,7 @@ jobs:
 
       - name: Run JVM unit tests
         working-directory: ./mobile/android
-        run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-glasses-media:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest --build-cache --parallel
+        run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-glasses-media:testDebugUnitTest :mentra-frame-preview:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest --build-cache --parallel
 
       # The device-proof analyzer decides whether a SoftAP hardware run passed, so an analyzer that
       # reports success on a broken capture would turn a real failure into recorded evidence that
@@ -111,8 +113,10 @@ jobs:
           path: |
             mobile/modules/acs-meeting/android/build/reports/tests/
             mobile/modules/glasses-media/android/build/reports/tests/
+            mobile/modules/frame-preview/android/build/reports/tests/
             mobile/modules/bluetooth-sdk/android/build/reports/tests/
             mobile/modules/acs-meeting/android/build/test-results/
             mobile/modules/glasses-media/android/build/test-results/
+            mobile/modules/frame-preview/android/build/test-results/
             mobile/modules/bluetooth-sdk/android/build/test-results/
           retention-days: 7
