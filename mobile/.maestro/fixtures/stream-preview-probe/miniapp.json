@@ -17,5 +17,12 @@
       "type": "CAMERA",
       "description": "Declared so the refusal is about meeting ownership, not a missing permission"
     }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "CAMERA",
+      "level": "REQUIRED",
+      "description": "Declared so the refusal is about meeting ownership, not a missing hardware capability"
+    }
   ]
 }
