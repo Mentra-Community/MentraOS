@@ -141,6 +141,7 @@ class MentraLive : SGCManager() {
         private const val LC3_FRAME_SIZE = 40
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
         private const val LOUDNESS_GATE_SWITCH_TYPE = 10
+        private const val AUTO_POWER_OFF_SWITCH_TYPE = 11
         // Mic tuning field names, matching the BES cs_mictun body.
         private val MIC_TUNING_FIELDS =
                 listOf("gain", "open", "close", "attack", "hang", "sp_open", "sp_close", "sp_hold")
@@ -5548,7 +5549,9 @@ class MentraLive : SGCManager() {
                     if (bodyObj != null) {
                         val type = bodyObj.optInt("type", -1)
                         val value = bodyObj.optInt("switch", -1)
-                        handleSwitchStatus(type, value, System.currentTimeMillis())
+                        // K900 replies carry result in "S"; 0 is RC_SUCCESS.
+                        val resultCode = json.optInt("S", -1)
+                        handleSwitchStatus(type, value, System.currentTimeMillis(), resultCode)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_swit response", e)
@@ -5578,7 +5581,13 @@ class MentraLive : SGCManager() {
                 try {
                     val bodyObj = optK900Body(json)
                     if (bodyObj != null) {
-                        Bridge.sendWearState(bodyObj.optInt("on", 0) != 0)
+                        val extras = HashMap<String, Any>()
+                        if (bodyObj.has("elapsed_ms")) extras["elapsedMs"] = bodyObj.optInt("elapsed_ms")
+                        if (bodyObj.has("timeout_ms")) extras["timeoutMs"] = bodyObj.optInt("timeout_ms")
+                        if (bodyObj.has("enabled")) extras["enabled"] = bodyObj.optInt("enabled") != 0
+                        if (bodyObj.has("armed")) extras["armed"] = bodyObj.optInt("armed") != 0
+                        if (bodyObj.has("inhibited")) extras["inhibited"] = bodyObj.optInt("inhibited") != 0
+                        Bridge.sendWearState(bodyObj.optInt("on", 0) != 0, extras)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_wrst response", e)
@@ -5933,8 +5942,20 @@ class MentraLive : SGCManager() {
         Bridge.sendWearTuningState(state)
     }
 
-    private fun handleSwitchStatus(switchType: Int, switchValue: Int, timestamp: Long) {
+    private fun handleSwitchStatus(
+            switchType: Int,
+            switchValue: Int,
+            timestamp: Long,
+            resultCode: Int = -1
+    ) {
         Bridge.sendSwitchStatus(switchType, switchValue, timestamp)
+        if (switchType == AUTO_POWER_OFF_SWITCH_TYPE) {
+            val ok = resultCode == 0
+            Bridge.log(
+                    "LIVE: 🔋 auto power-off sr_swit reply type=$switchType switch=$switchValue" +
+                            " result=$resultCode ok=$ok"
+            )
+        }
         if (switchType == VOICE_ACTIVITY_DETECTION_SWITCH_TYPE &&
                         (switchValue == 0 || switchValue == 1)
         ) {
@@ -10825,6 +10846,9 @@ class MentraLive : SGCManager() {
         // Send glasses-side loudness / Barrier gate setting.
         sendLoudnessGateSetting()
 
+        // Send glasses-side auto power-off setting.
+        sendAutoPowerOffSetting()
+
         // Send mic tuning. With nothing authorized this sends a reset, which is
         // what returns a freshly connected pair of glasses to stock behaviour.
         sendMicTuningSetting()
@@ -11105,6 +11129,52 @@ class MentraLive : SGCManager() {
             queueData(packedData)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating loudness gate setting command", e)
+        }
+    }
+
+    override fun sendAutoPowerOffSetting() {
+        val value = DeviceStore.get("bluetooth", "auto_power_off_enabled")
+        val enabled =
+                if (value is Boolean) value
+                else BluetoothSdkDefaults.AUTO_POWER_OFF_ENABLED
+
+        Bridge.log(
+                "LIVE: 🔋 Sending auto power-off setting to glasses: enabled=$enabled" +
+                        " (cs_swit type=$AUTO_POWER_OFF_SWITCH_TYPE)"
+        )
+
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send auto power-off setting - not connected")
+            return
+        }
+
+        try {
+            val body = JSONObject()
+            body.put("type", AUTO_POWER_OFF_SWITCH_TYPE)
+            body.put("switch", if (enabled) 1 else 0)
+
+            val cmdObject = JSONObject()
+            cmdObject.put("C", "cs_swit")
+            cmdObject.put("V", 1)
+            cmdObject.put("B", body.toString())
+
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack auto power-off setting command")
+                return
+            }
+            queueData(packedData)
+            Bridge.log(
+                    "LIVE: 🔋 Queued auto power-off cs_swit type=$AUTO_POWER_OFF_SWITCH_TYPE" +
+                            " switch=${if (enabled) 1 else 0}"
+            )
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating auto power-off setting command", e)
         }
     }
 
