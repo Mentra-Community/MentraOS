@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import {
   createApiToken,
@@ -121,10 +121,10 @@ export function registerStoreCommands(program: Command, requireCredentials: () =
     .requiredOption("--output <path>", "write the secret to a new private file (never stdout)")
     .action(
       run(async (creds, packageName, options) => {
-        // Reserve the destination before minting a credential; never overwrite an existing secret.
-        writeFileSync(options.output, "", { mode: 0o600, flag: "wx" });
-        const { token } = await createPublishingToken(creds, packageName, options.name);
-        writeFileSync(options.output, `${token.value}\n`, { mode: 0o600 });
+        const token = await writeTokenFile(
+          options.output,
+          async () => (await createPublishingToken(creds, packageName, options.name)).token,
+        );
         print({ id: token.id, permissions: token.permissions, secretFile: options.output });
       }),
     );
@@ -136,13 +136,31 @@ export function registerStoreCommands(program: Command, requireCredentials: () =
     .requiredOption("--output <path>", "write the secret to a new private file")
     .action(
       run(async (creds, options) => {
-        writeFileSync(options.output, "", { mode: 0o600, flag: "wx" });
-        const { token } = await createApiToken(creds, options.name);
-        writeFileSync(options.output, `${token.value}\n`, { mode: 0o600 });
+        const token = await writeTokenFile(
+          options.output,
+          async () => (await createApiToken(creds, options.name)).token,
+        );
         print({ id: token.id, secretFile: options.output });
       }),
     );
   tokens.command("revoke <tokenId>").action(run(async (creds, tokenId) => print(await revokeApiToken(creds, tokenId))));
+}
+
+async function writeTokenFile<T extends { value: string }>(path: string, issue: () => Promise<T>): Promise<T> {
+  // Reserve before minting and keep the file descriptor so a later path change
+  // cannot redirect the secret. Failed requests must not leave an empty file
+  // that prevents the same command from being retried.
+  const fd = openSync(path, "wx", 0o600);
+  let written = false;
+  try {
+    const token = await issue();
+    writeFileSync(fd, `${token.value}\n`);
+    written = true;
+    return token;
+  } finally {
+    closeSync(fd);
+    if (!written) rmSync(path, { force: true });
+  }
 }
 
 export function parseListingInput(value: unknown): StoreListingInput {

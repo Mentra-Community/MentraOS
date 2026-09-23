@@ -1,7 +1,17 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import JSZip from "jszip";
@@ -29,6 +39,7 @@ async function fixture(status?: string, differentBytes = false) {
   mkdirSync(join(cwd, "build"));
   writeFileSync(join(cwd, "build/com.example.app-1.0.1.zip"), bytes);
   const requests: Array<{ method: string; path: string; body: unknown }> = [];
+  let failNextTokenMint = false;
   let release = {
     id: "release",
     version: "1.0.1",
@@ -73,10 +84,15 @@ async function fixture(status?: string, differentBytes = false) {
             ...((body as object) ?? {}),
           },
         });
-      if (path.endsWith("/publishing-tokens"))
+      if (path.endsWith("/publishing-tokens") || path.endsWith("/tokens")) {
+        if (failNextTokenMint) {
+          failNextTokenMint = false;
+          return Response.json({ error: "temporary_failure" }, { status: 503 });
+        }
         return Response.json({
           token: { id: "key", value: "fixture-secret", permissions: ["miniapps:com.example.app:publish"] },
         });
+      }
       return Response.json({ error: "unexpected_request" }, { status: 500 });
     },
   });
@@ -86,7 +102,10 @@ async function fixture(status?: string, differentBytes = false) {
   const consolePath = join(cwd, "console-output");
   const consoleErrorPath = join(cwd, "console-error");
   const preload = join(cwd, "capture-console.ts");
-  writeFileSync(preload, `import {appendFileSync} from "node:fs"; console.log = (...args) => appendFileSync(${JSON.stringify(consolePath)}, args.join(" ") + "\\n"); console.error = (...args) => appendFileSync(${JSON.stringify(consoleErrorPath)}, args.join(" ") + "\\n");`);
+  writeFileSync(
+    preload,
+    `import {appendFileSync} from "node:fs"; console.log = (...args) => appendFileSync(${JSON.stringify(consolePath)}, args.join(" ") + "\\n"); console.error = (...args) => appendFileSync(${JSON.stringify(consoleErrorPath)}, args.join(" ") + "\\n");`,
+  );
   const cli = async (...args: string[]) => {
     writeFileSync(consolePath, "");
     writeFileSync(consoleErrorPath, "");
@@ -94,28 +113,43 @@ async function fixture(status?: string, differentBytes = false) {
     const stderrPath = join(cwd, "stderr");
     const stdoutFd = openSync(stdoutPath, "w");
     const stderrFd = openSync(stderrPath, "w");
-    const child = spawn(process.execPath, ["--preload", preload, new URL("./index.ts", import.meta.url).pathname, ...args], {
-      cwd,
-      env: {
-        ...process.env,
-        MENTRA_CLI_TOKEN: "fixture-token",
-        MENTRA_STORE_URL: `http://127.0.0.1:${server.port}`,
-        MENTRA_MINIAPP_SIGNING_KEY_JSON: "must-not-be-used",
+    const child = spawn(
+      process.execPath,
+      ["--preload", preload, new URL("./index.ts", import.meta.url).pathname, ...args],
+      {
+        cwd,
+        env: {
+          ...process.env,
+          MENTRA_CLI_TOKEN: "fixture-token",
+          MENTRA_STORE_URL: `http://127.0.0.1:${server.port}`,
+          MENTRA_MINIAPP_SIGNING_KEY_JSON: "must-not-be-used",
+        },
+        stdio: ["ignore", stdoutFd, stderrFd],
       },
-      stdio: ["ignore", stdoutFd, stderrFd],
-    });
+    );
     try {
       const code = await new Promise<number | null>((resolve, reject) => {
         child.on("close", resolve);
         child.on("error", reject);
       });
-      return { code, stdout: readFileSync(consolePath, "utf8"), stderr: readFileSync(consoleErrorPath, "utf8") + readFileSync(stderrPath, "utf8") };
+      return {
+        code,
+        stdout: readFileSync(consolePath, "utf8"),
+        stderr: readFileSync(consoleErrorPath, "utf8") + readFileSync(stderrPath, "utf8"),
+      };
     } finally {
       closeSync(stdoutFd);
       closeSync(stderrFd);
     }
   };
-  return { cwd, cli, requests };
+  return {
+    cwd,
+    cli,
+    requests,
+    failTokenMint: () => {
+      failNextTokenMint = true;
+    },
+  };
 }
 
 test("listing updates preserve multiline descriptions and legal links through the CLI", async () => {
@@ -180,6 +214,20 @@ test("published versions skip and conflicting unfinished versions fail without p
   ).toBe(false);
 });
 
+test("resuming with default flags preserves the original ZIP instead of rebuilding or repacking", async () => {
+  const f = await fixture("draft");
+  const zipPath = join(f.cwd, "build/com.example.app-1.0.1.zip");
+  const original = readFileSync(zipPath);
+  mkdirSync(join(f.cwd, "dist"));
+  writeFileSync(join(f.cwd, "dist/miniapp.json"), readFileSync(join(f.cwd, "miniapp.json")));
+  writeFileSync(join(f.cwd, "dist/background.js"), "console.log('changed after upload')");
+  const result = await f.cli("publish", "--skip-existing", "--publish", "--json");
+  expect(result.code).toBe(0);
+  expect(JSON.parse(result.stdout).release.status).toBe("published");
+  expect(readFileSync(zipPath)).toEqual(original);
+  expect(f.requests.some((request) => request.method === "POST" && request.path.endsWith("/releases"))).toBe(false);
+});
+
 test("publishing token writes a private new file, keeps secret out of output, and refuses overwrite", async () => {
   const f = await fixture();
   const args = ["admin", "publishing-token", "com.example.app", "--name", "CI", "--output", "token"];
@@ -191,3 +239,19 @@ test("publishing token writes a private new file, keeps secret out of output, an
   expect((await f.cli(...args)).code).toBe(1);
   expect(f.requests.filter((request) => request.path.endsWith("/publishing-tokens"))).toHaveLength(1);
 });
+
+test.each([{ command: ["admin", "publishing-token", "com.example.app"] }, { command: ["tokens", "create"] }])(
+  "failed token mint can be retried with the same output path (%j)",
+  async ({ command }) => {
+    const f = await fixture();
+    const args = [...command, "--name", "CI", "--output", "token"];
+    f.failTokenMint();
+    expect((await f.cli(...args)).code).toBe(1);
+    expect(existsSync(join(f.cwd, "token"))).toBe(false);
+    const retry = await f.cli(...args);
+    expect(retry.code).toBe(0);
+    expect(retry.stdout + retry.stderr).not.toContain("fixture-secret");
+    expect(readFileSync(join(f.cwd, "token"), "utf8")).toBe("fixture-secret\n");
+    expect(statSync(join(f.cwd, "token")).mode & 0o777).toBe(0o600);
+  },
+);

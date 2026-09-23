@@ -587,14 +587,16 @@ program
         throw new Error(`Existing release is ${existing.status}; resolve it before retrying or bump the version`);
       }
 
-      if (options.pack) {
+      // An unfinished immutable release must resume from its original ZIP.
+      // Repacking first can destroy the only local copy of those exact bytes.
+      if (!existing && options.pack) {
         await packMiniapp({
           cwd,
           build: options.build,
           silent: options.json,
           sign: false,
         });
-      } else if (options.build) {
+      } else if (!existing && options.build) {
         await buildMiniappProduction(cwd, { silent: options.json });
       }
 

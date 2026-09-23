@@ -185,7 +185,8 @@ mentra publish --cwd miniapp --no-build --no-pack --skip-existing --publish --js
 ```
 
 `--skip-existing` skips a version already published on the selected track. It
-resumes a draft/submitted/accepted version only when its ZIP hash matches; a
+resumes a draft/submitted/accepted version from the existing local ZIP without
+rebuilding or repacking, and only when its hash matches; a
 conflicting bundle, rejected release, or suspended release fails. `--publish`
 requests publication after submission. Ordinary keys still require staff review;
 administrator-issued app publishing tokens may approve and publish automatically.
