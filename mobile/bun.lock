@@ -345,7 +345,7 @@
         "@types/react-dom": "^19.1.0",
         "happy-dom": "^17.6.3",
         "react": "^19.1.0",
-        "react-dom": "^19.1.0",
+        "react-dom": "^19.2.0",
         "typescript": "^5.0.0",
       },
       "peerDependencies": {
