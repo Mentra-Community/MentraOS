@@ -38,13 +38,21 @@ export function recordingTimeAt(sharedSeconds: number, offsetSeconds: number, du
 }
 
 type Playback = Pick<HTMLVideoElement, "currentTime" | "duration" | "playbackRate" | "paused" | "play" | "pause">;
-export function synchronizeRecordingPeer(primary: Playback, peer: Playback, offsetSeconds: number): Promise<void> | null {
+type PrimaryPlayback = Playback & Pick<HTMLVideoElement, "readyState" | "seeking" | "ended">;
+function canAdvance(primary: PrimaryPlayback): boolean {
+  // HAVE_FUTURE_DATA (3) is the minimum readiness for the primary clock to advance.
+  return !primary.paused && !primary.seeking && !primary.ended && primary.readyState >= 3;
+}
+export function synchronizeRecordingPeer(primary: PrimaryPlayback, peer: Playback, offsetSeconds: number, advancing: boolean): Promise<void> | null {
   const local = recordingTimeAt(primary.currentTime, offsetSeconds, peer.duration);
   if (local === null) { peer.pause(); return null; }
   if (Math.abs(peer.currentTime - local) > 0.1) peer.currentTime = local;
   peer.playbackRate = primary.playbackRate;
-  if (primary.paused) peer.pause();
-  else if (peer.paused) return peer.play();
+  if (!advancing || !canAdvance(primary)) peer.pause();
+  else if (peer.paused) return peer.play().catch(error => {
+    // A hold can cancel a pending play request before the peer has buffered.
+    if (error?.name !== "AbortError") throw error;
+  });
   return null;
 }
 
@@ -56,6 +64,7 @@ export function TestRunRecordings({ runId, assets, timeline, selected, seekSeque
   seekSequence: number;
 }) {
   const media = useRef<Record<string, HTMLVideoElement | null>>({});
+  const primaryAdvancing = useRef(false);
   const lastSeek = useRef<string | null>(null);
   const [durations, setDurations] = useState<Record<string, number>>({});
   const [sharedSeconds, setSharedSeconds] = useState(0);
@@ -71,9 +80,16 @@ export function TestRunRecordings({ runId, assets, timeline, selected, seekSeque
       const video = media.current[track.assetId];
       if (!video) continue;
       try {
-        void synchronizeRecordingPeer(primary, video, track.offsetSeconds)?.catch(() => setError("The browser recording could not start playback."));
+        void synchronizeRecordingPeer(primary, video, track.offsetSeconds, primaryAdvancing.current)?.catch(() => setError("The browser recording could not start playback."));
       } catch { setError("The recordings could not synchronize at this moment."); }
     }
+  }
+
+  function holdPlayback() { primaryAdvancing.current = false; sync(); }
+  function resumePlayback() {
+    const primary = media.current[primaryId];
+    primaryAdvancing.current = !!primary && canAdvance(primary);
+    sync();
   }
 
   useEffect(() => {
@@ -111,8 +127,10 @@ export function TestRunRecordings({ runId, assets, timeline, selected, seekSeque
               controls={index === 0} muted={index !== 0} playsInline preload="metadata" aria-hidden={!covered} style={{ opacity: covered ? 1 : 0 }}
               aria-label={`${track.label} recording`} className="max-h-[65vh] w-full rounded-xl bg-[#111217] object-contain"
               onLoadedMetadata={event => { const duration = event.currentTarget.duration; setDurations(current => ({ ...current, [track.assetId]: duration })); sync(); }}
-              onTimeUpdate={index === 0 ? sync : undefined} onSeeking={index === 0 ? sync : undefined}
-              onPlay={index === 0 ? sync : undefined} onPause={index === 0 ? sync : undefined}
+              onTimeUpdate={index === 0 ? sync : undefined} onSeeking={index === 0 ? holdPlayback : undefined}
+              onWaiting={index === 0 ? holdPlayback : undefined} onPlaying={index === 0 ? resumePlayback : undefined}
+              onSeeked={index === 0 ? resumePlayback : undefined} onPause={index === 0 ? holdPlayback : undefined}
+              onPlay={index === 0 ? holdPlayback : undefined}
               onRateChange={index === 0 ? sync : undefined}
               onError={() => { for (const item of Object.values(media.current)) item?.pause(); setError("A recording is unavailable or the admin session has expired."); }} />
             {!covered ? <p role="status" className="absolute inset-0 flex items-center justify-center rounded-xl bg-[#f5f7f4] p-5 text-sm">{loaded ? "No recording covers this moment." : "Loading recording metadata."}</p> : null}

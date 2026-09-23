@@ -53,22 +53,89 @@ test("playback follows seek, rate and pause without playing a frame outside peer
   let plays = 0, pauses = 0;
   const peer = { currentTime: 0, duration: 10, playbackRate: 1, paused: true,
     async play() { plays++; this.paused = false; }, pause() { pauses++; this.paused = true; } };
-  const primary = { ...peer, currentTime: 15, duration: 30, playbackRate: 2, paused: false };
-  await synchronizeRecordingPeer(primary, peer, 12.5);
+  const primary = { ...peer, currentTime: 15, duration: 30, playbackRate: 2, paused: false, readyState: 4, seeking: false, ended: false };
+  await synchronizeRecordingPeer(primary, peer, 12.5, true);
   expect(peer.currentTime).toBe(2.5);
   expect(peer.playbackRate).toBe(2);
   expect(plays).toBe(1);
   primary.paused = true;
-  synchronizeRecordingPeer(primary, peer, 12.5);
+  synchronizeRecordingPeer(primary, peer, 12.5, true);
   expect(peer.paused).toBe(true);
   primary.paused = false;
   primary.currentTime = 2;
-  synchronizeRecordingPeer(primary, peer, 12.5);
+  synchronizeRecordingPeer(primary, peer, 12.5, true);
   expect(peer.currentTime).toBe(2.5); // Do not clamp to a misleading frame zero.
   expect(peer.paused).toBe(true);
   expect(plays).toBe(1);
   primary.currentTime = 29;
-  synchronizeRecordingPeer(primary, peer, 12.5);
+  synchronizeRecordingPeer(primary, peer, 12.5, true);
   expect(plays).toBe(1);
   expect(pauses).toBe(3);
+});
+
+test("buffering holds the peer until primary playback resumes at the shared time", async () => {
+  let plays = 0;
+  const peer = { currentTime: 2.5, duration: 10, playbackRate: 1, paused: false,
+    async play() { plays++; this.paused = false; }, pause() { this.paused = true; } };
+  const primary = { ...peer, currentTime: 15, duration: 30, readyState: 2, seeking: false, ended: false };
+  // A buffering video still reports paused=false, even before waiting is handled.
+  synchronizeRecordingPeer(primary, peer, 12.5, true);
+  expect(primary.paused).toBe(false);
+  expect(peer.paused).toBe(true);
+  expect(plays).toBe(0);
+
+  primary.readyState = 4;
+  primary.currentTime = 15.5;
+  // Metadata/time updates cannot release the hold established by waiting.
+  synchronizeRecordingPeer(primary, peer, 12.5, false);
+  expect(peer.paused).toBe(true);
+  expect(plays).toBe(0);
+  await synchronizeRecordingPeer(primary, peer, 12.5, true);
+  expect(peer.currentTime).toBe(3);
+  expect(peer.paused).toBe(false);
+  expect(plays).toBe(1);
+});
+
+test("seeking holds the peer and seek completion requires an advancing primary", async () => {
+  let plays = 0;
+  const peer = { currentTime: 2.5, duration: 10, playbackRate: 1, paused: false,
+    async play() { plays++; this.paused = false; }, pause() { this.paused = true; } };
+  const primary = { ...peer, currentTime: 18, duration: 30, readyState: 4, seeking: true, ended: false };
+  synchronizeRecordingPeer(primary, peer, 12.5, true);
+  expect(peer.currentTime).toBe(5.5);
+  expect(peer.paused).toBe(true);
+  primary.seeking = false;
+  for (const state of [
+    { readyState: 2, paused: false, ended: false },
+    { readyState: 4, paused: true, ended: false },
+    { readyState: 4, paused: false, ended: true },
+  ]) {
+    Object.assign(primary, state);
+    synchronizeRecordingPeer(primary, peer, 12.5, true);
+    expect(peer.paused).toBe(true);
+    expect(plays).toBe(0);
+  }
+  Object.assign(primary, { readyState: 3, paused: false, ended: false, currentTime: 19 });
+  await synchronizeRecordingPeer(primary, peer, 12.5, true);
+  expect(peer.currentTime).toBe(6.5);
+  expect(peer.paused).toBe(false);
+  expect(plays).toBe(1);
+});
+
+test("holding a pending peer play tolerates cancellation but preserves playback errors", async () => {
+  let rejectPlay: (error: Error) => void = () => {};
+  const peer = { currentTime: 2.5, duration: 10, playbackRate: 1, paused: true,
+    play() { this.paused = false; return new Promise<void>((_resolve, reject) => { rejectPlay = reject; }); },
+    pause() { this.paused = true; rejectPlay(new DOMException("Playback was paused", "AbortError")); } };
+  const primary = { ...peer, currentTime: 15, duration: 30, paused: false, readyState: 4, seeking: false, ended: false };
+  const pending = synchronizeRecordingPeer(primary, peer, 12.5, true);
+  primary.readyState = 2;
+  synchronizeRecordingPeer(primary, peer, 12.5, false);
+  await pending;
+  expect(peer.paused).toBe(true);
+
+  primary.readyState = 4;
+  const denied = synchronizeRecordingPeer(primary, peer, 12.5, true);
+  rejectPlay(new DOMException("Playback was denied", "NotAllowedError"));
+  await expect(denied).rejects.toMatchObject({ name: "NotAllowedError" });
 });
