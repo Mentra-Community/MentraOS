@@ -392,12 +392,12 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     const mismatch = !lease
       ? "lease"
       : lease.packageName !== request.packageName
-        ? "packageName"
-        : lease.runtimeId !== request.runtimeId
-          ? "runtimeId"
-          : lease.handleId !== request.handleId
-            ? "handleId"
-            : null
+      ? "packageName"
+      : lease.runtimeId !== request.runtimeId
+      ? "runtimeId"
+      : lease.handleId !== request.handleId
+      ? "handleId"
+      : null
     if (mismatch) {
       this.stale("stop", mismatch, {runtimeId: request.runtimeId, handleId: request.handleId})
       return
@@ -615,11 +615,42 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
   }
 
   private async handshake(packageName: string, request: PageRequest): Promise<MentraUIHostReply> {
-    const view = await this.waitForView(packageName)
+    const deadline = Date.now() + STREAM_PREVIEW_BIND_TIMEOUT_MS
+    let view = await this.waitForView(packageName)
+    let waitedForBind = false
+    // Android's first bind often returns no_webview, and LocalMiniappView retries.
+    // The page's handshake is already in flight by then. Answering `unsupported`
+    // for that miss is permanent: the page never asks again.
+    while (view && !view.bound && Date.now() < deadline) {
+      const pending = view.binding
+      if (pending) await pending
+      if (this.view !== view) {
+        view = this.view?.packageName === packageName ? this.view : null
+        continue
+      }
+      if (view.bound) break
+      if (view.unavailableReason && view.unavailableReason !== "no_webview") break
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) break
+      waitedForBind = true
+      this.log.info("handshake_waiting_for_bind", {
+        packageName,
+        reason: view.unavailableReason ?? "pending",
+      })
+      const next = await this.waitForDifferentView(view, remaining)
+      view = next?.packageName === packageName ? next : null
+    }
+    if (waitedForBind && view?.bound) {
+      this.log.info("handshake_bind_recovered", {packageName, reason: "no_webview"})
+    } else if (waitedForBind) {
+      this.log.warn("handshake_bind_gave_up", {
+        packageName,
+        reason: view?.unavailableReason ?? "not_bound",
+      })
+    }
     if (!view) {
       return this.refusePage(packageName, "unsupported", "This WebView has no preview binding")
     }
-    if (view.binding) await view.binding
     if (this.view !== view || !view.bound) {
       return this.refusePage(
         packageName,
@@ -688,6 +719,21 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       })
     }
     return this.view?.packageName === packageName ? this.view : null
+  }
+
+  /** Resolves when `bindView` replaces `current`, or when `timeoutMs` elapses. */
+  private waitForDifferentView(current: ViewBinding, timeoutMs: number): Promise<ViewBinding | null> {
+    if (this.view && this.view !== current) return Promise.resolve(this.view)
+    return new Promise((resolve) => {
+      const finish = (view: ViewBinding | null) => {
+        clearTimeout(timer)
+        this.viewWaiters.delete(wake)
+        resolve(view)
+      }
+      const wake = () => finish(this.view && this.view !== current ? this.view : null)
+      const timer = setTimeout(() => finish(null), timeoutMs)
+      this.viewWaiters.add(wake)
+    })
   }
 
   /** One credential per document and lease; a page that asks twice gets the same answer. */

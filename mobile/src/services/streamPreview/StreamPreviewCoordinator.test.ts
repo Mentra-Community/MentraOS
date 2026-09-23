@@ -510,6 +510,34 @@ describe("unsupported", () => {
     })
   })
 
+  test("a no_webview miss does not fail a handshake that is still waiting", async () => {
+    let binds = 0
+    native.bind = async (options) => {
+      binds += 1
+      native.calls.push(`bind:${options.packageName}`)
+      if (binds === 1) return {installReloadRequired: false, unavailableReason: "no_webview"}
+      return {installReloadRequired: false}
+    }
+    meetings.join(PKG)
+    await startLease()
+    coordinator.documentReady(PKG)
+    const requestId = "retry-bind"
+    coordinator.handleUiRequest(PKG, requestId, {cmd: "handshake", docGen: 0, mountEpoch: 1})
+    const first = coordinator.bindView({packageName: PKG, hostViewTag: 1})
+    await first
+    await flush()
+    expect(ui.replies.has(requestId)).toBe(false)
+    await coordinator.bindView({packageName: PKG, hostViewTag: 1})
+    await flush()
+    expect(result(ui.replies.get(requestId)!)).toMatchObject({t: "config", docGen: 1})
+    expect(
+      lines.some((line) => line.includes("phase=handshake_waiting_for_bind") && line.includes("reason=no_webview")),
+    ).toBe(true)
+    expect(
+      lines.some((line) => line.includes("phase=handshake_bind_recovered") && line.includes("reason=no_webview")),
+    ).toBe(true)
+  })
+
   test("a handshake that arrives before the view is bound waits for the binding", async () => {
     meetings.join(PKG)
     await startLease()
