@@ -36,6 +36,11 @@ async function requirePublishedAttempt(github, context, run) {
     matched[0].steps?.some(step => step.name === COORDINATED_PUBLISH_STEP &&
       step.status === "completed" && step.conclusion === "success"),
   "Selected coordinated attempt did not publish immutable assets; dry runs and retained artifacts are ineligible")
+  const published = matched[0]
+  const originalAttempt = Math.min(run.run_attempt, ...jobs.filter(job => job.name === COORDINATED_FINALIZE_JOB &&
+    published.started_at && published.completed_at && job.started_at === published.started_at &&
+    job.completed_at === published.completed_at && job.conclusion === published.conclusion).map(job => job.run_attempt))
+  requireThat(originalAttempt === run.run_attempt, "Selected coordinated attempt retains an earlier publication; select its original attempt")
 }
 
 function releaseCoordinates(identity, channel) {
@@ -83,10 +88,12 @@ export async function coordinatedSourceRun(github, context, source) {
   const {data: run} = await github.rest.actions.getWorkflowRunAttempt({...context.repo,
     run_id: source.buildRunId, attempt_number: source.publicationAttempt})
   requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt &&
-    run.path === COORDINATED_WORKFLOW && run.status === "completed" && run.conclusion === "success" &&
+    run.path === COORDINATED_WORKFLOW && run.status === "completed" &&
     ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === source.channel && SHA.test(run.head_sha ?? "") &&
     run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
-  "Selected coordinated workflow attempt did not successfully publish this channel")
+  "Selected coordinated workflow attempt does not match the completed source channel")
+  // Notification or other downstream failure does not invalidate the independently
+  // authenticated publication. The request workflow itself must still succeed.
   await requirePublishedAttempt(github, context, run)
   const {data: branch} = await github.rest.git.getRef({...context.repo, ref: `heads/${source.channel}`})
   requireThat(branch.ref === `refs/heads/${source.channel}` && branch.object?.type === "commit" && SHA.test(branch.object.sha ?? ""),

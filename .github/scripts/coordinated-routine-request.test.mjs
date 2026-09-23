@@ -29,7 +29,7 @@ for (const channel of ["dev", "staging"]) test(`${channel} selects an exact succ
 
 test("exact selection never substitutes another run, attempt, branch or source", async () => {
   for (const change of [{id: 101}, {run_attempt: 1}, {head_branch: "main"}, {event: "pull_request"},
-    {path: ".github/workflows/other.yml"}, {conclusion: "failure"}, {status: "in_progress"},
+    {path: ".github/workflows/other.yml"}, {status: "in_progress"},
     {repository: {full_name: "other/repository"}}, {head_repository: {full_name: "other/repository"}}]) {
     const {state, options} = coordinatedFixture()
     Object.assign(state.run, change)
@@ -63,6 +63,31 @@ test("retained run artifacts cannot qualify skipped, earlier or dry-run publicat
     assert.ok(state.calls.some(call => call.jobs?.run_id === state.run.id))
     assert.equal(state.calls.some(call => call.url), false, "Reject before reading retained CDN assets")
   }
+})
+
+for (const channel of ["dev", "staging"]) test(`${channel} accepts the original finalized attempt despite downstream failure and later job retries`, async () => {
+  const {state, options} = coordinatedFixture(channel)
+  state.run.run_attempt = 1
+  state.run.conclusion = "failure"
+  state.jobs[0].run_attempt = 1
+  state.jobs.push({...state.jobs[0], id: 1003, name: "Notify Slack", run_attempt: 2})
+  const exact = {...options, sourcePublicationAttempt: "1"}
+  const request = await createRoutineRequest(exact)
+  assert.equal(request.status, "ready")
+  assert.equal(request.selection.producer.publicationAttempt, 1)
+  await verifyCoordinatedReadyRequest({...exact, request})
+  state.jobs[0].conclusion = "failure"
+  await assert.rejects(verifyCoordinatedReadyRequest({...exact, request}), /did not publish immutable assets/)
+})
+
+test("a cloned retained finalizer does not make a later retry the producing attempt", async () => {
+  const {state, options} = coordinatedFixture()
+  Object.assign(state.jobs[0], {started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z"})
+  state.jobs.unshift({...structuredClone(state.jobs[0]), id: 999, run_attempt: 1})
+  const request = await createRoutineRequest(options)
+  assert.equal(request.status, "no-artifact")
+  assert.match(request.reason, /retains an earlier publication/)
+  assert.equal(state.calls.some(call => call.url), false)
 })
 
 test("the actual publishing retry remains selectable and callback verification repeats the job gate", async () => {
@@ -129,7 +154,9 @@ test("ready callback revalidates the selected artifacts and exact trusted issuer
   const changed = structuredClone(request); changed.selection.archive.sha256 = "f".repeat(64)
   await assert.rejects(verifyCoordinatedReadyRequest({...options, request: changed}), /differs/)
   state.run.conclusion = "failure"
-  await assert.rejects(verifyCoordinatedReadyRequest({...options, request}), /successfully/)
+  await verifyCoordinatedReadyRequest({...options, request})
+  state.jobs[0].conclusion = "failure"
+  await assert.rejects(verifyCoordinatedReadyRequest({...options, request}), /did not publish immutable assets/)
 })
 
 test("dev advancing during publication revalidation preserves the immutable request", async () => {
