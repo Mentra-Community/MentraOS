@@ -38,13 +38,16 @@ const state = new RevisionedSnapshot<FirmwareSnapshot>({
     actions: [{id: "install", label: {text: "Install fourth update"}}],
   },
 })
+let failOpen = false
 let installs = 0
 let disposed = 0
 const provider: FirmwareProvider = {
   target,
   snapshot: state.snapshot,
   subscribe: state.subscribe,
-  open: async () => {},
+  open: async () => {
+    if (failOpen) throw new Error("Native updater is unavailable")
+  },
   perform: async (request) => {
     if (request.action === "install") {
       installs++
@@ -74,6 +77,7 @@ const service = new FirmwareUpdateService(
 )
 let resolveFailure = false
 mock.module("../../facades/firmwareUpdates", () => ({
+  firmwareUpdateService: service,
   firmwareUpdates: {
     currentTarget: async () => {
       if (resolveFailure) throw new Error("No current device")
@@ -137,4 +141,32 @@ test("a failed pairing target lookup cancels setup only when retained work is sa
     view.unmount()
   })
   resolveFailure = false
+})
+
+test("a provider-open failure offers Close and releases the safe idle provider", async () => {
+  failOpen = true
+  state.publish({
+    ...state.snapshot(),
+    active: false,
+    safeToRelease: true,
+    phase: "idle",
+    presentation: {title: {text: "Firmware"}, busy: false, success: false, actions: []},
+  })
+  const finished = mock(() => {})
+  const before = disposed
+  let view!: TestRenderer.ReactTestRenderer
+  await act(async () => {
+    view = TestRenderer.create(<FirmwareUpdateFlow target={target} entryPoint="settings" onFinished={finished} />)
+  })
+  expect(JSON.stringify(view.toJSON())).toContain("Native updater is unavailable")
+  const close = view.root.findAllByType("Pressable" as never)[1]!
+  await act(async () => {
+    close.props.onPress()
+  })
+  expect(finished).toHaveBeenCalledTimes(1)
+  expect(disposed).toBe(before + 1)
+  await act(async () => {
+    view.unmount()
+  })
+  failOpen = false
 })

@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useRef, useState, useSyncExternalStore} from "react"
 
-import {firmwareUpdates} from "../facades/firmwareUpdates"
+import {firmwareUpdates, firmwareUpdateService} from "../facades/firmwareUpdates"
 import type {
   FirmwareAction,
   FirmwareFinishResult,
@@ -99,5 +99,25 @@ export function useFirmwareUpdate(target: FirmwareTarget, options: UseFirmwareUp
     [target.integrationId, target.deviceId],
   )
 
-  return {snapshot, opening, error, perform, retryOpen: () => setOpenRevision((revision) => revision + 1)}
+  const closeFailedOpen = () => {
+    if (opening || !error || snapshot.active || !snapshot.safeToRelease || snapshot.presentation.actions.length) return
+    try {
+      firmwareUpdates.assertSafeToRelease()
+      firmwareUpdateService.release(target)
+      callbacks.current.onFinished?.(
+        options.entryPoint === "pairing" ? {kind: "finished", outcome: "cancelled"} : undefined,
+      )
+    } catch (failure) {
+      setError(failure instanceof Error ? failure : new Error(String(failure)))
+    }
+  }
+
+  return {
+    snapshot,
+    opening,
+    error,
+    perform,
+    closeFailedOpen,
+    retryOpen: () => setOpenRevision((revision) => revision + 1),
+  }
 }

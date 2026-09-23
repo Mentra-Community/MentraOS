@@ -120,7 +120,7 @@ export function FirmwareUpdateFlow(props: FirmwareUpdateFlowProps & {views?: Fir
 }
 
 function ManagedFirmwareView(props: FirmwareUpdateFlowProps & {target: FirmwareTarget}) {
-  const {snapshot, opening, error, perform, retryOpen} = useFirmwareUpdate(props.target, props)
+  const {snapshot, opening, error, perform, closeFailedOpen, retryOpen} = useFirmwareUpdate(props.target, props)
   const colors = {...defaultTheme, ...props.theme}
   const copy = (value: FirmwareCopy): string =>
     value.key && props.translate ? props.translate(value.key, value.values ? {...value.values} : undefined) : value.text
@@ -173,10 +173,15 @@ function ManagedFirmwareView(props: FirmwareUpdateFlowProps & {target: FirmwareT
             <Text style={{color: colors.textDim}}>{note.markdown}</Text>
           </View>
         ))}
-        {error && !view.actions.length && snapshot.safeToRelease && (
-          <Pressable onPress={retryOpen} accessibilityRole="button">
-            <Text style={{color: colors.primary}}>{props.translate?.("common:retry") ?? "Retry"}</Text>
-          </Pressable>
+        {error && !view.actions.length && !snapshot.active && snapshot.safeToRelease && (
+          <>
+            <Pressable onPress={retryOpen} accessibilityRole="button">
+              <Text style={{color: colors.primary}}>{props.translate?.("common:retry") ?? "Retry"}</Text>
+            </Pressable>
+            <Pressable onPress={closeFailedOpen} accessibilityRole="button" disabled={opening}>
+              <Text style={{color: colors.primary}}>{props.translate?.("common:close") ?? "Close"}</Text>
+            </Pressable>
+          </>
         )}
         {view.actions.map((action) => (
           <Pressable
