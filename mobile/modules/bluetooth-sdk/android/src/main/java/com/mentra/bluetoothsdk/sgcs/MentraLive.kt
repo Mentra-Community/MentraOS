@@ -4392,6 +4392,36 @@ class MentraLive : SGCManager() {
                 val osErrorMessage: String? =
                         json.optString("err", json.optString("error_message", null))
 
+                Bridge.log(
+                        "LIVE: 📱 OTA status - step " +
+                                osCurrentStep +
+                                "/" +
+                                osTotalSteps +
+                                " " +
+                                osPhase +
+                                " " +
+                                osStatus +
+                                " " +
+                                osOverallPercent +
+                                "%"
+                )
+
+                val glassesTimeMs = json.optLong("glasses_time_ms", 0)
+                if (!sendLiveOtaStatus(
+                        osSessionId,
+                        osTotalSteps,
+                        osCurrentStep,
+                        osStepType,
+                        osPhase,
+                        osStepPercent,
+                        osOverallPercent,
+                        osStatus,
+                        osErrorMessage,
+                        if (glassesTimeMs > 0) glassesTimeMs else null,
+                        if (json.has("bytes_downloaded")) json.optLong("bytes_downloaded", 0) else null,
+                        json.optJSONObject("activity")?.let { jsonObjectToMap(it) }
+                )) return
+
                 // If the glasses started a new session, drop any leftover state from the
                 // old one before caching the new values. Without this, lastBesOtaProgress
                 // would stay at e.g. 95 from the previous session and cause us to silently
@@ -4412,36 +4442,13 @@ class MentraLive : SGCManager() {
                     cachedOtaStepSequence = osStepSequence
                 }
                 updateBesOtaHeartbeatGuard(osStepType, osPhase, osStatus)
-
-                Bridge.log(
-                        "LIVE: 📱 OTA status - step " +
-                                osCurrentStep +
-                                "/" +
-                                osTotalSteps +
-                                " " +
-                                osPhase +
-                                " " +
-                                osStatus +
-                                " " +
-                                osOverallPercent +
-                                "%"
-                )
-
-                val glassesTimeMs = json.optLong("glasses_time_ms", 0)
-                sendLiveOtaStatus(
-                        osSessionId,
-                        osTotalSteps,
-                        osCurrentStep,
-                        osStepType,
-                        osPhase,
-                        osStepPercent,
-                        osOverallPercent,
-                        osStatus,
-                        osErrorMessage,
-                        if (glassesTimeMs > 0) glassesTimeMs else null,
-                        if (json.has("bytes_downloaded")) json.optLong("bytes_downloaded", 0) else null,
-                        json.optJSONObject("activity")?.let { jsonObjectToMap(it) }
-                )
+            }
+            "ota_activity" -> {
+                val activity = json.optJSONObject("activity")?.let { jsonObjectToMap(it) }
+                if (activity != null && liveFirmwareUpdater?.activity(activity, firmwareConnectionGeneration) == true) {
+                    resetOtaCache()
+                    Bridge.sendOtaStatus("", 0, 0, "apk", "download", 0, 0, "idle", sourceContext = otaSourceContext)
+                }
             }
             "ota_progress" -> {
                 // Legacy glasses firmware: map to unified ota_status so JS has a single path
@@ -4483,7 +4490,8 @@ class MentraLive : SGCManager() {
                             legacyProgress,
                             legacyProgress,
                             unified,
-                            err
+                            err,
+                            legacyEvent = true
                     )
                 }
             }
@@ -5735,7 +5743,8 @@ class MentraLive : SGCManager() {
                                 besOtaProgressVal,
                                 besOverallPercent,
                                 syntheticStatus,
-                                besOtaErrorMessage
+                                besOtaErrorMessage,
+                                legacyEvent = true
                         )
                     }
                 } catch (e: Exception) {
@@ -6157,10 +6166,12 @@ class MentraLive : SGCManager() {
      */
     private fun sendLiveOtaStatus(sessionId: String, totalSteps: Int, currentStep: Int, stepType: String,
       phase: String, stepPercent: Int, overallPercent: Int, status: String, errorMessage: String? = null,
-      glassesTimeMs: Long? = null, bytesDownloaded: Long? = null, activity: Map<String, Any>? = null) {
-      liveFirmwareUpdater?.status(sessionId, phase, status, overallPercent, firmwareConnectionGeneration, activity)
+      glassesTimeMs: Long? = null, bytesDownloaded: Long? = null, activity: Map<String, Any>? = null,
+      legacyEvent: Boolean = false): Boolean {
+      if (liveFirmwareUpdater?.status(sessionId, phase, status, overallPercent, firmwareConnectionGeneration, activity, legacyEvent) == false) return false
       Bridge.sendOtaStatus(sessionId, totalSteps, currentStep, stepType, phase, stepPercent, overallPercent,
         status, errorMessage, glassesTimeMs, bytesDownloaded, otaSourceContext)
+      return true
     }
 
     fun sendOtaStart(otaVersionUrl: String? = null) {

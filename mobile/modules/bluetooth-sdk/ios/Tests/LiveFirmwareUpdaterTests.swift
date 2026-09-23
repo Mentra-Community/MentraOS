@@ -164,13 +164,97 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
             let h = Harness(); defer { h.cleanup() }
             _ = try h.updater.start(h.request)
             h.updater.status(sessionId: "old", phase: "install", status: "in_progress", progress: 10, generation: 1)
+            h.updater.status(sessionId: "new", phase: "install", status: "in_progress", progress: 90, generation: 1)
             h.updater.status(sessionId: "new", phase: "install", status: "complete", progress: 100, generation: 1)
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
             h.updater.commandSettled(h.token!, error: FirmwareUpdaterError("timeout", "late timeout"))
             XCTAssertEqual(h.updater.snapshot.phase, "complete")
             XCTAssertEqual(h.updater.snapshot.inventory["glassesSessionId"], "new")
             XCTAssertFalse(h.updater.ownsDevice)
             _ = try h.updater.acknowledge()
             XCTAssertNil(try FirmwareJournal(deviceId: "live", directory: h.directory).read())
+        }
+    }
+
+    func testPreviousTerminalCannotReleaseNewAckedAttemptIncludingColdRecovery() async throws {
+        try await MainActor.run {
+            for terminal in ["complete", "failed"] {
+                let h = Harness(); defer { h.cleanup() }
+                h.updater.status(sessionId: "previous", phase: "install", status: "in_progress", progress: 20, generation: 1)
+                h.updater.status(sessionId: "previous", phase: "install", status: terminal, progress: 100, generation: 1)
+                _ = try h.updater.start(h.request)
+                XCTAssertFalse(h.updater.status(sessionId: "previous", phase: "install", status: terminal, progress: 100, generation: 1))
+                h.updater.commandSettled(h.token!, error: nil)
+                XCTAssertEqual(h.queries, 1)
+                for value in [h.updater, h.makeUpdater()] {
+                    let before = value.snapshot
+                    var busy = quietActivity(value.beginStatusQuery()); busy["admission_held"] = true
+                    XCTAssertFalse(value.status(sessionId: "previous", phase: "install", status: terminal, progress: 100, generation: 1, activity: busy))
+                    XCTAssertFalse(value.activity(busy, generation: 1))
+                    XCTAssertEqual(value.snapshot.revision, before.revision)
+                    XCTAssertEqual(value.snapshot.phase, before.phase)
+                    XCTAssertTrue(value.ownsDevice)
+                    XCTAssertThrowsError(try value.acknowledge())
+                }
+                XCTAssertEqual(h.writes, 1)
+            }
+        }
+    }
+
+    func testAmbiguousTerminalResolvesAsIdleOnlyFromFreshQuietActivity() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            _ = try h.updater.start(h.request); h.updater.commandSettled(h.token!, error: nil)
+            let recovered = h.makeUpdater()
+            XCTAssertFalse(recovered.status(sessionId: "previous", phase: "install", status: "complete", progress: 100, generation: 1))
+            XCTAssertEqual(h.queries, 1)
+            let quiet = quietActivity(recovered.beginStatusQuery())
+            XCTAssertTrue(recovered.activity(quiet, generation: 1))
+            XCTAssertEqual(recovered.snapshot.phase, "idle"); XCTAssertFalse(recovered.ownsDevice)
+            XCTAssertFalse(recovered.activity(quiet, generation: 1))
+            _ = try recovered.commandStarted(manifestUrl: "https://example.com/next")
+            XCTAssertFalse(recovered.activity(quiet, generation: 1)); XCTAssertTrue(recovered.ownsDevice)
+        }
+    }
+
+    func testBoundSessionSurvivesRestartAndRejectsOtherTerminalSessions() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            _ = try h.updater.start(h.request); h.updater.commandSettled(h.token!, error: nil)
+            h.updater.status(sessionId: "current", phase: "download", status: "in_progress", progress: 30, generation: 1)
+            let recovered = h.makeUpdater()
+            let diagnostic = quietActivity(recovered.beginStatusQuery())
+            XCTAssertFalse(recovered.status(sessionId: "previous", phase: "install", status: "complete", progress: 100, generation: 1))
+            XCTAssertTrue(recovered.ownsDevice)
+            XCTAssertTrue(recovered.status(sessionId: "current", phase: "install", status: "complete", progress: 100, generation: 1))
+            XCTAssertFalse(recovered.ownsDevice)
+            XCTAssertFalse(recovered.activity(diagnostic, generation: 1))
+            XCTAssertEqual(recovered.snapshot.phase, "complete")
+        }
+    }
+
+    func testBusyActivityOverridesEvenBoundTerminalCompletion() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            _ = try h.updater.start(h.request); h.updater.commandSettled(h.token!, error: nil)
+            h.updater.status(sessionId: "current", phase: "install", status: "in_progress", progress: 90, generation: 1)
+            var busy = quietActivity(h.updater.beginStatusQuery()); busy["bes_in_progress"] = true
+            XCTAssertFalse(h.updater.status(sessionId: "current", phase: "install", status: "complete", progress: 100, generation: 1, activity: busy))
+            XCTAssertTrue(h.updater.ownsDevice)
+            XCTAssertTrue(h.updater.activity(quietActivity(h.updater.beginStatusQuery()), generation: 1))
+            XCTAssertEqual(h.updater.snapshot.phase, "idle")
+        }
+    }
+
+    func testTransientLegacyTerminalRemainsSupportedButWaitsForPendingCommand() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            _ = try h.updater.start(h.request)
+            XCTAssertTrue(h.updater.status(sessionId: "", phase: "install", status: "failed", progress: 0, generation: 1, legacyEvent: true))
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
+            h.updater.commandSettled(h.token!, error: FirmwareUpdaterError("timeout", "late timeout"))
+            XCTAssertEqual(h.updater.snapshot.phase, "failed"); XCTAssertFalse(h.updater.ownsDevice)
+            XCTAssertTrue(h.makeUpdater().snapshot.safeToRelease)
         }
     }
 

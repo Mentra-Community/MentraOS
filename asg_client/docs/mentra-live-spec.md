@@ -297,9 +297,14 @@ the process and request and exposes the existing OTA admission, APK/MTK/BES busy
 state and pending APK restart guard without expiring sessions or starting work.
 Its process-local admission generation increases on each accepted OTA admission;
 `consistent` is false if an admission occurs during the snapshot itself.
-Unknown owners remain unknown. Ordinary query responses and compact terminal BLE
-frames retain their existing behavior; a terminal BES result alone is not proof
-that every updater is idle.
+Unknown owners remain unknown. Requested activity accompanies nonterminal status;
+for terminal status it follows in a separate `ota_activity` message with the same
+`request_id`. The reliable terminal frame remains compact enough for one legacy
+BLE notification. Ordinary queries do not add an activity message. The phone binds
+completion to the observed update session; an old terminal session alone cannot
+release a new Start while its manifest is downloading. A fresh, correlated quiet
+activity snapshot can resolve an ambiguous attempt as idle without claiming an
+update succeeded. Verified legacy completion remains supported.
 
 MTK updates prefer an incremental patch whose start version matches the glasses.
 If no patch matches, a pinned `mtk_full_ota` can update a known older firmware

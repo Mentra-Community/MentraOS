@@ -3133,6 +3133,24 @@ class MentraLive: NSObject, SGCManager {
             let osStatus = json["status"] as? String ?? "idle"
             let osErrorMessage = json["err"] as? String ?? json["error_message"] as? String
 
+            Bridge.log("LIVE: 📱 OTA status - step \(osCurrentStep)/\(osTotalSteps) \(osPhase) \(osStatus) \(osOverallPercent)%")
+
+            let glassesTimeMs = (json["glasses_time_ms"] as? NSNumber)?.int64Value ?? 0
+            guard sendLiveOtaStatus(
+                sessionId: osSessionId,
+                totalSteps: osTotalSteps,
+                currentStep: osCurrentStep,
+                stepType: osStepType,
+                phase: osPhase,
+                stepPercent: osStepPercent,
+                overallPercent: osOverallPercent,
+                status: osStatus,
+                errorMessage: osErrorMessage,
+                glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil,
+                bytesDownloaded: (json["bytes_downloaded"] as? NSNumber)?.int64Value,
+                activity: json["activity"] as? [String: Any]
+            ) else { return }
+
             // If the glasses started a new session, drop any leftover state from the old
             // one before caching the new values. Without this, lastBesOtaProgress would
             // stay at e.g. 95 from the previous session and cause us to silently skip the
@@ -3149,23 +3167,15 @@ class MentraLive: NSObject, SGCManager {
             }
             updateBesOtaHeartbeatGuard(stepType: osStepType, phase: osPhase, status: osStatus)
 
-            Bridge.log("LIVE: 📱 OTA status - step \(osCurrentStep)/\(osTotalSteps) \(osPhase) \(osStatus) \(osOverallPercent)%")
-
-            let glassesTimeMs = (json["glasses_time_ms"] as? NSNumber)?.int64Value ?? 0
-            sendLiveOtaStatus(
-                sessionId: osSessionId,
-                totalSteps: osTotalSteps,
-                currentStep: osCurrentStep,
-                stepType: osStepType,
-                phase: osPhase,
-                stepPercent: osStepPercent,
-                overallPercent: osOverallPercent,
-                status: osStatus,
-                errorMessage: osErrorMessage,
-                glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil,
-                bytesDownloaded: (json["bytes_downloaded"] as? NSNumber)?.int64Value,
-                activity: json["activity"] as? [String: Any]
-            )
+        case "ota_activity":
+            if let activity = json["activity"] as? [String: Any],
+               liveFirmwareUpdater?.activity(activity, generation: firmwareConnectionGeneration) == true
+            {
+                resetOtaCache()
+                Bridge.sendOtaStatus(sessionId: "", totalSteps: 0, currentStep: 0, stepType: "apk",
+                                     phase: "download", stepPercent: 0, overallPercent: 0, status: "idle",
+                                     errorMessage: nil, sourceContext: otaSourceContext)
+            }
 
         case "ota_progress":
             // Legacy glasses firmware: map to unified ota_status (single RN path).
@@ -3196,7 +3206,8 @@ class MentraLive: NSObject, SGCManager {
                 stepPercent: legacyProgress,
                 overallPercent: legacyProgress,
                 status: unified,
-                errorMessage: err
+                errorMessage: err,
+                legacyEvent: true
             )
 
         default:
@@ -3596,7 +3607,8 @@ class MentraLive: NSObject, SGCManager {
                     stepPercent: besOtaProgressVal,
                     overallPercent: besOverallPercent,
                     status: syntheticStatus,
-                    errorMessage: besOtaErrorMessage
+                    errorMessage: besOtaErrorMessage,
+                    legacyEvent: true
                 )
             }
 
@@ -3911,17 +3923,20 @@ class MentraLive: NSObject, SGCManager {
     /// Send OTA start command to glasses.
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.
+    @discardableResult
     private func sendLiveOtaStatus(sessionId: String, totalSteps: Int, currentStep: Int, stepType: String,
                                    phase: String, stepPercent: Int, overallPercent: Int, status: String,
                                    errorMessage: String?, glassesTimeMs: Int64? = nil, bytesDownloaded: Int64? = nil,
-                                   activity: [String: Any]? = nil)
+                                   activity: [String: Any]? = nil, legacyEvent: Bool = false) -> Bool
     {
-        liveFirmwareUpdater?.status(sessionId: sessionId, phase: phase, status: status,
-                                    progress: overallPercent, generation: firmwareConnectionGeneration, activity: activity)
+        if liveFirmwareUpdater?.status(sessionId: sessionId, phase: phase, status: status,
+                                       progress: overallPercent, generation: firmwareConnectionGeneration,
+                                       activity: activity, legacyEvent: legacyEvent) == false { return false }
         Bridge.sendOtaStatus(sessionId: sessionId, totalSteps: totalSteps, currentStep: currentStep,
                              stepType: stepType, phase: phase, stepPercent: stepPercent, overallPercent: overallPercent,
                              status: status, errorMessage: errorMessage, glassesTimeMs: glassesTimeMs,
                              bytesDownloaded: bytesDownloaded, sourceContext: otaSourceContext)
+        return true
     }
 
     func sendOtaStart(otaVersionUrl: String?) {

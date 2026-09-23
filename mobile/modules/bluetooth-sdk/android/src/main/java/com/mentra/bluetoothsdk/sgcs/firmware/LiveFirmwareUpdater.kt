@@ -19,6 +19,8 @@ internal class LiveFirmwareUpdater(
   private var commandToken: String? = null
   private var commandRevision = 0
   private var statusQuery: Pair<String, Int>? = null
+  private var terminalRevision: Int? = null
+  private var needsInspection = false
   var launch: ((FirmwareStartRequest) -> Unit)? = null
   override val snapshot get() = state.snapshot
   val ownsDevice get() = commandToken != null || !snapshot.safeToRelease
@@ -95,11 +97,14 @@ internal class LiveFirmwareUpdater(
     val evidence = FirmwareStartRequest(snapshot.deviceId, snapshot.connectionGeneration, offerId, "live-observation",
       metadata = mapOf("manifestSha256" to digest))
     val next = snapshot.copy(sessionId = UUID.randomUUID().toString(), offerId = offerId, phase = "preparing",
-      safeToRelease = false, canReconcile = true, error = null, progress = null)
+      safeToRelease = false, canReconcile = true, error = null, progress = null,
+      inventory = snapshot.inventory - "activeGlassesSessionId")
     // Never persist URLs, credentials or multi-pass approval. Reading this only authorizes inspection.
     storage.write(FirmwareRecoveryRecord(next, evidence))
     record = evidence
     statusQuery = null
+    terminalRevision = null
+    needsInspection = false
     val token = UUID.randomUUID().toString(); commandToken = token
     state.update { next }; commandRevision = snapshot.revision
     return token
@@ -108,11 +113,14 @@ internal class LiveFirmwareUpdater(
   fun commandSettled(token: String, error: Throwable?) {
     if (commandToken != token) return
     commandToken = null
-    if (snapshot.revision == commandRevision) state.update {
+    if (terminalRevision == snapshot.revision) state.update { it.copy(safeToRelease = true, canReconcile = false) }
+    else if (snapshot.revision == commandRevision) state.update {
       it.copy(phase = if (error == null) "installing" else "interrupted",
         error = if (error == null) null else "The OTA start outcome requires a glasses status query")
     }
+    terminalRevision = null
     persist()
+    if (needsInspection) query()
   }
 
   /** Correlate ASG's existing read-only activity diagnostics with this exact observation. */
@@ -132,14 +140,28 @@ internal class LiveFirmwareUpdater(
       session["restart_pending"] == false && session["status"] in setOf("idle", "complete", "failed")
   }
 
+  fun activity(activity: Map<String, Any>, generation: Int): Boolean =
+    ownsDevice && status("", "download", "idle", 0, generation, activity)
+
   fun status(sessionId: String, phase: String, status: String, progress: Int, generation: Int,
-    activity: Map<String, Any>? = null) {
+    activity: Map<String, Any>? = null, legacyEvent: Boolean = false): Boolean {
     // Idle only means ASG has no session to report. It can still be fetching an
     // acknowledged Start's manifest, including after this phone restarts. Owned
     // work needs terminal/completion proof or a correlated, consistent quiet-worker snapshot.
-    if (generation != snapshot.connectionGeneration) return
-    if (status == "idle" && ownsDevice && !confirmsQuiescence(activity)) return
-    val safe = status in setOf("idle", "complete", "failed")
+    if (generation != snapshot.connectionGeneration) return false
+    if (status == "idle" && ownsDevice && !confirmsQuiescence(activity)) return false
+    val terminal = status in setOf("idle", "complete", "failed")
+    if (terminal && status != "idle" && ownsDevice &&
+      ((!legacyEvent && snapshot.inventory["activeGlassesSessionId"] != sessionId) ||
+        (activity != null && !confirmsQuiescence(activity)))) {
+      // ASG can retain the PREVIOUS terminal session during this Start's manifest fetch.
+      // A legacy progress event is transient; modern cached status needs attempt binding.
+      needsInspection = true
+      if (commandToken == null && statusQuery == null) query()
+      return false
+    }
+    needsInspection = false
+    val safe = terminal && commandToken == null
     if (!safe && record == null) {
       // The glasses-owned update may predate this phone process. Persist observation, never approval.
       record = FirmwareStartRequest(snapshot.deviceId, generation, "observed-" + UUID.randomUUID(), "live-observation")
@@ -147,15 +169,19 @@ internal class LiveFirmwareUpdater(
     state.update {
       it.copy(sessionId = if (!safe && it.sessionId == null) UUID.randomUUID().toString() else it.sessionId,
         offerId = if (!safe && it.offerId == null) record?.offerId else it.offerId,
-        inventory = if (sessionId.isNotEmpty()) it.inventory + ("glassesSessionId" to sessionId) else it.inventory,
+        inventory = (if (sessionId.isNotEmpty()) it.inventory + ("glassesSessionId" to sessionId) else it.inventory) +
+          (if (!terminal) mapOf("activeGlassesSessionId" to sessionId) else emptyMap()),
         phase = when (status) { "idle", "complete", "failed" -> status; else -> if (phase == "download") "transferring" else "installing" },
         safeToRelease = safe, canReconcile = !safe, progress = progress.coerceIn(0, 100).toDouble() / 100,
         error = if (status == "failed") "The glasses reported an update failure" else null)
     }
+    terminalRevision = if (terminal && !safe) snapshot.revision else null
     persist()
+    return true
   }
 
   fun connectionChanged(generation: Int, disconnected: Boolean = false) {
+    terminalRevision = null
     state.update { it.copy(connectionGeneration = generation,
       phase = if (disconnected && !it.safeToRelease) "interrupted" else it.phase,
       canReconcile = if (disconnected && !it.safeToRelease) true else it.canReconcile) }

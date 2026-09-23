@@ -744,6 +744,13 @@ public class CommunicationManager
                 JSONObject compactStatus = compactTerminalOtaStatus(status);
                 boolean sent = reliableManager.sendMessage(compactStatus);
                 Log.i(TAG, "📱 OTA Status (reliable): " + statusValue + " sent=" + sent);
+                JSONObject activity = status.optJSONObject("activity");
+                if (activity != null) {
+                    // Explicit status queries may inspect worker ownership without enlarging
+                    // the critical terminal frame or changing legacy clients' delivery.
+                    JSONObject observation = new JSONObject().put("type", "ota_activity").put("activity", activity);
+                    transport.sendMessage(observation.toString().getBytes(StandardCharsets.UTF_8));
+                }
             } else {
                 String jsonString = status.toString();
                 transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));

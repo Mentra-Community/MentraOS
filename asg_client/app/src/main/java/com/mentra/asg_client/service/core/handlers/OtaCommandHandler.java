@@ -196,8 +196,8 @@ public class OtaCommandHandler implements ICommandHandler {
 
         JSONObject state = otaHelper.getOtaSessionState();
         if (state != null && communicationManager != null) {
-            // Terminal BLE payloads retain their existing compact form. The explicit local
-            // diagnostic log above is also available when that compaction removes activity.
+            // Terminal BLE payloads retain their existing compact form; requested activity
+            // is sent separately so it cannot fragment the critical completion frame.
             if (activity != null) state.put("activity", activity);
             communicationManager.sendOtaStatus(state);
             String statusStr = state.optString("status", "?");
