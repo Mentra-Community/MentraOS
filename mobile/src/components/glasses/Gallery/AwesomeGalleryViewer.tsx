@@ -180,7 +180,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
           setIsPlaying(false)
           setIsBuffering(false)
           setIsSeeking(false)
-          onSeekingChange?.(false)
+          if (isSeeking) onSeekingChange?.(false)
         }}
         onEnd={() => {
           if (isSeeking || !isVideoAtEnd(currentTimeRef.current, duration)) return

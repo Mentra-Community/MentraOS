@@ -279,9 +279,11 @@ iOS skips that callback when the requested position already matches the player.
 Only activation changes start playback automatically. An explicit end state
 controls replay, rather than treating a paused position near the end as finished.
 Both native players send a final progress update before the end event. Completion
-also checks the latest position (with 10 ms rounding tolerance, smaller than the
-seek inset), so a late end event after a backward seek or replay cannot restore
-the finished state. A ref preserves that ordering even when React batches events.
+also checks the latest position, allowing up to 50 ms for frame/clock timing.
+Android forwards its playhead rather than forcing it to the duration. The tolerance
+is smaller than the seek inset and capped at half the duration for very short
+clips, so a late end event after a backward seek or replay cannot restore the
+finished state. A ref preserves ordering even when React batches events.
 Native decoding errors remain visible; these controls do not repair damaged media.
 
 Run the focused regression suites from `mobile/`:

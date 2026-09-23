@@ -277,6 +277,15 @@ describe("gallery video playback", () => {
     expect(mockVideoProps.paused).toBe(false)
   })
 
+  it("accepts native completion when the final playhead is within a frame of duration", () => {
+    const {view} = renderVideo()
+    emitVideo("onProgress", {currentTime: duration - 0.033})
+    emitVideo("onEnd")
+    expect(mockVideoProps.paused).toBe(true)
+    expect(view.getByText("replay")).toBeTruthy()
+    expect(mockSliderProps.value).toBe(duration)
+  })
+
   it("can seek backward after ending and play from the selected position", () => {
     const {view} = renderVideo()
     finishVideo()
@@ -322,6 +331,22 @@ describe("gallery video playback", () => {
     expect(mockSeek).toHaveBeenLastCalledWith(0)
     expect(mockVideoProps.paused).toBe(false)
     expect(view.queryByText("replay")).toBeNull()
+  })
+
+  it("does not let an inactive video's error unlock another video's scrub", () => {
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const {item} = renderVideo()
+      const startActiveScrub = mockSliderProps.onSlidingStart as () => void
+      render(cloneElement(item, {isActive: false}))
+      const inactiveError = mockVideoProps.onError as (payload: unknown) => void
+      act(() => startActiveScrub())
+      expect(mockGalleryProps.swipeEnabled).toBe(false)
+      act(() => inactiveError({error: {code: -11880}}))
+      expect(mockGalleryProps.swipeEnabled).toBe(false)
+    } finally {
+      errorLog.mockRestore()
+    }
   })
 
   it("keeps real decoder errors visible and does not resume on progress", () => {

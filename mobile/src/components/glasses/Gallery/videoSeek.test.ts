@@ -32,10 +32,12 @@ describe("isVideoAtEnd", () => {
   it.each([
     {currentTime: 60, duration: 60, expected: true},
     {currentTime: 59.999, duration: 60, expected: true},
+    {currentTime: 59.967, duration: 60, expected: true},
     {currentTime: 59.9, duration: 60, expected: false},
     {currentTime: 30, duration: 60, expected: false},
     {currentTime: 0, duration: 0.05, expected: false},
     {currentTime: 0.05, duration: 0.05, expected: true},
+    {currentTime: 0, duration: 0.005, expected: false},
     {currentTime: 0, duration: 0, expected: false},
     {currentTime: NaN, duration: 60, expected: false},
     {currentTime: Infinity, duration: 60, expected: false},
