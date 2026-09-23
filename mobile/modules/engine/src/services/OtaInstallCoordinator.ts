@@ -198,11 +198,12 @@ class OtaInstallCoordinator {
   private observationOnly = false
   private completionVerdict: DisplayState | null = null
   private finishing: Promise<void> | null = null
+  private finishFailed = false
   /** Controller ownership only; native recovery also has its own service/SDK guard. */
   isSafeToRelease(): boolean {
     // After verified cleanup and detach, old BLE progress must not resurrect this
     // controller's ownership (notably legacy BES step_complete after reboot proof).
-    if (!this.attached && !this.otaStartOwnership && !this.finishing) return true
+    if (!this.attached && !this.otaStartOwnership && !this.finishing && !this.finishFailed) return true
     return this.snapshot().safeToRelease === true
   }
 
@@ -463,7 +464,7 @@ class OtaInstallCoordinator {
 
   /** Retry after a failure: clear state and re-send ota_start (if connected). */
   retry(): void {
-    if (this.finishing) return
+    if (this.finishing || this.finishFailed) return
     this.completionVerdict = null
     if (this.observationOnly) {
       this.setErrorMsg("")
@@ -558,6 +559,15 @@ class OtaInstallCoordinator {
     if (this.finishing) return this.finishing
     const finishing = Promise.resolve()
       .then(() => this.performFinish())
+      .then(
+        () => {
+          this.finishFailed = false
+        },
+        (error) => {
+          this.finishFailed = true
+          throw error
+        },
+      )
       .finally(() => {
         if (this.finishing === finishing) {
           this.finishing = null
@@ -663,6 +673,7 @@ class OtaInstallCoordinator {
     }
     snapshot.safeToRelease =
       !this.finishing &&
+      !this.finishFailed &&
       this.isLegacySafeToRelease(snapshot) &&
       (!this.nativeBinding || this.nativeCompletion !== null) &&
       (this.nativeCompletion?.isSafeToRelease() ?? true)
@@ -713,6 +724,7 @@ class OtaInstallCoordinator {
 
   private resetSessionState(): void {
     this.completionVerdict = null
+    this.finishFailed = false
     this.errorMsg = ""
     this.sawReconnectEdge = false
     this.continueButtonDisabled = false
@@ -1632,7 +1644,7 @@ class OtaInstallCoordinator {
   }
 
   private sendOtaStartWithWatchdogs(): Promise<void> {
-    if (this.completionVerdict !== null) return Promise.resolve()
+    if (this.finishFailed || this.completionVerdict !== null) return Promise.resolve()
     // A cold journal carries evidence, never authorization to start another pass.
     if (this.observationOnly) return Promise.resolve()
     // INVARIANT BACKSTOP — not normal control flow. Every entry point that can drive the

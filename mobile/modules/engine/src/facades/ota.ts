@@ -19,6 +19,7 @@ export type {
 
 let legacyRelease: (() => void) | null = null
 let legacySession = false
+let detachRequested = false
 let commands = 0
 
 function reserveLegacy(): void {
@@ -38,6 +39,13 @@ function reserveLegacy(): void {
 }
 
 function releaseIdleReservation(): void {
+  if (detachRequested) {
+    if (legacySession && !otaInstallCoordinator.cancelUnboundPreparation() && !otaInstallCoordinator.isSafeToRelease())
+      return
+    liveOtaPorts.installSession.detach()
+    legacySession = false
+    detachRequested = false
+  }
   if (legacySession || commands) return
   legacyRelease?.()
   legacyRelease = null
@@ -53,7 +61,11 @@ function control<A extends unknown[], R>(fn: (...args: A) => R, retain = false):
     }
     try {
       const result = fn(...args)
-      if (retain) legacySession = true
+      if (retain) {
+        legacySession = true
+        // A new host attachment supersedes the previous host's pending unmount.
+        detachRequested = false
+      }
       if (result && typeof (result as unknown as PromiseLike<unknown>).then === "function")
         return Promise.resolve(result).finally(done) as R
       done()
@@ -82,15 +94,8 @@ export const ota = {
     detach: () => {
       assertLegacyLiveControlAvailable()
       // A view can disappear while firmware still owns the glasses. Keep its controller
-      // and reservation until terminal cleanup makes a later detach safe.
-      if (
-        legacySession &&
-        !otaInstallCoordinator.cancelUnboundPreparation() &&
-        !otaInstallCoordinator.isSafeToRelease()
-      )
-        return
-      liveOtaPorts.installSession.detach()
-      legacySession = false
+      // and remember the unmount until the in-flight completion/cleanup settles.
+      detachRequested = true
       releaseIdleReservation()
     },
     retry: control(liveOtaPorts.installSession.retry),

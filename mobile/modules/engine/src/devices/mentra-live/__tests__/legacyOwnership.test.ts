@@ -71,16 +71,13 @@ test("both Live interfaces reserve the controller before the other can attach", 
   expect(runtimeLeases).toBe(0)
 })
 
-test("legacy unsafe unmount retains its controller until terminal cleanup and detach", async () => {
+test("legacy unsafe unmount retains its controller and is honored after terminal cleanup", async () => {
   ota.installSession.attach()
   safe = false
   ota.installSession.detach()
   expect(attached).toBe(true)
   expect(() => managed()).toThrow("already owns")
   await ota.installSession.finish()
-  // finish does not permit managed attach to reuse a still-attached legacy coordinator.
-  expect(() => managed()).toThrow("already owns")
-  ota.installSession.detach()
   expect(attached).toBe(false)
   const release = managed()
   release()
