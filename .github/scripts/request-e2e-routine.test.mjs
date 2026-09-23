@@ -190,7 +190,7 @@ function fixture() {
   return {state, context, source, github, resolve, manual}
 }
 
-const originalPublication = {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}
+const originalPublication = {sourceBuildRunId: "100", sourcePublicationAttempt: "2", requestOrigin: "pr-label"}
 
 test("delayed automatic requests keep the original run while manual requests select the newer build", async () => {
   const f = fixture()
@@ -303,7 +303,56 @@ test("freezes original build attempt, retained publication and exact raw manifes
     createHash("sha256").update(JSON.stringify(f.state.manifest)).digest("hex"),
   )
   assert.equal(request.trigger.workflowSha, merge)
+  assert.equal(request.routine.authorization, "pr-label")
   assert.match(request.reason, /has not run/)
+})
+
+test("trusted explicit no-glasses requests need no label with latest or exact publication selection", async () => {
+  for (const selection of [{}, {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}]) {
+    const f = fixture()
+    f.manual()
+    f.state.pr.labels = []
+    const request = await f.resolve({routine: "no-glasses", ...selection})
+    assert.equal(request.status, "ready")
+    assert.equal(request.requestId, "routine-200-1-4136-no-glasses")
+    assert.equal(request.routine.authorization, "workflow-dispatch")
+    assert.deepEqual(request.selection.build, {headSha: head, baseSha: base, buildSha: merge})
+    assert.equal(request.selection.archive.sha256, digest)
+  }
+})
+
+test("automatic no-glasses requests require their own current label before and after selection", async () => {
+  for (const [labels, removed, ready] of [
+    [[{name: "routine:no-glasses"}], false, true], [[{name: REQUEST_LABEL}], false, false],
+    [[{name: "routine:no-glasses"}], true, false], [[], false, false],
+  ]) {
+    const f = fixture()
+    f.manual()
+    f.state.pr.labels = labels
+    f.state.removeLabelOnReread = removed
+    const request = await f.resolve({...originalPublication, routine: "no-glasses"})
+    assert.equal(request.status, ready ? "ready" : "no-artifact")
+    assert.equal(request.routine.authorization, "pr-label")
+    assert.match(request.routine.reason, /routine:no-glasses/)
+  }
+})
+
+test("explicit opt-in cannot weaken artifact/current-PR checks or originate from PR code", async () => {
+  for (const change of [f => {f.state.pr.state = "closed"}, f => {f.state.changeOnReread = true},
+    f => {f.state.changeBaseOnReread = true}, f => {f.state.missingArchive = true},
+    f => {f.state.receipt.app.executableSha256 = "invalid"}]) {
+    const f = fixture()
+    f.manual()
+    f.state.pr.labels = []
+    change(f)
+    assert.equal((await f.resolve({routine: "no-glasses", requestOrigin: "workflow-dispatch"})).status, "no-artifact")
+  }
+  for (const options of [{routine: "arbitrary-script"}, {requestOrigin: "unknown"}, {requestOrigin: true},
+    {requestOrigin: "workflow-dispatch"}]) {
+    const f = fixture()
+    await assert.rejects(() => f.resolve(options))
+    assert.equal(f.state.prReads, 0)
+  }
 })
 
 test("stale PR API and event base SHAs do not replace the actual dev tip", async () => {

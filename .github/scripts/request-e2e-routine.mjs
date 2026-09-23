@@ -4,6 +4,7 @@ import {join} from "node:path"
 import {matchingBuildRun, readOtaTargets} from "./notify-pr-builds.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
+import {deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
 
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
 export const REQUEST_LABEL = "routine:day1-ota"
@@ -153,6 +154,7 @@ export async function createRoutineRequest({
   context,
   number,
   routine = "day1-ota",
+  requestOrigin,
   source,
   sourceBuildRunId,
   sourcePublicationAttempt,
@@ -161,7 +163,13 @@ export async function createRoutineRequest({
 }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`
   const selectedSource = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
-  if (!positive(number) || routine !== "day1-ota") throw new Error("Expected a positive PR number and day1-ota routine")
+  const registered = deviceRoutine(routine)
+  if (!positive(number)) throw new Error("Expected a positive PR number")
+  const authorization = requestOrigin ?? (context.eventName === "pull_request" ? "pr-label" : "workflow-dispatch")
+  if (!["pr-label", "workflow-dispatch"].includes(authorization) ||
+    (context.eventName === "pull_request" && authorization !== "pr-label"))
+    throw new Error("Unsupported routine request authorization")
+  const labelRequired = authorization === "pr-label"
   if (
     repository !== "Mentra-Community/MentraOS" ||
     !positive(context.runId) ||
@@ -202,10 +210,11 @@ export async function createRoutineRequest({
     pullRequest: prIdentity(pr, baseSha),
     routine: {
       id: routine,
+      authorization,
       reason:
-        context.eventName === "workflow_dispatch"
+        authorization === "workflow-dispatch"
           ? "Explicit workflow_dispatch opt-in"
-          : `Explicit ${REQUEST_LABEL} PR label`,
+          : `Explicit ${registered.label} PR label`,
       harnessRevision: source.sha,
     },
     selection: null,
@@ -219,12 +228,12 @@ export async function createRoutineRequest({
     context.eventName === "pull_request" &&
     (context.payload.pull_request.head.sha !== pr.head.sha ||
       context.payload.pull_request.base.ref !== pr.base.ref ||
-      !pr.labels?.some((label) => (typeof label === "string" ? label : label.name) === REQUEST_LABEL))
+      !hasRoutineLabel(pr, routine))
   ) {
     request.reason = "Bootstrap opt-in was removed or its triggering PR revision was superseded"
     return request
   }
-  if (selectedSource && !pr.labels?.some((label) => (typeof label === "string" ? label : label.name) === REQUEST_LABEL)) {
+  if (labelRequired && !hasRoutineLabel(pr, routine)) {
     request.reason = "Automatic request opt-in was removed"
     return request
   }
@@ -332,8 +341,7 @@ export async function createRoutineRequest({
     current.head.repo?.full_name !== repository ||
     current.base.ref !== "dev" ||
     currentBaseSha !== baseSha ||
-    ((context.eventName === "pull_request" || selectedSource) &&
-      !current.labels?.some((label) => (typeof label === "string" ? label : label.name) === REQUEST_LABEL))
+    (labelRequired && !hasRoutineLabel(current, routine))
   ) {
     request.selection = null
     request.reason = "PR head/base or opt-in changed while resolving; no candidate was queued"

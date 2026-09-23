@@ -1,6 +1,7 @@
 import {test} from "node:test"
 import assert from "node:assert/strict"
-import {callbackRunName, dispatchReadyRequest, planDeviceDispatch, publicationJobName, PUBLICATION_SEND_STEP, requestAfterPublication} from "./dispatch-device-routine.mjs"
+import {readFile} from "node:fs/promises"
+import {callbackRunName, dispatchReadyRequest, planDeviceDispatch, planDeviceDispatches, publicationJobName, PUBLICATION_SEND_STEP, requestAfterPublication} from "./dispatch-device-routine.mjs"
 import {createRoutineRequest} from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -31,7 +32,7 @@ const callback = {id: context.runId, run_number: 100, run_attempt: 1, display_ti
   repository: {full_name: repo}, head_repository: {full_name: repo}}
 const publicationJob = {name: publicationJobName(123, 2), run_attempt: 1, status: "in_progress", conclusion: null,
   steps: [{name: PUBLICATION_SEND_STEP, status: "in_progress", conclusion: null, started_at: "2026-09-22T01:00:00Z"}]}
-const requestPlan = {mode: "request", pr: 42, sourceRunId: 123, publicationAttempt: 2,
+const requestPlan = {mode: "request", routine: "day1-ota", pr: 42, sourceRunId: 123, publicationAttempt: 2,
   sourceCreatedAt: build.created_at, callbackRunId: 777, callbackAttempt: 1}
 const dispatchResponse = {status: 200, data: {workflow_run_id: 9000,
   run_url: `https://api.github.com/repos/${repo}/actions/runs/9000`, html_url: `https://github.com/${repo}/actions/runs/9000`}}
@@ -64,7 +65,7 @@ test("successful current opted-in iOS publication requests the trusted dev produ
   const result = await requestAfterPublication({...f, context, plan})
   assert.deepEqual(result, {status: "request-dispatched", pr: 42, requestRunId: 9000, requestUrl: dispatchResponse.data.html_url})
   assert.deepEqual(f.calls.at(-1), ["dispatch", {...context.repo, workflow_id: producer.path, ref: "dev",
-    return_run_details: true, inputs: {pr: "42", routine: "day1-ota", source_build_run_id: "123", source_publication_attempt: "2"}}])
+    return_run_details: true, inputs: {pr: "42", routine: "day1-ota", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"}}])
 })
 
 const wake = {...build, id: 124, run_attempt: 1, path: producer.path, created_at: "2026-09-22T01:00:00Z"}
@@ -106,6 +107,7 @@ test("build completes before label opt-in, then the trusted dev resolver produce
   trusted.github.rest.repos = {getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}})}
   const generated = await createRoutineRequest({github: trusted.github,
     context: {...context, eventName: "workflow_dispatch", runId: sent.requestRunId}, number: Number(dispatch.inputs.pr),
+    routine: dispatch.inputs.routine, requestOrigin: dispatch.inputs.request_origin,
     sourceBuildRunId: dispatch.inputs.source_build_run_id, sourcePublicationAttempt: dispatch.inputs.source_publication_attempt,
     source: {runAttempt: 1, ref: "refs/heads/dev", sha: source, workflowSha: source,
       workflowRef: `${repo}/${producer.path}@refs/heads/dev`, actor: "tester"},
@@ -361,4 +363,80 @@ test("mismatched producer JSON and missing dispatch capability fail before priva
   await assert.rejects(() => dispatchReadyRequest({...f, context, plan, bytes: bytes(request)}), /E2E_PRIVATE_DISPATCH_TOKEN/)
   await assert.rejects(() => dispatchReadyRequest({...f, context, plan, bytes: Buffer.alloc(1048577)}), /1 MiB/)
   assert.equal(remote.calls.length, 0)
+})
+
+test("both routine labels create independent fenced generations for one exact publication", async () => {
+  const pull = {...pr, labels: [{name: "routine:day1-ota"}, {name: "routine:no-glasses"}]}
+  const jobs = ["day1-ota", "no-glasses"].map(routine => ({...publicationJob, name: publicationJobName(123, 2, routine)}))
+  const f = fake({pull, callbackJobs: {[callback.id]: jobs}})
+  const plans = await planDeviceDispatches({...f, context})
+  assert.deepEqual(plans.map(plan => plan.routine), ["day1-ota", "no-glasses"])
+  for (const plan of plans) assert.equal((await requestAfterPublication({...f, context, plan})).status, "request-dispatched")
+  assert.deepEqual(f.calls.filter(([kind]) => kind === "dispatch").map(([, call]) => call.inputs), [
+    {pr: "42", routine: "day1-ota", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
+    {pr: "42", routine: "no-glasses", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
+  ])
+})
+
+test("a previous day-one send does not consume no-glasses, and no-glasses replay remains fenced", async () => {
+  const pull = {...pr, labels: [{name: "routine:no-glasses"}]}
+  const noGlassesJob = {...publicationJob, name: publicationJobName(123, 2, "no-glasses")}
+  for (const prior of [publicationJob, {...publicationJob, name: "Request publication 123 / attempt 2"},
+    {name: "dispatch", status: "completed"}]) {
+    const f = fake({run: wake, pull, ...wakeHistory, callbackJobs: {
+      [callback.id]: [prior], [wakeCallback.id]: [noGlassesJob],
+    }})
+    const plan = await planDeviceDispatch({...f, context: wakeContext, routine: "no-glasses"})
+    assert.equal((await requestAfterPublication({...f, context: wakeContext, plan})).status, "request-dispatched")
+  }
+  const replay = fake({run: wake, pull, ...wakeHistory, callbackJobs: {
+    [callback.id]: [{...noGlassesJob, status: "completed", conclusion: "failure"}], [wakeCallback.id]: [noGlassesJob],
+  }})
+  const plan = await planDeviceDispatch({...replay, context: wakeContext, routine: "no-glasses"})
+  assert.equal((await requestAfterPublication({...replay, context: wakeContext, plan})).status, "request-reconcile")
+  assert.equal(replay.calls.some(([kind]) => kind === "dispatch"), false)
+})
+
+test("a completed trusted request has one private callback regardless of registered routine count", async () => {
+  const f = fake({run: producer})
+  const plans = await planDeviceDispatches({...f, context})
+  assert.equal(plans.length, 1)
+  assert.equal(plans[0].mode, "dispatch")
+  assert.equal(f.calls.filter(([kind]) => kind === "read-artifacts").length, 1)
+})
+
+test("explicit trusted no-glasses request queues without a label but retains current PR and base checks", async () => {
+  const manual = {...request, requestId: "routine-123-2-42-no-glasses",
+    routine: {...request.routine, id: "no-glasses", authorization: "workflow-dispatch"}}
+  const f = fake({run: producer, pull: {...pr, labels: []}}), remote = fake()
+  const plan = await planDeviceDispatch({...f, context})
+  assert.equal((await dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(manual)})).status,
+    "private-job-requested")
+  assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "123", request_attempt: "2"})
+  for (const setup of [{pull: {...pr, state: "closed", labels: []}}, {pull: {...pr, head: {...pr.head, sha: source}, labels: []}},
+    {baseSha: source}, {pull: {...pr, base: {ref: "staging"}, labels: []}}]) {
+    const changed = fake(setup), privateGithub = fake()
+    assert.equal((await dispatchReadyRequest({...changed, privateGithub: privateGithub.github, context, plan, bytes: bytes(manual)})).status,
+      "not-dispatched")
+    assert.equal(privateGithub.calls.length, 0)
+  }
+  for (const authorization of [undefined, "pr-label"]) {
+    const automatic = {...manual, routine: {...manual.routine, authorization}}
+    assert.equal((await dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(automatic)})).status,
+      "not-dispatched")
+  }
+  for (const routine of [{...manual.routine, id: "unknown"}, {...manual.routine, authorization: "label-free"}])
+    await assert.rejects(() => dispatchReadyRequest({...f, context, plan, bytes: bytes({...manual, routine})}))
+})
+
+test("workflow matrix preserves trusted code, independent routine fences and disabled POST retries", async () => {
+  const workflow = await readFile(new URL("../workflows/dispatch-device-routine.yml", import.meta.url), "utf8")
+  assert.match(workflow, /matrix: \$\{\{ fromJSON\(needs\.resolve\.outputs\.matrix\) \}\}/)
+  assert.match(workflow, /fail-fast: false/)
+  assert.match(workflow, /device-publication-\{0\}-\{1\}-\{2\}/)
+  assert.match(workflow, /matrix\.sourceRunId, matrix\.publicationAttempt, matrix\.routine/)
+  assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
+  assert.doesNotMatch(workflow, /ref: \$\{\{ github\.event\.workflow_run\.head_sha/)
+  assert.equal((workflow.match(/retries: 0/g) ?? []).length, 3)
+  assert.match(workflow, /retry: \{enabled: false\}/)
 })
