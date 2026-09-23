@@ -211,6 +211,22 @@ describe("authenticated result navigation", () => {
 });
 
 describe("recording and chapter integrity", () => {
+  test("paired recordings use the shared viewer while malformed mappings retain independent playback", () => {
+    const browser = { ...run.assets[0], assetId: "browser-recording", filename: "browser.mp4" };
+    const paired = { ...run, assets: [...run.assets, browser], provenance: { ...run.provenance, recordingTimeline: JSON.stringify({
+      schemaVersion: 1, clock: "native-video", uncertaintyMs: 75, tracks: [
+        { assetId: "video-one", label: "Mentra App", offsetSeconds: 0 },
+        { assetId: "browser-recording", label: "Browser peer", offsetSeconds: 2 },
+      ],
+    }) } };
+    const markup = renderToStaticMarkup(<TestRunView run={paired} onStep={() => {}} />);
+    expect(markup).toContain('aria-label="Synchronized routine recordings"');
+    expect(markup).toContain('aria-label="Browser peer recording"');
+    const invalid = renderToStaticMarkup(<TestRunView run={{ ...paired, provenance: { ...paired.provenance, recordingTimeline: "invalid" } }} onStep={() => {}} />);
+    expect(invalid).toContain("Showing the selected recording independently");
+    expect(invalid).not.toContain('aria-label="Synchronized routine recordings"');
+    expect(invalid).toContain('aria-label="Routine recording"');
+  });
   test("opens a failed step by default and honors an explicit recorded step", () => {
     expect(initialChapter(run.chapters)?.id).toBe("failed-step");
     expect(initialChapter(run.chapters, "start")?.id).toBe("start");

@@ -160,6 +160,59 @@ describe("test run authentication and immutable ingestion", () => {
 });
 
 describe("verified media uploads and seeking", () => {
+  test("uploads JSON evidence through S3 and verifies its original size without a GET fallback", async () => {
+    const bytes = Buffer.from(JSON.stringify({ instruction: "Check the firmware — 確認", details: "x".repeat(120_000) }));
+    const objects = new Map<string, Buffer>();
+    let gets = 0;
+    const headEncodings: (string | null)[] = [];
+    const s3 = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+      const key = new URL(request.url).pathname;
+      if (request.method === "PUT") {
+        objects.set(key, Buffer.from(await request.arrayBuffer()));
+        return new Response(null, { headers: { etag: '"test"' } });
+      }
+      const stored = objects.get(key);
+      if (!stored) return new Response(null, { status: 404 });
+      if (request.method === "HEAD") {
+        const encoding = request.headers.get("accept-encoding");
+        headEncodings.push(encoding);
+        return new Response(null, { headers: { "content-type": "application/json",
+          "last-modified": "Mon, 21 Sep 2026 00:00:00 GMT", etag: '"test"',
+          ...(encoding === "identity" ? { "content-length": String(stored.length) } : { "content-encoding": "gzip" }),
+        } });
+      }
+      if (request.method === "GET") { gets++; return new Response(stored); }
+      return new Response(null, { status: 405 });
+    } });
+    const provider = new S3StorageProvider({ endpoint: s3.url.toString(), bucket: "private-test-bucket",
+      accessKeyId: "test-access-key", secretAccessKey: "test-secret-key", region: "us-east-1" });
+    service = new TestRunService(repository, () => new StorageService(provider));
+    ingest = createTestRunIngestApi(service);
+    admin = createTestRunAdminApi(service);
+    const api = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => ingest.fetch(request) });
+    try {
+      const run = fixture();
+      run.chapters = [];
+      run.assets = [{ assetId: "metadata-1", kind: "metadata", filename: "source-run.json",
+        contentType: "application/json", sizeBytes: bytes.length, sha256: sha256(bytes) }];
+      expect((await post(run)).status).toBe(201);
+      const uploaded = await fetch(new URL("/run-example-1/assets/metadata-1", api.url), {
+        method: "PUT", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: bytes,
+      });
+      expect(uploaded.status).toBe(201);
+      await uploaded.arrayBuffer();
+      expect(objects.size).toBe(1);
+      expect([...objects.values()][0]).toEqual(bytes);
+      expect(gets).toBe(0);
+      expect(headEncodings).toEqual(["identity"]);
+      expect((await service.detail(run.runId)).outcomes.evidence).toBe("complete");
+      const downloaded = await admin.request("/run-example-1/assets/metadata-1");
+      expect(downloaded.status).toBe(200);
+      expect(downloaded.headers.get("content-length")).toBe(String(bytes.length));
+      expect(Buffer.from(await downloaded.arrayBuffer())).toEqual(bytes);
+      expect(headEncodings).toEqual(["identity", "identity"]);
+    } finally { await api.stop(true); await s3.stop(true); }
+  });
   test("accepts a recording upload over a real HTTP socket", async () => {
     const bytes = Buffer.concat([video, Buffer.alloc(9 * 1024 * 1024, 0x6d)]);
     const run = fixture();
