@@ -94,6 +94,7 @@ class DeviceStore {
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         store.set("bluetooth", "loudness_gate_enabled", BluetoothSdkDefaults.loudnessGateEnabled)
+        store.set("bluetooth", "auto_power_off_enabled", BluetoothSdkDefaults.autoPowerOffEnabled)
         // Mentra Nex feature flag (off by default; toggled from Nex Developer Settings):
         store.set("bluetooth", "nex_chinese_captions", false)
         store.set("bluetooth", "screen_disabled", false)
@@ -265,6 +266,12 @@ class DeviceStore {
 
         case ("bluetooth", "loudness_gate_enabled"):
             DeviceManager.shared.sgc?.sendLoudnessGateSetting()
+
+        case ("bluetooth", "auto_power_off_enabled"):
+            Bridge.log(
+                "DeviceStore: auto_power_off_enabled changed to \(String(describing: value)) — sending cs_swit type 11"
+            )
+            DeviceManager.shared.sgc?.sendAutoPowerOffSetting()
 
         // Deliberately has no seeded default: the key starts absent so that a
         // session where the engine has not authorized tuning can only ever

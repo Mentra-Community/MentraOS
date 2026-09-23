@@ -472,6 +472,18 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   /*
+   * Mentra Live can power itself off after ~20 minutes off the wearer's face
+   * (cs_swit type 11). Off unless Super Mode turns it on. Re-pushed on connect,
+   * so this default is what a new install sends to the glasses.
+   */
+  auto_power_off_enabled: {
+    key: "auto_power_off_enabled",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  /*
    * Mentra Live mic tuning, split in two on purpose.
    *
    * `mic_tuning_desired` is what the super user set. It persists so that
@@ -800,6 +812,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.power_saving_mode.key,
   SETTINGS.voice_activity_detection_enabled.key,
   SETTINGS.loudness_gate_enabled.key,
+  SETTINGS.auto_power_off_enabled.key,
   // Effective tuning only; mic_tuning_desired deliberately stays engine-side.
   SETTINGS.mic_tuning.key,
   SETTINGS.lc3_frame_size.key,

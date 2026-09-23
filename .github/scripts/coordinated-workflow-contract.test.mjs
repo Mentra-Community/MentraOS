@@ -383,6 +383,94 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
 })
 
+for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", false], ["", true]]) {
+  test(`private deployment waits for both release images before HTTP probes (${stuckApp || (sameImage ? "configuration-only rollout" : "successful rollout")})`, () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "private-rollout-"))
+    const digest = `sha256:${"a".repeat(64)}`
+    const image = `registry.example/cloud@${digest}`
+    // Execute the real verification step through its HTTP health probes. Azure
+    // initially reports healthy previous revisions; each target becomes ready
+    // on the second poll unless the scenario leaves that service stuck.
+    const step = workflow("private-deployment-dev.yml")
+      .split("      - name: Verify the live enterprise contract\n")[1]
+      .split("        run: |\n")[1]
+      .split("          jq -e '.status")[0]
+      .replace(/^          /gm, "")
+      .replace(/\$\{\{ steps\.source\.outputs\.(\w+) \}\}/g, (_, key) => ({
+        acr_tag: "release-tag", source_digest: digest, image,
+      })[key])
+    const mocks = `
+      az() {
+        case "$*" in
+          *properties.outputs.workspaceOrigin.value*) echo https://workspace.example ;;
+          *properties.outputs.coreOrigin.value*) echo https://core.example.azurecontainerapps.io ;;
+          *properties.outputs.generatedCoreHostname.value*) echo core.example.azurecontainerapps.io ;;
+          "acr manifest show-metadata"*) echo "$TARGET_DIGEST" ;;
+          "containerapp show"*)
+            local app=core count=0
+            [[ "$*" != *"--name runtime "* ]] || app=runtime
+            if [[ "$*" == *properties.latestRevisionName* ]]; then
+              echo "$app-new"
+              return 0
+            fi
+            [[ ! -f "$app-count" ]] || read -r count < "$app-count"
+            count=$((count + 1))
+            echo "$count" > "$app-count"
+            if [[ "$count" -ge 2 && "$STUCK_APP" != "$app" ]]; then
+              echo "$app-new"
+            else
+              echo "$app-old"
+            fi
+            ;;
+          "containerapp revision show"*)
+            if [[ "$*" == *"--revision runtime-new "* ]]; then
+              touch runtime-ready; echo "$TARGET_IMAGE"
+            elif [[ "$*" == *"--revision core-new "* ]]; then
+              touch core-ready; echo "$TARGET_IMAGE"
+            elif [[ "$SAME_IMAGE" == true ]]; then
+              echo "$TARGET_IMAGE"
+            else
+              echo registry.example/cloud:previous
+            fi
+            ;;
+          *) echo "Unexpected Azure command: $*" >&2; return 1 ;;
+        esac
+      }
+      sleep() { :; }
+      curl() {
+        echo probe >> probes
+        if [[ ! -f runtime-ready || ! -f core-ready ]]; then
+          echo "HTTP would read a previous release's manifest" >&2
+          return 1
+        fi
+        echo 200
+      }
+    `
+    try {
+      const result = spawnSync("bash", ["-c", `${mocks}\n${step}`], {
+        cwd: directory,
+        env: {...process.env, AZURE_RESOURCE_GROUP: "group", AZURE_REGISTRY: "registry",
+          AZURE_CONTAINER_APP: "runtime", AZURE_CORE_CONTAINER_APP: "core", RUNNER_TEMP: directory,
+          TARGET_DIGEST: digest, TARGET_IMAGE: image, STUCK_APP: stuckApp, SAME_IMAGE: String(sameImage)},
+        encoding: "utf8", timeout: 10_000,
+      })
+      assert.ifError(result.error)
+      if (stuckApp) {
+        assert.equal(result.status, 1, result.stderr)
+        assert.match(result.stderr, /has no ready revision running/)
+        assert.equal(existsSync(path.join(directory, "probes")), false)
+      } else {
+        assert.equal(result.status, 0, result.stderr)
+        assert.equal(readFileSync(path.join(directory, "probes"), "utf8").trim().split("\n").length, 4)
+        assert.equal(readFileSync(path.join(directory, "runtime-count"), "utf8").trim(), "2")
+        assert.equal(readFileSync(path.join(directory, "core-count"), "utf8").trim(), "2")
+      }
+    } finally {
+      rmSync(directory, {recursive: true, force: true})
+    }
+  })
+}
+
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const mobile = workflow("reusable-coordinated-mobile.yml")

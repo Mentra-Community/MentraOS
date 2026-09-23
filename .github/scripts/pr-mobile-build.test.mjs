@@ -5,7 +5,7 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {runInNewContext} from "node:vm"
-import {candidateAssets, fingerprintMobile, MOBILE_INPUT_PATHS} from "./pr-mobile-build.mjs"
+import {candidateAssets, fingerprintMobile, MOBILE_INPUT_PATHS, selectMobile} from "./pr-mobile-build.mjs"
 
 const input = {tree: "mobile tree", env: {EXPO_PUBLIC_BUILD_ENV: "dev"}, tools: {node: "20", java: "17"}}
 test("configuration-only packaging inputs do not invalidate compiled APK reuse", () => {
@@ -145,7 +145,12 @@ test("iOS selection skips corrupt candidates, verifies signature/provenance and 
   const previous = process.cwd()
   process.chdir(directory)
   try {
-    for (const valid of [true, false]) {
+    for (const {valid, unavailableIndex} of [
+      {valid: true, unavailableIndex: false},
+      {valid: false, unavailableIndex: false},
+      {valid: true, unavailableIndex: true},
+      {valid: false, unavailableIndex: true},
+    ]) {
       const outputs = {},
         verified = []
       const github = {
@@ -163,7 +168,10 @@ test("iOS selection skips corrupt candidates, verifies signature/provenance and 
         context: {repo: {owner: "o", repo: "r"}},
         platform: "ios",
         env: {MENTRA_PR_MOBILE_FINGERPRINT: fp},
-        readIndex: async () => ({assets: []}),
+        readIndex: async () => {
+          if (unavailableIndex) throw Object.assign(new Error("temporary outage"), {code: "ETIMEDOUT"})
+          return {assets: []}
+        },
         core: {setOutput: (key, value) => (outputs[key] = value), info: () => {}, warning: () => {}},
         exec: (command, args) => {
           verified.push(args)
@@ -177,5 +185,68 @@ test("iOS selection skips corrupt candidates, verifies signature/provenance and 
     }
   } finally {
     process.chdir(previous)
+  }
+})
+
+function selectionWithoutCandidates(readIndex) {
+  const outputs = {},
+    warnings = []
+  return {
+    outputs,
+    warnings,
+    args: {
+      github: {
+        rest: {repos: {getReleaseByTag: async () => ({data: {id: 1}}), listReleaseAssets: () => {}}},
+        paginate: async () => [],
+      },
+      context: {repo: {owner: "o", repo: "r"}},
+      platform: "ios",
+      env: {MENTRA_PR_MOBILE_FINGERPRINT: "a".repeat(64)},
+      readIndex,
+      core: {
+        setOutput: (key, value) => (outputs[key] = value),
+        info: () => {},
+        warning: (value) => warnings.push(value),
+      },
+      exec: () => assert.fail("A missing candidate must never be treated as verified"),
+    },
+  }
+}
+
+test("temporary reuse index transport failures fall back to compilation with a sanitized reason", async () => {
+  const failures = [
+    ...["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ECONNRESET", "EAI_AGAIN"].map((code) =>
+      Object.assign(new Error("must not print provider details"), {code}),
+    ),
+    ...[429, 500, 502, 503, 504].map((httpStatusCode) =>
+      Object.assign(new Error("must not print provider details"), {$metadata: {httpStatusCode}}),
+    ),
+  ]
+  for (const failure of failures) {
+    const {args, outputs, warnings} = selectionWithoutCandidates(async () => {
+      throw failure
+    })
+    await selectMobile(args)
+    assert.equal(outputs.reused, "false")
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /Reuse index temporarily unavailable/)
+    assert.doesNotMatch(warnings[0], /provider details/)
+  }
+})
+
+test("reuse index authentication, configuration and malformed-data failures remain fatal", async () => {
+  const failures = [
+    Object.assign(new Error("denied"), {$metadata: {httpStatusCode: 403}}),
+    new Error("ARTIFACTS_R2_ACCOUNT_ID is required"),
+    new Error("Artifact index does not match its release"),
+    new SyntaxError("Unexpected token"),
+  ]
+  for (const failure of failures) {
+    const {args, outputs, warnings} = selectionWithoutCandidates(async () => {
+      throw failure
+    })
+    await assert.rejects(selectMobile(args), (error) => error === failure)
+    assert.equal(outputs.reused, undefined)
+    assert.deepEqual(warnings, [])
   }
 })

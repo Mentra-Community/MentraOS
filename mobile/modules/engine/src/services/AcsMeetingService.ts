@@ -117,6 +117,8 @@ export interface MeetingState {
   guestReason?: "no-entra-identity" | "teams-license-unavailable" | "legacy-credential"
   state: MeetingPhase
   muted: boolean
+  /** Whether Teams receives the glasses camera. Omitted by natives that cannot toggle it. */
+  videoEnabled?: boolean
   error?: string
   meetingUrl?: string
   provider?: "acs-teams"
@@ -404,6 +406,8 @@ type NativeModule = {
   endForEveryone?(): Promise<MeetingState>
   admitParticipant?(participantId: string): Promise<void>
   setMuted(muted: boolean): Promise<MeetingState>
+  /** Stop or resume ACS outgoing video; the call and glasses stream stay up. Absent on older natives. */
+  setVideoEnabled?(enabled: boolean): Promise<MeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
@@ -643,6 +647,8 @@ class AcsMeetingService {
   private lastMicLevel: {meanAbs: number; peak: number} | null = null
   /** Guards [releaseHostState] so a remote hang-up followed by an explicit leave releases once. */
   private hostStateReleased = true
+  /** Read-only observers of a meeting ending; see [onMeetingReleased]. */
+  private readonly releasedListeners = new Set<(instanceId: string) => void>()
 
   setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
     this.onState = handler
@@ -654,6 +660,24 @@ class AcsMeetingService {
 
   ownerPackage(): string | null {
     return this.owner
+  }
+
+  /**
+   * The active meeting and a per-meeting id, or null when there is none. A new join always gets a
+   * new id, so a lease recorded against one meeting can never be inherited by the next.
+   */
+  meetingInstance(): {ownerPackage: string; instanceId: string} | null {
+    if (!this.owner || this.hostStateReleased) return null
+    return {ownerPackage: this.owner, instanceId: `acs-${this.callGeneration}`}
+  }
+
+  /**
+   * Observe meetings ending, by the id [meetingInstance] reported. Observers cannot affect the
+   * meeting: they run after the release and their failures are swallowed here.
+   */
+  onMeetingReleased(listener: (instanceId: string) => void): () => void {
+    this.releasedListeners.add(listener)
+    return () => this.releasedListeners.delete(listener)
   }
 
   /**
@@ -1324,6 +1348,7 @@ class AcsMeetingService {
   private async releaseHostState(): Promise<void> {
     if (this.hostStateReleased) return
     this.hostStateReleased = true
+    const releasedInstance = `acs-${this.callGeneration}`
     this.callGeneration++
     // Before anything else: a caller parked on a frame that will now never arrive has to be
     // rejected, or a leave mid-join leaves the orchestrator waiting out its whole timeout.
@@ -1344,6 +1369,13 @@ class AcsMeetingService {
     this.lastMediaRestartAt = 0
     this.identity = {}
     this.lastState = {state: "idle", muted: false}
+    for (const listener of [...this.releasedListeners]) {
+      try {
+        listener(releasedInstance)
+      } catch (error) {
+        console.warn("[AcsMeeting] meeting-released observer threw", error)
+      }
+    }
   }
 
   /**
@@ -1647,6 +1679,20 @@ class AcsMeetingService {
     return this.lastState
   }
 
+  async setVideoEnabled(packageName: string, enabled: boolean): Promise<MeetingState> {
+    this.assertOwner(packageName)
+    const native = getNative()
+    if (!native?.setVideoEnabled) throw new Error("Turning the camera off needs a newer Mentra App")
+    const state = await native.setVideoEnabled(enabled)
+    this.lastState = {
+      ...this.lastState,
+      ...state,
+      audioSourceReason: this.lastState.audioSourceReason,
+      micTransport: this.micTransport,
+    }
+    return this.lastState
+  }
+
   async updateVideoSource(packageName: string, whepUrl: string): Promise<void> {
     this.assertOwner(packageName)
     const native = getNative()
@@ -1726,6 +1772,7 @@ class AcsMeetingService {
           ...this.identity,
           state: (event.state as MeetingPhase) ?? "idle",
           muted: Boolean(event.muted),
+          ...(typeof event.videoEnabled === "boolean" ? {videoEnabled: event.videoEnabled} : {}),
           error: event.error as string | undefined,
           meetingUrl: event.meetingUrl as string | undefined,
           provider: "acs-teams",
@@ -1759,6 +1806,7 @@ class AcsMeetingService {
         console.log("[AcsMeeting] phase=native-state", {
           state: state.state,
           muted: state.muted,
+          videoEnabled: state.videoEnabled,
           error: state.error,
           audioSource: state.audioSource,
           activeStream: state.activeStream,

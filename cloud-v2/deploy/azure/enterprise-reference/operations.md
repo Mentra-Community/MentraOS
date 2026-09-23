@@ -1,5 +1,73 @@
 # Mentra Private Deployment operations
 
+## Reports and durable attachments
+
+Core stores report records in the deployment's Cosmos DB (MongoDB API).
+Core's report-asset schema creates the `createdAt` index required by Cosmos
+for the ordered attachment lookup.
+The Azure setup also creates an Azure Files share and mounts it at
+`/mnt/core-attachments` in Core. `CLOUD_STORAGE_PROVIDER=local` refers to this
+durable mount, not the container's temporary filesystem. Logs and screenshots
+survive Core revision replacement. The share authenticates with an account
+key held by the Container Apps environment, uses encrypted SMB, and has
+seven-day share-delete retention. It uses the storage service's authenticated
+public endpoint, matching this reference deployment's non-VNet topology.
+
+Report access uses Core's existing admin authorization. Create an org API key
+in this deployment and add its synthetic email, `api-key@<keyId>.local`, to
+`coreAdminEmails` in the deployment config (a comma-separated string). The
+template supplies it as `CLOUD_CORE_ADMIN_EMAILS`. Only the key's hash lives in
+the database; keep the full `msk_...` token in the customer's secret manager.
+An API key alone does not grant admin access: its email must be allowlisted.
+Admin keys permit the existing admin routes, including report listing and triage.
+
+The existing Developer Console org API-key creation flow can issue this key.
+For a fresh private deployment without a console, an operator with database
+access can bootstrap the org with `DeveloperOrgService.createPrimaryOrg` and
+issue its key with `DeveloperApiKeyService.create`. Use the operator's identity
+as the creator for auditability. The key's environment must match Core's
+`CLOUD_CORE_ENVIRONMENT` (or its console-derived environment; this reference
+defaults to `local`). Use these existing services rather than inserting a raw
+bearer secret into Core configuration. Keep the allowlist in deployment config
+so subsequent deployments preserve access. Revoke keys through
+`DeveloperApiKeyService.revoke` and remove their emails from the allowlist.
+
+Enterprise Dev CI uses the `ENTERPRISE_DEV_CORE_ADMIN_EMAILS` repository variable
+and `ENTERPRISE_DEV_ADMIN_TOKEN` secret. The secret is used only to verify the
+existing authenticated admin report route; the application validates the key
+against its database. The deployment helper performs the same check when
+`MENTRA_ADMIN_TOKEN` is set. Preserve signing keys and the refresh-token pepper
+when updating an existing deployment.
+
+The Mentra App feedback confirmation displays the report ID and offers
+**Copy report ID**. Retrieve a known report and its attachments with:
+
+```bash
+export MENTRA_CORE_URL=https://<enterprise-core-host>
+export MENTRA_ADMIN_TOKEN=<admin-org-api-key-from-secret-manager>
+./scripts/fetch-incident-logs.sh rep_01...
+```
+
+`--list` also works with this admin credential. For Enterprise Dev, operators
+who keep the key as `MENTRA_ADMIN_TOKEN_ENTERPRISEDEV` can pass
+`MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_ENTERPRISEDEV"` to the script along
+with the Enterprise Core URL.
+
+This setup needs no separate report-only credential. Admin credentials never
+belong in the mobile manifest.
+
+Report artifacts are not public. Slack notification delivery remains optional
+and unconfigured by this reference setup; report filing and retrieval work
+without Slack or consumer analytics (`telemetry: false`).
+
+Before upgrading a deployment that used temporary local attachment storage,
+copy its existing `.cloud-v2-storage/core/` contents to the new share. Database
+records alone cannot reconstruct attachment bytes lost during earlier restarts.
+
+On iOS, Call listed in `miniapps.managed` with `nativeMeetings: true` is installed
+and made available by the workspace policy. It does not require the consumer
+experimental toggle. Consumer Call visibility remains unchanged.
+
 Image configuration, module/provider values, manifest rules, endpoints, and
 SBOM/provenance verification are defined once in
 [private-deployment.md](../../private-deployment.md). This runbook covers the
@@ -174,3 +242,21 @@ digest. If a new userland bundle fails before activation, the prior version
 remains active. To roll back an already activated bundle, publish the known-good
 content under a new semantic version and update the manifest; versions are
 immutable.
+
+Installation provenance is stored separately from session data so logout retains
+ownership alongside the bundle files. Older missing metadata is recovered only
+through verified comparison, never by trusting a version number.
+
+Workspace changes and logout cancel pending managed downloads. Installation and
+ownership cleanup run in sequence, so a late download cannot remove another
+workspace's release. An unzip already committing finishes and records ownership
+before the next workspace cleans it up. Consumer registry downloads also stop
+installing when their deployment changes.
+
+If the same Call version is already installed from the consumer deployment, the
+host downloads and verifies the workspace ZIP, compares the complete extracted
+file tree, and adopts the existing release only when every file matches. It does
+not overwrite a differing or foreign-owned same-version release. A failed check
+keeps Call hidden in the workspace and preserves the consumer files. Returning
+to the consumer deployment removes workspace ownership before restoring bundled
+miniapps.

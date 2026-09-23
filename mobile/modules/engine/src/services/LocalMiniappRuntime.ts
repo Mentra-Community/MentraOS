@@ -91,7 +91,13 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import {meetingConfiguration, meetingCredential, type MeetingIdentity} from "./MeetingCredentials"
+import {
+  createMeeting,
+  meetingConfiguration,
+  meetingCredential,
+  retireMeeting,
+  type MeetingIdentity,
+} from "./MeetingCredentials"
 import acsMeetingService, {
   parseAcsCallOrigin,
   parseAcsOutgoingVideo,
@@ -114,6 +120,7 @@ import {
 import {awaitCleanupBarrier} from "./SoftapCleanupBarrier"
 import {softapTrace, softapTraceFailure} from "../utils/softapTrace"
 import {PermissionFeatures, permissions} from "../facades/permissions"
+import {getStreamPreviewHost} from "./streamPreviewPort"
 
 // =============================================================================
 // Types
@@ -171,6 +178,8 @@ interface ConnectedMiniapp {
    * see {@link LOCATION_RATE_PRIORITY}.
    */
   requestedLocationRate: string | null
+  /** One spawn of this package's background; a respawn gets a new id. Scopes preview leases. */
+  runtimeId: string
 }
 
 interface SpeechRun {
@@ -601,6 +610,7 @@ class LocalMiniappRuntime {
   public onLivenessTimeout: ((packageName: string) => void) | null = null
 
   private speechRuns = new Map<string, SpeechRun>()
+  private runtimeSeq = 0
 
   // Browser fallback token auth — HMAC-signed blob with a phone-local
   // secret. Both issuer and verifier are the same process, so the
@@ -874,6 +884,9 @@ class LocalMiniappRuntime {
       // stream cannot be re-adopted — startUnmanaged rejects while any stream is
       // active, even for the same owner — so release it or the respawned miniapp
       // is stuck behind STREAM_ALREADY_ACTIVE until the process restarts.
+      // Unlike a managed stream, a preview lease is bound to the runtime that took it and is not
+      // re-adopted: the respawned background asks again.
+      getStreamPreviewHost()?.releaseRuntime(packageName, existing.runtimeId, "runtime_replaced")
       const streamSnapshot = phoneStreamCoordinator.getDiagnosticSnapshot()
       if (
         streamSnapshot.active === true &&
@@ -898,6 +911,7 @@ class LocalMiniappRuntime {
       authDelivered: false,
       speakerState: "idle",
       requestedLocationRate: null,
+      runtimeId: `rt-${++this.runtimeSeq}`,
     })
     // If we just clobbered an existing entry, its requestedLocationRate is
     // now gone — recompute so the aggregate doesn't include a stale rate.
@@ -1058,6 +1072,8 @@ class LocalMiniappRuntime {
       }
       return
     }
+
+    getStreamPreviewHost()?.releaseRuntime(packageName, app.runtimeId, "runtime_stopped")
 
     // Remove from all stream subscriber sets
     this.replaceStreamSubscribers(packageName, app.subscriptions, [])
@@ -1431,6 +1447,18 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MEETING_GET_CONFIGURATION:
         this.sendResult(packageName, requestId, true, meetingConfiguration())
         break
+      case MiniappRequestType.MEETING_CREATE:
+        void this.handleMeetingCreate(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_RETIRE:
+        void this.handleMeetingRetire(packageName, payload, requestId)
+        break
+      case MiniappRequestType.STREAM_PREVIEW_START:
+        void this.handleStreamPreviewStart(packageName, payload, requestId)
+        break
+      case MiniappRequestType.STREAM_PREVIEW_STOP:
+        void this.handleStreamPreviewStop(packageName, payload, requestId)
+        break
       case MiniappRequestType.MEETING_JOIN:
         void this.handleMeetingJoin(packageName, payload, requestId)
         break
@@ -1445,6 +1473,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MEETING_SET_MUTED:
         void this.handleMeetingSetMuted(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_SET_VIDEO_ENABLED:
+        void this.handleMeetingSetVideoEnabled(packageName, payload, requestId)
         break
       case MiniappRequestType.MEETING_UPDATE_VIDEO_SOURCE:
         void this.handleMeetingUpdateVideoSource(packageName, payload, requestId)
@@ -3838,6 +3869,67 @@ class LocalMiniappRuntime {
     return this.handleStreamStop(packageName, payload, requestId)
   }
 
+  /** True when the installed manifest of a connected miniapp declares `permission`. */
+  public hasManifestPermission(packageName: string, permission: string): boolean {
+    return this.connectedApps.get(packageName)?.installedManifest?.permissions?.some((p) => p.type === permission) ?? false
+  }
+
+  /**
+   * Raw decoded-frame preview lease. Authorization, the single-holder rule and the lease's
+   * lifetime live in the host coordinator; the runtime supplies identity and delivery.
+   */
+  private async handleStreamPreviewStart(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    const previewHost = getStreamPreviewHost()
+    if (!app || !previewHost) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: "unsupported",
+        message: "Stream preview is not available in this Mentra App",
+      })
+      return
+    }
+    const runtimeId = app.runtimeId
+    try {
+      const result = await previewHost.start(
+        {packageName, runtimeId, source: payload.source, hasCamera: this.hasManifestPermission(packageName, "CAMERA")},
+        (event) => {
+          // A respawned background must not hear about its predecessor's lease.
+          if (this.connectedApps.get(packageName)?.runtimeId !== runtimeId) return
+          this.sendToMiniapp(packageName, {type: MiniappResponseType.STREAM_PREVIEW_STATUS, ...event})
+        },
+      )
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      const code = (err as {code?: unknown}).code
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: typeof code === "string" ? code : "unsupported",
+        message: err instanceof Error ? err.message : "Stream preview failed",
+      })
+    }
+  }
+
+  private async handleStreamPreviewStop(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    const previewHost = getStreamPreviewHost()
+    if (app && previewHost && typeof payload.handleId === "string") {
+      try {
+        await previewHost.stop({packageName, runtimeId: app.runtimeId, handleId: payload.handleId})
+      } catch (err) {
+        console.warn(`${LOG_TAG}: stream preview stop failed for ${packageName}`, err)
+      }
+    }
+    // Releasing is idempotent from the miniapp's side: an unknown or stale handle is already gone.
+    this.sendResult(packageName, requestId, true)
+  }
+
   private ensureMeetingStateBridge(): void {
     acsMeetingService.setStateHandler((owner, state) => {
       const attempt = this.softapAttempt
@@ -3856,6 +3948,43 @@ class LocalMiniappRuntime {
 
   /** Startup owns the hotspot before ACS has an owner. Closing the app must retire both. */
   private readonly meetingCredentialRequests = new Map<string, object>()
+
+  private async handleMeetingCreate(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      // Provider credentials and organizer IDs are host-owned, never copied from the RPC.
+      const result = await createMeeting({
+        provider: payload.provider as "acs-teams",
+        subject: payload.subject as string | undefined,
+        durationMinutes: payload.durationMinutes as number | undefined,
+      })
+      this.sendResult(packageName, requestId, true, result)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Meeting creation failed",
+      })
+    }
+  }
+
+  private async handleMeetingRetire(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      await retireMeeting(payload.meetingRef as string)
+      this.sendResult(packageName, requestId, true)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Meeting retirement failed",
+      })
+    }
+  }
 
   private async leaveMeetingForApp(packageName: string): Promise<void> {
     this.meetingCredentialRequests.delete(packageName)
@@ -5088,7 +5217,11 @@ class LocalMiniappRuntime {
     }
   }
 
-  private async handleMeetingAdmit(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handleMeetingAdmit(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     try {
       if (typeof payload.participantId !== "string") throw new Error("A participant ID is required")
       await acsMeetingService.admitParticipant(packageName, payload.participantId)
@@ -5132,13 +5265,51 @@ class LocalMiniappRuntime {
     }
   }
 
+  private async handleMeetingSetVideoEnabled(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    if (typeof payload.enabled !== "boolean") {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "enabled must be a boolean",
+      })
+      return
+    }
+    const startedAt = Date.now()
+    try {
+      const state = await acsMeetingService.setVideoEnabled(packageName, payload.enabled)
+      softapTrace("meeting_set_video_enabled", {
+        packageName,
+        requestId: requestId ?? "none",
+        requested: payload.enabled,
+        videoEnabled: state.videoEnabled ?? "unknown",
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      softapTraceFailure("meeting_set_video_enabled", {
+        packageName,
+        requestId: requestId ?? "none",
+        requested: payload.enabled,
+        reason: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS camera toggle failed",
+      })
+    }
+  }
+
   private async handleMeetingUpdateVideoSource(
     packageName: string,
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
     const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
-    const whepUrl = videoSource?.type === "whep" ? (videoSource.url ?? "") : ""
+    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
     if (!whepUrl) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INVALID_ARGUMENT,

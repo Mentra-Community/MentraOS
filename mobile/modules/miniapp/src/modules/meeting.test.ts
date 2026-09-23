@@ -35,6 +35,35 @@ const joinArgs = {
 }
 
 describe("MeetingModule", () => {
+  test("creates and retires through the host without sending caller credentials", async () => {
+    const requests: unknown[] = []
+    const result = {
+      provider: "acs-teams",
+      joinUrl: "https://teams.microsoft.com/meet/123456",
+      meetingRef: "ownership",
+      identityMode: "guest",
+      guestReason: "no-entra-identity",
+    }
+    const {session} = mockSession(async (payload) => {
+      requests.push(payload)
+      return result
+    })
+    const meeting = new MeetingModule(session)
+    expect(await meeting.create({provider: "acs-teams", subject: "Standup", durationMinutes: 30})).toEqual(result)
+    await meeting.retire(result.meetingRef)
+    expect(requests).toEqual([
+      {type: MiniappRequestType.MEETING_CREATE, provider: "acs-teams", subject: "Standup", durationMinutes: 30},
+      {type: MiniappRequestType.MEETING_RETIRE, meetingRef: "ownership"},
+    ])
+  })
+  test("creation on an older host reports that the app must be updated", async () => {
+    const {session} = mockSession(async () => {
+      throw {code: MiniappErrorCode.NOT_IMPLEMENTED}
+    })
+    await expect(new MeetingModule(session).create({provider: "acs-teams"})).rejects.toMatchObject({
+      message: MEETING_HOST_UPDATE_MESSAGE,
+    })
+  })
   test("admission preserves guest identity and propagates host rejection", async () => {
     const requests: unknown[] = []
     const {session} = mockSession(async (payload) => {
@@ -48,12 +77,46 @@ describe("MeetingModule", () => {
     expect(requests).toHaveLength(1)
   })
 
+  test("setVideoEnabled sends the toggle and applies the host's answer", async () => {
+    const requests: unknown[] = []
+    const {session} = mockSession(async (payload) => {
+      requests.push(payload)
+      return {state: "connected", muted: false, videoEnabled: false}
+    })
+    const meeting = new MeetingModule(session)
+    await meeting.setVideoEnabled(false)
+    expect(requests).toEqual([{type: MiniappRequestType.MEETING_SET_VIDEO_ENABLED, enabled: false}])
+    expect(meeting.state.videoEnabled).toBe(false)
+  })
+
+  test("videoEnabled reads as unknown when the host omits or garbles it", () => {
+    const {session} = mockSession(async () => null)
+    const meeting = new MeetingModule(session)
+    meeting._applyState({state: "connected", muted: false})
+    expect(meeting.state.videoEnabled).toBeUndefined()
+    meeting._applyState({state: "connected", muted: false, videoEnabled: "false" as never})
+    expect(meeting.state.videoEnabled).toBeUndefined()
+  })
+
+  test("setVideoEnabled on an older host reports that the app must be updated", async () => {
+    const {session} = mockSession(async () => {
+      throw {code: MiniappErrorCode.NOT_IMPLEMENTED}
+    })
+    await expect(new MeetingModule(session).setVideoEnabled(false)).rejects.toMatchObject({
+      message: MEETING_HOST_UPDATE_MESSAGE,
+    })
+  })
+
   test("lobby permission distinguishes granted, denied and unreported", () => {
     expect(parseMeetingCapabilities({hangUpForEveryone: {}})?.manageLobby).toBeUndefined()
     for (const allowed of [true, false, null]) {
-      expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed}})?.manageLobby?.allowed).toBe(allowed)
+      expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed}})?.manageLobby?.allowed).toBe(
+        allowed,
+      )
     }
-    expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed: "true"}})?.manageLobby?.allowed).toBeNull()
+    expect(
+      parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed: "true"}})?.manageLobby?.allowed,
+    ).toBeNull()
   })
 
   test("getState preserves provider termination details", async () => {

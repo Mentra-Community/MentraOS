@@ -40,15 +40,15 @@
     "supportUrl": null
   },
   "systemMiniapps": {
-    "approvedPackageNamesOverride": ["com.mentra.settings"]
+    "approvedPackageNamesOverride": ["com.mentra.settings", "com.mentra.feedback"]
   },
   "miniapps": {
     "managed": [
       {
         "packageName": "com.mentra.call",
-        "version": "2.1.29",
-        "bundleUrl": "https://enterprisedev.mentraglass.com/miniapps/com.mentra.call-2.1.29.zip",
-        "sha256": "e6619829f18de57442f2a66abd5c516e9f31d43f68b48bbe4a71915bea6df498"
+        "version": "2.1.30",
+        "bundleUrl": "https://enterprisedev.mentraglass.com/miniapps/com.mentra.call-2.1.30.zip",
+        "sha256": "c35cf04750cb9ed33d57942a0935091a9c96d59d1de527b3a023ac96a866edf6"
       }
     ],
     "configuration": {}

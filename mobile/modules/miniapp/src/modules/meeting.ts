@@ -108,6 +108,21 @@ export interface MeetingJoinOptions {
   origin?: MeetingOrigin
 }
 
+export interface MeetingCreateOptions {
+  provider: MeetingProvider
+  subject?: string
+  durationMinutes?: number
+}
+
+export interface CreatedMeeting {
+  provider: MeetingProvider
+  joinUrl: string
+  /** Opaque ownership receipt. Keep it to retire this meeting later. */
+  meetingRef: string
+  identityMode: MeetingIdentityMode
+  guestReason?: "no-entra-identity" | "teams-license-unavailable"
+}
+
 export type MeetingParticipantState = "idle" | "connecting" | "connected" | "lobby" | "hold" | "disconnected"
 
 /** A remote participant as reported by the phone-native meeting client. */
@@ -129,6 +144,8 @@ export interface MeetingConfiguration {
   credentialSource: "runtime" | "miniapp"
   externalBackendAllowed: boolean
   managedStreams: boolean
+  /** Omitted by older hosts. Runtime creation requires Graph organizer configuration. */
+  creationSource?: "runtime" | "miniapp"
 }
 
 export interface MeetingState {
@@ -137,6 +154,11 @@ export interface MeetingState {
   guestReason?: MeetingGuestReason
   state: MeetingPhase
   muted: boolean
+  /**
+   * Whether remote participants receive the glasses camera. False after `setVideoEnabled(false)`;
+   * every new join starts true. Omitted by hosts that cannot toggle outgoing video.
+   */
+  videoEnabled?: boolean
   error?: string
   /** Provider termination details, including Teams' invalid meeting-link codes. */
   endReason?: MeetingEndReason
@@ -225,12 +247,16 @@ export function parseMeetingCapabilities(raw: unknown): MeetingCapabilities | un
   if (!value || typeof value !== "object") return undefined
   const capability = value as Record<string, unknown>
   const rawLobby = (raw as Record<string, unknown>).manageLobby
-  const lobby = rawLobby && typeof rawLobby === "object" ? rawLobby as Record<string, unknown> : undefined
+  const lobby = rawLobby && typeof rawLobby === "object" ? (rawLobby as Record<string, unknown>) : undefined
   return {
-    ...(lobby ? {manageLobby: {
-      allowed: typeof lobby.allowed === "boolean" ? lobby.allowed : null,
-      reason: typeof lobby.reason === "string" && lobby.reason ? lobby.reason : null,
-    }} : {}),
+    ...(lobby
+      ? {
+          manageLobby: {
+            allowed: typeof lobby.allowed === "boolean" ? lobby.allowed : null,
+            reason: typeof lobby.reason === "string" && lobby.reason ? lobby.reason : null,
+          },
+        }
+      : {}),
     hangUpForEveryone: {
       allowed: typeof capability.allowed === "boolean" ? capability.allowed : null,
       reason: typeof capability.reason === "string" && capability.reason ? capability.reason : null,
@@ -277,14 +303,7 @@ export interface MeetingSoftApRecovery {
 
 const SOFTAP_STEPS: ReadonlySet<string> = new Set(["hotspot", "scopedJoin", "acsJoin", "publish", "live"])
 const SOFTAP_STEP_STATUSES: ReadonlySet<string> = new Set(["pending", "running", "done", "failed"])
-const SOFTAP_PHASES: ReadonlySet<string> = new Set([
-  "idle",
-  "starting",
-  "recovering",
-  "live",
-  "stopping",
-  "failed",
-])
+const SOFTAP_PHASES: ReadonlySet<string> = new Set(["idle", "starting", "recovering", "live", "stopping", "failed"])
 
 /** Tolerant parse of a host `softap` payload. Unknown steps are dropped; a malformed payload reads as absent. */
 export function parseMeetingSoftApProgress(raw: unknown): MeetingSoftApProgress | undefined {
@@ -426,6 +445,35 @@ export class MeetingModule {
     return this.session.sendRequest<MeetingConfiguration>({type: MiniappRequestType.MEETING_GET_CONFIGURATION})
   }
 
+  /** Create a Teams meeting in the selected Runtime without exposing provider credentials. */
+  async create(options: MeetingCreateOptions): Promise<CreatedMeeting> {
+    if (options.provider !== "acs-teams") {
+      throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "Unsupported meeting provider"}
+    }
+    try {
+      return await this.session.sendRequest<CreatedMeeting>(
+        {
+          type: MiniappRequestType.MEETING_CREATE,
+          provider: options.provider,
+          subject: options.subject,
+          durationMinutes: options.durationMinutes,
+        },
+        {timeoutMs: 0},
+      )
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /** Delete a meeting created by this caller. Does not hang up an active call. */
+  async retire(meetingRef: string): Promise<void> {
+    try {
+      await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_RETIRE, meetingRef}, {timeoutMs: 0})
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
   async leave(): Promise<void> {
     try {
       await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_LEAVE})
@@ -468,6 +516,23 @@ export class MeetingModule {
       const result = await this.session.sendRequest<MeetingState | null>({
         type: MiniappRequestType.MEETING_SET_MUTED,
         muted,
+      })
+      if (result) this._applyState(result)
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /**
+   * Stop or resume the glasses camera the meeting receives. The call and the glasses stream stay
+   * up, so a local `<StreamPreview>` keeps drawing while remote participants see the camera off.
+   * Check `state.videoEnabled !== undefined` before offering it; older hosts reject.
+   */
+  async setVideoEnabled(enabled: boolean): Promise<void> {
+    try {
+      const result = await this.session.sendRequest<MeetingState | null>({
+        type: MiniappRequestType.MEETING_SET_VIDEO_ENABLED,
+        enabled,
       })
       if (result) this._applyState(result)
     } catch (error) {
@@ -523,6 +588,7 @@ export class MeetingModule {
       guestReason: event.identityMode === "guest" ? event.guestReason : undefined,
       state: event.state,
       muted: Boolean(event.muted),
+      videoEnabled: typeof event.videoEnabled === "boolean" ? event.videoEnabled : undefined,
       error: event.error,
       endReason: parseMeetingEndReason(event.endReason),
       meetingUrl: event.meetingUrl,

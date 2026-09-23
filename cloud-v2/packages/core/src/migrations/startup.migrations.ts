@@ -12,6 +12,8 @@ import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
 import { OemModel } from "../models/oem.model";
+import { TestAssetModel, TestRunModel } from "../models/test-run.model";
+import { TestRunClaimModel } from "../models/test-run-claim.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
 
@@ -45,6 +47,11 @@ export async function runStartupMigrations(): Promise<void> {
   await UserModel.createIndexes();
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
+  // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
+  await TestRunModel.createIndexes();
+  await TestAssetModel.createIndexes();
+  // No device execution grant is safe until request IDs are unique across all Core instances.
+  await TestRunClaimModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
   await dedupeDeveloperOrgMemberships();
   // Build the unique index BEFORE any upserts so concurrent Core startups can't

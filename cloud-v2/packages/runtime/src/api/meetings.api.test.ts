@@ -4,6 +4,7 @@ import {Hono} from "hono"
 import {resetRuntimeAuthCache, signRuntimeToken} from "@mentra/cloud-shared"
 
 import {meetingsApi} from "./meetings.api"
+import {resetTeamsMeetingStateForTests} from "../services/meetings/teams-meetings.service"
 import {
   resetAcsTeamsAuthCache,
   setAcsIdentityClientForTests,
@@ -63,6 +64,97 @@ describe("Runtime ACS credential API", () => {
     expect((await app().request("/api/meetings/acs/token", {method: "POST"})).status).toBe(401)
   })
 
+  test("creation and retirement require Runtime authentication", async () => {
+    for (const path of ["create", "retire"]) {
+      expect((await app().request(`/api/meetings/teams/${path}`, {method: "POST"})).status).toBe(401)
+    }
+  })
+
+  test("rejects organizer injection, malformed input and unbound employee tokens", async () => {
+    const headers = {"authorization": `Bearer ${await runtimeToken()}`, "content-type": "application/json"}
+    for (const body of ["{", JSON.stringify({organizerId: "victim"}), JSON.stringify({durationMinutes: 0})]) {
+      expect((await app().request("/api/meetings/teams/create", {method: "POST", headers, body})).status).toBe(400)
+    }
+    expect(
+      (
+        await app().request("/api/meetings/teams/create", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({teamsUserAadToken: "x".repeat(100)}),
+        })
+      ).status,
+    ).toBe(403)
+    expect(
+      (
+        await app().request("/api/meetings/teams/create", {
+          method: "POST",
+          headers,
+          body: "x".repeat(17 * 1024),
+        })
+      ).status,
+    ).toBe(413)
+  })
+
+  test("creates using the fallback organizer and binds retirement to the authenticated caller", async () => {
+    setEnv("TEAMS_GRAPH_TENANT_ID", "tenant")
+    setEnv("TEAMS_GRAPH_CLIENT_ID", "graph-app")
+    setEnv("TEAMS_GRAPH_CLIENT_SECRET", "graph-secret")
+    setEnv("TEAMS_GRAPH_ORGANIZER_ID", "fallback-organizer")
+    resetTeamsMeetingStateForTests()
+    const savedFetch = globalThis.fetch
+    const deleted: string[] = []
+    globalThis.fetch = (async (input, init) => {
+      if (String(input).includes("/oauth2/v2.0/token"))
+        return Response.json({access_token: "graph-token", expires_in: 3600})
+      if (init?.method === "DELETE") {
+        deleted.push(String(input))
+        return new Response(null, {status: 204})
+      }
+      return Response.json({id: "meeting", joinWebUrl: "https://teams.microsoft.com/meet/123456"})
+    }) as typeof fetch
+    try {
+      const headers = {"authorization": `Bearer ${await runtimeToken()}`, "content-type": "application/json"}
+      const response = await app().request("/api/meetings/teams/create", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({subject: "Standup"}),
+      })
+      expect(response.status).toBe(200)
+      const result = (await response.json()) as {meetingRef: string}
+      expect(result).toMatchObject({identityMode: "guest", guestReason: "no-entra-identity"})
+      expect(result).not.toHaveProperty("token")
+      const body = JSON.stringify({meetingRef: result.meetingRef})
+      expect(
+        (
+          await app().request("/api/meetings/teams/retire", {
+            method: "POST",
+            headers: {...headers, authorization: `Bearer ${await runtimeToken("other-user")}`},
+            body,
+          })
+        ).status,
+      ).toBe(403)
+      expect(deleted).toHaveLength(0)
+      expect((await app().request("/api/meetings/teams/retire", {method: "POST", headers, body})).status).toBe(200)
+      expect(deleted).toEqual(["https://graph.microsoft.com/v1.0/users/fallback-organizer/onlineMeetings/meeting"])
+    } finally {
+      globalThis.fetch = savedFetch
+      resetTeamsMeetingStateForTests()
+    }
+  })
+
+  test("explains missing Graph configuration to clients without exposing provider secrets", async () => {
+    deleteEnv("TEAMS_GRAPH_CLIENT_ID")
+    const response = await app().request("/api/meetings/teams/create", {
+      method: "POST",
+      headers: {authorization: `Bearer ${await runtimeToken()}`},
+    })
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: "Teams meeting creation is not configured on this Runtime",
+      message: "Teams meeting creation is not configured on this Runtime",
+    })
+  })
+
   test("issues a guest credential without requiring Entra configuration", async () => {
     const response = await app().request("/api/meetings/acs/token", {
       method: "POST",
@@ -78,8 +170,8 @@ describe("Runtime ACS credential API", () => {
     })
   })
 
-  test("does not reinterpret a supplied employee token as a guest request", async () => {
-    const response = await app().request("/api/meetings/acs/token", {
+  test.each(["acs/token", "teams/create"])("explains identity rejection without guest fallback on %s", async (path) => {
+    const response = await app().request(`/api/meetings/${path}`, {
       method: "POST",
       headers: {
         "authorization": `Bearer ${await runtimeToken()}`,
@@ -91,6 +183,7 @@ describe("Runtime ACS credential API", () => {
     expect(response.status).toBe(403)
     expect(await response.json()).toEqual({
       error: "Teams identity exchange rejected",
+      message: "Teams identity exchange rejected",
     })
   })
 
@@ -138,11 +231,11 @@ function app(): Hono {
   return app
 }
 
-function runtimeToken(): Promise<string> {
+function runtimeToken(subject = "user-1"): Promise<string> {
   return signRuntimeToken({
     privateKey,
     issuer: ISSUER,
-    subject: "user-1",
+    subject,
     tenantId: "tenant-1",
     sessionId: "session-1",
     expiresInSeconds: 300,
