@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 export const testRunIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/);
+// Routine step names are labels, not run or asset path segments.
+export const testRunChapterIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
 const text = z.string().min(1).max(2000);
 const verdict = z.enum(["passed", "failed", "blocked", "not-run"]);
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
@@ -43,7 +45,7 @@ export const testRunSchema = z.object({
     phase: z.enum(["preflight", "setup", "test", "final-assertions", "teardown", "return-verification", "evidence"]).optional(),
   }).strict()).max(100),
   chapters: z.array(z.object({
-    id: testRunIdSchema, instruction: text, expected: text.optional(), status: verdict,
+    id: testRunChapterIdSchema, instruction: text, expected: text.optional(), status: verdict,
     phase: z.enum(["setup", "test", "verify", "teardown"]),
     videoAssetId: testRunIdSchema.optional(), videoStart: z.number().finite().nonnegative().optional(),
     videoEnd: z.number().finite().nonnegative().optional(), screenshotAssetId: testRunIdSchema.optional(),

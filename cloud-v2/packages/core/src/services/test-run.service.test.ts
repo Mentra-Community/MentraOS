@@ -119,6 +119,43 @@ describe("test run authentication and immutable ingestion", () => {
     expect((await post(changed)).status).toBe(409);
     expect((await service.detail(changed.runId)).provenance.buildSha).toBe("a".repeat(40));
   });
+  test("ingests dotted login chapter IDs and preserves them in admin results", async () => {
+    const run = fixture();
+    run.chapters = ["AUTH-08.1", "AUTH-08.2", "AUTH-08.3"].map((id, index) => ({
+      ...run.chapters[0], id, videoStart: index * 2, videoEnd: index * 2 + 1,
+    }));
+    expect((await post(run)).status).toBe(201);
+    expect((await post(run)).status).toBe(200);
+    expect((await put()).status).toBe(201);
+    const response = await admin.request(`/${run.runId}`);
+    expect(response.status).toBe(200);
+    const detail = await response.json() as Awaited<ReturnType<TestRunService["detail"]>>;
+    expect(detail.chapters).toEqual(run.chapters);
+    expect(detail.outcome).toBe("passed");
+    const changed = structuredClone(run);
+    changed.chapters[0].id = "AUTH-08.4";
+    expect((await post(changed)).status).toBe(409);
+  });
+  test("bounds chapter labels without allowing dotted run or asset resource IDs", async () => {
+    const run = fixture();
+    run.chapters[0].id = "A" + ".".repeat(119);
+    expect(testRunSchema.safeParse(run).success).toBe(true);
+    for (const id of ["A".repeat(121), ".AUTH-08", "AUTH/08.1", "AUTH\\08.1", "AUTH%2F08.1", "AUTH 08.1", ""]) {
+      expect((await post({ ...run, chapters: [{ ...run.chapters[0], id }] })).status).toBe(400);
+    }
+    const variants = [
+      { ...run, runId: "run.1" },
+      { ...run, requestId: "request.1" },
+      { ...run, routineId: "routine.1" },
+      { ...run, assets: [{ ...run.assets[0], assetId: "video.1" }],
+        chapters: [{ ...run.chapters[0], videoAssetId: "video.1" }] },
+      { ...run, assets: [...run.assets, { ...run.assets[0], assetId: "screenshot.1", kind: "screenshot", contentType: "image/png" }],
+        chapters: [{ ...run.chapters[0], screenshotAssetId: "screenshot.1" }] },
+      { ...run, chapters: [run.chapters[0], run.chapters[0]] },
+    ];
+    for (const value of variants) expect((await post(value)).status).toBe(400);
+    expect(repository.runs.size).toBe(0);
+  });
   test("preserves optional firmware phases and failed test checks after a successful return", async () => {
     const run = fixture();
     expect(testRunSchema.parse(run).firmwareAssertions[0].phase).toBeUndefined();
