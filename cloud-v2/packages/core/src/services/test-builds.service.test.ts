@@ -22,6 +22,7 @@ function fixture() {
   const fetch = (async (url: string, init?: RequestInit) => {
     calls.push({ url, init });
     const value = rows.get(`${init?.method ?? "GET"} ${url}`) ?? rows.get(url);
+    if (value instanceof Error) throw value;
     if (value instanceof Response) return value.clone();
     return value === undefined ? new Response("missing", { status: 404 }) : Response.json(value);
   }) as typeof globalThis.fetch;
@@ -84,6 +85,18 @@ describe("exact PR build inventory", () => {
     expect((await f.gateway.resolve(input.source)).availability).toBe("available");
     f.rows.set(`${API}/actions/runs/50/attempts/1`, run({ status: "in_progress" }));
     expect((await f.gateway.resolve(input.source)).availability).toBe("unavailable");
+  });
+  test("exact resolution preserves transient metadata and archive failures while inventory remains readable", async () => {
+    for (const failure of [new Response("busy", { status: 429 }), new Response("unavailable", { status: 503 }), new Error("Network timeout")]) {
+      for (const location of ["metadata", "archive"]) {
+        const f = fixture();
+        f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, { workflow_runs: [run()] });
+        f.rows.set(location === "metadata" ? `${CDN}pr-builds/mentra-ios-pr-12-${HEAD}-50-1.json`
+          : `HEAD ${CDN}pr-builds/${f.receipt.artifacts.mac.name}`, failure);
+        await expect(f.gateway.resolve(input.source)).rejects.toThrow(failure instanceof Error ? "Network timeout" : /unavailable/);
+        expect((await f.gateway.inventory({ channel: "pr", pr: 12 }))[0]!.availability).toBe("unavailable");
+      }
+    }
   });
 });
 

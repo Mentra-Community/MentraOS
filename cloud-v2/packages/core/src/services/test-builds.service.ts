@@ -179,11 +179,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
     requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, pr),
       "Build does not match the selected source and publication attempt");
-    const result = await this.describe(run, source.channel, pr, pr ? await this.baseSha() : undefined);
+    const result = await this.describe(run, source.channel, pr, pr ? await this.baseSha() : undefined, true);
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
   }
-  private async describe(run: GithubRun, channel: TestBuildSource["channel"], pr?: PullRequest, baseSha?: string): Promise<TestBuild> {
+  private async describe(run: GithubRun, channel: TestBuildSource["channel"], pr?: PullRequest, baseSha?: string, exact = false): Promise<TestBuild> {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
       : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
     const build: TestBuild = { source, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
@@ -195,10 +195,15 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       build.source.publicationAttempt = artifacts.attempt;
       const archive = artifacts.archive;
       const response = await this.fetcher(`${CDN}${artifacts.tag}/${archive.name}`, { method: "HEAD" });
+      if (!response.ok && response.status !== 404)
+        throw new TestDispatchError(502, `Published Mac archive is temporarily unavailable (HTTP ${response.status})`);
       requireThat(response.ok && Number(response.headers.get("content-length")) === archive.size,
         "Published Mac archive is missing or its size differs from the receipt");
       return { ...build, ...artifacts.result, archive, availability: "available", routines: this.routines(channel, true) };
     } catch (error) {
+      // Inventory can describe an unavailable row, but dispatch must not make a
+      // permanent rejection from a transient provider or network failure.
+      if (exact && (!(error instanceof TestDispatchError) || error.status >= 500)) throw error;
       return { ...build, reason: error instanceof TestDispatchError ? error.message : "Published metadata does not match this build" };
     }
   }

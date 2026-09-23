@@ -52,7 +52,8 @@ export interface TestDispatchReceipt {
   requestedBy: string;
   createdAt: string;
   // This is a send receipt, not another queue. A send is never retried here.
-  sendState: "sending" | "accepted" | "unknown";
+  sendState: "sending" | "accepted" | "unknown" | "rejected";
+  rejectionReason?: string;
   requestRunId?: number;
   requestUrl?: string;
 }

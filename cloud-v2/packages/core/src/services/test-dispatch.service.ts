@@ -58,7 +58,7 @@ export class MongoTestDispatchRepository implements TestDispatchRepository {
   async result(runId: string) { return new TestRunService().detail(runId); }
 }
 
-/** One acknowledged insert permits one send. Replays only read the saved receipt. */
+/** One acknowledged sending insert permits one send. Replays only read the saved receipt. */
 export class TestDispatchService {
   constructor(private readonly repository: TestDispatchRepository = new MongoTestDispatchRepository(),
     private readonly github: TestBuildGateway = new GithubTestBuildGateway()) {}
@@ -75,14 +75,24 @@ export class TestDispatchService {
     };
     const before = await this.repository.get(dispatchId);
     if (before) return replay(before);
-    const build = await this.github.resolve(data.source);
-    if (build.availability !== "available" || build.archive?.sha256 !== data.archiveSha256)
-      throw new TestDispatchError(409, build.reason ?? "Selected build changed or is unavailable; refresh the build list");
-    const routine = build.routines.find(item => item.id === data.routineId);
-    if (!routine?.available) throw new TestDispatchError(409, routine?.reason ?? "This routine is not compatible with the selected build");
-    const value: TestDispatchReceipt = { dispatchId, input: data, requestedBy, createdAt: new Date().toISOString(), sendState: "sending" };
+    let rejectionReason: string | undefined;
+    try {
+      const build = await this.github.resolve(data.source);
+      if (build.availability !== "available" || build.archive?.sha256 !== data.archiveSha256)
+        throw new TestDispatchError(409, build.reason ?? "Selected build changed or is unavailable; refresh the build list");
+      const routine = build.routines.find(item => item.id === data.routineId);
+      if (!routine?.available) throw new TestDispatchError(409, routine?.reason ?? "This routine is not compatible with the selected build");
+    } catch (error) {
+      if (!(error instanceof TestDispatchError) || ![400, 404, 409].includes(error.status)) throw error;
+      rejectionReason = error.message;
+    }
+    const value: TestDispatchReceipt = { dispatchId, input: data, requestedBy, createdAt: new Date().toISOString(),
+      sendState: rejectionReason === undefined ? "sending" : "rejected", ...(rejectionReason === undefined ? {} : { rejectionReason }) };
+    // Rejection must own the same unique ID as sending. A concurrent validator
+    // may already have sent; only the stored winner can authorize a new request.
     const inserted = await this.repository.insert({ inputSha256, receipt: value });
     if (!inserted.created) return replay(inserted.stored);
+    if (value.sendState === "rejected") return this.present(value);
     let response;
     try { response = await this.github.dispatch(data); }
     catch {
@@ -99,6 +109,8 @@ export class TestDispatchService {
     return this.present(stored.receipt);
   }
   private async present(value: TestDispatchReceipt): Promise<TestDispatchView> {
+    if (value.sendState === "rejected") return { ...value, state: "unavailable",
+      message: `Request was not sent: ${value.rejectionReason ?? "The selected build is unavailable"}. Choose New request to refresh the build selection.` };
     if (value.sendState !== "accepted" || !value.requestRunId) return { ...value, state: "unknown",
       message: "Submission is in progress or its acknowledgement is unknown. Keep this submission ID; do not send a replacement until reconciled." };
     const source = value.input.source;
