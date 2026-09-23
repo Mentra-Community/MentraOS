@@ -67,7 +67,7 @@ describe("Teams identity selection", () => {
   ])
     test(`does not downgrade ${JSON.stringify(error)}`, async () => {
       exchangeError = error
-      await expect(issueAcsTeamsCredential(subject, "user")).rejects.toBe(error)
+      await expect(issueAcsTeamsCredential(subject, "user")).rejects.toThrow("unavailable")
       expect(guestMints).toBe(0)
     })
 })

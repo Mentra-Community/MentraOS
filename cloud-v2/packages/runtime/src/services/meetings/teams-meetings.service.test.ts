@@ -89,7 +89,7 @@ describe("Runtime Teams meeting creation", () => {
   for (const error of [{code: "Forbidden"}, {code: "Unauthorized"}, {code: "TooManyRequests"}, new Error("network")]) {
     test(`does not create with the fallback organizer after ${JSON.stringify(error)}`, async () => {
       exchangeError = error
-      await expect(create(true)).rejects.toBe(error)
+      await expect(create(true)).rejects.toThrow("unavailable")
       expect(requests).toEqual([])
     })
   }
