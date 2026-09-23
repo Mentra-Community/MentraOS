@@ -106,15 +106,17 @@ export function TestRunRecordings({ runId, assets, timeline, selected, seekSeque
         return <div key={track.assetId}>
           <h4 className="mb-2 text-sm font-semibold">{track.label}</h4>
           {playable ? <>
+            <div className="relative rounded-xl bg-[#111217]">
             <video ref={node => { media.current[track.assetId] = node; }} src={testRunAssetPath(runId, track.assetId)}
-              controls={index === 0} muted={index !== 0} playsInline preload="metadata" hidden={!covered}
+              controls={index === 0} muted={index !== 0} playsInline preload="metadata" aria-hidden={!covered} style={{ opacity: covered ? 1 : 0 }}
               aria-label={`${track.label} recording`} className="max-h-[65vh] w-full rounded-xl bg-[#111217] object-contain"
               onLoadedMetadata={event => { const duration = event.currentTarget.duration; setDurations(current => ({ ...current, [track.assetId]: duration })); sync(); }}
               onTimeUpdate={index === 0 ? sync : undefined} onSeeking={index === 0 ? sync : undefined}
               onPlay={index === 0 ? sync : undefined} onPause={index === 0 ? sync : undefined}
               onRateChange={index === 0 ? sync : undefined}
               onError={() => { for (const item of Object.values(media.current)) item?.pause(); setError("A recording is unavailable or the admin session has expired."); }} />
-            {!covered ? <p role="status" className="rounded-xl bg-[#f5f7f4] p-5 text-sm">{loaded ? "No recording covers this moment." : "Loading recording metadata."}</p> : null}
+            {!covered ? <p role="status" className="absolute inset-0 flex items-center justify-center rounded-xl bg-[#f5f7f4] p-5 text-sm">{loaded ? "No recording covers this moment." : "Loading recording metadata."}</p> : null}
+            </div>
             <a href={testRunAssetPath(runId, track.assetId)} download className="mt-2 inline-block text-xs font-semibold text-[#087d50]">Download {track.label} recording</a>
           </> : <p role="status">Recording upload is incomplete or unavailable.</p>}
         </div>;

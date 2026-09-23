@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { api, ApiError } from "../lib/api";
-import type { TestBuild, TestDispatchReceipt, TestDispatchView, TestRoutineId } from "../../../../packages/core/src/types/test-dispatch.types";
+import type { TestBuild, TestDispatchInput, TestDispatchReceipt, TestDispatchView, TestRoutineId } from "../../../../packages/core/src/types/test-dispatch.types";
 
 const SELECT = "h-9 rounded-lg border border-[#dfe3dc] bg-white px-3 text-sm";
 export function testBuildInventoryPath(channel: string, pr: string) {
@@ -25,6 +25,7 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
   const [selection, setSelection] = useState("");
   const [routineId, setRoutineId] = useState<TestRoutineId>("no-glasses");
   const [dispatchId, setDispatchId] = useState<string | null>(null);
+  const [submittedInput, setSubmittedInput] = useState<TestDispatchInput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const builds = useQuery({ queryKey: ["admin-test-builds", inventoryPath], enabled: open && !!inventoryPath,
@@ -39,24 +40,29 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
   const selected = builds.data?.builds.find(build => buildKey(build) === selection);
   const compatibility = selected?.routines.find(routine => routine.id === routineId);
 
-  async function submit() {
-    if (!selected?.archive || !compatibility?.available || submitting || dispatchId) return;
-    const id = crypto.randomUUID();
-    setDispatchId(id);
+  async function send(input: TestDispatchInput) {
+    if (submitting) return;
+    setDispatchId(input.idempotencyKey);
+    setSubmittedInput(input);
     setSubmitting(true);
     setError(null);
     try {
-      await api<TestDispatchView>("/api/admin/test-dispatches", { method: "POST", body: {
-        source: selected.source, routineId, archiveSha256: selected.archive.sha256, idempotencyKey: id,
-      } });
+      await api<TestDispatchView>("/api/admin/test-dispatches", { method: "POST", body: input });
       await recent.refetch();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Unable to submit this routine.");
-      // Only validation failures before submission permit choosing another input.
-      // Network/server errors retain the ID and never automatically repeat POST.
-      if (failure instanceof ApiError && [400, 409].includes(failure.status)) setDispatchId(null);
+      // An uncertain response may already own a send. Retrying the exact saved
+      // input/id is idempotent; allocating a replacement ID is not.
+      if (failure instanceof ApiError && failure.status === 400) {
+        setDispatchId(null); setSubmittedInput(null);
+      }
     } finally { setSubmitting(false); }
   }
+  function submit() {
+    if (!selected?.archive || !compatibility?.available || submitting || dispatchId) return;
+    void send({ source: selected.source, routineId, archiveSha256: selected.archive.sha256, idempotencyKey: crypto.randomUUID() });
+  }
+  function clearSelection() { setInventoryPath(null); setSelection(""); setError(null); }
   return (
     <section className="border-b border-[#eceeeb] p-5" aria-label="Run a routine">
       <div className="flex items-center justify-between gap-4">
@@ -72,11 +78,11 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
             setInventoryPath(path); setSelection(""); setError(null);
           } catch (failure) { setError((failure as Error).message); }
         }}>
-          <label className="grid gap-1 text-xs font-medium">Build channel<select aria-label="Build channel" className={SELECT} value={channel} onChange={event => setChannel(event.target.value)}>
+          <label className="grid gap-1 text-xs font-medium">Build channel<select aria-label="Build channel" className={SELECT} value={channel} disabled={!!dispatchId} onChange={event => { setChannel(event.target.value); clearSelection(); }}>
             <option value="pr">Pull request</option><option value="dev">Dev</option><option value="staging">Staging</option>
           </select></label>
-          {channel === "pr" ? <label className="grid gap-1 text-xs font-medium">PR number<Input aria-label="PR number to test" inputMode="numeric" value={pr} onChange={event => setPr(event.target.value)} className="w-32" /></label> : null}
-          <Button type="submit" variant="outline" disabled={builds.isFetching}>{builds.isFetching ? "Checking builds…" : "Find builds"}</Button>
+          {channel === "pr" ? <label className="grid gap-1 text-xs font-medium">PR number<Input aria-label="PR number to test" inputMode="numeric" value={pr} disabled={!!dispatchId} onChange={event => { setPr(event.target.value); clearSelection(); }} className="w-32" /></label> : null}
+          <Button type="submit" variant="outline" disabled={builds.isFetching || !!dispatchId}>{builds.isFetching ? "Checking builds…" : "Find builds"}</Button>
         </form>
         {error || builds.error || routines.error ? <p role="alert" className="text-sm text-[#a64235]">{error ?? builds.error?.message ?? routines.error?.message}</p> : null}
         {builds.data ? <div className="space-y-2">
@@ -103,10 +109,11 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
           {progress.error ? <p role="alert" className="mt-2 text-sm text-[#a64235]">{progress.error.message}</p> : null}
           <p className="mt-2 break-all font-mono text-[10px]">Submission {dispatchId}</p>
           <Button variant="ghost" disabled={submitting || progress.isFetching} onClick={() => progress.refetch()}>Refresh status</Button>
-          {progress.data && ["finished", "unavailable", "failed"].includes(progress.data.state) ? <Button variant="outline" onClick={() => { setDispatchId(null); setError(null); }}>New request</Button> : null}
+          {submittedInput && progress.error ? <Button variant="outline" disabled={submitting || progress.isFetching} onClick={() => void send(submittedInput)}>Retry saved request</Button> : null}
+          {progress.data && ["finished", "unavailable", "failed"].includes(progress.data.state) ? <Button variant="outline" onClick={() => { setDispatchId(null); setSubmittedInput(null); clearSelection(); }}>New request</Button> : null}
         </div> : null}
         {recent.data?.dispatches.length ? <details><summary className="cursor-pointer text-sm font-medium">Recent routine requests</summary><ul className="mt-2 space-y-1">
-          {recent.data.dispatches.map(item => <li key={item.dispatchId}><button className="text-left text-sm text-[#087d50] underline" onClick={() => { setDispatchId(item.dispatchId); setError(null); }}>
+          {recent.data.dispatches.map(item => <li key={item.dispatchId}><button disabled={submitting} className="text-left text-sm text-[#087d50] underline" onClick={() => { setDispatchId(item.dispatchId); setSubmittedInput(item.input); setError(null); }}>
             {item.input.routineId} · {item.input.source.channel === "pr" ? `PR #${item.input.source.prNumber}` : item.input.source.channel} · {new Date(item.createdAt).toLocaleString()}
           </button></li>)}
         </ul></details> : null}
