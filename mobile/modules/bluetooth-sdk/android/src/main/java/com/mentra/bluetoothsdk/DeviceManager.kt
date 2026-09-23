@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import com.mentra.bluetoothsdk.controllers.ControllerManager
 import com.mentra.bluetoothsdk.controllers.R1
 import com.mentra.bluetoothsdk.services.ForegroundService
+import com.mentra.bluetoothsdk.services.G2ConnectionRecovery
 import com.mentra.bluetoothsdk.services.PhoneMic
 import com.mentra.bluetoothsdk.sgcs.Ar99
 import com.mentra.bluetoothsdk.sgcs.G1
@@ -52,6 +53,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         @Volatile
         private var _instance: DeviceManager? = null
 
+        internal fun isInitialized(): Boolean = _instance != null
+
         @JvmStatic
         fun getInstance(): DeviceManager {
             return _instance
@@ -60,6 +63,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     // MARK: - Unique (Android)
+    private val connectionRecovery = G2ConnectionRecovery(Bridge.getContext())
+    private val recoveryLock = Any()
+    private var recoverG2Connection = false
+    private var recoveryListenerId: String? = null
     private var serviceStarted = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -285,6 +292,15 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
 
     init {
         Bridge.log("DeviceManager: init()")
+        recoveryListenerId = DeviceStore.store.addListener { category, changes ->
+            if (category == "bluetooth" && changes.keys.any { it in G2ConnectionRecovery.keys }) {
+                synchronized(recoveryLock) {
+                    if (recoverG2Connection) {
+                        connectionRecovery.save(DeviceStore.store.getCategory("bluetooth"))
+                    }
+                }
+            }
+        }
         initializeViewStates()
         if (initializeHardware) initializeHardwareServices()
     }
@@ -1505,6 +1521,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         Bridge.log("MAN: handleDeviceReady() ${sgc?.type}")
         resetMicHealth()
         defaultWearable = sgc?.type ?: ""
+        synchronized(recoveryLock) {
+            recoverG2Connection = defaultWearable == DeviceTypes.G2
+            connectionRecovery.save(DeviceStore.store.getCategory("bluetooth"))
+        }
         searching = false
 
         syncSystemTimeOnceForConnection(readyKey)
@@ -2411,6 +2431,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun disconnect(clearPendingIdentity: Boolean = true) {
+        synchronized(recoveryLock) {
+            recoverG2Connection = false
+            connectionRecovery.clear()
+        }
         sgc?.clearDisplay()
         // NIMO owns a background canvas encoder and this path discards its instance.
         // A link-level reconnect keeps the instance (and encoder) through disconnect().
@@ -2465,6 +2489,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun forget() {
+        synchronized(recoveryLock) {
+            recoverG2Connection = false
+            connectionRecovery.clear()
+        }
         Bridge.log("MAN: Forgetting smart glasses")
 
         val live = sgc as? MentraLive
@@ -2579,6 +2607,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
 
     // MARK: Cleanup
     fun cleanup() {
+        recoveryListenerId?.let { DeviceStore.store.removeListener(it) }
+        recoveryListenerId = null
         stopBluetoothStateMonitoring()
 
         micReinitRunnable?.let { mainHandler.removeCallbacks(it) }

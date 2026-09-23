@@ -991,3 +991,158 @@ describe("MantleManager", () => {
     }
   })
 })
+
+describe("runtime recovery initialization", () => {
+  type Manager = {
+    init: typeof mantle.init
+    cleanup: typeof mantle.cleanup
+    waitForMiniapps: typeof mantle.waitForMiniapps
+    initialized: boolean
+    initialize(options: {background?: boolean}): Promise<void>
+    initServices(): Promise<void>
+    installBundledMiniapps(): Promise<void>
+    setupPeriodicTasks(): Promise<void>
+    setupSubscriptions(): Promise<void>
+  }
+  const internal = require("@mentra/engine-host-internal") as {
+    phoneLocationService?: {stopPhoneLocation(): void}
+  }
+  const originalLocationService = internal.phoneLocationService
+  const originalPlatform = Platform.OS
+  let manager: Manager
+
+  function deferred() {
+    let resolve!: () => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<void>((yes, no) => {
+      resolve = yes
+      reject = no
+    })
+    return {promise, resolve, reject}
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    jest.useFakeTimers()
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    internal.phoneLocationService = {stopPhoneLocation: jest.fn()}
+    jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+    jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue(undefined)
+    jest.spyOn(preinstalledMiniappSync, "sync").mockResolvedValue(undefined)
+    manager = new (mantle.constructor as new () => Manager)()
+    jest.spyOn(manager, "installBundledMiniapps").mockResolvedValue(undefined)
+    jest.spyOn(manager, "initServices").mockResolvedValue(undefined)
+    jest.spyOn(manager, "setupPeriodicTasks").mockResolvedValue(undefined)
+    jest.spyOn(manager, "setupSubscriptions").mockResolvedValue(undefined)
+  })
+
+  afterEach(async () => {
+    await manager.cleanup()
+    internal.phoneLocationService = originalLocationService
+    Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+    jest.restoreAllMocks()
+    jest.clearAllTimers()
+    jest.useRealTimers()
+  })
+
+  it.each([false, true])(
+    "runs deferred foreground synchronization once after recovery (still pending=%s)",
+    async (stillPending) => {
+      const start = deferred()
+      jest.spyOn(engine, "start").mockReturnValueOnce(start.promise)
+      const background = manager.init({background: true})
+      if (!stillPending) {
+        start.resolve()
+        await background
+        expect(deploymentManagedMiniappSync.sync).not.toHaveBeenCalled()
+        expect(preinstalledMiniappSync.sync).not.toHaveBeenCalled()
+      }
+      const activity = manager.init()
+      const secondActivity = manager.init()
+      if (stillPending) {
+        expect(manager.initServices).not.toHaveBeenCalled()
+        start.resolve()
+      }
+      await Promise.all([background, activity, secondActivity])
+      await manager.waitForMiniapps()
+      await manager.init()
+      expect(engine.start).toHaveBeenCalledTimes(1)
+      expect(localMiniappRuntime.initialize).toHaveBeenCalledTimes(1)
+      expect(manager.initServices).toHaveBeenCalledTimes(1)
+      expect(deploymentManagedMiniappSync.sync).toHaveBeenCalledTimes(1)
+      expect(preinstalledMiniappSync.sync).toHaveBeenCalledTimes(1)
+      expect(manager.initialized).toBe(true)
+    },
+  )
+
+  it.each([false, true])("starts a fresh generation after cleanup (old startup rejects=%s)", async (rejectOld) => {
+    const start = deferred()
+    jest.spyOn(engine, "start").mockReturnValueOnce(start.promise).mockResolvedValue(undefined)
+    const background = manager.init({background: true})
+    const cancelled = expect(background).rejects.toThrow(rejectOld ? "old startup failed" : "cancelled by cleanup")
+    await manager.cleanup()
+    const activity = manager.init()
+    const secondActivity = manager.init()
+    expect(engine.start).toHaveBeenCalledTimes(1)
+    if (rejectOld) start.reject(new Error("old startup failed"))
+    else start.resolve()
+    await Promise.all([cancelled, activity, secondActivity])
+    await manager.waitForMiniapps()
+    expect(engine.start).toHaveBeenCalledTimes(2)
+    expect(manager.initServices).toHaveBeenCalledTimes(1)
+    expect(manager.initialized).toBe(true)
+  })
+
+  it("waits for teardown before starting the next session", async () => {
+    await manager.init({background: true})
+    const stopped = deferred()
+    jest.spyOn(audioPlaybackService, "stopForApp").mockReturnValueOnce(stopped.promise)
+    const cleanup = manager.cleanup()
+    const activity = manager.init()
+    await Promise.resolve()
+    expect(engine.start).toHaveBeenCalledTimes(1)
+    stopped.resolve()
+    await Promise.all([cleanup, activity])
+    await manager.waitForMiniapps()
+    expect(engine.start).toHaveBeenCalledTimes(2)
+    expect(manager.initialized).toBe(true)
+  })
+
+  it("retries failed foreground reconciliation without restarting the runtime", async () => {
+    await manager.init({background: true})
+    jest.mocked(deploymentManagedMiniappSync.sync).mockRejectedValueOnce(new Error("sync failed"))
+    await manager.init()
+    await expect(manager.waitForMiniapps()).rejects.toThrow("sync failed")
+    await manager.init()
+    await manager.waitForMiniapps()
+    expect(engine.start).toHaveBeenCalledTimes(1)
+    expect(localMiniappRuntime.initialize).toHaveBeenCalledTimes(1)
+    expect(deploymentManagedMiniappSync.sync).toHaveBeenCalledTimes(2)
+    expect(preinstalledMiniappSync.sync).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not perform deferred synchronization after cleanup", async () => {
+    await manager.init({background: true})
+    // Foreground reconciliation waits for local restoration on a microtask;
+    // cleanup must invalidate it before it can update the signed-out session.
+    const activity = manager.init()
+    await manager.cleanup()
+    await activity
+    await expect(manager.waitForMiniapps()).resolves.toBeUndefined()
+    expect(deploymentManagedMiniappSync.sync).not.toHaveBeenCalled()
+    expect(preinstalledMiniappSync.sync).not.toHaveBeenCalled()
+  })
+
+  it("failed background initialization does not permanently suppress startup", async () => {
+    const start = jest
+      .spyOn(engine, "start")
+      .mockRejectedValueOnce(new Error("startup failed"))
+      .mockResolvedValue(undefined)
+    await expect(manager.init({background: true})).rejects.toThrow("startup failed")
+    expect(manager.initialized).toBe(false)
+    await manager.init()
+    await manager.waitForMiniapps()
+    expect(start).toHaveBeenCalledTimes(2)
+    expect(manager.initialized).toBe(true)
+  })
+})
