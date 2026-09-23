@@ -42,6 +42,8 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
   private opened = false
   private admitted = false
   private suspended = false
+  private cleanup: Promise<void> | null = null
+  private cleanupFailed = false
   private lifecycleGeneration = 0
   private allowDevelopmentSkip = false
   private readonly flowId = `live-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -67,8 +69,10 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
     const generation = this.lifecycleGeneration
     this.allowDevelopmentSkip = options.allowDevelopmentSkip === true
     await this.validateTarget()
+    if (this.cleanup) await this.cleanup
     if (generation !== this.lifecycleGeneration)
       throw new FirmwareUpdateError("action_unavailable", "The host runtime stopped")
+    this.cleanupFailed = false
     if (this.opened) {
       this.suspended = false
       this.session.resumeNewWork()
@@ -163,11 +167,43 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
 
   private refresh = (): void => {
     this.snapshots.publish(this.project())
-    if (this.suspended && this.snapshot().safeToRelease) {
-      this.unsubscribe?.()
-      this.session.dispose()
-      this.release()
+    if (!this.suspended || this.admitted) return
+    if (!this.session.requiresCleanup) {
+      if (!this.cleanup && this.safeToRelease()) {
+        this.unsubscribe?.()
+        this.session.dispose()
+        this.release()
+      }
+      return
     }
+    if (this.cleanup || this.cleanupFailed || !this.canFinishSuspendedWork()) return
+    // Native/store subscribers run synchronously. Defer until the coordinator has
+    // processed this same event, then retain the owner through transport teardown.
+    const session = this.session
+    const generation = this.lifecycleGeneration
+    const cleanup = Promise.resolve()
+      .then(async () => {
+        if (!this.suspended || session !== this.session || generation !== this.lifecycleGeneration) return
+        if (this.admitted || !this.canFinishSuspendedWork()) return
+        await session.finishSuspendedWork()
+      })
+      .catch((error) => {
+        this.cleanupFailed = true
+        console.warn("Suspended Live OTA cleanup failed; reopen to retry", error)
+      })
+      .finally(() => {
+        if (this.cleanup === cleanup) {
+          this.cleanup = null
+          this.refresh()
+        }
+      })
+    this.cleanup = cleanup
+  }
+
+  private canFinishSuspendedWork(): boolean {
+    // Legacy BES/APK completion needs the coordinator's existing proof reconciled
+    // into the native journal. finish() performs that verification before cleanup.
+    return this.safeToRelease() || this.session.snapshot().state.screen === "complete"
   }
 
   private release(): void {
@@ -181,7 +217,10 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
     const s = snapshot.state
     const terminalSafe = (s.screen === "complete" || s.screen === "failed") && this.safeToRelease()
     const active =
-      this.admitted || (snapshot.page === "progress" && !terminalSafe) || this.session.chain.isOtaAutoChainActive()
+      this.admitted ||
+      this.session.requiresCleanup ||
+      (snapshot.page === "progress" && !terminalSafe) ||
+      this.session.chain.isOtaAutoChainActive()
     const actions: FirmwareSnapshot["presentation"]["actions"][number][] = []
     if (!active && s.screen !== "checking" && s.screen !== "initializing")
       actions.push({id: "check", label: {text: "Check for updates", key: "ota:checkingForUpdates"}})
@@ -216,7 +255,12 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
       revision: 0,
       phase: phases[s.screen],
       active,
-      safeToRelease: !this.admitted && !this.session.chain.isOtaAutoChainActive() && this.safeToRelease(),
+      safeToRelease:
+        !this.admitted &&
+        !this.cleanup &&
+        !this.session.requiresCleanup &&
+        !this.session.chain.isOtaAutoChainActive() &&
+        this.safeToRelease(),
       offer: snapshot.offerId
         ? {
             id: snapshot.offerId,

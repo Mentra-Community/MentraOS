@@ -196,8 +196,11 @@ class OtaInstallCoordinator {
   private nativeCompletion: LiveNativeCompletion | null = null
   private nativeBinding: {pending: Promise<void> | null} | null = null
   private observationOnly = false
-  /** A phone-side timeout does not establish that the glasses stopped writing. */
+  /** Controller ownership only; native recovery also has its own service/SDK guard. */
   isSafeToRelease(): boolean {
+    // After verified cleanup and detach, old BLE progress must not resurrect this
+    // controller's ownership (notably legacy BES step_complete after reboot proof).
+    if (!this.attached && !this.otaStartOwnership) return true
     return this.snapshot().safeToRelease === true
   }
 

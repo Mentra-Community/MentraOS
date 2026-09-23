@@ -39,12 +39,11 @@ describe("managed Live provider contract", () => {
       ]),
     )
   })
-  afterEach(() => {
+  afterEach(async () => {
     safe = true
     if (provider) {
-      provider.session.chain.stopOtaAutoChain()
-      f.device({connected: false})
-      provider.session.check()
+      provider.suspendNewWork()
+      await jest.advanceTimersByTimeAsync(0)
       service.release(target)
     }
     f.session.dispose()
@@ -161,11 +160,45 @@ describe("managed Live provider contract", () => {
     expect(stopProjection).not.toHaveBeenCalled()
     safe = true
     f.install({displayState: "complete"})
+    expect(stopProjection).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(0)
+    expect(f.ports.installSession.finish).toHaveBeenCalledTimes(1)
     expect(stopProjection).toHaveBeenCalledTimes(1)
     expect(provider.session.isDisposed).toBe(true)
     await jest.advanceTimersByTimeAsync(5000)
     expect(f.ports.checkForUpdates).toHaveBeenCalledTimes(1)
     expect(provider.snapshot()).toMatchObject({phase: "complete", active: false, safeToRelease: true})
+  })
+
+  it("waits for suspended cleanup before reopening without restoring prior approval", async () => {
+    const offerId = await openOffer()
+    safe = false
+    await service.perform(target, {action: "install", offerId})
+    let finishCleanup!: () => void
+    jest.mocked(f.ports.installSession.finish).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCleanup = resolve
+        }),
+    )
+    service.suspendNewWork()
+    safe = true
+    f.install({displayState: "complete"})
+    await jest.advanceTimersByTimeAsync(0)
+    let reopened = false
+    const opening = service.open(target, {entryPoint: "recovery", initializeRuntime: false}).then(() => {
+      reopened = true
+    })
+    await jest.advanceTimersByTimeAsync(0)
+    expect(reopened).toBe(false)
+    expect(f.ports.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(provider.snapshot().safeToRelease).toBe(false)
+    finishCleanup()
+    await opening
+    expect(reopened).toBe(true)
+    expect(provider.session.isDisposed).toBe(false)
+    expect(provider.session.chain.isOtaAutoChainActive()).toBe(false)
+    expect(f.ports.installSession.prepare).toHaveBeenCalledTimes(1)
   })
 
   it("cannot start after the host stops during target validation", async () => {

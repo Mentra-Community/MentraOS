@@ -41,12 +41,25 @@ describe("MentraLiveOtaFlow", () => {
     await resolveMentraLiveOtaProvider()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
     stopOtaAutoChain()
-    useGlassesStore.getState().reset()
-    getMentraLiveOtaSession()!.check()
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "test-end",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "install",
+      stepPercent: 0,
+      overallPercent: 0,
+      status: "failed",
+    })
+    const provider = await resolveMentraLiveOtaProvider()
+    provider.session.suspendNewWork()
+    await provider.session.finishSuspendedWork()
+    provider.suspendNewWork()
     releaseMentraLiveOtaSession()
+    useGlassesStore.getState().reset()
     jest.restoreAllMocks()
     jest.useRealTimers()
   })

@@ -130,6 +130,12 @@ afterEach(async () => {
       status: "failed",
     })
   })
+  await act(async () => {
+    const provider = await resolveMentraLiveOtaProvider()
+    provider.session.suspendNewWork()
+    await provider.session.finishSuspendedWork()
+    provider.suspendNewWork()
+  })
   releaseMentraLiveOtaSession()
   jest.useRealTimers()
 })

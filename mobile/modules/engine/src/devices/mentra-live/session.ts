@@ -84,6 +84,7 @@ export class MentraLiveOtaSession {
   private readonly snapshots: RevisionedSnapshot<LiveSessionSnapshot>
   private unsubscribers: Array<() => void> = []
   private started = false
+  private cleanupRequired = false
   private disposed = false
   private suspended = false
   private attached = false
@@ -125,6 +126,9 @@ export class MentraLiveOtaSession {
   }
 
   snapshot = (): LiveSessionSnapshot => this.snapshots.snapshot()
+  get requiresCleanup(): boolean {
+    return this.cleanupRequired
+  }
   get isDisposed(): boolean {
     return this.disposed
   }
@@ -164,7 +168,7 @@ export class MentraLiveOtaSession {
   }
 
   check = (): void => {
-    if (this.suspended) return
+    if (this.suspended || this.cleanupRequired) return
     this.data.batteryBlocked = false
     this.data.offeredReleaseTransition = null
     this.data.completedReleaseTransition = null
@@ -200,6 +204,7 @@ export class MentraLiveOtaSession {
     if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1) return {kind: "wifi-required"}
     this.observationOnly = false
     this.ports.installSession.prepare(result)
+    this.cleanupRequired = true
     this.data.batteryBlocked = false
     this.data.completedUpdate = false
     this.data.completedChangelogs = []
@@ -229,7 +234,7 @@ export class MentraLiveOtaSession {
   }
 
   finish = (): FirmwareActionResult | Promise<FirmwareActionResult> => {
-    if (this.data.page === "check") return {kind: "finished"}
+    if (this.data.page === "check" && !this.cleanupRequired) return {kind: "finished"}
     const snapshot = this.ports.installSession.snapshot()
     if (
       snapshot.displayState === "restarting" ||
@@ -264,6 +269,12 @@ export class MentraLiveOtaSession {
     this.chain.stopOtaAutoChain()
     if (this.data.page === "check") this.data.checkState = "error"
     this.react()
+  }
+
+  /** Finish local/native cleanup without checking releases or authorizing another pass. */
+  async finishSuspendedWork(): Promise<void> {
+    if (!this.suspended) throw new Error("The Live session is no longer suspended")
+    if (this.cleanupRequired) await this.finishPass(false)
   }
 
   resumeNewWork(): void {
@@ -345,6 +356,7 @@ export class MentraLiveOtaSession {
     if (!admission.advance) return false
     this.checkCompleted = true
     this.ports.installSession.prepare(result)
+    this.cleanupRequired = true
     this.navigateToProgress()
     return true
   }
@@ -355,7 +367,10 @@ export class MentraLiveOtaSession {
     this.data.completionFailed = false
     this.finishing = (async () => {
       await (discard ? this.ports.installSession.discard() : this.ports.installSession.finish())
-      if (!this.disposed) this.returnToCheck()
+      this.cleanupRequired = false
+      // Suspended providers dispose only after this promise resolves. Keep the
+      // coordinator's terminal proof attached until that final ownership handoff.
+      if (!this.disposed && !this.suspended) this.returnToCheck()
       return NONE
     })()
       .catch((error) => {
@@ -404,8 +419,10 @@ export class MentraLiveOtaSession {
         const shouldAttach = this.data.runtimeReady && this.data.page === "progress"
         if (shouldAttach !== this.attached) {
           this.attached = shouldAttach
-          if (shouldAttach) this.ports.installSession.attach({observationOnly: this.observationOnly})
-          else this.ports.installSession.detach()
+          if (shouldAttach) {
+            this.cleanupRequired = true
+            this.ports.installSession.attach({observationOnly: this.observationOnly})
+          } else this.ports.installSession.detach()
         }
         const inputs = JSON.stringify([
           this.data.runtimeReady,

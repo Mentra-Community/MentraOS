@@ -206,11 +206,13 @@ async function renderProbe(initialPage: "check" | "progress" = "progress") {
 }
 
 describe("useMentraLiveOta", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     const previous = getMentraLiveOtaSession()
     if (previous) {
-      previous.chain.stopOtaAutoChain()
-      previous.check()
+      finishPromise = Promise.resolve()
+      previous.suspendNewWork()
+      await previous.finishSuspendedWork()
+      firmwareUpdateService.suspendNewWork()
       releaseMentraLiveOtaSession()
     }
     otaListeners.clear()
