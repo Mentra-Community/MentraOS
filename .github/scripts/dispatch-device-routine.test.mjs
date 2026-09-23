@@ -333,13 +333,13 @@ test("PR bootstrap or non-dev request callbacks do not reach the private queue",
   }
 })
 
-test("ready request sends only immutable source IDs to the fixed private workflow", async () => {
+test("ready request sends immutable source IDs and its authenticated routine to the fixed private workflow", async () => {
   const f = fake({run: producer}), remote = fake()
   const plan = await planDeviceDispatch({...f, context})
   const result = await dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(request)})
   assert.equal(result.status, "private-job-requested")
   assert.deepEqual(remote.calls, [["dispatch", {owner: "Mentra-Community", repo: "Mentra-Automated-Testing",
-    workflow_id: "device-routine.yml", ref: "main", inputs: {source_repository: repo, request_run_id: "123", request_attempt: "2"}}]])
+    workflow_id: "device-routine.yml", ref: "main", inputs: {source_repository: repo, request_run_id: "123", request_attempt: "2", routine_id: "day1-ota"}}]])
 })
 
 test("no-artifact, removed opt-in and superseded base are not queued", async () => {
@@ -413,7 +413,7 @@ test("explicit trusted no-glasses request queues without a label but retains cur
   const plan = await planDeviceDispatch({...f, context})
   assert.equal((await dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(manual)})).status,
     "private-job-requested")
-  assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "123", request_attempt: "2"})
+  assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "123", request_attempt: "2", routine_id: "no-glasses"})
   for (const setup of [{pull: {...pr, state: "closed", labels: []}}, {pull: {...pr, head: {...pr.head, sha: source}, labels: []}},
     {baseSha: source}, {pull: {...pr, base: {ref: "staging"}, labels: []}}]) {
     const changed = fake(setup), privateGithub = fake()
@@ -485,7 +485,7 @@ test("coordinated ready requests keep private dispatch limited to authenticated 
   const args = {...options, plan, privateGithub: remote.github, bytes: bytes(request)}
   assert.equal((await dispatchReadyRequest(args)).status, "private-job-requested")
   assert.deepEqual(remote.calls[0][1], {owner: "Mentra-Community", repo: "Mentra-Automated-Testing", workflow_id: "device-routine.yml",
-    ref: "main", inputs: {source_repository: repo, request_run_id: "500", request_attempt: "1"}})
+    ref: "main", inputs: {source_repository: repo, request_run_id: "500", request_attempt: "1", routine_id: "no-glasses"}})
   for (const changed of [{...request, pullRequest: {number: 42}}, {...request, schemaVersion: 1},
     {...request, source: {...request.source, channel: "main"}},
     {...request, selection: {...request.selection, archive: {...request.selection.archive, sha256: "a".repeat(64)}}}])

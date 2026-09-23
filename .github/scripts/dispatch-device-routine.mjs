@@ -254,6 +254,7 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
   await privateGithub.rest.actions.createWorkflowDispatch({owner: context.repo.owner, repo: PRIVATE_REPOSITORY,
     workflow_id: "device-routine.yml", ref: "main", inputs: {
       source_repository: REPOSITORY, request_run_id: String(plan.runId), request_attempt: String(plan.runAttempt),
+      routine_id: request.routine.id,
     }})
   return {status: "private-job-requested", requestId: request.requestId,
     reason: "GitHub accepted the workflow dispatch; device execution and results are not yet known"}
