@@ -19,6 +19,11 @@ declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents
    */
   leaveAndAwait(options: {timeoutMs: number}): Promise<{completed: boolean}>
   setMuted(muted: boolean): Promise<AcsMeetingState>
+  /**
+   * Stop or resume the outgoing video stream (ACS `stopVideo`/`startVideo`). The call, the glasses
+   * media source and the preview tap stay up; frames are dropped before ACS while stopped.
+   */
+  setVideoEnabled(enabled: boolean): Promise<AcsMeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<AcsMeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL (phone changed networks). */

@@ -79,3 +79,21 @@ jobs:
         run: bun test
         env:
           CI: true
+
+      # Also ignored by jest.config.js: the host-side StreamPreview coordinator is bun:test.
+      - name: Run StreamPreview coordinator tests (bun)
+        working-directory: ./mobile
+        run: bun test ./src/services/streamPreview
+        env:
+          CI: true
+
+      # Kotlin, Swift and TypeScript all assert these files, so a stale checked-in
+      # fixture would pass every suite while hiding generator drift.
+      - name: Check frame-preview golden fixtures
+        run: node mobile/modules/frame-preview/fixtures/generate.mjs --check
+
+      - name: Run frame-preview gate tool tests (bun)
+        if: hashFiles('mobile/modules/frame-preview/tools/**/*.test.ts') != ''
+        run: bun test mobile/modules/frame-preview/tools
+        env:
+          CI: true
