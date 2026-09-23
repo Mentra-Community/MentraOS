@@ -5,7 +5,10 @@ import {cloudClientService} from "./cloudClientServiceTestMock"
 
 let privateMeetings = true
 let enabled = true
-let auth: {getTeamsToken?: () => Promise<string>}
+let auth: {
+  getTeamsToken?: () => Promise<string>
+  getMeetingAccount?: () => Promise<{displayName?: string; email?: string}>
+}
 const getMeetingCredential = mock(async (_token?: string) => ({
   token: "acs",
   expiresOn: "2030-01-01",
@@ -28,7 +31,9 @@ const createTeamsMeeting = mock(async (_options: unknown, _token?: string) => ({
 const retireTeamsMeeting = mock(async (_ref: string) => {})
 cloudClientService.createTeamsMeeting = createTeamsMeeting
 cloudClientService.retireTeamsMeeting = retireTeamsMeeting
-const {createMeeting, retireMeeting, meetingCredential, meetingConfiguration} = await import("../MeetingCredentials")
+const {createMeeting, retireMeeting, meetingCredential, meetingConfiguration, meetingIdentity} = await import(
+  "../MeetingCredentials"
+)
 
 beforeEach(() => {
   privateMeetings = true
@@ -213,5 +218,66 @@ describe("host-owned meeting credentials", () => {
       return {token: "acs", expiresOn: "2030-01-01", identityMode: "guest", acsUserId: "guest", guestReason: undefined}
     })
     await expect(meetingCredential()).rejects.toThrow("Deployment changed")
+  })
+})
+
+describe("meeting identity preflight", () => {
+  test("returns only public identity and the selected Entra profile", async () => {
+    setAuth({
+      getTeamsToken: async () => "host-secret",
+      getMeetingAccount: async () => ({displayName: "Alex", email: "alex@example.com"}),
+    })
+    getMeetingCredential.mockImplementation(async () => ({
+      token: "acs-secret",
+      expiresOn: "2030-01-01",
+      identityMode: "teams-user",
+      acsUserId: "",
+      guestReason: undefined,
+    }))
+    expect(await meetingIdentity()).toEqual({
+      identityMode: "teams-user",
+      account: {displayName: "Alex", email: "alex@example.com"},
+    })
+    expect(createTeamsMeeting).not.toHaveBeenCalled()
+  })
+  test("distinguishes no Entra identity and an unlicensed Entra account", async () => {
+    expect(await meetingIdentity()).toEqual({identityMode: "guest", guestReason: "no-entra-identity"})
+    setAuth({getTeamsToken: async () => "host-secret", getMeetingAccount: async () => ({email: "alex@example.com"})})
+    getMeetingCredential.mockImplementation(async () => ({
+      token: "acs-secret",
+      expiresOn: "2030-01-01",
+      identityMode: "guest",
+      acsUserId: "guest",
+      guestReason: "teams-license-unavailable",
+    }))
+    expect(await meetingIdentity()).toEqual({
+      identityMode: "guest",
+      guestReason: "teams-license-unavailable",
+      account: {displayName: undefined, email: "alex@example.com"},
+    })
+  })
+  test("consumer identity checks need no provider token", async () => {
+    privateMeetings = false
+    setAuth({})
+    expect(await meetingIdentity()).toEqual({identityMode: "guest", guestReason: "legacy-credential"})
+    expect(getMeetingCredential).not.toHaveBeenCalled()
+  })
+  test("does not report guest when identity acquisition fails", async () => {
+    setAuth({
+      getTeamsToken: async () => {
+        throw new Error("Consent required")
+      },
+    })
+    await expect(meetingIdentity()).rejects.toThrow("Consent required")
+  })
+  test("rejects an account lookup that outlives its workspace", async () => {
+    setAuth({
+      getMeetingAccount: async () => {
+        setAuth({})
+        return {email: "old@example.com"}
+      },
+    })
+    await expect(meetingIdentity()).rejects.toThrow("Deployment changed")
+    expect(getMeetingCredential).not.toHaveBeenCalled()
   })
 })

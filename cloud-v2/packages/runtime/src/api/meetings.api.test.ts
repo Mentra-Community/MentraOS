@@ -187,6 +187,56 @@ describe("Runtime ACS credential API", () => {
     })
   })
 
+  test("an opaque token is checked against the signed Runtime identity by ACS", async () => {
+    setEnv("ENTRA_TENANT_ID", "entra-tenant")
+    setEnv("ENTRA_CLIENT_ID", "mobile-client")
+    let calls = 0
+    let rejected = false
+    setAcsIdentityClientForTests({
+      async createUserAndToken() {
+        throw new Error("must not downgrade")
+      },
+      async getTokenForTeamsUser(input) {
+        calls++
+        expect(input).toEqual({
+          teamsUserAadToken: "opaque".repeat(25),
+          clientId: "mobile-client",
+          userObjectId: "employee",
+        })
+        if (rejected) throw {statusCode: 403, code: "UserObjectIdMismatch", request: {body: "private"}}
+        return {token: "teams-credential", expiresOn: new Date("2030-01-01")}
+      },
+    })
+    const token = await signRuntimeToken({
+      privateKey,
+      issuer: ISSUER,
+      subject: "user-1",
+      tenantId: "tenant-1",
+      expiresInSeconds: 300,
+      federatedIdentity: {
+        providerId: "workforce",
+        providerKind: "microsoft-entra",
+        issuer: "https://login.microsoftonline.com/entra-tenant/v2.0",
+        directoryTenantId: "entra-tenant",
+        subject: "employee",
+      },
+    })
+    const request = () =>
+      app().request("/api/meetings/acs/token", {
+        method: "POST",
+        headers: {authorization: `Bearer ${token}`},
+        body: JSON.stringify({teamsUserAadToken: "opaque".repeat(25)}),
+      })
+    const response = await request()
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({identityMode: "teams-user"})
+    rejected = true
+    const denied = await request()
+    expect(denied.status).toBe(403)
+    expect(JSON.stringify(await denied.json())).not.toContain("private")
+    expect(calls).toBe(2)
+  })
+
   test("rejects oversized credential requests before parsing them", async () => {
     const response = await app().request("/api/meetings/acs/token", {
       method: "POST",

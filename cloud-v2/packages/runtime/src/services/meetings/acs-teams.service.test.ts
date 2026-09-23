@@ -1,5 +1,4 @@
 import {afterEach, beforeEach, describe, expect, test} from "bun:test"
-import * as jose from "jose"
 
 import {
   ACS_GUEST_STATE_MAX_ENTRIES,
@@ -7,120 +6,72 @@ import {
   mintAcsGuestToken,
   resetAcsTeamsAuthCache,
   setAcsIdentityClientForTests,
-  validateTeamsSubjectClaims,
-  verifyTeamsSubjectToken,
+  bindTeamsSubject,
+  exchangeAcsTeamsUserToken,
   type AcsIdentityClient,
 } from "./acs-teams.service"
 
-const configuration = {tenantId: "tenant-1", clientId: "mobile-client"}
-const expected = {tenantId: "tenant-1", objectId: "employee-1"}
-
-function payload(overrides: Record<string, unknown> = {}) {
-  return {
-    tid: "tenant-1",
-    oid: "employee-1",
-    azp: "mobile-client",
-    scp: "Teams.ManageCalls Teams.ManageChats",
-    ...overrides,
-  }
-}
-
-describe("ACS Teams subject validation", () => {
-  test("accepts the same Entra employee with both delegated Teams permissions", () => {
-    expect(() => validateTeamsSubjectClaims(payload(), expected, configuration)).not.toThrow()
+describe("ACS Teams opaque subject tokens", () => {
+  const names = ["ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ACS_CONNECTION_STRING"] as const
+  let saved: (string | undefined)[]
+  const expected = {tenantId: "tenant-1", objectId: "employee-1"}
+  beforeEach(() => {
+    saved = names.map((name) => process.env[name])
+    process.env.ENTRA_TENANT_ID = expected.tenantId
+    process.env.ENTRA_CLIENT_ID = "mobile-client"
+    process.env.ACS_CONNECTION_STRING = "endpoint=https://test.communication.azure.com/;accesskey=test"
   })
-
-  test("rejects cross-user, cross-client, and incomplete delegated tokens", () => {
-    expect(() => validateTeamsSubjectClaims(payload({oid: "other-employee"}), expected, configuration)).toThrow()
-    expect(() => validateTeamsSubjectClaims(payload({azp: "other-client"}), expected, configuration)).toThrow()
-    expect(() => validateTeamsSubjectClaims(payload({scp: "Teams.ManageCalls"}), expected, configuration)).toThrow()
-  })
-})
-
-describe("ACS Teams signed tokens", () => {
-  const envNames = ["ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_TEAMS_TOKEN_AUDIENCE"] as const
-  let savedEnv: (string | undefined)[]
-  let savedFetch: typeof fetch
-  let privateKey: jose.KeyLike
-
-  beforeEach(async () => {
-    savedEnv = envNames.map((name) => process.env[name])
-    savedFetch = globalThis.fetch
-    process.env.ENTRA_TENANT_ID = configuration.tenantId
-    process.env.ENTRA_CLIENT_ID = configuration.clientId
-    delete process.env.ENTRA_TEAMS_TOKEN_AUDIENCE
-    resetAcsTeamsAuthCache()
-    const pair = await jose.generateKeyPair("RS256", {extractable: true})
-    privateKey = pair.privateKey
-    const publicJwk = await jose.exportJWK(pair.publicKey)
-    globalThis.fetch = (async (url) => {
-      expect(String(url)).toBe("https://login.microsoftonline.com/tenant-1/discovery/v2.0/keys")
-      return Response.json({keys: [{...publicJwk, alg: "RS256", kid: "teams-test", use: "sig"}]})
-    }) as typeof fetch
-  })
-
   afterEach(() => {
-    globalThis.fetch = savedFetch
-    envNames.forEach((name, index) => {
-      if (savedEnv[index] === undefined) delete process.env[name]
-      else process.env[name] = savedEnv[index]
+    names.forEach((name, i) => {
+      if (saved[i] === undefined) delete process.env[name]
+      else process.env[name] = saved[i]
     })
     resetAcsTeamsAuthCache()
   })
 
-  async function token(overrides: jose.JWTPayload = {}) {
-    return new jose.SignJWT({
-      ...payload(),
-      aud: "1fd5118e-2576-4263-8130-9503064c837a",
-      iss: "https://login.microsoftonline.com/tenant-1/v2.0",
-      exp: Math.floor(Date.now() / 1000) + 300,
-      ...overrides,
+  test("lets Microsoft validate opaque tokens against the trusted user and application", async () => {
+    const opaque = "opaque-microsoft-token-not-a-jwt"
+    setAcsIdentityClientForTests({
+      async createUserAndToken() {
+        throw new Error("must not mint a guest")
+      },
+      async getTokenForTeamsUser(input) {
+        expect(input).toEqual({teamsUserAadToken: opaque, userObjectId: expected.objectId, clientId: "mobile-client"})
+        return {token: "teams-credential", expiresOn: new Date("2030-01-01")}
+      },
     })
-      .setProtectedHeader({alg: "RS256", kid: "teams-test"})
-      .sign(privateKey)
-  }
-
-  test.each([
-    ["https://auth.msft.communication.azure.com", "https://sts.windows.net/tenant-1/", "1.0"],
-    ["1fd5118e-2576-4263-8130-9503064c837a", "https://sts.windows.net/tenant-1/", "1.0"],
-    ["1fd5118e-2576-4263-8130-9503064c837a", "https://login.microsoftonline.com/tenant-1/v2.0", "2.0"],
-  ])("accepts Microsoft ACS audience %s from %s", async (aud, iss, ver) => {
-    const value = await token({
-      aud,
-      iss,
-      ver,
-      ...(ver === "1.0" ? {azp: undefined, appid: configuration.clientId} : {}),
+    expect(await exchangeAcsTeamsUserToken(bindTeamsSubject(opaque, expected))).toMatchObject({
+      identityMode: "teams-user",
     })
-    await expect(verifyTeamsSubjectToken(value, expected)).resolves.toEqual({token: value, ...expected})
   })
 
-  test("still rejects another resource, issuer, tenant, user, client, missing scopes and expired tokens", async () => {
-    for (const claims of [
-      {aud: "https://graph.microsoft.com"},
-      {iss: "https://login.microsoftonline.com/other-tenant/v2.0"},
-      {tid: "other-tenant"},
-      {oid: "another-employee"},
-      {azp: "another-client"},
-      {scp: "Teams.ManageCalls"},
-      {exp: Math.floor(Date.now() / 1000) - 300},
-    ]) {
-      await expect(verifyTeamsSubjectToken(await token(claims), expected)).rejects.toThrow()
-    }
+  test("rejects a foreign Runtime tenant before contacting Microsoft", () => {
+    expect(() => bindTeamsSubject("opaque", {...expected, tenantId: "other"})).toThrow("Runtime identity")
+    expect(() => bindTeamsSubject("opaque", {...expected, objectId: ""})).toThrow("Runtime identity")
   })
 
-  test("still rejects invalid signatures", async () => {
-    const value = await token()
-    const [header, body] = value.split(".")
-    await expect(verifyTeamsSubjectToken(`${header}.${body}.${"A".repeat(342)}`, expected)).rejects.toThrow()
-  })
-
-  test("an explicit audience override replaces the defaults", async () => {
-    process.env.ENTRA_TEAMS_TOKEN_AUDIENCE = "configured-resource"
-    await expect(verifyTeamsSubjectToken(await token(), expected)).rejects.toThrow()
-    await expect(verifyTeamsSubjectToken(await token({aud: "configured-resource"}), expected)).resolves.toMatchObject(
-      expected,
-    )
-  })
+  test.each([400, 401, 403, 429, 500])(
+    "preserves Microsoft rejection %s without leaking its request",
+    async (statusCode) => {
+      setAcsIdentityClientForTests({
+        async createUserAndToken() {
+          throw new Error("must not mint a guest")
+        },
+        async getTokenForTeamsUser() {
+          throw Object.assign(new Error("secret-token"), {statusCode, request: {body: "secret-token"}})
+        },
+      })
+      try {
+        await exchangeAcsTeamsUserToken(bindTeamsSubject("opaque", expected))
+        throw new Error("expected failure")
+      } catch (error) {
+        expect(String(error)).not.toContain("secret-token")
+        expect(String(error)).toContain(
+          statusCode < 429 ? "could not verify" : statusCode === 429 ? "busy" : "unavailable",
+        )
+      }
+    },
+  )
 })
 
 describe("ACS guest credentials", () => {

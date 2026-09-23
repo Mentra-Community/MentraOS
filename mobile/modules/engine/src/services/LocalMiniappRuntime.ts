@@ -94,6 +94,7 @@ import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {
   createMeeting,
   meetingConfiguration,
+  meetingIdentity,
   meetingCredential,
   retireMeeting,
   type MeetingIdentity,
@@ -1446,6 +1447,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MEETING_GET_CONFIGURATION:
         this.sendResult(packageName, requestId, true, meetingConfiguration())
+        break
+      case MiniappRequestType.MEETING_GET_IDENTITY:
+        void this.handleMeetingIdentity(packageName, requestId)
         break
       case MiniappRequestType.MEETING_CREATE:
         void this.handleMeetingCreate(packageName, payload, requestId)
@@ -3948,6 +3952,17 @@ class LocalMiniappRuntime {
 
   /** Startup owns the hotspot before ACS has an owner. Closing the app must retire both. */
   private readonly meetingCredentialRequests = new Map<string, object>()
+
+  private async handleMeetingIdentity(packageName: string, requestId?: string): Promise<void> {
+    try {
+      this.sendResult(packageName, requestId, true, await meetingIdentity())
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Could not check the meeting identity",
+      })
+    }
+  }
 
   private async handleMeetingCreate(
     packageName: string,
