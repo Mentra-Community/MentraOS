@@ -1,19 +1,10 @@
 import type {AcsMeetingCredential} from "@mentra/cloud-client"
-import type {
-  CreatedMeeting,
-  MeetingConfiguration,
-  MeetingCreateOptions,
-  MeetingGuestReason,
-  MeetingIdentityMode,
-} from "@mentra/miniapp"
+import type {CreatedMeeting, MeetingConfiguration, MeetingCreateOptions, MeetingIdentity} from "@mentra/miniapp"
+
+export type {MeetingIdentity} from "@mentra/miniapp"
 
 import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {cloudClientService} from "./CloudClientService"
-
-export interface MeetingIdentity {
-  identityMode: MeetingIdentityMode
-  guestReason?: MeetingGuestReason
-}
 
 export function meetingConfiguration(): MeetingConfiguration {
   const privateMeetings = getConfigValues().privateMeetings === true
@@ -23,6 +14,26 @@ export function meetingConfiguration(): MeetingConfiguration {
     externalBackendAllowed: !privateMeetings,
     managedStreams: isFeatureEnabled("managedStreams"),
     creationSource: privateMeetings ? "runtime" : "miniapp",
+  }
+}
+
+/** Reuses Runtime's license decision, returning only public identity metadata. */
+export async function meetingIdentity(): Promise<MeetingIdentity> {
+  const config = meetingConfiguration()
+  if (!config.enabled) throw new Error("Native meetings are disabled by this deployment")
+  if (config.credentialSource === "miniapp") return {identityMode: "guest", guestReason: "legacy-credential"}
+  const auth = getAuth()
+  const deployment = getConfigValues()
+  const account = await auth?.getMeetingAccount?.()
+  if (auth !== getAuth() || deployment !== getConfigValues())
+    throw new Error("Deployment changed while checking the meeting identity")
+  const {identityMode, guestReason} = await meetingCredential()
+  if (auth !== getAuth() || deployment !== getConfigValues())
+    throw new Error("Deployment changed while checking the meeting identity")
+  return {
+    identityMode,
+    ...(guestReason ? {guestReason} : {}),
+    ...(account ? {account: {displayName: account.displayName, email: account.email}} : {}),
   }
 }
 
