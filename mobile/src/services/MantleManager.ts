@@ -109,7 +109,10 @@ class MantleManager {
   private initialized: boolean = false
   private miniappGeneration = 0
   private initialization: Promise<void> | null = null
+  private initializationGeneration = 0
+  private cleanupTask: Promise<void> | null = null
   private miniappInitialization: Promise<void> | null = null
+  private foregroundMiniappSyncNeeded = false
   private activePhoneNotificationId: string | null = null
   /** A notification is being read aloud right now. */
   private speakingNotification: boolean = false
@@ -349,17 +352,53 @@ class MantleManager {
   // should only ever be run once
   // sets up the bridge and initializes app state
   public async init(options: {background?: boolean} = {}): Promise<void> {
-    if (this.initialization) return this.initialization
-    if (this.initialized) return
     const generation = this.miniappGeneration
-    this.initialization = this.initialize(options)
-      .then(() => {
-        if (generation === this.miniappGeneration) this.initialized = true
-      })
-      .finally(() => {
-        this.initialization = null
-      })
-    return this.initialization
+    if (this.cleanupTask) await this.cleanupTask
+    // An obsolete startup may still be inside a native call. Let it settle
+    // before configuring the next session, but never reuse it as that session.
+    if (this.initialization && this.initializationGeneration !== generation) {
+      await this.initialization.catch(() => {})
+    }
+    this.assertInitializationCurrent(generation)
+    if (!this.initialization && !this.initialized) {
+      this.initializationGeneration = generation
+      const initialization = this.initialize(options)
+        .then(() => {
+          this.assertInitializationCurrent(generation)
+          this.initialized = true
+        })
+        .finally(() => {
+          if (this.initialization === initialization) this.initialization = null
+        })
+      this.initialization = initialization
+    }
+    if (this.initialization) await this.initialization
+    this.assertInitializationCurrent(generation)
+    if (!options.background) this.resumeForegroundMiniappSync(generation)
+  }
+
+  private assertInitializationCurrent(generation: number): void {
+    if (generation !== this.miniappGeneration) throw new Error("MANTLE: initialization cancelled by cleanup")
+  }
+
+  private resumeForegroundMiniappSync(generation: number): void {
+    if (!this.foregroundMiniappSyncNeeded) return
+    this.foregroundMiniappSyncNeeded = false
+    const previous = this.miniappInitialization
+    const synchronization = (async () => {
+      // Finish local restoration before reconciling remote releases. A failed
+      // prior reconciliation can be retried by a later foreground init.
+      await previous?.catch(() => {})
+      this.assertInitializationCurrent(generation)
+      await this.restoreMiniapps()
+    })()
+    this.miniappInitialization = synchronization
+    void synchronization.catch((error) => {
+      if (generation === this.miniappGeneration && this.miniappInitialization === synchronization) {
+        this.foregroundMiniappSyncNeeded = true
+      }
+      console.warn("MANTLE: foreground miniapp synchronization failed", error)
+    })
   }
 
   public async waitForMiniapps(): Promise<void> {
@@ -499,6 +538,7 @@ class MantleManager {
       },
     })
     await engine.start()
+    this.assertInitializationCurrent(miniappGeneration)
     this.setupIosMiniappVisibility()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
@@ -526,6 +566,7 @@ class MantleManager {
     builtInMiniappCatalog.init()
 
     await migrate() // do any local migrations here
+    this.assertInitializationCurrent(miniappGeneration)
 
     // Cloud V1 settings pull removed with the login cutover: the endpoint only
     // exists on V1 and authenticated with a token the app no longer mints.
@@ -534,8 +575,10 @@ class MantleManager {
 
     if (deployment.kind === "consumer") {
       const userRes = await mentraAuth.getUser()
+      this.assertInitializationCurrent(miniappGeneration)
       if (userRes.is_ok()) {
         await ensureDevModeForUser(userRes.value.email)
+        this.assertInitializationCurrent(miniappGeneration)
       }
     }
 
@@ -549,15 +592,17 @@ class MantleManager {
     // fires. The delay just keeps auto-connect off the critical boot path.
     if (!options.background) {
       BgTimer.setTimeout(() => {
+        if (miniappGeneration !== this.miniappGeneration) return
         attemptReconnectToDefaultWearable()
       }, 1000)
     }
     // (Initial notification-config push now happens in island's
     // PhoneNotificationsSync, started by engine.start().)
 
-    if (miniappGeneration !== this.miniappGeneration) return
+    this.assertInitializationCurrent(miniappGeneration)
     await this.initServices()
-    if (miniappGeneration !== this.miniappGeneration) return
+    this.assertInitializationCurrent(miniappGeneration)
+    this.foregroundMiniappSyncNeeded = !!options.background
     this.miniappInitialization = this.initMiniapps(!!options.background)
     void this.miniappInitialization.catch((error) => console.warn("MANTLE: miniapp initialization failed", error))
     this.setupPeriodicTasks()
@@ -565,14 +610,25 @@ class MantleManager {
     if (options.background) await this.miniappInitialization
   }
 
-  public async cleanup() {
+  public cleanup(): Promise<void> {
+    if (this.cleanupTask) return this.cleanupTask
     this.miniappGeneration += 1
+    this.initialized = false
+    this.foregroundMiniappSyncNeeded = false
+    const cleanup = this.cleanupRuntime().finally(() => {
+      if (this.cleanupTask === cleanup) this.cleanupTask = null
+    })
+    this.cleanupTask = cleanup
+    return cleanup
+  }
+
+  private async cleanupRuntime(): Promise<void> {
     const managedSyncStopped = deploymentManagedMiniappSync.cancel()
     for (const visibility of this.iosMiniappVisibility.values()) visibility.dispose()
     this.iosMiniappVisibility.clear()
     // Stop timers
     if (this.calendarSyncTimer) {
-      clearInterval(this.calendarSyncTimer)
+      BgTimer.clearInterval(this.calendarSyncTimer)
       this.calendarSyncTimer = null
     }
     // Remove all event subscriptions
@@ -643,6 +699,15 @@ class MantleManager {
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
+    await this.restoreMiniapps(background)
+  }
+
+  /** Reconcile installations without reinitializing the running miniapp runtime. */
+  private async restoreMiniapps(background = false): Promise<void> {
+    const generation = this.miniappGeneration
+    const deployment = deploymentStore.getActive()
+    const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
+
     // Remove previous workspace releases before restoring consumer bundles,
     // including an identical bundled release adopted by a workspace.
     if (!background) await deploymentManagedMiniappSync.sync(deployment)
@@ -678,8 +743,8 @@ class MantleManager {
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
     // miniapps have no server to bring them back, so the launcher restarts them
     // here from the persisted running flags. Runs last so newly installed/
-    // upgraded bundles are on disk first. Best-effort — never block miniapp
-    // init on it.
+    // upgraded bundles are on disk first. Already-running contexts are left
+    // alone when foreground reconciliation follows background recovery.
     await miniappLauncher
       .autostartLocalMiniapps()
       .catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
@@ -831,9 +896,12 @@ class MantleManager {
     if (this.calendarSyncTimer) BgTimer.clearInterval(this.calendarSyncTimer)
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);
