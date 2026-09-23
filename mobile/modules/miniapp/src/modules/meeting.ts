@@ -138,6 +138,19 @@ export interface MeetingParticipant {
 export type MeetingIdentityMode = "guest" | "teams-user"
 export type MeetingGuestReason = "no-entra-identity" | "teams-license-unavailable" | "legacy-credential"
 
+/**
+ * Identity resolved before joining. `teams-user` means Microsoft accepted the
+ * Teams calling license, not that the account owns a particular M365 SKU or
+ * has permission to organize every meeting. Credentials never cross this API.
+ * Acquisition/consent/provider errors reject instead of reporting guest mode.
+ */
+export interface MeetingIdentity {
+  identityMode: MeetingIdentityMode
+  guestReason?: MeetingGuestReason
+  /** Present when the host has a signed-in Entra account, including unlicensed accounts. */
+  account?: {displayName?: string; email?: string}
+}
+
 /** Host policy; this contains no credentials or deployment endpoints. */
 export interface MeetingConfiguration {
   enabled: boolean
@@ -443,6 +456,18 @@ export class MeetingModule {
   /** Query before using a separate Call backend. Older hosts return NOT_IMPLEMENTED. */
   async getConfiguration(): Promise<MeetingConfiguration> {
     return this.session.sendRequest<MeetingConfiguration>({type: MiniappRequestType.MEETING_GET_CONFIGURATION})
+  }
+
+  /** Resolve the current calling identity without creating or joining a meeting. */
+  async getIdentity(): Promise<MeetingIdentity> {
+    try {
+      return await this.session.sendRequest<MeetingIdentity>(
+        {type: MiniappRequestType.MEETING_GET_IDENTITY},
+        {timeoutMs: 30_000},
+      )
+    } catch (error) {
+      mapHostError(error)
+    }
   }
 
   /** Create a Teams meeting in the selected Runtime without exposing provider credentials. */
