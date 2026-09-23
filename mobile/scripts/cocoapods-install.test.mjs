@@ -11,6 +11,7 @@ import {
   collectRnGitPodDrift,
   computePodFingerprint,
   fileUrlForPath,
+  firstPartyIosSourcePaths,
   firstPartyPodspecs,
   gitInsteadOfPairs,
   gitUrlVariants,
@@ -236,6 +237,78 @@ test("reinstalls when a first-party podspec changes, then stamps the new fingerp
     assert.equal(podCalls, 1)
     // The stamp is written from post-install state, so the next run is a no-op.
     assert.equal(await podInstallReason({iosDir, projectRoot: root}), null)
+  } finally {
+    await cleanup()
+  }
+})
+
+/**
+ * CocoaPods expands `source_files` once and bakes the result into the Pods Xcode project, so a
+ * new Swift file in an existing module is invisible until the next install. Left unnoticed that
+ * shows up as "cannot find X in scope" for a file sitting right there on disk.
+ */
+test("reinstalls when a first-party module gains a native source file", async () => {
+  const {root, iosDir, cleanup} = await makeSyncedProject()
+  try {
+    assert.equal(await podInstallReason({iosDir, projectRoot: root}), null)
+
+    const kitDir = path.join(root, "modules", "acs-meeting", "ios", "PolicyKit", "Sources")
+    await mkdir(kitDir, {recursive: true})
+    await writeFile(path.join(kitDir, "NewPolicy.swift"), "struct NewPolicy {}")
+
+    const reason = await podInstallReason({iosDir, projectRoot: root})
+    assert.match(reason, /native source file/)
+
+    let podCalls = 0
+    await runPodInstallIfNeeded({
+      cwd: "ios",
+      projectRoot: root,
+      prefetch: async () => [],
+      run: async (command) => {
+        if (command === "pod") podCalls += 1
+      },
+    })
+    assert.equal(podCalls, 1)
+    assert.equal(await podInstallReason({iosDir, projectRoot: root}), null)
+  } finally {
+    await cleanup()
+  }
+})
+
+test("editing a native source file does not force a reinstall", async () => {
+  const {root, iosDir, cleanup} = await makeSyncedProject()
+  try {
+    const source = path.join(root, "modules", "acs-meeting", "ios", "AcsMeetingModule.swift")
+    await writeFile(source, "// first")
+    await runPodInstallIfNeeded({
+      cwd: "ios",
+      projectRoot: root,
+      prefetch: async () => [],
+      run: async () => {},
+    })
+
+    // Only the set of paths is fingerprinted: the Pods project already lists this file, and
+    // reinstalling on every keystroke would re-copy ~12k headers and rebuild the world.
+    await writeFile(source, "// edited, same path")
+    assert.equal(await podInstallReason({iosDir, projectRoot: root}), null)
+  } finally {
+    await cleanup()
+  }
+})
+
+test("build output under a module is not mistaken for a source change", async () => {
+  const {root, cleanup} = await makeSyncedProject()
+  try {
+    const iosModule = path.join(root, "modules", "acs-meeting", "ios")
+    await writeFile(path.join(iosModule, "AcsMeetingModule.swift"), "// source")
+    // SwiftPM drops build products under the module; they are gitignored and churn constantly.
+    const buildDir = path.join(iosModule, "PolicyKit", ".build", "debug")
+    await mkdir(buildDir, {recursive: true})
+    await writeFile(path.join(buildDir, "Generated.swift"), "// not a pod source")
+
+    assert.deepEqual(await firstPartyIosSourcePaths(root), [
+      path.join("modules", "acs-meeting", "ios", "AcsMeetingModule.swift"),
+    ])
   } finally {
     await cleanup()
   }

@@ -103,20 +103,21 @@ class AcsFrameSender(
 
   fun isReady(): Boolean = stream.get() != null && running.get() && format.get() != null
 
-  fun sendPlanes(planes: I420Planes) {
+  /** True when the frame was submitted to ACS; false when a readiness, size, pacing or busy gate dropped it. */
+  fun sendPlanes(planes: I420Planes): Boolean {
     val out = stream.get()
     if (out == null || !running.get()) {
       stats.onDropNotStarted()
-      return
+      return false
     }
     val negotiated = format.get()
     if (negotiated == null) {
       stats.onDropNotStarted()
-      return
+      return false
     }
     if (negotiated.width != planes.width || negotiated.height != planes.height) {
       stats.onDropSize()
-      return
+      return false
     }
     if (!planes.planesReadable()) {
       stats.onDropMalformed()
@@ -125,11 +126,11 @@ class AcsFrameSender(
         "P5 send plane too small ${planes.width}x${planes.height} " +
           "stride=${planes.strideY}/${planes.strideU}/${planes.strideV}",
       )
-      return
+      return false
     }
     if (!pacer.tryAdmit(FramePacer.intervalNs(negotiated.framesPerSecond))) {
       stats.onDropPaced()
-      return
+      return false
     }
 
     val prepared = prepareSend(planes, negotiated)
@@ -139,7 +140,7 @@ class AcsFrameSender(
     if (!gate.tryAcquire()) {
       stats.onDropBusy()
       releaseSendBuffers(prepared, planes)
-      return
+      return false
     }
 
     val seq = sendSeq.incrementAndGet()
@@ -230,6 +231,7 @@ class AcsFrameSender(
       gate.release()
       releaseSendBuffers(prepared, planes)
     }
+    return submitted
   }
 
   private data class PreparedSend(

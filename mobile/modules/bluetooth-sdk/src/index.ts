@@ -141,6 +141,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGalleryModeEnabled: bindPublicMethod("setGalleryModeEnabled"),
   setVoiceActivityDetectionEnabled: bindPublicMethod("setVoiceActivityDetectionEnabled"),
   setLoudnessGateEnabled: bindPublicMethod("setLoudnessGateEnabled"),
+  setAutoPowerOffEnabled: bindPublicMethod("setAutoPowerOffEnabled"),
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
    * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot

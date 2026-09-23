@@ -700,6 +700,10 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "loudness_gate_enabled", enabled)
     }
 
+    fun setAutoPowerOffEnabled(enabled: Boolean) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "auto_power_off_enabled", enabled)
+    }
+
     @Deprecated(
         message =
             "Sticky action-button photo presets are deprecated. Prefer per-request " +

@@ -1,0 +1,122 @@
+---
+title: "Stream preview"
+description: "Show the live video of a call inside your miniapp's UI."
+icon: "eye"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+A stream preview draws raw decoded video frames from a source straight into your miniapp's
+WebView. The frames never leave the phone and never pass through your background as JSON, so
+the preview costs no network and adds no encode step.
+
+In this release the only source is `"call"`: the outgoing video of a phone-native meeting your
+miniapp started with `session.meeting.join()`. A preview of the
+glasses camera outside a call is not available yet; asking for `"glasses"` rejects with
+`unsupported`.
+
+```typescript src/background/index.ts
+// After the call connects. Never await this on the connect path.
+session.stream
+  .preview({source: "call"})
+  .then((handle) => {
+    previewHandle = handle
+    handle.onStatus((status) => {
+      if (status.state === "ended") previewHandle = null
+    })
+  })
+  .catch((error) => console.warn("preview unavailable", error.code))
+```
+
+```tsx src/ui/CallScreen.tsx
+import {StreamPreview} from "@mentra/miniapp/react"
+
+export function CallPreview({visible}: {visible: boolean}) {
+  return visible ? <StreamPreview fit="cover" onError={(code) => console.warn(code)} /> : null
+}
+```
+
+## Requirements
+
+- Declare the `CAMERA` permission in `miniapp.json`.
+- Your miniapp must own the active meeting. Previewing another miniapp's call is not supported.
+- Only one preview lease exists at a time. A second `preview()` rejects with `preview_busy`, and
+  the first keeps delivering.
+
+## Who owns what
+
+A preview has three parts with different lifetimes. Keeping them apart is what lets the UI come
+and go freely without interrupting anything.
+
+| Part | Owned by | Created | Ends |
+|---|---|---|---|
+| **Lease** (`PreviewHandle`) | Your background | `session.stream.preview()` | `handle.stop()`, the meeting ending, or your background stopping |
+| **Connection** | The UI document | The first `<StreamPreview>` mount | A reload or navigation, or the lease ending |
+| **Renderer** | The `<StreamPreview>` component | Mount | Unmount |
+
+The lease survives the UI closing and the WebView being destroyed. Reopening the UI and mounting
+`<StreamPreview>` again picks the preview back up without a new `preview()` call.
+
+## Hide versus release
+
+- **Hide:** unmount `<StreamPreview>` (or let it size to zero). The phone stops producing frames,
+  but the lease and the document's connection stay open, so mounting it again shows video
+  immediately. Use this for an eye toggle.
+- **Release:** call `handle.stop()`. The lease ends and every connection to it closes. Do this
+  when the call ends or the user turns the preview off for good. Ending the meeting releases the
+  lease automatically.
+
+The Mentra App also pauses production while it is in the background and resumes it when it
+returns. Your component receives `paused: true` in `onStatus` in the meantime.
+
+## `session.stream.preview(options?)`
+
+| Option | Type | What it is |
+|---|---|---|
+| `source` | `"call" \| "glasses"` | Defaults to `"call"`. `"glasses"` rejects with `unsupported`. |
+
+Resolves with a `PreviewHandle`:
+
+| Member | What it is |
+|---|---|
+| `source` | The source the lease is on. |
+| `handleId` | Identifies this lease. |
+| `previewTraceId` | Correlation id stamped on every `PREVIEW_TRACE` log line for this lease. Include it in bug reports. |
+| `state` | `"held"` or `"ended"`. |
+| `stop()` | Releases the lease. Idempotent. |
+| `onStatus(cb)` | Fires `{state: "ended", reason}` exactly once. Returns an unsubscribe function. |
+
+Rejects with a `PreviewError` whose `code` is one of the codes below.
+
+## `<StreamPreview>`
+
+| Prop | Type | What it is |
+|---|---|---|
+| `fit` | `"contain" \| "cover"` | `contain` (default) letterboxes; `cover` fills and crops. The picture is never stretched. |
+| `onStatus` | `(status) => void` | Connection state (`waiting_for_lease`, `open`, `error`, ...), `paused`, and once-a-second counters in `stats`. |
+| `onError` | `(code) => void` | A typed error code, below. |
+| `className`, `style` | | Applied to the canvas, which fills its container by default. |
+
+Mount the component before or after `preview()` resolves; if the lease is not held yet it reports
+`waiting_for_lease` and connects on its own as soon as it is. The picture is sized to the
+rendered box and capped at 640×360 at 15 fps; resizing only reconfigures the phone when the size
+tier changes.
+
+## Error and status codes
+
+| Code | Meaning |
+|---|---|
+| `permission_denied` | The miniapp does not declare `CAMERA`. |
+| `not_meeting_owner` | There is no active meeting, or another miniapp owns it. |
+| `preview_busy` | Another preview already holds the source. |
+| `waiting_for_lease` | Status, not an error: the UI is ready but the background has not taken the lease yet. |
+| `source_ended` | The meeting ended, before or after `preview()` resolved. |
+| `unsupported` | This device or WebView cannot carry the preview, or the source is not available. |
+| `ack_timeout`, `transport_failed` | The frame link dropped. The component reconnects on its own a few times. |
+| `pack_failed` | The phone could not prepare frames. Remount the component to try again. |
+| `paused_background` | Status: the Mentra App is in the background. |
+
+A preview failure never affects the call. Treat the preview as optional: keep showing your own
+call UI when it is `waiting_for_lease` or in an error state.

@@ -363,6 +363,9 @@ abstract class SGCManager {
     // Mentra Live center-mic loudness / Barrier gate
     open fun sendLoudnessGateSetting() {}
 
+    // Mentra Live power-off after a stretch of not being worn
+    open fun sendAutoPowerOffSetting() {}
+
     // Mentra Live mic tuning (super-mode only). No value authorized means the
     // implementation sends an explicit reset rather than skipping the send.
     open fun sendMicTuningSetting() {}

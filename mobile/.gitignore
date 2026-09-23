@@ -111,3 +111,7 @@ Camera_comparison/
 *.mapbox-bak
 .env.*-bak
 .env.bak
+
+# SwiftPM build output for the in-repo Swift packages (CoreKit, PolicyKit, PreviewKit).
+# `swift test` writes it next to the sources, and it is several thousand files.
+modules/*/ios/*Kit/.build/
