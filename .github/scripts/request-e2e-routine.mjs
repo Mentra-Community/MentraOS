@@ -156,6 +156,7 @@ export async function createRoutineRequest({
   channel = "pr",
   routine = "day1-ota",
   requestOrigin,
+  nightlyRunId, nightlyRunAttempt,
   source,
   sourceBuildRunId,
   sourcePublicationAttempt,
@@ -165,9 +166,10 @@ export async function createRoutineRequest({
   if (channel !== "pr") {
     const {createCoordinatedRoutineRequest} = await import("./coordinated-routine-request.mjs")
     return createCoordinatedRoutineRequest({github, context, number, channel, routine, requestOrigin, source,
-      sourceBuildRunId, sourcePublicationAttempt, fetchImpl, now})
+      sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, fetchImpl, now})
   }
   const repository = `${context.repo.owner}/${context.repo.repo}`
+  if (sourcePublication(nightlyRunId, nightlyRunAttempt)) throw new Error("Nightly sequences require a coordinated channel")
   const selectedSource = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
   const registered = deviceRoutine(routine)
   if (!positive(number)) throw new Error("Expected a positive PR number")

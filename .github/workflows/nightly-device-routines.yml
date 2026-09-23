@@ -63,11 +63,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    name: Nightly ${{ matrix.date }} / ${{ matrix.channel }} / ${{ matrix.routine }}
+    name: Nightly ${{ matrix.date }} / ${{ matrix.channel }} / OTA then Call
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     concurrency:
-      group: nightly-device-${{ matrix.date }}-${{ matrix.channel }}-${{ matrix.routine }}
+      group: nightly-device-${{ matrix.date }}-${{ matrix.channel }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -77,14 +77,65 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Send the nightly routine request
+      # The started send step fences the entire channel sequence, including a
+      # partial or ambiguous response. Never rerun to resend either member.
+      - name: Send the nightly routine sequence
+        id: send
         uses: actions/github-script@v7
         env:
           NIGHTLY_PLAN: ${{ toJSON(matrix) }}
         with:
           retries: 0
           script: |
-            const {sendNightlyRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
-            const result = await sendNightlyRequest({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+            const {sendNightlySequence} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
+            const result = await sendNightlySequence({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
               plan: JSON.parse(process.env.NIGHTLY_PLAN)});
+            core.setOutput('sent', JSON.stringify(result));
+            await core.summary.addCodeBlock(JSON.stringify(result, null, 2), 'json').write();
+      - name: Wait for both immutable request generations
+        id: ready
+        uses: actions/github-script@v7
+        env:
+          SENT: ${{ steps.send.outputs.sent }}
+        with:
+          retries: 0
+          script: |
+            const {waitForNightlyRequests} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
+            const ready = await waitForNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              sent: JSON.parse(process.env.SENT)});
+            core.setOutput('ready', JSON.stringify(ready));
+            core.setOutput('ota', JSON.stringify(ready.members[0]));
+            core.setOutput('call', JSON.stringify(ready.members[1]));
+      - name: Download the exact OTA request
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ fromJSON(steps.ready.outputs.ota).artifactId }}
+          run-id: ${{ fromJSON(steps.ready.outputs.ota).runId }}
+          github-token: ${{ github.token }}
+          path: routine-request/ota
+          merge-multiple: true
+      - name: Download the exact Call request
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ fromJSON(steps.ready.outputs.call).artifactId }}
+          run-id: ${{ fromJSON(steps.ready.outputs.call).runId }}
+          github-token: ${{ github.token }}
+          path: routine-request/call
+          merge-multiple: true
+      - name: Queue one private OTA then Call job
+        uses: actions/github-script@v7
+        env:
+          NIGHTLY_PLAN: ${{ toJSON(matrix) }}
+          READY: ${{ steps.ready.outputs.ready }}
+          E2E_PRIVATE_DISPATCH_TOKEN: ${{ secrets.E2E_PRIVATE_DISPATCH_TOKEN }}
+        with:
+          retries: 0
+          script: |
+            const {dispatchNightlySequence} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
+            const {readRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
+            const privateGithub = process.env.E2E_PRIVATE_DISPATCH_TOKEN ? new github.constructor({auth: process.env.E2E_PRIVATE_DISPATCH_TOKEN, retry: {enabled: false}}) : null;
+            const result = await dispatchNightlySequence({github, privateGithub, context,
+              attempt: Number(process.env.GITHUB_RUN_ATTEMPT), plan: JSON.parse(process.env.NIGHTLY_PLAN),
+              ready: JSON.parse(process.env.READY), bytes: await Promise.all([
+                readRequest('routine-request/ota/request.json'), readRequest('routine-request/call/request.json')])});
             await core.summary.addCodeBlock(JSON.stringify(result, null, 2), 'json').write();

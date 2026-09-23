@@ -1,13 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {readFile} from "node:fs/promises"
+import {createRoutineRequest} from "./request-e2e-routine.mjs"
+import {dispatchReadyRequest} from "./dispatch-device-routine.mjs"
 import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 import {COORDINATED_WORKFLOW, COORDINATED_FINALIZE_JOB, COORDINATED_PUBLISH_STEP} from "./coordinated-routine-request.mjs"
 import {NIGHTLY_SEND_STEP, NIGHTLY_WORKFLOW,
-  nightlyDate, nightlyJobName, planNightlyRequests, sendNightlyRequest} from "./nightly-device-routines.mjs"
+  nightlyDate, nightlyJobName, planNightlyRequests, sendNightlySequence,
+  waitForNightlyRequests, dispatchNightlySequence, validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 
 const repository = "Mentra-Community/MentraOS", sha = "b".repeat(40)
-const plan = {date: "2026-09-23", channel: "dev", routine: "day1-ota", sourceRunId: 100,
+const plan = {date: "2026-09-23", channel: "dev", sourceRunId: 100,
   publicationAttempt: 2, releaseIdentity: "3.3.0-dev.223"}
 const current = {id: 5000, run_attempt: 1, event: "schedule", path: NIGHTLY_WORKFLOW,
   head_branch: "dev", head_sha: sha, created_at: "2026-09-23T07:17:00Z",
@@ -25,7 +28,7 @@ function fixture() {
   staging.state.run.id = 200
   staging.state.artifacts[0].workflow_run.id = 200
   const publications = new Map([[100, dev.state], [200, staging.state]])
-  const state = {run: structuredClone(current), history: [structuredClone(current)],
+  const state = {requestRuns: new Map(), requestArtifacts: new Map(), run: structuredClone(current), history: [structuredClone(current)],
     candidates: {dev: [dev.state.run], staging: [staging.state.run]},
     jobs: new Map([[100, [publicationJob(1001)]], [200, [publicationJob(2001)]], [5000, [sendJob(50001)]]]),
     historyResponse: null, jobsResponse: null, dispatchResponse: {status: 200, data: {workflow_run_id: 9000,
@@ -33,10 +36,10 @@ function fixture() {
     dispatchError: false, calls: []}
   const listWorkflowRunArtifacts = () => {}
   const github = {rest: {actions: {
-    getWorkflowRun: async () => ({data: state.run}),
+    getWorkflowRun: async input => ({data: input.run_id === current.id ? state.run : state.requestRuns.get(input.run_id)}),
     getWorkflowRunAttempt: async input => {
       state.calls.push(["attempt", input])
-      return {data: publications.get(input.run_id)?.run}
+      return {data: input.run_id === current.id ? state.run : publications.get(input.run_id)?.run}
     },
     listWorkflowRunArtifacts,
     listWorkflowRuns: async input => {
@@ -53,12 +56,16 @@ function fixture() {
     createWorkflowDispatch: async input => {
       state.calls.push(["dispatch", input])
       if (state.dispatchError) throw new Error("response lost")
+      const offset = state.calls.filter(([kind]) => kind === "dispatch").length - 1
+      if (state.dispatchResponse?.data?.workflow_run_id === 9000 && offset) return {status: 200,
+        data: {workflow_run_id: 9000 + offset, html_url: `https://github.com/${repository}/actions/runs/${9000 + offset}`,
+          run_url: `https://api.github.com/repos/${repository}/actions/runs/${9000 + offset}`}}
       return state.dispatchResponse
     },
   }, git: dev.options.github.rest.git, repos: dev.options.github.rest.repos},
   paginate: async (method, input) => {
     assert.equal(method, listWorkflowRunArtifacts)
-    return publications.get(input.run_id)?.artifacts ?? []
+    return state.requestArtifacts.get(input.run_id) ?? publications.get(input.run_id)?.artifacts ?? []
   }}
   const options = {github, context, attempt: 1, fetchImpl: (url, init) =>
     (url.includes("-beta.") ? staging : dev).options.fetchImpl(url, init)}
@@ -82,10 +89,9 @@ test("delayed triggers retain intended local date but cannot drift past the boun
 
 test("planner selects exact verified publications for both channels and only advanced routines", async () => {
   const f = fixture(), result = await planNightlyRequests(f.options)
-  assert.deepEqual(result.requests.map(({date, channel, routine, sourceRunId, publicationAttempt}) =>
-    ({date, channel, routine, sourceRunId, publicationAttempt})), ["dev", "staging"].flatMap(channel =>
-    ["day1-ota", "mentra-call"].map(routine => ({date: "2026-09-23", channel, routine,
-      sourceRunId: channel === "dev" ? 100 : 200, publicationAttempt: 2}))))
+  assert.deepEqual(result.requests.map(({date, channel, sourceRunId, publicationAttempt}) =>
+    ({date, channel, sourceRunId, publicationAttempt})), ["dev", "staging"].map(channel =>
+    ({date: "2026-09-23", channel, sourceRunId: channel === "dev" ? 100 : 200, publicationAttempt: 2})))
   assert.deepEqual(result.unavailable, [])
   assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
 })
@@ -109,7 +115,7 @@ test("a successful earlier attempt cannot qualify the selected publication retry
   f.state.jobs.set(100, [publicationJob(1001, 1), {...publicationJob(1002), conclusion: "skipped"}])
   const result = await planNightlyRequests(f.options)
   assert.deepEqual(result.unavailable.map(row => row.channel), ["dev"])
-  assert.ok(result.requests.length === 2 && result.requests.every(row => row.channel === "staging"))
+  assert.ok(result.requests.length === 1 && result.requests.every(row => row.channel === "staging"))
 })
 
 test("one unavailable or unreadable channel preserves the other channel requests", async () => {
@@ -117,7 +123,7 @@ test("one unavailable or unreadable channel preserves the other channel requests
     const f = fixture(); f.state.candidates.staging = candidates
     const result = await planNightlyRequests(f.options)
     assert.deepEqual(result.unavailable.map(row => row.channel), ["staging"])
-    assert.equal(result.requests.length, 2)
+    assert.equal(result.requests.length, 1)
     assert.ok(result.requests.every(row => row.channel === "dev"))
   }
 })
@@ -139,21 +145,22 @@ test("wrong UTC trigger is a no-op; reruns and untrusted workflow identities can
   assert.equal(retry.state.calls.length, 0)
 })
 
-test("nightly sends exact source coordinates to the existing dev request workflow", async () => {
-  const f = fixture(), result = await sendNightlyRequest({...f.options, plan})
-  assert.equal(result.status, "request-dispatched")
-  assert.equal(result.requestRunId, 9000)
-  assert.deepEqual(f.state.calls.filter(([kind]) => kind === "dispatch"), [["dispatch", {...context.repo,
-    workflow_id: ".github/workflows/request-e2e-routine.yml", ref: "dev", return_run_details: true,
-    inputs: {channel: "dev", routine: "day1-ota", request_origin: "workflow-dispatch",
-      source_build_run_id: "100", source_publication_attempt: "2"}}]])
+test("nightly sends distinct marked members for the same exact publication", async () => {
+  const f = fixture(), result = await sendNightlySequence({...f.options, plan})
+  assert.equal(result.status, "requests-dispatched")
+  assert.deepEqual(result.members, [{routine: "day1-ota", runId: 9000, runAttempt: 1},
+    {routine: "mentra-call", runId: 9001, runAttempt: 1}])
+  assert.deepEqual(f.state.calls.filter(([kind]) => kind === "dispatch"), ["day1-ota", "mentra-call"].map(routine =>
+    ["dispatch", {...context.repo, workflow_id: ".github/workflows/request-e2e-routine.yml", ref: "dev", return_run_details: true,
+      inputs: {channel: "dev", routine, request_origin: "workflow-dispatch", source_build_run_id: "100",
+        source_publication_attempt: "2", nightly_run_id: "5000", nightly_run_attempt: "1"}}]))
 })
 
 test("invalid nightly coordinates cannot enter dispatch history or send", async () => {
   for (const patch of [{date: "2026-09-22"}, {channel: "main"}, {routine: "no-glasses"},
     {routine: "arbitrary"}, {sourceRunId: 0}, {publicationAttempt: 1.5}]) {
     const f = fixture()
-    await assert.rejects(sendNightlyRequest({...f.options, plan: {...plan, ...patch}}), /Invalid nightly/)
+    await assert.rejects(sendNightlySequence({...f.options, plan: {...plan, ...patch}}), /Invalid nightly/)
     assert.equal(f.state.calls.length, 0)
   }
 })
@@ -162,34 +169,34 @@ test("lost or malformed sends remain unknown and reruns never send again", async
   for (const reply of [null, {status: 204}, {status: 200, data: {workflow_run_id: 9000}},
     {status: 200, data: {workflow_run_id: 9000, html_url: "https://example.test", run_url: "https://example.test"}}]) {
     const f = fixture(); f.state.dispatchError = reply === null; f.state.dispatchResponse = reply
-    await assert.rejects(sendNightlyRequest({...f.options, plan}), /outcome is unknown/)
+    await assert.rejects(sendNightlySequence({...f.options, plan}), /outcome is unknown/)
     assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 1)
     f.state.run.run_attempt = 2
-    await assert.rejects(sendNightlyRequest({...f.options, attempt: 2, plan}), /Invalid nightly/)
+    await assert.rejects(sendNightlySequence({...f.options, attempt: 2, plan}), /Invalid nightly/)
     assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 1)
   }
 })
 
-test("an earlier started send owns the date/channel/routine even when failed or response was lost", async () => {
+test("an earlier started send owns the date/channel even when failed or response was lost", async () => {
   for (const conclusion of ["success", "failure", "cancelled", null]) {
     const f = fixture(), prior = {...current, id: 4999}
     f.state.history.push(prior)
     f.state.jobs.set(prior.id, [sendJob(49991, {status: "completed", conclusion})])
-    await assert.rejects(sendNightlyRequest({...f.options, plan}), /earlier nightly owns/)
+    await assert.rejects(sendNightlySequence({...f.options, plan}), /earlier nightly owns/)
     assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
   }
 })
 
-test("a queued cancellation before send and other dates/channels/routines do not consume this generation", async () => {
+test("a queued cancellation before send and other dates/channels do not consume this generation", async () => {
   const f = fixture(), prior = {...current, id: 4999}
   f.state.history.push(prior)
   f.state.jobs.set(prior.id, [
     sendJob(49991, {status: "completed", conclusion: "cancelled", steps: []}),
     sendJob(49992, {name: nightlyJobName({...plan, date: "2026-09-22"})}),
     sendJob(49993, {name: nightlyJobName({...plan, channel: "staging"})}),
-    sendJob(49994, {name: nightlyJobName({...plan, routine: "mentra-call"})}),
+
   ])
-  assert.equal((await sendNightlyRequest({...f.options, plan})).status, "request-dispatched")
+  assert.equal((await sendNightlySequence({...f.options, plan})).status, "requests-dispatched")
 })
 
 test("missing, partial, duplicated or foreign run/job history cannot authorize a send", async () => {
@@ -209,7 +216,7 @@ test("missing, partial, duplicated or foreign run/job history cannot authorize a
   ]
   for (const mutate of patches) {
     const f = fixture(); mutate(f)
-    await assert.rejects(sendNightlyRequest({...f.options, plan}))
+    await assert.rejects(sendNightlySequence({...f.options, plan}))
     assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
   }
 })
@@ -219,18 +226,18 @@ test("complete multi-page history is read and changing totals fail closed", asyn
   const older = Array.from({length: 100}, (_, i) => ({...current, id: 4000 + i}))
   for (const run of older) f.state.jobs.set(run.id, [{id: run.id * 10, name: "plan", steps: []}])
   f.state.historyResponse = input => ({total_count: 101, workflow_runs: input.page === 1 ? older : [current]})
-  assert.equal((await sendNightlyRequest({...f.options, plan})).status, "request-dispatched")
+  assert.equal((await sendNightlySequence({...f.options, plan})).status, "requests-dispatched")
   assert.equal(f.state.calls.filter(([kind, input]) => kind === "history" && input.workflow_id === NIGHTLY_WORKFLOW).length, 2)
   f.state.calls = []
   f.state.historyResponse = input => ({total_count: input.page === 1 ? 101 : 102, workflow_runs: input.page === 1 ? older : [current]})
-  await assert.rejects(sendNightlyRequest({...f.options, plan}), /history changed/)
+  await assert.rejects(sendNightlySequence({...f.options, plan}), /history changed/)
   assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
 })
 
 test("the current send can be found on a later complete job page", async () => {
   const f = fixture(), otherJobs = Array.from({length: 100}, (_, i) => ({id: i + 1, name: "other", steps: []}))
   f.state.jobsResponse = input => ({total_count: 101, jobs: input.page === 1 ? otherJobs : [sendJob(50001)]})
-  assert.equal((await sendNightlyRequest({...f.options, plan})).status, "request-dispatched")
+  assert.equal((await sendNightlySequence({...f.options, plan})).status, "requests-dispatched")
   assert.equal(f.state.calls.filter(([kind]) => kind === "jobs").length, 2)
 })
 
@@ -245,9 +252,169 @@ test("workflow is opt-in, preserves other eligible channels, and sends through t
   assert.match(workflow, /request:\n    needs: plan/)
   assert.doesNotMatch(workflow, /needs:.*availability/)
   assert.match(workflow, /fail-fast: false/)
+  assert.match(workflow, /group: nightly-device-\$\{\{ matrix.date \}\}-\$\{\{ matrix.channel \}\}/)
+  assert.doesNotMatch(workflow, /matrix.routine/)
+  assert.match(workflow, /Queue one private OTA then Call job/)
+  assert.equal((workflow.match(/uses: actions\/download-artifact@v4/g) ?? []).length, 2)
+  assert.match(workflow, /E2E_PRIVATE_DISPATCH_TOKEN: \$\{\{ secrets.E2E_PRIVATE_DISPATCH_TOKEN \}\}/)
   assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
-  assert.equal((workflow.match(/retries: 0/g) ?? []).length, 2)
+  assert.equal((workflow.match(/retries: 0/g) ?? []).length, 4)
   assert.doesNotMatch(workflow, /workflow_dispatch:|self-hosted|mentra-device-worker/)
   assert.ok(coordinated.includes(`name: ${COORDINATED_FINALIZE_JOB}`))
   assert.ok(coordinated.includes(`name: ${COORDINATED_PUBLISH_STEP}`))
+})
+
+async function sequenceFixture() {
+  const f = fixture()
+  const sent = await sendNightlySequence({...f.options, plan})
+  const requests = []
+  for (const member of sent.members) {
+    const request = await createRoutineRequest({...f.dev.options, github: f.options.github,
+      context: {...f.dev.options.context, runId: member.runId}, routine: member.routine,
+      nightlyRunId: current.id, nightlyRunAttempt: 1})
+    assert.equal(request.status, "ready")
+    requests.push(request)
+    f.state.requestRuns.set(member.runId, {...current, id: member.runId, event: "workflow_dispatch",
+      path: ".github/workflows/request-e2e-routine.yml", status: "completed", conclusion: "success"})
+    f.state.requestArtifacts.set(member.runId, [{id: member.runId + 1000, expired: false,
+      name: `mentra-routine-request-${member.runId}-1`, size_in_bytes: 4000, digest: `sha256:${"f".repeat(64)}`,
+      workflow_run: {id: member.runId, head_sha: sha}}])
+  }
+  const ready = await waitForNightlyRequests({...f.options, sent})
+  const privateCalls = []
+  const privateGithub = {rest: {actions: {createWorkflowDispatch: async input => {
+    privateCalls.push(input); return {status: 204}
+  }}}}
+  const options = {...f.options, privateGithub, plan, ready, bytes: requests.map(request => Buffer.from(JSON.stringify(request)))}
+  return {...f, sent, requests, ready, privateCalls, sequenceOptions: options}
+}
+
+test("real request producers create two authenticated artifacts and queue one private job with exact request coordinates", async () => {
+  const f = await sequenceFixture()
+  assert.deepEqual(f.requests.map(request => request.sequence), ["day1-ota", "mentra-call"].map(member =>
+    ({kind: "nightly-ota-call", runId: 5000, runAttempt: 1, member})))
+  assert.equal((await dispatchNightlySequence(f.sequenceOptions)).status, "private-sequence-requested")
+  assert.deepEqual(f.privateCalls, [{owner: "Mentra-Community", repo: "Mentra-Automated-Testing",
+    workflow_id: "nightly-device-routines.yml", ref: "main", inputs: {source_repository: repository,
+      ota_request_run_id: "9000", ota_request_attempt: "1", call_request_run_id: "9001", call_request_attempt: "1"}}])
+})
+
+test("marked callbacks never dispatch either member separately, including no-artifact members", async () => {
+  const f = await sequenceFixture()
+  for (const request of f.requests) for (const status of ["ready", "no-artifact"]) {
+    const result = await dispatchReadyRequest({...f.options, privateGithub: f.sequenceOptions.privateGithub,
+      plan: {mode: "dispatch", runId: request.trigger.runId, runAttempt: 1, sourceSha: sha},
+      bytes: Buffer.from(JSON.stringify({...request, status}))})
+    assert.equal(result.status, "not-dispatched")
+    assert.match(result.reason, /sequence member/)
+  }
+  assert.equal(f.privateCalls.length, 0)
+})
+
+test("malformed or foreign markers never downgrade to standalone requests", async () => {
+  const f = await sequenceFixture()
+  const mutations = [r => r.sequence = null, r => r.sequence.runId = 0, r => r.sequence.runAttempt = 2,
+    r => r.sequence.member = "mentra-call", r => r.sequence.kind = "other", r => r.sequence.extra = true,
+    r => r.schemaVersion = 1, r => r.source.channel = "main", r => r.routine.authorization = "successful-build"]
+  for (const mutate of mutations) {
+    const request = structuredClone(f.requests[0]); mutate(request)
+    assert.throws(() => validateNightlyMarker(request), /Invalid nightly/)
+    await assert.rejects(dispatchReadyRequest({...f.options, privateGithub: f.sequenceOptions.privateGithub,
+      plan: {mode: "dispatch", runId: request.trigger.runId, runAttempt: 1, sourceSha: sha},
+      bytes: Buffer.from(JSON.stringify(request))}))
+  }
+  assert.equal(validateNightlyMarker({schemaVersion: 1}), null)
+  assert.equal(f.privateCalls.length, 0)
+})
+
+test("producer authenticates scheduled source and entered send; stale, manual and missing send sources fail", async () => {
+  for (const change of [f => f.state.run.event = "workflow_dispatch", f => f.state.run.head_branch = "staging",
+    f => f.state.run.head_repository.full_name = "foreign/repo", f => f.state.run.run_attempt = 2,
+    f => f.state.jobs.set(5000, [{id: 501, name: "other", steps: []}]),
+    f => f.state.jobs.set(5000, [sendJob(501, {steps: [{name: NIGHTLY_SEND_STEP, status: "queued"}]})])]) {
+    const f = await sequenceFixture(); change(f)
+    await assert.rejects(authenticateNightlyMarker({...f.options, request: f.requests[0]}))
+  }
+  const f = fixture()
+  await assert.rejects(createRoutineRequest({...f.dev.options, channel: "pr", number: 1,
+    nightlyRunId: 5000, nightlyRunAttempt: 1}), /require a coordinated channel/)
+  await assert.rejects(createRoutineRequest({...f.dev.options, github: f.options.github,
+    nightlyRunId: 5000, nightlyRunAttempt: 1}), /Invalid nightly sequence marker/)
+})
+
+test("readiness waits are bounded and never resend; one failure or retry prevents the private job", async () => {
+  for (const mutate of [f => f.state.requestRuns.get(9001).conclusion = "failure",
+    f => f.state.requestRuns.get(9001).run_attempt = 2,
+    f => f.state.requestRuns.get(9001).head_branch = "staging",
+    f => f.state.requestArtifacts.get(9001).push({...f.state.requestArtifacts.get(9001)[0], id: 99999}),
+    f => f.state.requestArtifacts.get(9001)[0].workflow_run.head_sha = "f".repeat(40),
+    f => f.state.requestArtifacts.get(9001)[0].digest = "absent"]) {
+    const f = await sequenceFixture(); mutate(f)
+    await assert.rejects(waitForNightlyRequests({...f.options, sent: f.sent}))
+    assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 2)
+    assert.equal(f.privateCalls.length, 0)
+  }
+  const f = await sequenceFixture(); f.state.requestRuns.get(9001).status = "queued"
+  let clock = 0, sleeps = 0
+  await assert.rejects(waitForNightlyRequests({...f.options, sent: f.sent, timeoutMs: 30_000,
+    now: () => clock, sleep: async ms => {clock += ms; sleeps++}}), /deadline/)
+  assert.equal(sleeps, 2)
+  assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 2)
+})
+
+test("both full published selections, markers and producer identities must agree before private dispatch", async () => {
+  const mutations = [r => r.selection.archive.sha256 = "a".repeat(64), r => r.selection.otaManifest.size++,
+    r => r.selection.receipt.url += "?different", r => r.selection.app.build = "different",
+    r => r.source.buildRunId++, r => r.source.publicationAttempt++, r => r.source.channel = "staging",
+    r => r.sequence.runId++, r => r.sequence.member = "day1-ota", r => r.trigger.sha = "f".repeat(40),
+    r => r.trigger.runId--, r => r.status = "no-artifact", r => delete r.sequence]
+  for (const mutate of mutations) {
+    const f = await sequenceFixture(); mutate(f.requests[1])
+    await assert.rejects(dispatchNightlySequence({...f.sequenceOptions,
+      bytes: f.requests.map(request => Buffer.from(JSON.stringify(request)))}))
+    assert.equal(f.privateCalls.length, 0)
+  }
+})
+
+test("partial and ambiguous dispatches never retry or queue a replacement generation", async () => {
+  const f = fixture()
+  const dispatch = f.options.github.rest.actions.createWorkflowDispatch
+  f.options.github.rest.actions.createWorkflowDispatch = async input => {
+    if (input.inputs.routine === "mentra-call") throw new Error("response lost")
+    return dispatch(input)
+  }
+  await assert.rejects(sendNightlySequence({...f.options, plan}), /unknown/)
+  assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 1)
+  const ready = await sequenceFixture()
+  ready.sequenceOptions.privateGithub.rest.actions.createWorkflowDispatch = async input => {
+    ready.privateCalls.push(input); throw new Error("response lost")
+  }
+  await assert.rejects(dispatchNightlySequence(ready.sequenceOptions), /unknown/)
+  assert.equal(ready.privateCalls.length, 1)
+  ready.state.run.run_attempt = 2
+  await assert.rejects(dispatchNightlySequence({...ready.sequenceOptions, attempt: 2}))
+  assert.equal(ready.privateCalls.length, 1)
+})
+
+test("legacy nightly member send history also fences the whole channel sequence", async () => {
+  const f = fixture(), prior = {...current, id: 4999}
+  f.state.history.push(prior)
+  f.state.jobs.set(prior.id, [sendJob(49991, {name: "Nightly 2026-09-23 / dev / mentra-call", steps: [
+    {name: "Send the nightly routine request", status: "completed", conclusion: "failure", started_at: current.created_at}]
+  })])
+  await assert.rejects(sendNightlySequence({...f.options, plan}), /earlier nightly owns/)
+  assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
+})
+
+test("duplicate member acknowledgements and duplicate ready coordinates fail closed", async () => {
+  const f = fixture()
+  let sends = 0
+  f.options.github.rest.actions.createWorkflowDispatch = async () => {sends++; return f.state.dispatchResponse}
+  await assert.rejects(sendNightlySequence({...f.options, plan}), /unknown/)
+  assert.equal(sends, 2)
+  const ready = await sequenceFixture()
+  const duplicate = structuredClone(ready.sent)
+  duplicate.members[1].runId = duplicate.members[0].runId
+  await assert.rejects(waitForNightlyRequests({...ready.options, sent: duplicate}), /acknowledgements/)
+  assert.equal(ready.privateCalls.length, 0)
 })

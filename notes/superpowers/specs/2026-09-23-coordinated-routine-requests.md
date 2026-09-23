@@ -59,7 +59,38 @@ never execute bundled application scripts. Preserve schema1 PR import behavior.
 
 Core/admin progress must accept this discriminated schema2 source before enabling
 `dev,staging` in `TEST_RUN_DISPATCH_CHANNELS`; its dispatch input names already match.
-The first coordinated worker routine is `no-glasses`. Coordinated OTA/Call and a
-nightly trigger require their own registered adapters and fixture qualifications;
-they are not represented as implemented by this change. No staging or hardware
-verification was performed for the public source adapter.
+The first coordinated worker routine is `no-glasses`. Coordinated OTA/Call require
+registered adapters and fixture qualifications. No staging or hardware verification
+was performed for the public source adapter.
+
+## Nightly OTA then Call sequence
+
+The opt-in `nightly-device-routines.yml` workflow selects one immutable publication
+per dev/staging channel at Los Angeles midnight. The two UTC schedules account for
+DST. Leave `DEVICE_ROUTINE_NIGHTLY_ENABLED` unset until the matching private workflow
+is merged, dispatch credentials are installed and the fixture/network paths qualify.
+
+Each channel job creates two separate schema2 request generations through the trusted
+`dev` issuer. Both use the same exact build run and publication attempt. Their optional
+`sequence` marker is `{kind: "nightly-ota-call", runId, runAttempt: 1, member}`; `member`
+is the request routine (`day1-ota` or `mentra-call`) and the run identifies the public
+nightly source. The producer authenticates that source's repository, schedule event,
+workflow path, dev branch and entered channel send step. The ordinary completed-request
+callback skips marked members, including no-artifact results; malformed markers fail.
+Manual PR and coordinated requests without the marker keep their existing behavior.
+
+The channel job waits up to eight minutes for both acknowledged request runs and
+validates their exact attempt, successful completion and unique immutable artifact.
+It downloads each request, verifies the trusted producer identities, authenticates
+both complete published selections and requires exact selection equality. It then
+sends one private `nightly-device-routines.yml` job with only the source repository
+and the OTA/Call request run IDs and attempts. The private job independently validates
+these artifacts and owns the ordered OTA result, recovery and Call eligibility check.
+Each member retains its own request, claim and recorded result.
+
+The entered channel send step is the durable duplicate fence, including legacy
+individual nightly send jobs for that date/channel. An ambiguous acknowledgement,
+failed request, missing artifact or readiness timeout never causes an automatic resend.
+Workflow reruns refuse dispatch. Retain the original history and reconcile it manually;
+creating or deleting another workflow run is not an authorization to repeat hardware
+work. A failed channel does not prevent the other eligible channel from proceeding.

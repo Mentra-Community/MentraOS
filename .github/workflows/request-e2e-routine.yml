@@ -33,6 +33,14 @@ on:
         description: Optional exact publication attempt (requires source build run ID)
         type: string
         required: false
+      nightly_run_id:
+        description: Optional authenticated nightly sequence run ID (internal)
+        type: string
+        required: false
+      nightly_run_attempt:
+        description: Optional authenticated nightly sequence attempt (internal)
+        type: string
+        required: false
   # Bootstrap before this workflow reaches dev. The private worker must allowlist
   # this exact workflow/checkout SHA; a PR label alone never authorizes hardware.
   pull_request:
@@ -73,6 +81,8 @@ jobs:
           REQUEST_ORIGIN: ${{ inputs.request_origin || 'pr-label' }}
           SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
           SOURCE_PUBLICATION_ATTEMPT: ${{ inputs.source_publication_attempt }}
+          NIGHTLY_RUN_ID: ${{ inputs.nightly_run_id }}
+          NIGHTLY_RUN_ATTEMPT: ${{ inputs.nightly_run_attempt }}
         with:
           script: |
             const {createRoutineRequest, writeRoutineRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
@@ -81,6 +91,7 @@ jobs:
               requestOrigin: process.env.REQUEST_ORIGIN,
               sourceBuildRunId: process.env.SOURCE_BUILD_RUN_ID,
               sourcePublicationAttempt: process.env.SOURCE_PUBLICATION_ATTEMPT,
+              nightlyRunId: process.env.NIGHTLY_RUN_ID, nightlyRunAttempt: process.env.NIGHTLY_RUN_ATTEMPT,
               source: {
                 runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
                 ref: process.env.GITHUB_REF,
