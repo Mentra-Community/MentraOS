@@ -105,10 +105,17 @@ export class MentraLiveOtaSession {
   }
 
   snapshot = (): LiveSessionSnapshot => this.snapshots.snapshot()
+  get isDisposed(): boolean {
+    return this.disposed
+  }
   subscribe = (listener: (snapshot: LiveSessionSnapshot) => void): (() => void) => this.snapshots.subscribe(listener)
 
   open = async (options: {initialPage?: MentraLiveOtaFlowPage; initializeRuntime?: boolean} = {}): Promise<void> => {
-    if (this.started || this.disposed) return
+    if (this.disposed) return
+    if (this.started) {
+      this.react()
+      return
+    }
     this.started = true
     this.data.page = options.initialPage ?? "check"
     this.data.runtimeReady = options.initializeRuntime === false
@@ -183,7 +190,7 @@ export class MentraLiveOtaSession {
     this.react()
   }
 
-  finish = async (): Promise<FirmwareActionResult> => {
+  finish = (): FirmwareActionResult | Promise<FirmwareActionResult> => {
     if (this.data.page === "check") return {kind: "finished"}
     const snapshot = this.ports.installSession.snapshot()
     if (

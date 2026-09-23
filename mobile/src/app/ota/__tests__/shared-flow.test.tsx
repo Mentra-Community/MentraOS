@@ -2,18 +2,25 @@ import {act, fireEvent, render, renderHook, waitFor} from "@testing-library/reac
 
 import {MentraLiveOtaFlow, useMentraLiveOta} from "@mentra/engine/ota"
 
-import {beginOtaAutoChain, isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
+import {getMentraLiveOtaSession} from "../../../../modules/engine/src/devices/mentra-live/sessionRegistry"
+const beginOtaAutoChain = (
+  ...args: Parameters<ReturnType<typeof getMentraLiveOtaSession>["chain"]["beginOtaAutoChain"]>
+) => getMentraLiveOtaSession().chain.beginOtaAutoChain(...args)
+const isOtaAutoChainActive = () => getMentraLiveOtaSession().chain.isOtaAutoChainActive()
+const stopOtaAutoChain = () => getMentraLiveOtaSession().chain.stopOtaAutoChain()
 import {ota} from "@/../modules/engine/src/facades/ota"
 import {useGlassesStore} from "@/../modules/engine/src/stores/glasses"
 import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("MentraLiveOtaFlow", () => {
   beforeEach(() => {
+    getMentraLiveOtaSession().dispose()
     useGlassesStore.getState().reset()
   })
 
   afterEach(() => {
     stopOtaAutoChain()
+    getMentraLiveOtaSession().dispose()
     jest.restoreAllMocks()
     jest.useRealTimers()
   })
@@ -127,7 +134,7 @@ describe("MentraLiveOtaFlow", () => {
                   apps: {"com.mentra.asg_client": {versionCode: 301010001, versionName: "3.1.1"}},
                   bes_firmware: {version: "26.9.4.1", url: "https://ota.example/bes.bin"},
                 },
-        }) as Response,
+        } as Response),
     )
     beginOtaAutoChain("legacy-mtk", false, {fromVersion: "37.0", toVersion: "37.0", releaseVersion: null})
     const onFinished = jest.fn()

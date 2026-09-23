@@ -139,6 +139,15 @@ const fakeOta = {
 
 mock.module("../../facades/ota", () => ({ota: fakeOta}))
 mock.module("../../services/OtaAutoChain", () => ({
+  createOtaAutoChain: () => ({
+    beginOtaAutoChain: beginAutoChain,
+    clearOtaAutoChainReconnectWait: () => {},
+    isOtaAutoChainActive: () => autoChainActive,
+    otaAutoChainReleaseRange: () => (autoChainRange ? {...autoChainRange} : null),
+    otaAutoChainReconnectWaitRemaining: () => null,
+    stopOtaAutoChain: stopAutoChain,
+    tryAdvanceOtaAutoChain: advanceAutoChain,
+  }),
   OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS: 120_000,
   beginOtaAutoChain: beginAutoChain,
   clearOtaAutoChainReconnectWait: mock(() => {}),
@@ -157,6 +166,9 @@ mock.module("../../services/OtaErrorMapping", () => ({
   shouldRequireGlassesRebootForBesFailure: () => false,
   shouldShowChangeWifiForOtaDownloadFailure: () => false,
 }))
+
+const {getMentraLiveOtaSession} =
+  require("../../devices/mentra-live/sessionRegistry") as typeof import("../../devices/mentra-live/sessionRegistry")
 
 const {useMentraLiveOta} = require("../useMentraLiveOta") as typeof import("../useMentraLiveOta")
 
@@ -179,6 +191,7 @@ async function renderProbe(initialPage: "check" | "progress" = "progress") {
 
 describe("useMentraLiveOta", () => {
   beforeEach(() => {
+    getMentraLiveOtaSession().dispose()
     otaListeners.clear()
     installListeners.clear()
     prepare.mockClear()
