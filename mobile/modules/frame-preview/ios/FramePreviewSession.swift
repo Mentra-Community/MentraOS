@@ -64,6 +64,10 @@ final class FramePreviewSession {
   private var tapGeneration: UInt64?
   private var sendSlots: [SendSlot] = []
   private var slotCapacity = 0
+  /// Set when teardown wants to free the send buffers but a send is still in flight over them.
+  /// The dealloc is deferred until the last in-use slot is released, so Network framework is
+  /// never reading a buffer that has been `deallocate()`'d.
+  private var pendingSlotRelease = false
   private var lastSourceFrameAtNs: Int64 = 0
   private var lastFormat: PreviewPixelFormat = .nv12
   private var lastWidth = 0
@@ -191,7 +195,7 @@ final class FramePreviewSession {
     queue.async {
       self.stopLocked(reason: reason)
       self.socket.stop()
-      self.releaseSlotsLocked()
+      self.releaseSlotsIfIdleLocked()
     }
   }
 
@@ -517,6 +521,10 @@ final class FramePreviewSession {
   // MARK: - Send buffers
 
   private func acquireSlot(byteCount: Int) -> Int? {
+    // Acquiring a slot means a run is live again, so a teardown that only got deferred (buffers
+    // still in flight) is superseded: the buffers stay in the active pool rather than being
+    // freed when the old in-flight send finally completes.
+    pendingSlotRelease = false
     if slotCapacity != byteCount {
       // A resolution change must not free a buffer the transport is still reading from. Wait
       // for the in-flight send to complete rather than reallocating under it.
@@ -537,12 +545,32 @@ final class FramePreviewSession {
   private func releaseSlot(_ index: Int) {
     guard sendSlots.indices.contains(index) else { return }
     sendSlots[index].inUse = false
+    // If teardown deferred the dealloc because this send was in flight, the buffers are safe to
+    // free now that the last slot is idle.
+    if pendingSlotRelease, !sendSlots.contains(where: { $0.inUse }) {
+      releaseSlotsLocked()
+    }
+  }
+
+  /// Free the send buffers, but only once no send is still reading from them. `socket.stop()`
+  /// only async-hops to the socket queue and does not wait for the in-flight `connection.send`
+  /// to finish; the frame `Data` is `bytesNoCopy`/`deallocator: .none` over these buffers, so
+  /// freeing them while a send is in flight is a use-after-free. This mirrors the identical
+  /// guard in `acquireSlot`; the deferred dealloc fires from `releaseSlot` when the send's
+  /// completion runs.
+  private func releaseSlotsIfIdleLocked() {
+    guard !sendSlots.contains(where: { $0.inUse }) else {
+      pendingSlotRelease = true
+      return
+    }
+    releaseSlotsLocked()
   }
 
   private func releaseSlotsLocked() {
     for slot in sendSlots { slot.buffer.deallocate() }
     sendSlots = []
     slotCapacity = 0
+    pendingSlotRelease = false
   }
 
   // MARK: - Status
