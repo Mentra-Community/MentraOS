@@ -83,6 +83,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // Read by the welcome executor as well as device lifecycle handlers.
     @Volatile var sgc: SGCManager? = null
     val firmwareReplacementAllowed: Boolean get() = sgc?.firmwareUpdateOwnsDevice != true
+    private val firmwareIdentityKeys = setOf("default_wearable", "device_name", "device_address", "project_name",
+        "pending_wearable", "pending_device_name", "pending_device_address", "pending_device_secure_pairing_capable")
+    /** Host hydration can lag native pairing. It must not replace an active update's identity. */
+    internal fun allowsHostSettingUpdate(category: String, key: String): Boolean =
+        category != ObservableStore.BLUETOOTH_CATEGORY || key !in firmwareIdentityKeys || firmwareReplacementAllowed
     var controller: ControllerManager? = null
 
     // settings:

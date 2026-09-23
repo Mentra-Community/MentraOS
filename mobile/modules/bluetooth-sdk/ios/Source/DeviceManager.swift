@@ -124,6 +124,14 @@ struct ViewState {
     var sgc: SGCManager?
 
     var firmwareReplacementAllowed: Bool { sgc?.firmwareUpdateOwnsDevice != true }
+    private static let firmwareIdentityKeys: Set<String> = [
+        "default_wearable", "device_name", "device_address", "project_name", "pending_wearable",
+        "pending_device_name", "pending_device_address", "pending_device_secure_pairing_capable",
+    ]
+    /// Host hydration can lag native pairing. It must not replace an active update's identity.
+    func allowsHostSettingUpdate(category: String, key: String) -> Bool {
+        category != ObservableStore.bluetoothCategory || !Self.firmwareIdentityKeys.contains(key) || firmwareReplacementAllowed
+    }
     var controller: ControllerManager?
 
     // state

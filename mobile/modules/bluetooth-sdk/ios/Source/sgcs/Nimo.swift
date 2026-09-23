@@ -738,7 +738,9 @@ class Nimo: NSObject, SGCManager {
 
     func reconnectFirmwareOwner() {
         guard firmwareOwnsDevice, let id = nimoFirmwareUpdater?.snapshot.deviceId,
-              let uuid = UUID(uuidString: id), centralManager?.state == .poweredOn else { return }
+              let uuid = UUID(uuidString: id) else { return }
+        if centralManager == nil { startScan(); return }
+        guard centralManager?.state == .poweredOn else { return }
         if let peripheral, peripheral.state == .connected || peripheral.state == .connecting { return }
         guard let known = centralManager?.retrievePeripherals(withIdentifiers: [uuid]).first else { return }
         isDisconnecting = false

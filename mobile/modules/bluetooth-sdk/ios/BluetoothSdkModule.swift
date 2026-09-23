@@ -172,6 +172,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 let normalizedCategory = ObservableStore.normalizeCategory(category)
                 for (key, value) in values {
                     if value is NSNull { continue }
+                    guard DeviceManager.shared.allowsHostSettingUpdate(category: normalizedCategory, key: key) else { continue }
                     DeviceStore.shared.apply(normalizedCategory, key, value)
                 }
             }

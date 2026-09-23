@@ -483,7 +483,7 @@ class BluetoothSdkModule : Module() {
         Function("update") { category: String, values: Map<String, Any?> ->
             val normalizedCategory = ObservableStore.normalizeCategory(category)
             values.forEach { (key, value) ->
-                if (value != null) {
+                if (value != null && deviceManager?.allowsHostSettingUpdate(normalizedCategory, key) != false) {
                     DeviceStore.apply(normalizedCategory, key, value)
                 }
             }
