@@ -442,11 +442,14 @@ export class MentraLiveOtaSession {
         ])
         if (inputs !== this.checkInputs) {
           this.checkInputs = inputs
-          const generation = ++this.checkGeneration
           if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
           this.reconnectTimer = null
-          if (!this.suspended && this.data.runtimeReady && this.data.page === "check")
-            void this.performCheck(generation)
+          if (!this.suspended && this.data.runtimeReady && this.data.page === "check") {
+            void this.performCheck()
+          } else if (this.checkStarted && !this.checkCompleted) {
+            this.checkGeneration++
+            this.checkStarted = false
+          }
         }
         if (
           this.data.runtimeReady &&
@@ -497,15 +500,19 @@ export class MentraLiveOtaSession {
     }
   }
 
-  private async performCheck(generation: number): Promise<void> {
+  private async performCheck(): Promise<void> {
     if (this.checkCompleted) return
-    const cancelled = () => this.disposed || generation !== this.checkGeneration
     const snapshot = this.ports.snapshot()
     if (this.chain.isOtaAutoChainActive() && !snapshot.ready) {
+      if (this.checkStarted) {
+        this.checkGeneration++
+        this.checkStarted = false
+      }
       const remaining = this.chain.otaAutoChainReconnectWaitRemaining()
+      const reconnectGeneration = this.checkGeneration
       if (remaining !== null)
         this.reconnectTimer = setTimeout(() => {
-          if (cancelled() || this.ports.snapshot().ready) return
+          if (this.disposed || reconnectGeneration !== this.checkGeneration || this.ports.snapshot().ready) return
           this.chain.stopOtaAutoChain()
           this.checkCompleted = true
           this.data.checkState = "error"
@@ -515,6 +522,8 @@ export class MentraLiveOtaSession {
     }
     if (!snapshot.connected) {
       if (this.checkStarted) {
+        this.checkGeneration++
+        this.checkStarted = false
         this.chain.stopOtaAutoChain()
         this.data.checkState = "error"
       } else this.requestExit()
@@ -522,8 +531,13 @@ export class MentraLiveOtaSession {
       this.react()
       return
     }
+    // Snapshot refreshes must not restart an in-flight check. Only an actual
+    // check/reconnect transition changes its generation.
+    if (this.checkStarted) return
     this.chain.clearOtaAutoChainReconnectWait()
     this.checkStarted = true
+    const generation = ++this.checkGeneration
+    const cancelled = () => this.disposed || generation !== this.checkGeneration
     const startedAt = Date.now()
     try {
       const options = {
