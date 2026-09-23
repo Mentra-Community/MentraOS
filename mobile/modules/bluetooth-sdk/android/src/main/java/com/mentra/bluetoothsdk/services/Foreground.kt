@@ -13,6 +13,8 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 
 class ForegroundService : Service() {
@@ -107,7 +109,38 @@ class ForegroundService : Service() {
         }
         // Re-check permissions in case they changed
         startForegroundWithAutoDetectedType()
+        // A null intent is Android restarting START_STICKY after process death.
+        // Do not wait for an Activity/Expo module to restore the native BLE owner.
+        if (intent == null && !DeviceManager.isInitialized()) {
+            val settings = G2ConnectionRecovery(this).read()
+            if (settings != null && !startHostRuntimeRecovery()) {
+                Bridge.initialize(applicationContext)
+                settings.forEach { (key, value) -> DeviceStore.set("bluetooth", key, value) }
+                Bridge.log("ForegroundService: restoring G2 connection after process restart")
+                try {
+                    DeviceManager.getInstance().connectDefault()
+                } catch (error: Exception) {
+                    Bridge.log("ForegroundService: G2 recovery failed: ${error.message}")
+                }
+            }
+        }
         return START_STICKY
+    }
+
+    private fun startHostRuntimeRecovery(): Boolean {
+        // Keep the standalone SDK free of React dependencies. The Mentra App
+        // opts in with a private headless service declared by its host module.
+        val serviceName = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+                .metaData?.getString("com.mentra.bluetoothsdk.RUNTIME_RECOVERY_SERVICE")
+                ?: return false
+        return try {
+            if (startService(Intent().setClassName(packageName, serviceName)) == null) return false
+            Bridge.log("ForegroundService: requested host JavaScript runtime recovery")
+            true
+        } catch (error: Exception) {
+            Bridge.log("ForegroundService: host runtime recovery could not start: ${error.message}")
+            false
+        }
     }
 
     private fun startForegroundWithAutoDetectedType() {

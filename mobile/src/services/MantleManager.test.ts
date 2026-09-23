@@ -991,3 +991,54 @@ describe("MantleManager", () => {
     }
   })
 })
+
+describe("runtime recovery initialization", () => {
+  // Exercise the real init gate without starting native services again.
+  const manager = mantle as unknown as {
+    initialized: boolean
+    initialization: Promise<void> | null
+    initialize(options: {background?: boolean}): Promise<void>
+  }
+  let previouslyInitialized: boolean
+  beforeEach(() => {
+    previouslyInitialized = manager.initialized
+    manager.initialized = false
+    manager.initialization = null
+  })
+  afterEach(() => {
+    jest.restoreAllMocks()
+    manager.initialized = previouslyInitialized
+    manager.initialization = null
+  })
+
+  it("activity startup waits for the in-flight background initialization", async () => {
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const initialize = jest.spyOn(manager, "initialize").mockReturnValue(pending)
+    const background = mantle.init({background: true})
+    let activityFinished = false
+    const activity = mantle.init().then(() => {
+      activityFinished = true
+    })
+    await Promise.resolve()
+    expect(activityFinished).toBe(false)
+    expect(initialize).toHaveBeenCalledTimes(1)
+    finish()
+    await Promise.all([background, activity])
+    expect(manager.initialized).toBe(true)
+  })
+
+  it("failed background initialization does not permanently suppress startup", async () => {
+    const initialize = jest
+      .spyOn(manager, "initialize")
+      .mockRejectedValueOnce(new Error("startup failed"))
+      .mockResolvedValue(undefined)
+    await expect(mantle.init({background: true})).rejects.toThrow("startup failed")
+    expect(manager.initialized).toBe(false)
+    await mantle.init()
+    expect(initialize).toHaveBeenCalledTimes(2)
+    expect(manager.initialized).toBe(true)
+  })
+})

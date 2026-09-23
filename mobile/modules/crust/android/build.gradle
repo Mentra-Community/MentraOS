@@ -84,6 +84,7 @@ android {
 dependencies {
   testImplementation 'junit:junit:4.13.2'
 
+  implementation 'com.facebook.react:react-android'
   // Mapbox Navigation SDK v3 (replaces Google Navigation SDK).
   // Drives headless turn-by-turn nav in NavigationManager.kt: route
   // progress, off-route + automatic rerouting, enhanced (map-matched)

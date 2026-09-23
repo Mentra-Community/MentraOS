@@ -2,7 +2,7 @@
   "name": "mentraos",
   "version": "3.3.0",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "index.js",
   "workspaces": [
     "modules/*",
     "../cloud-v2/packages/cloud-client",
