@@ -1,6 +1,6 @@
-import {MentraLiveOtaSession} from "../../modules/engine/src/devices/mentra-live/session"
-import type {OtaCheckCurrentGlassesResult} from "../../modules/engine/src/services/OtaUpdateCheckService"
-import {fixture, offer, current} from "../test-utils/liveOtaFixture"
+import {MentraLiveOtaSession} from "@/../modules/engine/src/devices/mentra-live/session"
+import type {OtaCheckCurrentGlassesResult} from "@/../modules/engine/src/services/OtaUpdateCheckService"
+import {fixture, offer, current} from "@/test-utils/liveOtaFixture"
 
 describe("headless Live OTA session", () => {
   const sessions: MentraLiveOtaSession[] = []
@@ -99,6 +99,36 @@ describe("headless Live OTA session", () => {
     expect(session.snapshot().state).toMatchObject({screen: "up_to_date", completedUpdate: true, canFinish: true})
     expect(session.snapshot().state.changelogs).toHaveLength(1)
     expect(ports.installSession.finish).toHaveBeenCalledTimes(1)
+  })
+
+  it("retries failed completion verification without restarting the update or losing approval", async () => {
+    const {session, ports, install} = make()
+    await session.open({initializeRuntime: false})
+    await jest.advanceTimersByTimeAsync(1100)
+    session.install()
+    jest
+      .mocked(ports.installSession.finish)
+      .mockRejectedValueOnce(Object.assign(new Error("stale revision"), {code: "stale_evidence"}))
+    jest.mocked(ports.checkForUpdates).mockResolvedValue(current)
+    install({displayState: "complete"})
+    await jest.advanceTimersByTimeAsync(750)
+    expect(session.snapshot().state).toMatchObject({
+      screen: "failed",
+      canRetry: true,
+      canFinish: false,
+      error: {copyKey: "ota:completionVerificationFailed"},
+    })
+    expect(session.chain.isOtaAutoChainActive()).toBe(true)
+    expect(ports.installSession.detach).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(10000)
+    expect(ports.installSession.finish).toHaveBeenCalledTimes(1)
+    session.retryInstall()
+    session.retryInstall()
+    await jest.advanceTimersByTimeAsync(1100)
+    expect(ports.installSession.finish).toHaveBeenCalledTimes(2)
+    expect(ports.installSession.retry).not.toHaveBeenCalled()
+    expect(ports.installSession.prepare).toHaveBeenCalledTimes(1)
+    expect(session.snapshot().state).toMatchObject({screen: "up_to_date", completedUpdate: true})
   })
 
   it("retains approval across a version-information failure and retry", async () => {

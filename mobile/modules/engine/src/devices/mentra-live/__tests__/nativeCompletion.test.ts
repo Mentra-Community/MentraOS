@@ -5,7 +5,7 @@ import type {
 } from "@mentra/bluetooth-sdk/firmware-updates"
 import {LiveNativeCompletion} from "../nativeCompletion"
 
-function fixture() {
+function fixture(staleFailures = 0) {
   let native: NativeFirmwareUpdateSnapshot = {
     schemaVersion: 1,
     integrationId: "mentra-live",
@@ -32,6 +32,10 @@ function fixture() {
     },
     complete: async (proof) => {
       proofs.push(proof)
+      if (staleFailures-- > 0) {
+        native = {...native, revision: native.revision + 1}
+        throw Object.assign(new Error("new status arrived"), {code: "stale_evidence"})
+      }
       native = {...native, revision: native.revision + 1, safeToRelease: true, phase: "complete"}
       return native
     },
@@ -96,4 +100,16 @@ test("terminal read alone cannot bind an unobserved replacement and disposed own
   h.completion.dispose()
   await expect(h.completion.finish("live-bes-reboot")).rejects.toThrow("owner changed")
   expect(h.proofs).toHaveLength(0)
+})
+
+test("completion revalidates revision races with a bounded retry budget", async () => {
+  const h = fixture(1)
+  await h.completion.finish("live-bes-reboot")
+  expect(h.proofs.map((value) => value.revision)).toEqual([1, 2])
+  expect(h.proofs.map((value) => value.sessionId)).toEqual(["session", "session"])
+  h.completion.dispose()
+  const stalled = fixture(10)
+  await expect(stalled.completion.finish("live-apk-build-increase")).rejects.toThrow("new status arrived")
+  expect(stalled.proofs).toHaveLength(3)
+  stalled.completion.dispose()
 })

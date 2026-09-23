@@ -83,6 +83,7 @@ export function projectLiveOtaState(data: LiveSessionData, ota: LiveOtaPorts, ch
     isUpdateRequired,
     isVersionChange,
     errorKind,
+    completionFailed,
     unofficialClientPackage,
     offeredReleaseTransition,
     completedReleaseTransition,
@@ -247,14 +248,20 @@ export function projectLiveOtaState(data: LiveSessionData, ota: LiveOtaPorts, ch
     copyKey = otaErrorCopyKey(glassesCode)
   }
   const progressState = progressScreen(installSnapshot)
-  const screen = progressState === "complete" && autoChainActive ? "finishing" : progressState
+  const screen = completionFailed
+    ? "failed"
+    : progressState === "complete" && autoChainActive
+      ? "finishing"
+      : progressState
   const error: MentraLiveOtaError | null =
     screen === "failed"
       ? {
-          code: requiresGlassesReboot ? "bes_restart_required" : "install_failed",
-          message: displayedError,
-          copyKey,
-          glassesCode,
+          code: !completionFailed && requiresGlassesReboot ? "bes_restart_required" : "install_failed",
+          message: completionFailed
+            ? "Couldn't confirm update completion. Keep the glasses connected and try again."
+            : displayedError,
+          copyKey: completionFailed ? "ota:completionVerificationFailed" : copyKey,
+          glassesCode: completionFailed ? null : glassesCode,
         }
       : null
   const totalSteps = installSnapshot.otaStatus?.totalSteps ?? null
@@ -287,11 +294,11 @@ export function projectLiveOtaState(data: LiveSessionData, ota: LiveOtaPorts, ch
     firmwareRestarting,
     error,
     canInstall: false,
-    canRetry: screen === "failed" && !requiresGlassesReboot,
-    canFinish: screen === "complete" || (screen === "failed" && requiresGlassesReboot),
+    canRetry: screen === "failed" && (completionFailed || !requiresGlassesReboot),
+    canFinish: screen === "complete" || (screen === "failed" && !completionFailed && requiresGlassesReboot),
     canDismiss: false,
     canDiscard: screen === "disconnected",
-    canOpenWifiSetup: screen === "failed" && showChangeWifi,
+    canOpenWifiSetup: screen === "failed" && !completionFailed && showChangeWifi,
     continueDisabled: installSnapshot.continueButtonDisabled,
     completedUpdate: false,
     releaseTransition: releaseTransitionFromRange(chain.otaAutoChainReleaseRange()),

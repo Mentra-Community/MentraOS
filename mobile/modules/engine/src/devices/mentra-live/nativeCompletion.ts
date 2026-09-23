@@ -73,30 +73,38 @@ export class LiveNativeCompletion {
     await this.ready
     this.assertAvailable()
     if (this.unsupported) return
-    const current = await this.ports.read()
-    this.assertAvailable()
-    // Do not adopt a session discovered by this terminal read. Only observation/start may bind it.
-    const bound = this.bound
-    if (current.safeToRelease) return
-    if (
-      !kind ||
-      !bound ||
-      current.deviceId !== this.deviceId ||
-      current.integrationId !== "mentra-live" ||
-      current.updaterId !== bound.updaterId ||
-      current.sessionId !== bound.sessionId
-    ) {
-      throw new FirmwareUpdateError("busy", "The Live update still requires completion verification")
+    // Status can advance between the read and the native compare-and-set. Retry only that
+    // race, with fresh evidence for the same bound transaction; all other failures reach UI.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await this.ports.read()
+      this.assertAvailable()
+      const bound = this.bound
+      if (current.safeToRelease) return
+      if (
+        !kind ||
+        !bound ||
+        current.deviceId !== this.deviceId ||
+        current.integrationId !== "mentra-live" ||
+        current.updaterId !== bound.updaterId ||
+        current.sessionId !== bound.sessionId
+      ) {
+        throw new FirmwareUpdateError("busy", "The Live update still requires completion verification")
+      }
+      try {
+        const result = await this.ports.complete({
+          deviceId: this.deviceId,
+          ...bound,
+          connectionGeneration: current.connectionGeneration,
+          revision: current.revision,
+          kind,
+        })
+        this.observation.accept(result)
+        if (!result.safeToRelease) throw new FirmwareUpdateError("busy", "The Live update still owns the glasses")
+        return
+      } catch (error) {
+        if (attempt === 2 || (error as {code?: string})?.code !== "stale_evidence") throw error
+      }
     }
-    const result = await this.ports.complete({
-      deviceId: this.deviceId,
-      ...bound,
-      connectionGeneration: current.connectionGeneration,
-      revision: current.revision,
-      kind,
-    })
-    this.observation.accept(result)
-    if (!result.safeToRelease) throw new FirmwareUpdateError("busy", "The Live update still owns the glasses")
   }
 
   dispose(): void {

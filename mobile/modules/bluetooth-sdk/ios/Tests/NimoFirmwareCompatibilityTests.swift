@@ -50,4 +50,20 @@ final class NimoFirmwareCompatibilityTests: XCTestCase {
         XCTAssertFalse(NimoFirmwareCompatibility.permitsBeforeCompatibility(command: NimoProtocol.CMD_SET_PARAMETER, key: NimoProtocol.SET_BRIGHTNESS))
         XCTAssertFalse(NimoFirmwareCompatibility.permitsBeforeCompatibility(command: NimoProtocol.CMD_CONTROL_INSTRUCTION, key: NimoProtocol.CTRL_UPDATE_CONTENT))
     }
+
+    func testRecoveryDiscoveryUsesNativeIdentityWithoutAPairingName() {
+        let target = NimoConnectionTarget.recovery("retained-uuid")
+        XCTAssertTrue(target.matches(deviceId: "retained-uuid", name: nil))
+        XCTAssertTrue(target.matches(deviceId: "retained-uuid", name: "NIMO renamed"))
+        XCTAssertFalse(target.matches(deviceId: "other-uuid", name: "NIMO renamed"))
+        XCTAssertFalse(NimoConnectionTarget.recovery("").matches(deviceId: "", name: "NIMO"))
+    }
+
+    func testOrdinaryPairingStillRequiresSelectedMainDeviceName() {
+        XCTAssertFalse(NimoConnectionTarget.pairing("NOT_SET").matches(deviceId: "uuid", name: "NIMO 1"))
+        XCTAssertFalse(NimoConnectionTarget.pairing("NIMO 1").matches(deviceId: "uuid", name: nil))
+        XCTAssertFalse(NimoConnectionTarget.pairing("NIMO 1").matches(deviceId: "uuid", name: "NIMO 2"))
+        XCTAssertTrue(NimoConnectionTarget.pairing("NIMO 1").matches(deviceId: "uuid", name: "NIMO 1"))
+        XCTAssertFalse(NimoConnectionTarget.pairing("NIMO 1_ble").matches(deviceId: "uuid", name: "NIMO 1_ble"))
+    }
 }

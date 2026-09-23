@@ -30,6 +30,22 @@ enum NimoBLE {
     static let INTER_FRAME_DELAY_MS = 5
 }
 
+/// Recovery is bound to the retained native identity; ordinary pairing selects an advertised name.
+enum NimoConnectionTarget {
+    case recovery(String)
+    case pairing(String)
+
+    func matches(deviceId: String, name: String?) -> Bool {
+        switch self {
+        case let .recovery(id): return !id.isEmpty && deviceId == id
+        case let .pairing(selected):
+            guard let name, selected != "NOT_SET", !selected.isEmpty else { return false }
+            return name == selected && name.lowercased().hasPrefix(NimoBLE.NAME_PREFIX)
+                && !name.lowercased().hasSuffix(NimoBLE.BLE_NAME_SUFFIX)
+        }
+    }
+}
+
 // MARK: - Nimo Protocol Constants
 
 // Byte values follow the glasses firmware protocol and must not be changed.
@@ -737,17 +753,10 @@ class Nimo: NSObject, SGCManager {
     }
 
     func reconnectFirmwareOwner() {
-        guard firmwareOwnsDevice, let id = nimoFirmwareUpdater?.snapshot.deviceId,
-              let uuid = UUID(uuidString: id) else { return }
-        if centralManager == nil { startScan(); return }
-        guard centralManager?.state == .poweredOn else { return }
-        if let peripheral, peripheral.state == .connected || peripheral.state == .connecting { return }
-        guard let known = centralManager?.retrievePeripherals(withIdentifiers: [uuid]).first else { return }
+        guard firmwareOwnsDevice else { return }
         isDisconnecting = false
-        stopScan()
-        peripheral = known
-        known.delegate = self
-        centralManager?.connect(known, options: nil)
+        // startScan initializes the central, tries the retained UUID, and falls back to discovery.
+        startScan()
     }
 
     func connectById(_ id: String) {
@@ -1169,7 +1178,16 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func connectByUUID() -> Bool {
-        if firmwareOwnsDevice { reconnectFirmwareOwner(); return peripheral != nil }
+        if firmwareOwnsDevice {
+            if let peripheral, peripheral.state == .connected || peripheral.state == .connecting { return true }
+            guard let id = nimoFirmwareUpdater?.snapshot.deviceId, let uuid = UUID(uuidString: id),
+                  let known = centralManager?.retrievePeripherals(withIdentifiers: [uuid]).first else { return false }
+            stopScan()
+            peripheral = known
+            known.delegate = self
+            centralManager?.connect(known, options: nil)
+            return true
+        }
         guard DEVICE_SEARCH_ID != "NOT_SET", !DEVICE_SEARCH_ID.isEmpty else { return false }
         guard lastDeviceName == DEVICE_SEARCH_ID,
               let uuidString = lastDeviceUUID,
@@ -1812,26 +1830,22 @@ extension Nimo: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
-        guard
-            let name = peripheral.name
-            ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        else { return }
+        let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let rssiValue = rssi.intValue
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            guard self.isNimoMainDevice(name) else { return }
-            if self.firmwareOwnsDevice, peripheral.identifier.uuidString != self.nimoFirmwareUpdater?.snapshot.deviceId { return }
-
-            Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssiValue)
-
-            guard self.DEVICE_SEARCH_ID != "NOT_SET" else { return }
-            guard name == self.DEVICE_SEARCH_ID else { return }
+            let target: NimoConnectionTarget = self.firmwareOwnsDevice
+                ? .recovery(self.nimoFirmwareUpdater?.snapshot.deviceId ?? "") : .pairing(self.DEVICE_SEARCH_ID)
+            if !self.firmwareOwnsDevice, let name, self.isNimoMainDevice(name) {
+                Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssiValue)
+            }
+            guard target.matches(deviceId: peripheral.identifier.uuidString, name: name) else { return }
             guard self.peripheral == nil else { return }
 
-            Bridge.log("NIMO: Connecting to \(name)")
+            Bridge.log("NIMO: Connecting to \(name ?? peripheral.identifier.uuidString)")
             self.stopScan()
-            self.lastDeviceName = name
+            if let name { self.lastDeviceName = name }
             self.lastDeviceUUID = peripheral.identifier.uuidString
             self.peripheral = peripheral
             peripheral.delegate = self

@@ -129,6 +129,7 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:unofficialClientNoOtaNamed":
     "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
   "ota:noUpdatesAvailable": "Your glasses are running the latest version.",
+  "ota:completionVerificationFailed": "Couldn't confirm update completion. Keep the glasses connected and try again.",
   "ota:checkFailed": "Check Failed",
   "ota:checkFailedMessage": "Couldn't check for updates. Please check your connection and try again.",
   "ota:versionInfoFailedMessage":

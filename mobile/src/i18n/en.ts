@@ -551,6 +551,7 @@ const en = {
     unofficialClientNoOtaNamed:
       "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
+    completionVerificationFailed: "Couldn't confirm update completion. Keep the glasses connected and try again.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
     versionInfoFailedMessage: "Couldn't read the glasses software versions. Keep the glasses connected and try again.",

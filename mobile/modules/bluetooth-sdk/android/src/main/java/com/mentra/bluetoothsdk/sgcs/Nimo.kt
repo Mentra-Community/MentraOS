@@ -1896,7 +1896,6 @@ class Nimo : SGCManager() {
                             txChar = null
                             rxChar = null
                             micChar = null
-                            otaTxChar = null; otaRxChar = null; otaNotificationsEnabled = false
                             resetSessionState()
 
                             DeviceStore.apply("glasses", "connected", false)
@@ -2355,6 +2354,9 @@ class Nimo : SGCManager() {
     }
 
     private fun resetSessionState() {
+        // Characteristics and CCCD state belong to one GATT link, including transport-abort paths.
+        otaTxChar = null; otaRxChar = null; otaNotificationsEnabled = false
+
         firmwareOperational = false
         firmwareVersionPacked = ""; firmwareVersionDetail = ""
         inventoryPackedReceived = false; inventoryDetailReceived = false

@@ -44,6 +44,7 @@ export interface LiveSessionData {
   completedUpdate: boolean
   completedChangelogs: ReturnType<LiveOtaPorts["getReleaseChangelogs"]>
   batteryBlocked: boolean
+  completionFailed: boolean
 }
 
 export interface LiveSessionSnapshot {
@@ -61,6 +62,7 @@ const {setTimeout, clearTimeout} = BgTimer
 
 /** Owns the former React flow's decisions; the install coordinator still owns wire recovery. */
 export class MentraLiveOtaSession {
+  private completionDiscard = false
   private observationOnly = false
   private observedRecoveryActivity = false
   readonly chain: OtaAutoChain
@@ -77,6 +79,7 @@ export class MentraLiveOtaSession {
     completedUpdate: false,
     completedChangelogs: [],
     batteryBlocked: false,
+    completionFailed: false,
   }
   private readonly snapshots: RevisionedSnapshot<LiveSessionSnapshot>
   private unsubscribers: Array<() => void> = []
@@ -214,8 +217,14 @@ export class MentraLiveOtaSession {
   }
 
   retryInstall = (): void => {
-    if (this.suspended) return
-    if (this.data.page === "progress") this.ports.installSession.retry()
+    if (this.suspended || this.finishing) return
+    if (this.data.page === "progress") {
+      if (this.data.completionFailed) {
+        void this.finishPass(this.completionDiscard).catch((error) =>
+          console.warn("OTA completion retry failed", error),
+        )
+      } else this.ports.installSession.retry()
+    }
     this.react()
   }
 
@@ -307,6 +316,7 @@ export class MentraLiveOtaSession {
   }
 
   private navigateToProgress(): void {
+    this.data.completionFailed = false
     this.pass++
     this.installPending = true
     this.ports.clearProgress()
@@ -338,13 +348,23 @@ export class MentraLiveOtaSession {
 
   private finishPass(discard: boolean): Promise<FirmwareActionResult> {
     if (this.finishing) return this.finishing
+    this.completionDiscard = discard
+    this.data.completionFailed = false
     this.finishing = (async () => {
       await (discard ? this.ports.installSession.discard() : this.ports.installSession.finish())
       if (!this.disposed) this.returnToCheck()
       return NONE
-    })().finally(() => {
-      this.finishing = null
-    })
+    })()
+      .catch((error) => {
+        if (!this.disposed) {
+          this.data.completionFailed = true
+          this.react()
+        }
+        throw error
+      })
+      .finally(() => {
+        this.finishing = null
+      })
     return this.finishing
   }
 
@@ -429,8 +449,6 @@ export class MentraLiveOtaSession {
             this.autoChainAdvanced = true
             void this.finishPass(false).catch((error) => {
               console.warn("OTA pass cleanup failed", error)
-              this.data.checkState = "error"
-              this.react()
             })
           }, 750)
         }
