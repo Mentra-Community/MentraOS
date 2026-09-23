@@ -50,6 +50,31 @@ public class ReproSequenceTest {
         assertThat(trial.cleanup.get(0).id).isEqualTo("cleanup0");
     }
 
+    /** The host generator and this parser must agree on the schema; the fixture comes from gen.py. */
+    @Test
+    public void acceptsEveryTrialProducedByTheHostGenerator() throws Exception {
+        String text;
+        try (java.io.InputStream in =
+                getClass().getClassLoader().getResourceAsStream("audio-repro/m1-fixture.json")) {
+            assertThat(in).isNotNull();
+            text = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        ReproSequence sequence = ReproSequence.parse(new JSONObject(text));
+        assertThat(sequence.runId).isEqualTo("fixture-m1-s42");
+        assertThat(sequence.trials).isNotEmpty();
+        boolean sawCapture = false;
+        boolean sawHostWait = false;
+        for (ReproTrial trial : sequence.trials) {
+            for (ReproOp op : trial.ops) {
+                sawCapture |= op.type == ReproOp.Type.CAPTURE_START;
+                sawHostWait |= op.type == ReproOp.Type.WAIT_STATE
+                        && "af_standby".equals(op.stringParam("state", ""));
+            }
+        }
+        assertThat(sawCapture).isTrue();
+        assertThat(sawHostWait).isTrue();
+    }
+
     @Test
     public void rejectsInvalidSequencesWithEveryError() {
         String bad = VALID.replace("mentra.audio-repro.sequence/1", "other/2").replace("q0.complete", "q9.complete");
