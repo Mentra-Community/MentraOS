@@ -48,9 +48,18 @@ npm run test:maestro:ci
 - `04-simulated-glasses-pairing.yaml` - Pairing flow with simulated glasses (built-in feature)
 - `06-launch-app-simulated-glasses.yaml` - Launch Mira app on simulated glasses
 
+### Real Hardware Tests (Mentra Live and a Teams meeting)
+
+Tagged `hardware`; they need a meeting link and fail fast without one.
+
+- `99-call-stream-preview-lifecycle.yaml` - Mentra Call stream preview: join, show, 50 hide/show toggles, 10 minimize/reopen cycles, 3 page reloads, background and return, leave. Also the release memory gate. Run it with `scripts/stream-preview-run.sh android|ios "<meeting url>"`, which reloads the page through the WebView DevTools socket (Android debug builds) and pulls the `frame-preview` NDJSON run logs afterwards.
+- `99-call-stream-preview-non-owner.yaml` - A CAMERA miniapp that does not own the meeting (`fixtures/stream-preview-probe`) is refused with `not_meeting_owner`, and Mentra Call keeps its preview.
+
 ### Helper Flows
 
 - `helpers/login-helper.yaml` - Reusable login flow
+- `helpers/stream-preview-join-call.yaml` - Open Mentra Call and join `MEETING_URL`
+- `helpers/stream-preview-show.yaml` - Turn the Mentra Call preview on and wait for frames
 
 ## Environment Variables
 

@@ -3,7 +3,7 @@ export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
 [
   {
     "version": "3.3.0",
-    "markdown": "This release is under active development. User-facing changes will be documented as they land."
+    "markdown": "This release is under active development. User-facing changes will be documented as they land.\n\n- Mentra Miniapp SDK: `session.stream.preview({source: \"call\"})` and the `<StreamPreview>` component (from `@mentra/miniapp/react`) show the live video of a call your miniapp owns inside its UI. Requires the `CAMERA` permission; the lease survives the UI closing and ends with `handle.stop()` or the meeting. See [Stream preview](https://docs.mentraglass.com/app-devs/core-concepts/stream-preview)."
   },
   {
     "version": "3.2.1",

@@ -74,6 +74,7 @@ import com.mentra.glassesmedia.source.OutgoingRateArm
 import com.mentra.glassesmedia.source.PixelFormatArm
 import com.mentra.glassesmedia.source.GlassesMediaController
 import com.mentra.glassesmedia.network.ScopedSoftApNetwork
+import com.mentra.glassesmedia.source.DecodedFrameTap
 import com.mentra.glassesmedia.source.GlassesMediaSourceFactory
 import com.mentra.glassesmedia.source.LocalWhipIngestSource
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
@@ -210,6 +211,8 @@ class AcsMeetingSession(
   private var localOut: LocalOutgoingAudioStream? = null
   private var audioIn: RawIncomingAudioStream? = null
   private var videoOut: VirtualOutgoingVideoStream? = null
+  /** Whether ACS is sending [videoOut]. Only [setVideoEnabled] turns it off; every call starts on. */
+  @Volatile private var videoEnabled = true
   @Volatile private var meetingUrl: String? = null
   @Volatile private var phase = "idle"
   @Volatile private var lastError: String? = null
@@ -285,6 +288,7 @@ class AcsMeetingSession(
     val result = mutableMapOf<String, Any>(
       "state" to phase,
       "muted" to muted.get(),
+      "videoEnabled" to videoEnabled,
       "provider" to "acs-teams",
       "audioSource" to audioSource,
       "activeStream" to controller.readActive().name.lowercase(),
@@ -641,7 +645,10 @@ class AcsMeetingSession(
           bindIngestUnpinned {
             media.attach(
               video = { planes ->
-                frameSender.sendPlanes(planes)
+                // Preview first, deliberately: the tap must see frames ACS's pacing and
+                // readiness gates would otherwise hide, and it cannot delay or break this call.
+                DecodedFrameTap.offer(planes)
+                if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
               },
               pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
               config = videoSource.toConfig(),
@@ -668,7 +675,8 @@ class AcsMeetingSession(
         if (videoSource !is MeetingVideoSourceSpec.SoftAp) {
           media.attach(
             video = { planes ->
-              frameSender.sendPlanes(planes)
+              DecodedFrameTap.offer(planes)
+              if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
             },
             pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
             config = if (synthetic) SourceConfig("", SourceKind.DIRECT) else videoSource.toConfig(),
@@ -898,6 +906,45 @@ class AcsMeetingSession(
     val snap = snapshot()
     onState(snap)
     return snap
+  }
+
+  /**
+   * Stop or resume the camera Teams receives without leaving the call. The glasses source, the
+   * preview tap and the WHEP/WHIP transport keep running; [frameSender] drops frames while ACS
+   * reports the stream stopped. [videoEnabled] only moves once ACS accepts the change.
+   */
+  fun setVideoEnabled(next: Boolean, complete: (Map<String, Any>?, Throwable?) -> Unit) {
+    val generation = joinGeneration.get()
+    executor.execute {
+      val active = call
+      val stream = videoOut
+      if (active == null || stream == null || joinGeneration.get() != generation) {
+        complete(null, IllegalStateException("No active meeting"))
+        return@execute
+      }
+      if (videoEnabled == next) {
+        complete(snapshot(), null)
+        return@execute
+      }
+      val result = runCatching {
+        val change = if (next) active.startVideo(context, stream) else active.stopVideo(context, stream)
+        change.get(VIDEO_TOGGLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+      }
+      if (call !== active || joinGeneration.get() != generation) {
+        complete(null, IllegalStateException("The meeting ended before the camera changed"))
+        return@execute
+      }
+      result.exceptionOrNull()?.let { error ->
+        Log.e(TAG, "setVideoEnabled=$next failed", error)
+        complete(null, error)
+        return@execute
+      }
+      Log.i(TAG, "setVideoEnabled=$next")
+      videoEnabled = next
+      val snap = snapshot()
+      onState(snap)
+      complete(snap, null)
+    }
   }
 
   fun setAudioSource(source: String): Map<String, Any> {
@@ -2021,6 +2068,7 @@ class AcsMeetingSession(
     localOut = null
     audioIn = null
     videoOut = null
+    videoEnabled = true
     outgoingReady.set(false)
     muted.set(false)
     hangUpForEveryone = CapabilityStatus()
@@ -2097,6 +2145,7 @@ class AcsMeetingSession(
     private const val TAG = "ACS-SPIKE"
     const val GLASSES_REQUIRES_UNMUTED_TRANSPORT = true
     private const val ROSTER_COALESCE_MS = 150L
+    private const val VIDEO_TOGGLE_TIMEOUT_MS = 10_000L
     private const val MEDIA_RESTART_BASE_MS = 1_000L
     private const val MEDIA_RESTART_MAX_MS = 10_000L
 

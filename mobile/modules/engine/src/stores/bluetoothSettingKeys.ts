@@ -7,6 +7,7 @@ export const MENTRA_LIVE_SETTING_KEYS: string[] = [
   "preferred_mic",
   "voice_activity_detection_enabled",
   "loudness_gate_enabled",
+  "auto_power_off_enabled",
   // Effective tuning only. mic_tuning_desired is engine-side state and must
   // never appear here, or a persisted super-mode value would reach the glasses.
   "mic_tuning",
