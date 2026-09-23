@@ -256,7 +256,7 @@ test("workflow is opt-in, preserves other eligible channels, and sends through t
   assert.doesNotMatch(workflow, /matrix.routine/)
   assert.match(workflow, /Queue one private OTA then Call job/)
   assert.equal((workflow.match(/uses: actions\/download-artifact@v4/g) ?? []).length, 2)
-  assert.match(workflow, /E2E_PRIVATE_DISPATCH_TOKEN: \$\{\{ secrets.E2E_PRIVATE_DISPATCH_TOKEN \}\}/)
+  assert.match(workflow, /TEST_RUN_DISPATCH_TOKEN: \$\{\{ steps.dispatch-token.outputs.token \}\}/)
   assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
   assert.equal((workflow.match(/retries: 0/g) ?? []).length, 4)
   assert.doesNotMatch(workflow, /workflow_dispatch:|self-hosted|mentra-device-worker/)
@@ -456,4 +456,23 @@ test("nightly cannot fall back past a newer failed, skipped or ambiguous finaliz
     assert.equal(result.requests.some(row => row.channel === "dev"), false)
     assert.deepEqual(result.unavailable.map(row => row.channel), ["dev"])
   }
+})
+
+
+test("nightly App token is fresh after readiness and both downloads, repo-scoped and revoked by default", async () => {
+  const workflow = await readFile(new URL("../workflows/nightly-device-routines.yml", import.meta.url), "utf8")
+  const token = workflow.split("      - name: Create scoped private dispatch token\n")[1]?.split("      - name: ")[0]
+  assert.ok(token)
+  assert.match(token, /uses: actions\/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3/)
+  assert.match(token, /app-id: \$\{\{ vars.TEST_RUN_GITHUB_APP_ID \}\}/)
+  assert.match(token, /private-key: \$\{\{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY \}\}/)
+  assert.match(token, /owner: Mentra-Community\n          repositories: Mentra-Automated-Testing\n/)
+  assert.deepEqual(token.match(/permission-[a-z-]+: [a-z]+/g), ["permission-actions: write"])
+  assert.doesNotMatch(token, /skip-token-revoke/)
+  const mint = workflow.indexOf("- name: Create scoped private dispatch token")
+  for (const step of ["Wait for both immutable request generations", "Download the exact OTA request", "Download the exact Call request"])
+    assert.ok(workflow.indexOf(`- name: ${step}`) < mint)
+  assert.ok(mint < workflow.indexOf("- name: Queue one private OTA then Call job"))
+  assert.match(workflow, /timeout-minutes: 20/)
+  assert.doesNotMatch(workflow, /E2E_PRIVATE_DISPATCH_TOKEN|secrets.*PAT/)
 })

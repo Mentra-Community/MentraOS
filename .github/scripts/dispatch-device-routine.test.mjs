@@ -365,7 +365,7 @@ test("mismatched producer JSON and missing dispatch capability fail before priva
     {...request, routine: {...request.routine, harnessRevision: head}}]) {
     await assert.rejects(() => dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(value)}))
   }
-  await assert.rejects(() => dispatchReadyRequest({...f, context, plan, bytes: bytes(request)}), /E2E_PRIVATE_DISPATCH_TOKEN/)
+  await assert.rejects(() => dispatchReadyRequest({...f, context, plan, bytes: bytes(request)}), /Missing short-lived GitHub App dispatch token/)
   await assert.rejects(() => dispatchReadyRequest({...f, context, plan, bytes: Buffer.alloc(1048577)}), /1 MiB/)
   assert.equal(remote.calls.length, 0)
 })
@@ -575,4 +575,25 @@ test("automatic successful builds cannot substitute an earlier publication after
     await assert.rejects(planDeviceDispatch({...f, context, routine: "no-glasses"}), /did not publish/)
     assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
   }
+})
+
+
+test("private callback mints a repo-scoped App token only after artifact download in trusted code", async () => {
+  const workflow = await readFile(new URL("../workflows/dispatch-device-routine.yml", import.meta.url), "utf8")
+  const producer = await readFile(new URL("../workflows/request-e2e-routine.yml", import.meta.url), "utf8")
+  const token = workflow.split("      - name: Create scoped private dispatch token\n")[1]?.split("      - name: ")[0]
+  assert.ok(token)
+  assert.match(token, /if: matrix.mode == 'dispatch'/)
+  assert.match(token, /uses: actions\/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3/)
+  assert.match(token, /app-id: \$\{\{ vars.TEST_RUN_GITHUB_APP_ID \}\}/)
+  assert.match(token, /private-key: \$\{\{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY \}\}/)
+  assert.match(token, /owner: Mentra-Community\n          repositories: Mentra-Automated-Testing\n/)
+  assert.deepEqual(token.match(/permission-[a-z-]+: [a-z]+/g), ["permission-actions: write"])
+  assert.doesNotMatch(token, /skip-token-revoke/)
+  const mint = workflow.indexOf("- name: Create scoped private dispatch token")
+  assert.ok(workflow.indexOf("- name: Download the exact immutable request artifact") < mint)
+  assert.ok(mint < workflow.indexOf("- name: Queue the ready request in the private repository"))
+  assert.match(workflow, /TEST_RUN_DISPATCH_TOKEN: \$\{\{ steps.dispatch-token.outputs.token \}\}/)
+  assert.doesNotMatch(workflow, /E2E_PRIVATE_DISPATCH_TOKEN|secrets.*PAT/)
+  assert.doesNotMatch(producer, /TEST_RUN_GITHUB_APP_PRIVATE_KEY|create-github-app-token|TEST_RUN_DISPATCH_TOKEN/)
 })

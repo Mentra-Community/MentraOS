@@ -258,7 +258,7 @@ export async function dispatchNightlySequence({github, privateGithub, context, a
   requireThat(ready.members[0].runId !== ready.members[1].runId &&
     isDeepStrictEqual(requests[0].source, requests[1].source) &&
     isDeepStrictEqual(requests[0].selection, requests[1].selection), "Nightly OTA and Call selections differ")
-  requireThat(privateGithub, "Configure E2E_PRIVATE_DISPATCH_TOKEN with Actions write on the private test repo")
+  requireThat(privateGithub, "Missing short-lived GitHub App dispatch token")
   try {
     const response = await privateGithub.rest.actions.createWorkflowDispatch({owner: context.repo.owner,
       repo: "Mentra-Automated-Testing", workflow_id: "nightly-device-routines.yml", ref: "main", inputs: {

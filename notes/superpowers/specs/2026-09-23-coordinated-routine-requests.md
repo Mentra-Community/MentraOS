@@ -94,3 +94,27 @@ failed request, missing artifact or readiness timeout never causes an automatic 
 Workflow reruns refuse dispatch. Retain the original history and reconcile it manually;
 creating or deleting another workflow run is not an authorization to repeat hardware
 work. A failed channel does not prevent the other eligible channel from proceeding.
+
+
+## Private dispatch authentication
+
+The trusted public callback and nightly workflows mint short-lived installation
+tokens from the organization-owned GitHub App. Configure repository variable
+`TEST_RUN_GITHUB_APP_ID` and secret `TEST_RUN_GITHUB_APP_PRIVATE_KEY` for that App,
+which must be installed on `Mentra-Community/Mentra-Automated-Testing`. The App
+installation needs Actions write; each token explicitly selects only that private
+repository and Actions write (plus GitHub's implicit metadata permission).
+
+Both workflows pin `actions/create-github-app-token` v3 to
+`bcd2ba49218906704ab6c1aa796996da409d3eb1`. Minting occurs after the request artifacts
+are downloaded, immediately before private dispatch. The nightly eight-minute
+readiness wait therefore does not consume token lifetime. Tokens expire after one
+hour, longer than the complete ten-minute callback and twenty-minute nightly jobs,
+and the action revokes them on job completion by default. Hardware execution in the
+private workflow obtains its own credentials; no public token crosses jobs.
+
+The key is available only to the default-branch callback/scheduled code, checked out
+at `github.workflow_sha`; the PR request workflow does not receive it. There is no
+static `E2E_PRIVATE_DISPATCH_TOKEN` or PAT fallback. Changing token acquisition does
+not change request identities, shared claims, send-history fences or the prohibition
+on retrying an ambiguous workflow dispatch.

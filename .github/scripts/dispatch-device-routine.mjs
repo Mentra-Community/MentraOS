@@ -254,7 +254,7 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
     if (!pr || base.object?.sha !== request.pullRequest.baseSha)
       return {status: "not-dispatched", reason: "Request was superseded or PR opt-in was removed"}
   }
-  requireThat(privateGithub, "Configure E2E_PRIVATE_DISPATCH_TOKEN with Actions write on the private test repo")
+  requireThat(privateGithub, "Missing short-lived GitHub App dispatch token")
   await privateGithub.rest.actions.createWorkflowDispatch({owner: context.repo.owner, repo: PRIVATE_REPOSITORY,
     workflow_id: "device-routine.yml", ref: "main", inputs: {
       source_repository: REPOSITORY, request_run_id: String(plan.runId), request_attempt: String(plan.runAttempt),
