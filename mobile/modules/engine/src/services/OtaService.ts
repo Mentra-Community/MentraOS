@@ -11,6 +11,8 @@
  * Started by `engine.start()`. Idempotent.
  */
 import BluetoothSdk, {type OtaStatus} from "@mentra/bluetooth-sdk"
+import {LiveEventContext} from "../devices/mentra-live/eventContext"
+import {managedLiveDeviceId} from "../devices/mentra-live/ownership"
 import {cancelDeferredFirmwareStop, deferStopForFirmware} from "../ota/RuntimeLease"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {useGlassesStore} from "../stores/glasses"
@@ -18,6 +20,7 @@ import {handleOtaClockSkewFromGlasses} from "./glassesClockSync"
 import {legacyOtaProgressFromOtaStatusEvent, normalizeOtaStatusEvent, otaStatusFromNormalized} from "./otaLegacyMapping"
 
 let subs: Array<{remove: () => void}> = []
+const eventContext = new LiveEventContext()
 
 export function startOtaService(): void {
   cancelDeferredFirmwareStop(stopOtaService)
@@ -26,6 +29,7 @@ export function startOtaService(): void {
   // MTK firmware update finished (self power-cycle path).
   subs.push(
     BluetoothSdk.addListener("mtk_update_complete", (event) => {
+      if (!eventContext.accepts(event, managedLiveDeviceId())) return
       GlobalEventEmitter.emit("mtk_update_complete", {message: event.message, timestamp: event.timestamp})
     }),
   )
@@ -33,6 +37,7 @@ export function startOtaService(): void {
   // Glasses acknowledged the install start.
   subs.push(
     BluetoothSdk.addListener("ota_start_ack", (event) => {
+      if (!eventContext.accepts(event, managedLiveDeviceId())) return
       GlobalEventEmitter.emit("ota_start_ack", {timestamp: event.timestamp})
     }),
   )
@@ -42,6 +47,7 @@ export function startOtaService(): void {
   // the ONLY reconnect-edge signal the OTA coordinator gets after an APK install.
   subs.push(
     BluetoothSdk.addListener("glasses_session_changed", (event) => {
+      if (!eventContext.accepts(event, managedLiveDeviceId())) return
       console.log(`[OTA] glasses_session_changed ${event.previous_sid || "<none>"} -> ${event.sid}`)
       GlobalEventEmitter.emit("glasses_session_changed", {previousSid: event.previous_sid, sid: event.sid})
     }),
@@ -51,6 +57,7 @@ export function startOtaService(): void {
   // (otaProgress) store shapes; auto-fixes clock skew on the relevant failures.
   subs.push(
     BluetoothSdk.addListener("ota_status", (event) => {
+      if (!eventContext.accepts(event, managedLiveDeviceId())) return
       const normalized = normalizeOtaStatusEvent(event as Record<string, unknown>)
       const status: OtaStatus = otaStatusFromNormalized(normalized)
       useGlassesStore.getState().setOtaStatus(status)

@@ -5,6 +5,8 @@ import {FirmwareUpdateFlow, type FirmwareUpdateFlowProps, type FirmwareUpdateVie
 const bundledViews: FirmwareUpdateViewRegistry = {
   "mentra-live": (props) => (
     <MentraLiveOtaFlow
+      target={props.target}
+      entryPoint={props.entryPoint}
       allowDevSkip={props.allowDevelopmentSkip}
       deviceName={props.target.displayName}
       initialPage={props.legacyProgressEntry ? "progress" : "check"}

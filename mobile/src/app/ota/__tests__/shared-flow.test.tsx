@@ -13,15 +13,15 @@ import {
   getMentraLiveOtaSession,
   resolveMentraLiveOtaProvider,
   releaseMentraLiveOtaSession,
-} from "../../../../modules/engine/src/devices/mentra-live/sessionRegistry"
+} from "@/../modules/engine/src/devices/mentra-live/sessionRegistry"
+import {liveOtaPorts as ota} from "@/../modules/engine/src/devices/mentra-live/ports"
+import {useGlassesStore} from "@/../modules/engine/src/stores/glasses"
+import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 const beginOtaAutoChain = (
   ...args: Parameters<NonNullable<ReturnType<typeof getMentraLiveOtaSession>>["chain"]["beginOtaAutoChain"]>
 ) => getMentraLiveOtaSession()!.chain.beginOtaAutoChain(...args)
 const isOtaAutoChainActive = () => getMentraLiveOtaSession()!.chain.isOtaAutoChainActive()
 const stopOtaAutoChain = () => getMentraLiveOtaSession()!.chain.stopOtaAutoChain()
-import {liveOtaPorts as ota} from "@/../modules/engine/src/devices/mentra-live/ports"
-import {useGlassesStore} from "@/../modules/engine/src/stores/glasses"
-import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 async function render(element: React.ReactElement) {
   const view = renderNow(element)
@@ -51,6 +51,24 @@ describe("MentraLiveOtaFlow", () => {
     jest.useRealTimers()
   })
 
+  it("rejects a Live screen pinned to another native device before checking or installing", async () => {
+    const check = jest.spyOn(ota, "checkForUpdates")
+    const onFinished = jest.fn()
+    const view = await render(
+      <MentraLiveOtaFlow
+        target={{integrationId: "mentra-live", deviceId: "other-live", displayName: "Other Live"}}
+        entryPoint="settings"
+        initializeRuntime={false}
+        onFinished={onFinished}
+        onOpenWifiSetup={jest.fn()}
+      />,
+    )
+    await waitFor(() => expect(view.getByText("Check Failed")).toBeTruthy())
+    expect(check).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    expect(onFinished).not.toHaveBeenCalled()
+  })
+
   it("does not leave the flow before OTA-only status hydration finishes", async () => {
     let finishInitialization: () => void = () => {}
     jest.spyOn(ota, "initialize").mockReturnValue(
@@ -68,6 +86,23 @@ describe("MentraLiveOtaFlow", () => {
     })
 
     await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1))
+  })
+
+  it("does not navigate a dismissed host when initialization finishes later", async () => {
+    let finishInitialization!: () => void
+    jest.spyOn(ota, "initialize").mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishInitialization = resolve
+      }),
+    )
+    const onFinished = jest.fn()
+    const view = await render(<MentraLiveOtaFlow onFinished={onFinished} onOpenWifiSetup={jest.fn()} />)
+    view.unmount()
+    await act(async () => {
+      finishInitialization()
+      await Promise.resolve()
+    })
+    expect(onFinished).not.toHaveBeenCalled()
   })
 
   it("checks, offers, and enters progress without host navigation", async () => {
@@ -166,7 +201,7 @@ describe("MentraLiveOtaFlow", () => {
                   apps: {"com.mentra.asg_client": {versionCode: 301010001, versionName: "3.1.1"}},
                   bes_firmware: {version: "26.9.4.1", url: "https://ota.example/bes.bin"},
                 },
-        } as Response),
+        }) as Response,
     )
     beginOtaAutoChain("legacy-mtk", false, {fromVersion: "37.0", toVersion: "37.0", releaseVersion: null})
     const onFinished = jest.fn()

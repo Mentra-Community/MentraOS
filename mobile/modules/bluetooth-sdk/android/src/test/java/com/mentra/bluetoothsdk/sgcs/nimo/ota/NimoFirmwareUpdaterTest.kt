@@ -51,6 +51,28 @@ class NimoFirmwareUpdaterTest {
     assertEquals(0, h.releases); assertEquals(1, observed.size)
   }
 
+  @Test fun idleReconnectAcceptsFreshInventoryBeforeOtaChannelPreparation() = Harness().use { h ->
+    h.updater.inventoryChanged(NimoOtaManager.Inventory("old", "0.1.0.14"), 1)
+    h.updater.disconnected(1)
+    h.generation = 2
+    h.updater.connectionChanged("device", 2)
+    h.updater.inventoryChanged(NimoOtaManager.Inventory("fresh", "0.1.1.1"), 2)
+    h.updater.inventoryChanged(NimoOtaManager.Inventory("stale", "0.1.0.14"), 1)
+    assertEquals("fresh", h.updater.snapshot.observedFirmware)
+    assertEquals("2", h.updater.snapshot.inventory["revision"])
+    assertTrue(h.prepareCallbacks.isEmpty()); assertTrue(h.writes.isEmpty())
+    assertTrue(h.updater.snapshot.safeToRelease)
+  }
+
+  @Test fun journalRetainsOnlyRecoveryMetadata() = Harness().use { h ->
+    h.updater.start(h.request.copy(manifestUrl = "https://example.com/?secret=private-token",
+      metadata = h.request.metadata + ("authorization" to "private-token")))
+    val saved = FirmwareJournal("device", h.directory).read()
+    assertNull(saved?.request?.manifestUrl)
+    assertEquals(h.request.metadata, saved?.request?.metadata)
+    assertEquals(h.request.artifact?.sha256, saved?.request?.artifact?.sha256)
+  }
+
   @Test fun latePreparationCannotStartAfterTimeoutOrReconnect() = Harness().use { h ->
     h.updater.start(h.request); h.timers[0]()
     assertEquals("failed", h.updater.snapshot.phase); assertTrue(h.updater.snapshot.safeToRelease)

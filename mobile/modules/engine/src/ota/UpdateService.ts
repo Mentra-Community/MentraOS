@@ -1,4 +1,5 @@
 import {DeviceIntegrationRegistry} from "../devices/types"
+import {RevisionedSnapshot} from "./RevisionedSnapshot"
 import {
   FirmwareUpdateError,
   type FirmwareActionRequest,
@@ -20,6 +21,27 @@ export class FirmwareUpdateService {
   private requests = new Map<string, FirmwareActionRequest>()
   private openings = new Map<string, Promise<FirmwareProvider>>()
   private lifecycleGeneration = 0
+  private nativeReservations = new Set<string>()
+
+  /** Native work can predate this JS runtime. Observation must protect it before any provider opens. */
+  noteNativeRecovery(target: Pick<FirmwareTarget, "integrationId" | "deviceId">, safeToRelease: boolean): void {
+    const key = JSON.stringify([target.integrationId, target.deviceId])
+    if (safeToRelease) this.nativeReservations.delete(key)
+    else this.nativeReservations.add(key)
+  }
+  private observations = new Map<string, () => void>()
+  private sessions = new RevisionedSnapshot<{revision: number; values: readonly FirmwareSnapshot[]}>({
+    revision: 0,
+    values: [],
+  })
+
+  /** Retained sessions only: this read never constructs a provider or opens a flow. */
+  retainedSnapshots = (): readonly FirmwareSnapshot[] => this.sessions.snapshot().values
+  subscribeRetained = (listener: () => void): (() => void) => this.sessions.subscribe(() => listener())
+
+  private publishRetained(): void {
+    this.sessions.publish({values: [...this.providers.values()].map((provider) => provider.snapshot())})
+  }
 
   constructor(private readonly registry: DeviceIntegrationRegistry) {}
 
@@ -36,6 +58,10 @@ export class FirmwareUpdateService {
       throw new FirmwareUpdateError("invalid_provider", "The updater is bound to a different device")
     }
     this.providers.set(key, provider)
+    this.observations.set(
+      key,
+      provider.subscribe(() => this.publishRetained()),
+    )
     return provider
   }
 
@@ -52,7 +78,10 @@ export class FirmwareUpdateService {
     for (const [other, existing] of this.providers) {
       if (other !== key && !existing.snapshot().active && existing.snapshot().safeToRelease) {
         existing.dispose()
+        this.observations.get(other)?.()
+        this.observations.delete(other)
         this.providers.delete(other)
+        this.publishRetained()
       }
     }
     const provider = this.provider(target)
@@ -142,6 +171,7 @@ export class FirmwareUpdateService {
     if (
       this.commands.size ||
       this.openings.size ||
+      this.nativeReservations.size ||
       [...this.providers.values()].some((provider) => !provider.snapshot().safeToRelease)
     ) {
       throw new FirmwareUpdateError("busy", "The glasses are updating; wait before disconnecting or resetting them")
@@ -183,15 +213,20 @@ export class FirmwareUpdateService {
       throw new FirmwareUpdateError("busy", "This update still owns the device")
     }
     provider.dispose()
+    this.observations.get(key)?.()
+    this.observations.delete(key)
     this.providers.delete(key)
+    this.publishRetained()
   }
 
   private assertAvailable(target: FirmwareTarget): void {
     const key = targetKey(target)
     const busyCommand = [...this.commands.keys(), ...this.openings.keys()].some((other) => other !== key)
+    const busyNative = [...this.nativeReservations].some((other) => other !== key)
     const busyProvider = [...this.providers.entries()].some(
       ([other, provider]) => other !== key && (provider.snapshot().active || !provider.snapshot().safeToRelease),
     )
-    if (busyCommand || busyProvider) throw new FirmwareUpdateError("busy", "Another device update is active")
+    if (busyCommand || busyProvider || busyNative)
+      throw new FirmwareUpdateError("busy", "Another device update is active")
   }
 }

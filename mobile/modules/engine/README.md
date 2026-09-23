@@ -33,14 +33,14 @@ resolve live TypeScript source):
   OTA policy constants, hardware capability tables, `BgTimer`). Judgment rule:
   read models, commands, pure functions and types are main; anything that
   mutates runtime state or exposes a store/service is not.
-- **`@mentra/engine/ota`** (`src/react/index.ts`) — the complete Mentra Live OTA
-  controller plus its stock full-screen renderer. `useMentraLiveOta` owns the
-  check, hotspot or Wi-Fi install, APK/MTK/BES progress, reboot, retry, and final
-  verification behavior. `MentraLiveOtaFlow` renders that same public hook.
+- **`@mentra/engine/ota`** (`src/react/index.ts`) — `FirmwareUpdateFlow` and
+  `useFirmwareUpdate` render device-bound providers. Providers own execution
+  outside React; unmounting a view does not cancel an update. The compatible
+  `MentraLiveOtaFlow` and `useMentraLiveOta` use that same retained Live provider.
 - **`@mentra/engine/bluetooth-sdk`** (`src/bluetooth-sdk/index.ts`) — the
   complete public Bluetooth SDK surface, re-exported without a wrapper so it
   has the same singleton identity as `@mentra/bluetooth-sdk`. The supported
-  SDK `react`, `types`, `photo-receiver`, `ota-transport`, and `debug` subpaths are mirrored
+  SDK `react`, `types`, `photo-receiver`, `ota-transport`, `firmware-updates`, and `debug` subpaths are mirrored
   below this path. The SDK's `internal` entrypoint is deliberately not exposed.
 
 See `cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md`
@@ -66,7 +66,44 @@ import BluetoothSdk from "@mentra/engine/bluetooth-sdk"
 - `decideDevLaunchRoute` — pre-flight a dev URL's `miniapp.json` to decide
   whether to mount live or take the user to the offline screen.
 
-### Mentra Live OTA flow
+### Device firmware updates
+
+```tsx
+import {FirmwareUpdateFlow} from "@mentra/engine/ota"
+
+;<FirmwareUpdateFlow entryPoint="settings" onFinished={closeUpdateScreen} onOpenWifiSetup={openWifiSetup} />
+```
+
+The flow resolves the paired native device identity and its registered updater.
+An explicit `target` can be supplied; model names alone never authorize a write.
+Hosts render allowed actions and delegate them to `engine.firmwareUpdates`.
+`pairingPolicy(model)` declares Bluetooth Classic, firmware-check and onboarding
+requirements independently. An OTA capability does not imply Live's Wi-Fi setup.
+
+`snapshot`/`subscribe` observe a provider; `open` checks or adopts it; `perform`
+admits an allowed action against the displayed offer. `safeToRelease` governs
+device replacement and cleanup. A displayed failure can still require recovery.
+Call `assertSafeToRelease` before intentional logout, unpair or deployment changes.
+Runtime stop suspends optional checks/passes while retaining unsafe device work.
+
+`retainedSnapshots`/`subscribeRetained` expose existing Engine sessions without
+opening them. `observeNativeRecovery` additionally reads native sessions after a
+JS reload or cold process start. It performs local observation only and may be
+mounted outside authentication; keep this recovery surface alive when auth is
+revoked. Native recovery never restores authorization for another Live pass.
+
+NIMO uses the SDK's `device-firmware.json` catalogue and exact firmware identities.
+The catalogue deliberately has no production manifest pin until the firmware is
+approved and published. Missing update sources do not disable an already-known
+compatible build. Organization deployments disable public fallback by default.
+AR99's managed migration requires an explicitly injected vendor source; it has
+no default vendor fallback. The Mentra App retains its existing AR99 flow unless
+`EXPO_PUBLIC_ENABLE_MANAGED_AR99_OTA=true` is set for deliberate validation.
+Failed-transfer recovery must be verified before enabling that migration in
+production. A validated image is reported separately from a verified running
+firmware version; an arbitrary error never proves that device writes stopped.
+
+### Mentra Live compatibility flow
 
 Bluetooth-only hosts can render the OTA flow without configuring or starting
 the authenticated cloud connection or miniapp runtime:

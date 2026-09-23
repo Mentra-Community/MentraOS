@@ -640,19 +640,21 @@ class Bridge {
         }
     }
 
-    static func sendMtkUpdateComplete(message: String, timestamp: Int64) {
-        let eventBody: [String: Any] = [
+    static func sendMtkUpdateComplete(message: String, timestamp: Int64, sourceContext: [String: Any] = [:]) {
+        var eventBody: [String: Any] = [
             "message": message,
             "timestamp": timestamp,
         ]
+        eventBody.merge(sourceContext) { _, source in source }
         Bridge.sendTypedMessage("mtk_update_complete", body: eventBody)
     }
 
     /// Send ota_start_ack —glasses confirmed receipt of ota_start command
-    static func sendOtaStartAck() {
-        let eventBody: [String: Any] = [
+    static func sendOtaStartAck(sourceContext: [String: Any] = [:]) {
+        var eventBody: [String: Any] = [
             "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
         ]
+        eventBody.merge(sourceContext) { _, source in source }
         Bridge.sendTypedMessage("ota_start_ack", body: eventBody)
     }
 
@@ -667,7 +669,8 @@ class Bridge {
         status: String,
         errorMessage: String?,
         glassesTimeMs: Int64? = nil,
-        bytesDownloaded: Int64? = nil
+        bytesDownloaded: Int64? = nil,
+        sourceContext: [String: Any] = [:]
     ) {
         var eventBody: [String: Any] = [
             "session_id": sessionId,
@@ -688,6 +691,7 @@ class Bridge {
         if let bytesDownloaded {
             eventBody["bytes_downloaded"] = bytesDownloaded
         }
+        eventBody.merge(sourceContext) { _, source in source }
         Bridge.sendTypedMessage("ota_status", body: eventBody)
     }
 

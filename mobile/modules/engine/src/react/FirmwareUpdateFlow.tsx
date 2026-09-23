@@ -1,4 +1,3 @@
-/* eslint-disable react-native/no-raw-text -- Provider copy is translated through the supplied host translator. */
 import {useEffect, useState, type ComponentType} from "react"
 import {ActivityIndicator, Pressable, ScrollView, Text, View, type StyleProp, type ViewStyle} from "react-native"
 import {SafeAreaView} from "react-native-safe-area-context"
@@ -50,11 +49,17 @@ export function FirmwareUpdateFlow(props: FirmwareUpdateFlowProps & {views?: Fir
   const [error, setError] = useState<Error | null>(null)
   const [attempt, setAttempt] = useState(0)
   const colors = {...defaultTheme, ...props.theme}
+  const integrationId = props.target?.integrationId
+  const deviceId = props.target?.deviceId
+  const displayName = props.target?.displayName
   useEffect(() => {
     let observing = true
     setResolved(null)
     setError(null)
-    const target = props.target ? Promise.resolve(props.target) : firmwareUpdates.currentTarget()
+    const target =
+      integrationId && deviceId
+        ? Promise.resolve({integrationId, deviceId, displayName: displayName ?? integrationId})
+        : firmwareUpdates.currentTarget()
     void target.then(
       (value) => {
         if (observing) setResolved(value)
@@ -66,7 +71,7 @@ export function FirmwareUpdateFlow(props: FirmwareUpdateFlowProps & {views?: Fir
     return () => {
       observing = false
     }
-  }, [props.target?.integrationId, props.target?.deviceId, attempt])
+  }, [integrationId, deviceId, displayName, attempt])
 
   if (!resolved)
     return (
@@ -78,6 +83,18 @@ export function FirmwareUpdateFlow(props: FirmwareUpdateFlowProps & {views?: Fir
               <Pressable accessibilityRole="button" onPress={() => setAttempt((value) => value + 1)}>
                 <Text style={{color: colors.primary}}>{props.translate?.("common:retry") ?? "Retry"}</Text>
               </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  try {
+                    firmwareUpdates.assertSafeToRelease()
+                    props.onFinished()
+                  } catch (failure) {
+                    setError(failure instanceof Error ? failure : new Error(String(failure)))
+                  }
+                }}>
+                <Text style={{color: colors.primary}}>{props.translate?.("common:close") ?? "Close"}</Text>
+              </Pressable>
             </>
           ) : (
             <ActivityIndicator color={colors.primary} />
@@ -86,7 +103,12 @@ export function FirmwareUpdateFlow(props: FirmwareUpdateFlowProps & {views?: Fir
       </SafeAreaView>
     )
   const CustomView = props.views?.[resolved.integrationId]
-  return CustomView ? <CustomView {...props} target={resolved} /> : <ManagedFirmwareView {...props} target={resolved} />
+  const key = `${resolved.integrationId}:${resolved.deviceId}`
+  return CustomView ? (
+    <CustomView key={key} {...props} target={resolved} />
+  ) : (
+    <ManagedFirmwareView key={key} {...props} target={resolved} />
+  )
 }
 
 function ManagedFirmwareView(props: FirmwareUpdateFlowProps & {target: FirmwareTarget}) {
@@ -95,10 +117,11 @@ function ManagedFirmwareView(props: FirmwareUpdateFlowProps & {target: FirmwareT
   const copy = (value: FirmwareCopy): string =>
     value.key && props.translate ? props.translate(value.key, value.values ? {...value.values} : undefined) : value.text
   const view = snapshot.presentation
+  const {onFirmwareRestartingChange} = props
   useEffect(() => {
-    props.onFirmwareRestartingChange?.(["restarting", "verifying"].includes(snapshot.phase), snapshot.active)
-  }, [snapshot.phase, snapshot.active, props.onFirmwareRestartingChange])
-  useEffect(() => () => props.onFirmwareRestartingChange?.(false, false), [props.onFirmwareRestartingChange])
+    onFirmwareRestartingChange?.(["restarting", "verifying"].includes(snapshot.phase), snapshot.active)
+  }, [snapshot.phase, snapshot.active, onFirmwareRestartingChange])
+  useEffect(() => () => onFirmwareRestartingChange?.(false, false), [onFirmwareRestartingChange])
   return (
     <SafeAreaView style={[{flex: 1, backgroundColor: colors.background}, props.style]}>
       <ScrollView contentContainerStyle={{flexGrow: 1, padding: 24, justifyContent: "center", gap: 20}}>
@@ -108,10 +131,29 @@ function ManagedFirmwareView(props: FirmwareUpdateFlowProps & {target: FirmwareT
         {view.message && (
           <Text style={{fontSize: 16, lineHeight: 24, color: colors.textDim}}>{copy(view.message)}</Text>
         )}
+        {snapshot.offer?.observedVersion && (
+          <Text style={{color: colors.textDim}}>
+            {copy({
+              key: "ota:observedFirmware",
+              text: `Current: ${snapshot.offer.observedVersion}`,
+              values: {version: snapshot.offer.observedVersion},
+            })}
+          </Text>
+        )}
+        {snapshot.offer?.targetVersion && (
+          <Text style={{color: colors.foreground}}>
+            {copy({
+              key: "ota:offeredFirmware",
+              text: `Update: ${snapshot.offer.targetVersion}`,
+              values: {version: snapshot.offer.targetVersion},
+            })}
+          </Text>
+        )}
         {(view.busy || opening) && <ActivityIndicator color={colors.primary} />}
         {view.progress != null && (
           <Text style={{fontSize: 24, color: colors.foreground}}>{Math.round(view.progress)}%</Text>
         )}
+        {view.progressLabel && <Text style={{color: colors.textDim}}>{copy(view.progressLabel)}</Text>}
         {error && (
           <Text accessibilityRole="alert" style={{color: colors.error}}>
             {error.message}

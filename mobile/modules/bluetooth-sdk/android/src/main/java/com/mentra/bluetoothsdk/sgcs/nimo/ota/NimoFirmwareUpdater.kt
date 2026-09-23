@@ -76,7 +76,9 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
     }
     val target = target(request)
     val storage = journal ?: throw FirmwareUpdaterException("invalid_journal", "Firmware recovery storage is unavailable")
-    this.request = request
+    val recoveryRequest = request.copy(manifestUrl = null,
+      metadata = request.metadata.filterKeys { it in setOf("hardwareId", "packedVersion", "peerVersion") })
+    this.request = recoveryRequest
     operation++
     state.update { it.copy(sessionId = UUID.randomUUID().toString(), offerId = request.offerId, phase = "preparing",
       safeToRelease = false, targetFirmware = target.firmwareDetail, error = null) }
@@ -94,7 +96,7 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
         check(input.read() == -1) { "Firmware file grew after validation" }
         bytes
       }
-      storage.write(FirmwareRecoveryRecord(snapshot, request))
+      storage.write(FirmwareRecoveryRecord(snapshot, recoveryRequest))
       prepare {
         ports.connection()?.let { ready -> manager = makeManager(firmware, target, ready); manager?.start() }
       }
@@ -139,10 +141,14 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
   }
   fun connected(connection: Connection) {
     if (connection.deviceId != snapshot.deviceId) return
-    state.update { it.copy(connectionGeneration = connection.generation) }
+    connectionChanged(connection.deviceId, connection.generation)
     if (manager != null && rebootEvidence && !snapshot.safeToRelease) {
       prepare { ports.connection()?.let { ready -> manager?.reconnected(ready.generation, ready.writeCapacity) } }
     }
+  }
+  /** Ordinary version replies must use the new link before OTA channel preparation is relevant. */
+  fun connectionChanged(deviceId: String, generation: Int) {
+    if (deviceId == snapshot.deviceId) state.update { it.copy(connectionGeneration = generation) }
   }
   fun inventoryChanged(inventory: NimoOtaManager.Inventory, connectionGeneration: Int) {
     if (snapshot.connectionGeneration != connectionGeneration) return

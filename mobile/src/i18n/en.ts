@@ -494,6 +494,11 @@ const en = {
     couldNotContinue: "NIMO update could not continue",
   },
   ota: {
+    observedFirmware: "Current: {{version}}",
+    offeredFirmware: "Update: {{version}}",
+    recoveryNeedsAttention: "Glasses update needs attention",
+    recoveryUpdating: "Your glasses are updating",
+    recoverySignedOut: "Keep your glasses near this phone. Sign in to view the update and recovery options.",
     deviceRestartingReconnect: "Please wait while {{deviceName}} restarts and automatically reconnects...",
     startingHotspotUpdate: "Starting update…",
     downloadingToPhone: "Downloading update to phone…",

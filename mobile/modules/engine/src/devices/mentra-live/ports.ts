@@ -145,7 +145,7 @@ export const liveOtaPorts = {
     /** Select Wi-Fi or capability-gated hotspot transport for this checked manifest. */
     prepare: (result: OtaCheckCurrentGlassesResult) => otaInstallCoordinator.prepare(result),
     /** Bind the machine to the mounted progress screen. Idempotent per attach/detach cycle. */
-    attach: () => otaInstallCoordinator.attach(),
+    attach: (options?: {observationOnly?: boolean}) => otaInstallCoordinator.attach(options),
     /** Unbind on unmount: clears all timers/listeners and resets session state. */
     detach: () => otaInstallCoordinator.detach(),
     /** Retry after a failure: clear state and re-send ota_start (if connected). */

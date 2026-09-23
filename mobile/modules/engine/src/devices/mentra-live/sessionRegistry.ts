@@ -1,12 +1,14 @@
 import {firmwareUpdates, firmwareUpdateService} from "../../facades/firmwareUpdates"
-import {FirmwareUpdateError, type FirmwareOpenOptions} from "../../ota/types"
+import {FirmwareUpdateError, type FirmwareOpenOptions, type FirmwareTarget} from "../../ota/types"
 import {MentraLiveFirmwareProvider} from "./provider"
 
 let current: MentraLiveFirmwareProvider | null = null
 
 /** Passive compatibility lookup. Native identity is resolved before a provider is selected. */
-export async function resolveMentraLiveOtaProvider(): Promise<MentraLiveFirmwareProvider> {
-  const target = await firmwareUpdates.currentTarget()
+export async function resolveMentraLiveOtaProvider(
+  requestedTarget?: FirmwareTarget,
+): Promise<MentraLiveFirmwareProvider> {
+  const target = requestedTarget ?? (await firmwareUpdates.currentTarget())
   if (target.integrationId !== "mentra-live")
     throw new FirmwareUpdateError("unsupported", "The Live update flow requires Mentra Live glasses")
   const provider = firmwareUpdateService.provider(target)
@@ -20,8 +22,11 @@ export function getMentraLiveOtaSession() {
   return current?.session ?? null
 }
 
-export async function openMentraLiveOtaProvider(options: FirmwareOpenOptions): Promise<MentraLiveFirmwareProvider> {
-  const provider = await resolveMentraLiveOtaProvider()
+export async function openMentraLiveOtaProvider(
+  options: FirmwareOpenOptions,
+  target?: FirmwareTarget,
+): Promise<MentraLiveFirmwareProvider> {
+  const provider = await resolveMentraLiveOtaProvider(target)
   await firmwareUpdates.open(provider.target, options)
   return provider
 }

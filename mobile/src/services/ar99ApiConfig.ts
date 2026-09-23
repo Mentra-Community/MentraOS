@@ -15,6 +15,10 @@ export type Ar99ApiConfig = {
 
 export const AR99_API_ENV = AR99_API_ENVS.RELEASE
 
+// Keep the established AR99 flow until failed-transfer recovery is hardware/vendor validated.
+// A deliberate validation build can opt in; this is never inferred from capability metadata.
+export const MANAGED_AR99_OTA_ENABLED = process.env.EXPO_PUBLIC_ENABLE_MANAGED_AR99_OTA === "true"
+
 // Vendor OTA credentials are injected at build time via EAS/env (EXPO_PUBLIC_AR99_*).
 // They are intentionally NOT committed here so secret scanners are not circumvented.
 const AR99_API_CONFIGS: Record<Ar99ApiEnv, Ar99ApiConfig> = {

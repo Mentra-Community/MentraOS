@@ -1,5 +1,5 @@
 import type {ReleaseChangelog} from "../../facades/ota"
-import type {FirmwareSnapshot} from "../../ota/types"
+import type {FirmwareSnapshot, FirmwareTarget, FirmwareEntryPoint} from "../../ota/types"
 
 export type MentraLiveOtaFlowPage = "check" | "progress"
 
@@ -104,6 +104,9 @@ export type MentraLiveOtaState = {
 }
 
 export type UseMentraLiveOtaOptions = {
+  /** Pin this view to the native device selected by its host. */
+  target?: FirmwareTarget
+  entryPoint?: FirmwareEntryPoint
   /** Permit the existing developer check-screen skip. Does not bypass native update safety. */
   allowDevelopmentSkip?: boolean
   /** Entry page. `progress` exists for interrupted-session recovery. */

@@ -175,6 +175,10 @@ public class Ar99 extends SGCManager {
   }
   private void bindFirmwareUpdater(String id) {
     firmwareConnectionGeneration = FirmwareConnectionGeneration.INSTANCE.next();
+    if (ar99FirmwareUpdater != null && !ar99FirmwareUpdater.getSnapshot().getDeviceId().equals(id)) {
+      if (getFirmwareUpdateOwnsDevice()) return;
+      ar99FirmwareUpdater = null;
+    }
     if (ar99FirmwareUpdater == null) {
       ar99FirmwareUpdater = new Ar99FirmwareUpdater(id, firmwareConnectionGeneration, new Ar99FirmwareUpdater.Ports() {
         @Override public boolean connected() {

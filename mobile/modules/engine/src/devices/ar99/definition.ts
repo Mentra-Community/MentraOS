@@ -10,6 +10,12 @@ import type {DeviceIntegration} from "../types"
 import {Ar99FirmwareProvider, type Ar99FirmwarePorts} from "./provider"
 import {AR99_OTA_HEADERS, checkAr99Release, parseAr99Source} from "./releaseSource"
 
+function configuredSource() {
+  const policy = getConfigValues().firmwareSources
+  if (policy?.allowBundled === false || policy?.sources?.ar99 === null) return null
+  return parseAr99Source(policy?.vendorSources?.ar99)
+}
+
 function portsFor(target: FirmwareTarget): Ar99FirmwarePorts {
   const validateTarget = async () => {
     const device = await BluetoothSdk.getDefaultDevice()
@@ -57,11 +63,7 @@ function portsFor(target: FirmwareTarget): Ar99FirmwarePorts {
     reconcile: () => BluetoothSdk.reconcileFirmwareUpdate(target.deviceId),
     start: (request) => BluetoothSdk.startFirmwareUpdate(request),
     acknowledge: () => BluetoothSdk.acknowledgeFirmwareUpdate(target.deviceId),
-    source: () => {
-      const policy = getConfigValues().firmwareSources
-      if (policy?.allowBundled === false || policy?.sources?.ar99 === null) return null
-      return parseAr99Source(policy?.vendorSources?.ar99)
-    },
+    source: configuredSource,
     lookup: (source, native) =>
       checkAr99Release(
         source,
@@ -106,6 +108,15 @@ export const ar99Integration: DeviceIntegration = {
   models: ["AR99"],
   setup: {includeOsOnboarding: false},
   firmware: {
+    // Hosts must explicitly enable this migration. Do not infer it from hasOta.
+    isEnabled: () => {
+      try {
+        return configuredSource() !== null
+      } catch {
+        // Invalid optional configuration must not crash pairing/settings for the device.
+        return false
+      }
+    },
     entryPoints: ["settings", "recovery"],
     createProvider: (target) => new Ar99FirmwareProvider(target, portsFor(target)),
   },

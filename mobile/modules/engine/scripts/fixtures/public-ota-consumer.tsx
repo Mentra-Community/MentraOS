@@ -10,6 +10,15 @@ import {
   type MentraLiveOtaScreen,
 } from "@mentra/engine/ota"
 import {otaLocalNetwork, otaServer} from "@mentra/engine/bluetooth-sdk/ota-transport"
+import {
+  DEVICE_FIRMWARE_CATALOGUE,
+  type NativeFirmwareUpdateSnapshot,
+} from "@mentra/engine/bluetooth-sdk/firmware-updates"
+
+export const bundledFirmware = DEVICE_FIRMWARE_CATALOGUE
+export function nativeRecoveryState(snapshot: NativeFirmwareUpdateSnapshot) {
+  return {phase: snapshot.phase, safeToRelease: snapshot.safeToRelease}
+}
 
 export function StockOtaConsumer({onDone, onSetupWifi}: {onDone: () => void; onSetupWifi: () => void}) {
   return <MentraLiveOtaFlow onFinished={onDone} onOpenWifiSetup={onSetupWifi} />

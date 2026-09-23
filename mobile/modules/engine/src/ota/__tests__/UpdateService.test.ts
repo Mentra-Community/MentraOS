@@ -79,6 +79,32 @@ function fixture() {
 }
 
 describe("pluggable firmware update service", () => {
+  test("native recovery protects logout and another device before any provider is opened", async () => {
+    const {service, provider} = fixture()
+    service.noteNativeRecovery({integrationId: "nimo", deviceId: "cold-session"}, false)
+    expect(() => service.assertSafeToRelease()).toThrow("updating")
+    await expect(service.open(target, {entryPoint: "settings"})).rejects.toMatchObject({code: "busy"})
+    expect(provider.calls).toEqual([])
+    service.noteNativeRecovery({integrationId: "nimo", deviceId: "cold-session"}, true)
+    expect(() => service.assertSafeToRelease()).not.toThrow()
+  })
+
+  test("global recovery observation retains sessions across suspension without opening or starting work", () => {
+    const {service, provider} = fixture()
+    const seen: string[][] = []
+    const remove = service.subscribeRetained(() => seen.push(service.retainedSnapshots().map((s) => s.phase)))
+    const before = service.retainedSnapshots()
+    expect(service.retainedSnapshots()).toBe(before)
+    provider.update({phase: "installing", active: true, safeToRelease: false})
+    service.suspendNewWork()
+    expect(service.retainedSnapshots()[0].safeToRelease).toBe(false)
+    provider.update({phase: "complete", active: false, safeToRelease: true})
+    service.release(target)
+    expect(seen).toEqual([["available"], ["installing"], ["complete"], []])
+    expect(provider.calls).toEqual(["dispose"])
+    remove()
+  })
+
   test("a fourth integration is selected without a built-in model or flow switch", async () => {
     const {service, provider, registry} = fixture()
     expect(registry.forModel("Unrelated model")?.id).toBe(target.integrationId)

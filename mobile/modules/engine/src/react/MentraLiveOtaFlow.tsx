@@ -15,7 +15,7 @@ import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
 import {OTA_ERROR_ENGLISH_COPY} from "../services/OtaErrorMapping"
-import type {FirmwareSnapshot} from "../ota/types"
+import type {FirmwareSnapshot, FirmwareTarget, FirmwareEntryPoint} from "../ota/types"
 import {
   MINIMUM_OTA_BATTERY_LEVEL,
   useMentraLiveOta,
@@ -40,6 +40,8 @@ export type MentraLiveOtaFlowTheme = {
 export type MentraLiveOtaFlowTranslate = (key: string, options?: Record<string, string>) => string
 
 export type MentraLiveOtaFlowProps = {
+  target?: FirmwareTarget
+  entryPoint?: FirmwareEntryPoint
   /** Display name used in update copy. */
   deviceName?: string
   /** Entry page. `progress` exists for recovery/deep-link compatibility. */
@@ -174,6 +176,8 @@ function defaultTranslate(key: string, options?: Record<string, string>): string
 }
 
 export function MentraLiveOtaFlow({
+  target,
+  entryPoint,
   allowDevSkip = typeof __DEV__ !== "undefined" && __DEV__,
   deviceName = "Mentra Live",
   initialPage = "check",
@@ -189,6 +193,8 @@ export function MentraLiveOtaFlow({
 }: MentraLiveOtaFlowProps) {
   const colors = useMemo(() => ({...DEFAULT_THEME, ...theme}), [theme])
   const controller = useMentraLiveOta({
+    target,
+    entryPoint,
     allowDevelopmentSkip: allowDevSkip || superMode,
     initialPage,
     initializeRuntime,
@@ -334,8 +340,8 @@ function OtaFlowContent({
       state.screen === "wifi_required"
         ? "ota:wifiRequiredTitle"
         : state.versionChange
-        ? "ota:downgradeAvailable"
-        : "ota:updateAvailable"
+          ? "ota:downgradeAvailable"
+          : "ota:updateAvailable"
     return (
       <FlowPage
         colors={colors}
@@ -483,10 +489,10 @@ function OtaFlowContent({
       state.hotspotPhase === "downloading"
         ? "ota:downloadingToPhone"
         : state.hotspotPhase === "starting_hotspot"
-        ? "ota:startingGlassesHotspot"
-        : state.hotspotPhase === "joining_hotspot"
-        ? "ota:connectingPhoneToGlasses"
-        : "ota:startingHotspotUpdate",
+          ? "ota:startingGlassesHotspot"
+          : state.hotspotPhase === "joining_hotspot"
+            ? "ota:connectingPhoneToGlasses"
+            : "ota:startingHotspotUpdate",
     )
     const artifact = state.hotspotPhase === "downloading" ? state.hotspotArtifact : null
     return (
@@ -517,8 +523,8 @@ function OtaFlowContent({
     const title = hotspot
       ? translate(state.phase === "download" ? "ota:transferringToGlasses" : "ota:installingOnGlasses")
       : state.phase === "download"
-      ? "Downloading…"
-      : "Installing…"
+        ? "Downloading…"
+        : "Installing…"
     const component = state.step ? translate(componentCopyKey[state.step]) : null
     const hasStepCount =
       state.currentStep !== null &&
@@ -572,13 +578,13 @@ function OtaFlowContent({
     const title = state.versionChangeConverged
       ? translate("ota:versionChangeComplete")
       : state.versionChange
-      ? translate("ota:versionChangeFirmwarePassComplete")
-      : "Update complete!"
+        ? translate("ota:versionChangeFirmwarePassComplete")
+        : "Update complete!"
     const message = state.versionChangeConverged
       ? translate("ota:versionChangeCompleteMessage")
       : state.versionChange
-      ? translate("ota:versionChangeFirmwarePassCompleteMessage")
-      : "Your glasses are up to date."
+        ? translate("ota:versionChangeFirmwarePassCompleteMessage")
+        : "Your glasses are up to date."
     return (
       <FlowPage
         actions={

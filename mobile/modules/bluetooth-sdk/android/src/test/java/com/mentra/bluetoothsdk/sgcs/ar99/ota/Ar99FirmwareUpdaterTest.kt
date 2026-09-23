@@ -85,5 +85,13 @@ class Ar99FirmwareUpdaterTest {
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.acknowledge() }
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.beginLegacy() }
     assertEquals(1, h.starts)
+    h.updater.inventoryChanged("old", "serial", "AR99", 1)
+    val restored = h.makeUpdater()
+    restored.reconcile()
+    restored.inventoryChanged("old", "serial", "AR99", 1)
+    assertFalse(restored.snapshot.safeToRelease)
+    assertThrows(FirmwareUpdaterException::class.java) { restored.acknowledge() }
+    assertThrows(FirmwareUpdaterException::class.java) { restored.cancel() }
+    assertEquals(1, h.starts) // Old inventory is not proof of a remote abort. Rollout remains gated.
   }
 }

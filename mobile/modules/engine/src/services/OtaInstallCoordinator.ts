@@ -27,7 +27,6 @@ import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
 import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
-const {setTimeout, clearTimeout, setInterval, clearInterval} = BgTimer
 import {
   BES_CONTINUE_LOCKOUT_MS,
   BES_RESTART_TIMEOUT_MS,
@@ -60,6 +59,7 @@ import {
   selectOtaProtocolProfile,
   type OtaProtocolProfile,
 } from "./otaInstallPolicy"
+const {setTimeout, clearTimeout, setInterval, clearInterval} = BgTimer
 
 function isTerminalForWatchdog(d: DisplayState): boolean {
   return d === "complete" || d === "failed" || d === "restarting"
@@ -190,6 +190,7 @@ interface OtaStartOwnership {
 }
 
 class OtaInstallCoordinator {
+  private observationOnly = false
   /** A phone-side timeout does not establish that the glasses stopped writing. */
   isSafeToRelease(): boolean {
     if (this.otaStartOwnership?.outcome === "pending") return false
@@ -310,6 +311,7 @@ class OtaInstallCoordinator {
 
   /** Select the transport at the existing install entry point before the progress route attaches. */
   prepare(checkResult: OtaCheckCurrentGlassesResult): "wifi" | "hotspot" {
+    this.observationOnly = false
     const state = useGlassesStore.getState()
     if (!state.wifiStatusKnown) {
       throw new Error("Glasses Wi-Fi status is not available")
@@ -334,8 +336,9 @@ class OtaInstallCoordinator {
    * when connected with no session; otherwise ota_query_status + reply
    * fallback) and starts reacting to store changes + BLE OTA events.
    */
-  attach(): void {
+  attach(options: {observationOnly?: boolean} = {}): void {
     if (this.attached) return
+    this.observationOnly = options.observationOnly === true
     this.attached = true
     this.resetSessionState()
     const initialState = useGlassesStore.getState()
@@ -393,6 +396,13 @@ class OtaInstallCoordinator {
 
   /** Retry after a failure: clear state and re-send ota_start (if connected). */
   retry(): void {
+    if (this.observationOnly) {
+      this.setErrorMsg("")
+      void BluetoothSdk.queryOtaStatus().catch(() => {
+        this.setErrorMsg("Reconnect your glasses and check update status again.")
+      })
+      return
+    }
     // While the recovery worker owns the detour (apk install latched, not yet
     // converged), the phone must not drive: an ota_start now would push the
     // factory/surviving build into a parallel download-install, and a second
@@ -1166,6 +1176,12 @@ class OtaInstallCoordinator {
     // still begins an explicit install.
     const isIdleStatus = !!storeState.otaStatus && storeState.otaStatus.sessionId === ""
     const noSessionYet = (!storeState.otaStatus && !storeState.otaProgress) || isIdleStatus
+    if (this.observationOnly) {
+      void BluetoothSdk.queryOtaStatus().catch(() => {
+        this.setErrorMsg("Reconnect your glasses and check update status again.")
+      })
+      return
+    }
     if (noSessionYet) {
       if (!isIdleStatus && this.otaStartOwnership?.outcome === "acknowledged") {
         console.log("[OTA_PROGRESS] initial mount, acknowledged session has no cached status — reconciling")
@@ -1491,6 +1507,8 @@ class OtaInstallCoordinator {
   }
 
   private sendOtaStartWithWatchdogs(): Promise<void> {
+    // A cold journal carries evidence, never authorization to start another pass.
+    if (this.observationOnly) return Promise.resolve()
     // INVARIANT BACKSTOP — not normal control flow. Every entry point that can drive the
     // glasses (connect-edge, query fallback, retry, mount) carries its own detour gate with the
     // right behavior for that site; this final check only exists so that a FUTURE entry point
@@ -1647,6 +1665,7 @@ class OtaInstallCoordinator {
    * cancel the fallback, so reconnects against a wiped/lost session still recover.
    */
   private armQueryReplyFallback(reason: "reconnect" | "initial-mount" | "retry"): void {
+    if (this.observationOnly) return
     this.clearQueryReplyTimeout()
     this.queryReplyTimeout = setTimeout(() => {
       this.queryReplyTimeout = null

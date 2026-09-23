@@ -121,6 +121,14 @@ final class Ar99FirmwareUpdaterTests: XCTestCase {
             XCTAssertThrowsError(try h.updater.acknowledge())
             XCTAssertThrowsError(try h.updater.beginLegacy())
             XCTAssertEqual(h.starts, 1)
+            h.updater.inventoryChanged(version: "old", serial: "serial", projectName: "AR99", generation: 1)
+            let restored = h.makeUpdater()
+            _ = try restored.reconcile()
+            restored.inventoryChanged(version: "old", serial: "serial", projectName: "AR99", generation: 1)
+            XCTAssertFalse(restored.snapshot.safeToRelease)
+            XCTAssertThrowsError(try restored.acknowledge())
+            XCTAssertThrowsError(try restored.cancel())
+            XCTAssertEqual(h.starts, 1) // Rollout stays gated; old inventory is not proof of a remote abort.
         }
     }
 }

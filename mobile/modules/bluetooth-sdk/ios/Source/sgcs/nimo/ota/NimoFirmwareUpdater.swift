@@ -102,7 +102,12 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
         let target = try target(from: request)
         guard let journal else { throw FirmwareUpdaterError("invalid_journal", "Firmware recovery storage is unavailable") }
         // Admit before reading the file or changing any native notification/traffic state.
-        self.request = request
+        let recoveryRequest = FirmwareStartRequest(
+            deviceId: request.deviceId, connectionGeneration: request.connectionGeneration,
+            offerId: request.offerId, kind: "file", artifact: artifact,
+            metadata: request.metadata.filter { ["hardwareId", "packedVersion", "peerVersion"].contains($0.key) }
+        )
+        self.request = recoveryRequest
         operation += 1
         state.update {
             $0.sessionId = UUID().uuidString; $0.offerId = request.offerId; $0.phase = "preparing"
@@ -126,7 +131,7 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
                 throw FirmwareUpdaterError("invalid_artifact", "Firmware file grew after validation")
             }
             // Preserve admitted identity before any native preparation. Manager rechecks actual bytes before entry.
-            try journal.write(.init(snapshot: snapshot, request: request))
+            try journal.write(.init(snapshot: snapshot, request: recoveryRequest))
             prepare { [weak self] in
                 guard let self, let ready = self.ports.connection() else { return }
                 self.manager = self.makeManager(firmware: firmware, target: target, connection: ready)
@@ -183,13 +188,19 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
 
     func connected(_ connection: Connection) {
         guard connection.deviceId == snapshot.deviceId else { return }
-        state.update { $0.connectionGeneration = connection.generation }
+        connectionChanged(deviceId: connection.deviceId, generation: connection.generation)
         if manager != nil, rebootEvidence, !snapshot.safeToRelease {
             prepare { [weak self] in
                 guard let self, let ready = self.ports.connection() else { return }
                 self.manager?.reconnected(connectionGeneration: ready.generation, writeCapacity: ready.writeCapacity)
             }
         }
+    }
+
+    /// Bind every admitted link before ordinary version replies arrive. OTA-channel readiness is separate.
+    func connectionChanged(deviceId: String, generation: Int) {
+        guard deviceId == snapshot.deviceId else { return }
+        state.update { $0.connectionGeneration = generation }
     }
 
     func inventoryChanged(_ inventory: NimoOtaManager.Inventory, connectionGeneration: Int) {

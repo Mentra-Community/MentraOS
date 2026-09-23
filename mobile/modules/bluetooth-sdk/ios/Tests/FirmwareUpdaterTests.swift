@@ -67,6 +67,37 @@ final class FirmwareUpdaterTests: XCTestCase {
         }
     }
 
+    func testIdleReconnectAcceptsFreshInventoryBeforeOtaChannelPreparation() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            h.updater.inventoryChanged(.init(firmwareDetail: "old", packedVersion: "0.1.0.14"), connectionGeneration: 1)
+            h.updater.disconnected(connectionGeneration: 1)
+            h.generation = 2
+            h.updater.connectionChanged(deviceId: "device", generation: 2)
+            h.updater.inventoryChanged(.init(firmwareDetail: "fresh", packedVersion: "0.1.1.1"), connectionGeneration: 2)
+            h.updater.inventoryChanged(.init(firmwareDetail: "stale", packedVersion: "0.1.0.14"), connectionGeneration: 1)
+            XCTAssertEqual(h.updater.snapshot.observedFirmware, "fresh")
+            XCTAssertEqual(h.updater.snapshot.inventory["revision"], "2")
+            XCTAssertTrue(h.prepareCallbacks.isEmpty); XCTAssertTrue(h.writes.isEmpty)
+            XCTAssertTrue(h.updater.snapshot.safeToRelease)
+        }
+    }
+
+    func testJournalRetainsOnlyRecoveryMetadata() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            var metadata = h.request.metadata
+            metadata["authorization"] = "private-token"
+            let request = FirmwareStartRequest(deviceId: "device", connectionGeneration: 1, offerId: "offer", kind: "file",
+                                               artifact: h.request.artifact, manifestUrl: "https://example.com/?secret=private-token", metadata: metadata)
+            _ = try h.updater.start(request)
+            let saved = try FirmwareJournal(deviceId: "device", directory: h.directory).read()
+            XCTAssertNil(saved?.request.manifestUrl)
+            XCTAssertEqual(saved?.request.metadata, h.request.metadata)
+            XCTAssertEqual(saved?.request.artifact?.sha256, h.request.artifact?.sha256)
+        }
+    }
+
     func testLatePreparationCannotStartAfterTimeoutOrDeviceReconnect() async throws {
         try await MainActor.run {
             let h = try Harness(); defer { h.cleanup() }

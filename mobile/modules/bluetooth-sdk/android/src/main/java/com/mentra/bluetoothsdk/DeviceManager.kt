@@ -2300,7 +2300,13 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDefault() {
-        if (!firmwareReplacementAllowed) return
+        if (!firmwareReplacementAllowed) {
+            val live = sgc as? MentraLive
+            if (live?.liveFirmwareUpdater?.snapshot?.deviceId == deviceAddress && hasBluetoothPermissions()) {
+                live?.connectById(deviceName)
+            }
+            return
+        }
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
             return

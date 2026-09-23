@@ -1849,7 +1849,14 @@ struct ViewState {
     }
 
     func connectDefault(requiresAncs: Bool = true) {
-        guard firmwareReplacementAllowed else { return }
+        // Automatic same-device reconnect must retain the native update owner.
+        // Public device replacement still passes the SDK admission check.
+        if !firmwareReplacementAllowed {
+            if let live = sgc as? MentraLive, live.liveFirmwareUpdater?.snapshot.deviceId == deviceAddress {
+                live.connectById(deviceName)
+            }
+            return
+        }
         if defaultWearable.isEmpty {
             Bridge.log("MAN: No default wearable, returning")
             return

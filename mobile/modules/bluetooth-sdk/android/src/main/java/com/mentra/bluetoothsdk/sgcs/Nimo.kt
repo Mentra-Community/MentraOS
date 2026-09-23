@@ -966,6 +966,10 @@ class Nimo : SGCManager() {
     override val firmwareUpdater: FirmwareUpdater?
       get() {
         val id = gatt?.device?.address ?: lastDeviceAddress ?: return null
+        if (nimoFirmwareUpdater?.snapshot?.deviceId?.let { it != id } == true) {
+          if (firmwareUpdateOwnsDevice) return nimoFirmwareUpdater
+          nimoFirmwareUpdater = null
+        }
         if (nimoFirmwareUpdater == null) {
           firmwareCompatibility = NimoFirmwareCompatibility(id, context.getSharedPreferences("nimo-firmware", Context.MODE_PRIVATE))
           nimoFirmwareUpdater = NimoFirmwareUpdater(id, firmwareConnectionGeneration, object : NimoFirmwareUpdater.Ports {
@@ -1850,6 +1854,7 @@ class Nimo : SGCManager() {
                             lastDeviceAddress = g.device?.address
                             firmwareConnectionGeneration = FirmwareConnectionGeneration.next()
                             firmwareUpdater
+                            nimoFirmwareUpdater?.connectionChanged(g.device.address, firmwareConnectionGeneration)
                             // Do NOT request a large MTU here: the vendor transport warns that
                             // requesting one during connect makes some Nimo firmwares throw a
                             // GATT error and loop reconnecting. The system negotiates the MTU;

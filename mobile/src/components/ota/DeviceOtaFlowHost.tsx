@@ -35,11 +35,12 @@ export function DeviceOtaFlowHost({
   // is one-way and renders no back affordance. Leaving mid-update strands the
   // glasses half-installed with no route back to the progress UI, so lock the
   // screen instead of merely asking the navigator not to go back.
-  focusEffectLockScreen()
+  const allowCompletedExit = focusEffectLockScreen()
   useEffect(() => clearConfig, [clearConfig])
 
   const handleFinished = useCallback(() => {
     if (entryPoint !== "pairing" && !setup.onboardingFlowId) {
+      allowCompletedExit()
       goBack()
       return
     }
@@ -55,6 +56,7 @@ export function DeviceOtaFlowHost({
     clearHistoryAndGoHome()
   }, [
     clearHistoryAndGoHome,
+    allowCompletedExit,
     goBack,
     entryPoint,
     onboardingLiveCompleted,

@@ -1,4 +1,4 @@
-import {getAr99ApiConfig} from "./ar99ApiConfig"
+import {getAr99ApiConfig, MANAGED_AR99_OTA_ENABLED} from "./ar99ApiConfig"
 /**
  * @fileoverview Thin host wrapper over island's cloud client (keystone #5).
  *
@@ -115,7 +115,9 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
     allowLegacyOtaFallback: deployment.kind === "consumer",
     firmwareSources: {
       allowBundled: deployment.kind === "consumer",
-      ...(deployment.kind === "consumer" ? {vendorSources: {ar99: getAr99ApiConfig()}} : {}),
+      ...(deployment.kind === "consumer" && MANAGED_AR99_OTA_ENABLED
+        ? {vendorSources: {ar99: getAr99ApiConfig()}}
+        : {}),
     },
     cloudDebugScope: deploymentDebugScope(deployment),
     resolveCloudEndpoints: resolvedEndpoints,

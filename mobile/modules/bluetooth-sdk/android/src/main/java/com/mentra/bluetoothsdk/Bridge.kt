@@ -789,18 +789,22 @@ public class Bridge private constructor() {
 
         /** Send MTK firmware update complete notification - matches iOS implementation */
         @JvmStatic
-        fun sendMtkUpdateComplete(message: String) {
+        @JvmOverloads
+        fun sendMtkUpdateComplete(message: String, sourceContext: Map<String, Any> = emptyMap()) {
             val eventBody = HashMap<String, Any>()
             eventBody["message"] = message
             eventBody["timestamp"] = System.currentTimeMillis()
+            eventBody.putAll(sourceContext)
             sendTypedMessage("mtk_update_complete", eventBody as Map<String, Any>)
         }
 
         /** Send ota_start_ack — glasses confirmed receipt of ota_start command */
         @JvmStatic
-        fun sendOtaStartAck() {
+        @JvmOverloads
+        fun sendOtaStartAck(sourceContext: Map<String, Any> = emptyMap()) {
             val eventBody = HashMap<String, Any>()
             eventBody["timestamp"] = System.currentTimeMillis()
+            eventBody.putAll(sourceContext)
             sendTypedMessage("ota_start_ack", eventBody as Map<String, Any>)
         }
 
@@ -818,6 +822,7 @@ public class Bridge private constructor() {
                 errorMessage: String? = null,
                 glassesTimeMs: Long? = null,
                 bytesDownloaded: Long? = null,
+                sourceContext: Map<String, Any> = emptyMap(),
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["session_id"] = sessionId
@@ -836,6 +841,7 @@ public class Bridge private constructor() {
 
             Log.d(TAG, "Bridge: sendOtaStatus: $eventBody")
 
+            eventBody.putAll(sourceContext)
             sendTypedMessage("ota_status", eventBody as Map<String, Any>)
         }
 

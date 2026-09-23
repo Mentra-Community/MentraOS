@@ -527,6 +527,10 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     private func bindFirmwareUpdater(_ peripheral: CBPeripheral) {
         firmwareConnectionGeneration = FirmwareConnectionGeneration.next()
         let id = peripheral.identifier.uuidString
+        if let previous = ar99FirmwareUpdater, previous.snapshot.deviceId != id {
+            guard !firmwareUpdateOwnsDevice else { return }
+            ar99FirmwareUpdater = nil
+        }
         if ar99FirmwareUpdater == nil {
             ar99FirmwareUpdater = Ar99FirmwareUpdater(deviceId: id, connectionGeneration: firmwareConnectionGeneration, ports: .init(
                 connected: { [weak self] in self?.isBleConnected() == true },

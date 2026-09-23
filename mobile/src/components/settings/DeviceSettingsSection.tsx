@@ -1,4 +1,5 @@
 import {Image, View} from "react-native"
+import {useEffect, useState} from "react"
 
 import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
 import {NotConnectedInfo} from "@/components/glasses/info/NotConnectedInfo"
@@ -15,6 +16,8 @@ import {getGlassesImage} from "@/utils/getGlassesImage"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
+import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
+import {deploymentStore} from "@/services/deployment"
 
 const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
 
@@ -66,12 +69,24 @@ export function DeviceSettingsSection() {
   // )
   // const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [ar99OtaVisible, setAr99OtaVisible] = useState(false)
   const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const otaSnapshot = useEngineSnapshot(engine.ota.snapshot, engine.ota.onSnapshot)
   const glassesConnected = glassesStatus.state === "connected"
 
   const {push} = useNavigationStore.getState()
   const features: Capabilities = getModelCapabilities(defaultWearable)
+  const managedFirmware = engine.firmwareUpdates.supports(defaultWearable, "settings")
+  const showLegacyAr99Ota =
+    !managedFirmware &&
+    deploymentStore.getActive().kind === "consumer" &&
+    glassesConnected &&
+    (isAr99Identifier(defaultWearable) ||
+      isAr99Identifier(glassesInfo.model) ||
+      isAr99Identifier(glassesInfo.bluetoothName))
+  useEffect(() => {
+    if (!showLegacyAr99Ota) setAr99OtaVisible(false)
+  }, [showLegacyAr99Ota])
 
   const otaProgress = otaSnapshot.legacyProgress
   const isAr99Family =
@@ -218,12 +233,23 @@ export function DeviceSettingsSection() {
         )}
 
       {/* WiFi — connected glasses that support WiFi */}
-      {engine.firmwareUpdates.supports(defaultWearable, "settings") && (
+      {managedFirmware && (
         <RouteButton
           icon={<Icon name="refresh" size={24} color={theme.colors.secondary_foreground} />}
           label={translate("deviceSettings:checkForUpdates")}
           onPress={() => push("/ota/check-for-updates", {entryPoint: "settings"})}
         />
+      )}
+
+      {showLegacyAr99Ota && (
+        <>
+          <RouteButton
+            icon={<Icon name="world-download" size={24} color={theme.colors.secondary_foreground} />}
+            label={translate("deviceSettings:checkForUpdates")}
+            onPress={() => setAr99OtaVisible(true)}
+          />
+          <Ar99OtaModal visible={ar99OtaVisible} onClose={() => setAr99OtaVisible(false)} />
+        </>
       )}
 
       {glassesConnected && features?.hasWifi && (

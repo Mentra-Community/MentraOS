@@ -52,6 +52,7 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
     private readonly validateTarget: () => Promise<void>,
     private readonly safeToRelease: () => boolean,
     private readonly acquireOwner: (validate: () => Promise<void>, retry: () => void) => () => void,
+    private readonly inspectRecovery?: (options: FirmwareOpenOptions) => Promise<boolean>,
   ) {
     this.session = new MentraLiveOtaSession(ports)
     this.snapshots = new RevisionedSnapshot(this.project())
@@ -71,6 +72,7 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
       return this.session.open()
     }
     await this.validateTarget()
+    const observationOnly = (await this.inspectRecovery?.(options)) ?? false
     if (generation !== this.lifecycleGeneration)
       throw new FirmwareUpdateError("action_unavailable", "The host runtime stopped")
     this.suspended = false
@@ -82,8 +84,9 @@ export class MentraLiveFirmwareProvider implements FirmwareProvider {
     this.opened = true
     try {
       await this.session.open({
-        initialPage: options.legacyProgressEntry ? "progress" : "check",
+        initialPage: observationOnly || options.legacyProgressEntry ? "progress" : "check",
         initializeRuntime: options.initializeRuntime,
+        observationOnly,
       })
     } catch (error) {
       if (this.snapshot().safeToRelease) this.release()

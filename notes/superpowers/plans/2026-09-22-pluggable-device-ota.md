@@ -1,134 +1,47 @@
----
-status: active
-owner: Mentra
----
-
 # Pluggable device OTA implementation
 
 **Goal:** Implement the approved provider architecture for Live, NIMO and AR99; preserve Live policy/recovery; validate the mobile/native paths; open a PR to `dev`, mark it ready for review, and address CI/review findings. Do not merge automatically.
 
 **Spec:** [Device-owned OTA](../specs/2026-09-22-pluggable-device-ota-design.md).
 
-**Branch/base:** `device-ota-providers`, initially `origin/dev` at `75da48dec4`. Previous NIMO integration PR #4076 is merged. Baseline OTA sources match the reviewed `9762584dca` implementation.
+**Branch / PR:** `device-ota-providers`, [PR #4149](https://github.com/Mentra-Community/MentraOS/pull/4149), targeting `dev`. Previous NIMO integration PR #4076 is merged.
 
-## A. Characterization and contracts
+## Implemented
 
-- [x] Confirm current dev and existing PR state; preserve approved spec.
-- [x] Establish provider/session types, registration, observation and admission.
-- [x] Add synthetic fourth-provider contract coverage.
-- [ ] Preserve the existing 237-test/reference consumer baseline; add missing lifecycle/background coverage as extraction proceeds.
+- Shared native-device provider registry, explicit pairing/setup requirements, revisioned observation, retained sessions, admission and resource ownership, diagnostics, artifact staging and source policy.
+- Live headless session, availability and per-flow auto-chain ownership; existing manifest, transport, timing and presentation behavior. Native journal and connection-context fencing wrap the existing commands. Cold recovery queries status without restoring install/chain approval.
+- NIMO Swift/Kotlin protocol, native updater, integrity checks, full firmware/packed/peer compatibility, fresh inventory, reboot verification and conservative interrupted-session recovery. Device differences stay below miniapps.
+- AR99 provider and native ownership around the existing transport, preserving vendor requests and reconnect offsets. Image validation remains separate from running-version verification.
+- Shared pairing/settings/background/recovery UI, native-identity-preserving Wi-Fi return, scoped hotspot cleanup, runtime/logout admission, and a passive recovery indicator outside signed-in routes.
+- Public Engine/SDK observation APIs, OEM composition support and package consumer fixture.
 
-## B. Complete Live extraction
+## Rollout and hardware gates
 
-- [x] Move hook decisions into a headless Live session; retain pure public presentation and compatibility APIs.
-- [x] Own auto-chain state per Live flow and preserve its algorithm/deadlines.
-- [x] Extract background availability and coordinate clock-recovery commands.
-- [x] Protect coordinator ownership and asynchronous check publication.
-- [ ] Implement runtime/resource reservations, safe cleanup and logout admission.
-- [ ] Route all Live entry points through the provider; verify source/transport/recovery parity.
+**No phone installs or glasses tests have run for this implementation.** The owner has a Motorola Android phone paired to Live E7FA and explicitly requires permission before any hardware testing. Finish builds/reviews first, then ask. The iPhone is offline. No AR99 is available.
 
-## C. NIMO integration
+- **Live:** phone regression acceptance remains required. Automated preservation tests do not prove Wi-Fi/hotspot, old firmware, BES/MTK reboot, screen-off or interruption behavior on a physical device.
+- **AR99:** the managed replacement is opt-in (`EXPO_PUBLIC_ENABLE_MANAGED_AR99_OTA=true` in the consumer host, or an explicit OEM vendor source). The existing modal/service remains the default. A failed transfer followed by old-version readback does not establish a safe remote abort; tests deliberately retain the unsafe journal and reject reflash. Verify recovery and activation on hardware before removing the old execution path. This is the spec's staged migration gate, not a completed AR99 rollout.
+- **NIMO:** the catalogue contains the bench-verified compatibility identity but no production firmware distribution pin. The earlier Mac bench update used the vendor's dirty/Debug image; broad distribution, eligible starting versions and interruption recovery remain unapproved/unverified. That bench device is already on the target and is not an eligible old-firmware phone test. Do not downgrade or reflash it speculatively.
 
-- [x] Implement native Swift/Kotlin protocol/updater and public native session boundary.
-- [x] Add source/integrity/version policy, provider, operational compatibility restriction and device-aware UI routing.
-- [x] Add shared captured-protocol fixtures and native session tests.
-- [ ] Validate phone builds and eligible-device iOS/Android OTA including readback and recovery gates.
+## Validation evidence
 
-## D. AR99 migration and common integration
+Logs are under `.context/ota-implementation/`; earlier research is in `.context/ota-design-review/`, and NIMO protocol/bench evidence is in `.context/nimo-ota-bench/`.
 
-- [x] Add native identity/snapshot/ownership around existing managers, retaining wire bytes and reconnect negotiation.
-- [x] Move vendor lookup, download and modal execution into provider; preserve organization network policy.
-- [ ] Verify activation contract and native reconnect/restart behavior.
-- [ ] Integrate provider diagnostics and finalize shared routing/UI/SDK docs.
+- Full Swift SDK package: 190 tests pass, including Live journal/context and NIMO reconnect inventory. Extended AR99 timeout/old-readback/restart suite: six tests pass.
+- Full Android SDK compile and unit suite: 456 tests across 74 suites pass. Extended AR99 recovery tests also pass.
+- Mobile OTA regression run: 198 tests across 14 suites pass. Follow-up identity/navigation/recovery UI run: 52 tests across seven suites pass; additional Live dismissed-host and AR99 configuration cases pass.
+- Isolated Live hook: 16 tests pass. File-provider/shared contracts, native observation, staging, gallery and synthetic fourth-provider suites passed earlier; final package sweep remains tracked below.
+- Engine build and mobile typechecking pass after rebuilding the public declaration output. Changed-file lint retains existing errors in the unrelated `focusEffectPreventBack` hook; new code's errors are being checked separately.
+- PR checkpoint CI: Android app build, Swift package, Android tests, quality, public boundary, lockfile and release-family checks pass. iOS app build reached successful build steps and was uploading its post-job cache at the latest inspection. Revalidate the final pushed head.
+- Manual Maestro firmware-check flow exists but has **not** been run.
 
-## E. Validation and PR
+## Review and remaining work
 
-- [ ] Run focused tests, public consumer/package gates, mobile type/lint checks and relevant Android/iOS builds.
-- [ ] Complete hardware acceptance or explicitly record unverified gates; never claim untested OTA safety.
-- [ ] Commit and push; create PR against `dev` with precise scope/evidence.
-- [ ] Mark ready for review after implementation/validation, run repository Codex PR review, monitor CI and bots, fix supported findings and revalidate the final head.
+- First independent Codex review requested changes for idle NIMO reconnect inventory, completion navigation blocked by the screen lock, and AR99 uncertain-transfer recovery. The first two are fixed with native/UI regression tests; AR99 rollout is gated and the existing flow restored.
+- Live custom presentation now preserves the host's selected native target and entry point. Late completion callbacks do not navigate an unmounted host.
+- [ ] Finish final public package, type/lint and regression checks.
+- [ ] Push review fixes, merge latest `dev`, rerun independent Codex review on the final head, and address supported findings.
+- [ ] Monitor final CI and review bots; mark the implementation ready for review when those checks are complete.
+- [ ] Request permission before Live phone testing and record actual hardware acceptance. Keep unavailable AR99/iPhone and NIMO release gates explicit.
 
-## Evidence / unresolved hardware gates
-
-User update: no AR99 hardware is available. Live E7FA is paired to the connected Android phone. Finish implementation, automated checks and builds first; ask the user before ANY hardware testing. Do not initiate a Live update, phone runtime test, or interruption experiment without that approval. iPhone remains unavailable.
-
-
-The Mac NIMO bench update succeeded earlier; that device is now on the target firmware. It is not an eligible old-firmware phone test by itself. NIMO interruption recovery and production firmware approval remain unverified. AR99 activation/readback and Live phone regression updates require actual device evidence. Do not silently mark these checks complete or reflash/downgrade hardware speculatively.
-
-## Working notes
-
-- Initial research logs: `.context/ota-design-review/`; NIMO captured protocol/bench: `.context/nimo-ota-bench/`.
-- Only reviewed behavior changes are permitted: provider lifetime, explicit resource/concurrency guards, and NIMO required compatibility. Live manifest/protocol algorithms remain intact.
-
-### Implementation checkpoint: Live provider and ownership
-
-The Live hook now binds to the registered native-device provider. Background checks are headless; the host renders prompts. Managed-owner guards protect legacy controls; coordinator starts revalidate the target, and clock recovery uses the same coordinator. Device/status subscriptions can survive runtime teardown. Gallery/OTA now reserve the existing hotspot lease and inactive gallery cleanup no longer disconnects another owner. User logout, account deletion, device changes and debug deployment changes have admission checks.
-
-Validation so far: Engine TypeScript passes; 249 Jest tests passed across 10 OTA/gallery suites, 16 isolated Bun hook tests passed before the background-timer conversion, and 10 shared service tests passed. Further tests/builds and the remaining lifecycle work are still required. No phone or glasses testing has been performed in this implementation.
-
-Auth/runtime teardown now suspends optional continuation while retaining unsafe native work; re-entry adopts or recreates the appropriate session. Starts recheck the selected manifest/device-version/connection context. The focused Live/session suites pass 117 tests, shared-service suites pass 12 tests, and Engine TypeScript passes after these changes.
-
-Remaining Live work includes journal and native context boundaries, complete common presentation/routing (including development escape compatibility), additional trace/lifecycle coverage, and gallery async-cleanup ownership. NIMO protocol implementation has begun with matching Swift/Kotlin codecs and a shared captured-wire fixture. AR99 implementation has not begun yet. Do not mistake this checkpoint for completion or release approval.
-
-### Native NIMO checkpoint
-
-Implemented matching native OTA codecs/managers, with a shared captured-response/synthetic-block fixture. Both managers validate the image, honor device-requested slices/CRC, bound transfer/sync failures separately, send reset only after validation plus synchronization, and require full firmware/packed/peer readback for success. Native tests cover early failures, stale generations, duplicate start, backpressure, late reconnect and no-reset-on-uncertainty.
-
-The additive native `FirmwareUpdater` contract now has device/updater/session identity, connection generation, revisioned replay, admission, reconcile, cancellation and acknowledgement. NIMO adapters own preparation and journal persistence; cold recovery can inspect a synchronized attempt without replaying a flash. SGC wiring pauses competing traffic, uses the existing connection/queue, negotiates Android OTA MTU after explicit admission, and protects device replacement. Public SDK bridge/types are being completed and tested. These changes are not a production firmware release.
-
-Current evidence: 49 Swift NIMO/firmware tests passed; 131 Android NIMO tests and the SDK AAR compile passed. SDK TypeScript and existing public OTA API checks pass. No hardware tests or installs have run. Still required: Engine NIMO source/compatibility/provider and common routing, AR99 migration, complete Live lifecycle/routing parity, native boundary review, full phone builds and hardware approval/acceptance.
-
-### Engine NIMO policy checkpoint
-
-Added the NIMO provider, strict four-component/full-identity compatibility and manifest parsing, device/source/generation-bound offers, native snapshot replay/adoption, and scoped verified artifact staging. A new generated SDK catalogue has matching TypeScript/Swift/Kotlin values alongside unchanged Live release metadata. It carries the previously bench-verified firmware identity but no remote manifest pin or firmware distribution URL. Organization deployments explicitly disable bundled-source fallback. Native inventory now publishes a fresh sequence only after both version responses arrive.
-
-Evidence: 29 provider/manifest/observation/shared-contract tests pass, six artifact integrity/cleanup tests pass, two catalogue-generator tests pass, 21 deployment-policy tests pass, and Engine/SDK TypeScript passes. Shared UI/routing implementation is underway; the independent fourth-provider render/adoption test passes. Live screen tests are being adapted to explicit native identity and retained-session lifetimes; their assertions still need to be fully green. NIMO native operation restrictions/cached compatibility, AR99, Live remaining lifecycle work, full platform builds and hardware acceptance are still outstanding. This checkpoint is not ready to merge.
-
-### Shared presentation, NIMO compatibility and AR99 checkpoint
-
-The common firmware screen now resolves the registered native device. Pairing
-uses explicit setup requirements; AR99 remains settings-only. Settings, debug,
-background prompts and Wi-Fi return carry provider/entry context. Live retains
-its existing specialized presentation over the headless provider. The generic
-view works with a synthetic fourth provider. Wi-Fi return now carries native
-device identity, and Live explicitly declares its existing post-Wi-Fi check.
-
-NIMO enforces compatibility below the miniapp boundary on both platforms.
-Version/pairing commands remain available; display, microphone and normal
-controls await an exact supported identity. Verified host compatibility metadata
-is cached per device for offline use. The SDK catalogue still contains no firmware
-distribution pin. Shared staging uses the existing iOS background downloader and
-Android RNFS path, preserving AR99 request headers. Gallery cleanup now retains
-its network lease until pending native joins finish and cleanup completes.
-
-AR99's vendor request semantics now live in its Engine provider. The old app
-modal and execution service were removed. Swift/Kotlin wrappers admit native
-ownership before notification preparation, verify staged bytes, journal attempts,
-retain ordered snapshots and preserve device-requested reconnect offsets. They
-protect managed updates from legacy start/cancel and factory reset. The existing
-legacy SDK entry points retain their explicit behavior when no managed session
-owns the glasses. Driver-owned reconnects stay pinned to the same device while
-ordinary replacement is blocked. Preparation now counts as manager ownership;
-old delayed callbacks cannot negotiate a later attempt prematurely.
-
-The AR99 managed result distinguishes image validation from running-version
-verification and never substitutes the target for the observed version. A cold
-restart or failed/uncertain transfer does not authorize a reflash or speculative
-remote abort. **This is a material recovery/rollout gate:** the old UI offered a
-local cancel/retry, but that command does not prove that device-side writes
-stopped. Hardware/vendor evidence is still needed before claiming preserved safe
-cancel/retry behavior or production readiness. No AR99 hardware is available.
-
-Evidence so far: 46 isolated file-provider/shared-service tests, eight staging
-transport/integrity tests, 16 isolated Live hook tests, 53 gallery tests, and the
-fourth-provider UI test pass. The app's broader run passed 186 tests with one
-expected Wi-Fi parameter assertion updated; its 31-test Live progress suite then
-passed. Full mobile typechecking passes. Swift passed 61 NIMO/AR99/firmware tests;
-Android passed 136 NIMO tests and eight AR99 tests with an SDK AAR compile. Later
-small reconnect/factory-reset changes still require the final combined build run.
-The manual Maestro firmware-check flow was added but has not been run.
-
-Remaining work: Live native context/journal and auth-independent recovery surface,
-full regression/public-package/phone builds, review of AR99 recovery enablement,
-hardware authorization/acceptance, and PR/CI/review. Nothing here is a production
-firmware release or a claim that the PR is ready to merge.
+This is not a production firmware release or a claim of regression-free hardware behavior. The architecture can be reviewed before hardware acceptance; merging/enabling unvalidated device migrations remains a separate gate.

@@ -28,15 +28,29 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const callbacks = useRef(options)
   callbacks.current = options
 
+  const viewGeneration = useRef(0)
+  const integrationId = options.target?.integrationId
+  const deviceId = options.target?.deviceId
+  const displayName = options.target?.displayName
+  const entryPoint = options.entryPoint ?? "recovery"
+  const legacyProgressEntry = options.initialPage === "progress"
+  const initializeRuntime = options.initializeRuntime
+  const allowDevelopmentSkip = options.allowDevelopmentSkip
+
   useEffect(() => {
     let observing = true
+    viewGeneration.current += 1
+    setProvider(null)
     setOpenError(null)
-    void openMentraLiveOtaProvider({
-      entryPoint: "recovery",
-      legacyProgressEntry: options.initialPage === "progress",
-      initializeRuntime: options.initializeRuntime,
-      allowDevelopmentSkip: options.allowDevelopmentSkip,
-    })
+    void openMentraLiveOtaProvider(
+      {
+        entryPoint,
+        legacyProgressEntry,
+        initializeRuntime,
+        allowDevelopmentSkip,
+      },
+      integrationId && deviceId ? {integrationId, deviceId, displayName: displayName ?? "Mentra Live"} : undefined,
+    )
       .then((value) => {
         if (observing) setProvider(value)
       })
@@ -45,14 +59,26 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       })
     return () => {
       observing = false
+      viewGeneration.current += 1
     }
-  }, [openGeneration])
+  }, [
+    openGeneration,
+    integrationId,
+    deviceId,
+    displayName,
+    entryPoint,
+    legacyProgressEntry,
+    initializeRuntime,
+    allowDevelopmentSkip,
+  ])
 
   useEffect(() => {
     if (provider && snapshot.exitRequest && session.claimExitRequest(snapshot.exitRequest)) {
+      const generation = viewGeneration.current
       void firmwareUpdates
         .perform(provider.target, {action: "finish"})
         .then((result) => {
+          if (generation !== viewGeneration.current) return
           if (result.kind === "finished") callbacks.current.onFinished?.()
         })
         .catch((error) => console.warn("Could not finish the Live check", error))
@@ -77,9 +103,11 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         if (action === "check" || action === "retry") setOpenGeneration((value) => value + 1)
         return
       }
+      const generation = viewGeneration.current
       void firmwareUpdates
         .perform(provider.target, {action, offerId: provider.snapshot().offer?.id})
         .then((result) => {
+          if (generation !== viewGeneration.current) return
           if (result.kind === "finished") callbacks.current.onFinished?.()
           else if (result.kind === "wifi-required") callbacks.current.onOpenWifiSetup?.()
         })

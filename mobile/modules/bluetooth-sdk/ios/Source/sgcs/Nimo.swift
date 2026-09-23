@@ -607,6 +607,10 @@ class Nimo: NSObject, SGCManager {
 
     var firmwareUpdater: FirmwareUpdater? {
         guard let id = peripheral?.identifier.uuidString ?? lastDeviceUUID, !id.isEmpty else { return nil }
+        if let previous = nimoFirmwareUpdater, previous.snapshot.deviceId != id {
+            guard !firmwareUpdateOwnsDevice else { return nil }
+            nimoFirmwareUpdater = nil
+        }
         if nimoFirmwareUpdater == nil {
             firmwareCompatibility = NimoFirmwareCompatibility(deviceId: id)
             nimoFirmwareUpdater = NimoFirmwareUpdater(deviceId: id, connectionGeneration: firmwareConnectionGeneration, ports: .init(
@@ -1825,6 +1829,7 @@ extension Nimo: CBCentralManagerDelegate {
             self.firmwareConnectionGeneration = FirmwareConnectionGeneration.next()
             self.lastDeviceUUID = peripheral.identifier.uuidString
             _ = self.firmwareUpdater
+            self.nimoFirmwareUpdater?.connectionChanged(deviceId: peripheral.identifier.uuidString, generation: self.firmwareConnectionGeneration)
             peripheral.discoverServices([NimoBLE.SERVICE_UUID])
         }
     }

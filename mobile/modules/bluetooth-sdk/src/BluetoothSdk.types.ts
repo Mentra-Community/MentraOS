@@ -1047,7 +1047,13 @@ export type KeepAliveAckEvent = {
   timestamp?: number
 }
 
-export type MtkUpdateCompleteEvent = {
+export type LiveOtaSourceContext = {
+  /** Native peripheral identity and transport generation captured by the originating SGC. */
+  source_device_id?: string
+  source_connection_generation?: number
+}
+
+export type MtkUpdateCompleteEvent = LiveOtaSourceContext & {
   type: "mtk_update_complete"
   message: string
   timestamp: number
@@ -1058,7 +1064,7 @@ export type MtkUpdateCompleteEvent = {
  * changed, or first appeared after an update from a pre-sid build). There is no
  * physical disconnect for this — treat it as the logical reconnect edge.
  */
-export type GlassesSessionChangedEvent = {
+export type GlassesSessionChangedEvent = LiveOtaSourceContext & {
   type: "glasses_session_changed"
   previous_sid: string
   sid: string
@@ -1076,11 +1082,11 @@ export type OtaProgressEvent = {
   error_message?: string
 }
 
-export type OtaStartAckEvent = {
+export type OtaStartAckEvent = LiveOtaSourceContext & {
   type: "ota_start_ack"
   timestamp: number
 }
-export type OtaStatusEvent = {
+export type OtaStatusEvent = LiveOtaSourceContext & {
   type: "ota_status"
   session_id: string
   total_steps: number

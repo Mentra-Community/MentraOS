@@ -10,8 +10,8 @@
  */
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
-import {otaInstallCoordinator} from "../../modules/engine/src/services/OtaInstallCoordinator"
-import type {OtaCheckCurrentGlassesResult} from "../../modules/engine/src/services/OtaUpdateCheckService"
+import {otaInstallCoordinator} from "@/../modules/engine/src/services/OtaInstallCoordinator"
+import type {OtaCheckCurrentGlassesResult} from "@/../modules/engine/src/services/OtaUpdateCheckService"
 import {
   BES_CONTINUE_LOCKOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
@@ -28,25 +28,25 @@ import {
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
-} from "../../modules/engine/src/services/otaInstallPolicy"
+} from "@/../modules/engine/src/services/otaInstallPolicy"
 import {
   legacyOtaProgressFromOtaStatusEvent,
   normalizeOtaStatusEvent,
   otaStatusFromNormalized,
-} from "../../modules/engine/src/services/otaLegacyMapping"
-import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
-import GlobalEventEmitter from "../../modules/engine/src/utils/GlobalEventEmitter"
+} from "@/../modules/engine/src/services/otaLegacyMapping"
+import {useGlassesStore} from "@/../modules/engine/src/stores/glasses"
+import GlobalEventEmitter from "@/../modules/engine/src/utils/GlobalEventEmitter"
 
-import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
+import {bluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
-jest.mock("../../modules/engine/src/services/HotspotOtaTransport", () => ({
+jest.mock("@/../modules/engine/src/services/HotspotOtaTransport", () => ({
   hotspotOtaTransport: {
     prepare: jest.fn(),
     teardown: jest.fn(),
   },
 }))
 
-const mockedHotspotTransport = jest.requireMock("../../modules/engine/src/services/HotspotOtaTransport")
+const mockedHotspotTransport = jest.requireMock("@/../modules/engine/src/services/HotspotOtaTransport")
   .hotspotOtaTransport as {prepare: jest.Mock; teardown: jest.Mock}
 const mockHotspotPrepare = mockedHotspotTransport.prepare
 const mockHotspotTeardown = mockedHotspotTransport.teardown
@@ -161,6 +161,26 @@ afterEach(() => {
 })
 
 describe("OtaInstallCoordinator hotspot transport selection", () => {
+  it("cold recovery only queries across fallback, retry and reconnect without restoring Start approval", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}, buildNumber: "40"})
+    otaInstallCoordinator.attach({observationOnly: true})
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS + RETRY_INTERVAL_MS)
+    otaInstallCoordinator.retry()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS + RETRY_INTERVAL_MS)
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    expect(mockHotspotPrepare).not.toHaveBeenCalled()
+    otaInstallCoordinator.detach()
+    useGlassesStore.getState().setGlassesInfo({wifi: {state: "connected", ssid: "test"}})
+    otaInstallCoordinator.prepare(checkResult())
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it("preserves the current file context and clears percentages between files and phases", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},

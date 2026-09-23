@@ -11,6 +11,8 @@ export interface DeviceIntegration {
     readonly includeOsOnboarding?: boolean
   }
   readonly firmware?: {
+    /** Rollout/source gate for new UI entry points. Recovery observation remains registered. */
+    readonly isEnabled?: () => boolean
     readonly entryPoints: readonly FirmwareEntryPoint[]
     readonly createProvider: (target: FirmwareTarget) => FirmwareProvider
   }

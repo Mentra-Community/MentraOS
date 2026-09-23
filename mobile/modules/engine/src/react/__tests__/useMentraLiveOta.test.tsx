@@ -5,16 +5,17 @@ import {createRequire} from "node:module"
 import TestRenderer, {act} from "react-test-renderer"
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
+import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
+import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
+
 // Engine is a workspace member of both mobile/ and sdk/, so a bare `react`
 // import here is the sdk copy while react-test-renderer binds the mobile copy.
 // Load the hook against the renderer's React or every hook throws.
 const rendererRequire = createRequire(require.resolve("react-test-renderer"))
 mock.module("react", () => rendererRequire("react"))
-mock.module("../../utils/timers", () => ({BgTimer: {setTimeout, clearTimeout, setInterval, clearInterval}}))
-
-import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
-import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
-;(globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true
+mock.module("../../utils/timers", () => ({BgTimer: {setTimeout, clearTimeout, setInterval, clearInterval}}))(
+  globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean},
+).IS_REACT_ACT_ENVIRONMENT = true
 
 const checkResult: OtaCheckCurrentGlassesResult = {
   hasCheckCompleted: true,
@@ -143,7 +144,12 @@ mock.module("../../devices/mentra-live/ports", () => ({liveOtaPorts: fakeOta}))
 mock.module("../../devices/nimo/definition", () => ({nimoIntegration: {id: "nimo", models: ["NIMO"]}}))
 mock.module("../../devices/ar99/definition", () => ({ar99Integration: {id: "ar99", models: ["AR99"]}}))
 mock.module("@mentra/bluetooth-sdk", () => ({
-  default: {getDefaultDevice: async () => ({id: "live-test", model: "Mentra Live", name: "Live"})},
+  default: {
+    getDefaultDevice: async () => ({id: "live-test", model: "Mentra Live", name: "Live"}),
+    getFirmwareUpdateSnapshot: async () => {
+      throw Object.assign(new Error("Older standalone SDK"), {code: "unsupported"})
+    },
+  },
 }))
 mock.module("../../services/OtaInstallCoordinator", () => ({otaInstallCoordinator: {isSafeToRelease: () => true}}))
 mock.module("../../services/OtaAutoChain", () => ({

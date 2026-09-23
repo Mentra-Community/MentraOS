@@ -61,6 +61,8 @@ const {setTimeout, clearTimeout} = BgTimer
 
 /** Owns the former React flow's decisions; the install coordinator still owns wire recovery. */
 export class MentraLiveOtaSession {
+  private observationOnly = false
+  private observedRecoveryActivity = false
   readonly chain: OtaAutoChain
   private data: LiveSessionData = {
     page: "check",
@@ -103,7 +105,10 @@ export class MentraLiveOtaSession {
   private finishing: Promise<FirmwareActionResult> | null = null
   private delays = new Map<ReturnType<typeof setTimeout>, () => void>()
 
-  constructor(private readonly ports: LiveOtaPorts, chain = createOtaAutoChain()) {
+  constructor(
+    private readonly ports: LiveOtaPorts,
+    chain = createOtaAutoChain(),
+  ) {
     this.lastConnected = ports.snapshot().connected
     this.chain = chain
     this.snapshots = new RevisionedSnapshot<LiveSessionSnapshot>({
@@ -122,13 +127,16 @@ export class MentraLiveOtaSession {
   }
   subscribe = (listener: (snapshot: LiveSessionSnapshot) => void): (() => void) => this.snapshots.subscribe(listener)
 
-  open = async (options: {initialPage?: MentraLiveOtaFlowPage; initializeRuntime?: boolean} = {}): Promise<void> => {
+  open = async (
+    options: {initialPage?: MentraLiveOtaFlowPage; initializeRuntime?: boolean; observationOnly?: boolean} = {},
+  ): Promise<void> => {
     if (this.disposed) return
     if (this.started) {
       this.react()
       return
     }
     this.started = true
+    this.observationOnly = options.observationOnly === true
     this.data.page = options.initialPage ?? "check"
     if (this.data.page === "progress") this.pass = 1
     this.data.runtimeReady = options.initializeRuntime === false
@@ -187,6 +195,7 @@ export class MentraLiveOtaSession {
       return NONE
     }
     if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1) return {kind: "wifi-required"}
+    this.observationOnly = false
     this.ports.installSession.prepare(result)
     this.data.batteryBlocked = false
     this.data.completedUpdate = false
@@ -350,6 +359,17 @@ export class MentraLiveOtaSession {
       do {
         this.reactQueued = false
         const snapshot = this.ports.snapshot()
+        if (this.observationOnly && this.data.page === "progress") {
+          if (snapshot.status && !["idle", "complete", "failed"].includes(snapshot.status.status))
+            this.observedRecoveryActivity = true
+          if (this.observedRecoveryActivity && snapshot.status?.status === "idle") {
+            // A fresh idle reply ends passive recovery, but never starts another pass.
+            this.observationOnly = false
+            this.ports.clearProgress()
+            this.returnToCheck()
+            continue
+          }
+        }
         if (snapshot.connected !== this.lastConnected) this.connectionGeneration++
         this.lastConnected = snapshot.connected
         if (
@@ -361,7 +381,7 @@ export class MentraLiveOtaSession {
         const shouldAttach = this.data.runtimeReady && this.data.page === "progress"
         if (shouldAttach !== this.attached) {
           this.attached = shouldAttach
-          if (shouldAttach) this.ports.installSession.attach()
+          if (shouldAttach) this.ports.installSession.attach({observationOnly: this.observationOnly})
           else this.ports.installSession.detach()
         }
         const inputs = JSON.stringify([
