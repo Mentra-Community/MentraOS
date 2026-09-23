@@ -2074,8 +2074,58 @@ describe("legacy facade preparation cleanup", () => {
     release()
   })
 
-  it("unwinds a partially attached controller when synchronous attach fails", async () => {
+  it("keeps admitted native ownership when another prepare fails and the host leaves", async () => {
+    let native: NativeFirmwareUpdateSnapshot = {
+      schemaVersion: 1,
+      integrationId: "mentra-live",
+      deviceId: "live",
+      updaterId: "updater",
+      revision: 0,
+      connectionGeneration: 1,
+      phase: "idle",
+      safeToRelease: true,
+      canCancel: false,
+      canReconcile: false,
+      inventory: {},
+    }
+    const read = bluetoothSdkMock.getFirmwareUpdateSnapshot as jest.Mock
+    mockGetDefaultDevice.mockResolvedValue({id: "live", model: "Mentra Live"})
+    read.mockImplementation(async () => native)
+    bluetoothSdkMock.startOtaUpdate.mockImplementation(async () => {
+      native = {...native, revision: 1, sessionId: "admitted", phase: "installing", safeToRelease: false}
+      emitBluetoothSdkEvent("firmware_update", native)
+    })
+    try {
+      setGlassesConnected()
+      useGlassesStore.getState().setGlassesInfo({wifi: {state: "connected", ssid: "test"}})
+      legacyOta.installSession.prepare(checkResult())
+      legacyOta.installSession.attach()
+      await flushNativeStartPromise()
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+      expect(otaInstallCoordinator.isSafeToRelease()).toBe(false)
+      useGlassesStore.setState({wifiStatusKnown: false})
+      expect(() => legacyOta.installSession.prepare(checkResult())).toThrow("Wi-Fi status")
+      legacyOta.installSession.detach()
+      expect(() => acquireNext()).toThrow("already owns")
+    } finally {
+      native = {...native, revision: 2, phase: "failed", safeToRelease: true}
+      emitBluetoothSdkEvent("firmware_update", native)
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "failed"}))
+      await legacyOta.installSession.finish()
+      legacyOta.installSession.detach()
+      read.mockReset().mockRejectedValue(Object.assign(new Error("No native updater"), {code: "unsupported"}))
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+    }
+    const release = acquireNext()
+    release()
+  })
+
+  it.each([false, true])("unwinds a partially failed attachment (prepared=%s)", async (prepared) => {
     setGlassesConnected()
+    if (prepared) {
+      useGlassesStore.getState().setGlassesInfo({wifi: {state: "connected", ssid: "test"}})
+      legacyOta.installSession.prepare(checkResult())
+    }
     const attach = otaInstallCoordinator.attach.bind(otaInstallCoordinator)
     const spy = jest.spyOn(otaInstallCoordinator, "attach").mockImplementationOnce(() => {
       attach()

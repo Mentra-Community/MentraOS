@@ -59,7 +59,7 @@ function control<A extends unknown[], R>(fn: (...args: A) => R, retain = false):
       done()
       return result
     } catch (error) {
-      if (retain && !legacySession) otaInstallCoordinator.cancelUnboundPreparation()
+      if (retain && otaInstallCoordinator.cancelUnboundPreparation()) legacySession = false
       done()
       throw error
     }
