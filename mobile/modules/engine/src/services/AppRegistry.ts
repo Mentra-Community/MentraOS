@@ -2,7 +2,7 @@
  * AppRegistry — on-disk install/uninstall registry for local miniapps.
  *
  * Owns the `Documents/lmas/<packageName>/<version>/` filesystem layout, the
- * download/unzip pipeline, and the active-version pointer in MMKV. It does
+ * download/unzip pipeline, and consumer/workspace active-version pointers in MMKV. It does
  * NOT touch the apps store directly — instead it notifies subscribers when
  * the install set changes, so the host (mobile manager, OEM app) can refresh
  * its own state.
@@ -30,6 +30,7 @@ import {
   isInstalledMiniappAllowed,
   isMiniappAvailable,
   isOfflineSystemMiniappAllowed,
+  type LocalMiniappPolicy,
 } from "../runtime/bootstrap"
 import type {AppletType, ClientApp} from "../types/applet"
 import {type Capabilities, HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
@@ -238,6 +239,10 @@ function publisherIdentityKey(packageName: string): string {
   return `miniapp_publisher_identity:${packageName}`
 }
 
+function activeVersionKey(packageName: string, workspace = Boolean(getConfigValues().localMiniappPolicy)): string {
+  return `${packageName}_${workspace ? "workspace_" : ""}active_version`
+}
+
 interface StorageSnapshot<T> {
   present: boolean
   value?: T
@@ -250,6 +255,8 @@ interface InstallMetadataRollbackJournal {
   publisher: StorageSnapshot<string>
   release: StorageSnapshot<MiniappReleaseIdentity>
   active: StorageSnapshot<string>
+  /** Older journals always targeted the consumer selection. */
+  workspaceSelection?: boolean
 }
 
 const INSTALL_METADATA_ROLLBACK_FILE = "metadata-rollback.json"
@@ -293,7 +300,8 @@ function readMetadataRollbackJournal(
       parsed.version !== version ||
       !isStorageSnapshot(parsed.publisher, "string") ||
       !isStorageSnapshot(parsed.release, "object") ||
-      !isStorageSnapshot(parsed.active, "string")
+      !isStorageSnapshot(parsed.active, "string") ||
+      (parsed.workspaceSelection !== undefined && typeof parsed.workspaceSelection !== "boolean")
     ) {
       console.warn(`APP_REGISTRY: ignoring invalid metadata rollback journal for ${packageName}@${version}`)
       return null
@@ -333,7 +341,7 @@ function restoreInstallationMetadata<T>(metadata: MMKV, key: string, snapshot: S
 }
 
 function restoreInstallMetadata(journal: InstallMetadataRollbackJournal, metadata: MMKV): void {
-  restoreStorage(`${journal.packageName}_active_version`, journal.active)
+  restoreStorage(activeVersionKey(journal.packageName, journal.workspaceSelection ?? false), journal.active)
   restoreInstallationMetadata(metadata, releaseIdentityKey(journal.packageName, journal.version), journal.release)
   restoreInstallationMetadata(metadata, publisherIdentityKey(journal.packageName), journal.publisher)
 }
@@ -778,6 +786,7 @@ class AppRegistry {
   /** Package names whose start() requires the on-device STT model (host-declared). */
   private sttModelRequired = new Set<string>()
   private refreshNeeded: boolean = true
+  private cachedSelectionPolicy: LocalMiniappPolicy | undefined
   private listeners = new Set<Listener>()
 
   // Bundle files survive logout; their provenance must survive with them.
@@ -1124,7 +1133,8 @@ class AppRegistry {
   ): InstallFinalization {
     const publisherKey = publisherIdentityKey(packageName)
     const releaseKey = releaseIdentityKey(packageName, version)
-    const activeKey = `${packageName}_active_version`
+    const workspaceSelection = Boolean(getConfigValues().localMiniappPolicy)
+    const activeKey = activeVersionKey(packageName, workspaceSelection)
     const publisherBefore = snapshotInstallationMetadata<string>(publisherKey)
     const previousRelease = this.getReleaseIdentity(packageName, version)
     const releaseBefore: StorageSnapshot<MiniappReleaseIdentity> = previousRelease
@@ -1139,6 +1149,7 @@ class AppRegistry {
       publisher: publisherBefore,
       release: releaseBefore,
       active: activeBefore,
+      workspaceSelection,
     }
     recordRecoveryState(JSON.stringify(rollbackJournal))
 
@@ -1183,13 +1194,13 @@ class AppRegistry {
       },
       rollback: rollbackMetadata,
       afterCommit: () => {
-        // If this is a release install (semver, not dev-*) of a package that
+        // If this is a consumer release install (semver, not dev-*) of a package that
         // currently has dev-* snapshots, clear the dev state so the swap to
         // "released" is clean. Otherwise the dev version would keep winning
         // getActiveVersion's dev-precedence rule and the just-installed
         // release wouldn't run.
         const isDevInstall = version.startsWith("dev-")
-        if (!isDevInstall) {
+        if (!isDevInstall && !workspaceSelection) {
           this.clearDevArtifacts(packageName, preserveDevSnapshots)
         }
         // Any explicit successful install (Store, dev, or a new
@@ -1301,6 +1312,11 @@ class AppRegistry {
    */
   public gcReleaseVersions(packageName: string, keepVersions: readonly string[]): void {
     const keep = new Set(keepVersions.filter(Boolean))
+    // Workspace updates must not garbage-collect the consumer's selected build.
+    for (const workspace of [false, true]) {
+      const selected = storage.load<string>(activeVersionKey(packageName, workspace))
+      if (selected.is_ok()) keep.add(selected.value)
+    }
     try {
       const pkgDir = new Directory(Paths.document, "lmas", packageName)
       if (!pkgDir.exists) return
@@ -1371,10 +1387,11 @@ class AppRegistry {
         restoreInstallationMetadata(this.releaseIdentities, publisherIdentityKey(packageName), {present: false})
         console.log("APP_REGISTRY: Uninstalled all versions of mini app", packageName)
       }
-      // Always clear dev artifacts: for HTTP-direct dev miniapps the tile is
+      // Consumer removal clears dev artifacts: for HTTP-direct miniapps the tile is
       // backed by storage records (_dev_meta + dev_apps_index), not the disk
       // dir, so without this the projected tile reappears on the next refresh.
-      this.clearDevArtifacts(packageName)
+      // Removing a workspace-owned release must preserve the consumer's dev selection.
+      if (!managedVersion) this.clearDevArtifacts(packageName)
       if (!version) {
         const saved = storage.save(userUninstalledKey(packageName), true)
         if (saved.is_error()) throw saved.error
@@ -1433,9 +1450,30 @@ class AppRegistry {
 
   public async getActiveVersion(packageName: string): Promise<string> {
     let versions = this.getInstalledVersions(packageName)
+    const workspace = Boolean(getConfigValues().localMiniappPolicy)
+    if (workspace) {
+      versions = versions.filter((version) =>
+        isInstalledMiniappAllowed(packageName, version, this.getReleaseIdentity(packageName, version)),
+      )
+    }
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
-    let res = storage.load<string>(`${packageName}_active_version`)
+    const res = storage.load<string>(activeVersionKey(packageName, workspace))
+    const consumer = workspace ? storage.load<string>(activeVersionKey(packageName, false)) : res
+    // Carry an eligible newer consumer release into a workspace, but never its
+    // manual/dev override. Workspace installs keep their own selection so an
+    // approving workspace cannot erase the consumer's preference.
+    if (
+      workspace &&
+      consumer.is_ok() &&
+      versions.includes(consumer.value) &&
+      (res.is_error() ||
+        !versions.includes(res.value) ||
+        (semver.valid(consumer.value) && semver.valid(res.value) && semver.gt(consumer.value, res.value)))
+    ) {
+      this.setActiveVersion(packageName, consumer.value)
+      return consumer.value
+    }
     if (res.is_ok() && versions.includes(res.value)) {
       return res.value
     }
@@ -1450,12 +1488,12 @@ class AppRegistry {
     }
     versions = versions.filter((v) => semver.valid(v))
     versions.sort((a, b) => semver.rcompare(a, b))
-    this.setActiveVersion(packageName, versions[0])
+    if (versions[0]) this.setActiveVersion(packageName, versions[0])
     return versions[0]
   }
 
   public setActiveVersion(packageName: string, version: string): Result<void, Error> {
-    const key = `${packageName}_active_version`
+    const key = activeVersionKey(packageName)
     const previous = storage.load<string>(key)
     const result = storage.save(key, version)
     if (result.is_ok() && (previous.is_error() || previous.value !== version)) {
@@ -1547,6 +1585,13 @@ class AppRegistry {
   }
 
   public async getInstalledMiniapps(): Promise<ClientApp[]> {
+    // The same on-disk package may select a different release in a workspace.
+    // A policy transition must re-derive metadata, not just filter cached tiles.
+    const selectionPolicy = getConfigValues().localMiniappPolicy
+    if (this.cachedSelectionPolicy !== selectionPolicy) {
+      this.cachedSelectionPolicy = selectionPolicy
+      this.refreshNeeded = true
+    }
     if (!this.refreshNeeded && this.cachedApps.length > 0) {
       // Cache hit: re-project running from the registry. The cached array
       // IS the disk-derived truth; running comes from the mount registry.
@@ -1563,6 +1608,7 @@ class AppRegistry {
       const out: ClientApp[] = []
       for (const lmaInfo of installedInfo) {
         const versionString = await this.getActiveVersion(lmaInfo.packageName)
+        if (!versionString) continue
         const versionInfo = lmaInfo.versions[versionString]
 
         const manifest = this.getMiniappManifest(lmaInfo.packageName, versionString) as {

@@ -74,7 +74,7 @@ jest.mock("react-native-mmkv", () => {
       return {
         getString: (key: string) => values.get(key),
         set: (key: string, value: string) => {
-          if (mockFailNextActiveWrite && key === "com.mentra.call_active_version") {
+          if (mockFailNextActiveWrite && key.endsWith("_active_version")) {
             mockFailNextActiveWrite = false
             throw new Error("Active version write failed")
           }
@@ -259,6 +259,7 @@ beforeEach(async () => {
   mockUnzip.mockReset()
   mockMove.mockReset()
   mockFailNextActiveWrite = false
+  storage.remove(`${pkg}_workspace_active_version`)
   createMMKV({id: "mentra-miniapp-installations"}).clearAll()
   mockDigest = "a".repeat(64)
   mockScript = "verified call"
@@ -613,6 +614,8 @@ it.each(["inside workspace", "before entering workspace"])(
         systemMiniapps: {approvedPackageNamesOverride: [pkg]},
       },
     }
+    selectDeployment(unpinned)
+    expect(await registry.getActiveVersion(pkg)).toBe(version)
     selectDeployment(when === "inside workspace" ? unpinned : consumer)
     mockVersion = "2.1.30"
     expect(
@@ -676,6 +679,130 @@ it("installs unsigned manual replacements under the same bundled package identit
   expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(mockVersion)
   expect(registry.getReleaseIdentity(pkg, mockVersion)?.source).toBe("direct_download")
   expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, mockVersion))).toBe(false)
+})
+
+it.each([
+  ["manual", false],
+  ["manual", true],
+  ["dev", false],
+  ["dev", true],
+])("selects an approved bundled copy over a %s override (bundle needs reinstall=%s)", async (kind, reinstall) => {
+  selectDeployment(consumer)
+  const override = kind === "dev" ? "dev-999" : "2.1.30"
+  if (kind === "dev") {
+    await registerDevApp({packageName: pkg, name: "Local Call", devUrl: "http://localhost:8081", iconUrl: ""})
+  }
+  mockVersion = "2.1.30"
+  expect(
+    (
+      await registry.installFromUrl("http://localhost:8081/bundle.zip", {
+        versionOverride: override,
+        releaseIdentity: {source: kind === "dev" ? "dev_snapshot" : "direct_download"},
+      })
+    ).is_ok(),
+  ).toBe(true)
+  await registry.getInstalledMiniapps() // cache the consumer projection before switching
+  if (reinstall) removeInstalledFixture()
+  const unpinned: WorkspaceDeployment = {
+    ...workspace,
+    manifest: {
+      ...workspace.manifest,
+      miniapps: {configuration: {}, managed: []},
+      systemMiniapps: {approvedPackageNamesOverride: [pkg]},
+    },
+  }
+  selectDeployment(unpinned)
+  if (reinstall) {
+    mockVersion = version
+    expect((await registry.installFromLocalZip("consumer.zip")).is_ok()).toBe(true)
+  }
+  for (let startup = 0; startup < 2; startup++) {
+    selectDeployment(unpinned)
+    registry.markRefreshNeeded()
+    expect(await registry.getActiveVersion(pkg)).toBe(version)
+    expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
+    expect(getDevAppRecords()).toEqual([])
+    expect(new File(Paths.document, "lmas", pkg, override, "call.js").exists).toBe(true)
+  }
+  selectDeployment(consumer)
+  expect(await registry.getActiveVersion(pkg)).toBe(override)
+  const restored = (await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)
+  if (kind === "dev") expect(restored?.devUrl).toBe("http://localhost:8081")
+  else expect(restored?.version).toBe(override)
+})
+
+it("preserves a consumer manual release through workspace Store updates and release cleanup", async () => {
+  selectDeployment(consumer)
+  mockVersion = "2.1.30"
+  expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
+  const unpinned: WorkspaceDeployment = {
+    ...workspace,
+    manifest: {
+      ...workspace.manifest,
+      miniapps: {configuration: {}, managed: []},
+      systemMiniapps: {approvedPackageNamesOverride: [pkg]},
+    },
+  }
+  selectDeployment(unpinned)
+  expect(await registry.getActiveVersion(pkg)).toBe(version)
+  mockVersion = "2.1.31"
+  expect(
+    (
+      await registry.installFromUrl("https://store.example/bundle.zip", {
+        releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+      })
+    ).is_ok(),
+  ).toBe(true)
+  registry.gcReleaseVersions(pkg, [version, mockVersion])
+  expect(await registry.getActiveVersion(pkg)).toBe("2.1.31")
+  selectDeployment(consumer)
+  expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
+  expect(new File(Paths.document, "lmas", pkg, "2.1.30", "call.js").exists).toBe(true)
+})
+
+it("preserves consumer dev routing when entering and leaving an exact managed pin", async () => {
+  selectDeployment(consumer)
+  await registerDevApp({packageName: pkg, name: "Local Call", devUrl: "http://localhost:8081", iconUrl: ""})
+  expect(
+    (
+      await registry.installFromUrl("http://localhost:8081/bundle.zip", {
+        versionOverride: "dev-999",
+        releaseIdentity: {source: "dev_snapshot"},
+      })
+    ).is_ok(),
+  ).toBe(true)
+  selectDeployment(workspace)
+  await deploymentManagedMiniappSync.sync(workspace)
+  expect(await registry.getActiveVersion(pkg)).toBe(version)
+  expect(getDevAppRecords()).toEqual([])
+  selectDeployment(consumer)
+  await deploymentManagedMiniappSync.sync(consumer)
+  expect(await registry.getActiveVersion(pkg)).toBe("dev-999")
+  expect(getDevAppRecords().find((app) => app.packageName === pkg)?.devUrl).toBe("http://localhost:8081")
+})
+
+it("recovers a workspace selection journal without changing the consumer selection", async () => {
+  storage.save(`${pkg}_active_version`, "2.1.30")
+  storage.save(`${pkg}_workspace_active_version`, "2.1.31")
+  const pending = new Directory(Paths.document, "lmas", pkg, `.pending-existing-${version}-1700000000000`)
+  pending.create()
+  new File(pending, "metadata-rollback.json").write(
+    JSON.stringify({
+      schemaVersion: 1,
+      packageName: pkg,
+      version,
+      workspaceSelection: true,
+      publisher: {present: false},
+      release: {present: true, value: {source: "bundled_asset"}},
+      active: {present: true, value: version},
+    }),
+  )
+  selectDeployment(consumer) // recovery can happen after switching environments
+  registry["recoverInterruptedActivations"]()
+  const consumerSelection = storage.load<string>(`${pkg}_active_version`)
+  const workspaceSelection = storage.load<string>(`${pkg}_workspace_active_version`)
+  expect(consumerSelection.is_ok() && consumerSelection.value).toBe("2.1.30")
+  expect(workspaceSelection.is_ok() && workspaceSelection.value).toBe(version)
 })
 
 it("rejects same-version manual archive replacement without changing files or provenance", async () => {
