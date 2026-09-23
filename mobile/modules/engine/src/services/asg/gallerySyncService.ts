@@ -14,6 +14,7 @@ import WifiManager from "react-native-wifi-reborn"
 import {useGallerySyncStore, HotspotInfo, selectIssyncing} from "../../stores/gallerySync"
 import {selectGlassesConnected, useGlassesStore} from "../../stores/glasses"
 import {isGlassesConnected} from "../GlassesReadiness"
+import {acquireGlassesHotspot} from "../GlassesHotspotLease"
 import {SETTINGS, useSettingsStore} from "../../stores/settings"
 import {PhotoInfo, CaptureGroup} from "../../types/asg"
 import GlobalEventEmitter from "../../utils/GlobalEventEmitter"
@@ -155,6 +156,25 @@ class GallerySyncService {
   private lastFullSyncRetryKey: string | null = null
   private wifiSettingsOpenedAt: number | null = null // Timestamp when user was sent to WiFi settings
   private syncStartPromise: Promise<void> | null = null
+  private releaseHotspot: (() => void) | null = null
+  private networkCleanup: Promise<void> | null = null
+
+  private releaseNetwork(): Promise<void> {
+    if (this.networkCleanup) return this.networkCleanup
+    const release = this.releaseHotspot
+    if (!release) return Promise.resolve()
+    this.networkCleanup = (async () => {
+      try {
+        await localNetworkTransport.disconnect()
+      } finally {
+        if (this.releaseHotspot === release) this.releaseHotspot = null
+        release()
+      }
+    })().finally(() => {
+      this.networkCleanup = null
+    })
+    return this.networkCleanup
+  }
   private startAborted = false
   // Authoritative answer to "can this run read the phone's WiFi SSID?", captured from the
   // Location permission gate in pre-flight. Every SSID comparison below is advisory only:
@@ -208,7 +228,9 @@ class GallerySyncService {
    * Cleanup - remove event listeners
    */
   cleanup(): void {
-    void localNetworkTransport.disconnect()
+    this.startAborted = true
+    this.abortController?.abort()
+    void this.releaseNetwork()
     if (this.hotspotListenerRegistered) {
       GlobalEventEmitter.removeListener("hotspot_status_change", this.handleHotspotStatusChange)
       GlobalEventEmitter.removeListener("hotspot_error", this.handleHotspotError)
@@ -285,7 +307,7 @@ class GallerySyncService {
     }
 
     gallerySyncNotifications.showSyncError("Glasses disconnected")
-    void localNetworkTransport.disconnect()
+    void this.releaseNetwork()
   }
 
   /**
@@ -445,6 +467,7 @@ class GallerySyncService {
    * Handle hotspot error event
    */
   private handleHotspotError = (eventData: any): void => {
+    if (!this.releaseHotspot) return
     console.error("[GallerySyncService] Hotspot error:", eventData)
 
     const store = useGallerySyncStore.getState()
@@ -456,6 +479,7 @@ class GallerySyncService {
 
     store.setSyncError(eventData.error_message || "Failed to start hotspot")
     gallerySyncNotifications.showSyncError("Failed to start hotspot")
+    void this.releaseNetwork()
   }
 
   /**
@@ -468,9 +492,14 @@ class GallerySyncService {
     }
 
     useGallerySyncStore.getState().setSyncStarting(true)
-    this.syncStartPromise = this.runStartSync().finally(() => {
+    this.syncStartPromise = (async () => {
+      if (this.networkCleanup) await this.networkCleanup
+      this.releaseHotspot ??= acquireGlassesHotspot()
+      await this.runStartSync()
+    })().finally(async () => {
       this.syncStartPromise = null
       useGallerySyncStore.getState().setSyncStarting(false)
+      if (!this.isSyncing()) await this.releaseNetwork()
     })
     return this.syncStartPromise
   }
@@ -916,6 +945,7 @@ class GallerySyncService {
         currentStore.setSyncError("Hotspot request timed out")
         currentStore.setSyncServiceOpenedHotspot(false)
         gallerySyncNotifications.showSyncError("Could not start hotspot - please try again")
+        void this.releaseNetwork()
       }
       this.hotspotRequestTimeout = null
     }, TIMING.HOTSPOT_REQUEST_TIMEOUT_MS)
@@ -1442,7 +1472,7 @@ class GallerySyncService {
     } finally {
       // Release the scoped Android Network on every terminal path. This is idempotent with
       // closeHotspot(), and intentionally leaves Android 9/iOS legacy routing unchanged.
-      await localNetworkTransport.disconnect()
+      await this.releaseNetwork()
       // L2: Guarantee listener cleanup on all exit paths (cancel, success, error, exhaustion)
       appStateSubscription.remove()
     }
@@ -2337,6 +2367,7 @@ class GallerySyncService {
    * Close the hotspot
    */
   private async closeHotspot(): Promise<void> {
+    if (!this.releaseHotspot) return
     const store = useGallerySyncStore.getState()
 
     try {
@@ -2348,6 +2379,8 @@ class GallerySyncService {
       console.log("[GallerySyncService] Hotspot closed")
     } catch (error) {
       console.error("[GallerySyncService] Failed to close hotspot:", error)
+    } finally {
+      await this.releaseNetwork()
     }
   }
 

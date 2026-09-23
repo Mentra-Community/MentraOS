@@ -1,26 +1,44 @@
-import {act, fireEvent, render, renderHook, waitFor} from "@testing-library/react-native"
+import {act, fireEvent, render as renderNow, renderHook as renderHookNow, waitFor} from "@testing-library/react-native"
 
 import {MentraLiveOtaFlow, useMentraLiveOta} from "@mentra/engine/ota"
 
-import {getMentraLiveOtaSession} from "../../../../modules/engine/src/devices/mentra-live/sessionRegistry"
+import {
+  getMentraLiveOtaSession,
+  resolveMentraLiveOtaProvider,
+  releaseMentraLiveOtaSession,
+} from "../../../../modules/engine/src/devices/mentra-live/sessionRegistry"
 const beginOtaAutoChain = (
-  ...args: Parameters<ReturnType<typeof getMentraLiveOtaSession>["chain"]["beginOtaAutoChain"]>
-) => getMentraLiveOtaSession().chain.beginOtaAutoChain(...args)
-const isOtaAutoChainActive = () => getMentraLiveOtaSession().chain.isOtaAutoChainActive()
-const stopOtaAutoChain = () => getMentraLiveOtaSession().chain.stopOtaAutoChain()
-import {ota} from "@/../modules/engine/src/facades/ota"
+  ...args: Parameters<NonNullable<ReturnType<typeof getMentraLiveOtaSession>>["chain"]["beginOtaAutoChain"]>
+) => getMentraLiveOtaSession()!.chain.beginOtaAutoChain(...args)
+const isOtaAutoChainActive = () => getMentraLiveOtaSession()!.chain.isOtaAutoChainActive()
+const stopOtaAutoChain = () => getMentraLiveOtaSession()!.chain.stopOtaAutoChain()
+import {liveOtaPorts as ota} from "@/../modules/engine/src/devices/mentra-live/ports"
 import {useGlassesStore} from "@/../modules/engine/src/stores/glasses"
 import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
+async function render(element: React.ReactElement) {
+  const view = renderNow(element)
+  await act(async () => {})
+  return view
+}
+async function renderHook<T>(hook: () => T) {
+  const view = renderHookNow(hook)
+  await act(async () => {})
+  return view
+}
+
 describe("MentraLiveOtaFlow", () => {
-  beforeEach(() => {
-    getMentraLiveOtaSession().dispose()
+  beforeEach(async () => {
     useGlassesStore.getState().reset()
+    bluetoothSdkMock.getDefaultDevice.mockResolvedValue({id: "live-test", model: "Mentra Live", name: "Live"} as never)
+    await resolveMentraLiveOtaProvider()
   })
 
   afterEach(() => {
     stopOtaAutoChain()
-    getMentraLiveOtaSession().dispose()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    getMentraLiveOtaSession()!.check()
+    releaseMentraLiveOtaSession()
     jest.restoreAllMocks()
     jest.useRealTimers()
   })
@@ -33,10 +51,13 @@ describe("MentraLiveOtaFlow", () => {
       }),
     )
     const onFinished = jest.fn()
-    render(<MentraLiveOtaFlow onFinished={onFinished} onOpenWifiSetup={jest.fn()} />)
+    await render(<MentraLiveOtaFlow onFinished={onFinished} onOpenWifiSetup={jest.fn()} />)
 
     expect(onFinished).not.toHaveBeenCalled()
-    finishInitialization()
+    await act(async () => {
+      await Promise.resolve()
+      finishInitialization()
+    })
 
     await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1))
   })
@@ -67,7 +88,7 @@ describe("MentraLiveOtaFlow", () => {
     }
     jest.spyOn(ota, "checkForUpdates").mockResolvedValue(result as never)
     const prepare = jest.spyOn(ota.installSession, "prepare").mockImplementation(() => "hotspot")
-    const {getByTestId, getByText} = render(
+    const {getByTestId, getByText} = await render(
       <MentraLiveOtaFlow initializeRuntime={false} onFinished={jest.fn()} onOpenWifiSetup={jest.fn()} />,
     )
 
@@ -82,7 +103,9 @@ describe("MentraLiveOtaFlow", () => {
       ),
     ).toBeDefined()
 
-    fireEvent.press(getByTestId("button-Update Now"))
+    await act(async () => {
+      fireEvent.press(getByTestId("button-Update Now"))
+    })
 
     expect(prepare).toHaveBeenCalledWith(result)
     expect(getByText("Starting update…")).toBeDefined()
@@ -91,6 +114,7 @@ describe("MentraLiveOtaFlow", () => {
   it("keeps the approved flow finishing when an installed MTK patch is awaiting reboot", async () => {
     jest.useFakeTimers()
     resetBluetoothSdkMock()
+    bluetoothSdkMock.getDefaultDevice.mockResolvedValue({id: "live-test", model: "Mentra Live", name: "Live"} as never)
     const legacyVersions = {
       appVersion: "37.0",
       buildNumber: "37",
@@ -141,7 +165,7 @@ describe("MentraLiveOtaFlow", () => {
     const prepare = jest.spyOn(ota.installSession, "prepare").mockImplementation(() => "wifi")
     jest.spyOn(ota.installSession, "attach").mockImplementation(() => {})
     jest.spyOn(ota.installSession, "detach").mockImplementation(() => {})
-    const {result, unmount} = renderHook(() => useMentraLiveOta({initializeRuntime: false, onFinished}))
+    const {result, unmount} = await renderHook(() => useMentraLiveOta({initializeRuntime: false, onFinished}))
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(7_000)
@@ -191,14 +215,16 @@ describe("MentraLiveOtaFlow", () => {
     }
     jest.spyOn(ota, "checkForUpdates").mockResolvedValue(result as never)
     const prepare = jest.spyOn(ota.installSession, "prepare").mockImplementation(() => "hotspot")
-    const {getByTestId, getByText, queryByText} = render(
+    const {getByTestId, getByText, queryByText} = await render(
       <MentraLiveOtaFlow initializeRuntime={false} onFinished={jest.fn()} onOpenWifiSetup={jest.fn()} />,
     )
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(1_100)
     })
-    fireEvent.press(getByTestId("button-Update Now"))
+    await act(async () => {
+      fireEvent.press(getByTestId("button-Update Now"))
+    })
 
     expect(prepare).not.toHaveBeenCalled()
     expect(getByText("Charge Mentra Live to Update")).toBeDefined()
@@ -212,7 +238,9 @@ describe("MentraLiveOtaFlow", () => {
     await waitFor(() => expect(getByText("Mentra Live Update Available")).toBeDefined())
     expect(queryByText("Charge Mentra Live to Update")).toBeNull()
 
-    fireEvent.press(getByTestId("button-Update Now"))
+    await act(async () => {
+      fireEvent.press(getByTestId("button-Update Now"))
+    })
     expect(prepare).toHaveBeenCalledWith(result)
     expect(getByText("Starting update…")).toBeDefined()
   })
@@ -241,7 +269,7 @@ describe("MentraLiveOtaFlow", () => {
       buildNumber: "36",
     } as never)
     const onFinished = jest.fn()
-    const {getByTestId, getByText} = render(
+    const {getByTestId, getByText} = await render(
       <MentraLiveOtaFlow initializeRuntime={false} onFinished={onFinished} onOpenWifiSetup={jest.fn()} />,
     )
 
@@ -250,7 +278,9 @@ describe("MentraLiveOtaFlow", () => {
     })
     expect(getByText("Connect your Mentra Live to Wi-Fi to install the update.")).toBeDefined()
 
-    fireEvent.press(getByTestId("button-Later"))
+    await act(async () => {
+      fireEvent.press(getByTestId("button-Later"))
+    })
     expect(onFinished).toHaveBeenCalledTimes(1)
   })
 
@@ -268,7 +298,7 @@ describe("MentraLiveOtaFlow", () => {
         finishCheck = resolve
       }) as never,
     )
-    const {getByText, rerender} = render(
+    const {getByText, rerender} = await render(
       <MentraLiveOtaFlow initializeRuntime={false} onFinished={jest.fn()} onOpenWifiSetup={jest.fn()} />,
     )
 
@@ -304,12 +334,12 @@ describe("MentraLiveOtaFlow", () => {
     expect(getByText("Up to Date")).toBeDefined()
   })
 
-  it("reports that progress is inactive when the flow unmounts", () => {
+  it("reports that progress is inactive when the flow unmounts", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
     })
     const onFirmwareRestartingChange = jest.fn()
-    const {unmount} = render(
+    const {unmount} = await render(
       <MentraLiveOtaFlow
         initialPage="progress"
         initializeRuntime={false}
@@ -324,11 +354,11 @@ describe("MentraLiveOtaFlow", () => {
     expect(onFirmwareRestartingChange).toHaveBeenLastCalledWith(false, false)
   })
 
-  it("presents a firmware reboot as active work with no completion action", () => {
+  it("presents a firmware reboot as active work with no completion action", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
     })
-    const {getByText, queryByTestId} = render(
+    const {getByText, queryByTestId} = await render(
       <MentraLiveOtaFlow
         initialPage="progress"
         initializeRuntime={false}

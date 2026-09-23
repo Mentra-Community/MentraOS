@@ -1,4 +1,5 @@
 import {useState} from "react"
+import {engine} from "@mentra/engine"
 import {View, TextInput, ActivityIndicator, ScrollView, ViewStyle, TextStyle} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
@@ -28,6 +29,14 @@ export default function ConfirmDeletionScreen() {
 
   const handleConfirm = async () => {
     if (!code.trim()) return
+    try {
+      engine.firmwareUpdates.assertSafeToRelease()
+    } catch (error) {
+      showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [
+        {text: translate("common:ok")},
+      ])
+      return
+    }
     setIsLoading(true)
     const res = await mentraAuth.confirmAccountDeletion(code.trim())
     if (res.is_error()) {

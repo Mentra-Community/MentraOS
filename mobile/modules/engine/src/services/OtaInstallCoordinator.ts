@@ -18,13 +18,16 @@
  * during React effects scheduled a re-render after the current effect batch.
  */
 import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
+import {validateManagedLiveTarget} from "../devices/mentra-live/ownership"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
+import {BgTimer} from "../utils/timers"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
 import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
+const {setTimeout, clearTimeout, setInterval, clearInterval} = BgTimer
 import {
   BES_CONTINUE_LOCKOUT_MS,
   BES_RESTART_TIMEOUT_MS,
@@ -187,6 +190,15 @@ interface OtaStartOwnership {
 }
 
 class OtaInstallCoordinator {
+  /** A phone-side timeout does not establish that the glasses stopped writing. */
+  isSafeToRelease(): boolean {
+    if (this.otaStartOwnership?.outcome === "pending") return false
+    if (this.isInVersionChangeDetour()) return false
+    const snapshot = this.snapshot()
+    if (snapshot.displayState === "complete") return true
+    if (snapshot.otaStatus?.status === "failed" || snapshot.otaProgress?.status === "FAILED") return true
+    return !this.hasFirstActivity && this.otaStartOwnership?.outcome !== "acknowledged"
+  }
   private attached = false
   private preparedCheckResult: OtaCheckCurrentGlassesResult | null = null
   private selectedTransport: "wifi" | "hotspot" = "wifi"
@@ -1512,14 +1524,16 @@ class OtaInstallCoordinator {
       outcome: "pending",
       promise: Promise.resolve(),
     }
-    ownership.promise = this.performOtaStart(ownership)
     this.otaStartOwnership = ownership
+    ownership.promise = this.performOtaStart(ownership)
     return ownership.promise
   }
 
   private async performOtaStart(ownership: OtaStartOwnership): Promise<void> {
     let nativeStartAttempted = false
     try {
+      const validation = validateManagedLiveTarget()
+      if (validation) await validation
       const state = useGlassesStore.getState()
       let otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
       if (this.selectedTransport === "hotspot") {
@@ -1542,6 +1556,9 @@ class OtaInstallCoordinator {
         throw new Error("OTA is disabled because this build has no immutable manifest pin")
       }
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
+      const finalValidation = validateManagedLiveTarget()
+      if (finalValidation) await finalValidation
+      if (this.otaStartOwnership !== ownership) return
       nativeStartAttempted = true
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
       if (this.otaStartOwnership !== ownership) return

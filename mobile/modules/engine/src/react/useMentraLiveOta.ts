@@ -1,88 +1,97 @@
-import {useCallback, useEffect, useMemo, useRef, useState} from "react"
+import {useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore} from "react"
 
-import {getMentraLiveOtaSession, releaseMentraLiveOtaSession} from "../devices/mentra-live/sessionRegistry"
+import {openMentraLiveOtaProvider} from "../devices/mentra-live/sessionRegistry"
+import {MentraLiveOtaSession} from "../devices/mentra-live/session"
+import {liveOtaPorts} from "../devices/mentra-live/ports"
+import type {MentraLiveFirmwareProvider} from "../devices/mentra-live/provider"
 import type {MentraLiveOtaController, UseMentraLiveOtaOptions} from "../devices/mentra-live/types"
-import type {FirmwareActionResult} from "../ota/types"
-import {useEngineSnapshot} from "./useEngineSnapshot"
+import {firmwareUpdates} from "../facades/firmwareUpdates"
+import type {FirmwareAction} from "../ota/types"
 
 export * from "../devices/mentra-live/types"
 export {MINIMUM_OTA_BATTERY_LEVEL} from "../devices/mentra-live/session"
 
-/** Public view binding. The headless Live session survives view unsubscription. */
+/** Compatibility view over the same registered provider used by device-neutral OTA entry points. */
 export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraLiveOtaController {
-  const [session] = useState(getMentraLiveOtaSession)
-  const snapshot = useEngineSnapshot(session.snapshot, session.subscribe)
+  // A passive initial projection keeps the public state shape synchronous while native identity resolves.
+  const [initial] = useState(() => new MentraLiveOtaSession(liveOtaPorts))
+  const [provider, setProvider] = useState<MentraLiveFirmwareProvider | null>(null)
+  const [openError, setOpenError] = useState<Error | null>(null)
+  const [openGeneration, setOpenGeneration] = useState(0)
+  const session = provider?.session ?? initial
+  const snapshot = useSyncExternalStore(session.subscribe, session.snapshot, session.snapshot)
   const callbacks = useRef(options)
   callbacks.current = options
-  const initialExit = useRef(snapshot.exitRequest)
 
   useEffect(() => {
-    void session
-      .open({initialPage: options.initialPage, initializeRuntime: options.initializeRuntime})
-      .catch((error) => {
-        console.warn("Could not initialize the Live update flow", error)
+    let observing = true
+    setOpenError(null)
+    void openMentraLiveOtaProvider({
+      entryPoint: "recovery",
+      legacyProgressEntry: options.initialPage === "progress",
+      initializeRuntime: options.initializeRuntime,
+      allowDevelopmentSkip: options.allowDevelopmentSkip,
+    })
+      .then((value) => {
+        if (observing) setProvider(value)
       })
-  }, [session])
+      .catch((error) => {
+        if (observing) setOpenError(error instanceof Error ? error : new Error(String(error)))
+      })
+    return () => {
+      observing = false
+    }
+  }, [openGeneration])
 
   useEffect(() => {
-    if (snapshot.exitRequest > initialExit.current && session.claimExitRequest(snapshot.exitRequest)) {
-      releaseMentraLiveOtaSession(session)
+    if (provider && snapshot.exitRequest && session.claimExitRequest(snapshot.exitRequest))
       callbacks.current.onFinished?.()
-    }
-  }, [session, snapshot.exitRequest])
+  }, [provider, session, snapshot.exitRequest])
 
   useEffect(() => {
     if (snapshot.page === "progress")
       callbacks.current.onFirmwareRestartingChange?.(snapshot.state.firmwareRestarting, true)
   }, [snapshot.page, snapshot.state.firmwareRestarting])
-
   useEffect(() => {
     if (snapshot.page !== "progress") return
     return () => callbacks.current.onFirmwareRestartingChange?.(false, false)
   }, [snapshot.page])
 
-  const deliver = useCallback(
-    (result: FirmwareActionResult) => {
-      if (result.kind === "finished") {
-        releaseMentraLiveOtaSession(session)
-        callbacks.current.onFinished?.()
-      } else if (result.kind === "wifi-required") {
-        callbacks.current.onOpenWifiSetup?.()
+  const perform = useCallback(
+    (action: FirmwareAction) => {
+      if (!provider) {
+        if (action === "check" || action === "retry") setOpenGeneration((value) => value + 1)
+        return
       }
+      void firmwareUpdates
+        .perform(provider.target, {action, offerId: provider.snapshot().offer?.id})
+        .then((result) => {
+          if (result.kind === "finished") callbacks.current.onFinished?.()
+          else if (result.kind === "wifi-required") callbacks.current.onOpenWifiSetup?.()
+        })
+        .catch((error) => console.warn(`Live update ${action} failed`, error))
     },
-    [session],
+    [provider],
   )
-
-  const install = useCallback(() => deliver(session.install()), [deliver, session])
-  const retryInstall = useCallback(() => {
-    if (session.snapshot().page === "progress") callbacks.current.onFirmwareRestartingChange?.(false, true)
-    session.retryInstall()
-  }, [session])
-  const finish = useCallback(() => {
-    const result = session.finish()
-    if (result instanceof Promise) {
-      void result.then(deliver).catch((error) => console.warn("Could not finish Live update cleanup", error))
-    } else deliver(result)
-  }, [deliver, session])
-  const discard = useCallback(() => {
-    void session
-      .discard()
-      .then(deliver)
-      .catch((error) => console.warn("Could not discard Live update", error))
-  }, [deliver, session])
-  const openWifiSetup = useCallback(() => deliver(session.openWifiSetup()), [deliver, session])
 
   return useMemo(
     () => ({
-      state: snapshot.state,
-      check: session.check,
-      retryCheck: session.check,
-      install,
-      retryInstall,
-      finish,
-      discard,
-      openWifiSetup,
+      state: openError
+        ? {
+            ...snapshot.state,
+            screen: "check_failed" as const,
+            canRetry: true,
+            error: {code: "check_failed" as const, message: openError.message},
+          }
+        : snapshot.state,
+      check: () => perform("check"),
+      retryCheck: () => perform("retry"),
+      install: () => perform("install"),
+      retryInstall: () => perform("retry"),
+      finish: () => perform("finish"),
+      discard: () => perform("discard"),
+      openWifiSetup: () => perform("wifi"),
     }),
-    [snapshot.state, session, install, retryInstall, finish, discard, openWifiSetup],
+    [snapshot.state, perform, openError],
   )
 }

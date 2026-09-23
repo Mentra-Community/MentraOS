@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/react-native"
 import {FC, createContext, useContext, useEffect, useMemo, useState} from "react"
 
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {
   createDeploymentAuthProvider,
   type DeploymentAuthProvider,
@@ -168,6 +168,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
   }
 
   const logout = async () => {
+    engine.firmwareUpdates.assertSafeToRelease()
     console.log("AuthContext: Starting logout process")
     try {
       if (workspaceAuth && activeDeployment.kind === "workspace") {

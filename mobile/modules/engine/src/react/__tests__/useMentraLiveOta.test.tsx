@@ -10,6 +10,7 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 // Load the hook against the renderer's React or every hook throws.
 const rendererRequire = createRequire(require.resolve("react-test-renderer"))
 mock.module("react", () => rendererRequire("react"))
+mock.module("../../utils/timers", () => ({BgTimer: {setTimeout, clearTimeout, setInterval, clearInterval}}))
 
 import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
 import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
@@ -137,7 +138,11 @@ const fakeOta = {
   },
 }
 
-mock.module("../../facades/ota", () => ({ota: fakeOta}))
+mock.module("../../devices/mentra-live/ports", () => ({liveOtaPorts: fakeOta}))
+mock.module("@mentra/bluetooth-sdk", () => ({
+  default: {getDefaultDevice: async () => ({id: "live-test", model: "Mentra Live", name: "Live"})},
+}))
+mock.module("../../services/OtaInstallCoordinator", () => ({otaInstallCoordinator: {isSafeToRelease: () => true}}))
 mock.module("../../services/OtaAutoChain", () => ({
   createOtaAutoChain: () => ({
     beginOtaAutoChain: beginAutoChain,
@@ -167,7 +172,7 @@ mock.module("../../services/OtaErrorMapping", () => ({
   shouldShowChangeWifiForOtaDownloadFailure: () => false,
 }))
 
-const {getMentraLiveOtaSession} =
+const {getMentraLiveOtaSession, releaseMentraLiveOtaSession} =
   require("../../devices/mentra-live/sessionRegistry") as typeof import("../../devices/mentra-live/sessionRegistry")
 
 const {useMentraLiveOta} = require("../useMentraLiveOta") as typeof import("../useMentraLiveOta")
@@ -191,7 +196,12 @@ async function renderProbe(initialPage: "check" | "progress" = "progress") {
 
 describe("useMentraLiveOta", () => {
   beforeEach(() => {
-    getMentraLiveOtaSession().dispose()
+    const previous = getMentraLiveOtaSession()
+    if (previous) {
+      previous.chain.stopOtaAutoChain()
+      previous.check()
+      releaseMentraLiveOtaSession()
+    }
     otaListeners.clear()
     installListeners.clear()
     prepare.mockClear()
@@ -238,7 +248,13 @@ describe("useMentraLiveOta", () => {
   })
 
   test("reports no artifact while runtime initialization is pending", async () => {
-    fakeOta.initialize.mockImplementationOnce(() => new Promise<void>(() => {}))
+    let finishInitialization!: () => void
+    fakeOta.initialize.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishInitialization = resolve
+        }),
+    )
     function InitializingProbe() {
       latestController = useMentraLiveOta({initializeRuntime: true})
       return null
@@ -249,7 +265,10 @@ describe("useMentraLiveOta", () => {
     })
     expect(latestController.state.screen).toBe("initializing")
     expect(latestController.state.hotspotArtifact).toBeNull()
-    await act(async () => renderer!.unmount())
+    await act(async () => {
+      renderer!.unmount()
+      finishInitialization()
+    })
   })
 
   test("projects hotspot staging and unified install progress without exposing stores", async () => {
@@ -306,7 +325,7 @@ describe("useMentraLiveOta", () => {
       // Phone-side watchdog copy is English-only: no copy key, and no glasses code to show.
       error: {code: "install_failed", message: "Network lost", copyKey: null, glassesCode: null},
     })
-    latestController.retryInstall()
+    await act(async () => latestController.retryInstall())
     expect(retry).toHaveBeenCalledTimes(1)
     await act(async () => renderer.unmount())
   })

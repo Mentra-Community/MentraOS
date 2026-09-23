@@ -14,16 +14,16 @@ owner: Mentra
 ## A. Characterization and contracts
 
 - [x] Confirm current dev and existing PR state; preserve approved spec.
-- [ ] Establish provider/session types, registration, observation and admission.
-- [ ] Add synthetic fourth-provider contract coverage.
+- [x] Establish provider/session types, registration, observation and admission.
+- [x] Add synthetic fourth-provider contract coverage.
 - [ ] Preserve the existing 237-test/reference consumer baseline; add missing lifecycle/background coverage as extraction proceeds.
 
 ## B. Complete Live extraction
 
-- [ ] Move hook decisions into a headless Live session; retain pure public presentation and compatibility APIs.
-- [ ] Own auto-chain state per Live flow and preserve its algorithm/deadlines.
-- [ ] Extract background availability and coordinate clock-recovery commands.
-- [ ] Protect coordinator ownership and asynchronous check publication.
+- [x] Move hook decisions into a headless Live session; retain pure public presentation and compatibility APIs.
+- [x] Own auto-chain state per Live flow and preserve its algorithm/deadlines.
+- [x] Extract background availability and coordinate clock-recovery commands.
+- [x] Protect coordinator ownership and asynchronous check publication.
 - [ ] Implement runtime/resource reservations, safe cleanup and logout admission.
 - [ ] Route all Live entry points through the provider; verify source/transport/recovery parity.
 
@@ -50,9 +50,20 @@ owner: Mentra
 
 ## Evidence / unresolved hardware gates
 
+User update: no AR99 hardware is available. Live E7FA is paired to the connected Android phone. Finish implementation, automated checks and builds first; ask the user before ANY hardware testing. Do not initiate a Live update, phone runtime test, or interruption experiment without that approval. iPhone remains unavailable.
+
+
 The Mac NIMO bench update succeeded earlier; that device is now on the target firmware. It is not an eligible old-firmware phone test by itself. NIMO interruption recovery and production firmware approval remain unverified. AR99 activation/readback and Live phone regression updates require actual device evidence. Do not silently mark these checks complete or reflash/downgrade hardware speculatively.
 
 ## Working notes
 
 - Initial research logs: `.context/ota-design-review/`; NIMO captured protocol/bench: `.context/nimo-ota-bench/`.
 - Only reviewed behavior changes are permitted: provider lifetime, explicit resource/concurrency guards, and NIMO required compatibility. Live manifest/protocol algorithms remain intact.
+
+### Implementation checkpoint: Live provider and ownership
+
+The Live hook now binds to the registered native-device provider. Background checks are headless; the host renders prompts. Managed-owner guards protect legacy controls; coordinator starts revalidate the target, and clock recovery uses the same coordinator. Device/status subscriptions can survive runtime teardown. Gallery/OTA now reserve the existing hotspot lease and inactive gallery cleanup no longer disconnects another owner. User logout, account deletion, device changes and debug deployment changes have admission checks.
+
+Validation so far: Engine TypeScript passes; 249 Jest tests passed across 10 OTA/gallery suites, 16 isolated Bun hook tests passed before the background-timer conversion, and 10 shared service tests passed. Further tests/builds and the remaining lifecycle work are still required. No phone or glasses testing has been performed in this implementation.
+
+Remaining Live work includes auth-revocation cancellation of optional continuation, terminal-owner cleanup/reattachment, journal and native context boundaries, complete common presentation/routing (including development escape compatibility), additional trace/lifecycle coverage, and source/device stale-offer checks. NIMO/AR99 implementation has not begun yet. Do not mistake this checkpoint for completion or release approval.

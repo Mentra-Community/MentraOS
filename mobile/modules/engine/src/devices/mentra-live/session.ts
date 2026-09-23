@@ -1,4 +1,5 @@
 import type {ota as liveOta} from "../../facades/ota"
+import {BgTimer} from "../../utils/timers"
 import {RevisionedSnapshot} from "../../ota/RevisionedSnapshot"
 import type {FirmwareActionResult} from "../../ota/types"
 import {
@@ -50,10 +51,13 @@ export interface LiveSessionSnapshot {
   readonly state: MentraLiveOtaState
   readonly page: MentraLiveOtaFlowPage
   readonly exitRequest: number
+  readonly offerId: string | null
+  readonly pass: number
 }
 
 export const MINIMUM_OTA_BATTERY_LEVEL = 25
 const NONE: FirmwareActionResult = {kind: "none"}
+const {setTimeout, clearTimeout} = BgTimer
 
 /** Owns the former React flow's decisions; the install coordinator still owns wire recovery. */
 export class MentraLiveOtaSession {
@@ -89,6 +93,7 @@ export class MentraLiveOtaSession {
   private autoChainAdvanced = false
   private exitRequest = 0
   private claimedExitRequest = 0
+  private pass = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private completionTimer: ReturnType<typeof setTimeout> | null = null
   private finishing: Promise<FirmwareActionResult> | null = null
@@ -101,6 +106,8 @@ export class MentraLiveOtaSession {
       state: projectLiveOtaState(this.data, ports, chain),
       page: "check",
       exitRequest: 0,
+      offerId: null,
+      pass: 0,
     })
   }
 
@@ -118,6 +125,7 @@ export class MentraLiveOtaSession {
     }
     this.started = true
     this.data.page = options.initialPage ?? "check"
+    if (this.data.page === "progress") this.pass = 1
     this.data.runtimeReady = options.initializeRuntime === false
     this.unsubscribers = [this.ports.onSnapshot(this.react), this.ports.installSession.onSnapshot(this.react)]
     this.react()
@@ -262,6 +270,7 @@ export class MentraLiveOtaSession {
   }
 
   private navigateToProgress(): void {
+    this.pass++
     this.installPending = true
     this.ports.clearProgress()
     this.data.page = "progress"
@@ -373,6 +382,8 @@ export class MentraLiveOtaSession {
           state: projectLiveOtaState(this.data, this.ports, this.chain),
           page: this.data.page,
           exitRequest: this.exitRequest,
+          offerId: this.updateFingerprint,
+          pass: this.pass,
         }
         const {revision: _revision, ...previous} = this.snapshots.snapshot()
         if (JSON.stringify(value) !== JSON.stringify(previous)) this.snapshots.publish(value)
@@ -418,6 +429,7 @@ export class MentraLiveOtaSession {
         waitForLegacyMigrationMs: this.chain.isOtaAutoChainActive() ? OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS : 0,
         refreshVersionInfo: true,
         fixClockBeforeCheck: false,
+        canPublish: () => !cancelled(),
       }
       let result = await this.ports.checkForUpdates(options)
       if (cancelled()) return

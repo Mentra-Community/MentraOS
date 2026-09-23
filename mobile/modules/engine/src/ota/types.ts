@@ -69,6 +69,8 @@ export interface FirmwareSnapshot {
   readonly offer: FirmwareOffer | null
   readonly error: {readonly code: string; readonly message: string; readonly deviceCode?: string | null} | null
   readonly presentation: FirmwarePresentation
+  /** Optional device presentation data. Only a registered device view interprets this. */
+  readonly details?: unknown
 }
 
 export interface FirmwareOpenOptions {
@@ -76,6 +78,8 @@ export interface FirmwareOpenOptions {
   readonly initializeRuntime?: boolean
   /** Explicit compatibility entry for callers of the existing Live progress page. */
   readonly legacyProgressEntry?: boolean
+  /** Host's explicit development-only escape from a check; never permits stopping unsafe device work. */
+  readonly allowDevelopmentSkip?: boolean
 }
 
 export interface FirmwareActionRequest {

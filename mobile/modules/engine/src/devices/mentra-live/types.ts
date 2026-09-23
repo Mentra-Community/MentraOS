@@ -103,6 +103,8 @@ export type MentraLiveOtaState = {
 }
 
 export type UseMentraLiveOtaOptions = {
+  /** Permit the existing developer check-screen skip. Does not bypass native update safety. */
+  allowDevelopmentSkip?: boolean
   /** Entry page. `progress` exists for interrupted-session recovery. */
   initialPage?: MentraLiveOtaFlowPage
   /** Start Engine's OTA-only projections. Full Engine hosts should pass false. */

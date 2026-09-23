@@ -1,0 +1,187 @@
+import {RevisionedSnapshot} from "../../ota/RevisionedSnapshot"
+import {
+  FirmwareUpdateError,
+  type FirmwareActionRequest,
+  type FirmwareActionResult,
+  type FirmwareOpenOptions,
+  type FirmwareProvider,
+  type FirmwareSnapshot,
+  type FirmwareTarget,
+  type FirmwarePhase,
+} from "../../ota/types"
+import {MentraLiveOtaSession, type LiveOtaPorts} from "./session"
+import type {MentraLiveOtaState} from "./types"
+
+const phases: Record<MentraLiveOtaState["screen"], FirmwarePhase> = {
+  initializing: "checking",
+  checking: "checking",
+  finishing: "verifying",
+  update_available: "available",
+  battery_required: "blocked",
+  wifi_required: "blocked",
+  up_to_date: "complete",
+  dev_build: "unavailable",
+  unofficial_client: "unavailable",
+  check_failed: "failed",
+  update_info_unavailable: "unavailable",
+  starting: "preparing",
+  preparing_hotspot: "preparing",
+  updating: "installing",
+  restarting: "restarting",
+  verifying: "verifying",
+  complete: "complete",
+  failed: "failed",
+  disconnected: "interrupted",
+}
+
+/** The Live implementation of the same managed-provider boundary used by file-based updaters. */
+export class MentraLiveFirmwareProvider implements FirmwareProvider {
+  readonly session: MentraLiveOtaSession
+  private snapshots: RevisionedSnapshot<FirmwareSnapshot>
+  private unsubscribe: () => void
+  private opened = false
+  private admitted = false
+  private allowDevelopmentSkip = false
+  private readonly flowId = `live-${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+  constructor(
+    readonly target: FirmwareTarget,
+    private readonly ports: LiveOtaPorts,
+    private readonly validateTarget: () => Promise<void>,
+    private readonly safeToRelease: () => boolean,
+    private readonly acquireOwner: (validate: () => Promise<void>, retry: () => void) => () => void,
+  ) {
+    this.session = new MentraLiveOtaSession(ports)
+    this.snapshots = new RevisionedSnapshot(this.project())
+    this.unsubscribe = this.session.subscribe(() => this.snapshots.publish(this.project()))
+  }
+
+  private releaseOwner: (() => void) | null = null
+  snapshot = (): FirmwareSnapshot => this.snapshots.snapshot()
+  subscribe = (listener: (snapshot: FirmwareSnapshot) => void) => this.snapshots.subscribe(listener)
+
+  async open(options: FirmwareOpenOptions): Promise<void> {
+    this.allowDevelopmentSkip = options.allowDevelopmentSkip === true
+    if (this.opened) return this.session.open()
+    await this.validateTarget()
+    this.releaseOwner = this.acquireOwner(this.validateTarget, () => this.ports.installSession.retry())
+    this.opened = true
+    try {
+      await this.session.open({
+        initialPage: options.legacyProgressEntry ? "progress" : "check",
+        initializeRuntime: options.initializeRuntime,
+      })
+    } catch (error) {
+      if (this.snapshot().safeToRelease) this.release()
+      throw error
+    }
+  }
+
+  async perform(request: FirmwareActionRequest): Promise<FirmwareActionResult> {
+    if (!this.opened) throw new FirmwareUpdateError("action_unavailable", "Open this update flow first")
+    const state = this.snapshot()
+    if (request.action === "install") {
+      if (!request.offerId || request.offerId !== state.offer?.id)
+        throw new FirmwareUpdateError("stale_offer", "Check the update again")
+      if (state.active) return {kind: "none"}
+    }
+    const action = state.presentation.actions.find((item) => item.id === request.action)
+    if (!action || action.disabled)
+      throw new FirmwareUpdateError("action_unavailable", "This update action is unavailable")
+    if (["check", "install", "retry"].includes(request.action)) await this.validateTarget()
+    const current = this.snapshot()
+    if (request.action === "install" && request.offerId !== current.offer?.id)
+      throw new FirmwareUpdateError("stale_offer", "The update changed while verifying the paired device")
+    const currentAction = current.presentation.actions.find((item) => item.id === request.action)
+    if (!currentAction || currentAction.disabled)
+      throw new FirmwareUpdateError("action_unavailable", "The update state changed; try again")
+    switch (request.action) {
+      case "install":
+        this.admitted = true
+        try {
+          return this.session.install()
+        } finally {
+          this.admitted = false
+        }
+      case "retry":
+        if (this.session.snapshot().page === "progress") this.session.retryInstall()
+        else this.session.check()
+        break
+      case "check":
+        this.session.check()
+        break
+      case "wifi":
+        return this.session.openWifiSetup()
+      case "discard":
+        return this.session.discard()
+      case "finish": {
+        const result = await this.session.finish()
+        if (result.kind === "finished") this.release()
+        return result
+      }
+    }
+    return {kind: "none"}
+  }
+
+  dispose(): void {
+    if (!this.snapshot().safeToRelease) throw new FirmwareUpdateError("busy", "The Live update still owns the device")
+    this.unsubscribe()
+    this.session.dispose()
+    this.release()
+  }
+
+  private release(): void {
+    this.releaseOwner?.()
+    this.releaseOwner = null
+    this.opened = false
+  }
+
+  private project(): FirmwareSnapshot {
+    const snapshot = this.session.snapshot()
+    const s = snapshot.state
+    const active = this.admitted || snapshot.page === "progress" || this.session.chain.isOtaAutoChainActive()
+    const actions: FirmwareSnapshot["presentation"]["actions"][number][] = []
+    if (!active && s.screen !== "checking" && s.screen !== "initializing")
+      actions.push({id: "check", label: {text: "Check for updates", key: "ota:checkingForUpdates"}})
+    if (s.canInstall || s.screen === "battery_required")
+      actions.push({id: "install", label: {text: "Update Now", key: "ota:updateNow"}, disabled: !s.canInstall})
+    if (s.canRetry) actions.push({id: "retry", label: {text: "Retry"}})
+    if (s.canOpenWifiSetup) actions.push({id: "wifi", label: {text: "Set up Wi-Fi", key: "ota:setupWifi"}})
+    if (s.canFinish || s.canDismiss || (this.allowDevelopmentSkip && snapshot.page === "check" && !active))
+      actions.push({
+        id: "finish",
+        label: {text: s.canDismiss ? "Later" : "Continue", key: s.canDismiss ? "ota:updateLater" : "common:continue"},
+        disabled: s.continueDisabled,
+        secondary: s.canDismiss,
+      })
+    // Debug-only discard stays on the explicit compatibility surface; generic UI cannot abandon uncertain work.
+    return {
+      target: this.target,
+      flowId: this.flowId,
+      attemptId: snapshot.pass ? `${this.flowId}:${snapshot.pass}` : null,
+      nativeSessionId: this.ports.snapshot().status?.sessionId ?? null,
+      revision: 0,
+      phase: phases[s.screen],
+      active,
+      safeToRelease: !this.admitted && !this.session.chain.isOtaAutoChainActive() && this.safeToRelease(),
+      offer: snapshot.offerId
+        ? {
+            id: snapshot.offerId,
+            required: s.updateRequired,
+            observedVersion: s.releaseTransition?.fromVersion ?? this.ports.snapshot().appVersion,
+            targetVersion: s.releaseTransition?.toVersion ?? null,
+          }
+        : null,
+      error: s.error ? {code: s.error.code, message: s.error.message, deviceCode: s.error.glassesCode} : null,
+      presentation: {
+        title: {text: s.screen.replaceAll("_", " ")},
+        progress: s.progress,
+        busy: active || s.screen === "checking" || s.screen === "initializing",
+        success: s.screen === "up_to_date",
+        actions,
+        releaseNotes: s.changelogs,
+      },
+      details: s,
+    }
+  }
+}

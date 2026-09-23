@@ -25,6 +25,7 @@ import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
 import {Platform} from "react-native"
+import {acquireGlassesHotspot} from "../../../modules/engine/src/services/GlassesHotspotLease"
 import WifiManager from "react-native-wifi-reborn"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -310,6 +311,28 @@ async function startFileDownload(): Promise<void> {
 describe("GallerySyncService", () => {
   const originalPlatformOS = Platform.OS
 
+  it("does not disconnect a hotspot owned by OTA or another feature during inactive cleanup", async () => {
+    const release = acquireGlassesHotspot()
+    const disconnect = jest.spyOn(localNetworkTransport, "disconnect")
+    try {
+      gallerySyncService.cleanup()
+      await Promise.resolve()
+      expect(disconnect).not.toHaveBeenCalled()
+    } finally {
+      release()
+    }
+  })
+
+  it("rejects a conflicting start before changing either feature's Wi-Fi connection", async () => {
+    const release = acquireGlassesHotspot()
+    try {
+      await expect(gallerySyncService.startSync()).rejects.toThrow("already in use")
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    } finally {
+      release()
+    }
+  })
+
   beforeEach(() => {
     // Pin Date.now() to match EMPTY_SYNC_RESPONSE.server_time so detectClockSkew stays quiet
     // in tests that don't explicitly want to trigger clock-skew recovery.
@@ -320,6 +343,8 @@ describe("GallerySyncService", () => {
     useGallerySyncStore.getState().reset()
     useGlassesStore.getState().reset()
     gallerySyncService.cleanup()
+    // These fixtures also exercise private download phases directly, without startSync's fresh controller.
+    ;(gallerySyncService as unknown as {abortController: AbortController | null}).abortController = null
   })
 
   afterEach(() => {

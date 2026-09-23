@@ -47,6 +47,13 @@ export class FirmwareUpdateService {
     const key = targetKey(target)
     const pending = this.openings.get(key)
     if (pending) return pending
+    // Selecting another device explicitly retires safely idle flows, including their native owner tokens.
+    for (const [other, existing] of this.providers) {
+      if (other !== key && !existing.snapshot().active && existing.snapshot().safeToRelease) {
+        existing.dispose()
+        this.providers.delete(other)
+      }
+    }
     const provider = this.provider(target)
     const opening = Promise.resolve().then(async () => {
       await provider.open(options)
@@ -102,6 +109,13 @@ export class FirmwareUpdateService {
     this.commands.set(key, command)
     this.requests.set(key, {...request})
     void command
+      .then((result) => {
+        if (this.commands.get(key) === command) {
+          this.commands.delete(key)
+          this.requests.delete(key)
+          if (result.kind === "finished" && provider.snapshot().safeToRelease) this.release(target)
+        }
+      })
       .finally(() => {
         if (this.commands.get(key) === command) {
           this.commands.delete(key)
@@ -122,8 +136,37 @@ export class FirmwareUpdateService {
     }
   }
 
-  diagnosticSnapshot(): FirmwareSnapshot[] {
-    return [...this.providers.values()].map((provider) => provider.snapshot())
+  diagnosticSnapshot() {
+    // Offers can contain manifest URLs, and provider details are untrusted for reporting.
+    return [...this.providers.values()].map((provider) => {
+      const s = provider.snapshot()
+      return {
+        target: s.target,
+        flowId: s.flowId,
+        attemptId: s.attemptId,
+        nativeSessionId: s.nativeSessionId,
+        revision: s.revision,
+        phase: s.phase,
+        active: s.active,
+        safeToRelease: s.safeToRelease,
+        observedVersion: s.offer?.observedVersion ?? null,
+        targetVersion: s.offer?.targetVersion ?? null,
+        errorCode: s.error?.code ?? null,
+        deviceErrorCode: s.error?.deviceCode ?? null,
+      }
+    })
+  }
+
+  /** Explicitly release a safely finished flow; view unsubscription never calls this. */
+  release(target: FirmwareTarget): void {
+    const key = targetKey(target)
+    const provider = this.providers.get(key)
+    if (!provider) return
+    if (this.commands.has(key) || this.openings.has(key) || !provider.snapshot().safeToRelease) {
+      throw new FirmwareUpdateError("busy", "This update still owns the device")
+    }
+    provider.dispose()
+    this.providers.delete(key)
   }
 
   private assertAvailable(target: FirmwareTarget): void {

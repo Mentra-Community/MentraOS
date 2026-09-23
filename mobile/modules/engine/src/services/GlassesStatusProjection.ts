@@ -12,6 +12,7 @@
  * Started by `engine.start()`. Idempotent.
  */
 import BluetoothSdk, {type PublicGlassesStatus} from "@mentra/bluetooth-sdk"
+import {cancelDeferredFirmwareStop, deferStopForFirmware} from "../ota/RuntimeLease"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {isGlassesConnected} from "./GlassesReadiness"
@@ -51,6 +52,7 @@ let hydrationPromise: Promise<void> | null = null
 export function startGlassesStatusProjection(
   forwarder?: (status: Partial<PublicGlassesStatus>) => void,
 ): Promise<void> {
+  cancelDeferredFirmwareStop(stopGlassesStatusProjection)
   if (forwarder) glassesStatusForwarder = forwarder
   if (unsubs.length) return hydrationPromise ?? Promise.resolve()
 
@@ -102,6 +104,8 @@ export function startGlassesStatusProjection(
 }
 
 export function stopGlassesStatusProjection(): void {
+  glassesStatusForwarder = null
+  if (deferStopForFirmware(stopGlassesStatusProjection)) return
   projectionRunId++
   unsubs.forEach((unsub) => unsub())
   unsubs = []

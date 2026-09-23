@@ -11,6 +11,7 @@
  * Started by `engine.start()`. Idempotent.
  */
 import BluetoothSdk, {type OtaStatus} from "@mentra/bluetooth-sdk"
+import {cancelDeferredFirmwareStop, deferStopForFirmware} from "../ota/RuntimeLease"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {useGlassesStore} from "../stores/glasses"
 import {handleOtaClockSkewFromGlasses} from "./glassesClockSync"
@@ -19,6 +20,7 @@ import {legacyOtaProgressFromOtaStatusEvent, normalizeOtaStatusEvent, otaStatusF
 let subs: Array<{remove: () => void}> = []
 
 export function startOtaService(): void {
+  cancelDeferredFirmwareStop(stopOtaService)
   if (subs.length) return
 
   // MTK firmware update finished (self power-cycle path).
@@ -83,6 +85,7 @@ export function startOtaService(): void {
 }
 
 export function stopOtaService(): void {
+  if (deferStopForFirmware(stopOtaService)) return
   subs.forEach((s) => s.remove())
   subs = []
 }

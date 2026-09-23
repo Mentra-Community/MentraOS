@@ -1,16 +1,33 @@
-import {ota} from "../../facades/ota"
-import {MentraLiveOtaSession} from "./session"
+import {firmwareUpdates, firmwareUpdateService} from "../../facades/firmwareUpdates"
+import {FirmwareUpdateError, type FirmwareOpenOptions} from "../../ota/types"
+import {MentraLiveFirmwareProvider} from "./provider"
 
-// The native Live coordinator supports one device. All public React views share its flow owner.
-let session: MentraLiveOtaSession | null = null
+let current: MentraLiveFirmwareProvider | null = null
 
-export function getMentraLiveOtaSession(): MentraLiveOtaSession {
-  if (!session || session.isDisposed) session = new MentraLiveOtaSession(ota)
-  return session
+/** Passive compatibility lookup. Native identity is resolved before a provider is selected. */
+export async function resolveMentraLiveOtaProvider(): Promise<MentraLiveFirmwareProvider> {
+  const target = await firmwareUpdates.currentTarget()
+  if (target.integrationId !== "mentra-live")
+    throw new FirmwareUpdateError("unsupported", "The Live update flow requires Mentra Live glasses")
+  const provider = firmwareUpdateService.provider(target)
+  if (!(provider instanceof MentraLiveFirmwareProvider))
+    throw new FirmwareUpdateError("invalid_provider", "The registered Live updater has no Live presentation")
+  current = provider
+  return provider
 }
 
-export function releaseMentraLiveOtaSession(owner: MentraLiveOtaSession): void {
-  if (session !== owner || owner.snapshot().page === "progress" || owner.chain.isOtaAutoChainActive()) return
-  owner.dispose()
-  session = null
+export function getMentraLiveOtaSession() {
+  return current?.session ?? null
+}
+
+export async function openMentraLiveOtaProvider(options: FirmwareOpenOptions): Promise<MentraLiveFirmwareProvider> {
+  const provider = await resolveMentraLiveOtaProvider()
+  await firmwareUpdates.open(provider.target, options)
+  return provider
+}
+
+export function releaseMentraLiveOtaSession(): void {
+  if (!current) return
+  firmwareUpdateService.release(current.target)
+  current = null
 }
