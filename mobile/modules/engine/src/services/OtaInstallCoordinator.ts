@@ -19,7 +19,7 @@
  */
 import {LiveNativeCompletion} from "../devices/mentra-live/nativeCompletion"
 import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
-import {managedLiveDeviceId, validateManagedLiveTarget} from "../devices/mentra-live/ownership"
+import {hasLiveExecutionOwner, managedLiveDeviceId, validateManagedLiveTarget} from "../devices/mentra-live/ownership"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {BgTimer} from "../utils/timers"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
@@ -194,6 +194,7 @@ interface OtaStartOwnership {
 
 class OtaInstallCoordinator {
   private nativeCompletion: LiveNativeCompletion | null = null
+  private nativeBinding: {pending: Promise<void> | null} | null = null
   private observationOnly = false
   /** A phone-side timeout does not establish that the glasses stopped writing. */
   isSafeToRelease(): boolean {
@@ -348,20 +349,10 @@ class OtaInstallCoordinator {
     this.observationOnly = options.observationOnly === true
     this.attached = true
     this.resetSessionState()
+    this.nativeBinding = hasLiveExecutionOwner() ? {pending: null} : null
     const deviceId = managedLiveDeviceId()
-    if (deviceId)
-      this.nativeCompletion = new LiveNativeCompletion(
-        deviceId,
-        {
-          read: () => BluetoothSdk.getFirmwareUpdateSnapshot(deviceId),
-          listen: (listener) => {
-            const subscription = BluetoothSdk.addListener("firmware_update", listener)
-            return () => subscription.remove()
-          },
-          complete: (evidence) => BluetoothSdk.reconcileFirmwareUpdateCompletion(evidence),
-        },
-        () => this.emitInternalChange(),
-      )
+    if (deviceId) this.bindNativeCompletion(deviceId)
+    else if (this.nativeBinding) void this.ensureNativeCompletion().catch(() => {})
     const initialState = useGlassesStore.getState()
     this.protocolProfile = selectOtaProtocolProfile(
       initialState.otaStatus,
@@ -390,6 +381,41 @@ class OtaInstallCoordinator {
     }
   }
 
+  private bindNativeCompletion(deviceId: string): void {
+    this.nativeCompletion = new LiveNativeCompletion(
+      deviceId,
+      {
+        read: () => BluetoothSdk.getFirmwareUpdateSnapshot(deviceId),
+        listen: (listener) => {
+          const subscription = BluetoothSdk.addListener("firmware_update", listener)
+          return () => subscription.remove()
+        },
+        complete: (evidence) => BluetoothSdk.reconcileFirmwareUpdateCompletion(evidence),
+      },
+      () => this.emitInternalChange(),
+    )
+  }
+
+  /** Legacy attach stays synchronous, but Start/Finish wait for its pinned native identity. */
+  private ensureNativeCompletion(): Promise<void> {
+    const binding = this.nativeBinding
+    if (!binding || this.nativeCompletion) return Promise.resolve()
+    if (binding.pending) return binding.pending
+    binding.pending = Promise.resolve()
+      .then(async () => {
+        await validateManagedLiveTarget()
+        if (this.nativeBinding !== binding) return
+        const deviceId = managedLiveDeviceId()
+        if (!deviceId) throw new Error("The Live update has no native device identity")
+        this.bindNativeCompletion(deviceId)
+      })
+      .finally(() => {
+        binding.pending = null
+        if (this.nativeBinding === binding) this.emitInternalChange()
+      })
+    return binding.pending
+  }
+
   /**
    * Unbind on screen unmount: clears ALL timers/subscriptions/listeners and
    * resets the session-local state (the old component state died with the
@@ -398,6 +424,7 @@ class OtaInstallCoordinator {
   detach(): void {
     if (!this.attached) return
     this.attached = false
+    this.nativeBinding = null
     this.nativeCompletion?.dispose()
     this.nativeCompletion = null
     if (this.storeUnsubscribe) {
@@ -509,6 +536,9 @@ class OtaInstallCoordinator {
    * clear the stale build number so the next check re-reads version_info.
    */
   async finish(): Promise<void> {
+    const binding = this.nativeBinding
+    if (binding && !this.nativeCompletion) await this.ensureNativeCompletion()
+    if (this.nativeBinding !== binding) return
     // Keep the established legacy completion policy in one place. Native only fences and
     // persists this verdict; it must not infer success from a generic reconnect/step_complete.
     const complete = this.snapshot().displayState === "complete" && this.isLegacySafeToRelease()
@@ -586,7 +616,10 @@ class OtaInstallCoordinator {
       hotspotArtifact: this.hotspotArtifact ? {...this.hotspotArtifact} : null,
       transport: this.selectedTransport,
     }
-    snapshot.safeToRelease = this.isLegacySafeToRelease(snapshot) && (this.nativeCompletion?.isSafeToRelease() ?? true)
+    snapshot.safeToRelease =
+      this.isLegacySafeToRelease(snapshot) &&
+      (!this.nativeBinding || this.nativeCompletion !== null) &&
+      (this.nativeCompletion?.isSafeToRelease() ?? true)
     return snapshot
   }
 
@@ -1621,6 +1654,8 @@ class OtaInstallCoordinator {
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
       const finalValidation = validateManagedLiveTarget()
       if (finalValidation) await finalValidation
+      if (this.otaStartOwnership !== ownership) return
+      if (this.nativeBinding && !this.nativeCompletion) await this.ensureNativeCompletion()
       if (this.otaStartOwnership !== ownership) return
       if (this.nativeCompletion) await this.nativeCompletion.beforeStart()
       if (this.otaStartOwnership !== ownership) return

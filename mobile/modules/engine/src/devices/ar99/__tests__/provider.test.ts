@@ -289,3 +289,25 @@ test("an older idle read cannot release newer native admission after a lost Star
   expect(f.held()).toBe(0)
   expect(f.releases()).toBe(1)
 })
+
+test("a read older than the pre-Start snapshot retains uncertainty but permits a fresh recovery check", async () => {
+  const f = fixture()
+  const read = f.ports.read
+  const stale = await read()
+  f.emit({connectionGeneration: 2})
+  await f.provider.open({entryPoint: "settings"})
+  f.ports.start = async () => {
+    f.ports.read = async () => stale
+    throw new Error("Admission unknown")
+  }
+  await f.provider.perform({action: "install", offerId: f.provider.snapshot().offer!.id})
+  expect(f.provider.snapshot()).toMatchObject({phase: "interrupted", safeToRelease: false})
+  expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toEqual(["retry"])
+  expect(f.held()).toBe(1)
+  expect(f.releases()).toBe(0)
+  f.ports.read = read
+  await f.provider.perform({action: "retry"})
+  expect(f.provider.snapshot()).toMatchObject({phase: "idle", safeToRelease: true})
+  expect(f.held()).toBe(0)
+  expect(f.releases()).toBe(1)
+})

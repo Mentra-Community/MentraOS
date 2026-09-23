@@ -320,7 +320,8 @@ export class NimoFirmwareProvider implements FirmwareProvider {
           const native = await this.ports.read()
           const accepted = this.observation.acceptRead(native)
           const current = this.observation.snapshot()
-          if (accepted && current?.safeToRelease && !current.sessionId) this.fail("start_failed", error)
+          if (current?.safeToRelease && !current.sessionId)
+            this.fail(accepted ? "start_failed" : "start_uncertain", error, !accepted)
         } catch {
           this.fail("start_uncertain", error, true)
         }

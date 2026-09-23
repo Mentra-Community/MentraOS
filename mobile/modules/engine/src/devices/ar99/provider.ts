@@ -254,7 +254,7 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
           const native = await this.ports.read()
           const accepted = this.observation.acceptRead(native)
           const current = this.observation.snapshot()
-          if (accepted && current?.safeToRelease && !current.sessionId) this.fail(error)
+          if (current?.safeToRelease && !current.sessionId) this.fail(error, !accepted)
         } catch {
           this.fail(error, true)
         }

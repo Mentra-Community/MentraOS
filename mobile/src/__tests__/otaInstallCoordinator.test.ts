@@ -9,7 +9,7 @@
  * GlobalEventEmitter (what OtaService does with the BLE events).
  */
 import type {NativeFirmwareUpdateSnapshot} from "@mentra/bluetooth-sdk/firmware-updates"
-import {acquireManagedLiveOwner} from "@/../modules/engine/src/devices/mentra-live/ownership"
+import {acquireLegacyLiveOwner, acquireManagedLiveOwner} from "@/../modules/engine/src/devices/mentra-live/ownership"
 
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
@@ -1911,9 +1911,14 @@ describe("OtaInstallCoordinator legacy APK completion settle hold (WP 8C-g)", ()
 })
 
 describe("Live coordinator completion reconciles native ownership", () => {
-  it.each(["bes", "apk"] as const)(
-    "releases the matching native record after the established %s proof",
-    async (step) => {
+  it.each([
+    {step: "bes", controller: "managed"},
+    {step: "apk", controller: "managed"},
+    {step: "bes", controller: "legacy"},
+    {step: "apk", controller: "legacy"},
+  ] as const)(
+    "$controller releases the matching native record after the established $step proof",
+    async ({step, controller}) => {
       let native: NativeFirmwareUpdateSnapshot = {
         schemaVersion: 1,
         integrationId: "mentra-live",
@@ -1946,11 +1951,21 @@ describe("Live coordinator completion reconciles native ownership", () => {
         native = {...native, sessionId: "native-session", phase: "installing", safeToRelease: false, revision: 1}
         emitBluetoothSdkEvent("firmware_update", native)
       })
-      const release = acquireManagedLiveOwner(
-        async () => {},
-        () => {},
-        "live",
-      )
+      let legacyDeviceId: string | null = null
+      const release =
+        controller === "managed"
+          ? acquireManagedLiveOwner(
+              async () => {},
+              () => {},
+              "live",
+            )
+          : acquireLegacyLiveOwner(
+              async () => {
+                legacyDeviceId = "live"
+              },
+              () => {},
+              () => legacyDeviceId,
+            )
       try {
         setLegacyGlassesConnected(step === "bes" ? "39" : "33")
         useGlassesStore
