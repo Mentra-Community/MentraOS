@@ -175,6 +175,8 @@ final class Ar99FirmwareUpdater: FirmwareUpdater {
 
     private func transition(_ admitted: Int, phase: String, progress: Int? = nil, offset: Int? = nil, total: Int? = nil, safe: Bool = false, error: String? = nil) {
         guard operation == admitted else { return }
+        // Retire queued callbacks when an attempt is safely terminal.
+        if safe { operation += 1 }
         state.update {
             $0.phase = phase; $0.safeToRelease = safe; $0.error = error; $0.canReconcile = phase == "interrupted"
             if let progress { $0.progress = Double(min(100, max(0, progress))) / 100 }

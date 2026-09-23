@@ -11,23 +11,25 @@ struct FirmwareRecoveryRecord: Codable {
 
 final class FirmwareJournal {
     private let path: URL
+    private let directory: URL
     private let deviceId: String
 
     init(deviceId: String, directory: URL? = nil) throws {
         self.deviceId = deviceId
         let base = try directory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
-                                                            appropriateFor: nil, create: true).appendingPathComponent("firmware-updates", isDirectory: true)
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        #if os(iOS)
-            try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: base.path)
-        #endif
+                                                            appropriateFor: nil, create: false).appendingPathComponent("firmware-updates", isDirectory: true)
+        self.directory = base
         let filename = SHA256.hash(data: Data(deviceId.utf8)).map { String(format: "%02x", $0) }.joined() + ".json"
         path = base.appendingPathComponent(filename)
     }
 
     func read() throws -> FirmwareRecoveryRecord? {
-        guard FileManager.default.fileExists(atPath: path.path) else { return nil }
-        let attributes = try FileManager.default.attributesOfItem(atPath: path.path)
+        // Observation must not require writable storage. Only proven absence
+        // is safe; permission/protection errors still retain unknown recovery.
+        guard let parent = try attributesIfPresent(directory),
+              let type = parent[.type] as? FileAttributeType,
+              [.typeDirectory, .typeSymbolicLink].contains(type),
+              let attributes = try attributesIfPresent(path) else { return nil }
         guard let size = attributes[.size] as? NSNumber, size.intValue <= 65536 else {
             throw FirmwareUpdaterError("invalid_journal", "Firmware recovery record exceeds its size limit")
         }
@@ -40,6 +42,15 @@ final class FirmwareJournal {
         return record
     }
 
+    private func attributesIfPresent(_ url: URL) throws -> [FileAttributeKey: Any]? {
+        do { return try FileManager.default.attributesOfItem(atPath: url.path) }
+        catch let error as NSError {
+            if error.domain == NSCocoaErrorDomain,
+               [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) { return nil }
+            throw error
+        }
+    }
+
     func write(_ record: FirmwareRecoveryRecord) throws {
         guard record.snapshot.deviceId == deviceId, record.request.deviceId == deviceId,
               record.request.kind != "manifest"
@@ -49,6 +60,10 @@ final class FirmwareJournal {
         }
         let data = try JSONEncoder().encode(record)
         guard data.count <= 65536 else { throw FirmwareUpdaterError("invalid_journal", "Recovery record exceeds its size limit") }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        #if os(iOS)
+            try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: directory.path)
+        #endif
         try data.write(to: path, options: .atomic)
     }
 

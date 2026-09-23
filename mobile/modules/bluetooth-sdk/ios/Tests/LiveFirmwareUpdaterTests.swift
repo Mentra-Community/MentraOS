@@ -18,9 +18,9 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
         let request = FirmwareStartRequest(deviceId: "live", connectionGeneration: 1, offerId: "offer", kind: "manifest",
                                            manifestUrl: "https://example.com/manifest?private=secret", metadata: ["authorization": "secret"])
         lazy var updater = makeUpdater()
-        func makeUpdater() -> LiveFirmwareUpdater {
+        func makeUpdater(journalDirectory: URL? = nil) -> LiveFirmwareUpdater {
             let value = LiveFirmwareUpdater(deviceId: "live", generation: 1, connected: { true },
-                                            query: { [unowned self] in queries += 1 }, directory: directory)
+                                            query: { [unowned self] in queries += 1 }, directory: journalDirectory ?? directory)
             value.launch = { [unowned self, weak value] request in
                 token = try value?.commandStarted(manifestUrl: request.manifestUrl!, request: request)
                 writes += 1
@@ -66,6 +66,21 @@ final class LiveFirmwareUpdaterTests: XCTestCase {
             _ = try recovered.acknowledge()
             XCTAssertNil(try FirmwareJournal(deviceId: "live", directory: h.directory).read())
             XCTAssertEqual(h.writes, 1)
+        }
+    }
+
+    func testUnavailableNewJournalDoesNotOwnAnUnmodifiedDevice() async throws {
+        try await MainActor.run {
+            let h = Harness(); defer { h.cleanup() }
+            _ = h.updater
+            XCTAssertFalse(FileManager.default.fileExists(atPath: h.directory.path))
+            try Data([1]).write(to: h.directory)
+            let updater = h.makeUpdater()
+            XCTAssertTrue(updater.snapshot.safeToRelease)
+            XCTAssertThrowsError(try updater.start(h.request))
+            XCTAssertTrue(updater.snapshot.safeToRelease); XCTAssertEqual(h.writes, 0)
+            _ = try updater.acknowledge()
+            XCTAssertTrue(h.makeUpdater().snapshot.safeToRelease)
         }
     }
 

@@ -1,6 +1,7 @@
 package com.mentra.bluetoothsdk.sgcs.firmware
 
 import java.nio.file.Files
+import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,8 +24,8 @@ class LiveFirmwareUpdaterTest {
     val request = FirmwareStartRequest("live", 1, "offer", "manifest",
       manifestUrl = "https://example.com/manifest?private=secret", metadata = mapOf("authorization" to "secret"))
     val updater by lazy { makeUpdater() }
-    fun makeUpdater(): LiveFirmwareUpdater {
-      val value = LiveFirmwareUpdater("live", 1, { true }, { queries++ }, directory)
+    fun makeUpdater(journalDirectory: File = directory): LiveFirmwareUpdater {
+      val value = LiveFirmwareUpdater("live", 1, { true }, { queries++ }, journalDirectory)
       value.launch = { token = value.commandStarted(it.manifestUrl!!, it); writes++ }
       return value
     }
@@ -41,6 +42,15 @@ class LiveFirmwareUpdaterTest {
     assertFalse(saved.snapshot.safeToRelease)
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.acknowledge() }
     Unit
+  }
+  @Test fun unavailableNewJournalDoesNotOwnAnUnmodifiedDevice() = Harness().use { h ->
+    val blocked = File(h.directory, "blocked").apply { writeText("not a directory") }
+    val updater = h.makeUpdater(blocked)
+    assertTrue(updater.snapshot.safeToRelease)
+    assertThrows(Exception::class.java) { updater.start(h.request) }
+    assertTrue(updater.snapshot.safeToRelease); assertEquals(0, h.writes)
+    updater.acknowledge()
+    assertTrue(h.makeUpdater(blocked).snapshot.safeToRelease)
   }
 
   @Test fun lostAckRequiresQueryAndColdRecordNeverResumesApproval() = Harness().use { h ->

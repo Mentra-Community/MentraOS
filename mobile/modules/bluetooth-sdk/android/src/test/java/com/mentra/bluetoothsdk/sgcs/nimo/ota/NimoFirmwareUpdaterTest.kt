@@ -56,6 +56,16 @@ class NimoFirmwareUpdaterTest {
     assertEquals(1, h.writes.size); assertEquals(2, h.writes[0][4].toInt())
     assertEquals(0, h.releases); assertEquals(1, observed.size)
   }
+  @Test fun unavailableNewJournalDoesNotOwnAnUnmodifiedDevice() = Harness().use { h ->
+    val blocked = File(h.directory, "blocked").apply { writeText("not a directory") }
+    val updater = NimoFirmwareUpdater("device", 1, h, blocked)
+    assertTrue(updater.snapshot.safeToRelease)
+    val failed = updater.start(h.request)
+    assertEquals("failed", failed.phase); assertTrue(failed.safeToRelease)
+    assertTrue(h.writes.isEmpty()); assertTrue(h.prepareCallbacks.isEmpty())
+    updater.acknowledge()
+    assertTrue(NimoFirmwareUpdater("device", 1, h, blocked).snapshot.safeToRelease)
+  }
 
   @Test fun idleReconnectAcceptsFreshInventoryBeforeOtaChannelPreparation() = Harness().use { h ->
     h.updater.inventoryChanged(NimoOtaManager.Inventory("old", "0.1.0.14"), 1)

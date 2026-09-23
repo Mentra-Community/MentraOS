@@ -12,6 +12,7 @@ final class Ar99FirmwareUpdaterTests: XCTestCase {
         var starts = 0
         var queries = 0
         var onStart: (() -> Void)?
+        var startAccepted = true
         lazy var updater = makeUpdater()
         init() throws {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -22,12 +23,12 @@ final class Ar99FirmwareUpdaterTests: XCTestCase {
                                             sha256: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()))
         }
 
-        func makeUpdater() -> Ar99FirmwareUpdater {
+        func makeUpdater(journalDirectory: URL? = nil) -> Ar99FirmwareUpdater {
             Ar99FirmwareUpdater(deviceId: "ar99", connectionGeneration: 1, ports: .init(
                 connected: { true }, start: { [unowned self] bytes, callback in
-                    XCTAssertEqual(bytes, Data([1, 2, 3])); starts += 1; callbacks = callback; onStart?(); return true
+                    XCTAssertEqual(bytes, Data([1, 2, 3])); starts += 1; callbacks = callback; onStart?(); return startAccepted
                 }, queryInventory: { [unowned self] in queries += 1 }
-            ), journalDirectory: directory)
+            ), journalDirectory: journalDirectory ?? directory)
         }
 
         func cleanup() {
@@ -92,6 +93,39 @@ final class Ar99FirmwareUpdaterTests: XCTestCase {
             try Data([4, 5, 6]).write(to: h.file)
             let result = try h.updater.start(h.request)
             XCTAssertEqual(h.starts, 0); XCTAssertEqual(result.phase, "failed"); XCTAssertTrue(result.safeToRelease)
+        }
+    }
+
+    func testRejectedChannelRetiresCallbacksBeforeAcknowledgement() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            h.startAccepted = false
+            XCTAssertEqual(try h.updater.start(h.request).phase, "failed")
+            let stale = h.callbacks!
+            stale.onError(255, "queued channel error")
+            XCTAssertTrue(h.updater.snapshot.safeToRelease)
+            XCTAssertTrue(h.makeUpdater().snapshot.safeToRelease)
+            _ = try h.updater.acknowledge()
+            h.startAccepted = true
+            _ = try h.updater.start(h.request)
+            stale.onCompleted(false)
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
+            XCTAssertEqual(h.queries, 0)
+        }
+    }
+
+    func testUnavailableNewJournalDoesNotOwnAnUnmodifiedDevice() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            let blocked = h.directory.appendingPathComponent("blocked")
+            try Data([1]).write(to: blocked)
+            let updater = h.makeUpdater(journalDirectory: blocked)
+            XCTAssertTrue(updater.snapshot.safeToRelease)
+            let failed = try updater.start(h.request)
+            XCTAssertEqual(failed.phase, "failed"); XCTAssertTrue(failed.safeToRelease)
+            XCTAssertEqual(h.starts, 0)
+            _ = try updater.acknowledge()
+            XCTAssertTrue(h.makeUpdater(journalDirectory: blocked).snapshot.safeToRelease)
         }
     }
 

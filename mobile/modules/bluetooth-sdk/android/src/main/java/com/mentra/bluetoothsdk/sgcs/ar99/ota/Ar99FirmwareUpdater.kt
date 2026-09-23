@@ -149,6 +149,9 @@ class Ar99FirmwareUpdater(deviceId: String, connectionGeneration: Int, private v
   private fun transition(admitted: Int, phase: String, progress: Int? = null, offset: Int? = null, total: Int? = null,
     safe: Boolean = false, error: String? = null) {
     if (operation != admitted) return
+    // Safe terminal results retire this manager callback generation, including
+    // errors already queued before start() returned false.
+    if (safe) operation++
     state.update {
       val inventory = it.inventory.toMutableMap()
       if (offset != null) inventory["offset"] = offset.toString()

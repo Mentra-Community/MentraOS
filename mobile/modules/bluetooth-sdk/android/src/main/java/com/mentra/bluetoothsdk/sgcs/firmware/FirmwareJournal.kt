@@ -3,20 +3,28 @@ package com.mentra.bluetoothsdk.sgcs.firmware
 import android.util.AtomicFile
 import java.io.File
 import java.security.MessageDigest
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
+import java.nio.file.attribute.BasicFileAttributes
 import org.json.JSONObject
 
 /** Recovery evidence only. Reading this record never authorizes a new flash or guessed-offset resume. */
 internal data class FirmwareRecoveryRecord(val snapshot: FirmwareUpdateSnapshot, val request: FirmwareStartRequest, val formatVersion: Int = 1, val recoveryStage: String? = null)
 
-internal class FirmwareJournal(private val deviceId: String, directory: File) {
+internal class FirmwareJournal(private val deviceId: String, private val directory: File) {
   private val file: AtomicFile
   init {
-    check(directory.isDirectory || directory.mkdirs()) { "Firmware recovery directory is unavailable" }
     val name = MessageDigest.getInstance("SHA-256").digest(deviceId.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 255) }
     file = AtomicFile(File(directory, "$name.json"))
   }
 
   fun read(): FirmwareRecoveryRecord? {
+    // Observation does not need writable storage. A missing directory (or a
+    // non-directory at that path) cannot contain a prior recovery record.
+    // Other stat errors remain unknown and must not authorize device release.
+    val attributes = try { Files.readAttributes(directory.toPath(), BasicFileAttributes::class.java) }
+    catch (_: NoSuchFileException) { return null }
+    if (!attributes.isDirectory) return null
     val bytes = try {
       file.openRead().use { input ->
         val output = java.io.ByteArrayOutputStream()
@@ -30,7 +38,8 @@ internal class FirmwareJournal(private val deviceId: String, directory: File) {
         output.toByteArray()
       }
     } catch (_: java.io.FileNotFoundException) {
-      if (file.baseFile.exists()) throw FirmwareUpdaterException("invalid_journal", "Firmware recovery record cannot be read")
+      if (!Files.notExists(file.baseFile.toPath()) || !Files.notExists(File(file.baseFile.path + ".bak").toPath()))
+        throw FirmwareUpdaterException("invalid_journal", "Firmware recovery record cannot be read")
       return null
     }
     val json = JSONObject(String(bytes, Charsets.UTF_8))
@@ -47,6 +56,7 @@ internal class FirmwareJournal(private val deviceId: String, directory: File) {
       .put("recoveryStage", record.recoveryStage)
     val bytes = json.toString().toByteArray(Charsets.UTF_8)
     require(bytes.size <= 65536) { "Firmware recovery record exceeds size limit" }
+    check(directory.isDirectory || directory.mkdirs()) { "Firmware recovery directory is unavailable" }
     val stream = file.startWrite()
     try { stream.write(bytes); file.finishWrite(stream) }
     catch (error: Exception) { file.failWrite(stream); throw error }

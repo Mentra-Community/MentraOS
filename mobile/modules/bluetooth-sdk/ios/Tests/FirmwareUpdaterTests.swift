@@ -17,7 +17,7 @@ final class FirmwareUpdaterTests: XCTestCase {
         var timers: [() -> Void] = []
         lazy var updater = makeUpdater()
 
-        func makeUpdater() -> NimoFirmwareUpdater {
+        func makeUpdater(journalDirectory: URL? = nil) -> NimoFirmwareUpdater {
             NimoFirmwareUpdater(deviceId: "device", connectionGeneration: generation, ports: .init(
                 connection: { [unowned self] in .init(deviceId: "device", generation: generation, writeCapacity: capacity) },
                 prepare: { [unowned self] in prepareCallbacks.append($0) },
@@ -30,7 +30,7 @@ final class FirmwareUpdaterTests: XCTestCase {
                     return { cancelled = true }
                 },
                 now: { 0 }
-            ), journalDirectory: directory)
+            ), journalDirectory: journalDirectory ?? directory)
         }
 
         func reply(_ body: Data) {
@@ -91,6 +91,33 @@ final class FirmwareUpdaterTests: XCTestCase {
             XCTAssertEqual(h.updater.snapshot.inventory["revision"], "2")
             XCTAssertTrue(h.prepareCallbacks.isEmpty); XCTAssertTrue(h.writes.isEmpty)
             XCTAssertTrue(h.updater.snapshot.safeToRelease)
+        }
+    }
+
+    func testUnavailableNewJournalDoesNotOwnAnUnmodifiedDevice() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            let blocked = h.directory.appendingPathComponent("blocked")
+            try Data([1]).write(to: blocked)
+            let updater = h.makeUpdater(journalDirectory: blocked)
+            XCTAssertTrue(updater.snapshot.safeToRelease)
+            let failed = try updater.start(h.request)
+            XCTAssertEqual(failed.phase, "failed"); XCTAssertTrue(failed.safeToRelease)
+            XCTAssertTrue(h.writes.isEmpty); XCTAssertTrue(h.prepareCallbacks.isEmpty)
+            _ = try updater.acknowledge()
+            XCTAssertTrue(h.makeUpdater(journalDirectory: blocked).snapshot.safeToRelease)
+        }
+    }
+
+    func testDirectorySymlinkDoesNotHideExistingRecovery() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            var saved = FirmwareUpdateSnapshot(integrationId: "nimo", deviceId: "device", connectionGeneration: 1)
+            saved.phase = "transferring"; saved.safeToRelease = false
+            try FirmwareJournal(deviceId: "device", directory: h.directory).write(.init(snapshot: saved, request: h.request))
+            let link = h.directory.appendingPathComponent("recovery-link")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: h.directory)
+            XCTAssertFalse(h.makeUpdater(journalDirectory: link).snapshot.safeToRelease)
         }
     }
 

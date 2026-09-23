@@ -270,6 +270,8 @@ Live's `idle` status alone is not proof that admitted work ended: ASG acknowledg
 
 The recovery record is versioned and device-bound: integration/provider format version, flow/attempt/native IDs, source or artifact identity where applicable, last confirmed phase, and unresolved cleanup/recovery state. Write it before native upgrade entry and retain it across JS reload. Missing/corrupt/unsupported records cannot authorize a flash or override an active native session. A cold process start re-reads device state; cached bytes or a prior approval flag alone are insufficient. Do not add persistence of Live auto-chain approval as an incidental refactor.
 
+Journal observation does not create directories or require writable storage. Proven absence leaves an otherwise unowned device available; directory creation and protection happen before an admitted update can reach its transport. Read/protection errors and corrupt existing records remain unknown recovery, never proof that a device is safe to release.
+
 ### Interaction with other device users
 
 One OTA at a time does not protect resources from gallery, calls, streams or logout. Source review found that Live hotspot OTA and gallery share `localNetworkTransport`, gallery cleanup calls `disconnect()` unconditionally, and the existing `GlassesHotspotLease` is used by ACS/managed relay but not those two paths. This is a current ownership gap, not evidence of a new regression already introduced by this design.
