@@ -45,7 +45,10 @@ async function waitForDownload<T>(download: Promise<T>, signal: AbortSignal): Pr
   })
 }
 
+type StorageScope = "consumer" | "workspace"
+
 interface ManagedInstallRecord {
+  storageScope?: StorageScope
   packageName: string
   version: string
   sha256: string
@@ -81,7 +84,8 @@ function readState(): ManagedInstallState | null {
           !entry ||
           typeof entry.packageName !== "string" ||
           typeof entry.version !== "string" ||
-          typeof entry.sha256 !== "string",
+          typeof entry.sha256 !== "string" ||
+          (entry.storageScope !== undefined && entry.storageScope !== "consumer" && entry.storageScope !== "workspace"),
       )
     ) {
       return null
@@ -102,26 +106,38 @@ function writeState(state: ManagedInstallState | null): void {
   file.write(JSON.stringify(state))
 }
 
-function recordKey(entry: Pick<ManagedInstallRecord, "packageName" | "version">): string {
-  return `${entry.packageName}\0${entry.version}`
+function recordKey(entry: ManagedInstallRecord): string {
+  return `${entry.packageName}\0${entry.version}\0${entry.storageScope ?? "workspace"}`
+}
+
+function ownedStorageScope(
+  deploymentId: string,
+  workspaceOrigin: string,
+  entry: ManagedInstallRecord,
+): StorageScope | null {
+  for (const scope of entry.storageScope ? [entry.storageScope] : (["workspace", "consumer"] as const)) {
+    const identity = appRegistry.getReleaseIdentity(entry.packageName, entry.version, scope)
+    if (
+      identity?.source === "deployment_manifest" &&
+      identity.deploymentId === deploymentId &&
+      identity.deploymentOrigin === workspaceOrigin &&
+      identity.bundleSha256 === entry.sha256.toLowerCase()
+    )
+      return scope
+  }
+  return null
 }
 
 function hasExactOwnership(deploymentId: string, workspaceOrigin: string, entry: ManagedInstallRecord): boolean {
-  const identity = appRegistry.getReleaseIdentity(entry.packageName, entry.version)
-  return (
-    identity?.source === "deployment_manifest" &&
-    identity.deploymentId === deploymentId &&
-    identity.deploymentOrigin === workspaceOrigin &&
-    identity.bundleSha256 === entry.sha256.toLowerCase()
-  )
+  return ownedStorageScope(deploymentId, workspaceOrigin, entry) !== null
 }
 
 function discoverOwnedEntries(deploymentId: string, workspaceOrigin: string): ManagedInstallRecord[] {
   return appRegistry
     .getDeploymentOwnedReleases()
     .filter(({identity}) => identity.deploymentId === deploymentId && identity.deploymentOrigin === workspaceOrigin)
-    .flatMap(({packageName, version, identity}) =>
-      identity.bundleSha256 ? [{packageName, version, sha256: identity.bundleSha256.toLowerCase()}] : [],
+    .flatMap(({packageName, version, identity, storageScope}) =>
+      identity.bundleSha256 ? [{packageName, version, storageScope, sha256: identity.bundleSha256.toLowerCase()}] : [],
     )
 }
 
@@ -136,7 +152,9 @@ async function uninstallOwnedEntries(state: ManagedInstallState, context: SyncCo
       console.warn(`${LOG_TAG}: refusing to remove unowned ${entry.packageName}@${entry.version}`)
       continue
     }
-    const result = await appRegistry.uninstall(entry.packageName, entry.version)
+    const result = await appRegistry.uninstall(entry.packageName, entry.version, {
+      storageScope: ownedStorageScope(state.deploymentId, state.workspaceOrigin, entry)!,
+    })
     if (result.is_error()) {
       console.warn(`${LOG_TAG}: failed to remove ${entry.packageName}@${entry.version}`, result.error)
       return false
@@ -188,8 +206,8 @@ async function installEntry(
   context: SyncContext,
 ): Promise<boolean> {
   context.assertCurrent()
-  const installedVersions = appRegistry.getInstalledVersions(entry.packageName)
-  const desiredIdentity = appRegistry.getReleaseIdentity(entry.packageName, entry.version)
+  const installedVersions = appRegistry.getInstalledVersions(entry.packageName, "workspace")
+  const desiredIdentity = appRegistry.getReleaseIdentity(entry.packageName, entry.version, "workspace")
   const desiredOwnedByDeployment =
     installedVersions.includes(entry.version) &&
     desiredIdentity?.source === "deployment_manifest" &&
@@ -294,7 +312,12 @@ async function syncWorkspace(
     if (!(await installEntry(deployment.manifest.deploymentId, deployment.workspaceOrigin, entry, previous, context)))
       continue
 
-    const next = {packageName: entry.packageName, version: entry.version, sha256: entry.sha256.toLowerCase()}
+    const next: ManagedInstallRecord = {
+      packageName: entry.packageName,
+      version: entry.version,
+      sha256: entry.sha256.toLowerCase(),
+      storageScope: "workspace",
+    }
     nextEntries.set(recordKey(next), next)
     // Persist the new ownership before cleaning older versions. If cleanup
     // fails or the app stops, both owned releases remain discoverable.
@@ -310,12 +333,18 @@ async function syncWorkspace(
     context.assertCurrent()
     for (const old of [...nextEntries.values()]) {
       context.assertCurrent()
-      if (old.packageName !== entry.packageName || old.version === entry.version) continue
+      if (
+        old.packageName !== entry.packageName ||
+        (old.version === entry.version && (old.storageScope ?? "workspace") === "workspace")
+      )
+        continue
       if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.workspaceOrigin, old)) {
         nextEntries.delete(recordKey(old))
         continue
       }
-      const uninstall = await appRegistry.uninstall(old.packageName, old.version)
+      const uninstall = await appRegistry.uninstall(old.packageName, old.version, {
+        storageScope: ownedStorageScope(deployment.manifest.deploymentId, deployment.workspaceOrigin, old)!,
+      })
       if (uninstall.is_error()) {
         console.warn(`${LOG_TAG}: installed update but could not remove ${old.packageName}@${old.version}`)
         continue
@@ -338,7 +367,9 @@ async function syncWorkspace(
       nextEntries.delete(recordKey(previous))
       continue
     }
-    const uninstall = await appRegistry.uninstall(previous.packageName, previous.version)
+    const uninstall = await appRegistry.uninstall(previous.packageName, previous.version, {
+      storageScope: ownedStorageScope(deployment.manifest.deploymentId, deployment.workspaceOrigin, previous)!,
+    })
     if (uninstall.is_error()) {
       console.warn(`${LOG_TAG}: failed to remove ${previous.packageName}@${previous.version}`, uninstall.error)
       continue

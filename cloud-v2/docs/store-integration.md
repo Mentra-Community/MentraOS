@@ -128,12 +128,15 @@ Workspace-managed versions retain their exact version/hash/deployment policy;
 consumer developer URLs and manual release installs cannot override them.
 Approved, non-managed system miniapps can use their build-assigned Store releases
 inside a workspace, including releases installed before entering the workspace.
-Consumer and workspace selections are stored separately. If the consumer has a
+Consumer and workspace selections, bundle files, and release provenance are
+stored separately. If the consumer has a
 manual/dev override, an approving workspace selects an eligible bundled or Store
 release instead; returning to consumer mode restores the override. Workspace
 installation, cleanup, and release garbage collection preserve that consumer
 selection and its dev snapshots. Recovery journals record which selection they
 changed, so interrupted workspace installs cannot overwrite the consumer choice.
+This also preserves both builds when a host upgrade, Store release, or workspace
+pin uses the same version number as an existing consumer manual release.
 
 ### Store preview availability
 
