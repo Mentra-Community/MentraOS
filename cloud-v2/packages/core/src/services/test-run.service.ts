@@ -190,7 +190,12 @@ export class TestRunService {
           await file.writeFile(value);
         }
         await file.sync();
-      } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); await file.close(); }
+      } finally {
+        // This request owns the reader until it is discarded. Releasing a
+        // cancelled native HTTP reader throws on reused connections in Bun.
+        await reader.cancel().catch(() => undefined);
+        await file.close();
+      }
       if (size !== asset.sizeBytes || hash.digest("hex") !== asset.sha256) throw new TestRunError(400, "asset size/SHA256 does not match immutable metadata");
       if (!mediaSignatureMatches(asset.contentType, prefix)) throw new TestRunError(400, "asset bytes do not match media type");
       const existing = (await this.repository.assets(runId)).find(item => item.assetId === assetId);

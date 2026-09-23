@@ -160,6 +160,29 @@ describe("test run authentication and immutable ingestion", () => {
 });
 
 describe("verified media uploads and seeking", () => {
+  test("accepts a recording upload over a real HTTP socket", async () => {
+    const bytes = Buffer.concat([video, Buffer.alloc(9 * 1024 * 1024, 0x6d)]);
+    const run = fixture();
+    run.assets[0].sizeBytes = bytes.length;
+    run.assets[0].sha256 = sha256(bytes);
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => ingest.fetch(request) });
+    try {
+      const registered = await fetch(server.url, {
+        method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(run),
+      });
+      expect(registered.status).toBe(201);
+      await registered.arrayBuffer();
+      for (const status of [201, 200]) {
+        const response = await fetch(new URL("/run-example-1/assets/video-1", server.url), {
+          method: "PUT", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "video/mp4" }, body: bytes,
+        });
+        expect(response.status).toBe(status);
+        await response.arrayBuffer();
+      }
+      expect((await service.detail(run.runId)).outcomes.evidence).toBe("complete");
+      expect(Buffer.from(await (await admin.request("/run-example-1/assets/video-1")).arrayBuffer())).toEqual(bytes);
+    } finally { await server.stop(true); }
+  });
   test("keeps evidence incomplete until verified upload; repeat upload is idempotent", async () => {
     await post();
     expect((await service.detail("run-example-1")).outcomes).toEqual({ test: "passed", teardown: "passed", fixture: "ready", evidence: "incomplete" });
