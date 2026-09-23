@@ -46,10 +46,7 @@ async function connectedSession(): Promise<{session: MiniappSession; transport: 
 
 function reply(transport: FakeTransport, data: unknown, ok = true, error?: object): void {
   const {requestId} = transport.lastRequest()
-  transport.deliver(
-    {type: MiniappResponseType.REQUEST_RESULT, requestId, ok, ...(ok ? {data} : {error})},
-    requestId,
-  )
+  transport.deliver({type: MiniappResponseType.REQUEST_RESULT, requestId, ok, ...(ok ? {data} : {error})}, requestId)
 }
 
 describe("session.stream.preview()", () => {
@@ -121,8 +118,18 @@ describe("session.stream.preview()", () => {
     transport.deliver({type: MiniappResponseType.STREAM_PREVIEW_STATUS, handleId: "other", state: "ended"})
     expect(handle.state).toBe("held")
     transport.deliver({type: MiniappResponseType.STREAM_PREVIEW_STATUS, handleId: "h3", state: "held"})
-    transport.deliver({type: MiniappResponseType.STREAM_PREVIEW_STATUS, handleId: "h3", state: "ended", reason: "source_ended"})
-    transport.deliver({type: MiniappResponseType.STREAM_PREVIEW_STATUS, handleId: "h3", state: "ended", reason: "again"})
+    transport.deliver({
+      type: MiniappResponseType.STREAM_PREVIEW_STATUS,
+      handleId: "h3",
+      state: "ended",
+      reason: "source_ended",
+    })
+    transport.deliver({
+      type: MiniappResponseType.STREAM_PREVIEW_STATUS,
+      handleId: "h3",
+      state: "ended",
+      reason: "again",
+    })
     expect(handle.state).toBe("ended")
     expect(statuses).toEqual([{state: "ended", reason: "source_ended"}])
 

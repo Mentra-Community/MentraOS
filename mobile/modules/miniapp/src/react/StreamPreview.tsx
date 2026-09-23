@@ -17,7 +17,12 @@ import {getPreviewConnection} from "./stream-preview/PreviewConnection"
 import {ResizeCoalescer, type PreviewBox} from "./stream-preview/resizeCoalescer"
 import {quantizePreviewTier, sameTier, type PreviewTier} from "./stream-preview/tiers"
 import {previewTrace, previewTraceWarn} from "./stream-preview/trace"
-import {createYuvRenderer, type PreviewFit, type YuvRenderer, type YuvRendererOptions} from "./stream-preview/yuvRenderer"
+import {
+  createYuvRenderer,
+  type PreviewFit,
+  type YuvRenderer,
+  type YuvRendererOptions,
+} from "./stream-preview/yuvRenderer"
 
 export type {PreviewFit} from "./stream-preview/yuvRenderer"
 export type {PreviewConnectionState} from "./stream-preview/PreviewConnection"
@@ -122,7 +127,8 @@ export function StreamPreview({fit = "contain", onStatus, onError, className, st
     const sink: PreviewSink = {
       mountEpoch,
       draw: (frame) => rendererRef.current?.drawFrame(frame) ?? null,
-      onState: (state, detail) => emit({state, paused: detail.paused ?? false, reason: detail.reason, code: detail.code}),
+      onState: (state, detail) =>
+        emit({state, paused: detail.paused ?? false, reason: detail.reason, code: detail.code}),
       onStatus: (stats) => emit({stats: {...stats, contextLosses}}),
       onError: (code) => onErrorRef.current?.(code),
     }

@@ -43,7 +43,10 @@ export class StreamPreviewError extends Error {
 
 export interface StreamPreviewHostPort {
   /** Rejects with a {@link StreamPreviewError}. `notify` must be dropped once the lease ends. */
-  start(request: StreamPreviewStartRequest, notify: (event: StreamPreviewStatusEvent) => void): Promise<StreamPreviewStartResult>
+  start(
+    request: StreamPreviewStartRequest,
+    notify: (event: StreamPreviewStatusEvent) => void,
+  ): Promise<StreamPreviewStartResult>
   /** Identity-checked; a stale handle is ignored, not an error. */
   stop(request: {packageName: string; runtimeId: string; handleId: string}): Promise<void>
   /** The background runtime `runtimeId` of `packageName` is gone; release anything it held. */

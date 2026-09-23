@@ -82,7 +82,14 @@ class ScriptedHost {
     if (request.cmd === "handshake") {
       if (!this.leaseHeld) return {t: "waiting_for_lease", docGen: this.docGen}
       this.handshakes += 1
-      return {t: "config", protocolVersion: 1, transport: "webmessage", portName: PORT_NAME, token: TOKEN, docGen: this.docGen}
+      return {
+        t: "config",
+        protocolVersion: 1,
+        transport: "webmessage",
+        portName: PORT_NAME,
+        token: TOKEN,
+        docGen: this.docGen,
+      }
     }
     if (request.docGen !== this.docGen || request.token !== TOKEN) return {stale: true}
     this.ops.push(request)

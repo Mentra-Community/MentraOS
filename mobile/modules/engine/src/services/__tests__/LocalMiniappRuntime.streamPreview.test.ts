@@ -18,7 +18,7 @@ const methods = ["hasManifestPermission", "handleStreamPreviewStart", "handleStr
     const start = source.search(new RegExp(`^  (?:private|public) (?:async )?${name}\\(`, "m"))
     if (start < 0) throw new Error(`Missing runtime method ${name}`)
     const rest = source.slice(start)
-    const end = rest.search(/^  }$/m)
+    const end = rest.search(/^ {2}}$/m)
     return rest.slice(0, end + 3)
   })
   .join("\n")
@@ -27,18 +27,14 @@ const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(`class Host { 
 function build(previewHost: StreamPreviewHostPort | null, permissions = [{type: "CAMERA"}]) {
   const Host = new Function(
     "getStreamPreviewHost",
-    "StreamPreviewError",
     "MiniappResponseType",
     "LOG_TAG",
     "console",
     `${compiled}; return Host`,
-  )(
-    () => previewHost,
-    StreamPreviewError,
-    {STREAM_PREVIEW_STATUS: "miniapp_stream_preview_status"},
-    "test",
-    {warn: () => {}, log: () => {}},
-  )
+  )(() => previewHost, {STREAM_PREVIEW_STATUS: "miniapp_stream_preview_status"}, "test", {
+    warn: () => {},
+    log: () => {},
+  })
   const host = new Host()
   const results: Array<{ok: boolean; data?: unknown; error?: {code: string}}> = []
   const pushes: unknown[] = []
@@ -73,7 +69,9 @@ describe("LocalMiniappRuntime stream preview handlers", () => {
     const {host, results} = build(fake.port)
     await host.handleStreamPreviewStart("com.test.call", {source: "call"}, "r1")
     expect(fake.starts).toEqual([{packageName: "com.test.call", runtimeId: "rt-1", source: "call", hasCamera: true}])
-    expect(results).toEqual([{ok: true, data: {handleId: "h1", previewTraceId: "p1", source: "call"}, error: undefined}])
+    expect(results).toEqual([
+      {ok: true, data: {handleId: "h1", previewTraceId: "p1", source: "call"}, error: undefined},
+    ])
   })
 
   test("a missing CAMERA declaration is passed on for the coordinator to refuse", async () => {

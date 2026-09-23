@@ -98,7 +98,14 @@ export interface PreviewConnectionDeps {
 }
 
 function defaultListen(target: "document" | "window", type: string, handler: () => void): () => void {
-  const node = target === "document" ? (typeof document === "undefined" ? null : document) : typeof window === "undefined" ? null : window
+  const node =
+    target === "document"
+      ? typeof document === "undefined"
+        ? null
+        : document
+      : typeof window === "undefined"
+        ? null
+        : window
   if (!node) return () => {}
   node.addEventListener(type, handler)
   return () => node.removeEventListener(type, handler)
@@ -149,7 +156,8 @@ export class PreviewConnection {
     this.state = deps.channel ? "idle" : "unavailable"
     this.creditLoop = new CreditLoop({
       sendAck: (gen, seq) => this.transport?.sendText(ackMessage(gen, seq)),
-      onParseError: (reason) => previewTraceWarnLimited(`parse:${reason}`, "parse_reject", {reason, docGen: this.docGen}),
+      onParseError: (reason) =>
+        previewTraceWarnLimited(`parse:${reason}`, "parse_reject", {reason, docGen: this.docGen}),
     })
     if (deps.channel) {
       this.unsubscribers.push(deps.channel.onEvent((event) => this.handleHostEvent(event)))
@@ -240,9 +248,11 @@ export class PreviewConnection {
   // ---------------------------------------------------------------------------
 
   private sync(): void {
-    this.opChain = this.opChain.then(() => this.syncOnce()).catch((error: unknown) => {
-      previewTraceWarn("sync_failed", {error: error instanceof Error ? error.message : String(error)})
-    })
+    this.opChain = this.opChain
+      .then(() => this.syncOnce())
+      .catch((error: unknown) => {
+        previewTraceWarn("sync_failed", {error: error instanceof Error ? error.message : String(error)})
+      })
   }
 
   private wantsFrames(): boolean {
@@ -261,10 +271,20 @@ export class PreviewConnection {
     const gen = this.connectionGen
     const {epoch, state} = desired
     if (state.tier && !sameTier(state.tier, this.applied.tier)) {
-      const reply = await this.send({cmd: "configure", mountEpoch: epoch, boxWidth: state.boxWidth, boxHeight: state.boxHeight})
+      const reply = await this.send({
+        cmd: "configure",
+        mountEpoch: epoch,
+        boxWidth: state.boxWidth,
+        boxHeight: state.boxHeight,
+      })
       if (gen !== this.connectionGen || !this.accept(reply, "configure")) return
       this.counters.tierChanges += 1
-      previewTrace("tier_sent", {mountEpoch: epoch, width: state.tier.width, height: state.tier.height, docGen: this.docGen})
+      previewTrace("tier_sent", {
+        mountEpoch: epoch,
+        width: state.tier.width,
+        height: state.tier.height,
+        docGen: this.docGen,
+      })
       this.applied = {...this.applied, tier: state.tier}
     }
     const running = this.wantsFrames()
@@ -360,7 +380,11 @@ export class PreviewConnection {
     const gen = ++this.connectionGen
     let transport: PreviewTransport
     try {
-      transport = this.createTransport(config.transport, {url: config.url, portName: config.portName, token: config.token})
+      transport = this.createTransport(config.transport, {
+        url: config.url,
+        portName: config.portName,
+        token: config.token,
+      })
       transport.onBinary((buffer) => this.creditLoop.handleBinary(buffer))
       transport.onError((reason) => this.handleTransportError(gen, reason))
       await transport.connect()
@@ -380,7 +404,11 @@ export class PreviewConnection {
     }
     this.transport = transport
     this.applied = NOTHING_APPLIED
-    previewTrace("handshake_ok", {docGen: this.docGen, transport: config.transport, handshakes: this.counters.handshakes})
+    previewTrace("handshake_ok", {
+      docGen: this.docGen,
+      transport: config.transport,
+      handshakes: this.counters.handshakes,
+    })
     this.setState("open")
     return true
   }

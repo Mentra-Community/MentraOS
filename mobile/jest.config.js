@@ -33,6 +33,7 @@ module.exports = {
     // bun:test suites — run via `bun test`, not Jest (cannot resolve "bun:test").
     "<rootDir>/src/stores/settings.test.ts",
     "<rootDir>/src/services/qrScanRequest.test.ts",
+    "<rootDir>/src/services/streamPreview/StreamPreviewCoordinator.test.ts",
     "<rootDir>/src/__tests__/app/miniapps/settings/camera.test.tsx",
   ],
   transformIgnorePatterns: [

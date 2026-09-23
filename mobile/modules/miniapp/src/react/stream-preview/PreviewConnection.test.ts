@@ -1,7 +1,12 @@
 /// <reference types="bun-types" />
 import {afterEach, beforeEach, describe, expect, test} from "bun:test"
 
-import {PreviewControlError, type PreviewControlChannel, type PreviewControlRequest, type PreviewHostEvent} from "./controlChannel"
+import {
+  PreviewControlError,
+  type PreviewControlChannel,
+  type PreviewControlRequest,
+  type PreviewHostEvent,
+} from "./controlChannel"
 import {PreviewConnection, type PreviewConnectionState, type PreviewSink} from "./PreviewConnection"
 import type {PreviewTier} from "./tiers"
 import {setPreviewTraceSinkForTests} from "./trace"
@@ -25,7 +30,13 @@ class FakeChannel implements PreviewControlChannel {
     if (request.cmd === "handshake") {
       if (this.refuse) throw new PreviewControlError(this.refuse)
       if (!this.leaseHeld) return {t: "waiting_for_lease", docGen: this.docGen}
-      return {t: "config", protocolVersion: this.protocolVersion, transport: "webmessage", token: TOKEN, docGen: this.docGen}
+      return {
+        t: "config",
+        protocolVersion: this.protocolVersion,
+        transport: "webmessage",
+        token: TOKEN,
+        docGen: this.docGen,
+      }
     }
     if (this.staleNext) {
       this.staleNext = false

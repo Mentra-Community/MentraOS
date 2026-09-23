@@ -213,7 +213,13 @@ describe("MentraUIRouter — host channels", () => {
     router.replyToWebView("com.foo", "_preview", "r1", {ok: true, result: {t: "waiting_for_lease"}})
     router.pushToWebView("com.foo", "_preview", {t: "lease_available"})
     expect(recvFrames(injects)).toEqual([
-      {type: "msg", seq: 0, channel: "_preview", requestId: "r1", payload: {ok: true, result: {t: "waiting_for_lease"}}},
+      {
+        type: "msg",
+        seq: 0,
+        channel: "_preview",
+        requestId: "r1",
+        payload: {ok: true, result: {t: "waiting_for_lease"}},
+      },
       {type: "msg", seq: 0, channel: "_preview", payload: {t: "lease_available"}},
     ])
   })

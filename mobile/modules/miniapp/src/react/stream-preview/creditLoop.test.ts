@@ -143,7 +143,13 @@ describe("bad frames", () => {
     const loop = new CreditLoop({sendAck: (gen, seq) => acks.push([gen, seq])})
     await deliver(loop, [frame(1)])
     loop.reset()
-    expect(loop.snapshot()).toMatchObject({framesReceived: 0, acksSent: 0, parseErrors: 0, lastError: null, lastFrame: null})
+    expect(loop.snapshot()).toMatchObject({
+      framesReceived: 0,
+      acksSent: 0,
+      parseErrors: 0,
+      lastError: null,
+      lastFrame: null,
+    })
     await deliver(loop, [frame(2)])
     expect(acks).toEqual([
       [3, 1],

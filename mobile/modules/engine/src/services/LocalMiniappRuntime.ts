@@ -112,7 +112,7 @@ import {
 import {awaitCleanupBarrier} from "./SoftapCleanupBarrier"
 import {softapTrace, softapTraceFailure} from "../utils/softapTrace"
 import {PermissionFeatures, permissions} from "../facades/permissions"
-import {getStreamPreviewHost, StreamPreviewError} from "./streamPreviewPort"
+import {getStreamPreviewHost} from "./streamPreviewPort"
 
 // =============================================================================
 // Types
@@ -3849,8 +3849,9 @@ class LocalMiniappRuntime {
       )
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
+      const code = (err as {code?: unknown}).code
       this.sendResult(packageName, requestId, false, undefined, {
-        code: err instanceof StreamPreviewError ? err.code : "unsupported",
+        code: typeof code === "string" ? code : "unsupported",
         message: err instanceof Error ? err.message : "Stream preview failed",
       })
     }
