@@ -263,9 +263,11 @@ describe("authenticated result navigation", () => {
     expect(readTestRunLink("?testRun=one&testRun=two")).toBeNull();
     expect(readTestRunLink("?testRun=..%2Fother")).toBeNull();
     expect(testRunAssetPath("run-one", "asset_one")).toBe("/api/admin/test-runs/run-one/assets/asset_one");
-    for (const id of ["..", "../other", "https://elsewhere.invalid/video", "a/b", "%2F"]) {
+    for (const id of ["..", "../other", "https://elsewhere.invalid/video", "a/b", "a\\b", "%2F", "asset.1"]) {
       expect(() => testRunAssetPath("run-one", id)).toThrow();
     }
+    expect(readTestRunLink("?testRun=run.1&step=AUTH-08.1")).toBeNull();
+    expect(() => testRunAssetPath("run.1", "asset_one")).toThrow();
   });
   test("query filters stay on the current admin backend and encode cursor values", () => {
     const path = testRunListPath(
@@ -293,6 +295,30 @@ describe("authenticated result navigation", () => {
 });
 
 describe("recording and chapter integrity", () => {
+  test("dotted login chapter links survive authentication and select the exact recorded step", () => {
+    const chapters = ["AUTH-08.1", "AUTH-08.2", "AUTH-08.3"].map((id, index) => ({
+      ...run.chapters[0], id, instruction: `Login action ${id}`, videoStart: index * 2, videoEnd: index * 2 + 1,
+    }));
+    for (const chapter of chapters) {
+      const current = "https://admin.dev.mentraglass.com/";
+      const location = new URL(testRunLocation(current, { runID: run.runId, stepID: chapter.id }), current);
+      const login = new URL("/api/console/auth/login", current);
+      login.searchParams.set("return_to", location.href);
+      const returned = new URL(login.searchParams.get("return_to")!);
+      const selection = readTestRunLink(returned.search);
+      expect(selection).toEqual({ runID: run.runId, stepID: chapter.id });
+      expect(initialChapter(chapters, selection!.stepID)).toEqual(chapter);
+      expect(chapterSeekTime(chapter, run.assets[0], 10)).toBe(chapter.videoStart);
+      const markup = renderToStaticMarkup(
+        <TestRunView run={{ ...run, chapters }} stepId={selection!.stepID} onStep={() => {}} />,
+      );
+      expect(markup).toContain(chapter.id);
+      expect(markup).toContain(`<h4 class="text-sm font-semibold">${chapter.instruction}</h4>`);
+      expect(markup).not.toContain("The linked step was not found");
+      expect(markup).toContain('aria-current="step"');
+      expect(markup).toContain('src="/api/admin/test-runs/synthetic-run/assets/video-one"');
+    }
+  });
   test("paired recordings use the shared viewer while malformed mappings retain independent playback", () => {
     const browser = { ...run.assets[0], assetId: "browser-recording", filename: "browser.mp4" };
     const paired = { ...run, assets: [...run.assets, browser], provenance: { ...run.provenance, recordingTimeline: JSON.stringify({
