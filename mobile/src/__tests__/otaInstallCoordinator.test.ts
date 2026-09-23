@@ -9,6 +9,7 @@
  * GlobalEventEmitter (what OtaService does with the BLE events).
  */
 import type {NativeFirmwareUpdateSnapshot} from "@mentra/bluetooth-sdk/firmware-updates"
+import {ota as legacyOta} from "@/../modules/engine/src/facades/ota"
 import {acquireLegacyLiveOwner, acquireManagedLiveOwner} from "@/../modules/engine/src/devices/mentra-live/ownership"
 
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
@@ -2010,4 +2011,87 @@ describe("Live coordinator completion reconciles native ownership", () => {
       }
     },
   )
+})
+
+describe("legacy facade preparation cleanup", () => {
+  const mockGetDefaultDevice = bluetoothSdkMock.getDefaultDevice as jest.Mock
+  const acquireNext = () =>
+    acquireManagedLiveOwner(
+      async () => {},
+      () => {},
+      "next-live",
+    )
+
+  it.each(["missing", "rejected"])("can leave after a %s identity lookup without a delayed Start", async (failure) => {
+    mockGetDefaultDevice.mockImplementation(async () => {
+      if (failure === "rejected") throw new Error("Identity unavailable")
+      return null
+    })
+    setGlassesConnected()
+    legacyOta.installSession.attach()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    legacyOta.installSession.detach()
+    const release = acquireNext()
+    try {
+      await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS + QUERY_REPLY_TIMEOUT_MS)
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+      setGlassesConnected()
+      await flushNativeStartPromise()
+      expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    } finally {
+      release()
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+    }
+  })
+
+  it("fences a pending identity lookup when the legacy host leaves", async () => {
+    let resolveIdentity!: (device: {id: string; model: string}) => void
+    const pending = new Promise<{id: string; model: string}>((resolve) => {
+      resolveIdentity = resolve
+    })
+    mockGetDefaultDevice.mockImplementation(() => pending)
+    setGlassesConnected()
+    legacyOta.installSession.attach()
+    legacyOta.installSession.detach()
+    const release = acquireNext()
+    try {
+      resolveIdentity({id: "legacy-live", model: "Mentra Live"})
+      await flushNativeStartPromise()
+      await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS + QUERY_REPLY_TIMEOUT_MS)
+      expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+      expect(mockHotspotPrepare).not.toHaveBeenCalled()
+    } finally {
+      release()
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+    }
+  })
+
+  it("releases a failed real prepare before any progress host attaches", () => {
+    useGlassesStore.setState({wifiStatusKnown: false})
+    expect(() => legacyOta.installSession.prepare(checkResult())).toThrow("Wi-Fi status")
+    const release = acquireNext()
+    release()
+  })
+
+  it("unwinds a partially attached controller when synchronous attach fails", async () => {
+    setGlassesConnected()
+    const attach = otaInstallCoordinator.attach.bind(otaInstallCoordinator)
+    const spy = jest.spyOn(otaInstallCoordinator, "attach").mockImplementationOnce(() => {
+      attach()
+      throw new Error("Attach failed")
+    })
+    try {
+      expect(() => legacyOta.installSession.attach()).toThrow("Attach failed")
+      const release = acquireNext()
+      try {
+        await flushNativeStartPromise()
+        expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+      } finally {
+        release()
+      }
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })

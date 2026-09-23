@@ -416,6 +416,16 @@ class OtaInstallCoordinator {
     return binding.pending
   }
 
+  /** Cancel phone-side identity lookup before this controller can reach native Start.
+   * This releases only the controller; any existing native journal still owns its guard.
+   */
+  cancelUnboundPreparation(): boolean {
+    if (!this.nativeBinding || this.nativeCompletion) return false
+    this.otaStartOwnership = null
+    this.detach()
+    return true
+  }
+
   /**
    * Unbind on screen unmount: clears ALL timers/subscriptions/listeners and
    * resets the session-local state (the old component state died with the
@@ -1630,6 +1640,9 @@ class OtaInstallCoordinator {
     try {
       const validation = validateManagedLiveTarget()
       if (validation) await validation
+      if (this.otaStartOwnership !== ownership) return
+      if (this.nativeBinding && !this.nativeCompletion) await this.ensureNativeCompletion()
+      if (this.otaStartOwnership !== ownership) return
       const state = useGlassesStore.getState()
       let otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
       if (this.selectedTransport === "hotspot") {
@@ -1654,8 +1667,6 @@ class OtaInstallCoordinator {
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
       const finalValidation = validateManagedLiveTarget()
       if (finalValidation) await finalValidation
-      if (this.otaStartOwnership !== ownership) return
-      if (this.nativeBinding && !this.nativeCompletion) await this.ensureNativeCompletion()
       if (this.otaStartOwnership !== ownership) return
       if (this.nativeCompletion) await this.nativeCompletion.beforeStart()
       if (this.otaStartOwnership !== ownership) return

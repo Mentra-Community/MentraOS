@@ -3,6 +3,7 @@ import {expect, mock, test} from "bun:test"
 let safe = true
 let attached = false
 let runtimeLeases = 0
+let prepareError: Error | null = null
 let checkResult: Promise<void> = Promise.resolve()
 mock.module("../../../ota/RuntimeLease", () => ({
   acquireFirmwareRuntime: () => {
@@ -17,12 +18,17 @@ mock.module("@mentra/bluetooth-sdk", () => ({
     getDefaultDevice: async () => ({id: "legacy-live", model: "Mentra Live"}),
   },
 }))
-mock.module("../../../services/OtaInstallCoordinator", () => ({otaInstallCoordinator: {isSafeToRelease: () => safe}}))
+mock.module("../../../services/OtaInstallCoordinator", () => ({
+  otaInstallCoordinator: {isSafeToRelease: () => safe, cancelUnboundPreparation: () => false},
+}))
 mock.module("../ports", () => ({
   liveOtaPorts: {
     checkForUpdates: () => checkResult,
     installSession: {
-      prepare: () => "wifi",
+      prepare: () => {
+        if (prepareError) throw prepareError
+        return "wifi"
+      },
       attach: () => {
         attached = true
       },
@@ -96,4 +102,13 @@ test("legacy preparation and pending checks reserve execution without leaking sh
   const release = managed()
   release()
   expect(runtimeLeases).toBe(0)
+})
+
+test("a failed legacy preparation does not retain an unattached controller", () => {
+  prepareError = new Error("Glasses Wi-Fi status is not available")
+  expect(() => ota.installSession.prepare({} as never)).toThrow("Wi-Fi status")
+  expect(runtimeLeases).toBe(0)
+  const release = managed()
+  release()
+  prepareError = null
 })

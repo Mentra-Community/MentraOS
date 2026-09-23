@@ -46,7 +46,6 @@ function releaseIdleReservation(): void {
 function control<A extends unknown[], R>(fn: (...args: A) => R, retain = false): (...args: A) => R {
   return (...args) => {
     reserveLegacy()
-    if (retain) legacySession = true
     commands++
     const done = () => {
       commands--
@@ -54,11 +53,13 @@ function control<A extends unknown[], R>(fn: (...args: A) => R, retain = false):
     }
     try {
       const result = fn(...args)
+      if (retain) legacySession = true
       if (result && typeof (result as unknown as PromiseLike<unknown>).then === "function")
         return Promise.resolve(result).finally(done) as R
       done()
       return result
     } catch (error) {
+      if (retain && !legacySession) otaInstallCoordinator.cancelUnboundPreparation()
       done()
       throw error
     }
@@ -82,7 +83,12 @@ export const ota = {
       assertLegacyLiveControlAvailable()
       // A view can disappear while firmware still owns the glasses. Keep its controller
       // and reservation until terminal cleanup makes a later detach safe.
-      if (legacySession && !otaInstallCoordinator.isSafeToRelease()) return
+      if (
+        legacySession &&
+        !otaInstallCoordinator.cancelUnboundPreparation() &&
+        !otaInstallCoordinator.isSafeToRelease()
+      )
+        return
       liveOtaPorts.installSession.detach()
       legacySession = false
       releaseIdleReservation()
