@@ -50,6 +50,14 @@ param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
 param communicationDataLocation string = 'United States'
+@description('Microsoft Graph tenant for meeting creation. Employee organizers must belong to this tenant.')
+param teamsGraphTenantId string = tenantId
+@description('Graph application with OnlineMeetings.ReadWrite.All and a Teams application access policy.')
+param teamsGraphClientId string = ''
+@secure()
+param teamsGraphClientSecret string = ''
+@description('Licensed organizer object ID used when the caller has no eligible Teams identity.')
+param teamsGraphOrganizerId string = ''
 param approvedSystemMiniapps array = ['com.mentra.settings']
 @description('Customer-managed userland miniapp entries: packageName, version, bundleUrl, and sha256.')
 param managedMiniapps array = []
@@ -352,9 +360,9 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
           identity: pullIdentity.id
         }
       ]
-      secrets: [
+      secrets: concat([
         { name: 'acs-connection-string', value: communication.listKeys().primaryConnectionString }
-      ]
+      ], empty(teamsGraphClientSecret) ? [] : [{ name: 'teams-graph-client-secret', value: teamsGraphClientSecret }])
     }
     template: {
       containers: [
@@ -394,6 +402,10 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'ENTRA_TENANT_ID', value: tenantId }
             { name: 'ENTRA_CLIENT_ID', value: mobileClientId }
             { name: 'ACS_CONNECTION_STRING', secretRef: 'acs-connection-string' }
+            { name: 'TEAMS_GRAPH_TENANT_ID', value: teamsGraphTenantId }
+            { name: 'TEAMS_GRAPH_CLIENT_ID', value: teamsGraphClientId }
+            { name: 'TEAMS_GRAPH_ORGANIZER_ID', value: teamsGraphOrganizerId }
+            union({ name: 'TEAMS_GRAPH_CLIENT_SECRET' }, empty(teamsGraphClientSecret) ? { value: '' } : { secretRef: 'teams-graph-client-secret' })
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'runtime-enterprise-reference' }
           ]
