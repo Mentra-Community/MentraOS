@@ -3441,10 +3441,13 @@ class MentraLive: NSObject, SGCManager {
             if let body = k900ParseBody(json["B"]) {
                 let switchType = k900JsonInt(body, "type") ?? -1
                 let switchValue = k900JsonInt(body, "switch") ?? -1
+                // K900 replies carry result in "S"; 0 is RC_SUCCESS.
+                let resultCode = k900JsonInt(json, "S") ?? -1
                 handleSwitchStatus(
                     switchType: switchType,
                     value: switchValue,
-                    timestamp: Int64(Date().timeIntervalSince1970 * 1000)
+                    timestamp: Int64(Date().timeIntervalSince1970 * 1000),
+                    resultCode: resultCode
                 )
             }
 
@@ -5524,8 +5527,17 @@ class MentraLive: NSObject, SGCManager {
         Bridge.sendSpeakingStatus(speaking)
     }
 
-    private func handleSwitchStatus(switchType: Int, value: Int, timestamp: Int64) {
+    private func handleSwitchStatus(
+        switchType: Int, value: Int, timestamp: Int64, resultCode: Int = -1
+    ) {
         Bridge.sendSwitchStatus(switchType: switchType, value: value, timestamp: timestamp)
+        if switchType == Self.autoPowerOffSwitchType {
+            let ok = resultCode == 0
+            Bridge.log(
+                "LIVE: 🔋 auto power-off sr_swit reply type=\(switchType) switch=\(value)"
+                    + " result=\(resultCode) ok=\(ok)"
+            )
+        }
         if switchType == Self.voiceActivityDetectionSwitchType, value == 0 || value == 1 {
             handleVoiceActivityDetectionStatus(enabled: value == 1)
         }
@@ -7107,10 +7119,13 @@ extension MentraLive {
     func sendAutoPowerOffSetting() {
         let enabled = DeviceStore.shared.get("bluetooth", "auto_power_off_enabled") as? Bool
             ?? BluetoothSdkDefaults.autoPowerOffEnabled
-        Bridge.log("LIVE: 🔋 Sending auto power-off setting to glasses: \(enabled)")
+        Bridge.log(
+            "LIVE: 🔋 Sending auto power-off setting to glasses: enabled=\(enabled)"
+                + " (cs_swit type=\(Self.autoPowerOffSwitchType))"
+        )
 
         guard connectedPeripheral != nil, txCharacteristic != nil else {
-            Bridge.log("Cannot send auto power-off setting - BLE write path not ready")
+            Bridge.log("LIVE: Cannot send auto power-off setting - BLE write path not ready")
             return
         }
 
@@ -7130,6 +7145,11 @@ extension MentraLive {
             ]
             if !sendRawK900Command(command, wakeUp: true) {
                 Bridge.log("LIVE: Failed to send auto power-off setting command")
+            } else {
+                Bridge.log(
+                    "LIVE: 🔋 Queued auto power-off cs_swit type=\(Self.autoPowerOffSwitchType)"
+                        + " switch=\(enabled ? 1 : 0)"
+                )
             }
         } catch {
             Bridge.log("LIVE: Error encoding auto power-off payload: \(error)")

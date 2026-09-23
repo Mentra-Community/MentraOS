@@ -310,6 +310,9 @@ object DeviceStore {
                 DeviceManager.getInstance().sgc?.sendLoudnessGateSetting()
             }
             "bluetooth" to "auto_power_off_enabled" -> {
+                Bridge.log(
+                        "DeviceStore: auto_power_off_enabled changed to $value — sending cs_swit type 11"
+                )
                 DeviceManager.getInstance().sgc?.sendAutoPowerOffSetting()
             }
             // Deliberately has no seeded default above: the key starts absent so

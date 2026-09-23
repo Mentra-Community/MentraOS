@@ -5549,7 +5549,9 @@ class MentraLive : SGCManager() {
                     if (bodyObj != null) {
                         val type = bodyObj.optInt("type", -1)
                         val value = bodyObj.optInt("switch", -1)
-                        handleSwitchStatus(type, value, System.currentTimeMillis())
+                        // K900 replies carry result in "S"; 0 is RC_SUCCESS.
+                        val resultCode = json.optInt("S", -1)
+                        handleSwitchStatus(type, value, System.currentTimeMillis(), resultCode)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_swit response", e)
@@ -5934,8 +5936,20 @@ class MentraLive : SGCManager() {
         Bridge.sendWearTuningState(state)
     }
 
-    private fun handleSwitchStatus(switchType: Int, switchValue: Int, timestamp: Long) {
+    private fun handleSwitchStatus(
+            switchType: Int,
+            switchValue: Int,
+            timestamp: Long,
+            resultCode: Int = -1
+    ) {
         Bridge.sendSwitchStatus(switchType, switchValue, timestamp)
+        if (switchType == AUTO_POWER_OFF_SWITCH_TYPE) {
+            val ok = resultCode == 0
+            Bridge.log(
+                    "LIVE: 🔋 auto power-off sr_swit reply type=$switchType switch=$switchValue" +
+                            " result=$resultCode ok=$ok"
+            )
+        }
         if (switchType == VOICE_ACTIVITY_DETECTION_SWITCH_TYPE &&
                         (switchValue == 0 || switchValue == 1)
         ) {
@@ -11118,7 +11132,10 @@ class MentraLive : SGCManager() {
                 if (value is Boolean) value
                 else BluetoothSdkDefaults.AUTO_POWER_OFF_ENABLED
 
-        Bridge.log("LIVE: 🔋 Sending auto power-off setting to glasses: " + enabled)
+        Bridge.log(
+                "LIVE: 🔋 Sending auto power-off setting to glasses: enabled=$enabled" +
+                        " (cs_swit type=$AUTO_POWER_OFF_SWITCH_TYPE)"
+        )
 
         if (!isConnected) {
             Bridge.log("LIVE: Cannot send auto power-off setting - not connected")
@@ -11146,6 +11163,10 @@ class MentraLive : SGCManager() {
                 return
             }
             queueData(packedData)
+            Bridge.log(
+                    "LIVE: 🔋 Queued auto power-off cs_swit type=$AUTO_POWER_OFF_SWITCH_TYPE" +
+                            " switch=${if (enabled) 1 else 0}"
+            )
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating auto power-off setting command", e)
         }
