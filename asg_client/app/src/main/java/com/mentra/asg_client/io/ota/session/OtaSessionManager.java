@@ -132,6 +132,15 @@ public class OtaSessionManager {
         return mStatus;
     }
 
+    /** Read the raw activity state without expiring a session or consuming its restart guard. */
+    public synchronized JSONObject getActivitySnapshot() throws JSONException {
+        JSONObject snapshot = new JSONObject();
+        snapshot.put("session_id", mSessionId != null ? mSessionId : "");
+        snapshot.put("status", getStatus());
+        snapshot.put("restart_pending", mRestartingSinceElapsed >= 0);
+        return snapshot;
+    }
+
     /**
      * Builds the JSON payload sent to the phone via BLE as an {@code ota_status} message.
      *

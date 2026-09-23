@@ -553,6 +553,10 @@ describe("useMentraLiveOta", () => {
       await new Promise((resolve) => setTimeout(resolve, 1_150))
     })
     expect(latestController.state).toMatchObject({screen: "check_failed", completedUpdate: false, canRetry: true})
+    expect(latestController.state.error).toMatchObject({
+      copyKey: "ota:versionInfoFailedMessage",
+      message: "Couldn't read the glasses software versions. Keep the glasses connected and try again.",
+    })
     expect(stopAutoChain).not.toHaveBeenCalled()
     await act(async () => latestController.retryCheck())
     expect(fakeOta.checkForUpdates).toHaveBeenLastCalledWith(

@@ -1,0 +1,61 @@
+name: E2E Setup Checks
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/request-e2e-routine*"
+      - ".github/scripts/dispatch-device-routine*"
+      - ".github/scripts/notify-pr-builds*"
+      - ".github/scripts/pr-ios-artifacts*"
+      - ".github/workflows/request-e2e-routine.yml"
+      - ".github/workflows/dispatch-device-routine.yml"
+      - "mobile/scripts/install-ios-mac*"
+      - "mobile/scripts/app-ownership.*"
+      - "mobile/ci/pr-ios/mac_installer.py"
+      - "mobile/ci/pr-ios/test_mac_installer.py"
+      - ".github/workflows/e2e-setup-checks.yml"
+  push:
+    branches: [dev]
+    paths:
+      - ".github/scripts/request-e2e-routine*"
+      - ".github/scripts/dispatch-device-routine*"
+      - ".github/scripts/notify-pr-builds*"
+      - ".github/scripts/pr-ios-artifacts*"
+      - ".github/workflows/request-e2e-routine.yml"
+      - ".github/workflows/dispatch-device-routine.yml"
+      - "mobile/scripts/install-ios-mac*"
+      - "mobile/scripts/app-ownership.*"
+      - "mobile/ci/pr-ios/mac_installer.py"
+      - "mobile/ci/pr-ios/test_mac_installer.py"
+      - ".github/workflows/e2e-setup-checks.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Verify public device requests and Mac installation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify request publication, dispatch and build links
+        run: >-
+          node --test
+          .github/scripts/request-e2e-routine.test.mjs
+          .github/scripts/dispatch-device-routine.test.mjs
+          .github/scripts/notify-pr-builds.test.mjs
+          .github/scripts/pr-ios-artifacts.test.mjs
+      - name: Verify shared Mac installer and ownership
+        run: node --test mobile/scripts/install-ios-mac.test.mjs
+      - name: Verify Mac installer packaging
+        run: python3 mobile/ci/pr-ios/test_mac_installer.py
+
+# Native capture, firmware adapters, deterministic replay and worker ownership
+# tests run in Mentra-Community/Mentra-Automated-Testing's private verify workflow.

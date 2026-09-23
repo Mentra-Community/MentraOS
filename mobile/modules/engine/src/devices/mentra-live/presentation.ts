@@ -49,10 +49,10 @@ function installProgress(snapshot: OtaInstallSnapshot): number | null {
   const isDownload = otaStatus?.phase === "download"
   const totalSteps = otaStatus?.totalSteps ?? 1
   const rawPercent = isDownload
-    ? otaStatus?.stepPercent ?? 0
+    ? (otaStatus?.stepPercent ?? 0)
     : totalSteps >= 2
-    ? otaStatus?.overallPercent ?? 0
-    : otaStatus?.stepPercent ?? 0
+      ? (otaStatus?.overallPercent ?? 0)
+      : (otaStatus?.stepPercent ?? 0)
   return Math.min(Math.max(rawPercent, snapshot.mtkInstallStallSimulatedPercent ?? 0, 0), 100)
 }
 
@@ -152,8 +152,11 @@ export function projectLiveOtaState(data: LiveSessionData, ota: LiveOtaPorts, ch
     if (screen === "check_failed") {
       error = {
         code: "check_failed",
-        message: "Couldn't check for updates. Please check your connection and try again.",
-        copyKey: "ota:checkFailedMessage",
+        message:
+          errorKind === "version_info"
+            ? "Couldn't read the glasses software versions. Keep the glasses connected and try again."
+            : "Couldn't check for updates. Please check your connection and try again.",
+        copyKey: errorKind === "version_info" ? "ota:versionInfoFailedMessage" : "ota:checkFailedMessage",
         glassesCode: null,
       }
     } else if (screen === "update_info_unavailable") {
@@ -208,8 +211,8 @@ export function projectLiveOtaState(data: LiveSessionData, ota: LiveOtaPorts, ch
             ? releaseTransitionFromRange(chain.otaAutoChainReleaseRange())
             : offeredReleaseTransition
           : screen === "up_to_date"
-          ? completedReleaseTransition
-          : null,
+            ? completedReleaseTransition
+            : null,
       changelogs: screen === "up_to_date" ? completedChangelogs : [],
       glassesPackageName: screen === "unofficial_client" ? unofficialClientPackage : null,
     }

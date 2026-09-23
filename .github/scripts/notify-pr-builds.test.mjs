@@ -5,6 +5,7 @@ import {createServer} from "node:http"
 import test from "node:test"
 import {readFileSync} from "node:fs"
 import {brotliCompressSync} from "node:zlib"
+import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 import {
   iosBuildRequired,
   buildPost,
@@ -12,6 +13,7 @@ import {
   notifyPrBuilds,
   readOtaTargets,
   verifyIosTextArtifact,
+  routineResultsUrl,
 } from "./notify-pr-builds.mjs"
 
 const sha = "a".repeat(40)
@@ -122,7 +124,10 @@ function harness(options = {}) {
     missingInstall: false,
     wrongInstallType: false,
     corruptInstall: false,
+    textArtifacts: {},
     jobs: {},
+    routineRuns: [],
+    routineLookupError: false,
     ...options,
   }
   const posts = [],
@@ -133,19 +138,27 @@ function harness(options = {}) {
     rest: {
       pulls: {get: async () => ({data: state.currentPr}), listFiles: "files"},
       actions: {
-        listWorkflowRuns: async ({workflow_id}) => ({
-          data: {
-            workflow_runs: [
-              state[
-                workflow_id === "mentra-app-ios-build.yml"
-                  ? "ios"
-                  : workflow_id === "mentra-app-android-build.yml"
-                  ? "android"
-                  : "asg"
-              ],
-            ].filter(Boolean),
-          },
-        }),
+        listWorkflowRuns: async ({workflow_id, head_sha, event}) => {
+          if (workflow_id === "request-e2e-routine.yml") {
+            assert.equal(head_sha, sha)
+            assert.equal(event, "pull_request")
+            if (state.routineLookupError) throw new Error("Temporary Actions failure")
+            return {data: {workflow_runs: state.routineRuns}}
+          }
+          return {
+            data: {
+              workflow_runs: [
+                state[
+                  workflow_id === "mentra-app-ios-build.yml"
+                    ? "ios"
+                    : workflow_id === "mentra-app-android-build.yml"
+                      ? "android"
+                      : "asg"
+                ],
+              ].filter(Boolean),
+            },
+          }
+        },
         listJobsForWorkflowRun: "jobs",
       },
       issues: {
@@ -184,10 +197,10 @@ function harness(options = {}) {
       options.method === "HEAD"
         ? null
         : isInstallFile
-        ? state.corruptInstall
-          ? "bad bytes!"
-          : "test bytes"
-        : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
+          ? state.corruptInstall
+            ? "bad bytes!"
+            : (state.textArtifacts[url.endsWith(".html") ? "install" : "manifest"] ?? "test bytes")
+          : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
       {
         status:
           (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html"))
@@ -198,8 +211,8 @@ function harness(options = {}) {
           "content-type": state.wrongInstallType
             ? "application/octet-stream"
             : url.endsWith(".html")
-            ? "text/html; charset=utf-8"
-            : "text/xml; charset=utf-8",
+              ? "text/html; charset=utf-8"
+              : "text/xml; charset=utf-8",
         },
       },
     )
@@ -244,16 +257,25 @@ test("publishes direct iPhone installation and a shareable Safari link without t
   assert.ok(platformRows.every((row) => row.type === "rich_text_section" && row.elements[1].style.bold))
   assert.equal(platformRows[0].elements[3].text, "Download APK")
   assert.equal(platformRows[2].elements[3].text, "Download ZIP")
-  assert.deepEqual(platformRows.map((row) => row.elements.filter((element) => element.type === "link").length), [1, 2, 1])
+  assert.deepEqual(
+    platformRows.map((row) => row.elements.filter((element) => element.type === "link").length),
+    [1, 2, 1],
+  )
   const iphoneLinks = platformRows[1].elements.filter((element) => element.type === "link")
-  assert.deepEqual(iphoneLinks.map((element) => element.text), ["Install on iPhone", "Share install link"])
+  assert.deepEqual(
+    iphoneLinks.map((element) => element.text),
+    ["Install on iPhone", "Share install link"],
+  )
   // A structured link is required: webhook mrkdwn escapes this URL scheme.
   const direct = new URL(iphoneLinks[0].url)
   assert.equal(direct.protocol, "itms-services:")
   assert.equal(direct.searchParams.get("action"), "download-manifest")
   const verifiedManifest = ready.requests.find((url) => url.endsWith(".plist"))
   assert.equal(direct.searchParams.get("url"), verifiedManifest)
-  assert.equal(iphoneLinks[1].url, ready.requests.find((url) => url.endsWith(".html")))
+  assert.equal(
+    iphoneLinks[1].url,
+    ready.requests.find((url) => url.endsWith(".html")),
+  )
   assert.doesNotMatch(JSON.stringify(ready.posts[0]), /Download IPA/)
   assert.match(JSON.stringify(ready.posts[0]), /Install the app, connect your Mentra Live glasses/)
   assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
@@ -272,6 +294,63 @@ test("publishes direct iPhone installation and a shareable Safari link without t
   assert.match(legacy.written[0].body, /Download iPhone IPA/)
   assert.doesNotMatch(legacy.written[0].body, /Install on iPhone/)
   assert.doesNotMatch(JSON.stringify(legacy.posts[0]), /itms-services:/)
+})
+
+test("advertises HTTPS Mac handoff only from a verified capable page and uses the publication attempt", async () => {
+  const receipt = structuredClone(iosReceipt)
+  Object.assign(receipt, {
+    schemaVersion: 2,
+    runAttempt: 2,
+    buildAttempt: 1,
+    app: {
+      bundleId: "com.mentra.mentra",
+      version: "3.2.1",
+      build: "302018377",
+      macPackageVersion: 2,
+      macInstaller: "Install Mentra.app",
+    },
+    macInstaller: {
+      bundleId: "com.mentra.mac-installer",
+      teamId: "T5XXXL6N36",
+      notarizationStatus: "Accepted",
+      notarizationId: "12345678-abcd-1234-abcd-123456789012",
+      stapled: true,
+    },
+  })
+  const files = iosInstallationFiles(receipt, "o/r")
+  const textArtifacts = {}
+  for (const [kind, file] of Object.entries(files)) {
+    textArtifacts[kind] = file.content
+    receipt.artifacts[kind] = {
+      name: file.name,
+      size: Buffer.byteLength(file.content),
+      sha256: createHash("sha256").update(file.content).digest("hex"),
+    }
+  }
+  const ready = harness({
+    files: [{filename: "mobile/app.config.ts"}],
+    receipt,
+    textArtifacts,
+    ios: {...iosRun, run_attempt: 2},
+  })
+  await notifyPrBuilds(ready.args)
+  const macLinks = ready.posts[0].blocks[3].elements[2].elements.filter((item) => item.type === "link")
+  assert.deepEqual(
+    macLinks.map((item) => item.text),
+    ["Install on Mac", "First-time setup ZIP"],
+  )
+  const handoff = new URL(macLinks[0].url)
+  assert.equal(handoff.protocol, "https:")
+  assert.equal(handoff.search, "?platform=mac&attempt=2")
+  assert.match(handoff.pathname, /-3-1\.html$/)
+  assert.match(macLinks[1].url, /-3-1\.zip$/)
+  assert.doesNotMatch(JSON.stringify(ready.posts[0]), /mentra-install:/)
+  assert.match(ready.written[0].body, /\[Install on Mac\]\(https:[^)]*platform=mac&attempt=2\)/)
+  assert.equal(ready.requests.filter((url) => url.endsWith(".html")).length, 1)
+
+  const corrupted = harness({...ready.state, comments: [], corruptInstall: true})
+  await notifyPrBuilds(corrupted.args)
+  assert.doesNotMatch(JSON.stringify(corrupted.posts[0]), /Install on Mac/)
 })
 
 test("verifies decoded install files through real HTTP compression with missing or compressed Content-Length", async (t) => {
@@ -479,4 +558,99 @@ test("Android failure still allows verified iOS links; cancelled iOS suppresses 
   const cancelled = harness({files: [{filename: "mobile/app.config.ts"}], ios: {...iosRun, conclusion: "cancelled"}})
   await notifyPrBuilds(cancelled.args)
   assert.equal(cancelled.posts.length, 0)
+})
+
+test("requested tests link the exact Mac archive and current-head request without waiting for device results", async () => {
+  const h = harness({
+    files: [{filename: "mobile/app.config.ts"}],
+    currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+    routineRuns: [
+      {...run, id: 90, head_sha: "d".repeat(40), pull_requests: [{number: pr.number}]},
+      {...run, id: 91, head_repository: {full_name: "someone/fork"}, pull_requests: [{number: pr.number}]},
+      {...run, id: 9, run_attempt: 2, status: "in_progress", conclusion: null, pull_requests: [{number: pr.number}]},
+    ],
+  })
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap((block) => block.text?.text ?? []).join("\n")
+  assert.match(text, /Requested tests:\* Day-one OTA · iOS on Mac/)
+  assert.match(text, /https:\/\/github.com\/o\/r\/actions\/runs\/9\/attempts\/2\|Request pipeline/)
+  assert.doesNotMatch(text, /Tests passed|Test running|Ready to run|localhost|127\.0\.0\.1/)
+  const results = new URL(text.match(/<(https:[^|]+)\|View results>/)[1])
+  assert.equal(results.origin, "https://admin.dev.mentraglass.com")
+  assert.deepEqual(Object.fromEntries(results.searchParams), {
+    testRuns: "1",
+    repository: "o/r",
+    pr: "123",
+    headSha: sha,
+    archiveSha256: iosReceipt.artifacts.mac.sha256,
+    routineId: "day1-ota",
+    platform: "ios-mac",
+  })
+  assert.match(h.written[0].body, /\[View results\]\(https:\/\/admin\.dev\.mentraglass\.com/)
+  assert.match(text, /Results appear after the device run is uploaded/)
+  h.state.routineRuns[2].status = "completed"
+  h.state.routineRuns[2].conclusion = "success"
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1, "request completion does not change build-post deduplication")
+})
+
+test("request links reject another PR on the same branch/head and ambiguous or missing associations", async () => {
+  const currentRequest = {...run, id: 9, pull_requests: [{number: pr.number}]}
+  const otherRequest = {...run, id: 99, pull_requests: [{number: pr.number + 1, base: {ref: "staging"}}]}
+  const cases = [
+    {runs: [otherRequest, currentRequest], exact: true},
+    {runs: [otherRequest], exact: false},
+    {runs: [{...run, id: 99}], exact: false},
+    {runs: [{...run, id: 99, pull_requests: []}], exact: false},
+    {runs: [{...run, id: 99, pull_requests: [{number: pr.number}, {number: pr.number + 1}]}], exact: false},
+  ]
+  for (const {runs, exact} of cases) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      routineRuns: runs,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.doesNotMatch(body, /actions\/runs\/99/)
+    if (exact) assert.match(body, /actions\/runs\/9\/attempts\/1\|Request pipeline/)
+    else assert.match(body, /request-e2e-routine.yml\|Request pipeline \(workflow\)/)
+  }
+})
+
+test("optional request lookup never gates the build post or substitutes another revision", async () => {
+  for (const options of [
+    {routineRuns: [{...run, id: 90, head_sha: "d".repeat(40), pull_requests: [{number: pr.number}]}]},
+    {routineLookupError: true},
+  ]) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      ...options,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.match(body, /request-e2e-routine.yml\|Request pipeline \(workflow\)/)
+    assert.doesNotMatch(body, /actions\/runs\/90/)
+  }
+  for (const options of [{missingMac: true}, {files: []}]) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      ...options,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.match(body, /Requested tests/)
+    assert.doesNotMatch(body, /\|View results>/)
+  }
+  const unrequested = harness({files: [{filename: "mobile/app.config.ts"}]})
+  await notifyPrBuilds(unrequested.args)
+  assert.doesNotMatch(JSON.stringify(unrequested.posts[0]), /Requested tests|View results|Request pipeline/)
+})
+
+test("result links require a complete build identity", () => {
+  const identity = {repository: "o/r", pr: 123, sha, archiveSha256: "b".repeat(64)}
+  for (const patch of [{repository: "../bad"}, {pr: -1}, {sha: "short"}, {archiveSha256: undefined}])
+    assert.equal(routineResultsUrl({...identity, ...patch}), null)
 })

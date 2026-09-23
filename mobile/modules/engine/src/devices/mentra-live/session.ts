@@ -37,7 +37,7 @@ export interface LiveSessionData {
   checkState: CheckState
   isUpdateRequired: boolean
   isVersionChange: boolean
-  errorKind: "network" | "pin_unavailable"
+  errorKind: "network" | "pin_unavailable" | "version_info"
   unofficialClientPackage: string | null
   offeredReleaseTransition: MentraLiveOtaReleaseTransition | null
   completedReleaseTransition: MentraLiveOtaReleaseTransition | null
@@ -535,7 +535,7 @@ export class MentraLiveOtaSession {
     }
     if (!result.hasCheckCompleted) {
       if (result.checkFailureReason !== "version_info") this.chain.stopOtaAutoChain()
-      this.data.errorKind = result.checkFailureReason === "pin_unavailable" ? "pin_unavailable" : "network"
+      this.data.errorKind = result.checkFailureReason ?? "network"
       this.data.checkState = "error"
       return
     }
