@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.mentra.asg_client.audio.diag.AudioTraceBus;
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.AsgConstants;
 
@@ -32,6 +33,8 @@ public class I2SAudioController {
     private final Context context;
 
     private MediaPlayer mediaPlayer;
+    /** Playback token of {@link #mediaPlayer}, reported to {@link AudioTraceBus}. */
+    private long mediaPlayerTraceToken;
     private final Map<Long, CameraCuePlayer> overlayPlayers = new HashMap<>();
     private final Handler cameraAudioHandler = new Handler(Looper.getMainLooper());
     private final CameraCuePlayer.Pool cameraCuePool;
@@ -295,12 +298,17 @@ public class I2SAudioController {
         // Mark that WE are controlling I2S - prevents receiver from reacting to our broadcasts
         isControllingI2S = true;
 
+        final long traceToken = playbackGeneration;
+        AudioTraceBus.emit(AudioTraceBus.PLAYER_REQUEST, "token", traceToken, "name", logName);
+
         stopCurrentPlayer();
 
-        boolean i2sStarted = ensureI2sOpen();
+        boolean i2sStarted = ensureI2sOpen(traceToken);
         Log.i(TAG, "I2S start for " + logName + " notifyI2SState=" + i2sStarted);
         if (!i2sStarted) {
             Log.w(TAG, "Failed to start I2S path; skipping playback of " + logName);
+            AudioTraceBus.emit(
+                    AudioTraceBus.PLAYER_END, "token", traceToken, "reason", "failed");
             refreshControlFlag();
             return;
         }
@@ -313,6 +321,7 @@ public class I2SAudioController {
 
             final MediaPlayer trackedPlayer = nextPlayer;
             mediaPlayer = trackedPlayer;
+            mediaPlayerTraceToken = traceToken;
             trackedPlayer.setOnCompletionListener(
                     mp -> {
                         synchronized (I2SAudioController.this) {
@@ -321,6 +330,12 @@ public class I2SAudioController {
                             }
                             Log.d(TAG, "I2S audio playback completed: " + logName);
                             mediaPlayer = null;
+                            AudioTraceBus.emit(
+                                    AudioTraceBus.PLAYER_END,
+                                    "token",
+                                    traceToken,
+                                    "reason",
+                                    "complete");
                             mp.release();
                             closeI2SIfIdle();
                             refreshControlFlag();
@@ -341,6 +356,16 @@ public class I2SAudioController {
                                             + ", extra="
                                             + extra);
                             mediaPlayer = null;
+                            AudioTraceBus.emit(
+                                    AudioTraceBus.PLAYER_END,
+                                    "token",
+                                    traceToken,
+                                    "reason",
+                                    "error",
+                                    "what",
+                                    what,
+                                    "extra",
+                                    extra);
                             mp.release();
                             closeI2SIfIdle();
                             refreshControlFlag();
@@ -349,10 +374,14 @@ public class I2SAudioController {
                     });
 
             trackedPlayer.prepare();
-            startPlayerWhenReady(trackedPlayer, () -> true, () -> {});
+            startPlayerWhenReady(
+                    trackedPlayer,
+                    () -> true,
+                    () -> AudioTraceBus.emit(AudioTraceBus.PLAYER_START, "token", traceToken));
             Log.d(TAG, "I2S audio prepared; awaiting bridge readiness: " + logName);
         } catch (Exception e) {
             Log.e(TAG, "Unable to play " + logName, e);
+            AudioTraceBus.emit(AudioTraceBus.PLAYER_END, "token", traceToken, "reason", "failed");
             if (nextPlayer != null) {
                 if (mediaPlayer == nextPlayer) {
                     mediaPlayer = null;
@@ -412,6 +441,12 @@ public class I2SAudioController {
         if (mediaPlayer != null) {
             MediaPlayer playerToStop = mediaPlayer;
             mediaPlayer = null;
+            AudioTraceBus.emit(
+                    AudioTraceBus.PLAYER_END,
+                    "token",
+                    mediaPlayerTraceToken,
+                    "reason",
+                    "stopped");
             try {
                 if (playerToStop.isPlaying()) {
                     playerToStop.stop();
@@ -495,15 +530,52 @@ public class I2SAudioController {
     }
 
     private boolean ensureI2sOpen() {
+        return ensureI2sOpen(0L);
+    }
+
+    /** @param traceToken primary playback token for {@link AudioTraceBus}, or 0 for overlays. */
+    private boolean ensureI2sOpen(long traceToken) {
         if (idleClose != null) {
             cameraAudioHandler.removeCallbacks(idleClose);
             idleClose = null;
+            if (AudioTraceBus.isActive()) {
+                AudioTraceBus.emit(
+                        AudioTraceBus.GRACE_CANCEL, "request_id", readiness.currentRequestId());
+            }
         }
-        if (bridgeHeld && readiness.isUsable()) return true;
-        if (externalAudioPlaying && !bridgeHeld) return true;
+        if (bridgeHeld && readiness.isUsable()) {
+            if (AudioTraceBus.isActive()) {
+                AudioTraceBus.emit(
+                        AudioTraceBus.BRIDGE_REUSED,
+                        "token",
+                        traceToken,
+                        "reason",
+                        readiness.isReady()
+                                ? AudioTraceBus.REUSE_READY
+                                : AudioTraceBus.REUSE_PENDING,
+                        "request_id",
+                        readiness.currentRequestId());
+            }
+            return true;
+        }
+        if (externalAudioPlaying && !bridgeHeld) {
+            AudioTraceBus.emit(
+                    AudioTraceBus.BRIDGE_REUSED,
+                    "token",
+                    traceToken,
+                    "reason",
+                    AudioTraceBus.REUSE_EXTERNAL,
+                    "request_id",
+                    0);
+            return true;
+        }
         int requestId = readiness.begin();
         bridgeHeld = true;
+        AudioTraceBus.emit(
+                AudioTraceBus.BRIDGE_OPEN_REQ, "token", traceToken, "request_id", requestId);
         if (notifyI2SState(true, true, requestId)) return true;
+        AudioTraceBus.emit(
+                AudioTraceBus.BRIDGE_OPEN_FAILED, "token", traceToken, "request_id", requestId);
         readiness.cancel();
         bridgeHeld = false;
         return false;
@@ -546,6 +618,12 @@ public class I2SAudioController {
     private void failWaitingPlayer(MediaPlayer player) {
         if (!ownsPlayer(player)) return;
         Log.w(TAG, "[I2S-READY] Cancelling pending sound before playback");
+        AudioTraceBus.emit(
+                AudioTraceBus.PLAYER_END,
+                "token",
+                mediaPlayerTraceToken,
+                "reason",
+                "cancelled");
         if (mediaPlayer == player) mediaPlayer = null;
         player.release();
         closeI2SIfIdle();
@@ -571,14 +649,28 @@ public class I2SAudioController {
             }
         };
         cameraAudioHandler.postDelayed(idleClose, AsgConstants.I2S_IDLE_CLOSE_MS);
+        if (AudioTraceBus.isActive()) {
+            AudioTraceBus.emit(AudioTraceBus.GRACE_BEGIN, "request_id", readiness.currentRequestId());
+        }
     }
 
     private void closeI2sNow() {
         if (idleClose != null) cameraAudioHandler.removeCallbacks(idleClose);
         idleClose = null;
+        int traceRequestId = AudioTraceBus.isActive() ? readiness.currentRequestId() : 0;
+        boolean wasHeld = bridgeHeld;
         readiness.cancel();
         bridgeHeld = false;
-        if (!externalAudioPlaying) notifyI2SState(false);
+        boolean stopSent = !externalAudioPlaying;
+        if (stopSent) notifyI2SState(false);
+        AudioTraceBus.emit(
+                AudioTraceBus.BRIDGE_CLOSE,
+                "request_id",
+                traceRequestId,
+                "was_held",
+                wasHeld,
+                "stop_sent",
+                stopSent);
         refreshControlFlag();
     }
 

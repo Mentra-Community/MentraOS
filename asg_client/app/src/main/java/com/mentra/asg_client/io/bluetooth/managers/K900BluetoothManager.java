@@ -5,6 +5,7 @@ import android.os.SystemClock;
 import android.util.Log;
 
 import com.mentra.asg_client.audio.I2sReadyGate;
+import com.mentra.asg_client.audio.diag.AudioTraceBus;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
@@ -2146,7 +2147,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Object rawBody = message.opt("B");
             JSONObject body = rawBody instanceof JSONObject ? (JSONObject) rawBody
                     : new JSONObject(String.valueOf(rawBody));
-            I2sReadyGate.onResponse(body.optInt("request_id", 0), body.optBoolean("ready", false));
+            int requestId = body.optInt("request_id", 0);
+            boolean ready = body.optBoolean("ready", false);
+            AudioTraceBus.emit(
+                    AudioTraceBus.I2S_READY_RX, "request_id", requestId, "ready", ready);
+            I2sReadyGate.onResponse(requestId, ready);
             return true;
         } catch (org.json.JSONException e) {
             return false;
