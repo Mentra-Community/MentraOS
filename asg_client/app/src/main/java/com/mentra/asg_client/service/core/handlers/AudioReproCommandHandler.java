@@ -51,7 +51,8 @@ public class AudioReproCommandHandler implements ICommandHandler {
             Context context,
             K900CommandHandler k900CommandHandler,
             IConfigurationManager configurationManager) {
-        this.context = context.getApplicationContext();
+        Context application = context.getApplicationContext();
+        this.context = application != null ? application : context;
         AudioReproRunner.get(this.context)
                 .setBesLogDependencies(k900CommandHandler, configurationManager);
     }

@@ -76,7 +76,8 @@ public final class AudioReproRunner {
     private volatile boolean running;
 
     private AudioReproRunner(Context context) {
-        this.context = context.getApplicationContext();
+        Context application = context.getApplicationContext();
+        this.context = application != null ? application : context;
     }
 
     public static synchronized AudioReproRunner get(Context context) {
