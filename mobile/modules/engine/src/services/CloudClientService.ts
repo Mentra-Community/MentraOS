@@ -524,6 +524,21 @@ function construct(): void {
  * and the runtime-hook wiring.
  */
 export const cloudClientService = {
+  async createTeamsMeeting(options: {subject?: string; durationMinutes?: number}, teamsUserAadToken?: string) {
+    if (!client) construct()
+    const current = client
+    if (!current) throw new Error("Cloud client is unavailable")
+    const result = await current.runtime.meetings.createTeamsMeeting(options, teamsUserAadToken)
+    if (current !== client) throw new Error("Deployment changed while creating the meeting")
+    return result
+  },
+  async retireTeamsMeeting(meetingRef: string) {
+    if (!client) construct()
+    const current = client
+    if (!current) throw new Error("Cloud client is unavailable")
+    await current.runtime.meetings.retireTeamsMeeting(meetingRef)
+    if (current !== client) throw new Error("Deployment changed while retiring the meeting")
+  },
   async getMeetingCredential(teamsUserAadToken?: string) {
     if (!client) construct()
     const current = client

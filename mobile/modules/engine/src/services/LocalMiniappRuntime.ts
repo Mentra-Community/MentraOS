@@ -107,7 +107,13 @@ import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInsta
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {TransientActionWakeCoordinator} from "./TransientActionWakeCoordinator"
 import {projectSystemActions} from "./manifestActions"
-import {meetingConfiguration, meetingCredential, type MeetingIdentity} from "./MeetingCredentials"
+import {
+  createMeeting,
+  meetingConfiguration,
+  meetingCredential,
+  retireMeeting,
+  type MeetingIdentity,
+} from "./MeetingCredentials"
 import acsMeetingService, {
   parseAcsCallOrigin,
   parseAcsOutgoingVideo,
@@ -1472,6 +1478,12 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MEETING_GET_CONFIGURATION:
         this.sendResult(packageName, requestId, true, meetingConfiguration())
+        break
+      case MiniappRequestType.MEETING_CREATE:
+        void this.handleMeetingCreate(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_RETIRE:
+        void this.handleMeetingRetire(packageName, payload, requestId)
         break
       case MiniappRequestType.MEETING_JOIN:
         void this.handleMeetingJoin(packageName, payload, requestId)
@@ -3910,6 +3922,43 @@ class LocalMiniappRuntime {
   /** Startup owns the hotspot before ACS has an owner. Closing the app must retire both. */
   private readonly meetingCredentialRequests = new Map<string, object>()
 
+  private async handleMeetingCreate(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      // Provider credentials and organizer IDs are host-owned, never copied from the RPC.
+      const result = await createMeeting({
+        provider: payload.provider as "acs-teams",
+        subject: payload.subject as string | undefined,
+        durationMinutes: payload.durationMinutes as number | undefined,
+      })
+      this.sendResult(packageName, requestId, true, result)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Meeting creation failed",
+      })
+    }
+  }
+
+  private async handleMeetingRetire(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      await retireMeeting(payload.meetingRef as string)
+      this.sendResult(packageName, requestId, true)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Meeting retirement failed",
+      })
+    }
+  }
+
   private async leaveMeetingForApp(packageName: string): Promise<void> {
     this.meetingCredentialRequests.delete(packageName)
     const attempt = this.softapAttempt
@@ -5195,7 +5244,7 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
-    const whepUrl = videoSource?.type === "whep" ? (videoSource.url ?? "") : ""
+    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
     if (!whepUrl) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INVALID_ARGUMENT,
