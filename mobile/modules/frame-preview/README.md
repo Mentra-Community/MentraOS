@@ -122,7 +122,8 @@ unmeasurable, the second put the measurement inside the measurement.
 
 Every run writes one NDJSON file. The same object that goes to the panel at 1 Hz is appended to
 that file, so the screen and the file can never disagree about what a second looked like, and
-`pack_only` vs `render` becomes a diff rather than an argument.
+`pack_only` vs `render` becomes a diff rather than an argument. [`tools/`](tools/RUNBOOK.md) holds the
+script that summarises a run and checks two runs against the screening and release-gate limits.
 
 | | |
 |---|---|
