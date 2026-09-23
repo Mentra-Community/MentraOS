@@ -141,6 +141,12 @@ monitor_update() {
         if IFS= read -r -t 1 line <&3; then
             idle_seconds=0
         else
+            if ! kill -0 "$LOGCAT_PID" 2>/dev/null; then
+                exec 3<&-
+                echo "ℹ️  Log stream closed. Checking the target boot without resending OTA..."
+                wait_for_target_boot
+                return 0
+            fi
             idle_seconds=$((idle_seconds + 1))
             if [ "$saw_activity" -eq 0 ] && [ "$idle_seconds" -ge "$TRIGGER_ACTIVITY_TIMEOUT_SECONDS" ]; then
                 exec 3<&-
