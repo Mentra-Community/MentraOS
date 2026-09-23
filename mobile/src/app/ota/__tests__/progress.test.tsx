@@ -1,7 +1,9 @@
-import React from "react"
-import {render, act, fireEvent, waitFor} from "@testing-library/react-native"
+import {render, act, fireEvent} from "@testing-library/react-native"
 
+// eslint-disable-next-line no-restricted-imports -- Use the real Engine store, not the public test mock.
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+// eslint-disable-next-line no-restricted-imports -- Share the same real settings store as the Engine hooks.
+import {useSettingsStore} from "../../../../modules/engine/src/stores/settings"
 import {useNavigationStore} from "@/stores/navigation"
 
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
@@ -10,6 +12,7 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {initI18n} from "@/i18n"
 
 import OtaProgressScreen from "@/app/ota/progress"
+// eslint-disable-next-line no-restricted-imports -- Exercise the real retained session behind the public test mock.
 import {
   getMentraLiveOtaSession,
   resolveMentraLiveOtaProvider,
@@ -30,7 +33,6 @@ const stopOtaAutoChain = () => getMentraLiveOtaSession()?.chain.stopOtaAutoChain
 // super_mode is controlled through the REAL settings store — the screen's
 // useSetting comes from the global @mentra/engine mock, which passes the real
 // store-backed hook through.
-import {useSettingsStore} from "../../../../modules/engine/src/stores/settings"
 const setSuperMode = (enabled: boolean) => useSettingsStore.getState().setSetting("super_mode", enabled, false)
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
@@ -438,7 +440,12 @@ describe("progress.tsx display states", () => {
 
       expect(isOtaAutoChainActive()).toBe(false)
       expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
-      expect(pushSpy).toHaveBeenCalledWith("/wifi/scan", {firmwareReturn: "true", firmwareEntryPoint: "recovery", firmwareDeviceId: "live-progress-fixture", firmwareIntegrationId: "mentra-live"})
+      expect(pushSpy).toHaveBeenCalledWith("/wifi/scan", {
+        firmwareReturn: "true",
+        firmwareEntryPoint: "recovery",
+        firmwareDeviceId: "live-progress-fixture",
+        firmwareIntegrationId: "mentra-live",
+      })
     } finally {
       pushSpy.mockRestore()
     }
@@ -710,7 +717,7 @@ describe("progress.tsx watchdog timers", () => {
     expect(getByText(OtaProgressMessages.stalledOrStuck)).toBeDefined()
   })
 
-  it("fails progress stall after PROGRESS_TIMEOUT_MS with frozen ota_status", async () => {
+  it("retains BES restart guidance after a progress stall until authoritative status allows exit", async () => {
     setGlassesConnected()
     const {getByText, queryByText} = await renderProgress()
 
@@ -733,8 +740,28 @@ describe("progress.tsx watchdog timers", () => {
 
     expect(getByText("Update Failed")).toBeDefined()
     expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
+    expect(queryByText("Done")).toBeNull()
+    expect(queryByText("Retry")).toBeNull()
+
+    // The phone's watchdog cannot release ownership. A fresh terminal status
+    // from the glasses restores the established safe Done action.
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 10,
+        overallPercent: 10,
+        status: "failed",
+        error: "install_failed",
+      })
+    })
+    expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
     expect(getByText("Done")).toBeDefined()
     expect(queryByText("Retry")).toBeNull()
+    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
   it("queries the resumed session without starting a second OTA after a multi-step APK reconnect", async () => {

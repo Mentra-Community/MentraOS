@@ -5,7 +5,7 @@ import type {
 } from "@mentra/bluetooth-sdk/firmware-updates"
 import {LiveNativeCompletion} from "../nativeCompletion"
 
-function fixture(staleFailures = 0) {
+function fixture(staleFailures = 0, readFailures = 0) {
   let native: NativeFirmwareUpdateSnapshot = {
     schemaVersion: 1,
     integrationId: "mentra-live",
@@ -23,7 +23,10 @@ function fixture(staleFailures = 0) {
   let listener: ((value: NativeFirmwareUpdateSnapshot) => void) | null = null
   const proofs: NativeFirmwareCompletionEvidence[] = []
   const completion = new LiveNativeCompletion("live", {
-    read: async () => native,
+    read: async () => {
+      if (readFailures-- > 0) throw new Error("temporary bridge failure")
+      return native
+    },
     listen: (value) => {
       listener = value
       return () => {
@@ -43,6 +46,10 @@ function fixture(staleFailures = 0) {
   return {
     completion,
     proofs,
+    failRead: () => {
+      readFailures = 1
+    },
+    notify: (value: Partial<NativeFirmwareUpdateSnapshot>) => listener?.({...native, ...value}),
     set: (value: Partial<NativeFirmwareUpdateSnapshot>, emit = true) => {
       native = {...native, ...value, revision: native.revision + 1}
       if (emit) listener?.(native)
@@ -112,4 +119,66 @@ test("completion revalidates revision races with a bounded retry budget", async 
   await expect(stalled.completion.finish("live-apk-build-increase")).rejects.toThrow("new status arrived")
   expect(stalled.proofs).toHaveLength(3)
   stalled.completion.dispose()
+})
+
+test("explicit Start retries a failed initial bridge read", async () => {
+  const h = fixture(0, 1)
+  await h.completion.beforeStart()
+  h.set({sessionId: "retry", phase: "preparing"})
+  await h.completion.finish("live-bes-reboot")
+  expect(h.proofs[0].sessionId).toBe("retry")
+  expect(h.completion.isSafeToRelease()).toBe(true)
+  h.completion.dispose()
+})
+
+test.each(["fresh event", "explicit retry"])("%s recovers a transient observation error", async (recovery) => {
+  const h = fixture()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  h.failRead()
+  // A replacement notification forces an authoritative bridge read, which fails once.
+  h.notify({updaterId: "other", connectionGeneration: 2})
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(h.completion.isSafeToRelease()).toBe(false)
+  if (recovery === "fresh event") {
+    h.set({safeToRelease: true, phase: "complete"})
+    expect(h.completion.isSafeToRelease()).toBe(true)
+  }
+  await h.completion.finish("live-bes-reboot")
+  expect(h.completion.isSafeToRelease()).toBe(true)
+  expect(h.proofs).toHaveLength(recovery === "fresh event" ? 0 : 1)
+  if (h.proofs.length) expect(h.proofs[0].updaterId).toBe("updater")
+  h.completion.dispose()
+})
+
+test("a terminal read refreshes release safety when the native event was missed", async () => {
+  const h = fixture()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  h.set({safeToRelease: true, phase: "complete"}, false)
+  await h.completion.finish(null)
+  expect(h.completion.isSafeToRelease()).toBe(true)
+  expect(h.proofs).toHaveLength(0)
+  h.completion.dispose()
+})
+
+test("a healthy terminal read recovers an initially unavailable observation without a completion proof", async () => {
+  const h = fixture(0, 1)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(h.completion.isSafeToRelease()).toBe(false)
+  h.set({safeToRelease: true, phase: "complete"}, false)
+  await h.completion.finish(null)
+  expect(h.completion.isSafeToRelease()).toBe(true)
+  expect(h.proofs).toHaveLength(0)
+  h.completion.dispose()
+})
+
+test("a failed read cannot be cleared by safe evidence from a different device", async () => {
+  const h = fixture()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  h.failRead()
+  await expect(h.completion.finish("live-bes-reboot")).rejects.toThrow("temporary bridge failure")
+  h.set({deviceId: "other", phase: "complete", safeToRelease: true}, false)
+  await expect(h.completion.finish("live-bes-reboot")).rejects.toThrow("Fresh Live")
+  expect(h.completion.isSafeToRelease()).toBe(false)
+  expect(h.proofs).toHaveLength(0)
+  h.completion.dispose()
 })

@@ -33,18 +33,22 @@ export class LiveNativeCompletion {
       {integrationId: "mentra-live", deviceId},
       ports,
       (value) => {
-        this.changed()
-        if (!value.sessionId) return
-        if (this.expectingAfter !== null) {
-          if (value.sessionId === this.expectingAfter) return
-          this.bound = {updaterId: value.updaterId, sessionId: value.sessionId}
-          this.expectingAfter = null
-        } else if (!this.bound) {
-          this.bound = {updaterId: value.updaterId, sessionId: value.sessionId}
+        this.failure = null
+        if (value.sessionId) {
+          if (this.expectingAfter !== null) {
+            if (value.sessionId !== this.expectingAfter) {
+              this.bound = {updaterId: value.updaterId, sessionId: value.sessionId}
+              this.expectingAfter = null
+            }
+          } else if (!this.bound) {
+            this.bound = {updaterId: value.updaterId, sessionId: value.sessionId}
+          }
         }
+        this.changed()
       },
       (error) => {
         this.failure = error
+        this.changed()
       },
     )
     this.ready = this.observation.start().catch((error: unknown) => {
@@ -62,9 +66,11 @@ export class LiveNativeCompletion {
     await this.ready
     this.assertAvailable()
     if (this.unsupported) return
-    const current = await this.ports.read()
+    // A temporary initial read failure must not permanently disable an explicit Start.
+    await this.observation.start()
     this.assertAvailable()
-    this.observation.accept(current)
+    const current = await this.readCurrent()
+    this.acceptRead(current)
     this.expectingAfter = current.sessionId ?? ""
     this.bound = null
   }
@@ -76,10 +82,16 @@ export class LiveNativeCompletion {
     // Status can advance between the read and the native compare-and-set. Retry only that
     // race, with fresh evidence for the same bound transaction; all other failures reach UI.
     for (let attempt = 0; attempt < 3; attempt++) {
-      const current = await this.ports.read()
-      this.assertAvailable()
+      const current = await this.readCurrent()
       const bound = this.bound
-      if (current.safeToRelease) return
+      if (current.safeToRelease) {
+        this.acceptRead(current)
+        // Also recover an observation whose initial bridge read never completed.
+        await this.observation.start()
+        this.assertAvailable()
+        if (!this.isSafeToRelease()) throw new FirmwareUpdateError("busy", "The Live update still owns the glasses")
+        return
+      }
       if (
         !kind ||
         !bound ||
@@ -90,6 +102,7 @@ export class LiveNativeCompletion {
       ) {
         throw new FirmwareUpdateError("busy", "The Live update still requires completion verification")
       }
+      this.acceptRead(current)
       try {
         const result = await this.ports.complete({
           deviceId: this.deviceId,
@@ -114,6 +127,42 @@ export class LiveNativeCompletion {
 
   private assertAvailable(): void {
     if (this.disposed) throw new FirmwareUpdateError("busy", "The Live update owner changed")
-    if (this.failure) throw this.failure
+  }
+
+  private acceptRead(current: NativeFirmwareUpdateSnapshot): void {
+    this.failure = null
+    this.observation.accept(current)
+    // A retry may read the same revision that was observed before the bridge error.
+    this.changed()
+    this.assertAvailable()
+  }
+
+  /** Failed reads block release until fresh native evidence arrives, not all future retries. */
+  private async readCurrent(): Promise<NativeFirmwareUpdateSnapshot> {
+    try {
+      const current = await this.ports.read()
+      this.assertAvailable()
+      const observed = this.observation.snapshot()
+      if (
+        current.schemaVersion !== 1 ||
+        current.deviceId !== this.deviceId ||
+        current.integrationId !== "mentra-live" ||
+        !Number.isSafeInteger(current.revision) ||
+        current.revision < 0 ||
+        !Number.isSafeInteger(current.connectionGeneration) ||
+        current.connectionGeneration < 0 ||
+        (observed &&
+          (current.connectionGeneration < observed.connectionGeneration ||
+            (current.updaterId === observed.updaterId && current.revision < observed.revision)))
+      )
+        throw new FirmwareUpdateError("busy", "Fresh Live firmware status is required")
+      return current
+    } catch (error) {
+      if (!this.disposed) {
+        this.failure = error
+        this.changed()
+      }
+      throw error
+    }
   }
 }
