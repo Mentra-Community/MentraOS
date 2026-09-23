@@ -882,6 +882,26 @@ it("does not expose an uncommitted workspace copy through a consumer version wit
   expect((await registry.getInstalledMiniapps()).some((app) => app.packageName === pkg)).toBe(true)
 })
 
+it("does not fall back to an uncommitted consumer copy when a workspace copy is ineligible", async () => {
+  await deploymentManagedMiniappSync.sync(workspace)
+  selectDeployment({
+    ...workspace,
+    manifest: {
+      ...workspace.manifest,
+      miniapps: {configuration: {}, managed: []},
+      systemMiniapps: {approvedPackageNamesOverride: [pkg]},
+    },
+  })
+  const pending = new Directory(Paths.document, "lmas", pkg, `.pending-existing-${version}-1700000000000`)
+  pending.create()
+  registry.markRefreshNeeded()
+  expect((await registry.getInstalledMiniapps()).some((app) => app.packageName === pkg)).toBe(false)
+  pending.delete()
+  registry.markRefreshNeeded()
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+})
+
 it("recovers workspace bytes and provenance after switching back to consumer mode", async () => {
   selectDeployment(consumer)
   mockVersion = "2.1.30"

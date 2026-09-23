@@ -1259,7 +1259,11 @@ class AppRegistry {
       const workspaceIdentity = this.getReleaseIdentity(packageName, version, "workspace")
       if (isInstalledMiniappAllowed(packageName, version, workspaceIdentity)) return "workspace"
       const consumerIdentity = this.getReleaseIdentity(packageName, version, "consumer")
-      if (!isInstalledMiniappAllowed(packageName, version, consumerIdentity)) return "workspace"
+      if (
+        !this.getInstalledVersions(packageName, "consumer").includes(version) ||
+        !isInstalledMiniappAllowed(packageName, version, consumerIdentity)
+      )
+        return "workspace"
     }
     return "consumer"
   }
