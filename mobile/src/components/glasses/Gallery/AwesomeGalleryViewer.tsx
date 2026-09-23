@@ -180,6 +180,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
           onSeekingChange?.(false)
         }}
         onEnd={() => {
+          if (isSeeking) return
           console.log("🎥 [VideoPlayerItem] Video playback ended:", photo.name)
           setIsPlaying(false)
           setShowControls(true)

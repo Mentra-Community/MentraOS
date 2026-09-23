@@ -225,6 +225,15 @@ describe("gallery video playback", () => {
     expect(mockGalleryProps.swipeEnabled).toBe(true)
   })
 
+  it("preserves playback intent if an old end event arrives while dragging", () => {
+    renderVideo()
+    emitSlider("onSlidingStart")
+    emitVideo("onEnd")
+    emitSlider("onSlidingComplete", 30)
+    expect(mockVideoProps.paused).toBe(false)
+    expect(mockSeek).toHaveBeenLastCalledWith(30)
+  })
+
   it("does not wait for an onSeek event after a same-position seek", () => {
     renderVideo()
     emitSlider("onSlidingStart")
