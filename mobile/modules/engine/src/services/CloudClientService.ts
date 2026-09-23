@@ -22,7 +22,7 @@ import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentr
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import CrustModule from "@mentra/crust"
-import {getAuth, getConfigValues, isFeatureEnabled, isStarted} from "../runtime/bootstrap"
+import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
@@ -36,7 +36,6 @@ import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 import {resolveCloudEndpoints} from "./cloudEndpointPolicy"
 import {firmwareUpdates} from "../facades/firmwareUpdates"
-import {startLiveAvailability} from "../devices/mentra-live/availabilityRuntime"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -288,7 +287,7 @@ function ensureAuthWatch(): void {
         localMiniappUserIdentity.forget()
         // Resume optional discovery only. SIGNED_OUT suspended any previous approval;
         // some auth adapters also emit SIGNED_IN when refreshing an existing session.
-        if (session?.token && isStarted()) void startLiveAvailability()
+        if (session?.token) firmwareUpdates.resumeDiscovery()
       }
       if (!session?.token) return
       if (connected || reconnectPending) return

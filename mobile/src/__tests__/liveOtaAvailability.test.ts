@@ -1,9 +1,9 @@
 import {
   LiveAvailabilityMonitor,
   type LiveAvailabilityPorts,
-} from "../../modules/engine/src/devices/mentra-live/availability"
-import type {OtaSnapshot} from "../../modules/engine/src/facades/ota"
-import type {OtaCheckCurrentGlassesResult} from "../../modules/engine/src/services/OtaUpdateCheckService"
+} from "@/../modules/engine/src/devices/mentra-live/availability"
+import type {OtaSnapshot} from "@/../modules/engine/src/facades/ota"
+import type {OtaCheckCurrentGlassesResult} from "@/../modules/engine/src/services/OtaUpdateCheckService"
 
 jest.mock("../../modules/engine/src/utils/timers", () => ({
   BgTimer: {
@@ -131,6 +131,43 @@ describe("Live background availability owner", () => {
     monitor.setHome(false)
     monitor.setHome(true)
     expect(monitor.snapshot().prompt).toBeNull()
+  })
+
+  it("resumes discovery in the mounted home after suspension without replaying an old prompt", async () => {
+    monitor.setHome(true)
+    await tick()
+    const old = monitor.snapshot().prompt!
+    expect(monitor.claimPrompt(old.id)).toBe(true)
+    monitor.stop()
+    await tick(60_000)
+    expect(ports.check).toHaveBeenCalledTimes(1)
+    expect(monitor.snapshot().prompt).toBeNull()
+    monitor.start()
+    monitor.start()
+    await tick()
+    expect(ports.check).toHaveBeenCalledTimes(2)
+    expect(monitor.snapshot().prompt!.id).toBeGreaterThan(old.id)
+    expect(monitor.claimPrompt(old.id)).toBe(false)
+    expect(monitor.claimPrompt(monitor.snapshot().prompt!.id)).toBe(true)
+  })
+
+  it("resumes only after unsafe recovery releases and discards pre-suspension checks", async () => {
+    let resolve!: (value: OtaCheckCurrentGlassesResult) => void
+    ports.check = jest.fn(async () => result).mockImplementationOnce(() => new Promise((done) => (resolve = done)))
+    monitor.setHome(true)
+    await tick()
+    monitor.stop()
+    owned = true
+    monitor.start()
+    resolve(result)
+    await tick(60_000)
+    expect(ports.check).toHaveBeenCalledTimes(1)
+    expect(monitor.snapshot().prompt).toBeNull()
+    owned = false
+    changed()
+    await tick()
+    expect(ports.check).toHaveBeenCalledTimes(2)
+    expect(monitor.snapshot().prompt?.action).toBe("install")
   })
 
   it("keeps a pending Wi-Fi offer through setup and prompts install on return", async () => {

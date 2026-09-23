@@ -14,7 +14,10 @@ import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckSe
 const rendererRequire = createRequire(require.resolve("react-test-renderer"))
 mock.module("react", () => rendererRequire("react"))
 mock.module("../../utils/timers", () => ({BgTimer: {setTimeout, clearTimeout, setInterval, clearInterval}}))
-mock.module("../../devices/mentra-live/availabilityRuntime", () => ({stopLiveAvailability() {}}))
+mock.module("../../devices/mentra-live/availabilityRuntime", () => ({
+  async startLiveAvailability() {},
+  stopLiveAvailability() {},
+}))
 Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT: true})
 
 const checkResult: OtaCheckCurrentGlassesResult = {

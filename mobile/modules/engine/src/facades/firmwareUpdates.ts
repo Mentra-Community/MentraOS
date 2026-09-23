@@ -3,7 +3,8 @@ import {deviceIntegrations} from "../devices/builtins"
 import {FirmwareUpdateService} from "../ota/UpdateService"
 import {FirmwareUpdateError, type FirmwareEntryPoint, type FirmwareTarget} from "../ota/types"
 import {observeNativeRecovery} from "../ota/observeNativeRecovery"
-import {stopLiveAvailability} from "../devices/mentra-live/availabilityRuntime"
+import {startLiveAvailability, stopLiveAvailability} from "../devices/mentra-live/availabilityRuntime"
+import {isStarted} from "../runtime/bootstrap"
 
 export const firmwareUpdateService = new FirmwareUpdateService(deviceIntegrations)
 
@@ -49,6 +50,10 @@ export const firmwareUpdates = {
   suspendNewWork() {
     stopLiveAvailability()
     firmwareUpdateService.suspendNewWork()
+  },
+  /** Restore optional discovery after sign-in; retained update approvals stay suspended. */
+  resumeDiscovery() {
+    if (isStarted()) void startLiveAvailability()
   },
   diagnosticSnapshot: firmwareUpdateService.diagnosticSnapshot.bind(firmwareUpdateService),
 }

@@ -89,6 +89,10 @@ admits an allowed action against the displayed offer. `safeToRelease` governs
 device replacement and cleanup. A displayed failure can still require recovery.
 Call `assertSafeToRelease` before intentional logout, unpair or deployment changes.
 Runtime stop suspends optional checks/passes while retaining unsafe device work.
+Hosts receiving auth changes outside Engine's auth listener call `suspendNewWork`
+on auth loss/account replacement, then `resumeDiscovery` after sign-in. The latter
+only restores background discovery on a running Engine; it never resumes prior
+update approval. The mounted host retains ownership of its home-screen context.
 
 `retainedSnapshots`/`subscribeRetained` expose existing Engine sessions without
 opening them. `observeNativeRecovery` additionally reads native sessions after a

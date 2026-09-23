@@ -78,7 +78,8 @@ export class LiveAvailabilityMonitor {
     this.pollTimer = null
     this.invalidate()
     this.baseline = null
-    this.home = false
+    // Location belongs to the mounted host. Auth suspension must not erase it;
+    // the host still calls setHome(false) when it leaves or unmounts.
   }
 
   setHome(home: boolean): void {

@@ -73,6 +73,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     // Revocation/account replacement can happen without logout() or engine.stop().
     // Stop optional work before React removes the authenticated host; recovery stays alive.
     if (sessionSubject.current && sessionSubject.current !== subject) engine.firmwareUpdates.suspendNewWork()
+    if (subject && sessionSubject.current !== subject) engine.firmwareUpdates.resumeDiscovery()
     sessionSubject.current = subject
     setSession(next)
     setUser(next?.user ?? null)
@@ -86,6 +87,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
   useEffect(() => {
     let cancelled = false
+    let sessionEventSeen = false
     let unsubscribe: (() => void) | undefined
     setLoading(true)
 
@@ -117,18 +119,25 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       }
     } else if (workspaceAuth && activeDeployment.kind === "workspace") {
       const allowTelemetry = activeDeployment.manifest.telemetry
-      unsubscribe = workspaceAuth.onStateChange((next) => applySession(toMentraSession(next), allowTelemetry))
+      unsubscribe = workspaceAuth.onStateChange((next) => {
+        sessionEventSeen = true
+        applySession(toMentraSession(next), allowTelemetry)
+      })
       void workspaceAuth
         .getSession()
-        .then((next) => applySession(toMentraSession(next), allowTelemetry))
+        .then((next) => {
+          if (!sessionEventSeen) applySession(toMentraSession(next), allowTelemetry)
+        })
         .catch((error) => {
           console.warn("AuthContext: failed to restore workspace session", error)
-          applySession(null, allowTelemetry)
+          if (!sessionEventSeen) applySession(null, allowTelemetry)
         })
     } else {
       let authSubscription: {unsubscribe: () => void} | undefined
 
       void mentraAuth.getSession().then((res) => {
+        // A live auth event is newer than this initial asynchronous snapshot.
+        if (sessionEventSeen) return
         if (res.is_error()) {
           console.error("AuthContext: Error getting initial session:", res.error)
           applySession(null, true)
@@ -139,6 +148,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
       void (async () => {
         const res = await mentraAuth.onAuthStateChange((event, next: MentraAuthSession) => {
+          sessionEventSeen = true
           console.log(`AuthContext: auth state ${event}, session ${next ? "present" : "absent"}`)
           applySession(next, true)
         })
