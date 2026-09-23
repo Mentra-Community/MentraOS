@@ -37,9 +37,11 @@ MentraOS retains:
 The callback passes repository, immutable run/attempt identifiers and the
 authenticated routine ID. It does
 not send shell commands, executable paths or fixture overrides from public PRs.
-`E2E_PRIVATE_DISPATCH_TOKEN` is a scoped Actions-write capability for the private
-repository, read only by the trusted callback without checking out PR code.
-The private worker has separate source-read, claim and evidence-upload capabilities.
+The trusted callback mints a short-lived GitHub App token with Actions write
+access only to the private repository, without checking out PR code. Both
+repositories configure `TEST_RUN_GITHUB_APP_ID` and
+`TEST_RUN_GITHUB_APP_PRIVATE_KEY`. The private worker mints a separate
+source-read token and retains independent claim and evidence-upload capabilities.
 
 The callbacks must reach the repository's default branch and have their scoped
 credentials configured before they run. Private workflow activation, host/app

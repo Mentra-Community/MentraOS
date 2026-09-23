@@ -70,10 +70,11 @@ Before enabling:
 3. Verify the ordinary no-glasses PR/dev request path and its matching uploaded
    admin result. Staging supports the same path; do not make staging commits
    just to verify activation.
-4. Confirm the trusted callback has its scoped `E2E_PRIVATE_DISPATCH_TOKEN` and
-   the private worker has its separate source-read, claim and upload secrets.
-   Confirm the default branch is `dev`. GitHub schedules only run from the
-   default branch.
+4. Configure `TEST_RUN_GITHUB_APP_ID` and `TEST_RUN_GITHUB_APP_PRIVATE_KEY` in
+   both repositories. The callback mints a private Actions-write token; the
+   worker mints a source-read token for each phase and has separate claim and
+   upload secrets. Confirm the default branch is `dev`. GitHub schedules only
+   run from the default branch.
 5. Enable the repository variable, then inspect the next applicable midnight
    run and the four resulting request links. This command is an operator step,
    not part of the workflow:
