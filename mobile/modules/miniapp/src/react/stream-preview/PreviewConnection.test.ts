@@ -23,12 +23,20 @@ class FakeChannel implements PreviewControlChannel {
   protocolVersion = 1
   refuse: string | null = null
   staleNext = false
+  /** Handshakes that race a newer document (the host's `ready` after `handshake_without_ready`). */
+  supersedeHandshakes = 0
   private listeners = new Set<(event: PreviewHostEvent) => void>()
 
   async request(request: PreviewControlRequest): Promise<unknown> {
     this.requests.push(request)
     if (request.cmd === "handshake") {
       if (this.refuse) throw new PreviewControlError(this.refuse)
+      if (request.docGen && request.docGen !== this.docGen) return {stale: true}
+      if (this.supersedeHandshakes > 0) {
+        this.supersedeHandshakes -= 1
+        this.docGen += 1
+        return {stale: true}
+      }
       if (!this.leaseHeld) return {t: "waiting_for_lease", docGen: this.docGen}
       return {
         t: "config",
@@ -354,6 +362,56 @@ describe("PreviewConnection", () => {
     await settle()
     expect(h.connection.snapshot().staleReplies).toBe(1)
     expect(h.channel.cmds()).toEqual(["handshake", "configure:1", "handshake", "configure:1", "start:1"])
+  })
+
+  test("a handshake superseded by a newer document re-handshakes instead of going unsupported", async () => {
+    const h = setup()
+    h.channel.supersedeHandshakes = 1
+    const epoch = h.connection.nextMountEpoch()
+    h.connection.attach(h.sinkFor(epoch))
+    show(h.connection, epoch)
+    await settle()
+    expect(h.states).not.toContain("unsupported")
+    expect(h.errors).toEqual([])
+    expect(h.connection.currentState).toBe("open")
+    expect(h.channel.cmds()).toEqual(["handshake", "handshake", "configure:1", "start:1"])
+    expect(h.connection.snapshot().staleReplies).toBe(1)
+    expect(h.connection.documentGeneration).toBe(8)
+    expect(h.channel.requests.at(-1)!.docGen).toBe(8)
+  })
+
+  test("a lease after the host replaced the waiting document handshakes into the current one", async () => {
+    const h = setup()
+    h.channel.leaseHeld = false
+    const epoch = h.connection.nextMountEpoch()
+    h.connection.attach(h.sinkFor(epoch))
+    show(h.connection, epoch)
+    await settle()
+    expect(h.connection.documentGeneration).toBe(7)
+
+    h.channel.docGen = 8
+    h.channel.leaseHeld = true
+    h.channel.push({t: "lease_available"})
+    await settle()
+    expect(h.connection.currentState).toBe("open")
+    expect(h.channel.requests.filter((r) => r.cmd === "handshake").map((r) => r.docGen)).toEqual([0, 7, 0])
+    expect(h.connection.documentGeneration).toBe(8)
+  })
+
+  test("a host that keeps answering stale leaves the connection recoverable", async () => {
+    const h = setup()
+    h.channel.supersedeHandshakes = 10
+    const epoch = h.connection.nextMountEpoch()
+    h.connection.attach(h.sinkFor(epoch))
+    show(h.connection, epoch)
+    await settle()
+    expect(h.connection.currentState).toBe("error")
+    expect(h.channel.cmds()).toEqual(["handshake", "handshake", "handshake"])
+
+    h.channel.supersedeHandshakes = 0
+    h.fire("visibilitychange")
+    await settle()
+    expect(h.connection.currentState).toBe("open")
   })
 
   test("pack_failed halts this mount epoch until the next mount", async () => {

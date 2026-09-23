@@ -38,7 +38,11 @@ export interface PreviewDocumentConfig {
   docGen: number
 }
 
-export type PreviewHandshakeResult = PreviewDocumentConfig | {t: "waiting_for_lease"; docGen: number}
+/** `stale`: the host minted a newer document while this handshake was in flight. */
+export type PreviewHandshakeResult =
+  | PreviewDocumentConfig
+  | {t: "waiting_for_lease"; docGen: number}
+  | {t?: undefined; stale: true}
 
 /** Reply to configure/start/stop. `stale` means the host dropped it; that is not an error. */
 export interface PreviewControlReply {

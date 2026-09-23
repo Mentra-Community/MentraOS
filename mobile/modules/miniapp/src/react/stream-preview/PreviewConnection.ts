@@ -36,6 +36,8 @@ export const PREVIEW_PROTOCOL_VERSION = 1
 /** Automatic re-handshakes after a transport failure, per window, before giving up until remount. */
 const RECONNECT_BUDGET = 3
 const RECONNECT_WINDOW_MS = 60_000
+/** Immediate re-handshakes after the host answers a handshake as stale. */
+const STALE_HANDSHAKE_RETRIES = 2
 
 export type PreviewConnectionState =
   /** No handshake attempted yet in this document, or the lease ended and nobody wants frames. */
@@ -335,7 +337,7 @@ export class PreviewConnection {
     return this.handshaking
   }
 
-  private async handshake(): Promise<boolean> {
+  private async handshake(staleRetries = STALE_HANDSHAKE_RETRIES): Promise<boolean> {
     const channel = this.deps.channel
     if (!channel) return false
     const gen = this.connectionGen
@@ -355,6 +357,17 @@ export class PreviewConnection {
     if (gen !== this.connectionGen) return false
     if (!result || typeof result !== "object") {
       this.setState("error", {code: "transport_failed"})
+      return false
+    }
+    if ("stale" in result) {
+      // The docGen this page claimed (or the one minted for it mid-handshake) was superseded,
+      // e.g. by the `ready` that follows `handshake_without_ready`. Ask again as a page that does
+      // not know its document yet; the host answers with its current one.
+      this.counters.staleReplies += 1
+      previewTraceWarn("handshake_stale", {docGen: this.docGen, staleRetries})
+      this.docGen = 0
+      if (staleRetries > 0) return this.handshake(staleRetries - 1)
+      this.setState("error", {reason: "stale_identity"})
       return false
     }
     if (result.t === "waiting_for_lease") {
