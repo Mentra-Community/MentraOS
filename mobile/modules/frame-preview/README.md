@@ -169,3 +169,19 @@ with `installReloads == 0`. `LoopbackFrameSocketTests` (macOS) connects a real
 `URLSessionWebSocketTask`, checks token auth, rejects a wrong token, and asserts the listener is
 reachable on 127.0.0.1 only. The vImage path and the loopback socket compile only on Apple
 platforms.
+
+### CI and manual pre-merge checks
+
+Pull requests run the JVM suite (`Mobile App Android Unit Tests`), the SwiftPM suite on macOS
+(`Glasses Media Swift Tests`), and the fixture check, the host coordinator tests, the SDK tests
+and the gate tool tests (`Mobile App Quality Checks`). No PR workflow boots an Android emulator
+or an iOS simulator, so before merging a change to the native module or its transport, run
+these by hand and paste the result into the PR:
+
+- **Android WebView round trip:** `connectedDebugAndroidTest` (above) on an emulator or device
+  with a current Android System WebView.
+- **iOS in the app:** `FramePreviewModule.swift`, `FramePreviewSession.swift` and the tap hook
+  in `AcsMeetingModule.swift` sit outside the SwiftPM packages and have no XCTest target (the
+  tap's core logic is covered by glasses-media `CoreKit`). Build the app for a device and run a
+  call with the preview shown, hidden and reloaded, then check the `PREVIEW_TRACE` lines and
+  the NDJSON `end` counters.
