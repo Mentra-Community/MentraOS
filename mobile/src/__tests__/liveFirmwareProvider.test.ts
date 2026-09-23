@@ -2,7 +2,7 @@ import {DeviceIntegrationRegistry} from "@/../modules/engine/src/devices/types"
 import {MentraLiveFirmwareProvider} from "@/../modules/engine/src/devices/mentra-live/provider"
 import {
   acquireManagedLiveOwner,
-  recoverManagedLiveClock,
+  recoverLiveClock,
   validateManagedLiveTarget,
 } from "@/../modules/engine/src/devices/mentra-live/ownership"
 import {ota} from "@/../modules/engine/src/facades/ota"
@@ -132,7 +132,7 @@ describe("managed Live provider contract", () => {
     f.install({displayState: "failed", errorMsg: "Timed out"})
     expect(provider.snapshot()).toMatchObject({phase: "failed", safeToRelease: false})
     expect(() => service.release(target)).toThrow("owns")
-    expect(await recoverManagedLiveClock()).toBe(true)
+    expect(await recoverLiveClock()).toBe(true)
     expect(f.ports.installSession.retry).toHaveBeenCalledTimes(1)
   })
 

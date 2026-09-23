@@ -20,8 +20,8 @@ export function validateManagedLiveTarget(): Promise<void> | undefined {
   return validateTarget?.()
 }
 
-/** A managed flow retries through its coordinator, preserving its selected hotspot URL. */
-export async function recoverManagedLiveClock(): Promise<boolean> {
+/** Both execution owners retry through their coordinator, preserving the native attempt binding and selected hotspot URL. */
+export async function recoverLiveClock(): Promise<boolean> {
   const token = owner
   const retry = recoverClock
   if (!token || !retry) return false

@@ -5,7 +5,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {BgTimer} from "../utils/timers"
 import {useGlassesStore} from "../stores/glasses"
-import {hasManagedLiveOwner, recoverManagedLiveClock} from "../devices/mentra-live/ownership"
+import {hasLiveExecutionOwner, recoverLiveClock} from "../devices/mentra-live/ownership"
 
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {detectClockSkew} from "./gallerySyncClock"
@@ -86,7 +86,7 @@ export async function handleOtaClockSkewFromGlasses(
       }
 
       lastOtaClockFixAt = Date.now()
-      if (hasManagedLiveOwner()) return await recoverManagedLiveClock()
+      if (hasLiveExecutionOwner()) return await recoverLiveClock()
       const {buildNumber, otaVersionUrl} = useGlassesStore.getState()
       const manifestUrl = resolveOtaManifestUrl(otaVersionUrl, buildNumber)
       if (!manifestUrl) {
