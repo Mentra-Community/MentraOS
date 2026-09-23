@@ -487,6 +487,19 @@ describe("unsupported", () => {
     })
   })
 
+  test("a handshake that arrives before the view is bound waits for the binding", async () => {
+    meetings.join(PKG)
+    await startLease()
+    coordinator.documentReady(PKG)
+    const requestId = "early"
+    coordinator.handleUiRequest(PKG, requestId, {cmd: "handshake", docGen: 0, mountEpoch: 1})
+    await flush()
+    expect(ui.replies.has(requestId)).toBe(false)
+    await coordinator.bindView({packageName: PKG, hostViewTag: 7})
+    await flush()
+    expect(result(ui.replies.get(requestId)!)).toMatchObject({t: "config", docGen: 1})
+  })
+
   test("the reload-once fallback is counted", async () => {
     native.bindResult = {installReloadRequired: true}
     const outcome = await coordinator.bindView({packageName: PKG, hostViewTag: 1})

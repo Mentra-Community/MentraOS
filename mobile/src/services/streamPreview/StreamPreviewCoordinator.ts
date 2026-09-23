@@ -196,6 +196,8 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
   private readonly newId: () => string
   private readonly log: PreviewTraceLogger
   private readonly subscriptions: Array<{remove(): void}> = []
+  /** Handshakes that arrived before their WebView was bound. */
+  private readonly viewWaiters = new Set<() => void>()
   private readonly unsubscribeMeeting: () => void
 
   constructor(private readonly deps: StreamPreviewCoordinatorDeps) {
@@ -352,6 +354,7 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       binding: null,
     }
     this.view = view
+    for (const wake of [...this.viewWaiters]) wake()
     const binding = this.deps.native
       .bind({
         hostViewTag: options.hostViewTag,
@@ -518,8 +521,8 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
   }
 
   private async handshake(packageName: string, request: PageRequest): Promise<MentraUIHostReply> {
-    const view = this.view
-    if (!view || view.packageName !== packageName) {
+    const view = await this.waitForView(packageName)
+    if (!view) {
       return this.refusePage(packageName, "unsupported", "This WebView has no preview binding")
     }
     if (view.binding) await view.binding
@@ -567,6 +570,22 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
         docGen: doc.docGen,
       },
     }
+  }
+
+  /** A page can ask before its view is bound (nothing holds an iOS WebView's source). */
+  private async waitForView(packageName: string): Promise<ViewBinding | null> {
+    if (this.view?.packageName !== packageName) {
+      await new Promise<void>((resolve) => {
+        const wake = () => {
+          clearTimeout(timer)
+          this.viewWaiters.delete(wake)
+          resolve()
+        }
+        const timer = setTimeout(wake, STREAM_PREVIEW_BIND_TIMEOUT_MS)
+        this.viewWaiters.add(wake)
+      })
+    }
+    return this.view?.packageName === packageName ? this.view : null
   }
 
   /** One credential per document and lease; a page that asks twice gets the same answer. */
