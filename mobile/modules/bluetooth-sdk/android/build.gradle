@@ -272,6 +272,8 @@ dependencies {
   dependencies.add(publicMavenSdk ? 'compileOnly' : 'implementation', 'com.github.awxkee:avif-coder:1.7.3')
 
   testImplementation 'junit:junit:4.13.2'
+  // Exercise the real Expo setting entry points without publishing Expo in the SDK runtime.
+  testImplementation project(':expo-modules-core')
   testImplementation 'org.robolectric:robolectric:4.11.1'
   testImplementation 'org.assertj:assertj-core:3.24.2'
   // The Android SDK jar stubs org.json in JVM unit tests; the queue serializes real JSON.

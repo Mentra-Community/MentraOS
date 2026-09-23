@@ -31,6 +31,7 @@ class DeviceManagerSceneHandoffTest {
         val device = RecordingSGC(false)
         val directory = java.nio.file.Files.createTempDirectory("firmware-reconnect-test").toFile()
         val previousAddress = DeviceStore.get("bluetooth", "device_address") as? String ?: ""
+        val previousBrightness = DeviceStore.get("bluetooth", "brightness") ?: 50
         try {
             val updater = com.mentra.bluetoothsdk.sgcs.firmware.LiveFirmwareUpdater("native-owner", 1, { false }, {}, directory)
             updater.status("active", "install", "in_progress", 40, 1)
@@ -45,14 +46,30 @@ class DeviceManagerSceneHandoffTest {
             assertFalse(manager.allowsHostSettingUpdate("bluetooth", "pending_wearable"))
             assertTrue(manager.allowsHostSettingUpdate("bluetooth", "brightness"))
             assertTrue(manager.allowsHostSettingUpdate("bluetooth", "core_token"))
+            val module = BluetoothSdkModule()
+            BluetoothSdkModule::class.java.getDeclaredField("deviceManager").apply { isAccessible = true }.set(module, manager)
+            val functions = module.definition().syncFunctions
+            for (category in listOf("bluetooth", "core")) {
+                functions.getValue("set").callUserImplementation(arrayOf(category, "device_address", "late-single-setting"))
+                assertEquals("native-owner", DeviceStore.get("bluetooth", "device_address"))
+                functions.getValue("set").callUserImplementation(arrayOf(category, "brightness", 37))
+                assertEquals(37, DeviceStore.get("bluetooth", "brightness"))
+                functions.getValue("update").callUserImplementation(arrayOf(category, mapOf("device_address" to "late-batch-setting", "brightness" to 38)))
+                assertEquals("native-owner", DeviceStore.get("bluetooth", "device_address"))
+                assertEquals(38, DeviceStore.get("bluetooth", "brightness"))
+            }
             DeviceStore.set("bluetooth", "device_address", "different-device")
             manager.connectDefault()
             assertEquals(listOf("firmware-reconnect"), device.calls)
             assertSame(device, manager.sgc)
+            manager.sgc = null
+            functions.getValue("set").callUserImplementation(arrayOf("bluetooth", "device_address", "after-release"))
+            assertEquals("after-release", DeviceStore.get("bluetooth", "device_address"))
         } finally {
             manager.sgc = null
             manager.cleanup()
             DeviceStore.set("bluetooth", "device_address", previousAddress)
+            DeviceStore.set("bluetooth", "brightness", previousBrightness)
             directory.deleteRecursively()
         }
     }

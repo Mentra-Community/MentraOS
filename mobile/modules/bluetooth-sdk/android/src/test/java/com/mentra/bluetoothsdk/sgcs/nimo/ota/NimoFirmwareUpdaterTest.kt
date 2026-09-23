@@ -37,6 +37,11 @@ class NimoFirmwareUpdaterTest {
     }
     override fun nowMs() = 0L
     override fun close() { directory.deleteRecursively() }
+    fun reply(body: ByteArray) {
+      val sent = writes.last()
+      val length = body.size + 2
+      updater.receive(byteArrayOf(0x70, 7, 0x6e, 0, sent[4], (length shr 8).toByte(), length.toByte(), 0, sent[7]) + body + 0x33.toByte(), generation)
+    }
   }
 
   @Test fun admissionPrecedesPreparationAndUsesNegotiatedCapacity() = Harness().use { h ->
@@ -72,6 +77,40 @@ class NimoFirmwareUpdaterTest {
     assertNull(saved?.request?.manifestUrl)
     assertEquals(h.request.metadata, saved?.request?.metadata)
     assertEquals(h.request.artifact?.sha256, saved?.request?.artifact?.sha256)
+  }
+
+  @Test fun coldStartReleasesOnlyAttemptsProvenToPrecedeUpgradeEntry() {
+    // Stop during preparation, INFO, FILE_OFFSET, CAN_UPDATE, or after ENTER is submitted.
+    for (stage in 0..4) Harness().use { h ->
+      h.updater.start(h.request)
+      if (stage >= 1) { h.capacity = 244; h.prepareCallbacks[0](null) }
+      if (stage >= 2) h.reply("0600000e000e0205010000020103026464020301020400020501".chunked(2).map { it.toInt(16).toByte() }.toByteArray())
+      if (stage >= 3) h.reply(byteArrayOf(0, 0, 0, 0, 0, 18))
+      if (stage >= 4) h.reply(byteArrayOf(3))
+      assertFalse(h.updater.snapshot.safeToRelease)
+      val writes = h.writes.size
+      val preparations = h.prepareCallbacks.size
+      val recovered = NimoFirmwareUpdater("device", 2, h, h.directory)
+      assertEquals(stage < 4, recovered.snapshot.safeToRelease)
+      assertEquals(if (stage < 4) "failed" else "interrupted", recovered.snapshot.phase)
+      assertEquals(writes, h.writes.size); assertEquals(preparations, h.prepareCallbacks.size)
+      if (stage < 4) {
+        assertEquals("idle", recovered.acknowledge().phase)
+      } else {
+        assertEquals(0xE3, h.writes.last()[4].toInt() and 255)
+        assertThrows(FirmwareUpdaterException::class.java) { recovered.acknowledge() }
+        assertThrows(FirmwareUpdaterException::class.java) { recovered.reconcile() }
+      }
+      assertEquals(writes, h.writes.size) // No automatic retry, guessed resume, or reset.
+    }
+  }
+
+  @Test fun oldPreparingJournalWithoutPreEntryProofRemainsUnsafe() = Harness().use { h ->
+    FirmwareJournal("device", h.directory).write(FirmwareRecoveryRecord(
+      FirmwareUpdateSnapshot("nimo", "device", 1, phase = "preparing", safeToRelease = false, sessionId = "old-session"), h.request))
+    assertFalse(h.updater.snapshot.safeToRelease)
+    assertThrows(FirmwareUpdaterException::class.java) { h.updater.acknowledge() }
+    assertTrue(h.writes.isEmpty())
   }
 
   @Test fun latePreparationCannotStartAfterTimeoutOrReconnect() = Harness().use { h ->

@@ -48,10 +48,14 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
         require(record.snapshot.integrationId == "nimo" && record.request.kind == "file") { "Recovery record belongs to another updater" }
         request = record.request
         rebootEvidence = record.recoveryStage == "synchronized" || record.snapshot.phase in listOf("restarting", "verifying", "complete")
+        // This marker is atomically replaced before ENTER can be submitted. Admission and
+        // read-only preflight own the live connection, but need no device recovery after a crash.
+        val beforeEntry = record.recoveryStage == "before-entry" && record.snapshot.phase == "preparing"
         state.update { initial ->
           record.snapshot.copy(updaterId = initial.updaterId, connectionGeneration = connectionGeneration,
-            phase = if (record.snapshot.safeToRelease) record.snapshot.phase else "interrupted",
-            error = if (record.snapshot.safeToRelease) record.snapshot.error else "A previous firmware update requires device inspection",
+            phase = if (beforeEntry) "failed" else if (record.snapshot.safeToRelease) record.snapshot.phase else "interrupted",
+            safeToRelease = beforeEntry || record.snapshot.safeToRelease,
+            error = if (beforeEntry) "The previous attempt stopped before upgrade entry; check for an update again" else if (record.snapshot.safeToRelease) record.snapshot.error else "A previous firmware update requires device inspection",
             canReconcile = rebootEvidence && !record.snapshot.safeToRelease)
         }
       }
@@ -96,7 +100,7 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
         check(input.read() == -1) { "Firmware file grew after validation" }
         bytes
       }
-      storage.write(FirmwareRecoveryRecord(snapshot, recoveryRequest))
+      storage.write(FirmwareRecoveryRecord(snapshot, recoveryRequest, recoveryStage = "before-entry"))
       prepare {
         ports.connection()?.let { ready -> manager = makeManager(firmware, target, ready); manager?.start() }
       }

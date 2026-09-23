@@ -52,12 +52,18 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
                 }
                 request = record.request
                 rebootEvidence = record.recoveryStage == "synchronized" || ["restarting", "verifying", "complete"].contains(record.snapshot.phase)
+                // Atomically replaced before ENTER. Admission and read-only preflight own the
+                // live connection, but need no device recovery after the process stops.
+                let beforeEntry = record.recoveryStage == "before-entry" && record.snapshot.phase == "preparing"
                 state.update {
                     let updaterId = $0.updaterId
                     $0 = record.snapshot
                     $0.updaterId = updaterId
                     $0.connectionGeneration = connectionGeneration
-                    if !$0.safeToRelease {
+                    if beforeEntry {
+                        $0.phase = "failed"; $0.safeToRelease = true; $0.canReconcile = false
+                        $0.error = "The previous attempt stopped before upgrade entry; check for an update again"
+                    } else if !$0.safeToRelease {
                         $0.phase = "interrupted"
                         $0.error = "A previous firmware update requires device inspection"
                         $0.canReconcile = rebootEvidence
@@ -131,7 +137,7 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
                 throw FirmwareUpdaterError("invalid_artifact", "Firmware file grew after validation")
             }
             // Preserve admitted identity before any native preparation. Manager rechecks actual bytes before entry.
-            try journal.write(.init(snapshot: snapshot, request: recoveryRequest))
+            try journal.write(.init(snapshot: snapshot, request: recoveryRequest, recoveryStage: "before-entry"))
             prepare { [weak self] in
                 guard let self, let ready = self.ports.connection() else { return }
                 self.manager = self.makeManager(firmware: firmware, target: target, connection: ready)

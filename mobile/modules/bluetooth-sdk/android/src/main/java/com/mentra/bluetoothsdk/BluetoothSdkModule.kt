@@ -139,6 +139,12 @@ private inline fun <
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
     private var deviceManager: DeviceManager? = null
+    private fun applyHostSetting(category: String, key: String, value: Any?) {
+        val normalizedCategory = ObservableStore.normalizeCategory(category)
+        if (value != null && deviceManager?.allowsHostSettingUpdate(normalizedCategory, key) != false) {
+            DeviceStore.apply(normalizedCategory, key, value)
+        }
+    }
     private val logForwarding = LogForwardingBudget()
     private val sdkListener =
             object : MentraBluetoothSdkListener {
@@ -475,17 +481,12 @@ class BluetoothSdkModule : Module() {
         Function("getDefaultDevice") { sdk?.getDefaultDevice()?.toMap() }
 
         Function("set") { category: String, key: String, value: Any? ->
-            if (value != null) {
-                DeviceStore.apply(category, key, value)
-            }
+            applyHostSetting(category, key, value)
         }
 
         Function("update") { category: String, values: Map<String, Any?> ->
-            val normalizedCategory = ObservableStore.normalizeCategory(category)
             values.forEach { (key, value) ->
-                if (value != null && deviceManager?.allowsHostSettingUpdate(normalizedCategory, key) != false) {
-                    DeviceStore.apply(normalizedCategory, key, value)
-                }
+                applyHostSetting(category, key, value)
             }
             // Persist core_token to SharedPreferences so MentraLive.getCoreToken() finds it
             // (bridge may run this after glasses_ready; prefs survive retries and next connection)
