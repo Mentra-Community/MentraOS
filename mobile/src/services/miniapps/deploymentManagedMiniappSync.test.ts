@@ -1,5 +1,6 @@
 import {Directory, File, Paths} from "expo-file-system"
 import {configure, resetForTests} from "../../../modules/engine/src/runtime/bootstrap"
+import {runInstallFilesystemTransaction} from "../../../modules/engine/src/services/installOperation"
 import {
   isHostTrustedSystemMiniapp,
   canStoreUpdateSystemMiniapp,
@@ -36,6 +37,27 @@ jest.mock("@/utils/auth/authClient", () => ({
   default: {signOut: jest.fn(async () => ({is_error: () => false}))},
 }))
 jest.mock("@/utils/settleFrame", () => ({settleFrame: jest.fn(async () => {})}))
+jest.mock("expo/fetch", () => ({
+  fetch: async (url: string) => {
+    let read = false
+    return {
+      ok: true,
+      url,
+      headers: {get: () => null},
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (read) return {done: true}
+            read = true
+            return {done: false, value: Uint8Array.from(Buffer.from("archive"))}
+          },
+          cancel: async () => {},
+          releaseLock: () => {},
+        }),
+      },
+    }
+  },
+}))
 jest.mock("react-native-mmkv", () => {
   const stores = new Map<string, Map<string, string>>()
   return {
@@ -427,7 +449,7 @@ it.each(["workspace exit", "logout"])(
   },
 )
 
-it("finishes and records an in-flight unzip before workspace exit cleans its ownership", async () => {
+it("settles in-flight extraction before workspace exit reconciles ownership", async () => {
   removeInstalledFixture()
   const started = deferred()
   const unzip = deferred()
@@ -509,3 +531,63 @@ it("keeps a workspace-adopted first-party bundle unprivileged and rejects Store 
   expect((await registry.uninstall(pkg, version)).is_error()).toBe(true)
   expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, version))).toBe(true)
 })
+
+it.each(["Store", "bundled"])("rechecks workspace ownership after a %s install waits in the queue", async (source) => {
+  selectDeployment(consumer)
+  const entered = deferred()
+  const release = deferred()
+  const blocked = runInstallFilesystemTransaction(async () => {
+    entered.resolve()
+    await release.promise
+  })
+  await entered.promise
+  const install =
+    source === "bundled"
+      ? registry.installFromLocalZip("consumer.zip")
+      : registry.installFromUrl("https://store.example/call.zip", {
+          expectedPackageName: pkg,
+          expectedVersion: version,
+          expectedBundleSha256: "a".repeat(64),
+          releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+        })
+  // Drain the mock download/validation, leaving activation behind the held queue.
+  await new Promise((resolve) => setImmediate(resolve))
+  selectDeployment(workspace)
+  release.resolve()
+  await blocked
+  expect((await install).is_error()).toBe(true)
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+  await deploymentManagedMiniappSync.sync(workspace)
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
+})
+
+it.each(["Store", "bundled"])(
+  "preserves the consumer bundle when workspace selection changes during %s extraction",
+  async (source) => {
+    selectDeployment(consumer)
+    const entered = deferred()
+    const release = deferred()
+    mockUnzip.mockImplementationOnce(() => {
+      entered.resolve()
+      return release.promise
+    })
+    mockScript = "late Store replacement"
+    const install =
+      source === "bundled"
+        ? registry.installFromLocalZip("consumer.zip")
+        : registry.installFromUrl("https://store.example/call.zip", {
+            expectedPackageName: pkg,
+            expectedVersion: version,
+            expectedBundleSha256: "a".repeat(64),
+            releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+          })
+    await entered.promise
+    selectDeployment(workspace)
+    release.resolve()
+    expect((await install).is_error()).toBe(true)
+    expect(installedScript()).toBe("verified call")
+    mockScript = "verified call"
+    await deploymentManagedMiniappSync.sync(workspace)
+    expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
+  },
+)

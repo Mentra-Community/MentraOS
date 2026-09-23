@@ -718,8 +718,11 @@ async function downloadAndInstallMiniApp(
       ...resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, false),
       ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
     }
-    assertInstallAuthority(manifest.packageName, releaseIdentity, false)
-    assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
+    const validateTrust = () => {
+      assertInstallAuthority(manifest.packageName, releaseIdentity, false)
+      assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
+    }
+    validateTrust()
     console.log("ZIP: done downloading, starting unzip")
     const installed = await unpackMiniApp(
       downloadedZipPath,
@@ -739,8 +742,13 @@ async function downloadAndInstallMiniApp(
           },
           activation,
         ),
-      opts?.beforeActivate,
-      () => assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity),
+      () => {
+        // Workspace selection can change while native extraction is awaiting.
+        // Recheck before any installed files move, then reserve idle activation.
+        validateTrust()
+        opts?.beforeActivate?.()
+      },
+      validateTrust,
     )
     return {
       ...installed,
@@ -1059,8 +1067,11 @@ class AppRegistry {
       const releaseIdentity = resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, true)
       if (manifest.publisherKeyFingerprint) releaseIdentity.publisherKeyFingerprint = manifest.publisherKeyFingerprint
       const candidate = {version: opts?.versionOverride ?? manifest.version, verifiedBundleSha256}
-      assertInstallAuthority(manifest.packageName, releaseIdentity, true, candidate)
-      assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
+      const validateTrust = () => {
+        assertInstallAuthority(manifest.packageName, releaseIdentity, true, candidate)
+        assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
+      }
+      validateTrust()
       const {packageName, version} = await unpackMiniApp(
         zipPath,
         opts?.versionOverride,
@@ -1072,11 +1083,11 @@ class AppRegistry {
         opts?.onProgress,
         ({packageName, version}, activation) =>
           this.finalizeInstall(packageName, version, releaseIdentity, (state) => activation.recordRecoveryState(state)),
-        opts?.beforeActivate,
         () => {
-          assertInstallAuthority(manifest.packageName, releaseIdentity, true, candidate)
-          assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
+          validateTrust()
+          opts?.beforeActivate?.()
         },
+        validateTrust,
         opts?.adoptIdenticalInstalledVersion
           ? async (pkg, ver, extracted, installed) => {
               const identity = this.getReleaseIdentity(pkg, ver)
