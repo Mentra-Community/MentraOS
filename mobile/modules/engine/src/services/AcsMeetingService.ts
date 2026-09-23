@@ -634,6 +634,8 @@ class AcsMeetingService {
   private lastMicLevel: {meanAbs: number; peak: number} | null = null
   /** Guards [releaseHostState] so a remote hang-up followed by an explicit leave releases once. */
   private hostStateReleased = true
+  /** Read-only observers of a meeting ending; see [onMeetingReleased]. */
+  private readonly releasedListeners = new Set<(instanceId: string) => void>()
 
   setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
     this.onState = handler
@@ -645,6 +647,24 @@ class AcsMeetingService {
 
   ownerPackage(): string | null {
     return this.owner
+  }
+
+  /**
+   * The active meeting and a per-meeting id, or null when there is none. A new join always gets a
+   * new id, so a lease recorded against one meeting can never be inherited by the next.
+   */
+  meetingInstance(): {ownerPackage: string; instanceId: string} | null {
+    if (!this.owner || this.hostStateReleased) return null
+    return {ownerPackage: this.owner, instanceId: `acs-${this.callGeneration}`}
+  }
+
+  /**
+   * Observe meetings ending, by the id [meetingInstance] reported. Observers cannot affect the
+   * meeting: they run after the release and their failures are swallowed here.
+   */
+  onMeetingReleased(listener: (instanceId: string) => void): () => void {
+    this.releasedListeners.add(listener)
+    return () => this.releasedListeners.delete(listener)
   }
 
   /**
@@ -1300,6 +1320,7 @@ class AcsMeetingService {
   private async releaseHostState(): Promise<void> {
     if (this.hostStateReleased) return
     this.hostStateReleased = true
+    const releasedInstance = `acs-${this.callGeneration}`
     this.callGeneration++
     // Before anything else: a caller parked on a frame that will now never arrive has to be
     // rejected, or a leave mid-join leaves the orchestrator waiting out its whole timeout.
@@ -1319,6 +1340,13 @@ class AcsMeetingService {
     this.ingestUrl = null
     this.lastMediaRestartAt = 0
     this.lastState = {state: "idle", muted: false}
+    for (const listener of [...this.releasedListeners]) {
+      try {
+        listener(releasedInstance)
+      } catch (error) {
+        console.warn("[AcsMeeting] meeting-released observer threw", error)
+      }
+    }
   }
 
   /**
