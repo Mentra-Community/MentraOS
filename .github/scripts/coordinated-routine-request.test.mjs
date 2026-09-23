@@ -41,6 +41,52 @@ test("exact selection never substitutes another run, attempt, branch or source",
   }
 })
 
+test("retained run artifacts cannot qualify skipped, earlier or dry-run publication attempts", async () => {
+  for (const scenario of ["earlier-attempt", "later-skipped", "dry-run", "missing-publish-step", "ambiguous-finalizer"]) {
+    const {state, options} = coordinatedFixture()
+    const published = structuredClone(state.jobs[0])
+    if (scenario === "earlier-attempt") {
+      state.run.run_attempt = 1
+      state.jobs.unshift({...published, id: 999, run_attempt: 1, conclusion: "skipped", steps: []})
+    }
+    if (scenario === "later-skipped") {
+      state.jobs.unshift({...published, id: 999, run_attempt: 1})
+      state.jobs[1].conclusion = "skipped"
+    }
+    if (scenario === "dry-run") state.jobs[0].steps[0].conclusion = "skipped"
+    if (scenario === "missing-publish-step") state.jobs[0].steps = []
+    if (scenario === "ambiguous-finalizer") state.jobs.push({...published, id: 1002})
+    const request = await createRoutineRequest({...options, sourcePublicationAttempt: String(state.run.run_attempt)})
+    assert.equal(request.status, "no-artifact", scenario)
+    assert.match(request.reason, /did not publish immutable assets/, scenario)
+    assert.equal(request.selection, null)
+    assert.ok(state.calls.some(call => call.jobs?.run_id === state.run.id))
+    assert.equal(state.calls.some(call => call.url), false, "Reject before reading retained CDN assets")
+  }
+})
+
+test("the actual publishing retry remains selectable and callback verification repeats the job gate", async () => {
+  const {state, options} = coordinatedFixture()
+  state.jobs.unshift({...state.jobs[0], id: 999, run_attempt: 1, conclusion: "skipped", steps: []})
+  const request = await createRoutineRequest(options)
+  assert.equal(request.status, "ready")
+  assert.equal(request.selection.producer.publicationAttempt, 2)
+  await verifyCoordinatedReadyRequest({...options, request})
+  state.jobs[1].steps[0].conclusion = "skipped"
+  await assert.rejects(verifyCoordinatedReadyRequest({...options, request}), /did not publish immutable assets/)
+})
+
+test("incomplete publication job history cannot establish the producing attempt", async () => {
+  for (const response of [{total_count: 2, jobs: []}, {total_count: 1000, jobs: []}, {jobs: []}]) {
+    const {state, options} = coordinatedFixture()
+    state.jobsResponse = response
+    const request = await createRoutineRequest(options)
+    assert.equal(request.status, "no-artifact")
+    assert.match(request.reason, /job history is incomplete/)
+    assert.equal(state.calls.some(call => call.url), false)
+  }
+})
+
 test("changed or mismatched publication files cannot become ready", async () => {
   const mutations = [s => s.plan.sourceCommit = "f".repeat(40), s => s.plan.channel = "beta",
     s => s.receipt.app.buildSha = "f".repeat(40), s => s.receipt.app.backend = "staging",

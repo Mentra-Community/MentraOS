@@ -3,8 +3,6 @@ import {COORDINATED_WORKFLOW, resolveCoordinatedSelection} from "./coordinated-r
 export const NIGHTLY_WORKFLOW = ".github/workflows/nightly-device-routines.yml"
 export const NIGHTLY_SEND_STEP = "Send the nightly routine request"
 export const NIGHTLY_ROUTINES = Object.freeze(["day1-ota", "mentra-call"])
-export const COORDINATED_FINALIZE_JOB = "Finalize immutable release bill of materials"
-export const COORDINATED_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets"
 const REPOSITORY = "Mentra-Community/MentraOS"
 const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
 const SHA = /^[a-f0-9]{40}$/
@@ -34,14 +32,6 @@ async function completePages(read, key) {
 const jobsFor = (github, context, runId) => completePages(page => github.rest.actions.listJobsForWorkflowRun({
   ...context.repo, run_id: runId, filter: "all", per_page: 100, page,
 }), "jobs")
-
-async function publishedAttempt(github, context, candidate) {
-  const jobs = await jobsFor(github, context, candidate.id)
-  const matched = jobs.filter(job => job.name === COORDINATED_FINALIZE_JOB && job.run_attempt === candidate.run_attempt)
-  return matched.length === 1 && matched[0].status === "completed" && matched[0].conclusion === "success" &&
-    matched[0].steps?.some(step => step.name === COORDINATED_PUBLISH_STEP &&
-      step.status === "completed" && step.conclusion === "success")
-}
 
 /** Two UTC triggers cover DST. Use the intended trigger, allowing queue delays. */
 export function nightlyDate(cron, createdAt) {
@@ -93,8 +83,6 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
     for (const candidate of candidates) {
       const source = {kind: "coordinated-release", channel, buildRunId: candidate.id, publicationAttempt: candidate.run_attempt}
       try {
-        requireThat(await publishedAttempt(github, context, candidate),
-          "This attempt did not publish immutable assets; dry runs and retained earlier attempts are ineligible")
         const publication = await resolveCoordinatedSelection({github, context, source, fetchImpl})
         selected = {sourceRunId: candidate.id, publicationAttempt: candidate.run_attempt,
           releaseIdentity: publication.build.releaseIdentity}

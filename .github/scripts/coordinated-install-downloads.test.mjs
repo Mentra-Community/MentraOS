@@ -172,7 +172,8 @@ test("restore accepts only a complete matching published receipt and its origina
 test("coordinated routine links select the exact source and archive without claiming execution", async () => {
   for (const channel of ["dev", "staging"]) {
     const {state, options} = coordinatedFixture(channel)
-    const env = {BRANCH: channel, RELEASE_SCOPE: "core", FINALIZE_RESULT: "success", RELEASE_IDENTITY: state.plan.releaseIdentity,
+    const env = {BRANCH: channel, RELEASE_SCOPE: "core", FINALIZE_RESULT: "success", RELEASE_PAGE_RESULT: "success",
+      EXAMPLES_DISPATCH_RESULT: "success", RELEASE_IDENTITY: state.plan.releaseIdentity,
       REPOSITORY: "Mentra-Community/MentraOS", SHA: state.plan.sourceCommit, RUN_ID: "100", RUN_ATTEMPT: "2",
       MAC_URL: state.receipt.app.otaManifestUrl.replace(state.plan.artifactNames.otaManifest, state.receipt.artifacts.mac.name)}
     const blocks = await coordinatedRoutineLinks(env, options.fetchImpl)
@@ -190,6 +191,12 @@ test("coordinated routine links select the exact source and archive without clai
       const unavailable = JSON.stringify(await coordinatedRoutineLinks({...env, ...override}, options.fetchImpl))
       assert.match(unavailable, /Unavailable/)
       assert.doesNotMatch(unavailable, /Results for this exact build/)
+    }
+    for (const key of ["RELEASE_PAGE_RESULT", "EXAMPLES_DISPATCH_RESULT"]) for (const result of ["failure", "cancelled", "skipped", undefined]) {
+      const notRequested = JSON.stringify(await coordinatedRoutineLinks({...env, [key]: result}, options.fetchImpl))
+      assert.match(notRequested, /Not requested/)
+      assert.doesNotMatch(notRequested, /pending/)
+      assert.match(notRequested, /Results for this exact build/, "A published artifact remains reviewable even when the callback cannot run")
     }
     assert.deepEqual(await coordinatedRoutineLinks({...env, RELEASE_SCOPE: "examples"}, options.fetchImpl), [])
   }

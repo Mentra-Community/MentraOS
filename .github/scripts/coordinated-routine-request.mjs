@@ -5,12 +5,38 @@ import {jsonArtifact, REQUEST_WORKFLOW, sourcePublication} from "./request-e2e-r
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 export const COORDINATED_WORKFLOW = ".github/workflows/coordinated-release.yml"
+export const COORDINATED_FINALIZE_JOB = "Finalize immutable release bill of materials"
+export const COORDINATED_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets"
 const REPOSITORY = "Mentra-Community/MentraOS"
 const SHA = /^[a-f0-9]{40}$/
 const HASH = /^[a-f0-9]{64}$/
 const positive = (value) => Number.isSafeInteger(value) && value > 0
 const requireThat = (value, message) => { if (!value) throw new Error(message) }
 const pin = ({url, sha256, size}) => ({url, sha256, size})
+
+/** Artifacts belong to a run, so authenticate the actual publication attempt separately. */
+async function requirePublishedAttempt(github, context, run) {
+  const jobs = []
+  let expected
+  for (let page = 1; ; page++) {
+    const {data} = await github.rest.actions.listJobsForWorkflowRun({...context.repo,
+      run_id: run.id, filter: "all", per_page: 100, page})
+    requireThat(Number.isSafeInteger(data?.total_count) && data.total_count >= 1 && data.total_count < 1000 &&
+      Array.isArray(data.jobs), "Coordinated publication job history is incomplete")
+    expected ??= data.total_count
+    requireThat(data.total_count === expected, "Coordinated publication job history changed")
+    jobs.push(...data.jobs)
+    if (jobs.length >= expected) break
+    requireThat(data.jobs.length === 100, "Coordinated publication job history is incomplete")
+  }
+  requireThat(jobs.length === expected && jobs.every(job => positive(job?.id)) &&
+    new Set(jobs.map(job => job.id)).size === expected, "Coordinated publication job history is incomplete")
+  const matched = jobs.filter(job => job.name === COORDINATED_FINALIZE_JOB && job.run_attempt === run.run_attempt)
+  requireThat(matched.length === 1 && matched[0].status === "completed" && matched[0].conclusion === "success" &&
+    matched[0].steps?.some(step => step.name === COORDINATED_PUBLISH_STEP &&
+      step.status === "completed" && step.conclusion === "success"),
+  "Selected coordinated attempt did not publish immutable assets; dry runs and retained artifacts are ineligible")
+}
 
 function releaseCoordinates(identity, channel) {
   const match = /^(\d+\.\d+\.\d+)-(dev|beta)\.([1-9]\d*)$/.exec(identity ?? "")
@@ -61,6 +87,7 @@ export async function coordinatedSourceRun(github, context, source) {
     ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === source.channel && SHA.test(run.head_sha ?? "") &&
     run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
   "Selected coordinated workflow attempt did not successfully publish this channel")
+  await requirePublishedAttempt(github, context, run)
   const {data: branch} = await github.rest.git.getRef({...context.repo, ref: `heads/${source.channel}`})
   requireThat(branch.ref === `refs/heads/${source.channel}` && branch.object?.type === "commit" && SHA.test(branch.object.sha ?? ""),
     "Missing authenticated release channel ref")

@@ -2,8 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {readFile} from "node:fs/promises"
 import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
-import {COORDINATED_WORKFLOW} from "./coordinated-routine-request.mjs"
-import {COORDINATED_FINALIZE_JOB, COORDINATED_PUBLISH_STEP, NIGHTLY_SEND_STEP, NIGHTLY_WORKFLOW,
+import {COORDINATED_WORKFLOW, COORDINATED_FINALIZE_JOB, COORDINATED_PUBLISH_STEP} from "./coordinated-routine-request.mjs"
+import {NIGHTLY_SEND_STEP, NIGHTLY_WORKFLOW,
   nightlyDate, nightlyJobName, planNightlyRequests, sendNightlyRequest} from "./nightly-device-routines.mjs"
 
 const repository = "Mentra-Community/MentraOS", sha = "b".repeat(40)
@@ -97,10 +97,11 @@ test("newer dry-run and missing-artifact successes cannot replace the latest rea
   f.state.candidates.dev = [f.dev.state.run, missing, dry]
   f.state.jobs.set(102, [{...publicationJob(1021), steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "skipped"}]}])
   f.state.jobs.set(101, [publicationJob(1011)])
+  f.publications.set(102, {run: dry, artifacts: [{...f.dev.state.artifacts[0], workflow_run: {id: 102, head_sha: dry.head_sha}}]})
   f.publications.set(101, {run: missing, artifacts: []})
   const result = await planNightlyRequests(f.options)
   assert.ok(result.requests.filter(row => row.channel === "dev").every(row => row.sourceRunId === 100))
-  assert.equal(f.state.calls.some(([kind, input]) => kind === "attempt" && input.run_id === 102), false)
+  assert.equal(f.state.calls.some(([kind, input]) => kind === "jobs" && input.run_id === 102), true)
 })
 
 test("a successful earlier attempt cannot qualify the selected publication retry", async () => {

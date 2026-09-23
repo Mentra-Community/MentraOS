@@ -100,7 +100,11 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch) {
       url.search = new URLSearchParams({testRuns: "1", repository: env.REPOSITORY, headSha: env.SHA,
         archiveSha256: selection.archive.sha256, routineId: "no-glasses", platform: "ios-mac"}).toString()
       results = ` · <${url.href}|Results for this exact build>`
-      detail = "Automatic request follows successful workflow completion; execution and results are pending."
+      // Finalize already depends on the core release jobs. These sibling jobs can
+      // still fail afterward, preventing the successful-workflow callback.
+      detail = ["FINALIZE_RESULT", "RELEASE_PAGE_RESULT", "EXAMPLES_DISPATCH_RESULT"].every(key => env[key] === "success")
+        ? "Automatic request follows successful workflow completion; execution and results are pending."
+        : "Not requested: the coordinated workflow has not met the successful-completion requirement."
     } catch { detail = "Unavailable: published Mac metadata could not be verified." }
   }
   return [{type: "section", text: {type: "mrkdwn", text:
