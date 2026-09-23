@@ -787,9 +787,8 @@ class MantleManager {
     )
       return
     const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
-    if (approved !== null && !approved.includes(packageName)) {
-      throw new Error(`${packageName} is outside the workspace allowlist`)
-    }
+    // Bundled consumer assets excluded by the workspace are expected skips.
+    if (approved !== null && !approved.includes(packageName)) return
     if (shouldHideMiniapp(packageName)) return
 
     // Bundling is an initial-delivery/update channel, not a way to undo a

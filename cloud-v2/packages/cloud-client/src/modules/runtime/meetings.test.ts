@@ -4,7 +4,7 @@ import {noopLogger} from "../../logger"
 import {Meetings} from "./meetings"
 
 const guest = {token: "acs", identityMode: "guest" as const, acsUserId: "user", expiresOn: "2030-01-01"}
-function fixture(response: object) {
+function fixture(response: object, status = 200) {
   const calls: {url: string; init?: RequestInit}[] = []
   const meetings = new Meetings(
     createHttpClient({
@@ -13,7 +13,7 @@ function fixture(response: object) {
       logger: noopLogger,
       fetch: async (url, init) => {
         calls.push({url: String(url), init})
-        return Response.json(response)
+        return Response.json(response, {status})
       },
     }),
   )
@@ -60,6 +60,14 @@ describe("Runtime meeting creation", () => {
     identityMode: "guest",
     guestReason: "no-entra-identity",
   } as const
+  test.each([
+    [403, "Teams token verification failed"],
+    [503, "Teams meeting creation is not configured on this Runtime"],
+  ])("surfaces Runtime's error detail for HTTP %s", async (status, message) => {
+    const {meetings, calls} = fixture({error: "meeting_error", message}, status)
+    await expect(meetings.createTeamsMeeting({})).rejects.toThrow(message)
+    expect(calls).toHaveLength(1)
+  })
   test("uses the selected Runtime, preserves identity metadata, and strips unexpected fields", async () => {
     const {meetings, calls} = fixture({...created, token: "must-stay-host-only"})
     expect(await meetings.createTeamsMeeting({subject: "Standup", durationMinutes: 20})).toEqual(created)
