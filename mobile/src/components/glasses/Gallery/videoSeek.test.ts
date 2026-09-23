@@ -1,4 +1,4 @@
-import {getVideoSeekTime} from "./videoSeek"
+import {getVideoSeekTime, isVideoAtEnd} from "./videoSeek"
 
 describe("getVideoSeekTime", () => {
   it("keeps the reported video's endpoint inside the asset after native rounding", () => {
@@ -25,5 +25,22 @@ describe("getVideoSeekTime", () => {
     [Infinity, 60, 0],
   ])("bounds seek %s with duration %s to %s", (requestedTime, duration, expected) => {
     expect(getVideoSeekTime(requestedTime, duration)).toBe(expected)
+  })
+})
+
+describe("isVideoAtEnd", () => {
+  it.each([
+    {currentTime: 60, duration: 60, expected: true},
+    {currentTime: 59.999, duration: 60, expected: true},
+    {currentTime: 59.9, duration: 60, expected: false},
+    {currentTime: 30, duration: 60, expected: false},
+    {currentTime: 0, duration: 0.05, expected: false},
+    {currentTime: 0.05, duration: 0.05, expected: true},
+    {currentTime: 0, duration: 0, expected: false},
+    {currentTime: NaN, duration: 60, expected: false},
+    {currentTime: Infinity, duration: 60, expected: false},
+    {currentTime: 60, duration: Infinity, expected: false},
+  ])("checks position $currentTime against duration $duration", ({currentTime, duration, expected}) => {
+    expect(isVideoAtEnd(currentTime, duration)).toBe(expected)
   })
 })

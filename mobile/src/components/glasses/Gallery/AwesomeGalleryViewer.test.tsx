@@ -179,6 +179,15 @@ describe("gallery video playback", () => {
     act(() => (mockVideoProps[event] as (payload: unknown) => void)(payload))
   }
 
+  function finishVideo() {
+    act(() => {
+      const onProgress = mockVideoProps.onProgress as (payload: {currentTime: number}) => void
+      const onEnd = mockVideoProps.onEnd as () => void
+      onProgress({currentTime: duration})
+      onEnd()
+    })
+  }
+
   function emitSlider(event: string, value = 0) {
     act(() => (mockSliderProps[event] as (value: number) => void)(value))
   }
@@ -228,7 +237,7 @@ describe("gallery video playback", () => {
   it("preserves playback intent if an old end event arrives while dragging", () => {
     renderVideo()
     emitSlider("onSlidingStart")
-    emitVideo("onEnd")
+    finishVideo()
     emitSlider("onSlidingComplete", 30)
     expect(mockVideoProps.paused).toBe(false)
     expect(mockSeek).toHaveBeenLastCalledWith(30)
@@ -257,7 +266,7 @@ describe("gallery video playback", () => {
 
   it("stays stopped after end events and replays from zero", () => {
     const {view} = renderVideo()
-    emitVideo("onEnd")
+    finishVideo()
     expect(mockSliderProps.value).toBe(duration)
     emitVideo("onProgress", {currentTime: duration - 1})
     expect(mockSliderProps.value).toBe(duration)
@@ -270,7 +279,7 @@ describe("gallery video playback", () => {
 
   it("can seek backward after ending and play from the selected position", () => {
     const {view} = renderVideo()
-    emitVideo("onEnd")
+    finishVideo()
     emitSlider("onSlidingStart")
     emitSlider("onSlidingComplete", 30)
     expect(mockVideoProps.paused).toBe(true)
@@ -280,9 +289,33 @@ describe("gallery video playback", () => {
     expect(mockVideoProps.paused).toBe(false)
   })
 
+  it("ignores a late end event after seeking backward from completion", () => {
+    const {view} = renderVideo()
+    finishVideo()
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", 30)
+    emitVideo("onEnd")
+    expect(mockSliderProps.value).toBe(30)
+    expect(view.queryByText("replay")).toBeNull()
+    fireEvent.press(view.getByText("play"))
+    expect(mockSeek).toHaveBeenCalledTimes(1)
+    expect(mockSeek).toHaveBeenLastCalledWith(30)
+    expect(mockVideoProps.paused).toBe(false)
+  })
+
+  it("ignores a late end event after replay starts", () => {
+    const {view} = renderVideo()
+    finishVideo()
+    fireEvent.press(view.getByText("replay"))
+    emitVideo("onEnd")
+    expect(mockVideoProps.paused).toBe(false)
+    expect(mockSliderProps.value).toBe(0)
+    expect(view.queryByText("replay")).toBeNull()
+  })
+
   it("restarts when returning to a video after swiping away", () => {
     const {view, item} = renderVideo()
-    emitVideo("onEnd")
+    finishVideo()
     view.rerender(cloneElement(item, {isActive: false}))
     expect(mockVideoProps.paused).toBe(true)
     view.rerender(cloneElement(item, {isActive: true}))

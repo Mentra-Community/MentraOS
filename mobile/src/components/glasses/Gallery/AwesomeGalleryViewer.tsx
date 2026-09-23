@@ -22,7 +22,7 @@ import {PhotoInfo} from "@/types/asg"
 
 import {MediaMetadataSheet} from "./MediaMetadataSheet"
 import {MediaDimensions} from "./mediaMetadata"
-import {getVideoSeekTime} from "./videoSeek"
+import {getVideoSeekTime, isVideoAtEnd} from "./videoSeek"
 
 // Screen dimensions are now obtained via useWindowDimensions() hook for rotation support
 
@@ -64,6 +64,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
   const [hasEnded, setHasEnded] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [currentTime, setCurrentTime] = useState(0)
+  const currentTimeRef = useRef(0)
   const [duration, setDuration] = useState(0)
   const [isSeeking, setIsSeeking] = useState(false)
   const [hasError, setHasError] = useState(false)
@@ -77,6 +78,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
     setIsPlaying(isActive)
     if (isActive && wasInactiveRef.current) {
       videoRef.current?.seek(0)
+      currentTimeRef.current = 0
       setCurrentTime(0)
       setHasEnded(false)
       setIsSeeking(false)
@@ -145,6 +147,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
         }}
         onProgress={({currentTime: time}) => {
           if (!isSeeking && !hasEnded) {
+            currentTimeRef.current = time
             setCurrentTime(time)
           }
         }}
@@ -180,11 +183,12 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
           onSeekingChange?.(false)
         }}
         onEnd={() => {
-          if (isSeeking) return
+          if (isSeeking || !isVideoAtEnd(currentTimeRef.current, duration)) return
           console.log("🎥 [VideoPlayerItem] Video playback ended:", photo.name)
           setIsPlaying(false)
           setShowControls(true)
           setHasEnded(true)
+          currentTimeRef.current = duration
           setCurrentTime(duration)
         }}
       />
@@ -259,6 +263,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
                     // Replay from beginning
                     console.log("🎮 [VideoControls] Replaying video from start")
                     videoRef.current?.seek(0)
+                    currentTimeRef.current = 0
                     setCurrentTime(0)
                     setHasEnded(false)
                     setIsPlaying(true)
@@ -302,6 +307,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
                 onSlidingComplete={(value) => {
                   const seekTime = getVideoSeekTime(value, duration)
                   videoRef.current?.seek(seekTime)
+                  currentTimeRef.current = seekTime
                   setCurrentTime(seekTime)
                   setHasEnded(false)
                   setIsSeeking(false)
