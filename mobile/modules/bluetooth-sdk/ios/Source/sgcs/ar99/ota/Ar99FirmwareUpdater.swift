@@ -158,16 +158,19 @@ final class Ar99FirmwareUpdater: FirmwareUpdater {
 
     /// Existing SDK clients retain their explicit restart/cancel behavior, but cannot replace managed work.
     func beginLegacy() throws {
-        guard snapshot.safeToRelease, snapshot.sessionId == nil else { throw FirmwareUpdaterError("busy", "The managed AR99 update owns this device") }
+        try assertLegacyControlAllowed()
         legacyActive = true
+        state.update { $0.phase = "preparing"; $0.safeToRelease = false; $0.canReconcile = false; $0.error = nil }
     }
 
     func endLegacy() {
+        guard legacyActive else { return }
         legacyActive = false
+        state.update { $0.phase = "idle"; $0.safeToRelease = true; $0.canReconcile = false; $0.error = nil }
     }
 
     func assertLegacyControlAllowed() throws {
-        guard snapshot.safeToRelease, snapshot.sessionId == nil else { throw FirmwareUpdaterError("busy", "The managed AR99 update owns this device") }
+        guard legacyActive || (snapshot.safeToRelease && snapshot.sessionId == nil) else { throw FirmwareUpdaterError("busy", "The managed AR99 update owns this device") }
     }
 
     private func transition(_ admitted: Int, phase: String, progress: Int? = nil, offset: Int? = nil, total: Int? = nil, safe: Bool = false, error: String? = nil) {

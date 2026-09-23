@@ -152,6 +152,8 @@ function hasRecoveringOtaReply(otaStatus: OtaStatus | null, otaProgress: OtaProg
 
 /** Read model the host progress screen renders from. */
 export interface OtaInstallSnapshot {
+  /** False while native/the coordinator still owns recovery; older hosts may omit this field. */
+  safeToRelease?: boolean
   displayState: DisplayState
   errorMsg: string
   continueButtonDisabled: boolean
@@ -195,13 +197,12 @@ class OtaInstallCoordinator {
   private observationOnly = false
   /** A phone-side timeout does not establish that the glasses stopped writing. */
   isSafeToRelease(): boolean {
-    return this.isLegacySafeToRelease() && (this.nativeCompletion?.isSafeToRelease() ?? true)
+    return this.snapshot().safeToRelease === true
   }
 
-  private isLegacySafeToRelease(): boolean {
+  private isLegacySafeToRelease(snapshot: OtaInstallSnapshot = this.snapshot()): boolean {
     if (this.otaStartOwnership?.outcome === "pending") return false
     if (this.isInVersionChangeDetour()) return false
-    const snapshot = this.snapshot()
     if (snapshot.displayState === "complete") return true
     if (snapshot.otaStatus?.status === "failed" || snapshot.otaProgress?.status === "FAILED") return true
     if (snapshot.otaStatus && snapshot.otaStatus.status !== "idle") return false
@@ -556,7 +557,7 @@ class OtaInstallCoordinator {
     const connected = isGlassesConnected(state.connection)
     const otaStatus = state.otaStatus
     const otaProgress = state.otaProgress
-    return {
+    const snapshot: OtaInstallSnapshot = {
       displayState: deriveDisplayState({
         otaStatus,
         otaProgress,
@@ -585,6 +586,8 @@ class OtaInstallCoordinator {
       hotspotArtifact: this.hotspotArtifact ? {...this.hotspotArtifact} : null,
       transport: this.selectedTransport,
     }
+    snapshot.safeToRelease = this.isLegacySafeToRelease(snapshot) && (this.nativeCompletion?.isSafeToRelease() ?? true)
+    return snapshot
   }
 
   /**

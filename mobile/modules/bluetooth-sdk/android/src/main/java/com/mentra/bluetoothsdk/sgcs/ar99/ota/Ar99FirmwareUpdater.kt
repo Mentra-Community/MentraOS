@@ -133,10 +133,17 @@ class Ar99FirmwareUpdater(deviceId: String, connectionGeneration: Int, private v
   }
 
   /** Legacy SDK callers retain explicit restart/cancel, but cannot preempt a managed transfer. */
-  fun beginLegacy() { assertLegacyControlAllowed(); legacyActive = true }
-  fun endLegacy() { legacyActive = false }
+  fun beginLegacy() {
+    assertLegacyControlAllowed(); legacyActive = true
+    state.update { it.copy(phase = "preparing", safeToRelease = false, canReconcile = false, error = null) }
+  }
+  fun endLegacy() {
+    if (!legacyActive) return
+    legacyActive = false
+    state.update { it.copy(phase = "idle", safeToRelease = true, canReconcile = false, error = null) }
+  }
   fun assertLegacyControlAllowed() {
-    if (!snapshot.safeToRelease || snapshot.sessionId != null)
+    if (!legacyActive && (!snapshot.safeToRelease || snapshot.sessionId != null))
       throw FirmwareUpdaterException("busy", "The managed AR99 update owns this device")
   }
   private fun transition(admitted: Int, phase: String, progress: Int? = null, offset: Int? = null, total: Int? = null,

@@ -131,6 +131,37 @@ describe("headless Live OTA session", () => {
     expect(session.snapshot().state).toMatchObject({screen: "up_to_date", completedUpdate: true})
   })
 
+  it("retains BES restart instructions after a phone timeout until native recovery is safe", async () => {
+    const {session, ports, install} = make()
+    await session.open({initialPage: "progress", initializeRuntime: false})
+    const bes = {
+      sessionId: "bes-session",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "bes" as const,
+      phase: "install" as const,
+      stepPercent: 80,
+      overallPercent: 80,
+      status: "in_progress" as const,
+    }
+    install({displayState: "failed", otaStatus: bes, errorMsg: "BES install timed out", safeToRelease: false})
+    expect(session.snapshot().state).toMatchObject({
+      screen: "failed",
+      canFinish: false,
+      canRetry: false,
+      error: {code: "bes_restart_required"},
+    })
+    expect(await session.finish()).toEqual({kind: "none"})
+    expect(ports.installSession.finish).not.toHaveBeenCalled()
+    expect(ports.installSession.detach).not.toHaveBeenCalled()
+    expect(session.snapshot().state.error?.code).toBe("bes_restart_required")
+    // A fresh authoritative failure permits the established Done action; a local timeout does not.
+    install({otaStatus: {...bes, status: "failed"}, safeToRelease: true})
+    expect(session.snapshot().state.canFinish).toBe(true)
+    await session.finish()
+    expect(ports.installSession.finish).toHaveBeenCalledTimes(1)
+  })
+
   it("retains approval across a version-information failure and retry", async () => {
     const {session, ports} = make()
     session.chain.beginOtaAutoChain("prior", false, {fromVersion: "3.3.0", toVersion: "3.3.1"})

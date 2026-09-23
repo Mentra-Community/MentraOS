@@ -54,6 +54,26 @@ final class Ar99FirmwareUpdaterTests: XCTestCase {
         }
     }
 
+    func testLegacyOwnershipIsPublishedAndRetainedAcrossConnectionChanges() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            var observed: [FirmwareUpdateSnapshot] = []
+            let remove = h.updater.observe { observed.append($0) }; defer { remove() }
+            try h.updater.beginLegacy()
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
+            XCTAssertFalse(observed.last!.safeToRelease)
+            h.updater.connectionChanged(generation: 2)
+            XCTAssertFalse(observed.last!.safeToRelease)
+            try h.updater.assertLegacyControlAllowed() // Preserve explicit legacy retry/cancel.
+            try h.updater.beginLegacy()
+            XCTAssertThrowsError(try h.updater.start(h.request))
+            h.updater.endLegacy()
+            XCTAssertTrue(observed.last!.safeToRelease)
+            XCTAssertFalse(h.updater.ownsDevice)
+            XCTAssertGreaterThan(observed.last!.revision, observed.first!.revision)
+        }
+    }
+
     func testLegacyPreparationCannotBeReplacedByManagedStart() async throws {
         try await MainActor.run {
             let h = try Harness(); defer { h.cleanup() }

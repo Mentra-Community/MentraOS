@@ -79,15 +79,18 @@ function fixture() {
 }
 
 describe("pluggable firmware update service", () => {
-  test("native recovery protects logout and another device before any provider is opened", async () => {
-    const {service, provider} = fixture()
-    service.noteNativeRecovery({integrationId: "nimo", deviceId: "cold-session"}, false)
-    expect(() => service.assertSafeToRelease()).toThrow("updating")
-    await expect(service.open(target, {entryPoint: "settings"})).rejects.toMatchObject({code: "busy"})
-    expect(provider.calls).toEqual([])
-    service.noteNativeRecovery({integrationId: "nimo", deviceId: "cold-session"}, true)
-    expect(() => service.assertSafeToRelease()).not.toThrow()
-  })
+  test.each(["nimo", "ar99"])(
+    "%s native ownership protects logout and another device without an open provider",
+    async (integrationId) => {
+      const {service, provider} = fixture()
+      service.noteNativeRecovery({integrationId, deviceId: "cold-session"}, false)
+      expect(() => service.assertSafeToRelease()).toThrow("updating")
+      await expect(service.open(target, {entryPoint: "settings"})).rejects.toMatchObject({code: "busy"})
+      expect(provider.calls).toEqual([])
+      service.noteNativeRecovery({integrationId, deviceId: "cold-session"}, true)
+      expect(() => service.assertSafeToRelease()).not.toThrow()
+    },
+  )
 
   test("global recovery observation retains sessions across suspension without opening or starting work", () => {
     const {service, provider} = fixture()

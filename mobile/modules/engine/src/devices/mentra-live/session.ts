@@ -238,6 +238,9 @@ export class MentraLiveOtaSession {
     )
       return NONE
     if (shouldRequireGlassesRebootForBesFailure(snapshot.otaStatus, snapshot.otaProgress, snapshot.errorMsg)) {
+      // A phone timeout does not prove that BES stopped writing. Keep the restart instruction
+      // and the coordinator attached until the existing reconnect/status path proves release safe.
+      if (snapshot.safeToRelease === false) return NONE
       this.chain.stopOtaAutoChain()
     }
     return this.finishPass(false)

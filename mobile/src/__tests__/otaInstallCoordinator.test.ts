@@ -1982,8 +1982,10 @@ describe("Live coordinator completion reconciles native ownership", () => {
         }
         expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
         expect(native.safeToRelease).toBe(false)
+        expect(otaInstallCoordinator.snapshot().safeToRelease).toBe(false)
         await otaInstallCoordinator.finish()
         expect(native.safeToRelease).toBe(true)
+        expect(otaInstallCoordinator.snapshot().safeToRelease).toBe(true)
         expect(bluetoothSdkMock.reconcileFirmwareUpdateCompletion).toHaveBeenCalledTimes(1)
       } finally {
         otaInstallCoordinator.detach()

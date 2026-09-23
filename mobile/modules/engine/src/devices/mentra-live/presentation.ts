@@ -295,7 +295,9 @@ export function projectLiveOtaState(data: LiveSessionData, ota: LiveOtaPorts, ch
     error,
     canInstall: false,
     canRetry: screen === "failed" && (completionFailed || !requiresGlassesReboot),
-    canFinish: screen === "complete" || (screen === "failed" && !completionFailed && requiresGlassesReboot),
+    canFinish:
+      screen === "complete" ||
+      (screen === "failed" && !completionFailed && requiresGlassesReboot && installSnapshot.safeToRelease !== false),
     canDismiss: false,
     canDiscard: screen === "disconnected",
     canOpenWifiSetup: screen === "failed" && !completionFailed && showChangeWifi,

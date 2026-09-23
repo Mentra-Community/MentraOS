@@ -45,6 +45,21 @@ class Ar99FirmwareUpdaterTest {
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.acknowledge() }
     Unit
   }
+  @Test fun legacyOwnershipIsPublishedAndRetainedAcrossConnections() = Harness().use { h ->
+    val observed = mutableListOf<Boolean>()
+    val remove = h.updater.observe { observed.add(it.safeToRelease) }
+    h.updater.beginLegacy()
+    assertFalse(h.updater.snapshot.safeToRelease); assertFalse(observed.last())
+    h.updater.connectionChanged(2)
+    assertFalse(observed.last())
+    h.updater.assertLegacyControlAllowed() // Existing explicit legacy retry/cancel remains admitted.
+    h.updater.beginLegacy()
+    assertThrows(FirmwareUpdaterException::class.java) { h.updater.start(h.request) }
+    h.updater.endLegacy()
+    assertTrue(observed.last()); assertFalse(h.updater.ownsDevice)
+    assertTrue(observed.first())
+    remove()
+  }
   @Test fun legacyPreparationCannotBeReplaced() = Harness().use { h ->
     h.updater.beginLegacy()
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.start(h.request) }
