@@ -199,6 +199,12 @@ class OtaInstallCoordinator {
   private completionVerdict: DisplayState | null = null
   private finishing: Promise<void> | null = null
   private finishFailed = false
+  private cleanupCompleted = false
+
+  /** Cleanup belongs to the update attempt, independent of host mount/unmount. */
+  hasCompletedCleanup(): boolean {
+    return this.cleanupCompleted && !this.finishing && !this.finishFailed
+  }
   /** Controller ownership only; native recovery also has its own service/SDK guard. */
   isSafeToRelease(): boolean {
     // After verified cleanup and detach, old BLE progress must not resurrect this
@@ -562,9 +568,11 @@ class OtaInstallCoordinator {
       .then(
         () => {
           this.finishFailed = false
+          this.cleanupCompleted = true
         },
         (error) => {
           this.finishFailed = true
+          this.cleanupCompleted = false
           throw error
         },
       )
@@ -725,6 +733,7 @@ class OtaInstallCoordinator {
   private resetSessionState(): void {
     this.completionVerdict = null
     this.finishFailed = false
+    this.cleanupCompleted = false
     this.errorMsg = ""
     this.sawReconnectEdge = false
     this.continueButtonDisabled = false
@@ -1682,6 +1691,7 @@ class OtaInstallCoordinator {
       outcome: "pending",
       promise: Promise.resolve(),
     }
+    this.cleanupCompleted = false
     this.otaStartOwnership = ownership
     ownership.promise = this.performOtaStart(ownership)
     return ownership.promise

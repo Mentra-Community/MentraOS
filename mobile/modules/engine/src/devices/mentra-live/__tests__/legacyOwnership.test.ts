@@ -19,7 +19,11 @@ mock.module("@mentra/bluetooth-sdk", () => ({
   },
 }))
 mock.module("../../../services/OtaInstallCoordinator", () => ({
-  otaInstallCoordinator: {isSafeToRelease: () => safe, cancelUnboundPreparation: () => false},
+  otaInstallCoordinator: {
+    isSafeToRelease: () => safe,
+    cancelUnboundPreparation: () => false,
+    hasCompletedCleanup: () => safe,
+  },
 }))
 mock.module("../ports", () => ({
   liveOtaPorts: {

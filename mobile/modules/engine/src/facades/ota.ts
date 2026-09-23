@@ -20,7 +20,6 @@ export type {
 let legacyRelease: (() => void) | null = null
 let legacySession = false
 let detachRequested = false
-let cleanupSettled = false
 let unsubscribeDeferredDetach: (() => void) | null = null
 let commands = 0
 
@@ -47,12 +46,12 @@ function releaseIdleReservation(): void {
       !otaInstallCoordinator.cancelUnboundPreparation() &&
       !otaInstallCoordinator.isSafeToRelease()
     ) {
-      if (cleanupSettled && !unsubscribeDeferredDetach) {
+      if (otaInstallCoordinator.hasCompletedCleanup() && !unsubscribeDeferredDetach) {
         unsubscribeDeferredDetach = liveOtaPorts.installSession.onSnapshot(() => {
           // Finish has already settled. Let this native event finish dispatching,
           // then retry the requested unmount using the latest release evidence.
           void Promise.resolve().then(() => {
-            if (detachRequested && cleanupSettled) releaseIdleReservation()
+            if (detachRequested && otaInstallCoordinator.hasCompletedCleanup()) releaseIdleReservation()
           })
         })
       }
@@ -62,7 +61,6 @@ function releaseIdleReservation(): void {
     liveOtaPorts.installSession.detach()
     legacySession = false
     detachRequested = false
-    cleanupSettled = false
   }
   if (legacySession || commands) return
   legacyRelease?.()
@@ -72,12 +70,6 @@ function releaseIdleReservation(): void {
 function clearDeferredDetach(): void {
   unsubscribeDeferredDetach?.()
   unsubscribeDeferredDetach = null
-}
-
-async function completeLegacy(discard: boolean): Promise<void> {
-  cleanupSettled = false
-  await (discard ? liveOtaPorts.installSession.discard() : liveOtaPorts.installSession.finish())
-  cleanupSettled = true
 }
 
 function control<A extends unknown[], R>(fn: (...args: A) => R, retain = false): (...args: A) => R {
@@ -94,7 +86,6 @@ function control<A extends unknown[], R>(fn: (...args: A) => R, retain = false):
         legacySession = true
         // A new host attachment supersedes the previous host's pending unmount.
         detachRequested = false
-        cleanupSettled = false
         clearDeferredDetach()
       }
       if (result && typeof (result as unknown as PromiseLike<unknown>).then === "function")
@@ -130,7 +121,7 @@ export const ota = {
       releaseIdleReservation()
     },
     retry: control(liveOtaPorts.installSession.retry),
-    finish: control(() => completeLegacy(false)),
-    discard: control(() => completeLegacy(true)),
+    finish: control(liveOtaPorts.installSession.finish),
+    discard: control(liveOtaPorts.installSession.discard),
   },
 }
