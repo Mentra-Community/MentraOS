@@ -1212,3 +1212,86 @@ it("rejects a workspace Store downgrade below an approved consumer release", asy
   expect(await registry.getActiveVersion(pkg)).toBe("2.1.31")
   expect(registry.getInstalledVersions(pkg, "workspace")).not.toContain("2.1.30")
 })
+
+it.each(["after commit", "during cleanup"])("keeps committed release routing when interrupted %s", async (phase) => {
+  selectDeployment(consumer)
+  await registerDevApp({
+    packageName: pkg,
+    name: "Local Call",
+    devUrl: "http://localhost:8081",
+    iconUrl: "",
+    devPort: 8082,
+    mdnsHost: "laptop.local",
+  })
+  expect(
+    (
+      await registry.installFromUrl("http://localhost:8081/bundle.zip", {
+        versionOverride: "dev-123",
+        releaseIdentity: {source: "dev_snapshot"},
+      })
+    ).is_ok(),
+  ).toBe(true)
+  if (phase === "after commit") {
+    const finalize = registry["finalizeInstall"].bind(registry)
+    jest
+      .spyOn(registry as unknown as {finalizeInstall: typeof finalize}, "finalizeInstall")
+      .mockImplementation((...args) => ({...finalize(...args), afterCommit: () => {}}))
+  } else {
+    // An interrupted/best-effort snapshot GC leaves disposable files behind.
+    jest.spyOn(registry, "gcDevVersions").mockImplementation(() => {
+      throw new Error("Cleanup interrupted")
+    })
+  }
+  mockVersion = "2.1.30"
+  expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
+  registry["recoverInterruptedActivations"]()
+  registry.markRefreshNeeded()
+  expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
+  expect(getDevAppRecords()).toEqual([])
+  expect(storage.load(`${pkg}_dev_url`).is_error()).toBe(true)
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.isMiniappDev).not.toBe(true)
+  expect(registry.hasDevSnapshot(pkg)).toBe(true)
+})
+
+it.each(["metadata failure", "process interruption"])(
+  "restores live-dev routing after pre-commit %s",
+  async (phase) => {
+    selectDeployment(consumer)
+    await registerDevApp({
+      packageName: pkg,
+      name: "Local Call",
+      devUrl: "http://localhost:8081",
+      iconUrl: "",
+      devPort: 8082,
+      mdnsHost: "laptop.local",
+    })
+    expect(
+      (
+        await registry.installFromUrl("http://localhost:8081/bundle.zip", {
+          versionOverride: "dev-123",
+          releaseIdentity: {source: "dev_snapshot"},
+        })
+      ).is_ok(),
+    ).toBe(true)
+    const before = getDevAppRecords()
+    if (phase === "metadata failure") {
+      mockFailNextActiveWrite = true
+      expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_error()).toBe(true)
+    } else {
+      const pending = new Directory(Paths.document, "lmas", pkg, `.pending-existing-${version}-1700000000999`)
+      pending.create()
+      const finalize = registry["finalizeInstall"](pkg, version, {source: "direct_download"}, (journal) => {
+        new File(pending, "metadata-rollback.json").write(journal)
+      })
+      await finalize.apply()
+      expect(getDevAppRecords()).toEqual([])
+      registry["recoverInterruptedActivations"]()
+    }
+    expect(getDevAppRecords()).toEqual(before)
+    expect(storage.load<string>(`${pkg}_dev_url`)).toMatchObject({value: "http://localhost:8081"})
+    expect(storage.load<number>(`${pkg}_dev_port`)).toMatchObject({value: 8082})
+    expect(storage.load<string>(`${pkg}_dev_mdns`)).toMatchObject({value: "laptop.local"})
+    expect(await registry.getActiveVersion(pkg)).toBe("dev-123")
+    expect(registry.hasDevSnapshot(pkg)).toBe(true)
+  },
+)

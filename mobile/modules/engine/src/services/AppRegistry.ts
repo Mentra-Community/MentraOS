@@ -262,6 +262,9 @@ interface StorageSnapshot<T> {
   value?: T
 }
 
+const DEV_ROUTING_FIELDS = ["meta", "url", "port", "mdns", "last_reachable"] as const
+type DevRoutingSnapshot = Record<(typeof DEV_ROUTING_FIELDS)[number], StorageSnapshot<unknown>>
+
 interface InstallMetadataRollbackJournal {
   schemaVersion: 1
   packageName: string
@@ -272,6 +275,8 @@ interface InstallMetadataRollbackJournal {
   /** Older journals always targeted the consumer selection. */
   workspaceSelection?: boolean
   storageScope?: MiniappStorageScope
+  /** Consumer live-dev routing removed atomically by a release installation. */
+  devRouting?: DevRoutingSnapshot
 }
 
 const INSTALL_METADATA_ROLLBACK_FILE = "metadata-rollback.json"
@@ -291,10 +296,11 @@ function restoreStorage<T>(key: string, snapshot: StorageSnapshot<T>): void {
   if (restored.is_error()) throw restored.error
 }
 
-function isStorageSnapshot(value: unknown, valueType: "object" | "string"): value is StorageSnapshot<unknown> {
+function isStorageSnapshot(value: unknown, valueType: "object" | "string" | "any"): value is StorageSnapshot<unknown> {
   if (!value || typeof value !== "object" || typeof (value as {present?: unknown}).present !== "boolean") return false
   const snapshot = value as {present: boolean; value?: unknown}
   if (!snapshot.present) return true
+  if (valueType === "any") return Object.prototype.hasOwnProperty.call(snapshot, "value")
   return valueType === "string"
     ? typeof snapshot.value === "string"
     : Boolean(snapshot.value && typeof snapshot.value === "object" && !Array.isArray(snapshot.value))
@@ -317,7 +323,12 @@ function readMetadataRollbackJournal(
       !isStorageSnapshot(parsed.release, "object") ||
       !isStorageSnapshot(parsed.active, "string") ||
       (parsed.workspaceSelection !== undefined && typeof parsed.workspaceSelection !== "boolean") ||
-      (parsed.storageScope !== undefined && parsed.storageScope !== "consumer" && parsed.storageScope !== "workspace")
+      (parsed.storageScope !== undefined &&
+        parsed.storageScope !== "consumer" &&
+        parsed.storageScope !== "workspace") ||
+      (parsed.devRouting !== undefined &&
+        (!parsed.devRouting ||
+          DEV_ROUTING_FIELDS.some((field) => !isStorageSnapshot(parsed.devRouting?.[field], "any"))))
     ) {
       console.warn(`APP_REGISTRY: ignoring invalid metadata rollback journal for ${packageName}@${version}`)
       return null
@@ -356,7 +367,12 @@ function restoreInstallationMetadata<T>(metadata: MMKV, key: string, snapshot: S
   if (removed.is_error()) throw removed.error
 }
 
+function restoreDevRouting(packageName: string, snapshot: DevRoutingSnapshot): void {
+  for (const field of DEV_ROUTING_FIELDS) restoreStorage(`${packageName}_dev_${field}`, snapshot[field])
+}
+
 function restoreInstallMetadata(journal: InstallMetadataRollbackJournal, metadata: MMKV): void {
+  if (journal.devRouting) restoreDevRouting(journal.packageName, journal.devRouting)
   restoreStorage(activeVersionKey(journal.packageName, journal.workspaceSelection ?? false), journal.active)
   restoreInstallationMetadata(
     metadata,
@@ -1191,6 +1207,12 @@ class AppRegistry {
       ? {present: true, value: previousRelease}
       : {present: false}
     const activeBefore = snapshotStorage<string>(activeKey)
+    const devRoutingBefore =
+      !workspaceSelection && !version.startsWith("dev-")
+        ? (Object.fromEntries(
+            DEV_ROUTING_FIELDS.map((field) => [field, snapshotStorage(`${packageName}_dev_${field}`)]),
+          ) as DevRoutingSnapshot)
+        : undefined
 
     const rollbackJournal: InstallMetadataRollbackJournal = {
       schemaVersion: 1,
@@ -1201,12 +1223,16 @@ class AppRegistry {
       active: activeBefore,
       workspaceSelection,
       storageScope,
+      ...(devRoutingBefore ? {devRouting: devRoutingBefore} : {}),
     }
     recordRecoveryState(JSON.stringify(rollbackJournal))
 
     const rollbackMetadata = () => {
       let firstError: unknown
       for (const restore of [
+        () => {
+          if (devRoutingBefore) restoreDevRouting(packageName, devRoutingBefore)
+        },
         () => restoreStorage(activeKey, activeBefore),
         () => restoreInstallationMetadata(this.releaseIdentities, releaseKey, releaseBefore),
         () => restoreInstallationMetadata(this.releaseIdentities, publisherKey, publisherBefore),
@@ -1230,6 +1256,9 @@ class AppRegistry {
     return {
       apply: () => {
         if (!version.startsWith("dev-")) invalidateDevSnapshotRequests(packageName)
+        if (devRoutingBefore) {
+          for (const field of DEV_ROUTING_FIELDS) restoreStorage(`${packageName}_dev_${field}`, {present: false})
+        }
         // Development snapshots bypass publisher continuity and must not bind
         // future releases to a laptop's key. Keep their fingerprint only in
         // the per-version identity below.
@@ -1252,7 +1281,16 @@ class AppRegistry {
         // release wouldn't run.
         const isDevInstall = version.startsWith("dev-")
         if (!isDevInstall && !workspaceSelection) {
-          this.clearDevArtifacts(packageName)
+          // Routing already committed with the active release. Only disposable
+          // files/index entries remain, so interruption cannot select old dev code.
+          try {
+            this.gcDevVersions(packageName, 0)
+            if (!readDevAppRecord(packageName)) {
+              storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(getDevAppIndex().filter((pkg) => pkg !== packageName)))
+            }
+          } catch (error) {
+            console.warn(`APP_REGISTRY: failed to clean obsolete dev artifacts for ${packageName}`, error)
+          }
         }
         // Any explicit successful install (Store, dev, or a new
         // build-owned bundle) reverses a prior user-uninstalled tombstone.
