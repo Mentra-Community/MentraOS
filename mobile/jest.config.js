@@ -37,7 +37,9 @@ module.exports = {
     // bun:test suites — run via `bun test`, not Jest (cannot resolve "bun:test").
     "<rootDir>/src/stores/settings.test.ts",
     "<rootDir>/src/services/qrScanRequest.test.ts",
+    "<rootDir>/src/services/streamPreview/StreamPreviewCoordinator.test.ts",
     "<rootDir>/src/__tests__/app/miniapps/settings/camera.test.tsx",
+    "<rootDir>/modules/frame-preview/tools/",
   ],
   transformIgnorePatterns: [
     "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|@jsamr/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-marked|react-native-reanimated-table|marked|github-slugger|html-entities|svg-parser|core|typesafe-ts|uniwind)",

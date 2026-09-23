@@ -89,6 +89,34 @@ describe("MiniappSession meeting termination details", () => {
     expect(session.meeting.state.endReason).toBeUndefined()
     session.disconnect()
   })
+
+  test("host videoEnabled reaches listeners and cached state", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.meeting"})
+    const connected = session.connect()
+    await Promise.resolve()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.meeting",
+    })
+    await connected
+    const events: MeetingState[] = []
+    session.meeting.onState((state) => events.push(state))
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_STATE,
+      state: "connected",
+      muted: false,
+      videoEnabled: false,
+    })
+    expect(events.at(-1)?.videoEnabled).toBe(false)
+    expect(session.meeting.state.videoEnabled).toBe(false)
+
+    transport.deliverFromPhone({type: MiniappResponseType.MEETING_STATE, state: "connected", muted: false})
+    expect(session.meeting.state.videoEnabled).toBeUndefined()
+    session.disconnect()
+  })
 })
 
 describe("MiniappSession queue-before-ACK", () => {

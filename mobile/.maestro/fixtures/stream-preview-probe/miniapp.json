@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../../sdk/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.test.previewprobe",
+  "version": "0.1.0",
+  "name": "Preview Probe",
+  "description": "Test-only miniapp: asks for the call stream preview it does not own, for the refusal Maestro flow.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "3.2.1",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "CAMERA",
+      "description": "Declared so the refusal is about meeting ownership, not a missing permission"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "CAMERA",
+      "level": "REQUIRED",
+      "description": "Declared so the refusal is about meeting ownership, not a missing hardware capability"
+    }
+  ]
+}

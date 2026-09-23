@@ -59,6 +59,8 @@ describe("MiniappRequestType wire values", () => {
   test("MEETING_JOIN", () => expect(MiniappRequestType.MEETING_JOIN).toBe("miniapp_meeting_join"))
   test("MEETING_LEAVE", () => expect(MiniappRequestType.MEETING_LEAVE).toBe("miniapp_meeting_leave"))
   test("MEETING_SET_MUTED", () => expect(MiniappRequestType.MEETING_SET_MUTED).toBe("miniapp_meeting_set_muted"))
+  test("MEETING_SET_VIDEO_ENABLED", () =>
+    expect(MiniappRequestType.MEETING_SET_VIDEO_ENABLED).toBe("miniapp_meeting_set_video_enabled"))
   test("MEETING_UPDATE_VIDEO_SOURCE", () =>
     expect(MiniappRequestType.MEETING_UPDATE_VIDEO_SOURCE).toBe("miniapp_meeting_update_video_source"))
   test("MEETING_GET_STATE", () => expect(MiniappRequestType.MEETING_GET_STATE).toBe("miniapp_meeting_get_state"))

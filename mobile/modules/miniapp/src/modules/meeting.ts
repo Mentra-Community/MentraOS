@@ -154,6 +154,11 @@ export interface MeetingState {
   guestReason?: MeetingGuestReason
   state: MeetingPhase
   muted: boolean
+  /**
+   * Whether remote participants receive the glasses camera. False after `setVideoEnabled(false)`;
+   * every new join starts true. Omitted by hosts that cannot toggle outgoing video.
+   */
+  videoEnabled?: boolean
   error?: string
   /** Provider termination details, including Teams' invalid meeting-link codes. */
   endReason?: MeetingEndReason
@@ -519,6 +524,23 @@ export class MeetingModule {
   }
 
   /**
+   * Stop or resume the glasses camera the meeting receives. The call and the glasses stream stay
+   * up, so a local `<StreamPreview>` keeps drawing while remote participants see the camera off.
+   * Check `state.videoEnabled !== undefined` before offering it; older hosts reject.
+   */
+  async setVideoEnabled(enabled: boolean): Promise<void> {
+    try {
+      const result = await this.session.sendRequest<MeetingState | null>({
+        type: MiniappRequestType.MEETING_SET_VIDEO_ENABLED,
+        enabled,
+      })
+      if (result) this._applyState(result)
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /**
    * Repoint the host at a new WHEP URL mid-call, the recovery path for a re-published stream.
    *
    * WHEP only. A SoftAP source has no URL to update — the host owns the endpoint — and its
@@ -566,6 +588,7 @@ export class MeetingModule {
       guestReason: event.identityMode === "guest" ? event.guestReason : undefined,
       state: event.state,
       muted: Boolean(event.muted),
+      videoEnabled: typeof event.videoEnabled === "boolean" ? event.videoEnabled : undefined,
       error: event.error,
       endReason: parseMeetingEndReason(event.endReason),
       meetingUrl: event.meetingUrl,

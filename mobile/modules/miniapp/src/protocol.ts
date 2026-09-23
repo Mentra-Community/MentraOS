@@ -196,6 +196,13 @@ export enum MiniappRequestType {
   STREAM_STOP = "miniapp_stream_stop",
   MANAGED_STREAM_START = "miniapp_managed_stream_start",
   MANAGED_STREAM_STOP = "miniapp_managed_stream_stop",
+  /**
+   * Take the single raw decoded-frame preview lease on a source. See
+   * `session.stream.preview()`. Replies `{handleId, previewTraceId, source}`.
+   */
+  STREAM_PREVIEW_START = "miniapp_stream_preview_start",
+  /** Release a preview lease by `handleId`. */
+  STREAM_PREVIEW_STOP = "miniapp_stream_preview_stop",
 
   /** Ask the host to open the glasses Wi-Fi setup flow (mirrors the cloud SDK's requestWifiSetup). */
   REQUEST_WIFI_SETUP = "miniapp_request_wifi_setup",
@@ -236,6 +243,8 @@ export enum MiniappRequestType {
   /** Admit one waiting participant, when the host has Teams lobby permission. */
   MEETING_ADMIT = "miniapp_meeting_admit",
   MEETING_SET_MUTED = "miniapp_meeting_set_muted",
+  /** Stop or resume the glasses camera the meeting receives, without leaving. */
+  MEETING_SET_VIDEO_ENABLED = "miniapp_meeting_set_video_enabled",
   MEETING_UPDATE_VIDEO_SOURCE = "miniapp_meeting_update_video_source",
   MEETING_GET_STATE = "miniapp_meeting_get_state",
 }
@@ -302,6 +311,12 @@ export enum MiniappResponseType {
    * See MeetingModule.onState().
    */
   MEETING_STATE = "miniapp_meeting_state",
+
+  /**
+   * Push: a preview lease changed state. Carries {handleId, state: "held" | "ended", reason?}.
+   * See PreviewHandle.onStatus().
+   */
+  STREAM_PREVIEW_STATUS = "miniapp_stream_preview_status",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK
@@ -451,3 +466,59 @@ export enum MiniappErrorCode {
   /** `blob.importFile` failed (not the user cancelling — that resolves to null). */
   BLOB_IMPORT_FAILED = "BLOB_IMPORT_FAILED",
 }
+
+// ============================================================================
+// Stream preview
+// ============================================================================
+
+/**
+ * Where a raw preview comes from. `"call"` is the decoded video of the phone-native meeting the
+ * caller owns. `"glasses"` is reserved and currently rejects with `unsupported`.
+ */
+export type PreviewSource = "call" | "glasses"
+
+/**
+ * Typed preview failures and non-terminal statuses, shared by the background handle, the UI
+ * component and the host. `waiting_for_lease` and `paused_background` are statuses, not errors.
+ */
+export type PreviewErrorCode =
+  | "permission_denied"
+  | "not_meeting_owner"
+  | "preview_busy"
+  | "waiting_for_lease"
+  | "source_ended"
+  | "unsupported"
+  | "ack_timeout"
+  | "transport_failed"
+  | "pack_failed"
+  | "paused_background"
+  | "diagnostics_disabled"
+
+export const PREVIEW_ERROR_CODES: readonly PreviewErrorCode[] = [
+  "permission_denied",
+  "not_meeting_owner",
+  "preview_busy",
+  "waiting_for_lease",
+  "source_ended",
+  "unsupported",
+  "ack_timeout",
+  "transport_failed",
+  "pack_failed",
+  "paused_background",
+  "diagnostics_disabled",
+]
+
+export function isPreviewErrorCode(value: unknown): value is PreviewErrorCode {
+  return typeof value === "string" && (PREVIEW_ERROR_CODES as readonly string[]).includes(value)
+}
+
+/** Lease state pushed to the background with `STREAM_PREVIEW_STATUS`. */
+export interface PreviewStatus {
+  handleId: string
+  state: "held" | "ended"
+  /** Why the lease ended: `stopped`, `source_ended`, `runtime_stopped`, ... */
+  reason?: string
+}
+
+/** The single reserved UI channel the host answers itself for preview control. */
+export const PREVIEW_UI_CHANNEL = "_preview"

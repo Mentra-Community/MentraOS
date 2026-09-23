@@ -23,6 +23,8 @@ export type AcsMeetingParticipant = {
 export type AcsMeetingState = {
   state: MeetingPhase
   muted: boolean
+  /** Whether ACS is sending the glasses camera. Resets to true on every join. */
+  videoEnabled?: boolean
   error?: string
   meetingUrl?: string
   provider?: "acs-teams"

@@ -348,6 +348,51 @@ export async function firstPartyPodspecs(projectRoot) {
   return found.sort()
 }
 
+/** Build output and vendored trees a podspec's globs never reach. */
+const NON_SOURCE_DIRS = new Set([".build", "build", "Pods", "DerivedData", "node_modules", ".git"])
+const POD_SOURCE_EXTENSIONS = new Set([".swift", ".h", ".m", ".mm", ".c", ".cc", ".cpp"])
+
+/**
+ * Every file a first-party podspec's `source_files` glob could match, relative to the project.
+ *
+ * Only the *set* of paths matters here, never their contents: CocoaPods expands those globs once
+ * and writes the resulting file list into the Pods Xcode project, so adding or deleting a source
+ * file needs a reinstall while editing one does not.
+ */
+export async function firstPartyIosSourcePaths(projectRoot) {
+  const modulesDir = path.join(projectRoot, "modules")
+  const found = []
+
+  async function walk(dir) {
+    let entries
+    try {
+      entries = await readdir(dir, {withFileTypes: true})
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (NON_SOURCE_DIRS.has(entry.name)) continue
+        await walk(path.join(dir, entry.name))
+      } else if (POD_SOURCE_EXTENSIONS.has(path.extname(entry.name))) {
+        found.push(path.relative(projectRoot, path.join(dir, entry.name)))
+      }
+    }
+  }
+
+  let moduleEntries
+  try {
+    moduleEntries = await readdir(modulesDir, {withFileTypes: true})
+  } catch {
+    return []
+  }
+  for (const entry of moduleEntries) {
+    if (!entry.isDirectory()) continue
+    await walk(path.join(modulesDir, entry.name, "ios"))
+  }
+  return found.sort()
+}
+
 export async function computePodFingerprint({iosDir, projectRoot}) {
   const inputs = [
     path.join(iosDir, "Podfile"),
@@ -361,6 +406,14 @@ export async function computePodFingerprint({iosDir, projectRoot}) {
     hash.update(path.relative(projectRoot, input))
     hash.update("\0")
     hash.update((await readIfExists(input)) ?? "<missing>")
+    hash.update("\0")
+  }
+  // Paths only. A podspec whose contents never changed can still match a different set of files,
+  // and Xcode then compiles a module that is missing the new one — which surfaces as a baffling
+  // "cannot find X in scope" for a file that is plainly right there on disk.
+  hash.update("first-party-ios-sources\0")
+  for (const source of await firstPartyIosSourcePaths(projectRoot)) {
+    hash.update(source)
     hash.update("\0")
   }
   return hash.digest("hex")
@@ -377,7 +430,9 @@ export async function podInstallReason({iosDir, projectRoot}) {
   const stamp = await readIfExists(path.join(podsDir, POD_STAMP_FILE))
   if (!stamp) return "no pod install stamp from a previous run"
   const fingerprint = await computePodFingerprint({iosDir, projectRoot})
-  if (`${stamp}`.trim() !== fingerprint) return "Podfile, first-party podspec, or dependency change"
+  if (`${stamp}`.trim() !== fingerprint) {
+    return "Podfile, first-party podspec, native source file, or dependency change"
+  }
   return null
 }
 

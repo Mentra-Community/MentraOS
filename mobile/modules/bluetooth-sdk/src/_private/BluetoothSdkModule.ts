@@ -145,6 +145,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */
   setLoudnessGateEnabled(enabled: boolean): Promise<void>
+  /** Mentra Live power-off after ~20 min unworn (cs_swit type 11). */
+  setAutoPowerOffEnabled(enabled: boolean): Promise<void>
   /**
    * Mentra Live mic tuning. `null` clears every override and returns the
    * glasses to firmware defaults.
@@ -576,6 +578,10 @@ NativeBluetoothSdkModule.setVoiceActivityDetectionEnabled = function (enabled: b
 
 NativeBluetoothSdkModule.setLoudnessGateEnabled = function (enabled: boolean) {
   return this.updateBluetoothSettings({loudness_gate_enabled: enabled})
+}
+
+NativeBluetoothSdkModule.setAutoPowerOffEnabled = function (enabled: boolean) {
+  return this.updateBluetoothSettings({auto_power_off_enabled: enabled})
 }
 
 NativeBluetoothSdkModule.setMicTuning = function (tuning: MicTuning | null) {
