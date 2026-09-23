@@ -5611,7 +5611,9 @@ class LocalMiniappRuntime {
     let perGestureStream: string | null = null
     let outboundData = data
     if (normalizedStream === MiniappStreamType.GLASSES_CONNECTION) {
-      outboundData = toMiniappConnectionData(data) ?? data
+      const connection = toMiniappConnectionData(data)
+      if (!connection) return
+      outboundData = connection
     }
     if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
       // The Bluetooth SDK delivers the gesture under `gestureName` (single_tap /
