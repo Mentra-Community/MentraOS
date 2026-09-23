@@ -167,11 +167,13 @@ it("keeps overrides on a normal restart while rebuilding official defaults from 
 
 it("retains workspace capability limits and official OTA fallback policy", async () => {
   expect(deploymentCloudConfigValues(deploymentStore.getActive()).allowLegacyOtaFallback).toBe(true)
+  expect(deploymentCloudConfigValues(deploymentStore.getActive()).firmwareSources).toEqual({allowBundled: true})
   await deploymentStore.activate(workspace)
   expect(deploymentCloudConfigValues(deploymentStore.getActive())).toMatchObject({
     features: {nativeMeetings: false, cloudSpeech: false, onDeviceSpeech: false, navigation: false},
     runtimeRealtimeSession: false,
     allowLegacyOtaFallback: false,
+    firmwareSources: {allowBundled: false},
   })
 })
 

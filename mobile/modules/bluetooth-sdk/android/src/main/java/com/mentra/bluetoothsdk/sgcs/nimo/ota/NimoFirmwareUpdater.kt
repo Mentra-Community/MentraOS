@@ -135,7 +135,10 @@ internal class NimoFirmwareUpdater(deviceId: String, connectionGeneration: Int, 
   }
   fun inventoryChanged(inventory: NimoOtaManager.Inventory, connectionGeneration: Int) {
     if (snapshot.connectionGeneration != connectionGeneration) return
-    state.update { it.copy(observedFirmware = inventory.firmwareDetail, inventory = it.inventory + ("packedVersion" to inventory.packedVersion)) }
+    state.update { it.copy(observedFirmware = inventory.firmwareDetail, inventory = it.inventory + mapOf(
+      "packedVersion" to inventory.packedVersion,
+      "revision" to ((it.inventory["revision"]?.toLongOrNull() ?: 0L) + 1).toString(),
+    )) }
   }
 
   private fun makeManager(firmware: ByteArray, target: NimoOtaManager.Target, connection: Connection, recoveringReboot: Boolean = false): NimoOtaManager {

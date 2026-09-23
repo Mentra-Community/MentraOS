@@ -1299,9 +1299,10 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func resolveFirmwareInventory() {
+        guard inventoryPackedReceived, inventoryDetailReceived else { return }
         let inventory = NimoOtaManager.Inventory(firmwareDetail: firmwareVersionDetail, packedVersion: firmwareVersionPacked)
         nimoFirmwareUpdater?.inventoryChanged(inventory, connectionGeneration: firmwareConnectionGeneration)
-        guard inventoryPackedReceived, inventoryDetailReceived, let completion = pendingFirmwareInventory else { return }
+        guard let completion = pendingFirmwareInventory else { return }
         pendingFirmwareInventory = nil
         completion(.success(inventory))
     }

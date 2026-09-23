@@ -2126,9 +2126,9 @@ class Nimo : SGCManager() {
     }
 
     private fun resolveFirmwareInventory() {
+        if (!inventoryPackedReceived || !inventoryDetailReceived) return
         val inventory = NimoOtaManager.Inventory(firmwareVersionDetail, firmwareVersionPacked)
         nimoFirmwareUpdater?.inventoryChanged(inventory, firmwareConnectionGeneration)
-        if (!inventoryPackedReceived || !inventoryDetailReceived) return
         val completion = pendingFirmwareInventory; pendingFirmwareInventory = null
         completion?.invoke(Result.success(inventory))
     }

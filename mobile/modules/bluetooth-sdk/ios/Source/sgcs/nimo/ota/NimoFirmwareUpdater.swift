@@ -183,6 +183,7 @@ final class NimoFirmwareUpdater: FirmwareUpdater {
         state.update {
             $0.observedFirmware = inventory.firmwareDetail
             $0.inventory["packedVersion"] = inventory.packedVersion
+            $0.inventory["revision"] = String((Int($0.inventory["revision"] ?? "0") ?? 0) + 1)
         }
     }
 

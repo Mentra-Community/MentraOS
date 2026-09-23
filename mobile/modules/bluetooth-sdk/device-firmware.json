@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "nimo": {
+    "manifest": null,
+    "compatible": [
+      {
+        "fullVersion": "FW-VERSION-v0.1.1.1-20260827164351-537cf1-dirty-Debug",
+        "packedVersion": "0.1.1.1"
+      }
+    ]
+  }
+}
