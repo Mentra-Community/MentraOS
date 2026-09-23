@@ -3,7 +3,7 @@ import {matchingBuildRun} from "./notify-pr-builds.mjs"
 import {successfulMacPublication} from "./request-e2e-routine.mjs"
 import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
 import {validateNightlyMarker} from "./nightly-device-routines.mjs"
-import {COORDINATED_WORKFLOW, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
+import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 
 const REPOSITORY = "Mentra-Community/MentraOS"
 const PRIVATE_REPOSITORY = "Mentra-Automated-Testing"
@@ -116,7 +116,8 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
       return {mode: "skip", reason: "Automatic coordinated requests require successful dev/staging builds and no-glasses"}
     if (callbackAttempt !== 1) return {mode: "reconcile", callbackUrl: callbackUrl(context.runId),
       reason: "This callback was already attempted; reconcile manually"}
-    return {mode: "request", routine, channel: run.head_branch, sourceRunId: run.id, publicationAttempt: run.run_attempt,
+    const publicationAttempt = await coordinatedPublicationAttempt(github, context, run)
+    return {mode: "request", routine, channel: run.head_branch, sourceRunId: run.id, publicationAttempt,
       sourceCreatedAt: run.created_at, callbackRunId: context.runId, callbackAttempt}
   }
   const requestPlan = (build, publication, pr) => callbackAttempt !== 1

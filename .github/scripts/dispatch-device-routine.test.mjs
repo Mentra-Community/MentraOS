@@ -4,6 +4,7 @@ import {readFile} from "node:fs/promises"
 import {callbackRunName, dispatchReadyRequest, planDeviceDispatch, planDeviceDispatches, publicationJobName, PUBLICATION_SEND_STEP, requestAfterPublication} from "./dispatch-device-routine.mjs"
 import {createRoutineRequest} from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
+import {COORDINATED_FINALIZE_JOB, COORDINATED_PUBLISH_STEP} from "./coordinated-routine-request.mjs"
 import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 
 const repo = "Mentra-Community/MentraOS"
@@ -41,7 +42,10 @@ function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, j
   history = [callback], historyResponse, builds = [build], callbackJobs = {[callback.id]: [publicationJob]},
   dispatch = async () => dispatchResponse} = {}) {
   const calls = []
-  const listJobsForWorkflowRun = () => {}
+  const listJobsForWorkflowRun = async input => {
+    const rows = callbackJobs[input.run_id] ?? (input.run_id === build.id ? jobs : [])
+    return {data: {total_count: rows.length, jobs: rows}}
+  }
   const github = {rest: {
     actions: {getWorkflowRunAttempt: async (input) => {calls.push(["read-attempt", input]); return {data: run}},
       listWorkflowRuns: async (input) => {
@@ -446,11 +450,14 @@ test("workflow matrix preserves trusted code, independent routine fences and dis
   assert.match(workflow, /Coordinated Mentra Release/)
 })
 
+const coordinatedJob = (attempt = 2) => ({id: 1000 + attempt, name: COORDINATED_FINALIZE_JOB, run_attempt: attempt,
+  status: "completed", conclusion: "success", steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "success"}]})
+
 test("successful dev and staging builds automatically request only no-glasses through dev", async () => {
   for (const channel of ["dev", "staging"]) {
     const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: channel, pull_requests: []}
     const job = {...publicationJob, name: publicationJobName(123, 2, "no-glasses", channel)}
-    const f = fake({run, callbackJobs: {[callback.id]: [job]}})
+    const f = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: [job]}})
     const work = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
     assert.equal(work.length, 1)
     assert.equal(work[0].routine, "no-glasses")
@@ -472,7 +479,7 @@ test("coordinated reruns retain one automatic generation even after an ambiguous
   const job = {...publicationJob, name: publicationJobName(123, 2, "no-glasses", "dev")}
   assert.equal(job.name, publicationJobName(123, 3, "no-glasses", "dev"))
   assert.notEqual(job.name, publicationJobName(124, 3, "no-glasses", "dev"))
-  const f = fake({run, history: [callback, next], callbackJobs: {
+  const f = fake({run, jobs: [coordinatedJob()], history: [callback, next], callbackJobs: {
     [callback.id]: [{...job, status: "completed", conclusion: "failure"}], [next.id]: [job]}})
   const plan = await planDeviceDispatch({...f, context: nextContext, routine: "no-glasses"})
   assert.equal((await requestAfterPublication({...f, context: nextContext, plan})).status, "request-reconcile")
@@ -526,5 +533,46 @@ test("diverged, missing or forged issuer ancestry cannot dispatch a queued reque
     const plan = {mode: "dispatch", runId: 500, runAttempt: 1, sourceSha: options.source.sha}, remote = fake()
     await assert.rejects(dispatchReadyRequest({...options, plan, privateGithub: remote.github, bytes: bytes(request)}), /issuer is not an ancestor/)
     assert.equal(remote.calls.length, 0)
+  }
+})
+
+
+for (const cloned of [false, true]) test(`automatic successful retry selects original publication and creates a ready request (${cloned ? "cloned" : "original-only"} finalizer)`, async () => {
+  const {state, options} = coordinatedFixture()
+  state.run.id = 123
+  state.artifacts[0].workflow_run.id = 123
+  const original = {...coordinatedJob(1), started_at: "2026-09-22T00:01:00Z", completed_at: "2026-09-22T00:02:00Z"}
+  state.jobs = cloned ? [original, {...original, id: 1002, run_attempt: 2}] : [original]
+  const job = {...publicationJob, name: publicationJobName(123, 1, "no-glasses", "dev")}
+  const f = fake({run: state.run, jobs: state.jobs, callbackJobs: {[callback.id]: [job]}})
+  const plan = await planDeviceDispatch({...f, context, routine: "no-glasses"})
+  assert.equal(plan.publicationAttempt, 1)
+  assert.equal((await requestAfterPublication({...f, context, plan})).status, "request-dispatched")
+  const sent = f.calls.find(([kind]) => kind === "dispatch")[1].inputs
+  assert.equal(sent.source_build_run_id, "123")
+  assert.equal(sent.source_publication_attempt, "1")
+  assert.equal(sent.request_origin, "successful-build")
+
+  options.github.rest.actions.getWorkflowRunAttempt = async input => {
+    assert.equal(input.run_id, 123)
+    assert.equal(input.attempt_number, 1)
+    // The original finalizer succeeded, but a sibling job failed before retry 2.
+    return {data: {...state.run, run_attempt: 1, conclusion: "failure"}}
+  }
+  const request = await createRoutineRequest({...options, channel: sent.channel, routine: sent.routine,
+    requestOrigin: sent.request_origin, sourceBuildRunId: sent.source_build_run_id,
+    sourcePublicationAttempt: sent.source_publication_attempt})
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.source.publicationAttempt, 1)
+  assert.equal(request.selection.producer.publicationAttempt, 1)
+})
+
+test("automatic successful builds cannot substitute an earlier publication after a failed or skipped finalizer", async () => {
+  const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: "dev"}
+  for (const job of [{...coordinatedJob(2), conclusion: "failure"}, {...coordinatedJob(2), conclusion: "skipped"},
+    {...coordinatedJob(2), steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "skipped"}]}]) {
+    const f = fake({run, jobs: [coordinatedJob(1), job]})
+    await assert.rejects(planDeviceDispatch({...f, context, routine: "no-glasses"}), /did not publish/)
+    assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
   }
 })
