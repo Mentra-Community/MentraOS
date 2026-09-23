@@ -311,9 +311,9 @@
     },
     "modules/frame-preview": {
       "name": "@mentra/frame-preview",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/glasses-media": "3.2.1",
+        "@mentra/glasses-media": "3.3.0",
       },
       "peerDependencies": {
         "expo": "*",
