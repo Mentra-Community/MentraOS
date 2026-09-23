@@ -1,6 +1,6 @@
 import {miniappHistoryBridge} from "./historyBridge"
 import {useCallback, useEffect, useRef, useState} from "react"
-import {AppState, Platform, View, type AppStateStatus} from "react-native"
+import {AppState, findNodeHandle, Platform, View, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
@@ -11,13 +11,18 @@ import {useStressTestStore} from "@/stores/stressTest"
 import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {BgTimer, engine, SETTINGS, useSetting} from "@mentra/engine"
-import {buildMentraUiShim, buildMiniappGlobalsScript, miniappLauncher} from "@mentra/engine-host-internal"
+import {
+  buildMentraUiShim,
+  buildMiniappGlobalsScript,
+  localMiniappRuntime,
+  miniappLauncher,
+} from "@mentra/engine-host-internal"
 import {devServerBridge} from "@mentra/engine-host-internal/devtools"
 import {useNavigationStore, type NavInterceptor} from "@/stores/navigation"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import framePreviewHost from "@/services/framePreview/FramePreviewHost"
+import {getStreamPreviewCoordinator, STREAM_PREVIEW_BIND_TIMEOUT_MS} from "@/services/streamPreview"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -95,6 +100,14 @@ function LocalMiniappView({
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
+  // Stream preview. For a CAMERA miniapp on Android the WebView is first rendered without its real
+  // source: the preview's WebMessageListener only appears in documents that start loading after
+  // it is installed, so the source is set once the binding resolves (or its timeout passes).
+  const previewEligibleRef = useRef(false)
+  const previewBoundInstanceRef = useRef<WebView | null>(null)
+  const [holdSource, setHoldSource] = useState(false)
+  const holdSourceRef = useRef(false)
+  holdSourceRef.current = holdSource
 
   // ----- Load-state tracking -------------------------------------------------
   //
@@ -163,10 +176,6 @@ function LocalMiniappView({
 
   // Fresh handshake + retry budget — used on (re)launch and dev hot-reload.
   const resetLoadState = useCallback(() => {
-    // A genuinely new document, which is the point at which the preview experiment's
-    // per-document credential has to be replaced. onLoadEnd is not that point: one page load
-    // fires it several times, and rotating the token there would revoke a working consumer.
-    framePreviewHost.beginDocument()
     connectedRef.current = false
     setConnected(false)
     attemptsRef.current = 0
@@ -199,12 +208,6 @@ function LocalMiniappView({
       appStateRef.current = nextState
       if (prevState !== "active" && nextState === "active") {
         refreshUiBinding("app-active", true, true)
-      }
-      if (nextState !== "active") {
-        // Host visibility is the authority. The patched Android WebView deliberately reports
-        // itself visible while the app is hidden, so asking it would keep frames flowing into
-        // a page nobody is looking at.
-        framePreviewHost.stop("host-inactive")
       }
     })
 
@@ -311,6 +314,7 @@ function LocalMiniappView({
     // Fresh attempt budget per (re)launch — a re-foreground / new package
     // restarts the ready handshake and reload-retry loop from scratch.
     resetLoadState()
+    previewBoundInstanceRef.current = null
 
     const ac = new AbortController()
     const {signal} = ac
@@ -353,6 +357,10 @@ function LocalMiniappView({
         })
         return
       }
+      const previewEligible = !!result.uiUri && localMiniappRuntime.hasManifestPermission(packageName, "CAMERA")
+      previewEligibleRef.current = previewEligible
+      // Batched with setUiUri so the WebView's first render already has no source.
+      setHoldSource(previewEligible && Platform.OS === "android")
       // Set unconditionally: when the launcher resolves no UI entry (e.g. a
       // re-foreground couldn't re-resolve a non-dev package), clearing prevents
       // the WebView from continuing to show a stale / previous URL.
@@ -385,11 +393,49 @@ function LocalMiniappView({
       ac.abort()
       clearReadyTimer()
       getMentraJS()?.uiRouter.unbindWebView(packageName)
-      void framePreviewHost.teardown("miniapp-unmounted")
+      getStreamPreviewCoordinator().viewDestroyed(packageName, "miniapp-unmounted")
     }
   }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
 
   // ----- WebView bindings ----------------------------------------------------
+
+  const bindStreamPreview = useCallback(
+    (instance: WebView) => {
+      if (!packageName || webViewRef.current !== instance) return
+      // The WebView's own ref is an imperative handle, not a host component, so native is given
+      // this wrapper's tag and walks down to the real WebView.
+      const hostViewTag = viewShotRef.current ? findNodeHandle(viewShotRef.current) : null
+      if (hostViewTag == null) {
+        console.warn(`LocalMiniappView: no native tag for the stream-preview binding of ${packageName}`)
+        setHoldSource(false)
+        return
+      }
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        setHoldSource(false)
+      }
+      const timer = BgTimer.setTimeout(() => {
+        console.warn(`LocalMiniappView: stream-preview bind for ${packageName} is slow; loading without it`)
+        release()
+      }, STREAM_PREVIEW_BIND_TIMEOUT_MS)
+      void getStreamPreviewCoordinator()
+        .bindView({packageName, hostViewTag})
+        .then((result) => {
+          BgTimer.clearTimeout(timer)
+          const sourceWasHeld = !released && holdSourceRef.current
+          release()
+          // Only a real document that started loading before the listener existed needs this;
+          // while the source was held, nothing had loaded yet.
+          if (result.installReloadRequired && !sourceWasHeld && webViewRef.current === instance) {
+            getStreamPreviewCoordinator().noteInstallReload(packageName)
+            instance.reload()
+          }
+        })
+    },
+    [packageName],
+  )
 
   // Bind UI router on ref attach so mentra.send/on routes outbound messages
   // through `webViewRef.current.injectJavaScript(...)`. Unbinds on cleanup
@@ -412,35 +458,14 @@ function LocalMiniappView({
         if (webViewRef.current === instance) {
           refreshUiBinding("bind", false, true)
         }
-        // Deferred deliberately. React attaches refs child-first, so on the first mount
-        // viewShotRef is still null while this WebView ref is running, and the native side
-        // would be handed nothing to search.
-        if (webViewRef.current !== instance || !framePreviewHost.isEligible(packageName)) return
-        void framePreviewHost
-          .bind({
-            packageName,
-            // The WebView's own ref is an imperative handle, not a host component, so the
-            // native side is given this wrapper's tag and walks down to the real WebView.
-            hostView: viewShotRef.current,
-            inject: (js: string) => {
-              try {
-                instance.injectJavaScript(js)
-              } catch (e) {
-                console.warn(`LocalMiniappView: frame-preview inject failed for ${packageName}:`, e)
-              }
-            },
-          })
-          .then(() => {
-            // An Android WebMessageListener does not appear in a document that already loaded.
-            // Exactly one reload fixes that; the native side never asks again for this view.
-            if (framePreviewHost.consumeInstallReload() && webViewRef.current === instance) {
-              console.log("LocalMiniappView: reloading once to publish the frame-preview port")
-              instance.reload()
-            }
-          })
       }, 250)
+      if (previewEligibleRef.current && previewBoundInstanceRef.current !== instance) {
+        previewBoundInstanceRef.current = instance
+        // Next tick: React attaches refs child-first, so viewShotRef is still null right now.
+        BgTimer.setTimeout(() => bindStreamPreview(instance), 0)
+      }
     },
-    [packageName, refreshUiBinding],
+    [packageName, refreshUiBinding, bindStreamPreview],
   )
 
   const handleMessage = useCallback(
@@ -474,7 +499,6 @@ function LocalMiniappView({
       // LocalMiniappView (the two-layer path) lacked the equivalent
       // until now.
       if (forwardWebViewDevLog(packageName, event.nativeEvent.data)) return
-      if (forwardFramePreviewCommand(packageName, event.nativeEvent.data)) return
       const mj = getMentraJS()
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
@@ -497,7 +521,8 @@ function LocalMiniappView({
   // number (you'd see ~4 attempts on a normal load before `ready` lands).
   const handleLoadEnd = useCallback(() => {
     console.log("LocalMiniappView: handleLoadEnd, connected:", connectedRef.current)
-    if (connectedRef.current) return
+    // The placeholder document shown while the preview binding installs is not the miniapp.
+    if (connectedRef.current || holdSourceRef.current) return
     clearReadyTimer()
     readyTimerRef.current = BgTimer.setTimeout(() => {
       readyTimerRef.current = null
@@ -523,7 +548,7 @@ function LocalMiniappView({
 
   const handleTerminate = useCallback(() => {
     if (!packageName) return
-    framePreviewHost.beginDocument()
+    getStreamPreviewCoordinator().documentEnded(packageName, "content_process_terminated")
     useStressTestStore.getState().recordEvent({
       packageName,
       at: Date.now(),
@@ -600,7 +625,7 @@ function LocalMiniappView({
         {uiUri ? (
           <WebView
             ref={handleRef}
-            source={{uri: uiUri}}
+            source={holdSource ? undefined : {uri: uiUri}}
             originWhitelist={["*"]}
             allowFileAccess={true}
             allowFileAccessFromFileURLs={true}
@@ -679,28 +704,6 @@ function isReadyEnvelope(raw: string): boolean {
   } catch {
     return false
   }
-}
-
-/**
- * Intercept the raw-frame preview experiment's control envelope.
- *
- * These are host-level commands, not miniapp messages: `MentraUIRouter` only bridges
- * `ready`/`msg`/`cancel` through to the background JSContext, and the preview's transport lives
- * in native code next to the decoder. Same seam as `dev_log` above, for the same reason.
- *
- * Returns true when the frame was handled and must not be routed onward.
- */
-function forwardFramePreviewCommand(packageName: string, raw: string): boolean {
-  if (!raw.includes("frame_preview")) return false
-  let envelope: {type?: string; cmd?: string; args?: Record<string, unknown>}
-  try {
-    envelope = JSON.parse(raw)
-  } catch {
-    return false
-  }
-  if (envelope.type !== "frame_preview" || typeof envelope.cmd !== "string") return false
-  framePreviewHost.handleCommand(packageName, {cmd: envelope.cmd, args: envelope.args})
-  return true
 }
 
 /**

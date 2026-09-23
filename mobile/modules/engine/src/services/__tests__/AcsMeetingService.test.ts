@@ -267,6 +267,38 @@ describe("AcsMeetingService", () => {
     setAcsMeetingPhoneNetworkForTests(null)
   })
 
+  test("each meeting has its own instance id, and its release is observable without affecting it", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    const released: string[] = []
+    const unsubscribeThrowing = acsMeetingService.onMeetingReleased(() => {
+      throw new Error("observer bug")
+    })
+    const unsubscribe = acsMeetingService.onMeetingReleased((id) => released.push(id))
+    expect(acsMeetingService.meetingInstance()).toBeNull()
+    const join = () =>
+      acsMeetingService.join("com.mentra.call", {
+        meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+        token: "tok",
+        videoSource: {type: "whep", url: "https://example.com/whep"},
+      })
+    await join()
+    const first = acsMeetingService.meetingInstance()
+    expect(first?.ownerPackage).toBe("com.mentra.call")
+    await acsMeetingService.leave("com.mentra.call")
+    expect(acsMeetingService.meetingInstance()).toBeNull()
+    expect(released).toEqual([first!.instanceId])
+    await join()
+    const second = acsMeetingService.meetingInstance()
+    expect(second!.instanceId).not.toBe(first!.instanceId)
+    // A remote hang-up releases through the native state path, not `leave`.
+    native.emit("onState", {state: "disconnected", muted: false})
+    await flush()
+    expect(released).toEqual([first!.instanceId, second!.instanceId])
+    unsubscribe()
+    unsubscribeThrowing()
+  })
+
   test("a failed native join releases ownership, unbinds listeners, and hangs up native", async () => {
     const native = fakeNative()
     native.join.mockImplementationOnce(async () => {
