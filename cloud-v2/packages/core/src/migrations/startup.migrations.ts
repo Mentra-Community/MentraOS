@@ -5,6 +5,7 @@ import {RefreshTokenModel} from "../models/refresh-token.model"
 import {UserModel} from "../models/user.model"
 import {TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {TestRunClaimModel} from "../models/test-run-claim.model"
+import {TestDispatchModel} from "../models/test-dispatch.model"
 
 const logger = createLogger("core").child({component: "startup-migrations"})
 const USERS = "users"
@@ -27,6 +28,8 @@ export async function runStartupMigrations(): Promise<void> {
   await TestRunModel.createIndexes()
   await TestAssetModel.createIndexes()
   await TestRunClaimModel.createIndexes()
+  // The send receipt must be unique before any admin can submit a device request.
+  await TestDispatchModel.createIndexes()
   await ensureMentraAccountOem()
 }
 

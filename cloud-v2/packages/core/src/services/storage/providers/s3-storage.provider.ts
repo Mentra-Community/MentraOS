@@ -49,7 +49,31 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   async statObject(key: string): Promise<{ sizeBytes: number }> {
-    return { sizeBytes: (await this.client.file(key).stat()).size };
+    // R2 can compress text HEAD responses and omit Content-Length. Bun's
+    // native S3 stat advertises compression and reports that missing size as 0.
+    // Request the object's original representation without downloading it.
+    let response: Response;
+    try {
+      response = await fetch(this.client.file(key).presign({ method: "HEAD", expiresIn: 60 }), {
+        method: "HEAD",
+        headers: { "Accept-Encoding": "identity" },
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      // Fetch errors can include the signed URL. Keep credentials out of logs.
+      throw new Error("storage object metadata request failed");
+    }
+    if (response.status !== 200) throw new Error(`storage object metadata request returned ${response.status}`);
+    const encoding = response.headers.get("content-encoding");
+    if (encoding && encoding.trim().toLowerCase() !== "identity") {
+      throw new Error("storage object metadata response is encoded");
+    }
+    const length = response.headers.get("content-length");
+    if (length === null || !/^(0|[1-9]\d*)$/.test(length) || !Number.isSafeInteger(Number(length))) {
+      throw new Error("storage object metadata has no valid size");
+    }
+    return { sizeBytes: Number(length) };
   }
 
   async streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array>> {

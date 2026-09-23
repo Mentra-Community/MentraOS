@@ -4,6 +4,7 @@ import {adminAuth} from "../middleware/admin-auth.middleware"
 import reports from "./reports.api"
 import supportProfiles from "./support-profiles.api"
 import testRuns from "./test-runs.api"
+import testDispatches from "./test-dispatches.api"
 
 /**
  * Core's admin surface, reached directly by the admin console and by CLI
@@ -17,4 +18,5 @@ app.get("/me", c => c.json({authenticated: true, admin: true, user: c.var.develo
 app.route("/reports", reports)
 app.route("/support-profiles", supportProfiles)
 app.route("/test-runs", testRuns)
+app.route("/", testDispatches)
 export default app
