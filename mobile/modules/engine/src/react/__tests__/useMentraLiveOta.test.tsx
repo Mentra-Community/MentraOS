@@ -142,9 +142,10 @@ mock.module("../../devices/mentra-live/ports", () => ({liveOtaPorts: fakeOta}))
 // This suite isolates Live's public hook; NIMO's native file transport is covered separately.
 mock.module("../../devices/nimo/definition", () => ({nimoIntegration: {id: "nimo", models: ["NIMO"]}}))
 mock.module("../../devices/ar99/definition", () => ({ar99Integration: {id: "ar99", models: ["AR99"]}}))
+const getDefaultDevice = mock(async () => ({id: "live-test", model: "Mentra Live", name: "Live"}))
 mock.module("@mentra/bluetooth-sdk", () => ({
   default: {
-    getDefaultDevice: async () => ({id: "live-test", model: "Mentra Live", name: "Live"}),
+    getDefaultDevice,
     getFirmwareUpdateSnapshot: async () => {
       throw Object.assign(new Error("Older standalone SDK"), {code: "unsupported"})
     },
@@ -184,12 +185,14 @@ const {getMentraLiveOtaSession, releaseMentraLiveOtaSession} =
   require("../../devices/mentra-live/sessionRegistry") as typeof import("../../devices/mentra-live/sessionRegistry")
 
 const {useMentraLiveOta} = require("../useMentraLiveOta") as typeof import("../useMentraLiveOta")
+const {firmwareUpdateService} =
+  require("../../facades/firmwareUpdates") as typeof import("../../facades/firmwareUpdates")
 
 let latestController: ReturnType<typeof useMentraLiveOta>
 let renderedScreens: string[] = []
 
-function Probe({initialPage = "progress"}: {initialPage?: "check" | "progress"}) {
-  latestController = useMentraLiveOta({initialPage, initializeRuntime: false})
+function Probe({initialPage = "progress", ...options}: Parameters<typeof useMentraLiveOta>[0] = {}) {
+  latestController = useMentraLiveOta({initialPage, initializeRuntime: false, ...options})
   renderedScreens.push(latestController.state.screen)
   return null
 }
@@ -221,6 +224,7 @@ describe("useMentraLiveOta", () => {
     getReleaseChangelogs.mockClear()
     getReleaseChangelogs.mockImplementation(() => [{version: "3.1.0", markdown: "Release notes"}])
     fakeOta.checkForUpdates.mockClear()
+    getDefaultDevice.mockReset().mockResolvedValue({id: "live-test", model: "Mentra Live", name: "Live"})
     beginAutoChain.mockClear()
     stopAutoChain.mockClear()
     advanceAutoChain.mockClear()
@@ -720,5 +724,50 @@ describe("useMentraLiveOta", () => {
     expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
     expect(renderedScreens.slice(screenCountBeforeReturn)).not.toContain("update_available")
     await act(async () => renderer.unmount())
+  })
+
+  for (const entryPoint of ["pairing", "settings"] as const) {
+    test.each(["resolution", "validation"])(
+      `${entryPoint} failed %s closes safely without completing required setup`,
+      async (failure) => {
+        if (failure === "validation")
+          getDefaultDevice.mockResolvedValueOnce({id: "live-test", model: "Mentra Live", name: "Live"})
+        getDefaultDevice.mockRejectedValueOnce(new Error("Device lookup failed"))
+        const onFinished = mock((_result?: import("../../ota/types").FirmwareFinishResult) => {})
+        let view!: TestRenderer.ReactTestRenderer
+        await act(async () => {
+          view = TestRenderer.create(<Probe initialPage="check" entryPoint={entryPoint} onFinished={onFinished} />)
+        })
+        expect(latestController.state.screen).toBe("check_failed")
+        expect(latestController.state.canDismiss).toBe(true)
+        await act(async () => latestController.finish())
+        expect(onFinished).toHaveBeenCalledTimes(1)
+        expect(onFinished).toHaveBeenCalledWith(
+          entryPoint === "pairing" ? {kind: "finished", outcome: "cancelled"} : undefined,
+        )
+        expect(firmwareUpdateService.retainedSnapshots()).toEqual([])
+        await act(async () => view.unmount())
+        latestController.finish()
+        expect(onFinished).toHaveBeenCalledTimes(1)
+      },
+    )
+  }
+
+  test("failed Live opening cannot close over retained native ownership", async () => {
+    getDefaultDevice.mockRejectedValueOnce(new Error("Device lookup failed"))
+    const owner = {integrationId: "nimo", deviceId: "retained-owner"}
+    firmwareUpdateService.noteNativeRecovery(owner, false)
+    const onFinished = mock(() => {})
+    let view!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      view = TestRenderer.create(<Probe initialPage="check" entryPoint="settings" onFinished={onFinished} />)
+    })
+    await act(async () => latestController.finish())
+    expect(onFinished).not.toHaveBeenCalled()
+    expect(latestController.state.error?.message).toContain("wait before disconnecting")
+    firmwareUpdateService.noteNativeRecovery(owner, true)
+    await act(async () => latestController.finish())
+    expect(onFinished).toHaveBeenCalledTimes(1)
+    await act(async () => view.unmount())
   })
 })

@@ -1,5 +1,5 @@
 import type {ReleaseChangelog} from "../../facades/ota"
-import type {FirmwareSnapshot, FirmwareTarget, FirmwareEntryPoint} from "../../ota/types"
+import type {FirmwareSnapshot, FirmwareTarget, FirmwareEntryPoint, FirmwareFinishResult} from "../../ota/types"
 
 export type MentraLiveOtaFlowPage = "check" | "progress"
 
@@ -114,7 +114,7 @@ export type UseMentraLiveOtaOptions = {
   /** Start Engine's OTA-only projections. Full Engine hosts should pass false. */
   initializeRuntime?: boolean
   /** Called after the final check or when an optional update is dismissed. */
-  onFinished?: () => void
+  onFinished?: (result?: FirmwareFinishResult) => void
   /** Host-owned Wi-Fi setup for glasses without hotspot OTA support. */
   onOpenWifiSetup?: () => void
   /** Lets a host coordinate its connection overlay with OTA firmware restarts. */

@@ -81,3 +81,18 @@ test("stock failure screen preserves restart guidance without offering an unsafe
   expect(root.root.findAllByProps({testID: "button-Retry"})).toHaveLength(1)
   await act(async () => root.unmount())
 })
+
+test("stock failed-open page offers Close without enabling developer skip", async () => {
+  let root!: TestRenderer.ReactTestRenderer
+  await act(async () => {
+    root = TestRenderer.create(
+      React.createElement(MentraLiveOtaPreview, {
+        state: {...failed, screen: "check_failed", canDismiss: true, canRetry: true},
+      }),
+    )
+  })
+  expect(root.root.findAllByProps({testID: "button-Close"})).toHaveLength(1)
+  expect(root.root.findAllByProps({testID: "button-Retry"})).toHaveLength(1)
+  expect(root.root.findAllByProps({testID: "button-Skip (dev only)"})).toHaveLength(0)
+  await act(async () => root.unmount())
+})

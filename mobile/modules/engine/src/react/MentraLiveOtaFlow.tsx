@@ -15,7 +15,7 @@ import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
 import {OTA_ERROR_ENGLISH_COPY} from "../services/OtaErrorMapping"
-import type {FirmwareSnapshot, FirmwareTarget, FirmwareEntryPoint} from "../ota/types"
+import type {FirmwareSnapshot, FirmwareTarget, FirmwareEntryPoint, FirmwareFinishResult} from "../ota/types"
 import {
   MINIMUM_OTA_BATTERY_LEVEL,
   useMentraLiveOta,
@@ -49,7 +49,7 @@ export type MentraLiveOtaFlowProps = {
   /** Start the OTA-only projections. Full Engine hosts should pass false. */
   initializeRuntime?: boolean
   /** Called after the final check or when the user leaves an optional update. */
-  onFinished: () => void
+  onFinished: (result?: FirmwareFinishResult) => void
   /** Host-owned Wi-Fi setup for glasses that do not support hotspot OTA. */
   onOpenWifiSetup: () => void
   /** Lets a host coordinate its global connection overlay with OTA progress and firmware restarts. */
@@ -457,7 +457,9 @@ function OtaFlowContent({
         actions={
           <>
             <FlowButton colors={colors} label="Retry" onPress={controller.retryCheck} />
-            {allowDevSkip ? (
+            {state.canDismiss ? (
+              <FlowButton colors={colors} label="Close" onPress={controller.finish} secondary />
+            ) : allowDevSkip ? (
               <FlowButton colors={colors} label="Skip (dev only)" onPress={controller.finish} secondary />
             ) : null}
           </>

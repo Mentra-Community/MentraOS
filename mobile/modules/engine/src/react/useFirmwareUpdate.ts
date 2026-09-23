@@ -102,11 +102,7 @@ export function useFirmwareUpdate(target: FirmwareTarget, options: UseFirmwareUp
   const closeFailedOpen = () => {
     if (opening || !error || snapshot.active || !snapshot.safeToRelease || snapshot.presentation.actions.length) return
     try {
-      firmwareUpdates.assertSafeToRelease()
-      firmwareUpdateService.release(target)
-      callbacks.current.onFinished?.(
-        options.entryPoint === "pairing" ? {kind: "finished", outcome: "cancelled"} : undefined,
-      )
+      callbacks.current.onFinished?.(firmwareUpdateService.closeFailedOpen(target, options.entryPoint))
     } catch (failure) {
       setError(failure instanceof Error ? failure : new Error(String(failure)))
     }

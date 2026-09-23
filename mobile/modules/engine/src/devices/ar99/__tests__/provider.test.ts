@@ -266,3 +266,26 @@ test.each(["event", "reopen", "retry"])(
     expect(await service.perform(target, {action: "finish"})).toEqual({kind: "finished"})
   },
 )
+
+test("an older idle read cannot release newer native admission after a lost Start reply", async () => {
+  const f = fixture()
+  await f.provider.open({entryPoint: "settings"})
+  const idle = await f.ports.read()
+  const start = f.ports.start
+  f.ports.start = async (request) => {
+    await start(request)
+    f.ports.read = async () => idle
+    throw new Error("Start reply lost after native admission")
+  }
+  await f.provider.perform({action: "install", offerId: f.provider.snapshot().offer!.id})
+  expect(f.requests).toHaveLength(1)
+  expect(f.provider.snapshot()).toMatchObject({active: true, safeToRelease: false, phase: "preparing"})
+  expect(f.provider.snapshot().nativeSessionId).toBeTruthy()
+  expect(f.provider.snapshot().presentation.actions).toEqual([])
+  expect(f.held()).toBe(1)
+  expect(f.releases()).toBe(0)
+  await expect(f.provider.perform({action: "finish"})).rejects.toThrow()
+  f.emit({phase: "complete", safeToRelease: true})
+  expect(f.held()).toBe(0)
+  expect(f.releases()).toBe(1)
+})

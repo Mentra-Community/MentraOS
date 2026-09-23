@@ -4,6 +4,8 @@ import {
   FirmwareUpdateError,
   type FirmwareActionRequest,
   type FirmwareActionResult,
+  type FirmwareEntryPoint,
+  type FirmwareFinishResult,
   type FirmwareOpenOptions,
   type FirmwareProvider,
   type FirmwareSnapshot,
@@ -176,6 +178,18 @@ export class FirmwareUpdateService {
     ) {
       throw new FirmwareUpdateError("busy", "The glasses are updating; wait before disconnecting or resetting them")
     }
+  }
+
+  /** Failed view initialization can close only after all update ownership is safely released. */
+  closeFailedOpen(
+    target: FirmwareTarget | undefined,
+    entryPoint: FirmwareEntryPoint,
+  ): FirmwareFinishResult | undefined {
+    this.assertSafeToRelease()
+    const provider = target && this.providers.get(targetKey(target))
+    if (provider && provider.snapshot().active) throw new FirmwareUpdateError("busy", "This update is still active")
+    if (target) this.release(target)
+    return entryPoint === "pairing" ? {kind: "finished", outcome: "cancelled"} : undefined
   }
 
   suspendNewWork(): void {

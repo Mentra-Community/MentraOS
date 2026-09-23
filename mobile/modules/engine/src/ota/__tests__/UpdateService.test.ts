@@ -225,3 +225,14 @@ describe("revisioned snapshot delivery", () => {
     expect(observed).toEqual([2])
   })
 })
+
+test("failed-open close checks active local work and preserves pairing cancellation", () => {
+  const {service, provider} = fixture()
+  provider.update({active: true, safeToRelease: true})
+  expect(() => service.closeFailedOpen(target, "pairing")).toThrow("still active")
+  expect(provider.calls).not.toContain("dispose")
+  provider.update({active: false})
+  expect(service.closeFailedOpen(target, "pairing")).toEqual({kind: "finished", outcome: "cancelled"})
+  expect(provider.calls).toContain("dispose")
+  expect(service.retainedSnapshots()).toEqual([])
+})

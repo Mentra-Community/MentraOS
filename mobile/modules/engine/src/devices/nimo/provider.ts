@@ -318,8 +318,9 @@ export class NimoFirmwareProvider implements FirmwareProvider {
         // A bridge rejection is not proof that native failed to admit the update.
         try {
           const native = await this.ports.read()
-          this.observation.accept(native)
-          if (!native.sessionId && native.safeToRelease) this.fail("start_failed", error)
+          const accepted = this.observation.acceptRead(native)
+          const current = this.observation.snapshot()
+          if (accepted && current?.safeToRelease && !current.sessionId) this.fail("start_failed", error)
         } catch {
           this.fail("start_uncertain", error, true)
         }
@@ -387,7 +388,7 @@ export class NimoFirmwareProvider implements FirmwareProvider {
         this.releaseRuntime?.()
         this.releaseRuntime = null
         void this.releaseFile()
-        this.show("idle", "NIMO firmware changed", "Check again before updating these glasses.", {
+        this.show("idle", "NIMO firmware", "Check again before updating these glasses.", {
           nativeSessionId: null,
           attemptId: null,
           active: false,

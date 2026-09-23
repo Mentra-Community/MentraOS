@@ -2,7 +2,7 @@ import {useEffect, useState, type ComponentType} from "react"
 import {ActivityIndicator, Pressable, ScrollView, Text, View, type StyleProp, type ViewStyle} from "react-native"
 import {SafeAreaView} from "react-native-safe-area-context"
 
-import {firmwareUpdates} from "../facades/firmwareUpdates"
+import {firmwareUpdates, firmwareUpdateService} from "../facades/firmwareUpdates"
 import type {
   FirmwareCopy,
   FirmwareFinishResult,
@@ -93,10 +93,7 @@ export function FirmwareUpdateFlow(props: FirmwareUpdateFlowProps & {views?: Fir
                 accessibilityRole="button"
                 onPress={() => {
                   try {
-                    firmwareUpdates.assertSafeToRelease()
-                    props.onFinished(
-                      props.entryPoint === "pairing" ? {kind: "finished", outcome: "cancelled"} : undefined,
-                    )
+                    props.onFinished(firmwareUpdateService.closeFailedOpen(undefined, props.entryPoint))
                   } catch (failure) {
                     setError(failure instanceof Error ? failure : new Error(String(failure)))
                   }

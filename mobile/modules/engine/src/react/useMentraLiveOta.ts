@@ -1,12 +1,12 @@
 import {useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore} from "react"
 
-import {openMentraLiveOtaProvider} from "../devices/mentra-live/sessionRegistry"
+import {resolveMentraLiveOtaProvider} from "../devices/mentra-live/sessionRegistry"
 import {MentraLiveOtaSession} from "../devices/mentra-live/session"
 import {liveOtaPorts} from "../devices/mentra-live/ports"
 import type {MentraLiveFirmwareProvider} from "../devices/mentra-live/provider"
 import type {MentraLiveOtaController, UseMentraLiveOtaOptions} from "../devices/mentra-live/types"
-import {firmwareUpdates} from "../facades/firmwareUpdates"
-import type {FirmwareAction} from "../ota/types"
+import {firmwareUpdates, firmwareUpdateService} from "../facades/firmwareUpdates"
+import type {FirmwareAction, FirmwareTarget} from "../ota/types"
 
 export * from "../devices/mentra-live/types"
 export {MINIMUM_OTA_BATTERY_LEVEL} from "../devices/mentra-live/session"
@@ -29,6 +29,8 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   callbacks.current = options
 
   const viewGeneration = useRef(0)
+  const openingTarget = useRef<FirmwareTarget | undefined>(options.target)
+  const closed = useRef(false)
   const integrationId = options.target?.integrationId
   const deviceId = options.target?.deviceId
   const displayName = options.target?.displayName
@@ -40,25 +42,32 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   useEffect(() => {
     let observing = true
     viewGeneration.current += 1
+    closed.current = false
+    openingTarget.current =
+      integrationId && deviceId ? {integrationId, deviceId, displayName: displayName ?? "Mentra Live"} : undefined
     setProvider(null)
     setOpenError(null)
-    void openMentraLiveOtaProvider(
-      {
-        entryPoint,
-        legacyProgressEntry,
-        initializeRuntime,
-        allowDevelopmentSkip,
-      },
-      integrationId && deviceId ? {integrationId, deviceId, displayName: displayName ?? "Mentra Live"} : undefined,
-    )
+    void resolveMentraLiveOtaProvider(openingTarget.current)
+      .then(async (value) => {
+        if (!observing) return null
+        openingTarget.current = value.target
+        await firmwareUpdates.open(value.target, {
+          entryPoint,
+          legacyProgressEntry,
+          initializeRuntime,
+          allowDevelopmentSkip,
+        })
+        return value
+      })
       .then((value) => {
-        if (observing) setProvider(value)
+        if (observing && value) setProvider(value)
       })
       .catch((error) => {
         if (observing) setOpenError(error instanceof Error ? error : new Error(String(error)))
       })
     return () => {
       observing = false
+      closed.current = true
       viewGeneration.current += 1
     }
   }, [
@@ -97,10 +106,21 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     return () => callbacks.current.onFirmwareRestartingChange?.(false, false)
   }, [snapshot.page])
 
+  const renderedGeneration = viewGeneration.current
   const perform = useCallback(
     (action: FirmwareAction) => {
+      if (closed.current || renderedGeneration !== viewGeneration.current) return
       if (!provider) {
         if (action === "check" || action === "retry") setOpenGeneration((value) => value + 1)
+        else if (action === "finish" && openError && !closed.current) {
+          try {
+            const result = firmwareUpdateService.closeFailedOpen(openingTarget.current, entryPoint)
+            closed.current = true
+            callbacks.current.onFinished?.(result)
+          } catch (error) {
+            setOpenError(error instanceof Error ? error : new Error(String(error)))
+          }
+        }
         return
       }
       const generation = viewGeneration.current
@@ -113,7 +133,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         })
         .catch((error) => console.warn(`Live update ${action} failed`, error))
     },
-    [provider],
+    [provider, openError, entryPoint, renderedGeneration],
   )
 
   return useMemo(
@@ -123,6 +143,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
             ...snapshot.state,
             screen: "check_failed" as const,
             canRetry: true,
+            canDismiss: true,
             error: {code: "check_failed" as const, message: openError.message},
           }
         : {
