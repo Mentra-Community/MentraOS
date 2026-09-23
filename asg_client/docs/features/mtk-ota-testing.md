@@ -44,6 +44,11 @@ ASG performs the download and installation, including its own MTK-only reboot.
 The script sends no second reboot. It waits within the existing 15-minute OTA
 deadline for a completed new boot, the same eMMC CID, the opposite A/B slot and
 the exact target firmware. Full mode dispatches once and never retries.
+The Python observer shares one monotonic deadline across logcat and all postboot
+ADB reads. Each read is capped at five seconds or the remaining deadline,
+whichever is shorter; stalled readers are killed and reaped, and late replies
+cannot pass verification. Logcat EOF starts postboot verification directly,
+including on macOS Bash 3.2; it does not rely on shell process-substitution PIDs.
 
 If wiping changes ADB authorization or its selector, target verification remains
 incomplete. Reacquire the same physical fixture and inspect its actual state;

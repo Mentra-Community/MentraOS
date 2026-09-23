@@ -46,10 +46,6 @@ cleanup() {
     if [ -n "${HTTP_PID:-}" ] && kill -0 "$HTTP_PID" 2>/dev/null; then
         kill "$HTTP_PID" 2>/dev/null || true
     fi
-    if [ -n "${LOGCAT_PID:-}" ]; then
-        kill "$LOGCAT_PID" 2>/dev/null || true
-        wait "$LOGCAT_PID" 2>/dev/null || true
-    fi
     if [ "$REVERSE_CREATED" = true ]; then
         adb reverse --remove "tcp:$PORT" 2>/dev/null || true
     fi
@@ -90,138 +86,13 @@ trigger_mtk_ota() {
         -n "$DEBUG_RECEIVER_COMPONENT" >/dev/null || fail "Failed to send MTK OTA trigger broadcast"
 }
 
-wait_for_target_boot() {
-    # The existing OTA deadline covers installation and reboot; do not reset it.
-    local current_boot="" current_slot="" current_version="" current_cid="" completed=""
-    while [ "$SECONDS" -lt "$UPDATE_DEADLINE" ]; do
-        current_boot="$(adb shell cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r\n')" || true
-        if [ -n "$current_boot" ] && [ "$current_boot" != "$SOURCE_BOOT" ]; then
-            completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')" || true
-            if [ "$completed" = "1" ]; then
-                current_version="$(adb shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')" || true
-                current_slot="$(adb shell getprop ro.boot.slot_suffix 2>/dev/null | tr -d '\r\n')" || true
-                current_cid="$(adb shell cat /sys/block/mmcblk0/device/cid 2>/dev/null | tr -d '\r\n')" || true
-                if [ -z "$current_version" ] || [ -z "$current_slot" ] || [ -z "$current_cid" ]; then
-                    sleep 1
-                    continue
-                fi
-                [ "$current_cid" = "$SOURCE_CID" ] || fail "Different eMMC identity after reboot"
-                [ "$current_version" = "$END_FIRMWARE" ] || fail "Postboot firmware is $current_version, expected $END_FIRMWARE"
-                [ "$current_slot" = "$TARGET_SLOT" ] || fail "Postboot slot is $current_slot, expected $TARGET_SLOT"
-                local closing_boot=""
-                closing_boot="$(adb shell cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r\n')" || true
-                if [ -z "$closing_boot" ]; then sleep 1; continue; fi
-                [ "$closing_boot" = "$current_boot" ] || fail "Boot changed during target verification"
-                echo "✅ Verified target MTK on the new boot and slot."
-                return 0
-            fi
-        fi
-        sleep 1
-    done
-    fail "Target boot was not verified before the OTA deadline; do not resend the update"
-}
-
 monitor_update() {
-    local last_download=-1
-    local last_install=-1
-    local line=""
-    local progress=0
-    local raw_progress=0
-    local idle_seconds=0
-    local saw_activity=0
-    UPDATE_DEADLINE=$((SECONDS + MTK_UPDATE_TIMEOUT_SECONDS))
-
-    exec 3< <(adb logcat -v time)
-    LOGCAT_PID=$!
-    while true; do
-        if [ "$SECONDS" -ge "$UPDATE_DEADLINE" ]; then
-            exec 3<&-
-            fail "MTK OTA did not complete within $((MTK_UPDATE_TIMEOUT_SECONDS / 60)) minutes"
-        fi
-        if IFS= read -r -t 1 line <&3; then
-            idle_seconds=0
-        else
-            if ! kill -0 "$LOGCAT_PID" 2>/dev/null; then
-                exec 3<&-
-                echo "ℹ️  Log stream closed. Checking the target boot without resending OTA..."
-                wait_for_target_boot
-                return 0
-            fi
-            idle_seconds=$((idle_seconds + 1))
-            if [ "$saw_activity" -eq 0 ] && [ "$idle_seconds" -ge "$TRIGGER_ACTIVITY_TIMEOUT_SECONDS" ]; then
-                exec 3<&-
-                return 3
-            fi
-            continue
-        fi
-
-        if [[ "$line" == *"OtaHelper not initialized - is OtaService running?"* ]]; then
-            exec 3<&-
-            return 2
-        fi
-
-        if [[ "$line" == *"Failed to download MTK firmware"* ]] || \
-           [[ "$line" == *"MTK firmware verification failed"* ]] || \
-           [[ "$line" == *"MTK OTA error:"* ]]; then
-            exec 3<&-
-            fail "$line"
-        fi
-
-        if [[ "$line" == *"MTK OTA source URL:"* ]]; then
-            saw_activity=1
-            echo "📥 Downloading MTK patch..."
-            continue
-        fi
-
-        if [[ "$line" =~ MTK\ firmware\ download\ progress:\ ([0-9]+)% ]]; then
-            saw_activity=1
-            progress="${BASH_REMATCH[1]}"
-            if [ "$progress" -ne "$last_download" ]; then
-                echo "📥 Downloading MTK patch: ${progress}%"
-                last_download="$progress"
-            fi
-            continue
-        fi
-
-        if [[ "$line" == *"MTK firmware downloaded to:"* ]]; then
-            saw_activity=1
-            if [ "$last_download" -lt 100 ]; then
-                echo "📥 Downloading MTK patch: 100%"
-                last_download=100
-            fi
-            continue
-        fi
-
-        if [[ "$line" =~ MTK\ OTA\ update\ -\ cmd:\ write,\ msg:\ ([0-9]+) ]]; then
-            saw_activity=1
-            raw_progress="${BASH_REMATCH[1]}"
-            progress=$((raw_progress / 2))
-            if [ "$progress" -gt "$last_install" ]; then
-                echo "🛠️ Installing MTK firmware: ${progress}%"
-                last_install="$progress"
-            fi
-            continue
-        fi
-
-        if [[ "$line" =~ MTK\ OTA\ update\ -\ cmd:\ update,\ msg:\ ([0-9]+) ]]; then
-            saw_activity=1
-            raw_progress="${BASH_REMATCH[1]}"
-            progress=$((50 + (raw_progress / 2)))
-            if [ "$progress" -gt "$last_install" ]; then
-                echo "🛠️ Installing MTK firmware: ${progress}%"
-                last_install="$progress"
-            fi
-            continue
-        fi
-
-        if [[ "$line" == *'"type":"mtk_update_complete"'* ]] || \
-           [[ "$line" == *"MTK OTA success:"* ]]; then
-            exec 3<&-
-            echo "✅ Payload staged. Waiting for the ASG-owned MTK-only reboot..."
-            wait_for_target_boot
-            return 0
-        fi
-    done
+    # One monotonic deadline owns logcat and every postboot read, including EOF.
+    python3 "$SCRIPT_DIR/mtk-ota-observe.py" \
+        --source-boot "$SOURCE_BOOT" --source-cid "$SOURCE_CID" \
+        --target-version "$END_FIRMWARE" --target-slot "$TARGET_SLOT" \
+        --timeout "$MTK_UPDATE_TIMEOUT_SECONDS" \
+        --activity-timeout "$TRIGGER_ACTIVITY_TIMEOUT_SECONDS"
 }
 
 run_mtk_ota() {
