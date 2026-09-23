@@ -6,7 +6,7 @@ import {
   issueAcsTeamsCredential,
   mintAcsGuestToken,
   TeamsIdentityRejectedError,
-  verifyTeamsSubjectToken,
+  bindTeamsSubject,
 } from "../services/meetings/acs-teams.service"
 import {createTeamsMeeting, retireTeamsMeeting, TeamsMeetingError} from "../services/meetings/teams-meetings.service"
 import {authenticateRuntimeRequest} from "./runtime-auth"
@@ -98,7 +98,7 @@ meetingsApi.post("/acs/token", async (c) => {
 
   let subject
   try {
-    subject = await verifiedSubject(auth.identity, parsed.data.teamsUserAadToken)
+    subject = await boundSubject(auth.identity, parsed.data.teamsUserAadToken)
   } catch (error) {
     if (error instanceof AcsCredentialError) {
       return c.json(meetingError(error.message), error.status)
@@ -116,10 +116,12 @@ meetingsApi.post("/acs/token", async (c) => {
       200,
     )
   } catch (error) {
+    if (error instanceof TeamsIdentityRejectedError)
+      return c.json(meetingError(error.message, "Teams identity exchange rejected"), 403)
     if (error instanceof AcsCredentialError) {
       return c.json(meetingError(error.message), error.status)
     }
-    console.error("ACS token exchange unavailable", error)
+    console.error("ACS token exchange unavailable")
     return c.json(meetingError("Teams meeting provider unavailable"), 502)
   }
 })
@@ -131,7 +133,7 @@ meetingsApi.post("/teams/create", async (c) => {
     const parsed = createRequestSchema.safeParse(await readMeetingJson(c.req.raw))
     if (!parsed.success) return c.json(meetingError("invalid Teams meeting request"), 400)
     const subject = parsed.data.teamsUserAadToken
-      ? await verifiedSubject(auth.identity, parsed.data.teamsUserAadToken)
+      ? await boundSubject(auth.identity, parsed.data.teamsUserAadToken)
       : undefined
     return c.json(
       await createTeamsMeeting({
@@ -181,7 +183,7 @@ function meetingActor(identity: VerifiedAccessToken): string {
   return JSON.stringify([identity.tenantId, identity.mentraUserId])
 }
 
-async function verifiedSubject(identity: VerifiedAccessToken, token: string) {
+async function boundSubject(identity: VerifiedAccessToken, token: string) {
   const federated = identity.federatedIdentity
   if (!federated || federated.providerKind !== "microsoft-entra" || !federated.directoryTenantId) {
     throw new TeamsIdentityRejectedError("Teams identity exchange rejected")
@@ -191,5 +193,5 @@ async function verifiedSubject(identity: VerifiedAccessToken, token: string) {
   if (federated.issuer !== `https://login.microsoftonline.com/${configuredTenantId}/v2.0`) {
     throw new TeamsIdentityRejectedError("Teams identity exchange rejected")
   }
-  return verifyTeamsSubjectToken(token, {tenantId: federated.directoryTenantId, objectId: federated.subject})
+  return bindTeamsSubject(token, {tenantId: federated.directoryTenantId, objectId: federated.subject})
 }
