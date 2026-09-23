@@ -16,7 +16,8 @@ MentraOS retains:
 
 ## Request and dispatch
 
-1. Add `routine:day1-ota` to a same-repository PR targeting `dev`.
+1. Add `routine:no-glasses`, `routine:day1-ota` or `routine:mentra-call` to a
+   same-repository PR targeting `dev`. Multiple labels request separate routines.
 2. The [request workflow](workflows/request-e2e-routine.yml) records the current
    PR revisions, exact successful iOS build/publication attempt, receipt, Mac
    archive and OTA manifest in an immutable `request.json` artifact. If these
@@ -33,22 +34,27 @@ MentraOS retains:
    shared claim API before entering the routine. Duplicate/ambiguous ownership
    does not start another hardware execution.
 
-The callback passes repository and immutable run/attempt identifiers. It does
+The callback passes repository, immutable run/attempt identifiers and the
+authenticated routine ID. It does
 not send shell commands, executable paths or fixture overrides from public PRs.
-`E2E_PRIVATE_DISPATCH_TOKEN` is a scoped Actions-write capability for the private
-repository, read only by the trusted callback without checking out PR code.
-The private worker has separate source-read, claim and evidence-upload capabilities.
+The trusted callback mints a short-lived GitHub App token with Actions write
+access only to the private repository, without checking out PR code. Both
+repositories configure `TEST_RUN_GITHUB_APP_ID` and
+`TEST_RUN_GITHUB_APP_PRIVATE_KEY`. The private worker mints a separate
+source-read token and retains independent claim and evidence-upload capabilities.
 
 The callbacks must reach the repository's default branch and have their scoped
 credentials configured before they run. Private workflow activation, host/app
 permissions, artifact preparation and fixture qualification are separate gates.
-A registered runner or an accepted dispatch is not a completed test. Nightly
-coordinated dev/staging scheduling and automatic routine selection remain follow-up work.
+A registered runner or an accepted dispatch is not a completed test. Successful
+coordinated dev/staging builds request the no-glasses walkthrough automatically.
+The optional [nightly scheduler](workflows/nightly-device-routines.yml) requests
+day-one OTA and Mentra Call; see its [activation runbook](NIGHTLY-DEVICE-ROUTINES.md).
 
 ## Results and Slack
 
 The existing `#pr-builds` post is published when app/ASG producers finish; it
-does not wait for a hardware test. A requested day-one routine adds requested
+does not wait for a hardware test. Each requested routine adds requested
 coverage, a request-pipeline link and, for a verified Mac archive, **View results**.
 If no matching request can be found, the pipeline link opens the workflow page
 without claiming a request exists. A label expresses requested coverage, not a pass.

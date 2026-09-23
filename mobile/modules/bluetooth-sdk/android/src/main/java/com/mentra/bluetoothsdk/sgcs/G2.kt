@@ -1665,8 +1665,15 @@ class G2 : SGCManager() {
         if (char == null || gatt == null) return
         char.value = packet
         char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-        val ok = gatt.writeCharacteristic(char)
-        bgcapNoteWriteResult(ok) // BGCAP
+        // A rejected write never entered Android's queue. Retry on this dedicated
+        // BLE worker before later commands (especially a page replacement) overtake it.
+        var ok = false
+        for (attempt in 0 until 5) {
+            ok = gatt.writeCharacteristic(char)
+            bgcapNoteWriteResult(ok)
+            if (ok) break
+            if (attempt < 4) Thread.sleep(BLE_PACKET_GAP_MS)
+        }
         if (leg != null) {
             Bridge.log("G2/FILE: write $leg ${packet.size}B -> ${if (ok) "queued" else "DROPPED (stack busy)"}")
         }
@@ -2258,6 +2265,12 @@ class G2 : SGCManager() {
     }
 
     override fun clearDisplay() {
+        // Expo invokes this on its worker queue; all container mutations must
+        // share Main with reconcileDisplay and scene updates.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { clearDisplay() }
+            return
+        }
         Bridge.log("G2: clearDisplay()")
         // Clear the text in place — do NOT shut down + rebuild the EvenHub page. Tearing the page
         // down (rebuildPage) kills audio streaming AND triggers a firmware systemExit /
@@ -2267,9 +2280,22 @@ class G2 : SGCManager() {
         // several seconds (incident 8164175a). Just blank the text + clear images; the reconcile
         // loop pushes the blanked text on a live page, and a dead page is only resurrected for
         // meaningful (non-blank) content, so a clear can't churn it back up.
-        for (i in textContainers.indices) {
-            textContainers[i].content = "\n"
-            textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+        for (container in textContainers) {
+            // Erase the firmware's existing text BEFORE forgetting its container.
+            // A queued reconcile cannot do this after the positioned container is removed.
+            // Cover the previous byte range, rather than replacing only its first character.
+            val blank = " ".repeat(maxOf(1, container.content.toByteArray(Charsets.UTF_8).size))
+            container.content = blank
+            container.pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+            if (pageCreated) {
+                val erase = EvenHubProto.updateTextMessage(
+                    containerID = container.id,
+                    contentOffset = 0,
+                    contentLength = blank.length,
+                    content = blank
+                )
+                repeat(1 + EVEN_HUB_RESEND_COUNT) { sendEvenHubCommand(erase) }
+            }
         }
         for (i in imageContainers.indices) {
             // The firmware still shows this container's image; emptying bmpData locally never reaches
@@ -2297,8 +2323,13 @@ class G2 : SGCManager() {
             textContainers.removeAll { it.id in huskIds }
             sceneTextByElement.entries.removeAll { it.value in huskIds }
             sceneImageByElement.clear()
-            Bridge.log("G2: clearDisplay() — purging ${huskIds.size} positioned husk container(s), one rebuild")
-            displayScope.launch { coalescedPageRebuild() }
+            // Replace the live page now, while still on Main. A shutdown followed by
+            // reconcile cannot clear this case: reconcile intentionally skips blank pages,
+            // leaving the firmware's old positioned text visible until new speech arrives.
+            // Queue the blank replacement before any following miniapp frame, without
+            // tearing down the page (or its microphone session).
+            Bridge.log("G2: clearDisplay() — replacing page after removing ${huskIds.size} positioned container(s)")
+            if (pageCreated) createPageWithContainers()
         }
     }
 
@@ -2345,6 +2376,15 @@ class G2 : SGCManager() {
                     return false
                 }
 
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { applyBitmap(rx, ry, rw, rh, bmpData) }
+            return true
+        }
+        return applyBitmap(rx, ry, rw, rh, bmpData)
+    }
+
+    // Called only on Main, including the inline scene-frame path.
+    private fun applyBitmap(rx: Int, ry: Int, rw: Int, rh: Int, bmpData: ByteArray): Boolean {
         // Pure state mutation: update the target container's bytes and mark it dirty. The reconcile
         // loop is the sole sender, so two displayBitmap calls can never overlap a sendImageData and
         // clobber the single-slot image ACK — no lock needed. Reuse an existing container if the rect
@@ -3000,15 +3040,15 @@ class G2 : SGCManager() {
                 }
                 // Only settle the flag if it's still empty — a displayBitmap during the await would
                 // have set new bytes, so leave it dirty for the next pass to send the real image.
-                val jj = imageContainers.indexOfFirst { it.id == container.id }
+                val jj = imageContainers.indexOfFirst { it === container }
                 if (jj >= 0 && imageContainers[jj].bmpData.isEmpty()) {
                     imageContainers[jj].dirty = false
                 }
                 continue
             }
             sendImageData(container.id, container.name, sentBytes)
-            // Re-find by id: the list may have shifted (eviction) during the await.
-            val j = imageContainers.indexOfFirst { it.id == container.id }
+            // Re-find by identity: eviction can reuse this ID during the await.
+            val j = imageContainers.indexOfFirst { it === container }
             if (j >= 0 && imageContainers[j].bmpData.contentEquals(sentBytes)) {
                 imageContainers[j].dirty = false
             }
@@ -3678,8 +3718,17 @@ class G2 : SGCManager() {
         rightAuthenticated = false
         startupPageCreated = false
         pageCreated = false
-        imageContainers.clear()
-        textContainers.clear()
+        // Keep GATT teardown synchronous for manager replacement, but never
+        // remove containers underneath Main's reconcile/scene iteration.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            imageContainers.clear()
+            textContainers.clear()
+        } else {
+            mainHandler.post {
+                imageContainers.clear()
+                textContainers.clear()
+            }
+        }
         dashboardShowing = 0
         dashboardOpening = false
         heartbeatCounter = 0

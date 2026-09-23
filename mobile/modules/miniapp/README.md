@@ -261,3 +261,18 @@ See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../../../sdk/exa
 - Reference miniapp: [`../example-miniapp/`](../../../sdk/example-miniapp/)
 
 Phone Wi-Fi APIs read the phone radio on Android (`true`/`false`); iOS returns `true` when connected to Wi-Fi and `null` otherwise. `requestWifiEnable(reason?)` presents the host prompt and resolves with `{enabled, cancelled}` after returning from system settings. See [Phone Wi-Fi](https://docs.mentra.glass/app-devs/core-concepts/phone#phone-wi-fi) for platform behavior and cancellation.
+
+## Calling identity
+
+Use `await session.meeting.getIdentity()` before showing a meeting join/create
+confirmation. It returns `identityMode: "teams-user" | "guest"`, an optional
+`account: {displayName?, email?}` for the selected Entra account, and a guest
+reason (`no-entra-identity`, `teams-license-unavailable`, or `legacy-credential`).
+A successful `teams-user` result means Microsoft accepted Teams calling eligibility;
+it is not a general M365 subscription lookup or a guarantee of organizer permissions.
+
+The host obtains credentials from its Runtime and returns only identity metadata.
+No meeting is created or joined. Identity, consent, and network failures reject;
+do not turn them into guest mode. Older hosts reject with an update message.
+Consumer deployments retain their miniapp-supplied guest credentials. Query again
+when entering the confirmation screen; create/join revalidate against current auth.

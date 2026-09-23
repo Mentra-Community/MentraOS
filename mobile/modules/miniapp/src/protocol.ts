@@ -227,6 +227,7 @@ export enum MiniappRequestType {
    * Phone-native meeting (ACS Teams). Join/leave/mute live in the MentraOS
    * host so the miniapp never holds the ACS Calling SDK.
    */
+  MEETING_GET_IDENTITY = "miniapp_meeting_get_identity",
   MEETING_GET_CONFIGURATION = "miniapp_meeting_get_configuration",
   MEETING_CREATE = "miniapp_meeting_create",
   MEETING_RETIRE = "miniapp_meeting_retire",

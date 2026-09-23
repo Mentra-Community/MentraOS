@@ -3,6 +3,7 @@ import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
+import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
 
 export function iosBuildRequired(files) {
   return files.some(({filename}) =>
@@ -51,7 +52,7 @@ export function readOtaTargets(manifest, number, sha) {
   return {asg, bes: bes.version, mtk: mtk.end_firmware}
 }
 
-export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios, routine}) {
+export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios, routines = []}) {
   const ready = !error && !ios?.error
   const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
   const lines = [
@@ -122,9 +123,9 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
       "Install the app, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
     )
   }
-  if (routine)
+  for (const routine of routines)
     lines.push(
-      `*Requested tests:* Day-one OTA · iOS on Mac\n${[
+      `*Requested tests:* ${deviceRoutine(routine.id).name} · iOS on Mac\n${[
         routine.resultsUrl ? link(routine.resultsUrl, "View results") : "Results link available with the Mac build",
         link(routine.pipelineUrl, routine.pipelineLabel),
       ].join(" · ")}\nResults appear after the device run is uploaded.`,
@@ -145,13 +146,13 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
 }
 
-export function routineResultsUrl({repository, pr, sha, archiveSha256}) {
+export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId = "day1-ota"}) {
   if (
     !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
     !Number.isSafeInteger(pr) ||
     pr <= 0 ||
     !/^[a-f0-9]{40}$/.test(sha) ||
-    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "")
+    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !Object.hasOwn(DEVICE_ROUTINES, routineId)
   )
     return null
   // PR applications use dev. This is the deployed admin origin documented in
@@ -163,18 +164,18 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256}) {
     pr: String(pr),
     headSha: sha,
     archiveSha256,
-    routineId: "day1-ota",
+    routineId,
     platform: "ios-mac",
   }).toString()
   return url.href
 }
 
 async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
-  if (!pr.labels?.some((label) => label.name === "routine:day1-ota")) return null
+  const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
+  if (!requested.length) return []
   const repository = `${context.repo.owner}/${context.repo.repo}`
   const workflow = "request-e2e-routine.yml"
   const result = {
-    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: ios.archiveSha256}),
     pipelineUrl: `https://github.com/${repository}/actions/workflows/${workflow}`,
     pipelineLabel: "Request pipeline (workflow)",
   }
@@ -207,7 +208,8 @@ async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
     // missing/pending request or a lookup failure must not gate the build post.
     core.warning(`Could not locate this revision's routine request; linking its workflow: ${error.message}`)
   }
-  return result
+  return requested.map(id => ({...result, id,
+    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: ios.archiveSha256, routineId: id})}))
 }
 
 export function matchingBuildRun(runs, pr, sha) {
@@ -395,12 +397,12 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     core.info("This PR revision's notification was already delivered.")
     return
   }
-  let routine = await requestedRoutineLinks({github, context, pr, sha, ios, core})
+  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, core})
   if (!(await current())) {
     core.info("PR superseded before notification.")
     return
   }
-  if (!pr.labels?.some((label) => label.name === "routine:day1-ota")) routine = null
+  routines = routines.filter(routine => hasRoutineLabel(pr, routine.id))
   const payload = buildPost({
     pr,
     sha,
@@ -411,7 +413,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     asgRunUrl: asgRun?.html_url,
     error,
     ios,
-    routine,
+    routines,
   })
   // No automatic POST retry: an ambiguous network failure must not duplicate a post.
   const response = await fetchImpl(webhook, {
@@ -432,9 +434,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       }) · [Installation instructions](${ios.instructionsUrl})`,
     )
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
-  if (routine)
+  for (const routine of routines)
     downloads.push(
-      `**Requested tests:** Day-one OTA · iOS on Mac\n\n${[
+      `**Requested tests:** ${deviceRoutine(routine.id).name} · iOS on Mac\n\n${[
         ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
         `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
       ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
