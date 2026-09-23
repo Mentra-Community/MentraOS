@@ -22,7 +22,7 @@ import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentr
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import CrustModule from "@mentra/crust"
-import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
+import {getAuth, getConfigValues, isFeatureEnabled, isStarted} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
@@ -35,6 +35,8 @@ import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 import {resolveCloudEndpoints} from "./cloudEndpointPolicy"
+import {firmwareUpdates} from "../facades/firmwareUpdates"
+import {startLiveAvailability} from "../devices/mentra-live/availabilityRuntime"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -276,12 +278,18 @@ function ensureAuthWatch(): void {
   try {
     const sub = auth.onStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
+        firmwareUpdates.suspendNewWork()
         localMiniappUserIdentity.forget()
         return
       }
       // A new sign-in may belong to a different account. Force the next
       // storage request to resolve and persist that account's Core identity.
-      if (event === "SIGNED_IN") localMiniappUserIdentity.forget()
+      if (event === "SIGNED_IN") {
+        localMiniappUserIdentity.forget()
+        // Resume optional discovery only. SIGNED_OUT suspended any previous approval;
+        // some auth adapters also emit SIGNED_IN when refreshing an existing session.
+        if (session?.token && isStarted()) void startLiveAvailability()
+      }
       if (!session?.token) return
       if (connected || reconnectPending) return
 

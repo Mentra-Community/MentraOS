@@ -4439,7 +4439,8 @@ class MentraLive : SGCManager() {
                         osStatus,
                         osErrorMessage,
                         if (glassesTimeMs > 0) glassesTimeMs else null,
-                        if (json.has("bytes_downloaded")) json.optLong("bytes_downloaded", 0) else null
+                        if (json.has("bytes_downloaded")) json.optLong("bytes_downloaded", 0) else null,
+                        json.optJSONObject("activity")?.let { jsonObjectToMap(it) }
                 )
             }
             "ota_progress" -> {
@@ -6156,8 +6157,8 @@ class MentraLive : SGCManager() {
      */
     private fun sendLiveOtaStatus(sessionId: String, totalSteps: Int, currentStep: Int, stepType: String,
       phase: String, stepPercent: Int, overallPercent: Int, status: String, errorMessage: String? = null,
-      glassesTimeMs: Long? = null, bytesDownloaded: Long? = null) {
-      liveFirmwareUpdater?.status(sessionId, phase, status, overallPercent, firmwareConnectionGeneration)
+      glassesTimeMs: Long? = null, bytesDownloaded: Long? = null, activity: Map<String, Any>? = null) {
+      liveFirmwareUpdater?.status(sessionId, phase, status, overallPercent, firmwareConnectionGeneration, activity)
       Bridge.sendOtaStatus(sessionId, totalSteps, currentStep, stepType, phase, stepPercent, overallPercent,
         status, errorMessage, glassesTimeMs, bytesDownloaded, otaSourceContext)
     }
@@ -6181,6 +6182,10 @@ class MentraLive : SGCManager() {
         try {
             val json = JSONObject()
             json.put("type", "ota_query_status")
+            liveFirmwareUpdater?.beginStatusQuery()?.let {
+                json.put("request_id", it)
+                json.put("include_activity", true)
+            }
             json.put("timestamp", System.currentTimeMillis())
             sendJson(json, true)
             Bridge.log("LIVE: 📱 Sending ota_query_status command to glasses")

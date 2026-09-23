@@ -121,6 +121,8 @@ test("a fourth provider renders and runs through generic UI, then reattaches wit
 })
 
 test("a failed pairing target lookup cancels setup only when retained work is safe", async () => {
+  state.publish({...state.snapshot(), active: true, safeToRelease: false})
+  await service.open(target, {entryPoint: "recovery"})
   resolveFailure = true
   const finished = mock(() => {})
   let view!: TestRenderer.ReactTestRenderer

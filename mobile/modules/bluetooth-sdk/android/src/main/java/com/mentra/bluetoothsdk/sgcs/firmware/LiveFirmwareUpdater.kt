@@ -18,6 +18,7 @@ internal class LiveFirmwareUpdater(
   private var record: FirmwareStartRequest? = null
   private var commandToken: String? = null
   private var commandRevision = 0
+  private var statusQuery: Pair<String, Int>? = null
   var launch: ((FirmwareStartRequest) -> Unit)? = null
   override val snapshot get() = state.snapshot
   val ownsDevice get() = commandToken != null || !snapshot.safeToRelease
@@ -98,6 +99,7 @@ internal class LiveFirmwareUpdater(
     // Never persist URLs, credentials or multi-pass approval. Reading this only authorizes inspection.
     storage.write(FirmwareRecoveryRecord(next, evidence))
     record = evidence
+    statusQuery = null
     val token = UUID.randomUUID().toString(); commandToken = token
     state.update { next }; commandRevision = snapshot.revision
     return token
@@ -113,11 +115,30 @@ internal class LiveFirmwareUpdater(
     persist()
   }
 
-  fun status(sessionId: String, phase: String, status: String, progress: Int, generation: Int) {
+  /** Correlate ASG's existing read-only activity diagnostics with this exact observation. */
+  fun beginStatusQuery(): String = UUID.randomUUID().toString().also {
+    statusQuery = it to snapshot.revision
+  }
+
+  private fun confirmsQuiescence(activity: Map<String, Any>?): Boolean {
+    val query = statusQuery ?: return false
+    if (activity?.get("request_id") != query.first) return false
+    statusQuery = null
+    if (commandToken != null || query.second != snapshot.revision) return false
+    val session = activity["session"] as? Map<*, *> ?: return false
+    return activity["schema"] == 1 && activity["consistent"] == true &&
+      activity["admission_held"] == false && activity["updating"] == false &&
+      activity["mtk_in_progress"] == false && activity["bes_in_progress"] == false &&
+      session["restart_pending"] == false && session["status"] in setOf("idle", "complete", "failed")
+  }
+
+  fun status(sessionId: String, phase: String, status: String, progress: Int, generation: Int,
+    activity: Map<String, Any>? = null) {
     // Idle only means ASG has no session to report. It can still be fetching an
     // acknowledged Start's manifest, including after this phone restarts. Owned
-    // work needs a terminal status or the coordinator's completion proof.
-    if (generation != snapshot.connectionGeneration || (status == "idle" && ownsDevice)) return
+    // work needs terminal/completion proof or a correlated, consistent quiet-worker snapshot.
+    if (generation != snapshot.connectionGeneration) return
+    if (status == "idle" && ownsDevice && !confirmsQuiescence(activity)) return
     val safe = status in setOf("idle", "complete", "failed")
     if (!safe && record == null) {
       // The glasses-owned update may predate this phone process. Persist observation, never approval.

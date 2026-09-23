@@ -10,6 +10,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class LiveFirmwareUpdaterTest {
+  private fun quietActivity(id: String): Map<String, Any> = mapOf(
+    "schema" to 1, "request_id" to id, "consistent" to true, "admission_held" to false,
+    "updating" to false, "mtk_in_progress" to false, "bes_in_progress" to false,
+    "session" to mapOf("status" to "idle", "restart_pending" to false),
+  )
   private class Harness : AutoCloseable {
     val directory = Files.createTempDirectory("live-firmware-test").toFile()
     var writes = 0
@@ -48,8 +53,56 @@ class LiveFirmwareUpdaterTest {
     assertEquals(1, h.queries); assertEquals(1, h.writes)
     recovered.status("", "download", "idle", 0, 1)
     assertFalse(recovered.snapshot.safeToRelease)
-    recovered.status("", "download", "failed", 0, 1)
+    val activity = quietActivity(recovered.beginStatusQuery())
+    recovered.status("", "download", "idle", 0, 1, activity)
     assertTrue(recovered.snapshot.safeToRelease)
+    recovered.acknowledge()
+    assertNull(FirmwareJournal("live", h.directory).read())
+    assertEquals(1, h.writes)
+  }
+
+  @Test fun quiescenceRequiresEveryOwnerToBeKnownIdleAndAConsistentRead() = Harness().use { h ->
+    h.updater.start(h.request)
+    h.updater.commandSettled(h.token!!, null)
+    val invalid = listOf(
+      "schema" to 2, "consistent" to false, "admission_held" to true, "updating" to true,
+      "mtk_in_progress" to true, "bes_in_progress" to true, "bes_in_progress" to "false",
+      "session" to mapOf("status" to "in_progress", "restart_pending" to false),
+      "session" to mapOf("status" to "idle", "restart_pending" to true),
+      "session" to emptyMap<String, Any>(),
+    )
+    for ((key, value) in invalid) {
+      val activity = quietActivity(h.updater.beginStatusQuery()) + (key to value)
+      h.updater.status("", "download", "idle", 0, 1, activity)
+      assertTrue("Rejected $key=$value", h.updater.ownsDevice)
+    }
+    val missing = quietActivity(h.updater.beginStatusQuery()) - "bes_in_progress"
+    h.updater.status("", "download", "idle", 0, 1, missing)
+    assertTrue(h.updater.ownsDevice)
+  }
+
+  @Test fun staleQueriesCannotReleaseAChangedAttemptOrObservation() = Harness().use { h ->
+    h.updater.start(h.request)
+    h.updater.commandSettled(h.token!!, null)
+    val old = quietActivity(h.updater.beginStatusQuery())
+    h.updater.beginStatusQuery()
+    h.updater.status("", "download", "idle", 0, 1, old)
+    assertTrue(h.updater.ownsDevice)
+    val beforeProgress = quietActivity(h.updater.beginStatusQuery())
+    h.updater.status("new", "download", "in_progress", 10, 1)
+    h.updater.status("", "download", "idle", 0, 1, beforeProgress)
+    assertTrue(h.updater.ownsDevice)
+    val beforeRetry = quietActivity(h.updater.beginStatusQuery())
+    val token = h.updater.commandStarted("https://example.com/retry")
+    h.updater.commandSettled(token, null)
+    h.updater.status("", "download", "idle", 0, 1, beforeRetry)
+    assertTrue(h.updater.ownsDevice)
+    val beforeReconnect = quietActivity(h.updater.beginStatusQuery())
+    h.updater.connectionChanged(2)
+    h.updater.status("", "download", "idle", 0, 2, beforeReconnect)
+    assertTrue(h.updater.ownsDevice)
+    h.updater.status("", "download", "idle", 0, 2, quietActivity(h.updater.beginStatusQuery()))
+    assertFalse(h.updater.ownsDevice)
   }
 
   @Test fun idleAfterStartAckCannotReleaseOwnershipBeforeTerminalStatus() = Harness().use { h ->

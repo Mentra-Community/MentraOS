@@ -46,7 +46,7 @@ import {dev} from "./facades/dev"
 import {reports} from "./facades/reports"
 import {ota} from "./facades/ota"
 import {firmwareUpdates} from "./facades/firmwareUpdates"
-import {startLiveAvailability, stopLiveAvailability} from "./devices/mentra-live/availabilityRuntime"
+import {startLiveAvailability} from "./devices/mentra-live/availabilityRuntime"
 import {gallery} from "./facades/gallery"
 import {miniapps} from "./facades/miniapps"
 import {pairing} from "./facades/pairing"
@@ -149,7 +149,6 @@ export const engine = {
    * the remaining runtime services. */
   async stop() {
     firmwareUpdates.suspendNewWork()
-    stopLiveAvailability()
     const safely = async (label: string, step: () => unknown): Promise<void> => {
       try {
         await step()

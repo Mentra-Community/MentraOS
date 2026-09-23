@@ -3,6 +3,7 @@ import {deviceIntegrations} from "../devices/builtins"
 import {FirmwareUpdateService} from "../ota/UpdateService"
 import {FirmwareUpdateError, type FirmwareEntryPoint, type FirmwareTarget} from "../ota/types"
 import {observeNativeRecovery} from "../ota/observeNativeRecovery"
+import {stopLiveAvailability} from "../devices/mentra-live/availabilityRuntime"
 
 export const firmwareUpdateService = new FirmwareUpdateService(deviceIntegrations)
 
@@ -45,6 +46,9 @@ export const firmwareUpdates = {
   subscribeRetained: firmwareUpdateService.subscribeRetained,
   perform: firmwareUpdateService.perform.bind(firmwareUpdateService),
   assertSafeToRelease: firmwareUpdateService.assertSafeToRelease.bind(firmwareUpdateService),
-  suspendNewWork: firmwareUpdateService.suspendNewWork.bind(firmwareUpdateService),
+  suspendNewWork() {
+    stopLiveAvailability()
+    firmwareUpdateService.suspendNewWork()
+  },
   diagnosticSnapshot: firmwareUpdateService.diagnosticSnapshot.bind(firmwareUpdateService),
 }

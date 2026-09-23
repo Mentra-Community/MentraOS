@@ -3163,7 +3163,8 @@ class MentraLive: NSObject, SGCManager {
                 status: osStatus,
                 errorMessage: osErrorMessage,
                 glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil,
-                bytesDownloaded: (json["bytes_downloaded"] as? NSNumber)?.int64Value
+                bytesDownloaded: (json["bytes_downloaded"] as? NSNumber)?.int64Value,
+                activity: json["activity"] as? [String: Any]
             )
 
         case "ota_progress":
@@ -3912,13 +3913,15 @@ class MentraLive: NSObject, SGCManager {
     /// Triggers glasses to begin download and installation.
     private func sendLiveOtaStatus(sessionId: String, totalSteps: Int, currentStep: Int, stepType: String,
                                    phase: String, stepPercent: Int, overallPercent: Int, status: String,
-                                   errorMessage: String?, glassesTimeMs: Int64? = nil, bytesDownloaded: Int64? = nil) {
+                                   errorMessage: String?, glassesTimeMs: Int64? = nil, bytesDownloaded: Int64? = nil,
+                                   activity: [String: Any]? = nil)
+    {
         liveFirmwareUpdater?.status(sessionId: sessionId, phase: phase, status: status,
-                                    progress: overallPercent, generation: firmwareConnectionGeneration)
+                                    progress: overallPercent, generation: firmwareConnectionGeneration, activity: activity)
         Bridge.sendOtaStatus(sessionId: sessionId, totalSteps: totalSteps, currentStep: currentStep,
-                            stepType: stepType, phase: phase, stepPercent: stepPercent, overallPercent: overallPercent,
-                            status: status, errorMessage: errorMessage, glassesTimeMs: glassesTimeMs,
-                            bytesDownloaded: bytesDownloaded, sourceContext: otaSourceContext)
+                             stepType: stepType, phase: phase, stepPercent: stepPercent, overallPercent: overallPercent,
+                             status: status, errorMessage: errorMessage, glassesTimeMs: glassesTimeMs,
+                             bytesDownloaded: bytesDownloaded, sourceContext: otaSourceContext)
     }
 
     func sendOtaStart(otaVersionUrl: String?) {
@@ -3939,10 +3942,14 @@ class MentraLive: NSObject, SGCManager {
     func sendOtaQueryStatus() {
         Bridge.log("LIVE: 📱 Sending ota_query_status command to glasses")
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "ota_query_status",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
+        if let id = liveFirmwareUpdater?.beginStatusQuery() {
+            json["request_id"] = id
+            json["include_activity"] = true
+        }
 
         sendJson(json, wakeUp: true)
     }

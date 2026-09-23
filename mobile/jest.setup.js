@@ -414,6 +414,7 @@ const mockIslandEntries = () => {
     engine: {
       firmwareUpdates: {
         assertSafeToRelease: jest.fn(),
+        suspendNewWork: jest.fn(),
         pairingPolicy: jest.fn((model) =>
           require("./modules/engine/src/facades/firmwareUpdates").firmwareUpdates.pairingPolicy(model),
         ),

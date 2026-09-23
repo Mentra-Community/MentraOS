@@ -12,6 +12,7 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
     private var record: FirmwareStartRequest?
     private var commandToken: UUID?
     private var commandRevision = 0
+    private var statusQuery: (id: String, revision: Int)?
     var launch: ((FirmwareStartRequest) throws -> Void)?
     var snapshot: FirmwareUpdateSnapshot {
         state.snapshot
@@ -114,6 +115,7 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         // Never persist URLs, credentials or multi-pass approval. A saved record only authorizes inspection.
         try journal.write(.init(snapshot: next, request: evidence))
         record = evidence
+        statusQuery = nil
         let token = UUID(); commandToken = token
         state.update { $0 = next }
         commandRevision = snapshot.revision
@@ -132,12 +134,41 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         persist()
     }
 
-    func status(sessionId: String, phase: String, status: String, progress: Int, generation: Int) {
+    /// Correlate ASG's existing read-only activity diagnostics with this exact observation.
+    func beginStatusQuery() -> String {
+        let id = UUID().uuidString
+        statusQuery = (id, snapshot.revision)
+        return id
+    }
+
+    private func confirmsQuiescence(_ activity: [String: Any]?) -> Bool {
+        guard let query = statusQuery, let activity,
+              activity["request_id"] as? String == query.id else { return false }
+        statusQuery = nil
+        guard commandToken == nil, query.revision == snapshot.revision,
+              let session = activity["session"] as? [String: Any],
+              let status = session["status"] as? String,
+              ["idle", "complete", "failed"].contains(status),
+              let schema = activity["schema"] as? NSNumber,
+              CFGetTypeID(schema) != CFBooleanGetTypeID(), schema.doubleValue == 1 else { return false }
+        func flag(_ values: [String: Any], _ key: String, _ expected: Bool) -> Bool {
+            guard let value = values[key] as? NSNumber,
+                  CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
+            return value.boolValue == expected
+        }
+        return flag(activity, "consistent", true) && flag(activity, "admission_held", false) &&
+            flag(activity, "updating", false) && flag(activity, "mtk_in_progress", false) &&
+            flag(activity, "bes_in_progress", false) && flag(session, "restart_pending", false)
+    }
+
+    func status(sessionId: String, phase: String, status: String, progress: Int, generation: Int,
+                activity: [String: Any]? = nil)
+    {
         guard generation == snapshot.connectionGeneration else { return }
         // Idle only means ASG has no session to report. It can still be fetching
         // an acknowledged Start's manifest, including after this phone restarts.
-        // Owned work needs a terminal status or the coordinator's completion proof.
-        if status == "idle", ownsDevice { return }
+        // Owned work needs terminal/completion proof or a correlated quiet-worker snapshot.
+        if status == "idle", ownsDevice, !confirmsQuiescence(activity) { return }
         let safe = ["idle", "complete", "failed"].contains(status)
         if !safe, record == nil {
             // A glasses-owned update can predate this phone process. Persist observation only,
