@@ -5,6 +5,7 @@ import type {MiniappReleaseIdentity} from "../AppRegistry"
 import {assertPublisherIdentityPolicy} from "../publisherIdentityPolicy"
 
 const values = new Map<string, unknown>()
+const installationValues = new Map<string, string>()
 let failedWrite: string | undefined
 mock.module("../../utils/storage/storage", () => ({
   storage: {
@@ -19,6 +20,13 @@ mock.module("../../utils/storage/storage", () => ({
       return Res.ok(undefined)
     },
   },
+}))
+mock.module("react-native-mmkv", () => ({
+  createMMKV: () => ({
+    getString: (key: string) => installationValues.get(key),
+    set: (key: string, value: string) => installationValues.set(key, value),
+    remove: (key: string) => installationValues.delete(key),
+  }),
 }))
 mock.module("../../runtime/bootstrap", () => ({
   getConfigValues: () => ({}),
@@ -49,10 +57,27 @@ function finalize(version: string, identity: MiniappReleaseIdentity) {
 
 beforeEach(() => {
   values.clear()
+  installationValues.clear()
   failedWrite = undefined
 })
 
 describe("AppRegistry publisher identity finalization", () => {
+  test("retains verified publisher and release identity when logout clears session storage", () => {
+    finalize("1.0.0", {source: "store", publisherKeyFingerprint: "publisher-a"}).apply()
+    values.clear()
+    expect(registry.getReleaseIdentity(packageName, "1.0.0")?.source).toBe("store")
+    expect(registry.getPublisherKeyFingerprint(packageName)).toBe("publisher-a")
+    expect(() =>
+      assertPublisherIdentityPolicy({
+        packageName,
+        source: "store",
+        system: false,
+        candidateFingerprint: "publisher-b",
+        installedFingerprint: registry.getPublisherKeyFingerprint(packageName),
+      }),
+    ).toThrow("signature mismatch")
+  })
+
   for (const installedFingerprint of [undefined, "publisher-a"]) {
     for (const candidateFingerprint of [undefined, "publisher-b"]) {
       test(`dev snapshot ${candidateFingerprint ?? "unsigned"} preserves ${installedFingerprint ?? "no pin"}`, () => {
@@ -84,12 +109,16 @@ describe("AppRegistry publisher identity finalization", () => {
   test("restores the production pin and release metadata if snapshot activation fails", () => {
     values.set(publisherKey, "publisher-a")
     values.set(activeKey, "1.0.0")
+    registry.getPublisherKeyFingerprint(packageName)
     const before = new Map(values)
+    const installationBefore = new Map(installationValues)
     const transaction = finalize("dev-123", {source: "dev_snapshot", publisherKeyFingerprint: "publisher-b"})
     failedWrite = activeKey
     expect(() => transaction.apply()).toThrow("Storage write failed")
     failedWrite = undefined
     transaction.rollback()
     expect(values).toEqual(before)
+    expect(installationValues).toEqual(installationBefore)
+    expect(registry.getReleaseIdentity(packageName, "dev-123")).toBeNull()
   })
 })

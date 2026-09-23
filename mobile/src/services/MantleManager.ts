@@ -121,6 +121,7 @@ class MantleManager {
   private lastMicDataAt: number = 0
   private subs: Array<any> = []
   private initialized: boolean = false
+  private miniappGeneration = 0
   private storePreviewUnsubscribe: (() => void) | null = null
   private activePhoneNotificationId: string | null = null
   /** A notification is being read aloud right now. */
@@ -366,6 +367,7 @@ class MantleManager {
       return
     }
     this.initialized = true
+    const miniappGeneration = this.miniappGeneration
 
     // Island front door: hand island the host's auth provider and config, then
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
@@ -556,6 +558,7 @@ class MantleManager {
     // (Initial notification-config push now happens in island's
     // PhoneNotificationsSync, started by engine.start().)
 
+    if (miniappGeneration !== this.miniappGeneration) return
     this.initServices()
     void this.initMiniapps().catch((error) => console.warn("MANTLE: miniapp initialization failed", error))
     this.setupPeriodicTasks()
@@ -563,6 +566,8 @@ class MantleManager {
   }
 
   public async cleanup() {
+    this.miniappGeneration += 1
+    const managedSyncStopped = deploymentManagedMiniappSync.cancel()
     for (const visibility of this.iosMiniappVisibility.values()) visibility.dispose()
     this.iosMiniappVisibility.clear()
     // Stop timers
@@ -604,6 +609,7 @@ class MantleManager {
     this.speakingNotification = false
     this.lastSpokenAt = 0
 
+    await managedSyncStopped
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
 
@@ -627,32 +633,43 @@ class MantleManager {
   }
 
   private async initMiniapps() {
+    const generation = this.miniappGeneration
+    const deployment = deploymentStore.getActive()
+    const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
     // Warm the local miniapp registry by reading lmas/ off disk. Cheap call —
     // it populates AppRegistry's cache so the first refreshApplets() doesn't
     // pay the disk-walk cost in the UI thread.
     await appRegistry.getInstalledMiniapps()
+    if (!isCurrent()) return
 
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
-    for (const visibility of this.iosMiniappVisibility.values()) {
-      await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
-    }
+    // Remove previous workspace releases before restoring consumer bundles,
+    // including an identical bundled release adopted by a workspace.
+    await deploymentManagedMiniappSync.sync(deployment)
+    if (!isCurrent()) return
 
     // Install any bundled miniapps that ship with the app and aren't on disk
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
+    if (!isCurrent()) return
 
-    // Reconcile customer-owned userland bundles independently from SYSTEM
-    // miniapps embedded in the Mentra App binary.
-    await deploymentManagedMiniappSync.sync(deploymentStore.getActive())
+    // Publish iOS enablement only after managed installation has finished.
+    // Every startup/retry follows this order, including recovery from a failed
+    // download with a previously forced-hidden Call entry.
+    for (const visibility of this.iosMiniappVisibility.values()) {
+      await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+      if (!isCurrent()) return
+    }
 
     // The Store ships as a real build-owned SYSTEM miniapp so its trust and
     // update paths are exercised before launch, but it is a host-gated preview:
     // normal users get no Home tile, running-tray entry, catalog traffic, or
     // maintenance warnings. miniapp.json cannot opt into this gate.
     await this.applyStorePreview(Boolean(engine.settings.get(SETTINGS.miniapp_store_preview_enabled.key)))
+    if (!isCurrent()) return
     this.storePreviewUnsubscribe?.()
     this.storePreviewUnsubscribe = engine.settings.onChanged<boolean>(
       SETTINGS.miniapp_store_preview_enabled.key,
@@ -717,11 +734,13 @@ class MantleManager {
    * installs it.
    */
   private async installBundledMiniapps() {
+    const generation = this.miniappGeneration
     for (const module of BUNDLED_MINIAPPS) {
+      if (generation !== this.miniappGeneration) return
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
-        // iOS Call is installed by its serialized visibility controller.
+        // iOS Call uses its visibility controller (consumer) or managed sync (workspace).
         if (Platform.OS === "ios" && parsed?.packageName === mentraCallPackageName) continue
         await this.installBundledMiniapp(asset)
       } catch (error) {
@@ -730,7 +749,18 @@ class MantleManager {
     }
   }
 
-  private async installBundledCall() {
+  private async prepareIosCall() {
+    const deployment = deploymentStore.getActive()
+    if (deployment.kind === "workspace") {
+      // Managed releases must retain manifest ownership and digest verification;
+      // the consumer binary's ZIP is outside the workspace system-app allowlist.
+      // initMiniapps owns managed synchronization; never start an independent
+      // retry that could install a bundle without publishing its visibility.
+      if (shouldHideMiniapp(mentraCallPackageName)) {
+        throw new Error("The workspace Call bundle could not be installed and verified")
+      }
+      return
+    }
     const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
       (asset) => parseBundledMiniappName(asset.name)?.packageName === mentraCallPackageName,
     )
@@ -740,10 +770,19 @@ class MantleManager {
 
   /** Install one bundle, or skip it when current policy/version makes it unnecessary. */
   private async installBundledMiniapp(asset: Asset) {
+    const generation = this.miniappGeneration
     const parsed = parseBundledMiniappName(asset.name)
     if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
     const {packageName, version} = parsed
-    const approved = deploymentStore.getActive().manifest.systemMiniapps.approvedPackageNamesOverride
+    const deployment = deploymentStore.getActive()
+    // A workspace pin owns this package even when the system-app allowlist is
+    // unrestricted. A newer consumer ZIP must not replace its active version.
+    if (
+      deployment.kind === "workspace" &&
+      deployment.manifest.miniapps.managed.some((app) => app.packageName === packageName)
+    )
+      return
+    const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
     if (approved !== null && !approved.includes(packageName)) {
       throw new Error(`${packageName} is outside the workspace allowlist`)
     }
@@ -791,7 +830,12 @@ class MantleManager {
 
     await asset.downloadAsync()
     // The user can disable Call while the bundle is being materialized.
-    if (shouldHideMiniapp(packageName)) return
+    if (
+      generation !== this.miniappGeneration ||
+      deploymentStore.getActive() !== deployment ||
+      shouldHideMiniapp(packageName)
+    )
+      return
     if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
     const result = await appRegistry.installFromLocalZip(asset.localUri)
     if (result.is_error()) throw result.error
@@ -817,7 +861,7 @@ class MantleManager {
         setHidden: (hidden) => engine.miniapps.setHiddenStatus(packageName, hidden),
         clearRunningState: () => saveLocalAppRunningState(packageName, false),
         install: async () => {
-          if (packageName === mentraCallPackageName) await this.installBundledCall()
+          if (packageName === mentraCallPackageName) await this.prepareIosCall()
           else builtInMiniappCatalog.installNotify()
         },
         stop: async () => {
@@ -861,12 +905,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);

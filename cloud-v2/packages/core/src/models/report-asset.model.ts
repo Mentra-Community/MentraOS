@@ -26,5 +26,9 @@ const ReportAssetSchema = new Schema(
   { timestamps: { createdAt: true, updatedAt: false }, collection: "report_assets" },
 );
 
+// getReport orders attachments by createdAt. Cosmos DB's MongoDB API rejects
+// a sort on an unindexed path, even when reportId itself is indexed.
+ReportAssetSchema.index({ createdAt: 1 });
+
 export type ReportAsset = InferSchemaType<typeof ReportAssetSchema>;
 export const ReportAssetModel = registerModel("ReportAsset", ReportAssetSchema);
