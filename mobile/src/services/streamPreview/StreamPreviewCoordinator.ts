@@ -81,9 +81,31 @@ export interface StreamPreviewNative {
   start(): Promise<void>
   stop(reason: string): Promise<void>
   unbind(reason: string): Promise<void>
+  /** Diagnostics only; rejects `diagnostics_disabled` when native diagnostics are off. */
+  injectFault(options: {kind: StreamPreviewFaultKind; ms?: number}): Promise<void>
+  setDiagnosticsEnabled(enabled: boolean): Promise<void>
   addListener(event: "onStatus", listener: (status: Record<string, unknown>) => void): {remove(): void}
   addListener(event: "onStopped", listener: (event: {reason: string; docGen: number}) => void): {remove(): void}
+  /** Native `PREVIEW_TRACE` lines; the host forwards them to the console. */
+  addListener(event: "onLog", listener: (event: {level: "info" | "warn"; message: string}) => void): {remove(): void}
 }
+
+export type StreamPreviewFaultKind =
+  | "ack_delay"
+  | "ack_drop"
+  | "transport_close"
+  | "pack_throw"
+  | "sink_throw"
+  | "clear"
+
+export const STREAM_PREVIEW_FAULT_KINDS: readonly StreamPreviewFaultKind[] = [
+  "ack_delay",
+  "ack_drop",
+  "transport_close",
+  "pack_throw",
+  "sink_throw",
+  "clear",
+]
 
 export interface StreamPreviewUiBridge {
   reply(packageName: string, requestId: string, reply: MentraUIHostReply): void
@@ -97,6 +119,11 @@ export interface StreamPreviewCoordinatorDeps {
   now?: () => number
   newId?: () => string
   log?: PreviewTraceLogger
+  /**
+   * Whether fault injection may run: debug builds, or the hidden developer setting in release.
+   * Defaults to never.
+   */
+  diagnosticsAllowed?: () => boolean
 }
 
 /** A typed refusal for the runtime; `code` is a preview error code. */
@@ -139,6 +166,8 @@ interface DocumentState {
   /** Production was halted by a non-recoverable error for this epoch; a newer mount may retry. */
   haltedEpoch: number
   waitingForLease: boolean
+  /** Native rejection code from the last failed `prepareDocument`, e.g. `not_bound`. */
+  prepareError: string | null
 }
 
 interface PageRequest {
@@ -149,6 +178,8 @@ interface PageRequest {
   boxWidth?: unknown
   boxHeight?: unknown
   message?: unknown
+  kind?: unknown
+  ms?: unknown
 }
 
 export interface StreamPreviewCounters {
@@ -158,9 +189,16 @@ export interface StreamPreviewCounters {
   tierChanges: number
   pausedBackgroundMs: number
   refusals: number
+  faultsInjected: number
+  /** Native production stops, by reason. */
+  nativeStops: Record<string, number>
 }
 
 const STOP_CODES = new Set(["ack_timeout", "pack_failed", "transport_failed", "diagnostics_disabled"])
+/** Stops a new start would only repeat; the mount epoch is halted until a newer mount. */
+const HALTING_CODES = new Set(["pack_failed", "diagnostics_disabled"])
+/** `onStopped` reasons native originates; anything else is the echo of a host stop/unbind. */
+const NATIVE_STOP_REASONS = new Set([...STOP_CODES, "source_detached", "unbound"])
 
 function defaultNewId(): string {
   return Math.floor(Math.random() * 0xffffffff)
@@ -191,6 +229,8 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     tierChanges: 0,
     pausedBackgroundMs: 0,
     refusals: 0,
+    faultsInjected: 0,
+    nativeStops: {},
   }
   private readonly now: () => number
   private readonly newId: () => string
@@ -214,6 +254,11 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       this.subscriptions.push(
         deps.native.addListener("onStopped", (event) => this.guard("stopped", () => this.onNativeStopped(event))),
       )
+      this.subscriptions.push(
+        deps.native.addListener("onLog", (event) =>
+          this.guard("native_log", () => this.log.forward(event.level, event.message)),
+        ),
+      )
     } catch (error) {
       this.log.warn("native_events_unavailable", {error: String(error)})
     }
@@ -221,7 +266,41 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
 
   /** Snapshot for diagnostics and tests. */
   getCounters(): StreamPreviewCounters {
-    return {...this.counters}
+    return {...this.counters, nativeStops: {...this.counters.nativeStops}}
+  }
+
+  // ===========================================================================
+  // Diagnostics
+  // ===========================================================================
+
+  /**
+   * Arm a native fault hook. Only in debug builds or with the hidden developer setting; anything
+   * else is refused with `diagnostics_disabled` before native is asked.
+   */
+  async injectFault(options: {kind: string; ms?: number}): Promise<void> {
+    const fields = {...this.currentFields(), kind: options.kind, ms: options.ms}
+    if (!(STREAM_PREVIEW_FAULT_KINDS as readonly string[]).includes(options.kind)) {
+      throw this.refuse("unsupported", `Unknown preview fault ${options.kind}`, fields)
+    }
+    if (!(this.deps.diagnosticsAllowed?.() ?? false)) {
+      throw this.refuse("diagnostics_disabled", "Preview fault injection needs diagnostics", fields)
+    }
+    try {
+      await this.deps.native.setDiagnosticsEnabled(true)
+      await this.deps.native.injectFault({
+        kind: options.kind as StreamPreviewFaultKind,
+        ...(options.ms !== undefined ? {ms: options.ms} : {}),
+      })
+    } catch (error) {
+      const code = (error as {code?: unknown}).code
+      throw this.refuse(
+        code === "diagnostics_disabled" ? "diagnostics_disabled" : "unsupported",
+        error instanceof Error ? error.message : String(error),
+        fields,
+      )
+    }
+    this.counters.faultsInjected += 1
+    this.log.warn("fault_injected", {...fields, faultsInjected: this.counters.faultsInjected})
   }
 
   getLeaseSnapshot(): {packageName: string; handleId: string; meetingId: string; state: string} | null {
@@ -430,6 +509,7 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       tier: null,
       haltedEpoch: -1,
       waitingForLease: false,
+      prepareError: null,
     }
     this.doc = doc
     this.log.info("doc_gen", {packageName, docGen: doc.docGen, previousDocGen: previous?.docGen, trigger})
@@ -498,6 +578,20 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
         this.reconcile("page_stop")
         respond({ok: true, result: {applied: true}})
         return
+      case "injectFault":
+        try {
+          await this.injectFault({kind: String(request.kind), ms: num(request.ms)})
+          respond({ok: true, result: {applied: true}})
+        } catch (error) {
+          respond({
+            ok: false,
+            error: {
+              code: (error as {code?: string}).code ?? "unsupported",
+              message: error instanceof Error ? error.message : String(error),
+            },
+          })
+        }
+        return
       case "rendererError":
         this.log.warnLimited(`renderer:${String(request.message)}`, "renderer_error", {
           ...this.docFields(doc),
@@ -547,7 +641,15 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     }
     const config = await this.prepare(doc, lease)
     if (this.doc !== doc) return this.staleReply("handshake", "docGen", {packageName})
-    if (!config) return this.refusePage(packageName, "transport_failed", "The preview transport could not be prepared")
+    if (!config) {
+      if (doc.prepareError === "not_bound") {
+        // Native lost (or never had) the WebView binding; only a new view binding fixes that.
+        view.bound = false
+        view.unavailableReason = "not_bound"
+        return this.refusePage(packageName, "unsupported", "The preview transport is not bound to this WebView")
+      }
+      return this.refusePage(packageName, "transport_failed", "The preview transport could not be prepared")
+    }
     if (config.protocolVersion !== STREAM_PREVIEW_PROTOCOL_VERSION) {
       return this.refusePage(packageName, "unsupported", `Unknown preview protocol version ${config.protocolVersion}`)
     }
@@ -600,8 +702,12 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
           return config
         })
         .catch((error: unknown) => {
+          const code = (error as {code?: unknown}).code
+          doc.prepareError = typeof code === "string" ? code : "prepare_failed"
           this.log.warn("prepare_failed", {
+            ...this.leaseFields(lease),
             docGen: doc.docGen,
+            code: doc.prepareError,
             error: error instanceof Error ? error.message : String(error),
           })
           return null
@@ -727,7 +833,9 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     const doc = this.doc
     const lease = this.lease
     if (!doc || !lease || doc.packageName !== lease.packageName) return
-    this.push(doc.packageName, {...status, t: "status", ...this.counters})
+    // Native fields (acsSendFps, tap telemetry, ...) pass through untouched; the host's own
+    // counters ride beside them rather than over same-named native ones.
+    this.push(doc.packageName, {...status, t: "status", host: this.getCounters()})
   }
 
   private onNativeStopped(event: {reason: string; docGen: number}): void {
@@ -736,16 +844,27 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       this.log.info("stopped_stale", {reason: event.reason, eventDocGen: event.docGen, docGen: doc?.docGen})
       return
     }
+    if (!NATIVE_STOP_REASONS.has(event.reason)) {
+      // Native echoes the reason of a stop or unbind the host asked for. It can arrive after a
+      // later start, so it must not change the production state.
+      this.log.info("native_stop_echo", {reason: event.reason, docGen: doc.docGen})
+      return
+    }
     this.producing = false
     this.configuredTier = null
-    this.log.warnLimited(`stopped:${event.reason}`, "native_stopped", {...this.currentFields(), reason: event.reason})
+    this.counters.nativeStops[event.reason] = (this.counters.nativeStops[event.reason] ?? 0) + 1
+    this.log.warnLimited(`stopped:${event.reason}`, "native_stopped", {
+      ...this.currentFields(),
+      reason: event.reason,
+      count: this.counters.nativeStops[event.reason],
+    })
     if (event.reason === "source_detached") {
       this.checkLeaseMeeting()
       if (this.lease) this.push(doc.packageName, {t: "error", code: "transport_failed", docGen: doc.docGen})
       return
     }
     if (STOP_CODES.has(event.reason)) {
-      if (event.reason === "pack_failed" || event.reason === "diagnostics_disabled") doc.haltedEpoch = doc.mountEpoch
+      if (HALTING_CODES.has(event.reason)) doc.haltedEpoch = doc.mountEpoch
       this.push(doc.packageName, {t: "error", code: event.reason, docGen: doc.docGen})
       return
     }

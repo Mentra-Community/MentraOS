@@ -1,11 +1,17 @@
 import {AppState} from "react-native"
 
+import {engine, SETTINGS} from "@mentra/engine"
 import {acsMeetingPreviewSource, setStreamPreviewHost, type MentraUIRouter} from "@mentra/engine-host-internal"
 import {PREVIEW_UI_CHANNEL} from "@mentra/miniapp"
 
-import {StreamPreviewCoordinator, type StreamPreviewNative} from "./StreamPreviewCoordinator"
+import {
+  StreamPreviewCoordinator,
+  type StreamPreviewFaultKind,
+  type StreamPreviewNative,
+} from "./StreamPreviewCoordinator"
 
-export {STREAM_PREVIEW_BIND_TIMEOUT_MS} from "./StreamPreviewCoordinator"
+export {STREAM_PREVIEW_BIND_TIMEOUT_MS, STREAM_PREVIEW_FAULT_KINDS} from "./StreamPreviewCoordinator"
+export type {StreamPreviewFaultKind} from "./StreamPreviewCoordinator"
 
 /** A build without the native module: every binding is unavailable, so the page sees `unsupported`. */
 const unavailableNative: StreamPreviewNative = {
@@ -17,7 +23,16 @@ const unavailableNative: StreamPreviewNative = {
   start: async () => {},
   stop: async () => {},
   unbind: async () => {},
+  injectFault: async () => {
+    throw Object.assign(new Error("no_native_module"), {code: "diagnostics_disabled"})
+  },
+  setDiagnosticsEnabled: async () => {},
   addListener: () => ({remove: () => {}}),
+}
+
+/** Fault injection: debug builds, or Super Mode (the hidden developer setting) in release. */
+function diagnosticsAllowed(): boolean {
+  return __DEV__ || Boolean(engine.settings.get(SETTINGS.super_mode.key))
 }
 
 function loadNative(): StreamPreviewNative {
@@ -41,6 +56,7 @@ export function getStreamPreviewCoordinator(): StreamPreviewCoordinator {
     coordinator = new StreamPreviewCoordinator({
       native: loadNative(),
       meetings: acsMeetingPreviewSource,
+      diagnosticsAllowed,
       ui: {
         reply: (packageName, requestId, reply) =>
           router?.replyToWebView(packageName, PREVIEW_UI_CHANNEL, requestId, reply),
@@ -65,4 +81,12 @@ export function installStreamPreviewCoordinator(uiRouter: MentraUIRouter): void 
   setStreamPreviewHost(instance)
   instance.setAppActive(AppState.currentState === "active")
   AppState.addEventListener("change", (state) => instance.setAppActive(state === "active"))
+}
+
+/**
+ * Arm a native preview fault for the gate and fault-injection runs. Rejects with a typed
+ * `diagnostics_disabled` outside debug builds and Super Mode.
+ */
+export function injectStreamPreviewFault(kind: StreamPreviewFaultKind, ms?: number): Promise<void> {
+  return getStreamPreviewCoordinator().injectFault({kind, ms})
 }

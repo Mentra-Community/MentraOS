@@ -24,6 +24,8 @@ export interface PreviewTraceLogger {
   warn(phase: string, fields?: PreviewTraceFields): void
   /** Rate-limited per `key`: logs the first, then `repeated=N` at most every 10 s. */
   warnLimited(key: string, phase: string, fields?: PreviewTraceFields): void
+  /** An already formatted line from another layer (native), redacted on the way through. */
+  forward(level: "info" | "warn", line: string): void
 }
 
 export type PreviewTraceSink = (level: "log" | "warn", line: string) => void
@@ -51,6 +53,19 @@ export function formatPreviewTrace(phase: string, fields: PreviewTraceFields, t:
   return parts.join(" ")
 }
 
+/**
+ * Redact a preformatted `key=value` line: sensitive keys lose their value, URLs lose their query
+ * and fragment. Native already redacts; this is the host's own guarantee for bug reports.
+ */
+export function redactPreviewTraceLine(line: string): string {
+  return line
+    .replace(
+      /\b([\w.-]*(?:token|secret|password|authorization|meetingurl|url)[\w.-]*)(=|":\s*"?)([^\s",}]+)/gi,
+      `$1$2${REDACTED}`,
+    )
+    .replace(/(\w+:\/\/[^\s?#"]*)[?#][^\s"]*/g, `$1?${REDACTED}`)
+}
+
 const consoleSink: PreviewTraceSink = (level, line) => {
   if (level === "warn") console.warn(line)
   else console.log(line)
@@ -66,6 +81,7 @@ export function createPreviewTraceLogger(
     sink(level, formatPreviewTrace(phase, fields, now()))
   return {
     info: (phase, fields) => emit("log", phase, fields),
+    forward: (level, line) => sink(level === "warn" ? "warn" : "log", redactPreviewTraceLine(String(line))),
     warn: (phase, fields) => emit("warn", phase, fields),
     warnLimited(key, phase, fields) {
       const at = now()

@@ -38,6 +38,10 @@ class FakeNative implements StreamPreviewNative {
   holdStop: ReturnType<typeof deferred> | null = null
   failStart: Error | null = null
   throwStopSync = false
+  prepareError: {code: string} | null = null
+  rejectFault: {code: string} | null = null
+  faults: Array<{kind: string; ms?: number}> = []
+  diagnosticsEnabled = false
   prepared = 0
   private listeners = new Map<string, (event: never) => void>()
 
@@ -48,6 +52,7 @@ class FakeNative implements StreamPreviewNative {
   async prepareDocument(options: {docGen: number}): Promise<StreamPreviewDocumentConfig> {
     this.prepared += 1
     this.calls.push(`prepare:${options.docGen}`)
+    if (this.prepareError) throw Object.assign(new Error(this.prepareError.code), this.prepareError)
     return {
       protocolVersion: this.protocolVersion,
       transport: this.transport,
@@ -71,11 +76,18 @@ class FakeNative implements StreamPreviewNative {
   async unbind(reason: string) {
     this.calls.push(`unbind:${reason}`)
   }
+  async injectFault(options: {kind: string; ms?: number}) {
+    if (this.rejectFault) throw Object.assign(new Error(this.rejectFault.code), this.rejectFault)
+    this.faults.push(options)
+  }
+  async setDiagnosticsEnabled(enabled: boolean) {
+    this.diagnosticsEnabled = enabled
+  }
   addListener(event: string, listener: (event: never) => void) {
     this.listeners.set(event, listener)
     return {remove: () => this.listeners.delete(event)}
   }
-  emit(event: "onStatus" | "onStopped", payload: unknown) {
+  emit(event: "onStatus" | "onStopped" | "onLog", payload: unknown) {
     this.listeners.get(event)?.(payload as never)
   }
   count(prefix: string): number {
@@ -140,6 +152,8 @@ let native: FakeNative
 let meetings: FakeMeetings
 let ui: FakeUi
 let lines: string[]
+let levels: Array<"log" | "warn">
+let diagnostics: boolean
 let clock: number
 let ids: number
 let coordinator: StreamPreviewCoordinator
@@ -151,6 +165,8 @@ beforeEach(() => {
   meetings = new FakeMeetings()
   ui = new FakeUi()
   lines = []
+  levels = []
+  diagnostics = false
   clock = 1000
   ids = 0
   notified = []
@@ -161,7 +177,14 @@ beforeEach(() => {
     ui,
     now: () => clock,
     newId: () => `id${++ids}`,
-    log: createPreviewTraceLogger({now: () => clock, sink: (_level, line) => lines.push(line)}),
+    log: createPreviewTraceLogger({
+      now: () => clock,
+      sink: (level, line) => {
+        lines.push(line)
+        levels.push(level)
+      },
+    }),
+    diagnosticsAllowed: () => diagnostics,
   })
 })
 
@@ -537,15 +560,181 @@ describe("native stops", () => {
     expect(native.count("start")).toBe(2)
   })
 
-  test("status is forwarded with the host counters", async () => {
+  test("native status passes through unchanged, with host counters beside it", async () => {
     await running()
-    native.emit("onStatus", {deliveredFps: 14.9, outstanding: 1})
-    expect(ui.pushes.at(-1)!.payload).toMatchObject({
+    const nativeStatus = {
       t: "status",
       deliveredFps: 14.9,
-      staleControlOps: 0,
+      outstanding: 1,
+      acsSendFps: 29.7,
+      tapFramesOffered: 30,
+      tapTelemetry: true,
       installReloads: 0,
+      handshakes: 3,
+      packFailures: {sink_error: 1},
+    }
+    native.emit("onStatus", nativeStatus)
+    const pushed = ui.pushes.at(-1)!.payload
+    expect(pushed).toMatchObject(nativeStatus)
+    expect(pushed.host).toMatchObject({staleControlOps: 0, installReloads: 0, handshakes: 1, faultsInjected: 0})
+  })
+
+  test("native echoes of the host's own stop reasons never change production state", async () => {
+    const {identity} = await running()
+    result(await page({cmd: "stop", ...identity, mountEpoch: 1}))
+    result(await page({cmd: "start", ...identity, mountEpoch: 1}))
+    await flush()
+    // The echo of the stop arrives after the restart.
+    native.emit("onStopped", {reason: "page_stop", docGen: 1})
+    expect(coordinator.isProducing()).toBe(true)
+    expect(coordinator.getCounters().nativeStops).toEqual({})
+    expect(lines.some((l) => l.includes("phase=native_stop_echo") && l.includes("reason=page_stop"))).toBe(true)
+  })
+
+  test("diagnostics_disabled from native is a typed, halting error", async () => {
+    const {identity} = await running()
+    native.emit("onStopped", {reason: "diagnostics_disabled", docGen: 1})
+    expect(ui.events().at(-1)).toBe("error:diagnostics_disabled")
+    expect(coordinator.getCounters().nativeStops).toEqual({diagnostics_disabled: 1})
+    result(await page({cmd: "start", ...identity, mountEpoch: 1}))
+    await flush()
+    expect(native.count("start")).toBe(1)
+  })
+})
+
+describe("native binding errors", () => {
+  test("prepareDocument rejecting not_bound refuses the handshake as unsupported and stops asking", async () => {
+    native.prepareError = {code: "not_bound"}
+    meetings.join(PKG)
+    await startLease()
+    await coordinator.bindView({packageName: PKG, hostViewTag: 1})
+    coordinator.documentReady(PKG)
+    expect(await page({cmd: "handshake", docGen: 0, mountEpoch: 1})).toMatchObject({
+      ok: false,
+      error: {code: "unsupported"},
     })
+    expect(await page({cmd: "handshake", docGen: 0, mountEpoch: 1})).toMatchObject({
+      ok: false,
+      error: {code: "unsupported"},
+    })
+    expect(native.prepared).toBe(1)
+    expect(lines.some((l) => l.includes("phase=prepare_failed") && l.includes("code=not_bound"))).toBe(true)
+  })
+})
+
+describe("native log forwarding", () => {
+  test("native PREVIEW_TRACE lines reach the console at their level, redacted", async () => {
+    native.emit("onLog", {level: "info", message: "[PREVIEW_TRACE] layer=native phase=attach gen=4 t=10"})
+    native.emit("onLog", {
+      level: "warn",
+      message:
+        "[PREVIEW_TRACE] layer=native phase=hello_rejected token=abc123 url=ws://127.0.0.1:4100/p?token=abc123 t=11",
+    })
+    native.emit("onLog", {level: "warn", message: 'listener at ws://127.0.0.1:4100/p?token=abc123 {"token":"abc123"}'})
+    expect(lines[0]).toBe("[PREVIEW_TRACE] layer=native phase=attach gen=4 t=10")
+    expect(levels).toEqual(["log", "warn", "warn"])
+    expect(lines[1]).toContain("phase=hello_rejected token=<redacted> url=<redacted>")
+    expect(lines.join("\n")).not.toContain("abc123")
+  })
+
+  test("a malformed log event cannot break the coordinator", () => {
+    native.emit("onLog", null)
+    expect(lines.some((l) => l.includes("phase=coordinator_error") && l.includes("what=native_log"))).toBe(true)
+  })
+})
+
+describe("fault injection", () => {
+  const cases: Array<{
+    kind: "ack_delay" | "ack_drop" | "transport_close" | "pack_throw" | "sink_throw"
+    ms?: number
+    stop: string
+    halts: boolean
+  }> = [
+    {kind: "ack_delay", ms: 3000, stop: "ack_timeout", halts: false},
+    {kind: "ack_drop", stop: "ack_timeout", halts: false},
+    {kind: "transport_close", stop: "transport_failed", halts: false},
+    {kind: "pack_throw", stop: "pack_failed", halts: true},
+    {kind: "sink_throw", stop: "pack_failed", halts: true},
+  ]
+  for (const c of cases) {
+    test(`${c.kind}: typed ${c.stop} to the page, counters and log lines, and the call is untouched`, async () => {
+      diagnostics = true
+      const {identity} = await running()
+      await coordinator.injectFault({kind: c.kind, ms: c.ms})
+      expect(native.faults).toEqual([c.ms === undefined ? {kind: c.kind} : {kind: c.kind, ms: c.ms}])
+      expect(native.diagnosticsEnabled).toBe(true)
+      expect(coordinator.getCounters().faultsInjected).toBe(1)
+      expect(lines.some((l) => l.includes("phase=fault_injected") && l.includes(`kind=${c.kind}`))).toBe(true)
+
+      // What native reports once the fault bites.
+      native.emit("onStatus", {t: "status", tapSinkExceptions: c.kind === "sink_throw" ? 1 : 0, acsSendFps: 30})
+      native.emit("onStopped", {reason: c.stop, docGen: identity.docGen})
+      expect(ui.pushes.find((p) => p.payload.t === "status")!.payload).toMatchObject({
+        tapSinkExceptions: c.kind === "sink_throw" ? 1 : 0,
+        acsSendFps: 30,
+      })
+      expect(ui.events().at(-1)).toBe(`error:${c.stop}`)
+      expect(coordinator.getCounters().nativeStops).toEqual({[c.stop]: 1})
+      expect(lines.some((l) => l.includes("phase=native_stopped") && l.includes(`reason=${c.stop}`))).toBe(true)
+      expect(coordinator.isProducing()).toBe(false)
+
+      result(await page({cmd: "start", ...identity, mountEpoch: 1}))
+      await flush()
+      expect(native.count("start")).toBe(c.halts ? 1 : 2)
+      expect(new Set(meetings.touched)).toEqual(new Set(["current", "onReleased"]))
+      expect(coordinator.getLeaseSnapshot()).not.toBeNull()
+    })
+  }
+
+  test("clear disarms without stopping anything", async () => {
+    diagnostics = true
+    await running()
+    await coordinator.injectFault({kind: "clear"})
+    expect(native.faults).toEqual([{kind: "clear"}])
+    expect(coordinator.isProducing()).toBe(true)
+  })
+
+  test("outside debug builds and Super Mode it is refused before native is asked", async () => {
+    await running()
+    const error = await coordinator.injectFault({kind: "ack_drop"}).catch((e: {code: string}) => e)
+    expect((error as {code: string}).code).toBe("diagnostics_disabled")
+    expect(native.faults).toEqual([])
+    expect(native.diagnosticsEnabled).toBe(false)
+    expect(lines.some((l) => l.includes("phase=refused") && l.includes("code=diagnostics_disabled"))).toBe(true)
+  })
+
+  test("a native diagnostics_disabled rejection stays typed", async () => {
+    diagnostics = true
+    native.rejectFault = {code: "diagnostics_disabled"}
+    await running()
+    const error = await coordinator.injectFault({kind: "pack_throw"}).catch((e: {code: string}) => e)
+    expect((error as {code: string}).code).toBe("diagnostics_disabled")
+    expect(coordinator.getCounters().faultsInjected).toBe(0)
+  })
+
+  test("an unknown fault kind is unsupported", async () => {
+    diagnostics = true
+    const error = await coordinator.injectFault({kind: "melt"}).catch((e: {code: string}) => e)
+    expect((error as {code: string}).code).toBe("unsupported")
+  })
+
+  test("the page can arm a fault over _preview only with the current identity and diagnostics on", async () => {
+    const {identity} = await running()
+    expect(await page({cmd: "injectFault", ...identity, mountEpoch: 1, kind: "ack_drop"})).toMatchObject({
+      ok: false,
+      error: {code: "diagnostics_disabled"},
+    })
+    diagnostics = true
+    expect(result(await page({cmd: "injectFault", ...identity, mountEpoch: 1, kind: "ack_delay", ms: 500}))).toEqual({
+      applied: true,
+    })
+    expect(native.faults).toEqual([{kind: "ack_delay", ms: 500}])
+    expect(
+      result(await page({cmd: "injectFault", ...identity, token: "forged", mountEpoch: 1, kind: "ack_drop"})),
+    ).toEqual({
+      stale: true,
+    })
+    expect(native.faults).toHaveLength(1)
   })
 })
 

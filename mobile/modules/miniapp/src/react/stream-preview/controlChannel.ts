@@ -9,7 +9,8 @@
 
 import {PREVIEW_UI_CHANNEL} from "../../protocol"
 
-export type PreviewCommand = "handshake" | "configure" | "start" | "stop" | "rendererError"
+/** `injectFault` is honoured only in debug builds or with the host's hidden developer setting. */
+export type PreviewCommand = "handshake" | "configure" | "start" | "stop" | "rendererError" | "injectFault"
 
 export interface PreviewControlRequest {
   cmd: PreviewCommand
@@ -22,6 +23,9 @@ export interface PreviewControlRequest {
   boxHeight?: number
   /** `rendererError` only. */
   message?: string
+  /** `injectFault` only: `ack_delay`, `ack_drop`, `transport_close`, `pack_throw`, `sink_throw`, `clear`. */
+  kind?: string
+  ms?: number
 }
 
 export interface PreviewDocumentConfig {
