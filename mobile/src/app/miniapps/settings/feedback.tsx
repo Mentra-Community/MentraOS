@@ -1,5 +1,6 @@
 import {useLocalSearchParams} from "expo-router"
 import * as ImagePicker from "expo-image-picker"
+import * as Clipboard from "expo-clipboard"
 import {useRef, useState} from "react"
 import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
@@ -115,6 +116,7 @@ export default function FeedbackPage() {
       sourceAppletName,
     })
 
+    let reportId: string
     // Bug reports and feature requests both go through the engine reports surface.
     if (feedbackType === "bug") {
       const trigger = buildReportTrigger({
@@ -147,6 +149,7 @@ export default function FeedbackPage() {
         ])
         return
       }
+      reportId = submitRes.reportId
     } else {
       const feedbackPayload = {
         type: feedbackType,
@@ -175,6 +178,7 @@ export default function FeedbackPage() {
           ])
           return
         }
+        reportId = submitRes.reportId
       } catch (error) {
         setIsSubmitting(false)
         console.error("Error sending feedback:", error)
@@ -201,7 +205,17 @@ export default function FeedbackPage() {
     setScreenshots([])
 
     // Show thank you message
-    showAlert(translate("feedback:thankYou"), translate("feedback:feedbackReceived"), [
+    showAlert(translate("feedback:thankYou"), translate("feedback:reportReceived", {reportId}), [
+      {
+        text: translate("feedback:copyReportId"),
+        onPress: () => {
+          void Clipboard.setStringAsync(reportId)
+            .then(() => goBack())
+            .catch(() => {
+              showAlert(translate("common:error"), `${translate("feedback:copyReportIdFailed")}\n\n${reportId}`)
+            })
+        },
+      },
       {
         text: translate("common:ok"),
         onPress: () => {

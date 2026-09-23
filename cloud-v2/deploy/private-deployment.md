@@ -87,7 +87,7 @@ profile: `realtime-audio,camera,maps,tts`; it does not implicitly add meetings.
 | `camera` | Photo and managed-stream routes; currently requires `realtime-audio`. |
 | `maps` | Directions, geocoding, and places. |
 | `tts` | Speech synthesis. |
-| `meetings` | Native meeting credential issuance and exchange. |
+| `meetings` | Native meeting credentials and Teams meeting creation/retirement. |
 
 The first call-focused profile is:
 
@@ -114,6 +114,31 @@ empty request issues or reuses an anonymous ACS guest credential. A request with
 Core-signed federated identity and exchanges it for an employee credential. The
 response reports `identityMode` as `guest` or `teams-user`. A supplied invalid
 token is rejected and never falls back to guest issuance.
+If Microsoft rejects a verified employee specifically with
+`UserLicenseNotPresentForbidden`, Runtime issues a guest credential and reports
+`guestReason: "teams-license-unavailable"`. Other authorization, consent, network,
+and provider errors do not trigger guest issuance.
+
+The Mentra App obtains credentials using its selected Runtime and Core-brokered
+Runtime bearer. Its Entra provider supplies the separate Teams subject token when
+available. `session.meeting.getConfiguration()` exposes the host's calling policy;
+workspace miniapps omit `token` from `session.meeting.join()`. Meeting state and
+`onState` report `identityMode` (`guest` or `teams-user`) and, for guests,
+`guestReason` (`no-entra-identity` or `teams-license-unavailable`). Neither the Entra
+nor ACS credential is returned to miniapp JavaScript.
+
+Workspace Mentra Call supports joining work/school Teams links using direct
+local glasses video. It does not contact the public Call backend for startup,
+restore, credentials, or meeting creation. Existing consumer token pass-through
+and Call backend routes remain supported; consumer joins still require the
+miniapp-supplied credential. Older clients need no backend change.
+A Mentra App native build containing Teams-user agent support is required for
+employee identity. Install the matching managed miniapp ZIP and re-select the
+workspace to refresh the cached manifest. The new Call bundle requires host
+meeting-policy discovery even when the host version is otherwise compatible.
+Hosts without that API show an update message and cannot enable public-backend
+access. Existing installed Call bundles and legacy token joins are unchanged.
+
 
 Guest identity reuse and abuse throttling are bounded in-process state. The v1
 reference therefore runs one Runtime replica. Before scaling the meetings
@@ -122,6 +147,48 @@ equivalent ingress control; otherwise separate replicas can issue separate ACS
 guest identities for the same authenticated user.
 
 Provider enablement is explicit, never inferred from whether an API key exists.
+
+### Teams meeting creation
+
+`POST /api/meetings/teams/create` accepts `subject` (1–120 characters, default
+`Mentra Call`), `durationMinutes` (1–1440, default 30), and an optional host-owned
+`teamsUserAadToken`. It uses the same Core authentication and employee binding
+as the credential endpoint. The caller cannot supply an organizer ID.
+
+Runtime requires `TEAMS_GRAPH_TENANT_ID`, `TEAMS_GRAPH_CLIENT_ID`, and secret
+`TEAMS_GRAPH_CLIENT_SECRET`. `TEAMS_GRAPH_ORGANIZER_ID` is the licensed organizer
+object ID for callers without an eligible Teams identity. The Graph application
+needs admin-consented **application** permission `OnlineMeetings.ReadWrite.All`
+and a Teams application access policy for each permitted employee organizer
+and the fallback organizer. See [Entra setup](./azure/enterprise-reference/entra-setup.md#meeting-creation).
+
+For a verified Entra caller, Runtime checks eligibility through the existing ACS
+Teams-user exchange and creates as that employee. Only Microsoft's explicit
+`UserLicenseNotPresentForbidden` result uses the fallback organizer. Callers
+without an Entra token also use that organizer. Identity, consent, Graph policy,
+and network errors propagate; they do not change the organizer. A Microsoft 365
+subscription name alone does not establish Teams eligibility.
+
+`session.meeting.create({provider: "acs-teams", subject, durationMinutes})`
+returns `provider`, `joinUrl`, an opaque `meetingRef`, `identityMode`, and a guest
+reason when applicable. The host obtains the identity token; credentials stay
+out of miniapp JavaScript. `getConfiguration().creationSource === "runtime"`
+advertises host support; missing server configuration returns an actionable
+error. Older private hosts keep joining available and hide New Call. Consumer
+Call keeps its existing backend creation flow. Creating with the fallback
+organizer does not grant organizer identity to a guest participant.
+
+`session.meeting.retire(meetingRef)` calls `POST /api/meetings/teams/retire`.
+The signed ownership reference permits only the original Core tenant/user to
+delete that meeting in the original Graph application. It expires 24 hours
+after the scheduled end, and Graph client-secret rotation invalidates existing
+references. No Runtime database is required. Retiring a Graph resource does not
+hang up active participants; native meeting termination is a separate action.
+
+Creation is limited to 12 attempts per caller per 10 minutes per Runtime
+process. Use shared rate limiting before scaling beyond one replica. Creation
+POSTs are not automatically retried: a provider timeout can leave a meeting
+created without a confirmed response.
 
 ## Deployment manifest
 

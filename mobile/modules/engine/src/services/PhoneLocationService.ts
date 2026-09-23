@@ -16,6 +16,7 @@
  */
 import * as Location from "expo-location"
 import * as TaskManager from "expo-task-manager"
+import {AppState, Platform} from "react-native"
 
 import localMiniappRuntime from "./LocalMiniappRuntime"
 
@@ -76,38 +77,97 @@ export function getLocationAccuracy(accuracy: string | undefined): Location.Loca
   }
 }
 
-/**
- * Apply a location tier (the aggregate of what miniapps request). "off" means no app
- * is asking — stop the task so the OS can power GPS down; anything else (re)starts the
- * background task at the matching accuracy. Callers gate this on the OS location
- * permission (host UI concern).
- */
-export async function setLocationTier(
-  tier: "off" | "passive" | "low" | "high" | "realtime" | string,
-): Promise<void> {
-  console.log("ISLAND: setLocationTier()", tier)
+let pendingLocationRequest: {tier: string} | null = null
+let locationWork: Promise<void> = Promise.resolve()
+let foregroundRetrySubscription: ReturnType<typeof AppState.addEventListener> | null = null
+
+function queueLocationReconciliation(): Promise<void> {
+  // Each job reads the latest demand, not the tier that originally queued it.
+  // Native operations stay serial so an in-flight start cannot overtake off.
+  locationWork = locationWork.then(reconcileLocationTier, reconcileLocationTier)
+  return locationWork
+}
+
+async function reconcileLocationTier(): Promise<void> {
   try {
-    const isRegistered = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false)
-    if (isRegistered) {
-      await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+    const request = pendingLocationRequest
+    if (!request) return
+    const {tier} = request
+    const isAndroid = Platform.OS === "android"
+
+    // Expo rejects foreground-service registration while the Activity is inactive.
+    // Keep any existing service running until the requested tier can be applied.
+    if (isAndroid && tier !== "off" && AppState.currentState !== "active") return
+
+    if (tier === "off" || !isAndroid) {
+      const isRegistered = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch((error) => {
+        if (isAndroid) throw error
+        return false // Preserve iOS's existing start-on-query-failure behavior.
+      })
+      if (pendingLocationRequest !== request) return
+      if (isRegistered) {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+      }
+      if (pendingLocationRequest !== request) return
     }
+
     if (tier === "off") {
       console.log("ISLAND: setLocationTier() stopped — no active subscribers")
-      return
+    } else {
+      // Android's task manager updates an existing consumer's options in place.
+      // Do not unregister first: a native foreground-gate rejection must leave
+      // the previously running service intact. Preserve iOS's stop/start above.
+      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+        accuracy: getLocationAccuracy(tier),
+        pausesUpdatesAutomatically: false,
+        // Android deliberately blocks ACCESS_BACKGROUND_LOCATION. Expo requires
+        // its foreground-service mode even when Mentra's own service is running.
+        // Keep the notification brand-only; Android supplies the location-service
+        // indicator, without introducing untranslated engine-owned UI copy.
+        ...(isAndroid
+          ? {foregroundService: {notificationTitle: "Mentra", notificationBody: "", killServiceOnDestroy: true}}
+          : {}),
+      })
+      console.log("ISLAND: setLocationTier() success —", tier)
     }
-    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-      accuracy: getLocationAccuracy(tier),
-      pausesUpdatesAutomatically: false,
-    })
-    console.log("ISLAND: setLocationTier() success —", tier)
+
+    if (pendingLocationRequest === request) {
+      pendingLocationRequest = null
+      foregroundRetrySubscription?.remove()
+      foregroundRetrySubscription = null
+    }
   } catch (error) {
+    // Retain demand for the next active transition or explicit request, without
+    // spinning on permission failures or a JS/native foreground-state race.
     console.log("ISLAND: Error setting location tier", error)
   }
 }
 
+/**
+ * Apply the latest aggregate miniapp tier. "off" stops updates on any platform
+ * immediately after in-flight work. Android non-off requests may remain pending
+ * until the Activity is active; the returned promise does not wait for foreground.
+ * Callers own the OS permission UI.
+ */
+export function setLocationTier(tier: "off" | "passive" | "low" | "high" | "realtime" | string): Promise<void> {
+  console.log("ISLAND: setLocationTier()", tier)
+  pendingLocationRequest = {tier}
+  try {
+    if (Platform.OS === "android" && !foregroundRetrySubscription) {
+      foregroundRetrySubscription = AppState.addEventListener("change", (state) => {
+        if (state === "active" && pendingLocationRequest) void queueLocationReconciliation()
+      })
+    }
+  } catch (error) {
+    // Still reconcile active/off requests; a later request can retry registration.
+    console.log("ISLAND: Error observing foreground location state", error)
+  }
+  return queueLocationReconciliation()
+}
+
 /** Stop the background location task (host cleanup). */
 export function stopPhoneLocation(): void {
-  Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => {})
+  void setLocationTier("off")
 }
 
 export const phoneLocationService = {

@@ -123,6 +123,19 @@ describe("glasses model selection", () => {
     expect(push).not.toHaveBeenCalled()
   })
 
+  it("offers NIMO without Super Mode and preserves its pairing preparation", () => {
+    const {getByTestId, queryByTestId} = render(<SelectGlassesModelScreen />)
+
+    fireEvent.press(getByTestId("pairing-model-nimo"))
+
+    expect(push).toHaveBeenCalledWith("/pairing/prep", {
+      deviceModel: "Nimo",
+      ar99ProjectName: undefined,
+    })
+    expect(queryByTestId("pairing-model-mentra_nex")).toBeNull()
+    expect(preparePairingScan).not.toHaveBeenCalled()
+  })
+
   it("shows only model ids approved by the workspace manifest", () => {
     ;(deploymentStore.getActive as jest.Mock).mockReturnValue({
       kind: "workspace",
@@ -132,5 +145,6 @@ describe("glasses model selection", () => {
 
     expect(getByTestId("pairing-model-mentra_live")).toBeTruthy()
     expect(queryByTestId("pairing-model-evenrealities_g1")).toBeNull()
+    expect(queryByTestId("pairing-model-nimo")).toBeNull()
   })
 })

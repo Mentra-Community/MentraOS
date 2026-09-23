@@ -2,6 +2,9 @@ import {CommunicationIdentityClient, type CommunicationUserToken} from "@azure/c
 import * as jose from "jose"
 
 const REQUIRED_TEAMS_SCOPES = new Set(["Teams.ManageCalls", "Teams.ManageChats"])
+// Entra v2 access tokens use the resource application's ID as aud; v1 can
+// use either its ID or URI. Both identify Microsoft's ACS Teams resource.
+const ACS_TEAMS_AUDIENCES = ["https://auth.msft.communication.azure.com", "1fd5118e-2576-4263-8130-9503064c837a"]
 export const ACS_GUEST_TOKEN_EXPIRES_IN_MINUTES = 120
 export const ACS_GUEST_MINT_LIMIT_PER_WINDOW = 12
 export const ACS_GUEST_MINT_WINDOW_MS = 10 * 60 * 1000
@@ -36,6 +39,7 @@ export type AcsMeetingCredential =
       expiresOn: string
       identityMode: "guest"
       acsUserId: string
+      guestReason?: "teams-license-unavailable"
     }
   | {
       token: string
@@ -99,7 +103,7 @@ export async function verifyTeamsSubjectToken(
   try {
     ;({payload} = await jose.jwtVerify(token, microsoftJwks, {
       issuer: issuers,
-      audience: process.env.ENTRA_TEAMS_TOKEN_AUDIENCE ?? "https://auth.msft.communication.azure.com",
+      audience: process.env.ENTRA_TEAMS_TOKEN_AUDIENCE ?? ACS_TEAMS_AUDIENCES,
       algorithms: ["RS256"],
       clockTolerance: "2 minutes",
     }))
@@ -107,6 +111,11 @@ export async function verifyTeamsSubjectToken(
     // Signature/claim/key mismatches are credential rejection. Network and
     // JWKS timeouts remain provider outages so the API can return a 5xx.
     if (error instanceof jose.errors.JOSEError && error.code !== "ERR_JWKS_TIMEOUT") {
+      // Fixed diagnostic fields only: never log the bearer or token payload.
+      console.warn("Teams token verification rejected", {
+        code: error.code,
+        ...(error instanceof jose.errors.JWTClaimValidationFailed ? {claim: error.claim} : {}),
+      })
       throw new TeamsIdentityRejectedError("Teams token verification failed")
     }
     throw error
@@ -154,6 +163,26 @@ export async function exchangeAcsTeamsUserToken(
     token: result.token,
     expiresOn: result.expiresOn.toISOString(),
     identityMode: "teams-user",
+  }
+}
+
+/** Only Microsoft's explicit license rejection permits automatic guest joining. */
+export function isTeamsLicenseUnavailable(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && "code" in error && error.code === "UserLicenseNotPresentForbidden"
+  )
+}
+
+/** The subject must already have been verified against the authenticated Runtime user. */
+export async function issueAcsTeamsCredential(
+  subject: VerifiedTeamsSubject,
+  authenticatedUserId: string,
+): Promise<AcsMeetingCredential> {
+  try {
+    return await exchangeAcsTeamsUserToken(subject)
+  } catch (error) {
+    if (!isTeamsLicenseUnavailable(error)) throw error
+    return {...(await mintAcsGuestToken(authenticatedUserId)), guestReason: "teams-license-unavailable"}
   }
 }
 

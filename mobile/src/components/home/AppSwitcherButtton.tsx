@@ -6,14 +6,21 @@ import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {sortAppsByLastOpenTime, useActiveBackgroundApps, useActiveForegroundApp, type ClientApp} from "@mentra/engine"
-import {RefObject, useEffect, useRef, useState} from "react"
+import {
+  sortAppsByLastOpenTime,
+  useActiveBackgroundApps,
+  useActiveForegroundApp,
+  useForegroundApp,
+  type ClientApp,
+} from "@mentra/engine"
+import {RefObject, useEffect, useLayoutEffect, useRef, useState} from "react"
 import {scheduleOnRN} from "react-native-worklets"
 import {BlurView} from "expo-blur"
 import {LinearGradient} from "expo-linear-gradient"
 import MaskedView from "@react-native-masked-view/masked-view"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
+import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 import {OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {hapticBuzz} from "@/utils/utils"
@@ -32,12 +39,17 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   const {theme} = useAppTheme()
   const backgroundApps = useActiveBackgroundApps()
   const foregroundApp = useActiveForegroundApp()
-  // Once the Compositor starts opening a standard app, keep it out of the
-  // home tray underneath the sliding surface. It enters the tray when the app
-  // is minimized (foregrounded=false), which avoids the icon/count visibly
-  // popping in before the opening animation has covered Home.
-  const trayForegroundApp = foregroundApp?.foregrounded ? null : foregroundApp
-  const appsCount = backgroundApps.length + (trayForegroundApp ? 1 : 0)
+  const trayForegroundApp = foregroundApp
+  const overlayApp = useForegroundApp()
+  const revealedPackageName = useMiniappPresentationStore((s) => s.revealedPackageName)
+  const freezeTray = !!overlayApp && revealedPackageName !== overlayApp.packageName
+  const liveAppsCount = backgroundApps.length + (trayForegroundApp ? 1 : 0)
+  const lastHomeCount = useRef(liveAppsCount)
+  useLayoutEffect(() => {
+    if (!freezeTray) lastHomeCount.current = liveAppsCount
+  }, [freezeTray, liveAppsCount])
+  // Freeze only through launch; update behind the fully revealed miniapp.
+  const appsCount = freezeTray ? lastHomeCount.current : liveAppsCount
   const hasBuzzedRef = useRef(false)
   const [appsList, setAppsList] = useState<ClientApp[]>([])
   const insets = useSaferAreaInsets()
@@ -45,6 +57,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   const [androidBlur] = useSetting(SETTINGS.android_blur.key)
 
   useEffect(() => {
+    if (freezeTray) return
     let cancelled = false
     const list = trayForegroundApp ? [...backgroundApps, trayForegroundApp] : [...backgroundApps]
     sortAppsByLastOpenTime(list).then((sorted) => {
@@ -53,7 +66,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
     return () => {
       cancelled = true
     }
-  }, [backgroundApps, trayForegroundApp])
+  }, [backgroundApps, trayForegroundApp, freezeTray])
 
   const panGesture = Gesture.Pan()
     .activeOffsetY([-10, 10])

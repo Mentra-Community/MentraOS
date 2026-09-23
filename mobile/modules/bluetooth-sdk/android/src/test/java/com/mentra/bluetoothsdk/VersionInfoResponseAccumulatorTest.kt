@@ -103,6 +103,77 @@ class VersionInfoResponseAccumulatorTest {
     }
 
     @Test
+    fun factoryAsg27CompletesAfterItsTwoChunks() {
+        // Exact January wire shape after Bridge normalization; firmware can be unknown.
+        for (firmware in listOf("", "17.26.1.13")) {
+            val accumulator = VersionInfoResponseAccumulator("request-1")
+            accumulator.accept(chunk("version_info_1", null, "buildNumber" to "27", "appVersion" to "27.0"))
+            val complete = accumulator.accept(chunk("version_info_2", null,
+                "buildNumber" to "", "otaVersionUrl" to "https://ota.example/live_version.json", "firmwareVersion" to firmware,
+            )) as VersionInfoAccumulatorOutcome.Complete
+            assertThat(complete.result.buildNumber).isEqualTo("27")
+            assertThat(complete.result.otaVersionUrl).isEqualTo("https://ota.example/live_version.json")
+            assertThat(complete.result.firmwareVersion).isEqualTo(firmware)
+        }
+    }
+
+    @Test
+    fun otherLegacyBuildsStillRequireTheirThirdChunk() {
+        for (build in listOf("", "26", "28", "31", "37", "42")) {
+            val accumulator = VersionInfoResponseAccumulator("request-1")
+            accumulator.accept(chunk("version_info_1", null, "buildNumber" to build))
+            assertThat(accumulator.accept(chunk("version_info_2", null,
+                "otaVersionUrl" to "https://ota.example/version.json",
+            ))).isEqualTo(VersionInfoAccumulatorOutcome.Waiting)
+            assertThat(accumulator.accept(chunk("version_info_3", null, "besFirmwareVersion" to "new")))
+                .isInstanceOf(VersionInfoAccumulatorOutcome.Complete::class.java)
+        }
+    }
+
+    @Test
+    fun factorySecondChunkCannotCompleteWithoutFirstChunkAndOtaUrl() {
+        val accumulator = VersionInfoResponseAccumulator("request-1")
+        val second = chunk("version_info_2", null, "otaVersionUrl" to "https://ota.example/version.json")
+        assertThat(accumulator.accept(second)).isEqualTo(VersionInfoAccumulatorOutcome.Ignored)
+        accumulator.accept(chunk("version_info_1", null, "buildNumber" to "27"))
+        for (values in listOf(emptyMap(), mapOf("otaVersionUrl" to ""), mapOf("otaVersionUrl" to " \n"))) {
+            assertThat(accumulator.accept(chunk("version_info_2", null) + values))
+                .isEqualTo(VersionInfoAccumulatorOutcome.Waiting)
+        }
+        assertThat(accumulator.accept(second)).isInstanceOf(VersionInfoAccumulatorOutcome.Complete::class.java)
+    }
+
+    @Test
+    fun secondChunkCannotChangeBuildIntoFactoryProtocol() {
+        val accumulator = VersionInfoResponseAccumulator("request-1")
+        accumulator.accept(chunk("version_info_1", null, "buildNumber" to "31"))
+        assertThat(accumulator.accept(chunk("version_info_2", null,
+            "buildNumber" to "27", "otaVersionUrl" to "https://ota.example/version.json",
+        ))).isEqualTo(VersionInfoAccumulatorOutcome.Waiting)
+    }
+
+    @Test
+    fun repeatedFirstChunkClearsFactoryCompletionRule() {
+        val accumulator = VersionInfoResponseAccumulator("request-1")
+        accumulator.accept(chunk("version_info_1", null, "buildNumber" to "27"))
+        accumulator.accept(chunk("version_info_1", null, "buildNumber" to "31"))
+        assertThat(accumulator.accept(chunk("version_info_2", null,
+            "otaVersionUrl" to "https://ota.example/version.json",
+        ))).isEqualTo(VersionInfoAccumulatorOutcome.Waiting)
+    }
+
+    @Test
+    fun factoryBuildCannotBypassModernCorrelation() {
+        val accumulator = VersionInfoResponseAccumulator("request-1")
+        accumulator.accept(chunk("version_info_1", "request-1", "buildNumber" to "27"))
+        assertThat(accumulator.accept(chunk("version_info_2", null,
+            "otaVersionUrl" to "https://ota.example/version.json",
+        ))).isEqualTo(VersionInfoAccumulatorOutcome.Ignored)
+        assertThat(accumulator.accept(chunk("version_info_3", "request-1", "besFirmwareVersion" to "new")))
+            .isInstanceOf(VersionInfoAccumulatorOutcome.Complete::class.java)
+    }
+
+    @Test
     fun modernFinalChunkWaitsForMissingFirstChunk() {
         val accumulator = VersionInfoResponseAccumulator("request-1")
         assertThat(accumulator.accept(chunk("version_info_3", "request-1", "besFirmwareVersion" to "new")))

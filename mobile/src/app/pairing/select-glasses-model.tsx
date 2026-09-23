@@ -62,7 +62,7 @@ export default function SelectGlassesModelScreen() {
   const getDisplayName = (option: GlassesOption) => option.displayName ?? option.deviceModel
   const getImageSource = (option: GlassesOption) => option.imageSource ?? getGlassesImage(option.deviceModel)
 
-  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX, DeviceTypes.NIMO])
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
 
   const ar99Options: GlassesOption[] = AR99_MODEL_OPTIONS.map((option) => ({
     key: option.key,

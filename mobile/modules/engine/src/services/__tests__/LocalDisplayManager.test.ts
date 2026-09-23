@@ -16,6 +16,7 @@ const displayEventMock = mock(() => {})
 mock.module("../DisplayProcessor", () => ({
   __esModule: true,
   default: {
+    setDeviceModel: () => {},
     processDisplayEvent: (e: Record<string, unknown>) => ({...e, _processed: true}),
   },
 }))
@@ -102,6 +103,92 @@ describe("LocalDisplayManager", () => {
 
   afterEach(() => {
     jest.useRealTimers()
+  })
+
+  describe("conditional main-view updates", () => {
+    const frame = (text: string, ifDisplayToken?: string) => ({
+      layout: {layoutType: "text_wall", text},
+      ifDisplayToken,
+    })
+    const render = (pkg: string, payload: import("../LocalDisplayManager").DisplayPayload) => {
+      let result: import("../LocalDisplayManager").DisplayRequestResult | undefined
+      mgr.request(pkg, payload, (value: import("../LocalDisplayManager").DisplayRequestResult) => {
+        result = value
+      })
+      return result!
+    }
+    test("accepted frames rotate the token, including same-app frames", () => {
+      mgr.onCoreAppChange("ai")
+      const first = render("ai", frame("one"))
+      expect(first.displayToken).toBeString()
+      const second = render("ai", frame("two", first.displayToken))
+      expect(second.status).toBe("displayed")
+      expect(second.displayToken).not.toBe(first.displayToken)
+      expect(render("ai", frame("stale", first.displayToken)).status).toBe("blocked")
+      expect(lastText()).toBe("two")
+    })
+    test("stale pages do not acquire a lock or replace the retained core snapshot", () => {
+      mgr.onCoreAppChange("ai")
+      const first = render("ai", frame("original"))
+      render("other", {...frame("other app"), durationMs: 1000})
+      expect(render("ai", frame("unread page", first.displayToken)).status).toBe("blocked")
+      advance(1000)
+      expect(lastText()).toBe("original")
+      // Restoring a frame invalidates its old token too.
+      expect(render("ai", frame("late", first.displayToken)).status).toBe("blocked")
+    })
+    test("an expired background lease cannot let an old timer take the display back", () => {
+      const first = render("ai", frame("answer"))
+      advance(10_001)
+      render("other", frame("other app"))
+      advance(10_001)
+      expect(render("ai", frame("next page", first.displayToken)).status).toBe("blocked")
+      expect(lastText()).toBe("other app")
+      expect(render("other", frame("still other app")).status).toBe("displayed")
+    })
+    test("tokens are scoped to package, and stale clears cannot clear another frame", () => {
+      const first = render("ai", frame("answer"))
+      expect(render("other", frame("hijack", first.displayToken)).status).toBe("blocked")
+      render("ai", frame("new answer"))
+      expect(render("ai", {scene: [], ifDisplayToken: first.displayToken}).status).toBe("blocked")
+      expect(lastText()).toBe("new answer")
+    })
+    test("boot rejects a conditional page immediately without queueing or saving it", () => {
+      const first = render("ai", frame("answer"))
+      mgr.onMount("new-app", "New app")
+      expect(render("ai", frame("stale page", first.displayToken)).status).toBe("blocked")
+      advance(1500)
+      expect(lastText()).toBe("answer")
+    })
+    test("dashboard traffic does not invalidate the main token or return one", () => {
+      const first = render("ai", frame("answer"))
+      const dashboard = render("dashboard-app", {...frame("dashboard"), view: "dashboard"})
+      expect(dashboard.displayToken).toBeUndefined()
+      expect(render("ai", frame("next", first.displayToken)).status).toBe("displayed")
+    })
+    test("a core dashboard update cannot save a background notice as its main frame", () => {
+      mgr.onCoreAppChange("core")
+      render("core", frame("original core frame"))
+      render("notice", {...frame("temporary notice"), durationMs: 1000})
+      render("core", {...frame("core dashboard"), view: "dashboard"})
+      advance(1000)
+      expect(lastText()).toBe("original core frame")
+    })
+    test("a core dashboard update during boot cannot become the saved main frame", () => {
+      mgr.onCoreAppChange("core")
+      render("core", frame("original core frame"))
+      mgr.onMount("new-app", "New app")
+      render("core", {...frame("core dashboard"), view: "dashboard"})
+      render("new-app", {...frame("temporary new app"), durationMs: 1000})
+      advance(1000)
+      expect(lastText()).toBe("original core frame")
+    })
+    test("conditional clears forfeit the frame and do not return a reusable token", () => {
+      const first = render("ai", frame("answer"))
+      const result = render("ai", {scene: [], ifDisplayToken: first.displayToken})
+      expect(result).toEqual({status: "displayed"})
+      expect(render("ai", frame("late", first.displayToken)).status).toBe("blocked")
+    })
   })
 
   // ==========================================================================
@@ -441,9 +528,7 @@ describe("LocalDisplayManager", () => {
       expect(lastText()).toBe("bg")
       displayEventMock.mockClear()
       mgr.onUnmount("com.app.bg")
-      const restoredOldCore = displayEventMock.mock.calls.some(
-        ([e]: any[]) => e.layout?.text === "a1",
-      )
+      const restoredOldCore = displayEventMock.mock.calls.some(([e]: any[]) => e.layout?.text === "a1")
       expect(restoredOldCore).toBe(false)
     })
   })

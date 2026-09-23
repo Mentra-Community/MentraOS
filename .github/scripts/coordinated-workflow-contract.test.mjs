@@ -280,7 +280,7 @@ test("stable packages publish from the frozen beta source independently of the m
   )
 })
 
-test("Cloud V2 deploys once per coordinated environment before mobile publication", () => {
+test("Cloud V2 readiness gates mobile compilation and publication", () => {
   const coordinator = workflow("coordinated-release.yml")
   const cloud = workflow("reusable-coordinated-cloud-v2.yml")
   const cloudJob = jobBlock(coordinator, "cloud-v2")
@@ -382,6 +382,94 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(notify, /PRIVATE_DEPLOYMENT_RESULT: \$\{\{ needs\.private-deployment\.result \}\}/)
   assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
 })
+
+for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", false], ["", true]]) {
+  test(`private deployment waits for both release images before HTTP probes (${stuckApp || (sameImage ? "configuration-only rollout" : "successful rollout")})`, () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "private-rollout-"))
+    const digest = `sha256:${"a".repeat(64)}`
+    const image = `registry.example/cloud@${digest}`
+    // Execute the real verification step through its HTTP health probes. Azure
+    // initially reports healthy previous revisions; each target becomes ready
+    // on the second poll unless the scenario leaves that service stuck.
+    const step = workflow("private-deployment-dev.yml")
+      .split("      - name: Verify the live enterprise contract\n")[1]
+      .split("        run: |\n")[1]
+      .split("          jq -e '.status")[0]
+      .replace(/^          /gm, "")
+      .replace(/\$\{\{ steps\.source\.outputs\.(\w+) \}\}/g, (_, key) => ({
+        acr_tag: "release-tag", source_digest: digest, image,
+      })[key])
+    const mocks = `
+      az() {
+        case "$*" in
+          *properties.outputs.workspaceOrigin.value*) echo https://workspace.example ;;
+          *properties.outputs.coreOrigin.value*) echo https://core.example.azurecontainerapps.io ;;
+          *properties.outputs.generatedCoreHostname.value*) echo core.example.azurecontainerapps.io ;;
+          "acr manifest show-metadata"*) echo "$TARGET_DIGEST" ;;
+          "containerapp show"*)
+            local app=core count=0
+            [[ "$*" != *"--name runtime "* ]] || app=runtime
+            if [[ "$*" == *properties.latestRevisionName* ]]; then
+              echo "$app-new"
+              return 0
+            fi
+            [[ ! -f "$app-count" ]] || read -r count < "$app-count"
+            count=$((count + 1))
+            echo "$count" > "$app-count"
+            if [[ "$count" -ge 2 && "$STUCK_APP" != "$app" ]]; then
+              echo "$app-new"
+            else
+              echo "$app-old"
+            fi
+            ;;
+          "containerapp revision show"*)
+            if [[ "$*" == *"--revision runtime-new "* ]]; then
+              touch runtime-ready; echo "$TARGET_IMAGE"
+            elif [[ "$*" == *"--revision core-new "* ]]; then
+              touch core-ready; echo "$TARGET_IMAGE"
+            elif [[ "$SAME_IMAGE" == true ]]; then
+              echo "$TARGET_IMAGE"
+            else
+              echo registry.example/cloud:previous
+            fi
+            ;;
+          *) echo "Unexpected Azure command: $*" >&2; return 1 ;;
+        esac
+      }
+      sleep() { :; }
+      curl() {
+        echo probe >> probes
+        if [[ ! -f runtime-ready || ! -f core-ready ]]; then
+          echo "HTTP would read a previous release's manifest" >&2
+          return 1
+        fi
+        echo 200
+      }
+    `
+    try {
+      const result = spawnSync("bash", ["-c", `${mocks}\n${step}`], {
+        cwd: directory,
+        env: {...process.env, AZURE_RESOURCE_GROUP: "group", AZURE_REGISTRY: "registry",
+          AZURE_CONTAINER_APP: "runtime", AZURE_CORE_CONTAINER_APP: "core", RUNNER_TEMP: directory,
+          TARGET_DIGEST: digest, TARGET_IMAGE: image, STUCK_APP: stuckApp, SAME_IMAGE: String(sameImage)},
+        encoding: "utf8", timeout: 10_000,
+      })
+      assert.ifError(result.error)
+      if (stuckApp) {
+        assert.equal(result.status, 1, result.stderr)
+        assert.match(result.stderr, /has no ready revision running/)
+        assert.equal(existsSync(path.join(directory, "probes")), false)
+      } else {
+        assert.equal(result.status, 0, result.stderr)
+        assert.equal(readFileSync(path.join(directory, "probes"), "utf8").trim().split("\n").length, 4)
+        assert.equal(readFileSync(path.join(directory, "runtime-count"), "utf8").trim(), "2")
+        assert.equal(readFileSync(path.join(directory, "core-count"), "utf8").trim(), "2")
+      }
+    } finally {
+      rmSync(directory, {recursive: true, force: true})
+    }
+  })
+}
 
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
   const coordinator = workflow("coordinated-release.yml")
@@ -965,4 +1053,25 @@ test("the immutable publish contract inspects each invocation on its own", () =>
     immutablePublishMismatches(snippet).map(({name}) => name),
     ["current-production-release-plan.json", "\${{ steps.b.outputs.asset_name }}"],
   )
+})
+
+test("new cache and signing tooling tolerate a frozen source predating the helpers", () => {
+  const ios = jobBlock(workflow("reusable-coordinated-mobile.yml"), "ios")
+  assert.match(ios, /ref: \$\{\{ github.sha \}\}[\s\S]*mobile\/ci\/verify-signing.py/)
+  assert.match(ios, /python3 "\$GITHUB_WORKSPACE\/release-tooling\/mobile\/ci\/verify-signing.py"/)
+  assert.match(ios, /if \[\[ -f mobile\/scripts\/native-build-cache.mjs \]\] && grep -q MENTRA_NATIVE_BUILD_CACHE/)
+  const cache = ios.split("      - name: Compute iOS compilation cache scope\n")[1].split("\n      - name:")[0]
+  assert.match(cache, /if: steps.cache-support.outputs.supported == 'true'/)
+})
+
+
+test("cache scope receives the generated public runtime environment, including its backend", () => {
+  const source = workflow("reusable-coordinated-mobile.yml")
+  const pattern = source.match(/grep -E '([^']+)' mobile\/\.env/)[1]
+  const input = "EXPO_PUBLIC_BUILD_ENV=staging\nEXPO_PUBLIC_CLOUD_CORE_URL=https://staging.example\nMENTRAOS_PINNED_BUILD_NUMBER=42\nPRIVATE_TOKEN=secret\n"
+  const result = spawnSync("grep", ["-E", pattern], {input, encoding: "utf8"})
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /EXPO_PUBLIC_BUILD_ENV=staging/)
+  assert.match(result.stdout, /EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/staging.example/)
+  assert.doesNotMatch(result.stdout, /PRIVATE_TOKEN/)
 })

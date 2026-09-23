@@ -5,13 +5,23 @@ cloud-neutral image and configuration contract is in
 [private-deployment.md](../../private-deployment.md). The Azure template starts the
 same immutable Mentra Cloud image as two Container Apps:
 
-- customer Core with Cosmos DB for MongoDB-compatible persistence; and
+- customer Core with Cosmos DB for MongoDB-compatible persistence and Azure Files for durable report attachments; and
 - meetings-only Runtime with the `acs-teams` provider.
 
 It also creates ACS, a Container Apps environment, pull identity, managed TLS
 for the workspace hostname, and the served deployment manifest. The Runtime
 profile does not start Redis, UDP, cloud audio, camera, Cloudflare, speech,
 maps, Store, or reporting dependencies.
+
+Core's report API is available independently of Runtime and consumer telemetry.
+See [report setup and retrieval](operations.md#reports-and-durable-attachments)
+for existing admin org API-key authorization and the attachment-storage lifecycle.
+
+The Enterprise Demo manifest enables the built-in Give Feedback miniapp alongside
+Settings. Reports go to the selected Enterprise Core, including phone logs and
+screenshots for bug reports. The confirmation provides a copyable report ID.
+Re-select the workspace to refresh a previously cached manifest; Settings → Give
+Feedback also opens the same form.
 
 ## Reference identities
 
@@ -90,6 +100,22 @@ removes that file, runs the smoke test, and prints the deployment outputs.
 Import the durable secret file into approved secret management; replacing its
 values is a deliberate session/key rotation, not an ordinary redeploy.
 
+### Teams meeting creation
+
+After completing [Graph consent and Teams access policy](./entra-setup.md#meeting-creation),
+set `teamsGraphClientId` and `teamsGraphOrganizerId` in the public deployment
+configuration and add `teamsGraphClientSecret` to the protected secret file.
+`teamsGraphTenantId` defaults to `tenantId`. Leaving these inputs empty preserves
+join-only server behavior; creation returns a configuration error.
+
+The reference CI deployment reads GitHub variables
+`ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID` and `ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID`,
+and secret `ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_SECRET`. Its Graph tenant is the
+configured Entra tenant. Bicep stores the secret only on Runtime; neither Core
+nor the deployment manifest receives it.
+
+### Custom hostname
+
 For a custom hostname, first deploy without `workspaceHostname`, create a
 DNS-only CNAME to the printed `generatedRuntimeHostname`, and create
 `asuid.<workspace-hostname>` as a TXT record whose value is the printed
@@ -125,3 +151,22 @@ ACS, the customer workspace, and customer Core remain expected egress.
 
 This qualifies private infrastructure and restricted networking; it is not a
 literal zero-internet air-gapped profile.
+
+## Mentra Call
+
+The reference manifest pins Mentra Call 2.1.30. Its ZIP is included in the Runtime
+image under `miniapps/` and is byte-identical to the Mentra App's bundled ZIP.
+The coordinated deployment passes that managed list to Bicep and verifies the
+served bundle's SHA-256. Updating Call requires updating both copies and the pin.
+
+Use the matching Mentra App native build from this change, then re-select the
+workspace to refresh an already cached deployment manifest. Call uses the selected
+Runtime for credentials and a direct glasses link for media. It prefers the Entra
+Teams identity and automatically uses guest mode for an absent identity or a
+confirmed missing Teams license; the call screen reports the selected mode.
+Existing installed consumer clients continue using the existing Call backend routes.
+The new Call bundle requires host meeting-policy discovery; hosts lacking that API
+show an update message and cannot send requests to a public Call backend.
+
+Before releasing, qualify licensed and unlicensed joins on both Android and iOS,
+including lobby admission, remote identity, two-way audio/video and cancellation.

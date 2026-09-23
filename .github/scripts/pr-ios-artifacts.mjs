@@ -32,6 +32,18 @@ export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
     (receipt.buildAttempt ?? receipt.runAttempt) > attempt
   )
     throw new Error("iOS receipt belongs to a different revision or workflow attempt")
+  if (receipt.app?.macPackageVersion === 2) {
+    const installer = receipt.macInstaller
+    if (
+      receipt.app.macInstaller !== "Install Mentra.app" ||
+      installer?.bundleId !== "com.mentra.mac-installer" ||
+      installer.teamId !== "T5XXXL6N36" ||
+      installer.notarizationStatus !== "Accepted" ||
+      installer.stapled !== true ||
+      !/^[a-f0-9-]{36}$/i.test(installer.notarizationId || "")
+    )
+      throw new Error("Mac package is missing verified installer notarization")
+  }
   const sourceName = iosReceiptName(pr, sha, runId, receipt.buildAttempt ?? receipt.runAttempt)
   const suffix = sourceName.slice("mentra-ios-".length, -".json".length)
   const kinds =
@@ -120,6 +132,9 @@ export async function publishIosArtifacts(directory, env = process.env, {exec = 
         releaseId,
         "--repository",
         repository,
+        ...(name === assets.iphone.name && receipt.app.mobileFingerprint
+          ? ["--fingerprint", receipt.app.mobileFingerprint]
+          : []),
       ],
       {stdio: "inherit", env},
     )

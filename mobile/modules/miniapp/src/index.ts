@@ -74,6 +74,8 @@ export type {
   RenderRectStyle,
   RenderResult,
   RenderTextStyle,
+  RenderTextLayout,
+  RenderTextLine,
   ViewType,
 } from "./modules/display"
 export type {
@@ -94,7 +96,7 @@ export type {
   VadData,
   WifiData,
 } from "./modules/events"
-export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "./modules/phone"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult, PhoneWifiEnableResult} from "./modules/phone"
 export type {
   PlayAudioOptions,
   SpeakOptions,
@@ -186,6 +188,11 @@ export type {SpeakerModule} from "./modules/speaker"
 export type {
   MeetingModule,
   MeetingJoinOptions,
+  MeetingCreateOptions,
+  CreatedMeeting,
+  MeetingConfiguration,
+  MeetingIdentityMode,
+  MeetingGuestReason,
   MeetingState,
   MeetingEndReason,
   MeetingPhase,

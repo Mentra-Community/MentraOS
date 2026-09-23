@@ -1,5 +1,6 @@
 #!/usr/bin/env zx
 
+import {runXcode, signingOnlyFailure} from '../ci/pr-ios/xcode-attempt.mjs';
 import { setBuildEnv } from './set-build-env.mjs';
 import { withRetry, isSPMOrSentryTransientError, writeSummary } from './release-utils.mjs';
 import {
@@ -224,11 +225,34 @@ const archivePath = path.resolve('build/Mentra.xcarchive');
 // sourced from .xcode.env.local before it launches Expo/Metro.
 await withRetry(
   'xcodebuild archive',
-  () => {
-    const p = $`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} -derivedDataPath ${derivedDataPath} -allowProvisioningUpdates DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal ${archiveBuildSettings}`;
-    p.stdout.pipe(process.stdout);
-    p.stderr.pipe(process.stderr);
-    return p;
+  async () => {
+    const args = ['archive', '-workspace', 'ios/Mentra.xcworkspace', '-scheme', 'Mentra',
+      '-configuration', 'Release', '-destination', 'generic/platform=iOS', '-archivePath', archivePath,
+      '-derivedDataPath', derivedDataPath, '-allowProvisioningUpdates',
+      `DEVELOPMENT_TEAM=${teamId}`, 'SWIFT_STRICT_CONCURRENCY=minimal', ...archiveBuildSettings];
+    if (process.env.MENTRA_CI_KEYCHAIN) {
+      args.push(`OTHER_CODE_SIGN_FLAGS=--keychain ${process.env.MENTRA_CI_KEYCHAIN} --timestamp=none`);
+    }
+    if (process.env.MENTRA_NATIVE_BUILD_CACHE === 'true') {
+      args.push('COMPILATION_CACHE_ENABLE_CACHING=YES',
+        `COMPILATION_CACHE_CAS_PATH=${path.resolve('build/CompilationCache')}`,
+        '-showBuildTimingSummary');
+    }
+    // Keep the first transient diagnostic even if later parallel compile logs
+    // push it out of runXcode's bounded tail.
+    let transientEvidence = '';
+    const options = {env: process.env, onOutput: (output) => {
+      if (!transientEvidence && isSPMOrSentryTransientError({stdout: output})) transientEvidence = output;
+    }};
+    let result = await runXcode(args, options);
+    if (signingOnlyFailure(result) && process.env.MENTRA_CI_KEYCHAIN) {
+      console.log('Retrying signing with existing compiler outputs.');
+      await $({ stdio: 'inherit' })`security unlock-keychain -p ${process.env.MENTRA_CI_KEYCHAIN_PASSWORD} ${process.env.MENTRA_CI_KEYCHAIN}`;
+      result = await runXcode(args, options);
+    }
+    if (result.status !== 0 || result.signal) {
+      throw Object.assign(new Error(`iOS archive failed: ${result.status ?? result.signal}`), {stdout: transientEvidence + result.output});
+    }
   },
   { shouldRetry: isSPMOrSentryTransientError }
 );

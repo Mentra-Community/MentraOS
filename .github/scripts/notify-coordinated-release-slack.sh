@@ -140,11 +140,11 @@ play_detail="${PLAY_TRACK:-unknown}"
 if [[ "${UPLOAD_GOOGLE_PLAY:-true}" == "false" ]]; then
   play_detail="dev uploads paused; APK/AAB downloads remain available"
 fi
-android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${play_detail}"
+android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Android: $(icon "$android_result") $(label "$android_result") · Google Play: ${play_detail}"
 if [[ -n "${PLAY_INSTALL_URL:-}" ]]; then
   android_line+=" - <${PLAY_INSTALL_URL}|Install from Google Play>"
 fi
-ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
+ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}iOS: $(icon "$ios_result") $(label "$ios_result") · TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
 if [[ -n "${TESTFLIGHT_DISTRIBUTION_STATUS:-}" ]]; then
   ios_line+=" - ${TESTFLIGHT_DISTRIBUTION_STATUS}"
 fi
@@ -180,7 +180,18 @@ else
   checks_line+="${newline}Examples and docs dispatch: $(icon "${EXAMPLES_DISPATCH_RESULT:-unknown}") $(label "${EXAMPLES_DISPATCH_RESULT:-unknown}") - <${examples_url}|View separate workflow>"
 fi
 
+platforms='[]'
+if [[ "$scope" != examples ]]; then
+  platforms=$(node "$(dirname -- "$0")/coordinated-downloads-slack.mjs" platforms)
+  if [[ -n "${OTA_MANIFEST_URL:-}" ]]; then
+    targets=$(node "$(dirname -- "$0")/coordinated-downloads-slack.mjs" ota)
+    asg_line+="${newline}${targets}${newline}<${OTA_MANIFEST_URL}|OTA manifest>"
+    asg_line+="${newline}Install the Mentra App, connect your glasses, and follow the update prompt to reach these versions."
+  fi
+fi
+
 payload=$(jq -n \
+  --argjson platforms "$platforms" \
   --arg scope "$scope" \
   --arg header "$header_icon $header_text" \
   --arg commit "$commit_subject" \
@@ -204,8 +215,8 @@ payload=$(jq -n \
         {type: "section", text: {type: "mrkdwn", text: $starter}},
         {type: "section", text: {type: "mrkdwn", text: $docs}}
       else
-        {type: "section", text: {type: "mrkdwn", text: $android}},
-        {type: "section", text: {type: "mrkdwn", text: $ios}},
+        $platforms[],
+        {type: "section", text: {type: "mrkdwn", text: (($android | split("\n")[1]) + "\n" + ($ios | split("\n")[1]))}},
         {type: "section", text: {type: "mrkdwn", text: $asg}}
       end),
       {type: "section", text: {type: "mrkdwn", text: $checks}},

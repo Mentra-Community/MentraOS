@@ -9,6 +9,7 @@ function makeDisplayController() {
   const renders: string[] = []
   const uiSends: Array<{channel: string; payload: Record<string, unknown>}> = []
   const storage = new Map<string, string>()
+  const lifecycle = new Map<string, () => void>()
   const noop = () => () => {}
   const session = {
     translation: {
@@ -26,13 +27,26 @@ function makeDisplayController() {
     display: {
       render: (els: Array<{text?: string}>) => {
         if (els.length > 0 && typeof els[0].text === "string") renders.push(els[0].text)
+        return Promise.resolve({status: "displayed"})
       },
     },
-    storage: {get: (k: string) => Promise.resolve(storage.get(k) ?? null), set: (k: string, v: string) => (storage.set(k, v), Promise.resolve())},
-    ui: {send: (channel: string, payload: Record<string, unknown>) => uiSends.push({channel, payload}), on: noop, onOpen: noop},
+    storage: {
+      get: (k: string) => Promise.resolve(storage.get(k) ?? null),
+      set: (k: string, v: string) => (storage.set(k, v), Promise.resolve()),
+    },
+    ui: {
+      send: (channel: string, payload: Record<string, unknown>) => uiSends.push({channel, payload}),
+      on: noop,
+      onOpen: noop,
+    },
     actions: {handle: noop},
-    capabilities: {display: {width: 576, height: 288}},
+    capabilities: {modelName: null as string | null, display: {width: 576, height: 288}},
+    on: (event: string, callback: () => void) => {
+      lifecycle.set(event, callback)
+      return () => lifecycle.delete(event)
+    },
     onCapabilitiesChange: noop,
+    cloud: {onStatusChanged: noop},
   }
   const controller = new TranslationController(session as never) as unknown as {
     start: () => Promise<void>
@@ -42,6 +56,8 @@ function makeDisplayController() {
     controller,
     renders,
     uiSends,
+    session,
+    ready: () => lifecycle.get("ready")?.(),
     feed: (d: unknown) => translationHandler?.(d),
     feedTranscription: (d: unknown) => transcriptionHandler?.(d),
   }
@@ -84,6 +100,16 @@ describe("TranslationController subscription replacement", () => {
 })
 
 describe("TranslationController glasses display mode", () => {
+  test("accepts initial capabilities on ready without device-specific formatting", async () => {
+    const {controller, renders, feed, session, ready} = makeDisplayController()
+    await controller.start()
+    session.capabilities = {modelName: "Nimo-7188", display: {width: 500, height: 220}}
+    ready()
+    feed({text: "W".repeat(40), originalText: "source", isFinal: true, utteranceId: "nimo-1"})
+    expect(renders.at(-1)).toContain("W".repeat(40))
+    expect(renders.at(-1)).not.toContain("\n")
+  })
+
   test("switching to 'both' re-renders the current line with the original text (not a no-op)", async () => {
     const {controller, renders, feed} = makeDisplayController()
     await controller.start()
@@ -124,11 +150,16 @@ describe("TranslationController same-language passthrough (cloud events)", () =>
     const {controller, uiSends, feed} = makeDisplayController()
     await controller.start() // default target es
 
-    feed({text: "Hola mundo", isFinal: true, sourceLanguage: "es", targetLanguage: "es-ES", utteranceId: "u1", speakerId: "1"})
+    feed({
+      text: "Hola mundo",
+      isFinal: true,
+      sourceLanguage: "es",
+      targetLanguage: "es-ES",
+      utteranceId: "u1",
+      speakerId: "1",
+    })
 
-    const card = uiSends.find(
-      (s) => s.channel === "translation:live-translation" && s.payload.text === "Hola mundo",
-    )
+    const card = uiSends.find((s) => s.channel === "translation:live-translation" && s.payload.text === "Hola mundo")
     expect(card).toBeDefined()
   })
 
@@ -148,7 +179,14 @@ describe("TranslationController same-language passthrough (cloud events)", () =>
     const {controller, renders, feed} = makeDisplayController()
     await controller.start() // target es, translation-only mode
 
-    feed({text: "Hola mundo", originalText: "Hello world", isFinal: true, sourceLanguage: "en", targetLanguage: "es-ES", utteranceId: "u4"})
+    feed({
+      text: "Hola mundo",
+      originalText: "Hello world",
+      isFinal: true,
+      sourceLanguage: "en",
+      targetLanguage: "es-ES",
+      utteranceId: "u4",
+    })
     expect(renders.some((r) => r.includes("Hola mundo"))).toBe(true)
   })
 
@@ -168,7 +206,14 @@ describe("TranslationController same-language passthrough (cloud events)", () =>
 
     // Cross-language interims (originalText present, source still unknown)
     // must STILL display in translation-only mode.
-    feed({text: "Adios", originalText: "Goodbye", isFinal: false, sourceLanguage: "auto", targetLanguage: "es-ES", utteranceId: "u6"})
+    feed({
+      text: "Adios",
+      originalText: "Goodbye",
+      isFinal: false,
+      sourceLanguage: "auto",
+      targetLanguage: "es-ES",
+      utteranceId: "u6",
+    })
     expect(renders.some((r) => r.includes("Adios"))).toBe(true)
   })
 })
