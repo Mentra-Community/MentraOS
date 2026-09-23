@@ -1,4 +1,5 @@
-import {fireEvent, render} from "@testing-library/react-native"
+import {act, fireEvent, render} from "@testing-library/react-native"
+import {cloneElement} from "react"
 
 import {PhotoInfo} from "@/types/asg"
 
@@ -7,6 +8,8 @@ import {AwesomeGalleryViewer, CustomOverlay} from "./AwesomeGalleryViewer"
 let mockGalleryProps: Record<string, unknown> = {}
 let mockImageProps: Record<string, unknown> = {}
 let mockVideoProps: Record<string, unknown> = {}
+let mockSliderProps: Record<string, unknown> = {}
+const mockSeek = jest.fn()
 
 jest.mock("@gorhom/bottom-sheet", () => ({
   __esModule: true,
@@ -64,8 +67,16 @@ jest.mock("react-native-vector-icons/MaterialCommunityIcons", () => {
     return React.createElement(Text, null, name)
   }
 })
-jest.mock("react-native-video", () => (props: Record<string, unknown>) => {
-  mockVideoProps = props
+jest.mock("react-native-video", () => {
+  const React = require("react")
+  return React.forwardRef((props: Record<string, unknown>, ref: unknown) => {
+    React.useImperativeHandle(ref, () => ({seek: mockSeek}))
+    mockVideoProps = props
+    return null
+  })
+})
+jest.mock("@react-native-community/slider", () => (props: Record<string, unknown>) => {
+  mockSliderProps = props
   return null
 })
 
@@ -158,5 +169,131 @@ describe("CustomOverlay", () => {
     expect(videoView.getByTestId("video-player-container")).toHaveStyle({backgroundColor: "#f7f7f7"})
     expect(videoView.getByTestId("video-thumbnail-overlay")).toHaveStyle({backgroundColor: "#f7f7f7"})
     expect(mockVideoProps.style).toMatchObject({backgroundColor: "#f7f7f7"})
+  })
+})
+
+describe("gallery video playback", () => {
+  const duration = 600.4028930664062
+
+  function emitVideo(event: string, payload: unknown = {}) {
+    act(() => (mockVideoProps[event] as (payload: unknown) => void)(payload))
+  }
+
+  function emitSlider(event: string, value = 0) {
+    act(() => (mockSliderProps[event] as (value: number) => void)(value))
+  }
+
+  function renderVideo(load = true) {
+    const photo = {name: "video.mp4", url: "file:///gallery/video.mp4", is_video: true} as PhotoInfo
+    render(<AwesomeGalleryViewer visible photos={[photo]} initialIndex={0} onClose={jest.fn()} />)
+    const renderItem = mockGalleryProps.renderItem as (info: {
+      item: PhotoInfo
+      index: number
+      setImageDimensions: jest.Mock
+    }) => React.ReactElement<{isActive: boolean}>
+    const item = renderItem({item: photo, index: 0, setImageDimensions: jest.fn()})
+    const view = render(item)
+    if (load) emitVideo("onLoad", {duration})
+    return {view, item}
+  }
+
+  beforeEach(() => {
+    mockSeek.mockClear()
+  })
+
+  it("disables scrubbing until a finite duration is loaded", () => {
+    renderVideo(false)
+    expect(mockSliderProps.disabled).toBe(true)
+    emitVideo("onLoad", {duration: Infinity})
+    expect(mockSliderProps.disabled).toBe(true)
+    expect(mockSliderProps.maximumValue).toBe(0)
+    emitVideo("onLoad", {duration})
+    expect(mockSliderProps.disabled).toBe(false)
+  })
+
+  it("pauses during scrubbing and seeks inside the file at the right endpoint", () => {
+    renderVideo()
+    emitSlider("onSlidingStart")
+    expect(mockVideoProps.paused).toBe(true)
+    expect(mockGalleryProps.swipeEnabled).toBe(false)
+    emitVideo("onProgress", {currentTime: 100})
+    expect(mockSliderProps.value).toBe(0)
+    emitSlider("onSlidingComplete", duration)
+    expect(mockSeek).toHaveBeenLastCalledWith(duration - 0.1)
+    expect(mockSliderProps.value).toBe(duration - 0.1)
+    expect(mockVideoProps.paused).toBe(false)
+    expect(mockGalleryProps.swipeEnabled).toBe(true)
+  })
+
+  it("does not wait for an onSeek event after a same-position seek", () => {
+    renderVideo()
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", 0)
+    emitVideo("onProgress", {currentTime: 1})
+    expect(mockSliderProps.value).toBe(1)
+    expect(mockVideoProps.paused).toBe(false)
+  })
+
+  it("preserves a user pause when seeking near the end and resumes without replaying", () => {
+    const {view} = renderVideo()
+    fireEvent.press(view.getByText("pause"))
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", duration)
+    emitVideo("onProgress", {currentTime: duration - 0.1})
+    expect(mockVideoProps.paused).toBe(true)
+    fireEvent.press(view.getByText("play"))
+    expect(mockVideoProps.paused).toBe(false)
+    expect(mockSeek).toHaveBeenCalledTimes(1)
+  })
+
+  it("stays stopped after end events and replays from zero", () => {
+    const {view} = renderVideo()
+    emitVideo("onEnd")
+    expect(mockSliderProps.value).toBe(duration)
+    emitVideo("onProgress", {currentTime: duration - 1})
+    expect(mockSliderProps.value).toBe(duration)
+    expect(mockVideoProps.paused).toBe(true)
+    fireEvent.press(view.getByText("replay"))
+    expect(mockSeek).toHaveBeenLastCalledWith(0)
+    expect(mockSliderProps.value).toBe(0)
+    expect(mockVideoProps.paused).toBe(false)
+  })
+
+  it("can seek backward after ending and play from the selected position", () => {
+    const {view} = renderVideo()
+    emitVideo("onEnd")
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", 30)
+    expect(mockVideoProps.paused).toBe(true)
+    fireEvent.press(view.getByText("play"))
+    expect(mockSeek).toHaveBeenCalledTimes(1)
+    expect(mockSeek).toHaveBeenLastCalledWith(30)
+    expect(mockVideoProps.paused).toBe(false)
+  })
+
+  it("restarts when returning to a video after swiping away", () => {
+    const {view, item} = renderVideo()
+    emitVideo("onEnd")
+    view.rerender(cloneElement(item, {isActive: false}))
+    expect(mockVideoProps.paused).toBe(true)
+    view.rerender(cloneElement(item, {isActive: true}))
+    expect(mockSeek).toHaveBeenLastCalledWith(0)
+    expect(mockVideoProps.paused).toBe(false)
+    expect(view.queryByText("replay")).toBeNull()
+  })
+
+  it("keeps real decoder errors visible and does not resume on progress", () => {
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const {view} = renderVideo()
+      emitSlider("onSlidingStart")
+      emitVideo("onError", {error: {code: -11880, domain: "AVFoundationErrorDomain"}})
+      emitVideo("onProgress", {currentTime: 1})
+      expect(mockVideoProps.paused).toBe(true)
+      expect(mockGalleryProps.swipeEnabled).toBe(true)
+      expect(view.getByText("Playback Error")).toBeTruthy()
+    } finally {
+      errorLog.mockRestore()
+    }
   })
 })
