@@ -109,3 +109,27 @@ test("disposed reads cannot publish and unconfirmed updater events cannot force 
   listener(snapshot({revision: 200}))
   expect(observer.snapshot()?.revision).toBe(0)
 })
+
+test("direct read evidence recovers initial hydration while retaining identity and ordering checks", async () => {
+  const observer = new NativeFirmwareObservation(
+    identity,
+    {
+      listen: () => () => {},
+      read: async () => {
+        throw new Error("bridge unavailable")
+      },
+    },
+    () => {},
+    () => {},
+  )
+  await expect(observer.start()).rejects.toThrow("bridge unavailable")
+  observer.acceptRead(snapshot({revision: 2, connectionGeneration: 2}))
+  expect(observer.snapshot()?.revision).toBe(2)
+  expect(() => observer.acceptRead(snapshot({deviceId: "other", revision: 3}))).toThrow("another device")
+  observer.acceptRead(snapshot({revision: 1, connectionGeneration: 2}))
+  observer.acceptRead(snapshot({updaterId: "old", revision: 100, connectionGeneration: 1}))
+  expect(observer.snapshot()?.revision).toBe(2)
+  observer.dispose()
+  observer.acceptRead(snapshot({revision: 3, connectionGeneration: 2}))
+  expect(observer.snapshot()?.revision).toBe(2)
+})

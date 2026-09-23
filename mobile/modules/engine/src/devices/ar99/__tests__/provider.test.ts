@@ -212,3 +212,57 @@ test.each(["completion", "cancellation", "error"])(
     removeReservation()
   },
 )
+
+test.each(["event", "reopen", "retry"])(
+  "%s resolves a failed Start and lost status read without another install",
+  async (via) => {
+    const f = fixture()
+    const target = f.provider.target
+    const service = new FirmwareUpdateService(
+      new DeviceIntegrationRegistry([
+        {
+          id: "ar99",
+          models: ["AR99"],
+          firmware: {entryPoints: ["settings", "recovery"], createProvider: () => f.provider},
+        },
+      ]),
+    )
+    const read = f.ports.read
+    let starts = 0
+    f.ports.start = async () => {
+      starts++
+      f.ports.read = async () => {
+        f.ports.read = read
+        throw new Error("Status reply lost")
+      }
+      throw new Error("Start failed before admission")
+    }
+    await service.open(target, {entryPoint: "settings"})
+    await service.perform(target, {action: "install", offerId: f.provider.snapshot().offer!.id})
+    expect(f.provider.snapshot()).toMatchObject({phase: "interrupted", safeToRelease: false})
+    expect(f.held()).toBe(1)
+    expect(f.releases()).toBe(0)
+    expect(() => service.assertSafeToRelease()).toThrow()
+    if (via === "event") f.emit({phase: "idle", safeToRelease: true})
+    if (via === "retry") {
+      f.ports.read = async () => {
+        throw new Error("Still disconnected")
+      }
+      await expect(service.perform(target, {action: "retry"})).rejects.toThrow("Still disconnected")
+      expect(f.provider.snapshot().safeToRelease).toBe(false)
+      expect(f.held()).toBe(1)
+      f.ports.read = read
+      await service.perform(target, {action: "retry"})
+    }
+    // In the reopen case native never changed revision: it did not admit Start.
+    await service.open(target, {entryPoint: "recovery"})
+    expect(f.provider.snapshot()).toMatchObject({phase: "idle", safeToRelease: true, active: false, offer: null})
+    expect(f.provider.snapshot().presentation.success).toBe(false)
+    expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toEqual(["check", "finish"])
+    expect(() => service.assertSafeToRelease()).not.toThrow()
+    expect(f.held()).toBe(0)
+    expect(f.releases()).toBe(1)
+    expect(starts).toBe(1)
+    expect(await service.perform(target, {action: "finish"})).toEqual({kind: "finished"})
+  },
+)

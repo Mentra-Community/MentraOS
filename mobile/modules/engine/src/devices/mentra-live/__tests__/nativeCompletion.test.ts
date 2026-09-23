@@ -171,6 +171,39 @@ test("a healthy terminal read recovers an initially unavailable observation with
   h.completion.dispose()
 })
 
+test("validated terminal evidence completes without a second fallible refresh", async () => {
+  const native: NativeFirmwareUpdateSnapshot = {
+    schemaVersion: 1,
+    integrationId: "mentra-live",
+    deviceId: "live",
+    updaterId: "updater",
+    connectionGeneration: 1,
+    revision: 1,
+    sessionId: "session",
+    phase: "complete",
+    safeToRelease: true,
+    canCancel: false,
+    canReconcile: false,
+    inventory: {},
+  }
+  let reads = 0
+  const completion = new LiveNativeCompletion("live", {
+    read: async () => {
+      if (++reads === 3) throw new Error("second refresh failed")
+      return native
+    },
+    listen: () => () => {},
+    complete: async () => {
+      throw new Error("Already terminal")
+    },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await completion.finish(null)
+  expect(reads).toBe(2)
+  expect(completion.isSafeToRelease()).toBe(true)
+  completion.dispose()
+})
+
 test("a failed read cannot be cleared by safe evidence from a different device", async () => {
   const h = fixture()
   await new Promise((resolve) => setTimeout(resolve, 0))

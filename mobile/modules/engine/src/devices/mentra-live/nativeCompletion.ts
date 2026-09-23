@@ -66,9 +66,6 @@ export class LiveNativeCompletion {
     await this.ready
     this.assertAvailable()
     if (this.unsupported) return
-    // A temporary initial read failure must not permanently disable an explicit Start.
-    await this.observation.start()
-    this.assertAvailable()
     const current = await this.readCurrent()
     this.acceptRead(current)
     this.expectingAfter = current.sessionId ?? ""
@@ -86,9 +83,6 @@ export class LiveNativeCompletion {
       const bound = this.bound
       if (current.safeToRelease) {
         this.acceptRead(current)
-        // Also recover an observation whose initial bridge read never completed.
-        await this.observation.start()
-        this.assertAvailable()
         if (!this.isSafeToRelease()) throw new FirmwareUpdateError("busy", "The Live update still owns the glasses")
         return
       }
@@ -131,7 +125,7 @@ export class LiveNativeCompletion {
 
   private acceptRead(current: NativeFirmwareUpdateSnapshot): void {
     this.failure = null
-    this.observation.accept(current)
+    this.observation.acceptRead(current)
     // A retry may read the same revision that was observed before the bridge error.
     this.changed()
     this.assertAvailable()

@@ -103,6 +103,9 @@ export class NimoFirmwareProvider implements FirmwareProvider {
     this.suspended = false
     await this.ports.validateTarget()
     await this.observation.start()
+    // A successful reread can resolve a lost Start response without a new revision.
+    const native = this.observation.snapshot()
+    if (native?.safeToRelease && !native.sessionId) this.onNative(native)
     if (this.suspended || generation !== this.generation) return
     if (this.nativeOwnsFlow() || this.snapshot().active || this.started) return
     this.started = true
@@ -124,11 +127,16 @@ export class NimoFirmwareProvider implements FirmwareProvider {
       await this.releaseFile()
       return request.action === "discard" ? {kind: "finished", outcome: "cancelled"} : {kind: "finished"}
     }
-    if (request.action === "retry" && native && !native.safeToRelease) {
-      if (!native.canReconcile)
+    if (request.action === "retry" && !this.snapshot().safeToRelease) {
+      if (native && !native.safeToRelease && !native.canReconcile)
         throw new FirmwareUpdateError("action_unavailable", "No verified recovery command is available")
       await this.ports.validateTarget()
-      this.observation.accept(await this.ports.reconcile())
+      if (native && !native.safeToRelease) this.observation.accept(await this.ports.reconcile())
+      else {
+        await this.observation.start()
+        const current = this.observation.snapshot()
+        if (current) this.onNative(current)
+      }
       return {kind: "none"}
     }
     if (request.action === "check" || request.action === "retry") {
@@ -369,7 +377,27 @@ export class NimoFirmwareProvider implements FirmwareProvider {
       this.offer = null
       this.show("idle", "NIMO firmware changed", "Check again before updating these glasses.", {offer: null})
     }
-    if (!native.sessionId && native.safeToRelease) return
+    if (!native.sessionId && native.safeToRelease) {
+      // Native idle resolves uncertain admission; it does not establish that the
+      // required firmware was installed. Require a new check/approval before Start.
+      if (!this.pendingStart && (!this.snapshot().safeToRelease || this.snapshot().nativeSessionId !== null)) {
+        this.generation++
+        this.started = true
+        this.offer = null
+        this.releaseRuntime?.()
+        this.releaseRuntime = null
+        void this.releaseFile()
+        this.show("idle", "NIMO firmware changed", "Check again before updating these glasses.", {
+          nativeSessionId: null,
+          attemptId: null,
+          active: false,
+          safeToRelease: true,
+          offer: null,
+          error: null,
+        })
+      }
+      return
+    }
     if (!native.safeToRelease) this.holdRuntime()
     else {
       this.releaseRuntime?.()
@@ -429,7 +457,7 @@ export class NimoFirmwareProvider implements FirmwareProvider {
       "verifying",
     ].includes(phase)
     if (!next.safeToRelease) {
-      if (native?.canReconcile && phase === "interrupted")
+      if (phase === "interrupted" && (native?.canReconcile || (native?.safeToRelease && !native.sessionId)))
         actions.push({id: "retry", label: nimoFirmwareCopy("Check recovery")})
     } else if (!busy) {
       if (phase === "available" && next.offer) actions.push({id: "install", label: nimoFirmwareCopy("Update now")})

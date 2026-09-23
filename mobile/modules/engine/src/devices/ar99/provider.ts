@@ -61,7 +61,6 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
   private disposed = false
   private opened = false
   private pendingStart = false
-  private legacyOwned = false
   private file: Ar99PreparedFile | null = null
   private releaseRuntime: (() => void) | null = null
 
@@ -100,6 +99,9 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
     const generation = this.generation
     await this.ports.validateTarget()
     await this.observation.start()
+    // A successful reread can resolve a lost Start response without a new revision.
+    const native = this.observation.snapshot()
+    if (native?.safeToRelease && !native.sessionId) this.onNative(native)
     if (!this.current(generation) || this.nativeOwnsFlow() || this.opened || this.snapshot().active) return
     this.opened = true
     await this.check()
@@ -118,9 +120,14 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
       await this.releaseFile()
       return {kind: "finished"}
     }
-    if (request.action === "retry" && native && !native.safeToRelease) {
+    if (request.action === "retry" && !this.snapshot().safeToRelease) {
       await this.ports.validateTarget()
-      this.observation.accept(await this.ports.reconcile())
+      if (native && !native.safeToRelease) this.observation.accept(await this.ports.reconcile())
+      else {
+        await this.observation.start()
+        const current = this.observation.snapshot()
+        if (current) this.onNative(current)
+      }
     } else if (request.action === "check" || request.action === "retry") {
       if (native?.sessionId) this.observation.accept(await this.ports.acknowledge())
       await this.check()
@@ -284,10 +291,9 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
     )
       this.generation++
     if (!native.sessionId && native.safeToRelease) {
-      // The legacy updater publishes ownership without a managed session ID. Its
-      // safe idle transition releases that ownership, but does not prove activation.
-      if (this.legacyOwned) {
-        this.legacyOwned = false
+      // This covers legacy release and a failed managed Start whose status read
+      // was lost. Native idle proves no ownership, not successful activation.
+      if (!this.pendingStart && (!this.snapshot().safeToRelease || this.snapshot().nativeSessionId !== null)) {
         this.generation++
         this.opened = true
         this.offer = null
@@ -311,7 +317,6 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
       }
       return
     }
-    this.legacyOwned = !native.sessionId && !native.safeToRelease
     if (!native.safeToRelease) this.releaseRuntime ??= this.ports.acquireRuntime()
     else {
       this.releaseRuntime?.()
@@ -378,7 +383,8 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
     const action = (id: "check" | "install" | "retry" | "finish", key: string, text: string, secondary = false) =>
       actions.push({id, label: {text, key: `ar99Ota:${key}`}, secondary})
     if (!next.safeToRelease) {
-      if (this.observation.snapshot()?.canReconcile && phase === "interrupted")
+      const native = this.observation.snapshot()
+      if (phase === "interrupted" && (native?.canReconcile || (native?.safeToRelease && !native.sessionId)))
         action("retry", "inspectFirmware", "Check recovery")
     } else if (!busy) {
       if (phase === "available") action("install", "upgrade", "Upgrade")

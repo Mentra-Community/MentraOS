@@ -2,6 +2,8 @@ import {describe, expect, test} from "bun:test"
 import type {NativeFirmwareStartRequest, NativeFirmwareUpdateSnapshot} from "@mentra/bluetooth-sdk/firmware-updates"
 import {NimoFirmwareProvider, type NimoFirmwarePorts} from "../provider"
 import {parseNimoManifest} from "../manifest"
+import {DeviceIntegrationRegistry} from "../../types"
+import {FirmwareUpdateService} from "../../../ota/UpdateService"
 
 const target = {integrationId: "nimo", deviceId: "native-device", displayName: "NIMO"}
 const fullVersion = "FW-VERSION-v0.1.1.1-20260827164351-537cf1-dirty-Debug"
@@ -78,6 +80,59 @@ function fixture() {
 }
 
 describe("headless NIMO firmware policy", () => {
+  test.each(["event", "reopen", "retry"])(
+    "%s resolves failed admission without bypassing required setup",
+    async (via) => {
+      const f = fixture()
+      const service = new FirmwareUpdateService(
+        new DeviceIntegrationRegistry([
+          {
+            id: "nimo",
+            models: ["NIMO"],
+            firmware: {entryPoints: ["pairing"], createProvider: () => f.provider},
+          },
+        ]),
+      )
+      const read = f.ports.read
+      let starts = 0
+      f.ports.start = async () => {
+        starts++
+        f.ports.read = async () => {
+          f.ports.read = read
+          throw new Error("Status reply lost")
+        }
+        throw new Error("Start failed before admission")
+      }
+      await service.open(target, {entryPoint: "pairing"})
+      await service.perform(target, {action: "install", offerId: f.provider.snapshot().offer!.id})
+      expect(f.provider.snapshot()).toMatchObject({phase: "interrupted", safeToRelease: false})
+      expect(f.held()).toBe(1)
+      expect(f.releases()).toBe(0)
+      expect(() => service.assertSafeToRelease()).toThrow()
+      if (via === "event") f.emit({phase: "idle", safeToRelease: true})
+      if (via === "retry") {
+        f.ports.read = async () => {
+          throw new Error("Still disconnected")
+        }
+        await expect(service.perform(target, {action: "retry"})).rejects.toThrow("Still disconnected")
+        expect(f.provider.snapshot().safeToRelease).toBe(false)
+        expect(f.held()).toBe(1)
+        f.ports.read = read
+        await service.perform(target, {action: "retry"})
+      }
+      // A rejected Start may leave the native snapshot at the same revision.
+      await service.open(target, {entryPoint: "pairing"})
+      expect(f.provider.snapshot()).toMatchObject({phase: "idle", safeToRelease: true, active: false, offer: null})
+      expect(f.provider.snapshot().presentation.success).toBe(false)
+      expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toEqual(["check", "discard"])
+      expect(() => service.assertSafeToRelease()).not.toThrow()
+      expect(f.held()).toBe(0)
+      expect(f.releases()).toBe(1)
+      expect(starts).toBe(1)
+      expect(await service.perform(target, {action: "discard"})).toEqual({kind: "finished", outcome: "cancelled"})
+    },
+  )
+
   test("checks, binds approval to the source and device, and follows native completion", async () => {
     const f = fixture()
     await f.provider.open({entryPoint: "pairing"})

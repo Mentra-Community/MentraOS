@@ -35,6 +35,12 @@ export class NativeFirmwareObservation {
     this.receive(value)
   }
 
+  /** A direct read already identifies the selected native updater; events still require that lookup. */
+  acceptRead(value: NativeFirmwareUpdateSnapshot): void {
+    if (!this.matches(value)) throw new Error("Firmware snapshot belongs to another device")
+    this.publish(value)
+  }
+
   dispose(): void {
     this.disposed = true
     this.remove?.()
