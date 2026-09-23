@@ -131,3 +131,16 @@ test("ready callback revalidates the selected artifacts and exact trusted issuer
   state.run.conclusion = "failure"
   await assert.rejects(verifyCoordinatedReadyRequest({...options, request}), /successfully/)
 })
+
+test("dev advancing during publication revalidation preserves the immutable request", async () => {
+  const {state, options} = coordinatedFixture()
+  const request = await createRoutineRequest(options), frozen = JSON.stringify(request)
+  const nextDev = "f".repeat(40)
+  await verifyCoordinatedReadyRequest({...options, request, fetchImpl: async (url, init) => {
+    const response = await options.fetchImpl(url, init)
+    state.devSha = nextDev
+    return response
+  }})
+  assert.equal(JSON.stringify(request), frozen)
+  assert.ok(state.calls.some(call => call.compare === `${request.trigger.sha}...${nextDev}`))
+})

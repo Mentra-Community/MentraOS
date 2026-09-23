@@ -496,3 +496,35 @@ for (const routine of ["no-glasses", "mentra-call"]) test(`coordinated ${routine
   await assert.rejects(dispatchReadyRequest(args), /ancestor/)
   assert.equal(remote.calls.length, 1)
 })
+
+for (const channel of ["dev", "staging"]) test(`queued ${channel} request dispatches once after dev advances`, async () => {
+  const {options, state} = coordinatedFixture(channel)
+  const request = await createRoutineRequest(options), frozen = bytes(request)
+  state.devSha = "f".repeat(40)
+  const plan = {mode: "dispatch", runId: 500, runAttempt: 1, sourceSha: options.source.sha}
+  const remote = fake()
+  assert.equal((await dispatchReadyRequest({...options, plan, privateGithub: remote.github, bytes: frozen})).status,
+    "private-job-requested")
+  assert.equal(remote.calls.length, 1)
+  assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "500", request_attempt: "1", routine_id: "no-glasses"})
+  assert.deepEqual(bytes(request), frozen)
+  assert.ok(state.calls.some(call => call.compare === `${request.trigger.sha}...${state.devSha}`))
+})
+
+test("diverged, missing or forged issuer ancestry cannot dispatch a queued request", async () => {
+  const issuer = "b".repeat(40), different = "f".repeat(40)
+  const valid = {status: "ahead", base_commit: {sha: issuer}, merge_base_commit: {sha: issuer}}
+  for (const ancestry of [null, {}, {...valid, status: "diverged"}, {...valid, status: "behind"},
+    {...valid, base_commit: {sha: different}}, {...valid, merge_base_commit: {sha: different}},
+    {...valid, base_commit: undefined}, {...valid, merge_base_commit: undefined}]) {
+    const {options, state} = coordinatedFixture()
+    const request = await createRoutineRequest(options)
+    state.devSha = different
+    const compare = options.github.rest.repos.compareCommitsWithBasehead
+    options.github.rest.repos.compareCommitsWithBasehead = async input => input.basehead.startsWith(`${issuer}...`)
+      ? {data: ancestry} : compare(input)
+    const plan = {mode: "dispatch", runId: 500, runAttempt: 1, sourceSha: options.source.sha}, remote = fake()
+    await assert.rejects(dispatchReadyRequest({...options, plan, privateGithub: remote.github, bytes: bytes(request)}), /issuer is not an ancestor/)
+    assert.equal(remote.calls.length, 0)
+  }
+})

@@ -154,6 +154,13 @@ export async function verifyCoordinatedReadyRequest({github, context, request, f
   const selection = await resolveCoordinatedSelection({github, context, source: request.source, fetchImpl})
   requireThat(isDeepStrictEqual(selection, request.selection), "Ready coordinated selection differs from its published source")
   const {data: issuer} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})
-  requireThat(issuer.ref === "refs/heads/dev" && issuer.object?.sha === request.trigger.sha,
-    "Request issuer is no longer the trusted dev revision")
+  requireThat(issuer.ref === "refs/heads/dev" && issuer.object?.type === "commit" &&
+    SHA.test(issuer.object.sha ?? "") && SHA.test(request.trigger.sha ?? ""), "Invalid authenticated request issuer ref")
+  // The caller binds this immutable issuer SHA to the authenticated request run.
+  // Later dev commits must not invalidate an otherwise unchanged queued request.
+  const {data: ancestry} = await github.rest.repos.compareCommitsWithBasehead({...context.repo,
+    basehead: `${request.trigger.sha}...${issuer.object.sha}`})
+  requireThat(["ahead", "identical"].includes(ancestry?.status) &&
+    ancestry.base_commit?.sha === request.trigger.sha && ancestry.merge_base_commit?.sha === request.trigger.sha,
+  "Request issuer is not an ancestor of trusted dev")
 }

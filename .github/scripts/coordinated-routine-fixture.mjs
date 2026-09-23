@@ -30,16 +30,20 @@ export function coordinatedFixture(channel = "dev") {
   const jobs = [{id: 1001, name: COORDINATED_FINALIZE_JOB, run_attempt: 2, status: "completed", conclusion: "success",
     steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "success"}]}]
   const state = {plan, receipt, ota, run, artifacts: [artifact], jobs, jobsResponse: null,
-    ancestry: "ahead", reads: 0, changed: false, calls: []}
+    ancestry: "ahead", devSha: issuer, reads: 0, changed: false, calls: []}
   const github = {rest: {actions: {
     getWorkflowRunAttempt: async input => { state.calls.push(input); state.reads++; return {data: {...state.run,
       ...(state.changed && state.reads > 1 ? {head_sha: "f".repeat(40)} : {})}} },
     listWorkflowRunArtifacts: () => {},
     listJobsForWorkflowRun: async input => { state.calls.push({jobs: input});
       return {data: state.jobsResponse ?? {total_count: state.jobs.length, jobs: state.jobs}} },
-  }, git: {getRef: async ({ref}) => ({data: {ref: `refs/${ref}`, object: {type: "commit", sha: issuer}}})},
-  repos: {compareCommitsWithBasehead: async () => ({data: {status: state.ancestry,
-    base_commit: {sha: head}, merge_base_commit: {sha: head}}})}},
+  }, git: {getRef: async ({ref}) => ({data: {ref: `refs/${ref}`, object: {type: "commit", sha: ref === "heads/dev" ? state.devSha : issuer}}})},
+  repos: {compareCommitsWithBasehead: async ({basehead}) => {
+    state.calls.push({compare: basehead})
+    const [base, tip] = basehead.split("...")
+    return {data: {status: base === issuer ? (base === tip ? "identical" : "ahead") : state.ancestry,
+      base_commit: {sha: base}, merge_base_commit: {sha: base}}}
+  }}},
   paginate: async () => state.artifacts}
   const fetchImpl = async (url, options) => {
     state.calls.push({url, method: options?.method})
