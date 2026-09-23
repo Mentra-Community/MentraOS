@@ -2120,10 +2120,11 @@ describe("legacy facade preparation cleanup", () => {
     release()
   })
 
-  it.each(["unmount", "remount", "cleanup-failure"])(
+  it.each(["unmount", "remount", "cleanup-failure", "late-native", "late-native-remount"])(
     "coalesces completion and honors the latest legacy host (%s)",
     async (mode) => {
-      const remount = mode === "remount"
+      const remount = mode === "remount" || mode === "late-native-remount"
+      const lateNative = mode.startsWith("late-native")
       let native: NativeFirmwareUpdateSnapshot = {
         schemaVersion: 1,
         integrationId: "mentra-live",
@@ -2180,7 +2181,11 @@ describe("legacy facade preparation cleanup", () => {
         expect(() => acquireNext()).toThrow("already owns")
         expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
         expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
-        if (remount) legacyOta.installSession.attach()
+        if (remount && !lateNative) legacyOta.installSession.attach()
+        if (lateNative) {
+          native = {...native, revision: 3, phase: "installing", safeToRelease: false}
+          emitBluetoothSdkEvent("firmware_update", native)
+        }
 
         if (mode === "cleanup-failure") {
           failTransport(new Error("Transport cleanup failed"))
@@ -2194,6 +2199,14 @@ describe("legacy facade preparation cleanup", () => {
         } else {
           stopTransport()
           expect((await outcomes).map((result) => result.status)).toEqual(["fulfilled", "fulfilled"])
+        }
+        if (lateNative) {
+          expect(otaInstallCoordinator.isSafeToRelease()).toBe(false)
+          expect(() => acquireNext()).toThrow("already owns")
+          if (remount) legacyOta.installSession.attach()
+          native = {...native, revision: 4, phase: "complete", safeToRelease: true}
+          emitBluetoothSdkEvent("firmware_update", native)
+          await flushNativeStartPromise()
         }
         expect(otaInstallCoordinator.isSafeToRelease()).toBe(true)
         // Unmount only runs once. Completion must honor the already requested
