@@ -61,10 +61,14 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
   private disposed = false
   private opened = false
   private pendingStart = false
+  private legacyOwned = false
   private file: Ar99PreparedFile | null = null
   private releaseRuntime: (() => void) | null = null
 
-  constructor(readonly target: FirmwareTarget, private readonly ports: Ar99FirmwarePorts) {
+  constructor(
+    readonly target: FirmwareTarget,
+    private readonly ports: Ar99FirmwarePorts,
+  ) {
     this.state = new RevisionedSnapshot<FirmwareSnapshot>({
       target,
       flowId: ports.id(),
@@ -280,12 +284,34 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
     )
       this.generation++
     if (!native.sessionId && native.safeToRelease) {
+      // The legacy updater publishes ownership without a managed session ID. Its
+      // safe idle transition releases that ownership, but does not prove activation.
+      if (this.legacyOwned) {
+        this.legacyOwned = false
+        this.generation++
+        this.opened = true
+        this.offer = null
+        this.releaseRuntime?.()
+        this.releaseRuntime = null
+        void this.releaseFile()
+        this.show("idle", "checkAgain", "Check firmware again", undefined, {
+          nativeSessionId: null,
+          attemptId: null,
+          active: false,
+          safeToRelease: true,
+          offer: null,
+          error: null,
+          details: {observedVersion: native.observedFirmware},
+        })
+        return
+      }
       if (this.offer && identity(native) !== this.offer.context) {
         this.offer = null
         this.show("idle", "checkAgain", "Check firmware again", undefined, {offer: null})
       }
       return
     }
+    this.legacyOwned = !native.sessionId && !native.safeToRelease
     if (!native.safeToRelease) this.releaseRuntime ??= this.ports.acquireRuntime()
     else {
       this.releaseRuntime?.()
@@ -296,28 +322,28 @@ export class Ar99FirmwareProvider implements FirmwareProvider {
       native.phase === "transferring"
         ? "installing"
         : native.phase === "paused"
-        ? "interrupted"
-        : ["preparing", "complete", "failed", "interrupted"].includes(native.phase)
-        ? (native.phase as FirmwarePhase)
-        : "interrupted"
+          ? "interrupted"
+          : ["preparing", "complete", "failed", "interrupted"].includes(native.phase)
+            ? (native.phase as FirmwarePhase)
+            : "interrupted"
     const paused = native.phase === "paused"
     const copy =
       phase === "complete"
         ? ["transferComplete", "Firmware transfer complete"]
         : paused
-        ? ["waitingForReconnect", "Waiting for reconnect"]
-        : phase === "installing"
-        ? ["updatingFirmware", "Updating firmware"]
-        : phase === "preparing"
-        ? ["preparingUpdate", "Preparing firmware update"]
-        : ["recoveryRequired", "Firmware update needs attention"]
+          ? ["waitingForReconnect", "Waiting for reconnect"]
+          : phase === "installing"
+            ? ["updatingFirmware", "Updating firmware"]
+            : phase === "preparing"
+              ? ["preparingUpdate", "Preparing firmware update"]
+              : ["recoveryRequired", "Firmware update needs attention"]
     const message =
       native.error ??
       (phase === "complete" && native.inventory.activation !== "verified"
         ? "The glasses validated the transferred image. The running firmware version has not yet been confirmed."
         : paused
-        ? "Keep your glasses nearby. The existing transfer resumes when they reconnect."
-        : undefined)
+          ? "Keep your glasses nearby. The existing transfer resumes when they reconnect."
+          : undefined)
     this.show(
       phase,
       copy[0]!,

@@ -1,6 +1,8 @@
 import {expect, test} from "bun:test"
 import type {NativeFirmwareStartRequest, NativeFirmwareUpdateSnapshot} from "@mentra/bluetooth-sdk/firmware-updates"
 import {Ar99FirmwareProvider, type Ar99FirmwarePorts} from "../provider"
+import {DeviceIntegrationRegistry} from "../../types"
+import {FirmwareUpdateService} from "../../../ota/UpdateService"
 
 function fixture() {
   const target = {integrationId: "ar99", deviceId: "native-ar99", displayName: "AR99"}
@@ -161,3 +163,52 @@ test("completion before the start promise settles remains visible and never star
   expect(f.provider.snapshot().phase).toBe("complete")
   expect(f.requests).toHaveLength(1)
 })
+
+test.each(["completion", "cancellation", "error"])(
+  "legacy %s releases shared recovery ownership without claiming an installed version",
+  async (outcome) => {
+    const f = fixture()
+    f.ports.source = () => null
+    const target = f.provider.target
+    const service = new FirmwareUpdateService(
+      new DeviceIntegrationRegistry([
+        {
+          id: "ar99",
+          models: ["AR99"],
+          firmware: {entryPoints: ["settings", "recovery"], createProvider: () => f.provider},
+        },
+      ]),
+    )
+    const removeReservation = f.ports.listen((native) => service.noteNativeRecovery(target, native.safeToRelease))
+    // Cover both adopting work at open and observing legacy work after the flow opened.
+    if (outcome === "cancellation") await service.open(target, {entryPoint: "settings"})
+    f.emit({phase: "preparing", safeToRelease: false})
+    await service.open(target, {entryPoint: "recovery"})
+    f.emit({connectionGeneration: 2})
+    expect(f.held()).toBe(1)
+    expect(() => service.assertSafeToRelease()).toThrow("wait before disconnecting")
+    expect(f.provider.snapshot().presentation.actions).toEqual([])
+
+    // An error alone is not an abort proof. Only the native legacy end transition releases ownership.
+    if (outcome === "error") {
+      f.emit({phase: "interrupted", error: "Transfer failed"})
+      expect(f.held()).toBe(1)
+      expect(() => service.assertSafeToRelease()).toThrow("wait before disconnecting")
+    }
+    f.emit({phase: "idle", safeToRelease: true, error: undefined})
+    expect(f.held()).toBe(0)
+    expect(() => service.assertSafeToRelease()).not.toThrow()
+    expect(service.retainedSnapshots()[0]).toMatchObject({phase: "idle", active: false, safeToRelease: true})
+    expect(f.provider.snapshot().presentation.success).toBe(false)
+    expect(f.provider.snapshot().presentation.actions.map((action) => action.id)).toEqual(["check", "finish"])
+    expect(f.provider.snapshot().details).toEqual({observedVersion: "old"})
+    await service.open(target, {entryPoint: "recovery"})
+    expect(() => service.assertSafeToRelease()).not.toThrow()
+    expect(f.held()).toBe(0)
+    expect(f.lookups()).toBe(0)
+    expect(f.requests).toHaveLength(0)
+    expect(await service.perform(target, {action: "finish"})).toEqual({kind: "finished"})
+    expect(service.retainedSnapshots()).toEqual([])
+    removeReservation()
+  },
+)

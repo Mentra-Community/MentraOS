@@ -617,11 +617,13 @@ function OtaFlowContent({
       <FlowPage
         actions={
           <>
-            <FlowButton
-              colors={colors}
-              label={state.canRetry ? "Retry" : "Done"}
-              onPress={state.canRetry ? controller.retryInstall : controller.finish}
-            />
+            {state.canRetry || state.canFinish ? (
+              <FlowButton
+                colors={colors}
+                label={state.canRetry ? "Retry" : "Done"}
+                onPress={state.canRetry ? controller.retryInstall : controller.finish}
+              />
+            ) : null}
             {state.canOpenWifiSetup ? (
               <FlowButton colors={colors} label="Change Wi-Fi" onPress={controller.openWifiSetup} secondary />
             ) : null}
