@@ -104,7 +104,8 @@ import {
   isHostTrustedSystemMiniapp,
   systemMiniappStoreOwner,
 } from "./SystemMiniappPolicy"
-import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
+import {MiniappRunningError} from "../utils/storeInstallRuntime"
+import {installMiniappRelease} from "./miniappReleaseInstall"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {TransientActionWakeCoordinator} from "./TransientActionWakeCoordinator"
 import {projectSystemActions} from "./manifestActions"
@@ -6403,75 +6404,43 @@ class LocalMiniappRuntime {
         return
       }
 
-      const install = async (beforeActivate?: () => void) => {
-        const installed = await appRegistry.installFromUrl(bundleUrl, {
-          beforeActivate: () => {
-            if (payload.onlyIfStopped === true && getDevAppRecords().some((app) => app.packageName === target)) {
-              throw new Error(`${target} uses a manually selected build`)
-            }
-            beforeActivate?.()
-          },
-          expectedPackageName: target,
-          expectedVersion: version,
-          expectedBundleSha256: bundleSha256,
-          ...(bundleAuthorization ? {bundleAuthorization} : {}),
-          compatibilityPolicy: {
-            hostVersion,
-            supportedSdkRange: supportedMiniappSdkRange,
-            hardwareCapabilities: this.currentInstallHardwareCapabilities(),
-          },
-          onProgress: (phase) =>
-            this.sendToMiniapp(storePackageName, {
-              type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
-              packageName: target,
-              version,
-              phase,
-            }),
-          releaseIdentity: {
-            source: isSystemMiniappPackage(target) ? "system_store" : "store",
-            storePackageName,
-            bundleSha256,
-            ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
-            ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
-          },
-        })
-        if (installed.is_error()) throw installed.error
-        return installed
-      }
-      if (payload.onlyIfStopped === true) {
-        if (
-          this.interopApps().find((app) => app.packageName === target)?.isMiniappDev ||
-          (isSystemMiniappPackage(target) && !isHostTrustedSystemMiniapp(target, currentIdentity))
-        )
-          throw new Error(`${target} uses a manually selected build`)
-        // Only mark an automatic update after the idle guard accepts it. A
-        // deferred update must not make the running miniapp appear unavailable.
-        await miniappLauncher.installWhenIdle(target, (beforeActivate) =>
-          useAppStatusStore.getState().runUpdate(target, () => {
-            // The user may have removed the app after the Store selected it,
-            // including while the active-version lookup above was in flight.
-            if (appRegistry.wasUserUninstalled(target)) throw new Error(`${target} was uninstalled`)
-            return install(beforeActivate)
+      if (
+        payload.onlyIfStopped === true &&
+        (this.interopApps().find((app) => app.packageName === target)?.isMiniappDev ||
+          (isSystemMiniappPackage(target) && !isHostTrustedSystemMiniapp(target, currentIdentity)))
+      )
+        throw new Error(`${target} uses a manually selected build`)
+      await installMiniappRelease(bundleUrl, {
+        onlyIfStopped: payload.onlyIfStopped === true,
+        beforeActivate: () => {
+          if (payload.onlyIfStopped === true && getDevAppRecords().some((app) => app.packageName === target)) {
+            throw new Error(`${target} uses a manually selected build`)
+          }
+        },
+        expectedPackageName: target,
+        expectedVersion: version,
+        expectedBundleSha256: bundleSha256,
+        ...(bundleAuthorization ? {bundleAuthorization} : {}),
+        compatibilityPolicy: {
+          hostVersion,
+          supportedSdkRange: supportedMiniappSdkRange,
+          hardwareCapabilities: this.currentInstallHardwareCapabilities(),
+        },
+        onProgress: (phase) =>
+          this.sendToMiniapp(storePackageName, {
+            type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+            packageName: target,
+            version,
+            phase,
           }),
-        )
-      } else {
-        await useAppStatusStore.getState().runUpdate(target, () =>
-          installWithRuntimeReload(miniappLauncher, target, install, {
-            restorePreviousVersion: () => {
-              if (!activeVersion) throw new Error(`No prior active version is available for ${target}`)
-              const restored = appRegistry.setActiveVersion(target, activeVersion)
-              if (restored.is_error()) throw restored.error
-            },
-            onRecoveryError: (recoveryError) => {
-              console.warn(
-                `${LOG_TAG}: failed to restore ${target} after Store install: ${
-                  (recoveryError as Error)?.message ?? recoveryError
-                }`,
-              )
-            },
-          }),
-        )
-      }
+        releaseIdentity: {
+          source: isSystemMiniappPackage(target) ? "system_store" : "store",
+          storePackageName,
+          bundleSha256,
+          ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
+          ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
+        },
+      })
       appRegistry.gcReleaseVersions(target, [version, ...(activeVersion ? [activeVersion] : [])])
       this.sendToMiniapp(storePackageName, {
         type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
@@ -6479,7 +6448,6 @@ class LocalMiniappRuntime {
         version,
         phase: "complete",
       })
-      await useAppStatusStore.getState().refresh()
       this.sendResult(storePackageName, requestId, true, {
         packageName: target,
         version,

@@ -28,62 +28,42 @@ describe("installWithRuntimeReload", () => {
   test("leaves a stopped target stopped", async () => {
     const runtime = launcher(false)
     await expect(
-      installWithRuntimeReload(
-        runtime.value,
-        "com.example.app",
-        async () => {
-          runtime.calls.push("install")
-          return "installed"
-        },
-        {restorePreviousVersion: () => runtime.calls.push("restore")},
-      ),
+      installWithRuntimeReload(runtime.value, "com.example.app", async () => {
+        runtime.calls.push("install")
+        return "installed"
+      }),
     ).resolves.toBe("installed")
     expect(runtime.calls).toEqual(["install"])
   })
 
   test("replaces a running context around activation", async () => {
     const runtime = launcher(true)
-    await installWithRuntimeReload(
-      runtime.value,
-      "com.example.app",
-      async () => {
-        runtime.calls.push("install")
-      },
-      {restorePreviousVersion: () => runtime.calls.push("restore")},
-    )
+    await installWithRuntimeReload(runtime.value, "com.example.app", async () => {
+      runtime.calls.push("install")
+    })
     expect(runtime.calls).toEqual(["stop", "install", "start"])
   })
 
   test("restores the active version when installation fails", async () => {
     const runtime = launcher(true)
     await expect(
-      installWithRuntimeReload(
-        runtime.value,
-        "com.example.app",
-        async () => {
-          runtime.calls.push("install")
-          throw new Error("download failed")
-        },
-        {restorePreviousVersion: () => runtime.calls.push("restore")},
-      ),
+      installWithRuntimeReload(runtime.value, "com.example.app", async () => {
+        runtime.calls.push("install")
+        throw new Error("download failed")
+      }),
     ).rejects.toThrow("download failed")
     expect(runtime.calls).toEqual(["stop", "install", "start"])
   })
 
-  test("reports success when a transient post-install launch succeeds on retry", async () => {
+  test("reports installation success even when restarting the committed release fails", async () => {
     const runtime = launcher(true, 1)
     await expect(
-      installWithRuntimeReload(
-        runtime.value,
-        "com.example.app",
-        async () => {
-          runtime.calls.push("install")
-          return "installed"
-        },
-        {restorePreviousVersion: () => runtime.calls.push("restore")},
-      ),
+      installWithRuntimeReload(runtime.value, "com.example.app", async () => {
+        runtime.calls.push("install")
+        return "installed"
+      }),
     ).resolves.toBe("installed")
-    expect(runtime.calls).toEqual(["stop", "install", "start", "start"])
+    expect(runtime.calls).toEqual(["stop", "install", "start"])
   })
 
   test("reports success when launch throws after registering the new context", async () => {
@@ -94,31 +74,21 @@ describe("installWithRuntimeReload", () => {
       throw new Error("late launch signal")
     }
     await expect(
-      installWithRuntimeReload(
-        runtime.value,
-        "com.example.app",
-        async () => {
-          runtime.calls.push("install")
-          return "installed"
-        },
-        {restorePreviousVersion: () => runtime.calls.push("restore")},
-      ),
+      installWithRuntimeReload(runtime.value, "com.example.app", async () => {
+        runtime.calls.push("install")
+        return "installed"
+      }),
     ).resolves.toBe("installed")
     expect(runtime.calls).toEqual(["stop", "install", "start"])
   })
 
-  test("restores the prior version when the new version cannot launch", async () => {
+  test("does not roll back committed installation after a launch failure", async () => {
     const runtime = launcher(true, 2)
     await expect(
-      installWithRuntimeReload(
-        runtime.value,
-        "com.example.app",
-        async () => {
-          runtime.calls.push("install")
-        },
-        {restorePreviousVersion: () => runtime.calls.push("restore")},
-      ),
-    ).rejects.toThrow("launch failed")
-    expect(runtime.calls).toEqual(["stop", "install", "start", "start", "restore", "start"])
+      installWithRuntimeReload(runtime.value, "com.example.app", async () => {
+        runtime.calls.push("install")
+      }),
+    ).resolves.toBeUndefined()
+    expect(runtime.calls).toEqual(["stop", "install", "start"])
   })
 })

@@ -1047,21 +1047,20 @@ it.each(["missing", "corrupt"])(
   },
 )
 
-it("rejects same-version manual archive replacement without changing files or provenance", async () => {
+it("reinstalls a same-version manual archive and commits its bytes and provenance", async () => {
   selectDeployment(consumer)
-  mockScript = "broken same-version replacement"
+  mockScript = "same-version replacement"
   const result = await registry.installFromUrl("https://manual.example/call.zip", {
     expectedPackageName: pkg,
     expectedVersion: version,
-    rejectExistingVersion: true,
   })
-  expect(result.is_error()).toBe(true)
-  expect(installedScript()).toBe("verified call")
-  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+  expect(result.is_ok()).toBe(true)
+  expect(installedScript()).toBe("same-version replacement")
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("direct_download")
   expect(await registry.getActiveVersion(pkg)).toBe(version)
 })
 
-it("retains a developer snapshot for manual runtime recovery until explicit cleanup", async () => {
+it("clears development state only after a release installation commits", async () => {
   selectDeployment(consumer)
   await registerDevApp({packageName: pkg, name: "Local Call", devUrl: "http://localhost:8081", iconUrl: ""})
   expect(
@@ -1080,14 +1079,10 @@ it("retains a developer snapshot for manual runtime recovery until explicit clea
         expectedPackageName: pkg,
         expectedVersion: mockVersion,
         rejectExistingVersion: true,
-        preserveDevSnapshots: true,
       })
     ).is_ok(),
   ).toBe(true)
   expect(getDevAppRecords()).toEqual([])
-  expect(registry.hasDevSnapshot(pkg)).toBe(true)
-  expect(new File(Paths.document, "lmas", pkg, "dev-123", "call.js").textSync()).toBe("verified call")
-  registry.gcDevVersions(pkg, 0)
   expect(registry.hasDevSnapshot(pkg)).toBe(false)
   expect(registry.getReleaseIdentity(pkg, "dev-123")).toBeNull()
 })
@@ -1135,4 +1130,85 @@ it("keeps an unavailable bundled release installed while excluding it from regis
   expect(registry.getInstalledVersions(pkg)).toContain(version)
   available = true
   expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
+})
+
+it.each(["manual", "store", "bundled"] as const)(
+  "%s installs accept equal/newer versions and reject older ones",
+  async (source) => {
+    selectDeployment(consumer)
+    const install = () =>
+      source === "bundled"
+        ? registry.installFromLocalZip("bundle.zip")
+        : registry.installFromUrl(
+            "https://example.com/bundle.zip",
+            source === "store"
+              ? {
+                  releaseIdentity: {
+                    source: "system_store",
+                    storePackageName: "com.mentra.store",
+                    bundleSha256: "a".repeat(64),
+                  },
+                }
+              : undefined,
+          )
+    mockScript = "equal-version replacement"
+    expect((await install()).is_ok()).toBe(true)
+    expect(installedScript()).toBe("equal-version replacement")
+    mockVersion = "2.1.30"
+    mockScript = "upgrade"
+    expect((await install()).is_ok()).toBe(true)
+    mockVersion = "2.1.28"
+    mockScript = "downgrade"
+    const result = await install()
+    expect(result.is_error()).toBe(true)
+    if (result.is_error()) expect(String(result.error)).toContain("2.1.30 is already installed")
+    expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
+    expect(new File(registry.getBundleDir(pkg, "2.1.30"), "call.js").textSync()).toBe("upgrade")
+    expect(registry.getInstalledVersions(pkg)).not.toContain("2.1.28")
+  },
+)
+
+it("restores old same-version bytes and provenance when replacement cannot commit", async () => {
+  selectDeployment(consumer)
+  mockScript = "replacement"
+  mockFailNextActiveWrite = true
+  const result = await registry.installFromUrl("https://manual.example/bundle.zip")
+  expect(result.is_error()).toBe(true)
+  expect(installedScript()).toBe("verified call")
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+  expect(await registry.getActiveVersion(pkg)).toBe(version)
+})
+
+it("rejects a delayed download after a newer release installs", async () => {
+  selectDeployment(consumer)
+  const entered = deferred()
+  const release = deferred()
+  mockRemoteRead.mockImplementationOnce(() => {
+    entered.resolve()
+    return release.promise
+  })
+  const pending = registry.installFromUrl("https://manual.example/bundle.zip")
+  await entered.promise
+  mockVersion = "2.1.31"
+  mockScript = "newer release"
+  expect((await registry.installFromLocalZip("newer.zip")).is_ok()).toBe(true)
+  mockVersion = "2.1.30"
+  mockScript = "late older release"
+  release.resolve()
+  expect((await pending).is_error()).toBe(true)
+  expect(await registry.getActiveVersion(pkg)).toBe("2.1.31")
+  expect(new File(registry.getBundleDir(pkg, "2.1.31"), "call.js").textSync()).toBe("newer release")
+})
+
+it("rejects a workspace Store downgrade below an approved consumer release", async () => {
+  selectDeployment(consumer)
+  mockVersion = "2.1.31"
+  const options = {releaseIdentity: {source: "system_store" as const, storePackageName: "com.mentra.store"}}
+  expect((await registry.installFromUrl("https://store.example/bundle.zip", options)).is_ok()).toBe(true)
+  selectDeployment({...workspace, manifest: {...workspace.manifest, miniapps: {configuration: {}, managed: []}}})
+  mockVersion = "2.1.30"
+  const result = await registry.installFromUrl("https://store.example/bundle.zip", options)
+  expect(result.is_error()).toBe(true)
+  expect(await registry.getActiveVersion(pkg)).toBe("2.1.31")
+  expect(registry.getInstalledVersions(pkg, "workspace")).not.toContain("2.1.30")
 })

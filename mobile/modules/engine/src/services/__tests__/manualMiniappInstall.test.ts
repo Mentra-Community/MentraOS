@@ -1,5 +1,6 @@
 import {afterAll, beforeEach, expect, mock, test} from "bun:test"
 import {result as Res} from "typesafe-ts"
+import {assertMiniappUpdateVersion} from "../miniappInstallIdentity"
 import {configure, resetForTests} from "../../runtime/bootstrap"
 
 let active = "1.0.0"
@@ -7,7 +8,6 @@ let running = true
 let failInstall = false
 let failLaunch = false
 let devRecord: {packageName: string; devUrl: string; name: string; iconUrl: string} | undefined
-let retainedDevSnapshot = false
 const events: string[] = []
 let installOptions: Record<string, unknown> | undefined
 mock.module("../AppRegistry", () => ({
@@ -16,10 +16,8 @@ mock.module("../AppRegistry", () => ({
     devRecord = record
   },
   default: {
-    getInstalledVersions: () => [active],
-    gcDevVersions: () => {
-      retainedDevSnapshot = false
-    },
+    assertCanInstallVersion: (pkg: string, version: string) => assertMiniappUpdateVersion(pkg, version, [active]),
+    wasUserUninstalled: () => false,
     getActiveVersion: async () => active,
     setActiveVersion: (_pkg: string, version: string) => {
       active = version
@@ -29,7 +27,6 @@ mock.module("../AppRegistry", () => ({
       events.push("install")
       installOptions = options
       if (failInstall) return Res.error(new Error("Invalid archive"))
-      retainedDevSnapshot = Boolean(devRecord && options.preserveDevSnapshots)
       devRecord = undefined
       active = "2.0.0"
       return Res.ok(undefined)
@@ -38,6 +35,10 @@ mock.module("../AppRegistry", () => ({
 }))
 mock.module("../MiniappLauncher", () => ({
   miniappLauncher: {
+    installWhenIdle: async (_pkg: string, action: (guard: () => void) => Promise<void>) => {
+      if (running) throw new Error("App is running")
+      return action(() => {})
+    },
     pauseLaunches: async () => {
       events.push("pause")
       return () => {}
@@ -50,7 +51,6 @@ mock.module("../MiniappLauncher", () => ({
     ensureRunning: async () => {
       events.push(`launch ${active}`)
       if (failLaunch && active === "2.0.0") throw new Error("Replacement cannot launch")
-      if (active.startsWith("dev-") && (!retainedDevSnapshot || !devRecord)) throw new Error("Missing prior dev build")
       running = true
     },
   },
@@ -66,6 +66,7 @@ mock.module("../../stores/apps", () => ({
   },
 }))
 const {installMiniappFromJsonUrl} = await import("../manualMiniappInstall")
+const {installMiniappRelease} = await import("../miniappReleaseInstall")
 const originalFetch = globalThis.fetch
 beforeEach(() => {
   resetForTests()
@@ -75,7 +76,6 @@ beforeEach(() => {
   failInstall = false
   failLaunch = false
   devRecord = undefined
-  retainedDevSnapshot = false
   events.length = 0
   installOptions = undefined
   globalThis.fetch = (async () =>
@@ -93,8 +93,7 @@ test("release QR replaces a running bundled miniapp and binds the ZIP to its man
   expect(installOptions).toEqual({
     expectedPackageName: "com.mentra.notes",
     expectedVersion: "2.0.0",
-    rejectExistingVersion: true,
-    preserveDevSnapshots: true,
+    beforeActivate: expect.any(Function),
     releaseIdentity: {source: "direct_download"},
   })
 })
@@ -112,22 +111,75 @@ test("workspace manual installs are rejected before stopping or downloading a mi
   expect(events).toEqual([])
 })
 
-test("same-version release QR is rejected without stopping the working miniapp", async () => {
+test("same-version release QR uses the same installer as an upgrade", async () => {
   active = "2.0.0"
   const result = await installMiniappFromJsonUrl("https://manual.example")
-  expect(result.is_error()).toBe(true)
-  expect(events).toEqual([])
+  expect(result.is_ok()).toBe(true)
+  expect(events).toEqual(["pause", "stop", "install", "launch 2.0.0", "refresh"])
   expect(running).toBe(true)
 })
 
-test("a release that cannot launch restores the live-dev registration and retained snapshot", async () => {
+test("a committed release stays installed when its runtime fails to launch", async () => {
   active = "dev-123"
   devRecord = {packageName: "com.mentra.notes", devUrl: "http://localhost:8081", name: "Local Notes", iconUrl: ""}
   failLaunch = true
-  expect((await installMiniappFromJsonUrl("https://manual.example")).is_error()).toBe(true)
-  expect(events).toEqual(["pause", "stop", "install", "launch 2.0.0", "launch 2.0.0", "launch dev-123"])
+  expect((await installMiniappFromJsonUrl("https://manual.example")).is_ok()).toBe(true)
+  expect(events).toEqual(["pause", "stop", "install", "launch 2.0.0", "refresh"])
+  expect(running).toBe(false)
+  expect(active).toBe("2.0.0")
+  expect(devRecord).toBeUndefined()
+})
+
+test("release QR rejects a downgrade before stopping the installed miniapp", async () => {
+  active = "3.0.0"
+  const result = await installMiniappFromJsonUrl("https://manual.example")
+  expect(result.is_error()).toBe(true)
+  expect(events).toEqual([])
+  expect(active).toBe("3.0.0")
   expect(running).toBe(true)
-  expect(active).toBe("dev-123")
-  expect(retainedDevSnapshot).toBe(true)
-  expect(devRecord?.devUrl).toBe("http://localhost:8081")
+})
+
+test.each(["1.0.0", "2.0.0"])("Store installs use the shared upgrade/reinstall flow from %s", async (installed) => {
+  active = installed
+  await installMiniappRelease("https://store.example/bundle.zip", {
+    expectedPackageName: "com.mentra.notes",
+    expectedVersion: "2.0.0",
+    releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+  })
+  expect(events).toEqual(["pause", "stop", "install", "launch 2.0.0", "refresh"])
+})
+
+test("Store downgrade is rejected by the same preflight as QR", async () => {
+  active = "3.0.0"
+  await expect(
+    installMiniappRelease("https://store.example/bundle.zip", {
+      expectedPackageName: "com.mentra.notes",
+      expectedVersion: "2.0.0",
+      releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+    }),
+  ).rejects.toThrow("3.0.0 is already installed")
+  expect(events).toEqual([])
+})
+
+test("automatic installation defers without stopping a running miniapp", async () => {
+  await expect(
+    installMiniappRelease("https://store.example/bundle.zip", {
+      expectedPackageName: "com.mentra.notes",
+      expectedVersion: "2.0.0",
+      onlyIfStopped: true,
+    }),
+  ).rejects.toThrow("App is running")
+  expect(events).toEqual([])
+  expect(active).toBe("1.0.0")
+})
+
+test("automatic installation uses the shared installer when idle", async () => {
+  running = false
+  await installMiniappRelease("https://store.example/bundle.zip", {
+    expectedPackageName: "com.mentra.notes",
+    expectedVersion: "2.0.0",
+    onlyIfStopped: true,
+  })
+  expect(events).toEqual(["install", "refresh"])
+  expect(running).toBe(false)
 })

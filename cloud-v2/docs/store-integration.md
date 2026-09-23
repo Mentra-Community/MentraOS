@@ -114,13 +114,22 @@ Bundled package IDs remain usable through the consumer developer QR/URL flow.
 A live QR registration shadows its installed bundle, supports offline snapshots,
 and survives startup without being replaced by bundled installation. A release
 QR installs the matching unsigned ZIP under the same package ID and reloads a
-running miniapp. Release versions are immutable: an already-installed version
-is rejected before replacement; use a new version or a live development QR.
-Development snapshots are retained until a manual release restarts successfully
-so a failed release can recover the previous developer registration and code.
-Release selection also invalidates earlier dev probes/downloads; an obsolete
-snapshot cannot reactivate development code after the release commits. A manual release at the same or a newer version is preserved;
-a newer bundled release can replace it on a later Mentra App upgrade.
+running miniapp. QR and Store use the same release-install service and archive
+installer: an incoming release must be greater than or equal to the installed
+release version. Equal-version replacement is allowed; downgrades are rejected.
+The installer rechecks ordering after download in its serialized filesystem
+transaction, so a delayed download cannot replace a newer installed release.
+Live development sessions and snapshots do not require version bumps.
+
+Installation failures restore the prior files and metadata, including during a
+same-version replacement. Once a verified installation commits, it remains
+installed even if its code cannot launch; launch failure is separate from install
+failure. A committed release clears obsolete live-dev registration and snapshots.
+Release selection invalidates earlier dev probes/downloads so an obsolete snapshot
+cannot undo a completed installation. A manual release at the same or a newer
+version is preserved; a newer bundled release can replace it on a later Mentra App
+upgrade. Automatic Store updates only select newer releases and defer while an app
+is running; this scheduling policy uses the same installer.
 
 Manual and development releases do not acquire privileged SYSTEM APIs from the
 package name. The Store's automatic updater leaves these overrides alone.

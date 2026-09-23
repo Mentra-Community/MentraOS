@@ -162,22 +162,12 @@ describe("MiniappLauncher", () => {
     const downloading = new Promise<void>((resolve) => {
       began = resolve
     })
-    const update = installWithRuntimeReload(
-      miniappLauncher,
-      "com.x",
-      async () => {
-        began()
-        await pending
-        if (fail) throw new Error("install failed")
-        activeVersion = "2.0.0"
-      },
-      {
-        restorePreviousVersion: () => {
-          activeVersion = "1.0.0"
-          available = true
-        },
-      },
-    )
+    const update = installWithRuntimeReload(miniappLauncher, "com.x", async () => {
+      began()
+      await pending
+      if (fail) throw new Error("install failed")
+      activeVersion = "2.0.0"
+    })
     const outcome = update.catch((error) => error)
     await downloading
     const launch = miniappLauncher.ensureRunning("com.x", {version: "1.0.0"})
@@ -193,19 +183,9 @@ describe("MiniappLauncher", () => {
 
   test("explicit updates wait for an already-starting context and restart the new bundle", async () => {
     const launch = miniappLauncher.ensureRunning("com.x")
-    const update = installWithRuntimeReload(
-      miniappLauncher,
-      "com.x",
-      async () => {
-        activeVersion = "2.0.0"
-      },
-      {
-        restorePreviousVersion: () => {
-          activeVersion = "1.0.0"
-          available = true
-        },
-      },
-    )
+    const update = installWithRuntimeReload(miniappLauncher, "com.x", async () => {
+      activeVersion = "2.0.0"
+    })
     await Promise.all([launch, update])
     expect(mockRouter.spawnCalls.map((call) => call.src)).toEqual(["BG SOURCE", "UPDATED SOURCE"])
     expect(mockRouter.unregisterCalls).toEqual(["com.x"])

@@ -58,7 +58,11 @@ import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {assertPublisherIdentityPolicy} from "./publisherIdentityPolicy"
 import {normalizeManifestPermissions} from "./manifestPermissions"
-import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
+import {
+  assertMiniappUpdateVersion,
+  miniappInstallIdentityError,
+  type MiniappInstallExpectations,
+} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {sameMiniappBundle} from "./sameMiniappBundle"
 import {
@@ -165,8 +169,6 @@ export interface InstallBundleOptions {
   expectedBundleSha256?: string
   /** Refuse to overwrite a version that is already installed. */
   rejectExistingVersion?: boolean
-  /** Keep dev snapshots until a manual release has restarted successfully. */
-  preserveDevSnapshots?: boolean
   /** Host-only adoption after verifying an exact deployment bundle. */
   adoptIdenticalInstalledVersion?: boolean
   compatibilityPolicy?: {
@@ -586,6 +588,8 @@ async function unpackMiniAppFromScratchDirectory(
   const identityError = miniappInstallIdentityError({packageName, version: manifestVersion}, expected)
   if (identityError) throw new Error(identityError)
   console.log(`ZIP: installing ${packageName} as version ${version}`)
+
+  appRegistry.assertCanInstallVersion(packageName, version)
 
   const basePackageDir = new Directory(bundleRoot(storageScope), packageName)
   try {
@@ -1047,6 +1051,16 @@ class AppRegistry {
     return null
   }
 
+  public assertCanInstallVersion(packageName: string, version: string): void {
+    // Files retained for a different workspace policy are not installations in
+    // this environment. Compare only releases that this environment can use,
+    // including an approved consumer release visible inside a workspace.
+    const installed = this.getInstalledVersions(packageName).filter((installedVersion) =>
+      isInstalledMiniappAllowed(packageName, installedVersion, this.getReleaseIdentity(packageName, installedVersion)),
+    )
+    assertMiniappUpdateVersion(packageName, version, installed)
+  }
+
   /**
    * Download and install a miniapp bundle from a URL. The URL must serve a
    * zip whose root contains `miniapp.json` plus the bundle entry files.
@@ -1055,6 +1069,7 @@ class AppRegistry {
    *   of `manifest.version`. The dev caching path uses `dev-<ms>` so multiple
    *   snapshots can coexist alongside semver-installed versions.
    */
+
   public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       await downloadAndInstallMiniApp(
@@ -1069,7 +1084,6 @@ class AppRegistry {
               ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
             },
             (state) => activation.recordRecoveryState(state),
-            opts?.preserveDevSnapshots,
             storageScope,
           )
         },
@@ -1136,7 +1150,6 @@ class AppRegistry {
             version,
             releaseIdentity,
             (state) => activation.recordRecoveryState(state),
-            false,
             storageScope,
           ),
         () => {
@@ -1166,7 +1179,6 @@ class AppRegistry {
     version: string,
     releaseIdentity: MiniappReleaseIdentity,
     recordRecoveryState: (serializedState: string) => void,
-    preserveDevSnapshots = false,
     storageScope: MiniappStorageScope = currentStorageScope(),
   ): InstallFinalization {
     const publisherKey = publisherIdentityKey(packageName)
@@ -1240,7 +1252,7 @@ class AppRegistry {
         // release wouldn't run.
         const isDevInstall = version.startsWith("dev-")
         if (!isDevInstall && !workspaceSelection) {
-          this.clearDevArtifacts(packageName, preserveDevSnapshots)
+          this.clearDevArtifacts(packageName)
         }
         // Any explicit successful install (Store, dev, or a new
         // build-owned bundle) reverses a prior user-uninstalled tombstone.
@@ -1319,10 +1331,10 @@ class AppRegistry {
    * release install (dev → released transition) and on uninstall, so a dev
    * package leaves nothing behind that `projectDevApps` could re-surface.
    */
-  private clearDevArtifacts(packageName: string, preserveSnapshots = false): void {
+  private clearDevArtifacts(packageName: string): void {
     try {
       const pkgDir = new Directory(Paths.document, "lmas", packageName)
-      if (!preserveSnapshots && pkgDir.exists) {
+      if (pkgDir.exists) {
         for (const item of pkgDir.list()) {
           if (item instanceof Directory && item.name.startsWith("dev-")) {
             try {
