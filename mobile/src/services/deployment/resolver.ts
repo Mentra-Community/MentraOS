@@ -1,7 +1,7 @@
 import {deploymentManifestSchema} from "./schema"
 import type {DeploymentCandidate, DeploymentManifest} from "./types"
 import {GLASSES_MENU_EXCLUDED_APPS} from "@/constants/miniapps"
-import {BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
+import {BUNDLED_STORE_MINIAPP_PACKAGES} from "@/constants/miniapps"
 
 const MANIFEST_PATH = "/.well-known/mentra-deployment.json"
 const DEFAULT_MAX_BYTES = 256 * 1024
@@ -184,9 +184,9 @@ export function validateDeploymentManifest(
     managedBundlePaths.add(bundleUrl.pathname)
   }
   const approvedSystemMiniapps = manifest.systemMiniapps.approvedPackageNamesOverride
-  // Built-in identities are the native offline apps plus every SYSTEM miniapp
-  // bundled into this host build. A manifest may not claim either.
-  const systemPackageNames = new Set<string>([...GLASSES_MENU_EXCLUDED_APPS, ...BUNDLED_SYSTEM_MINIAPP_PACKAGES])
+  // Workspaces may pin userland versions of preinstalled miniapps such as Call.
+  // They may never replace native host utilities or the build-selected Stores.
+  const systemPackageNames = new Set<string>([...GLASSES_MENU_EXCLUDED_APPS, ...BUNDLED_STORE_MINIAPP_PACKAGES])
   if (
     [...managedPackageNames].some((packageName) => systemPackageNames.has(packageName)) ||
     approvedSystemMiniapps?.some((packageName) => managedPackageNames.has(packageName))

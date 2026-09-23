@@ -53,7 +53,12 @@ import {normalizeManifestPermissions} from "./manifestPermissions"
 import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {sameMiniappBundle} from "./sameMiniappBundle"
-import {canInstallMiniappRelease, isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
+import {
+  canInstallMiniappRelease,
+  isSystemMiniappPackage,
+  isStoreMiniappPackage,
+  requiresConnectedGlasses,
+} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
@@ -205,9 +210,10 @@ function assertInstallAuthority(
   packageName: string,
   releaseIdentity: MiniappReleaseIdentity,
   localBundledAsset: boolean,
+  candidate?: {version: string; verifiedBundleSha256?: string},
 ): void {
-  if (!canInstallMiniappRelease(packageName, releaseIdentity, localBundledAsset)) {
-    throw new Error(`Protected SYSTEM package ${packageName} can only be updated by its host-selected Store`)
+  if (!canInstallMiniappRelease(packageName, releaseIdentity, localBundledAsset, candidate)) {
+    throw new Error(`Miniapp ${packageName} does not match its host-owned installation policy`)
   }
 }
 
@@ -1038,10 +1044,12 @@ class AppRegistry {
       ) {
         throw new Error("Bundle adoption requires a verified deployment release with an exact identity")
       }
+      let verifiedBundleSha256: string | undefined
       if (opts?.expectedBundleSha256) {
         const expected = opts.expectedBundleSha256.toLowerCase()
         const actual = await sha256Hex(await new File(zipPath).bytes())
         if (actual !== expected) throw new Error(`bundle SHA-256 mismatch: expected ${expected}, got ${actual}`)
+        verifiedBundleSha256 = actual
       }
       const manifest = await validateInstallBundleArchive(await new File(zipPath).bytes(), {
         packageName: opts?.expectedPackageName,
@@ -1050,7 +1058,8 @@ class AppRegistry {
       if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
       const releaseIdentity = resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, true)
       if (manifest.publisherKeyFingerprint) releaseIdentity.publisherKeyFingerprint = manifest.publisherKeyFingerprint
-      assertInstallAuthority(manifest.packageName, releaseIdentity, true)
+      const candidate = {version: opts?.versionOverride ?? manifest.version, verifiedBundleSha256}
+      assertInstallAuthority(manifest.packageName, releaseIdentity, true, candidate)
       assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
       const {packageName, version} = await unpackMiniApp(
         zipPath,
@@ -1064,7 +1073,10 @@ class AppRegistry {
         ({packageName, version}, activation) =>
           this.finalizeInstall(packageName, version, releaseIdentity, (state) => activation.recordRecoveryState(state)),
         opts?.beforeActivate,
-        () => assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity),
+        () => {
+          assertInstallAuthority(manifest.packageName, releaseIdentity, true, candidate)
+          assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
+        },
         opts?.adoptIdenticalInstalledVersion
           ? async (pkg, ver, extracted, installed) => {
               const identity = this.getReleaseIdentity(pkg, ver)
@@ -1324,7 +1336,14 @@ class AppRegistry {
       // miniapp initiated the uninstall. Users may still hide a SYSTEM app
       // from Home through setHiddenStatus; only its installed bundle is
       // protected here.
-      if (isSystemMiniappPackage(packageName)) {
+      // Workspace-owned versions remain userland even when the same package
+      // ships as SYSTEM for consumers. The host must be able to remove that
+      // exact version on workspace exit without deleting a consumer bundle.
+      const managedVersion =
+        version &&
+        !isStoreMiniappPackage(packageName) &&
+        this.getReleaseIdentity(packageName, version)?.source === "deployment_manifest"
+      if (isSystemMiniappPackage(packageName) && !managedVersion) {
         throw new Error(`SYSTEM miniapp ${packageName} cannot be uninstalled; remove it from Home instead`)
       }
       if (this.offlineApps.some((app) => app.packageName === packageName)) {

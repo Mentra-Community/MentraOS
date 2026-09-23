@@ -11,6 +11,10 @@ function configuredPackages(key: "bundledSystemMiniappPackages" | "bundledStoreM
   return getConfigValues()[key] ?? []
 }
 
+function managedMiniapp(packageName: string) {
+  return getConfigValues().localMiniappPolicy?.managed.find((entry) => entry.packageName === packageName)
+}
+
 export function isSystemMiniappPackage(packageName: string): boolean {
   return configuredPackages("bundledSystemMiniappPackages").includes(packageName)
 }
@@ -24,13 +28,14 @@ export function canStoreUpdateSystemMiniapp(storePackageName: string, targetPack
   return (
     isStoreMiniappPackage(storePackageName) &&
     isSystemMiniappPackage(targetPackageName) &&
+    !managedMiniapp(targetPackageName) &&
     getConfigValues().bundledSystemMiniappStoreOwners?.[targetPackageName] === storePackageName
   )
 }
 
 /** Store selected by the host build to update this SYSTEM package, if any. */
 export function systemMiniappStoreOwner(packageName: string): string | undefined {
-  if (!isSystemMiniappPackage(packageName)) return undefined
+  if (!isSystemMiniappPackage(packageName) || managedMiniapp(packageName)) return undefined
   return getConfigValues().bundledSystemMiniappStoreOwners?.[packageName]
 }
 
@@ -40,12 +45,35 @@ export function systemMiniappStoreOwner(packageName: string): string | undefined
  * A bundled provenance claim is accepted only on the local bundled-asset path;
  * remote/direct/dev callers cannot manufacture it. SYSTEM Store updates must
  * come from the exact Store selected by the host build.
+ * Workspace pins instead require locally verified bytes and exact deployment
+ * provenance; they never acquire SYSTEM authority or Store ownership.
  */
 export function canInstallMiniappRelease(
   packageName: string,
-  releaseIdentity: {source?: string; storePackageName?: string},
+  releaseIdentity: {
+    source?: string
+    storePackageName?: string
+    bundleSha256?: string
+    deploymentId?: string
+    deploymentOrigin?: string
+  },
   localBundledAsset: boolean,
+  candidate?: {version: string; verifiedBundleSha256?: string},
 ): boolean {
+  const managed = managedMiniapp(packageName)
+  if (managed || releaseIdentity.source === "deployment_manifest") {
+    return Boolean(
+      managed &&
+        localBundledAsset &&
+        !isStoreMiniappPackage(packageName) &&
+        releaseIdentity.source === "deployment_manifest" &&
+        candidate?.version === managed.version &&
+        candidate.verifiedBundleSha256 === managed.sha256 &&
+        releaseIdentity.bundleSha256?.toLowerCase() === managed.sha256 &&
+        releaseIdentity.deploymentId === managed.deploymentId &&
+        releaseIdentity.deploymentOrigin === managed.deploymentOrigin,
+    )
+  }
   if (!isSystemMiniappPackage(packageName)) return true
   if (releaseIdentity.source === "bundled_asset") return localBundledAsset
   return (
@@ -80,7 +108,7 @@ export function isHostTrustedSystemMiniapp(
   packageName: string,
   releaseIdentity?: {source?: string; storePackageName?: string} | null,
 ): boolean {
-  if (!isSystemMiniappPackage(packageName)) return false
+  if (!isSystemMiniappPackage(packageName) || managedMiniapp(packageName)) return false
   if (releaseIdentity?.source === "bundled_asset") return true
   return (
     releaseIdentity?.source === "system_store" &&

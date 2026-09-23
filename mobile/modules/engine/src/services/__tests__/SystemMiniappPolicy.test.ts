@@ -126,3 +126,66 @@ describe("SYSTEM miniapp policy", () => {
     expect(requiresConnectedGlasses("com.example.weather")).toBe(true)
   })
 })
+
+describe("workspace-owned preinstalled package policy", () => {
+  const hash = "a".repeat(64)
+  const identity = {
+    source: "deployment_manifest",
+    bundleSha256: hash,
+    deploymentId: "enterprise",
+    deploymentOrigin: "https://enterprise.example",
+  }
+  beforeAll(() =>
+    configure({
+      auth: {},
+      config: {
+        bundledSystemMiniappPackages: ["com.mentra.call", "com.mentra.store"],
+        bundledStoreMiniappPackages: ["com.mentra.store"],
+        bundledSystemMiniappStoreOwners: {"com.mentra.call": "com.mentra.store"},
+        localMiniappPolicy: {
+          systemPackageNames: null,
+          managed: [
+            {
+              packageName: "com.mentra.call",
+              version: "2.1.31",
+              sha256: hash,
+              deploymentId: identity.deploymentId,
+              deploymentOrigin: identity.deploymentOrigin,
+            },
+          ],
+        },
+      },
+    }),
+  )
+  afterAll(resetForTests)
+
+  test("accepts only the host-verified workspace version, hash and owner", () => {
+    const candidate = {version: "2.1.31", verifiedBundleSha256: hash}
+    expect(canInstallMiniappRelease("com.mentra.call", identity, true, candidate)).toBe(true)
+    expect(canInstallMiniappRelease("com.mentra.call", identity, false, candidate)).toBe(false)
+    expect(canInstallMiniappRelease("com.mentra.call", identity, true, {...candidate, version: "2.1.32"})).toBe(false)
+    expect(
+      canInstallMiniappRelease("com.mentra.call", identity, true, {...candidate, verifiedBundleSha256: "b".repeat(64)}),
+    ).toBe(false)
+    expect(canInstallMiniappRelease("com.mentra.call", {...identity, deploymentId: "other"}, true, candidate)).toBe(
+      false,
+    )
+  })
+
+  test("does not grant SYSTEM or Store ownership to a workspace pin", () => {
+    expect(isHostTrustedSystemMiniapp("com.mentra.call", identity)).toBe(false)
+    expect(isHostTrustedSystemMiniapp("com.mentra.call", {source: "bundled_asset"})).toBe(false)
+    expect(canStoreUpdateSystemMiniapp("com.mentra.store", "com.mentra.call")).toBe(false)
+    expect(systemMiniappStoreOwner("com.mentra.call")).toBeUndefined()
+    expect(
+      canInstallMiniappRelease(
+        "com.mentra.call",
+        {source: "system_store", storePackageName: "com.mentra.store"},
+        false,
+      ),
+    ).toBe(false)
+    expect(
+      canInstallMiniappRelease("com.mentra.store", identity, true, {version: "2.1.31", verifiedBundleSha256: hash}),
+    ).toBe(false)
+  })
+})

@@ -166,7 +166,8 @@ export function isInstalledMiniappAllowed(
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
 
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
-  if (systemApproved && releaseIdentity?.source === "bundled_asset") return true
+  const workspaceManaged = policy.managed.some((entry) => entry.packageName === packageName)
+  if (systemApproved && !workspaceManaged && releaseIdentity?.source === "bundled_asset") return true
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 
   return policy.managed.some(

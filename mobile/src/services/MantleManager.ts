@@ -14,7 +14,12 @@ import {
   BUNDLED_SYSTEM_MINIAPP_PACKAGES,
   BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
 } from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {
+  BUNDLED_STORE_MINIAPP_PACKAGES,
+  CHINA_HIDDEN_APPS,
+  mentraCallPackageName,
+  notifyPackageName,
+} from "@/constants/miniapps"
 import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
 import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {storage} from "@/utils/storage"
@@ -55,7 +60,6 @@ import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployme
 // Build-time Store trust table. OEM builds may add Store packages here and
 // assign SYSTEM bundle ownership below; the same list configures install
 // authority and invisible update scheduling so multiple Stores can coexist.
-const BUNDLED_STORE_MINIAPP_PACKAGES = ["com.mentra.store"] as const
 const BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS = Object.fromEntries(
   BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((packageName) => [packageName, "com.mentra.store"]),
 )

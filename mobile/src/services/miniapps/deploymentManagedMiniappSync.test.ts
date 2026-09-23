@@ -1,4 +1,12 @@
 import {Directory, File, Paths} from "expo-file-system"
+import {configure, resetForTests} from "../../../modules/engine/src/runtime/bootstrap"
+import {
+  isHostTrustedSystemMiniapp,
+  canStoreUpdateSystemMiniapp,
+} from "../../../modules/engine/src/services/SystemMiniappPolicy"
+import {BUNDLED_SYSTEM_MINIAPP_PACKAGES, BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS} from "@/generated/bundledMiniapps"
+import {BUNDLED_STORE_MINIAPP_PACKAGES} from "@/constants/miniapps"
+import type {ActiveDeployment} from "@/services/deployment/types"
 import {createMMKV} from "react-native-mmkv"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import {storage} from "@/utils/storage"
@@ -175,6 +183,40 @@ const workspace: WorkspaceDeployment = {
     },
   },
 }
+function selectDeployment(deployment: ActiveDeployment) {
+  jest.spyOn(deploymentStore, "getActive").mockReturnValue(deployment)
+  resetForTests()
+  configure({
+    auth: {getSubjectToken: async () => ({token: "test", type: "test"})},
+    config: {
+      bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+      bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
+      bundledSystemMiniappPublisherKeys: BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
+      bundledSystemMiniappStoreOwners: Object.fromEntries(
+        BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((name) => [name, "com.mentra.store"]),
+      ),
+      localMiniappPolicy:
+        deployment.kind === "workspace"
+          ? {
+              systemPackageNames: deployment.manifest.systemMiniapps.approvedPackageNamesOverride,
+              managed: deployment.manifest.miniapps.managed.map((entry) => ({
+                packageName: entry.packageName,
+                version: entry.version,
+                sha256: entry.sha256,
+                deploymentId: deployment.manifest.deploymentId,
+                deploymentOrigin: deployment.workspaceOrigin,
+              })),
+            }
+          : undefined,
+    },
+  })
+}
+
+function removeInstalledFixture() {
+  new Directory(Paths.document, "lmas", pkg, version).delete()
+  registry["removeReleaseIdentity"](pkg, version)
+}
+
 const installedScript = () => new File(Paths.document, "lmas", pkg, version, "call.js").textSync()
 
 beforeEach(async () => {
@@ -189,9 +231,10 @@ beforeEach(async () => {
   mockDigest = "a".repeat(64)
   mockScript = "verified call"
   mockVersion = "2.1.29"
-  jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
+  selectDeployment(consumer)
   expect((await registry.installFromLocalZip("consumer.zip")).is_ok()).toBe(true)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+  selectDeployment(workspace)
 })
 afterEach(() => jest.restoreAllMocks())
 afterAll(() => require("node:fs").rmSync(require("node:path").dirname(Paths.document), {recursive: true, force: true}))
@@ -214,7 +257,7 @@ it("adopts an identical verified consumer release and restores consumer installa
   expect(mockDownload).toHaveBeenCalledTimes(1)
   await LogoutUtils.performCompleteLogout()
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
-  jest.spyOn(deploymentStore, "getActive").mockReturnValue(consumer)
+  selectDeployment(consumer)
   await deploymentManagedMiniappSync.sync(consumer)
   expect(registry.getInstalledVersions(pkg)).toEqual([])
   expect((await registry.installFromLocalZip("consumer.zip")).is_ok()).toBe(true)
@@ -241,14 +284,27 @@ it.each(["digest", "contents", "extra file"])(
 )
 
 it("does not adopt a same-version release owned by another workspace", async () => {
-  await registry.installFromLocalZip("foreign.zip", {
-    releaseIdentity: {
-      source: "deployment_manifest",
-      deploymentId: "other",
-      deploymentOrigin: "https://other.example",
-      bundleSha256: "a".repeat(64),
-    },
+  selectDeployment({
+    ...workspace,
+    workspaceOrigin: "https://other.example",
+    manifest: {...workspace.manifest, deploymentId: "other"},
   })
+  expect(
+    (
+      await registry.installFromLocalZip("foreign.zip", {
+        expectedPackageName: pkg,
+        expectedVersion: version,
+        expectedBundleSha256: "a".repeat(64),
+        releaseIdentity: {
+          source: "deployment_manifest",
+          deploymentId: "other",
+          deploymentOrigin: "https://other.example",
+          bundleSha256: "a".repeat(64),
+        },
+      })
+    ).is_ok(),
+  ).toBe(true)
+  selectDeployment(workspace)
   await deploymentManagedMiniappSync.sync(workspace)
   expect(mockDownload).not.toHaveBeenCalled()
   expect(shouldHideMiniapp(pkg, version)).toBe(true)
@@ -270,7 +326,7 @@ it.each(["consumer", "workspace"])(
     await deploymentManagedMiniappSync.sync(workspace)
     expect(shouldHideMiniapp(pkg, version)).toBe(false)
     await LogoutUtils.performCompleteLogout()
-    jest.spyOn(deploymentStore, "getActive").mockReturnValue(consumer)
+    selectDeployment(consumer)
     await deploymentManagedMiniappSync.sync(consumer)
     expect(registry.getInstalledVersions(pkg)).toEqual([])
   },
@@ -299,9 +355,11 @@ it("adopts a byte-identical consumer registry release after logout", async () =>
 it("refreshes cached app metadata when recovering the workspace pin over a newer installed consumer version", async () => {
   await deploymentManagedMiniappSync.sync(workspace)
   mockVersion = "2.1.30"
+  selectDeployment(consumer)
   expect((await registry.installFromLocalZip("newer-consumer.zip")).is_ok()).toBe(true)
   expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe("2.1.30")
   mockVersion = version
+  selectDeployment(workspace)
   await deploymentManagedMiniappSync.sync(workspace)
   expect(await registry.getActiveVersion(pkg)).toBe(version)
   expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
@@ -316,7 +374,7 @@ function deferred() {
 }
 
 it("keeps workspace B's verified Call when A's older download finishes later", async () => {
-  await registry.uninstall(pkg, version)
+  removeInstalledFixture()
   const started = deferred()
   const download = deferred()
   mockDownload.mockImplementationOnce(() => {
@@ -330,7 +388,7 @@ it("keeps workspace B's verified Call when A's older download finishes later", a
     workspaceOrigin: "https://other.example",
     manifest: {...workspace.manifest, deploymentId: "other"},
   }
-  jest.spyOn(deploymentStore, "getActive").mockReturnValue(other)
+  selectDeployment(other)
   await deploymentManagedMiniappSync.sync(other)
   expect(shouldHideMiniapp(pkg, version)).toBe(false)
   expect(registry.getReleaseIdentity(pkg, version)?.deploymentId).toBe("other")
@@ -355,7 +413,7 @@ it.each(["workspace exit", "logout"])(
     const oldSync = deploymentManagedMiniappSync.sync(workspace)
     await started.promise
     if (reason === "workspace exit") {
-      jest.spyOn(deploymentStore, "getActive").mockReturnValue(consumer)
+      selectDeployment(consumer)
       await deploymentManagedMiniappSync.sync(consumer)
     } else {
       await deploymentManagedMiniappSync.cancel()
@@ -370,7 +428,7 @@ it.each(["workspace exit", "logout"])(
 )
 
 it("finishes and records an in-flight unzip before workspace exit cleans its ownership", async () => {
-  await registry.uninstall(pkg, version)
+  removeInstalledFixture()
   const started = deferred()
   const unzip = deferred()
   mockUnzip.mockImplementationOnce(() => {
@@ -379,7 +437,7 @@ it("finishes and records an in-flight unzip before workspace exit cleans its own
   })
   const oldSync = deploymentManagedMiniappSync.sync(workspace)
   await started.promise
-  jest.spyOn(deploymentStore, "getActive").mockReturnValue(consumer)
+  selectDeployment(consumer)
   const exit = deploymentManagedMiniappSync.sync(consumer)
   unzip.resolve()
   await Promise.all([oldSync, exit])
@@ -388,7 +446,7 @@ it("finishes and records an in-flight unzip before workspace exit cleans its own
 })
 
 it("rolls back only its own partially moved bundle and permits a retry", async () => {
-  await registry.uninstall(pkg, version)
+  removeInstalledFixture()
   mockMove.mockImplementationOnce(() => {
     throw new Error("disk write failed")
   })
@@ -431,4 +489,23 @@ it("recovers an interrupted adoption's durable metadata without removing its exi
   expect(installedScript()).toBe("verified call")
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
   expect(pending.exists).toBe(false)
+})
+
+it("keeps a workspace-adopted first-party bundle unprivileged and rejects Store replacement", async () => {
+  expect(BUNDLED_SYSTEM_MINIAPP_PACKAGES).toContain(pkg)
+  await deploymentManagedMiniappSync.sync(workspace)
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
+  expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, version))).toBe(false)
+  expect(canStoreUpdateSystemMiniapp("com.mentra.store", pkg)).toBe(false)
+  const replacement = await registry.installFromLocalZip("store.zip", {
+    releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+  })
+  expect(replacement.is_error()).toBe(true)
+  expect(installedScript()).toBe("verified call")
+  selectDeployment(consumer)
+  await deploymentManagedMiniappSync.sync(consumer)
+  expect(registry.getInstalledVersions(pkg)).toEqual([])
+  expect((await registry.installFromLocalZip("consumer.zip")).is_ok()).toBe(true)
+  expect((await registry.uninstall(pkg, version)).is_error()).toBe(true)
+  expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, version))).toBe(true)
 })

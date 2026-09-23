@@ -72,4 +72,26 @@ describe("deployment feature policy", () => {
       }),
     ).toBe(false)
   })
+
+  test("a managed pin takes precedence over an unrestricted bundled-app allowlist", () => {
+    configure({
+      auth: {},
+      config: {
+        localMiniappPolicy: {
+          systemPackageNames: null,
+          managed: [
+            {
+              packageName: "com.mentra.call",
+              version: "2.1.31",
+              sha256: "abc",
+              deploymentId: "acme",
+              deploymentOrigin: "https://acme.example",
+            },
+          ],
+        },
+      },
+    })
+    expect(isInstalledMiniappAllowed("com.mentra.call", "2.1.31", {source: "bundled_asset"})).toBe(false)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "1.0.0", {source: "bundled_asset"})).toBe(true)
+  })
 })
