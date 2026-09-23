@@ -13,6 +13,7 @@ import {
 } from "@mentra/miniapp-cli";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import {
   createApp,
   createRelease,
@@ -23,6 +24,7 @@ import {
   listApps,
   listReleases,
   pollLoginToken,
+  publishRelease,
   refreshLoginToken,
   startLogin,
   submitRelease,
@@ -33,6 +35,7 @@ import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials
 import { openBrowser } from "./open-browser";
 import { encodeDevAttestation, ensureSigningKey, signDevAttestation } from "./signing";
 import { verifyPackedBundle } from "./validate-bundle";
+import { registerStoreCommands } from "./store-commands";
 
 const program = new Command();
 const CLI_VERSION = (
@@ -541,6 +544,8 @@ program
   .option("--no-build", "skip running bun run build before packing")
   .option("--no-pack", "skip running bun run pack and upload the existing build zip")
   .option("--no-submit", "upload as draft without submitting for review")
+  .option("--publish", "also publish; requires an approved release or an app publishing token")
+  .option("--skip-existing", "skip published versions and safely resume matching unfinished uploads")
   .option("--track <track>", "release track: stable or beta", "stable")
   .option("--json", "print machine-readable JSON")
   .action(async (options: {
@@ -548,6 +553,8 @@ program
     build: boolean;
     pack: boolean;
     submit: boolean;
+    publish?: boolean;
+    skipExisting?: boolean;
     track: string;
     json?: boolean;
   }) => {
@@ -559,6 +566,7 @@ program
       if (options.track !== "stable" && options.track !== "beta") {
         throw new Error("--track must be either stable or beta");
       }
+      if (options.publish && !options.submit) throw new Error("--publish cannot be combined with --no-submit");
       const manifest = readManifest(cwd);
       const packageName = stringField(manifest, "packageName");
       const version = stringField(manifest, "version");
@@ -566,6 +574,18 @@ program
       const description = typeof manifest.description === "string" ? manifest.description : null;
 
       await ensureMiniappRecord(creds, { packageName, displayName: name, description });
+
+      const existing = options.skipExisting
+        ? (await listReleases(creds, packageName)).releases.find(release => release.version === version && release.releaseTrack === options.track)
+        : undefined;
+      if (existing?.status === "published") {
+        if (options.json) console.log(JSON.stringify({release: existing, skipped: true}, null, 2));
+        else console.log(`Skipped ${packageName}@${version}: already published`);
+        return;
+      }
+      if (existing && !["draft", "submitted", "in_review", "accepted"].includes(existing.status)) {
+        throw new Error(`Existing release is ${existing.status}; resolve it before retrying or bump the version`);
+      }
 
       if (options.pack) {
         await packMiniapp({
@@ -584,7 +604,10 @@ program
       }
       const bundle = readFileSync(zipPath);
       const verifiedBundle = await verifyPackedBundle(bundle, manifest);
-      const { release } = await createRelease(creds, {
+      if (existing && existing.bundleSha256 !== createHash("sha256").update(bundle).digest("hex")) {
+        throw new Error("This version already has different bundle bytes. Retry with the original ZIP or bump miniapp.json version.");
+      }
+      const { release } = existing ? {release: existing} : await createRelease(creds, {
         packageName,
         version,
         releaseTrack: options.track,
@@ -592,9 +615,12 @@ program
         bundle,
         fileName: basename(zipPath),
       });
-      const submitted = options.submit
+      let submitted = options.submit && release.status === "draft"
         ? await submitRelease(creds, { packageName, releaseId: release.id })
         : { release };
+      if (options.publish && submitted.release.status !== "published") {
+        submitted = await publishRelease(creds, packageName, release.id);
+      }
       const sizeKb = Math.round(statSync(zipPath).size / 1024);
       if (options.json) {
         console.log(
@@ -629,6 +655,7 @@ program
     console.log("Logged out");
   });
 
+registerStoreCommands(program, requireCredentials);
 await program.parseAsync();
 
 async function requireCredentials(): Promise<CliCredentials | null> {

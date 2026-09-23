@@ -107,6 +107,69 @@ export interface AdminUser {
   email: string;
 }
 
+export interface StoreAsset {
+  id: string;
+  role: "store_icon" | "store_cover" | "gallery_screenshot";
+  fileName: string;
+  sha256: string;
+}
+
+export interface StoreListingInput {
+  subtitle?: string | null;
+  longDescription?: string | null;
+  categories?: string[];
+  privacyPolicyUrl?: string | null;
+  supportUrl?: string | null;
+  websiteUrl?: string | null;
+}
+
+export interface StoreListing extends StoreListingInput {
+  iconAssetId: string | null;
+  coverAssetId: string | null;
+  screenshotAssetIds: string[];
+  assets: StoreAsset[];
+}
+
+export function getListing(credentials: CliCredentials, packageName: string): Promise<{listing: StoreListing}> {
+  return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/listing`);
+}
+
+export function updateListing(credentials: CliCredentials, packageName: string, input: StoreListingInput): Promise<{listing: StoreListing}> {
+  return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/listing`, {method: "PUT", body: JSON.stringify(input)});
+}
+
+export function uploadListingAsset(credentials: CliCredentials, packageName: string, input: {role: StoreAsset["role"]; fileName: string; contentType: string; base64: string}): Promise<{asset: StoreAsset}> {
+  return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/listing/assets`, {method: "POST", body: JSON.stringify(input)});
+}
+
+export function deleteListingAsset(credentials: CliCredentials, packageName: string, assetId: string): Promise<{ok: true}> {
+  return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/listing/assets/${encodeURIComponent(assetId)}`, {method: "DELETE"});
+}
+
+export function publishRelease(credentials: CliCredentials, packageName: string, releaseId: string): Promise<{release: DeveloperRelease}> {
+  return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/releases/${encodeURIComponent(releaseId)}/publish`, {method: "POST"});
+}
+
+export function reviewRelease(credentials: CliCredentials, releaseId: string, action: "approve" | "reject" | "publish", notes?: string): Promise<{release: DeveloperRelease}> {
+  return storeRequest(credentials, `/api/admin/submissions/${encodeURIComponent(releaseId)}/${action}`, {method: "POST", body: JSON.stringify({notes})});
+}
+
+export function createPublishingToken(credentials: CliCredentials, packageName: string, name: string): Promise<{token: {id: string; value: string; permissions: string[]}}> {
+  return storeRequest(credentials, `/api/admin/apps/${encodeURIComponent(packageName)}/publishing-tokens`, {method: "POST", body: JSON.stringify({name})});
+}
+
+export function listApiTokens(credentials: CliCredentials): Promise<{tokens: Array<{id: string; name: string; permissions: string[]}>}> {
+  return storeRequest(credentials, "/api/console/tokens");
+}
+
+export function createApiToken(credentials: CliCredentials, name: string): Promise<{token: {id: string; value: string}}> {
+  return storeRequest(credentials, "/api/console/tokens", {method: "POST", body: JSON.stringify({name})});
+}
+
+export function revokeApiToken(credentials: CliCredentials, tokenId: string): Promise<{ok: true}> {
+  return storeRequest(credentials, `/api/console/tokens/${encodeURIComponent(tokenId)}`, {method: "DELETE"});
+}
+
 export async function startLogin(config: CliConfig): Promise<DeviceAuthorizationResponse> {
   await ensureWorkosClientId(config);
   const body = new URLSearchParams({ client_id: config.workosClientId });
