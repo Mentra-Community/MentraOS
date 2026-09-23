@@ -274,5 +274,6 @@ it is not a general M365 subscription lookup or a guarantee of organizer permiss
 The host obtains credentials from its Runtime and returns only identity metadata.
 No meeting is created or joined. Identity, consent, and network failures reject;
 do not turn them into guest mode. Older hosts reject with an update message.
-Consumer deployments retain their miniapp-supplied guest credentials. Query again
-when entering the confirmation screen; create/join revalidate against current auth.
+Consumer deployments retain their miniapp-supplied guest credentials. Callers may
+cache this metadata for the current miniapp session and retry failed lookups
+explicitly; create/join still revalidate against current auth.
