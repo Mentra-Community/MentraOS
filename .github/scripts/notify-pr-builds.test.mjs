@@ -709,3 +709,27 @@ test("Android opt-in links the APK receipt hash and Android result platform, ind
   assert.equal(result.searchParams.get("platform"), "android")
   assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
 })
+
+
+test("a transient Android receipt miss does not claim notification identity and retries on the next callback", async () => {
+  const h = harness({files: [], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
+  const original = h.args.fetchImpl, digest = "e".repeat(64)
+  let available = false, reads = 0
+  h.args.fetchImpl = async (url, options) => {
+    if (!url.includes("mentra-android-pr-")) return original(url, options)
+    reads++
+    if (!available) return new Response("temporarily unavailable", {status: 404})
+    return new Response(JSON.stringify({schemaVersion: 1, pr: 123, headSha: sha, baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
+      app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40), backend: "dev",
+        otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
+      artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 1234}}}))
+  }
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 1); assert.equal(h.posts.length, 0); assert.equal(h.written.length, 0)
+  available = true
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 2); assert.equal(h.posts.length, 1); assert.equal(h.written.length, 1)
+  assert.ok(JSON.stringify(h.posts[0]).includes(digest)); assert.ok(h.written[0].body.includes(digest))
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 3); assert.equal(h.posts.length, 1); assert.equal(h.written.length, 1)
+})

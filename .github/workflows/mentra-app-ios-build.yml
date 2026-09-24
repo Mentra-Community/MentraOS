@@ -13,6 +13,7 @@ on:
       - ".github/workflows/mentra-asg-client-build.yml"
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/ensure-android-ndk*"
       - ".github/scripts/pr_mobile_config.py"
       - ".github/scripts/prepare-pr-mobile.mjs"
       - ".github/scripts/repackage-pr-apk*"

@@ -384,6 +384,18 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       ios.error = failure.message
     }
   }
+  const android = {}
+  if (hasRoutineLabel(pr, "no-glasses-android") && !error) {
+    try {
+      const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
+      const receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
+        androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
+      android.archiveSha256 = validateAndroidReceipt(receipt, coordinates).android.sha256
+    } catch (failure) {
+      core.warning(`Android routine receipt unavailable: ${failure.message}; defer notification so the next callback can retry.`)
+      return
+    }
+  }
   const comments = await github.paginate(github.rest.issues.listComments, {
     ...repo,
     issue_number: pr.number,
@@ -397,15 +409,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
     core.info("This PR revision's notification was already delivered.")
     return
-  }
-  const android = {}
-  if (hasRoutineLabel(pr, "no-glasses-android") && !error) {
-    try {
-      const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
-      const receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
-        androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
-      android.archiveSha256 = validateAndroidReceipt(receipt, coordinates).android.sha256
-    } catch (failure) { core.warning(`Android routine receipt unavailable: ${failure.message}`) }
   }
   let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core})
   if (!(await current())) {
