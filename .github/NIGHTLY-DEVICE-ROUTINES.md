@@ -31,18 +31,33 @@ does not imply that a physical routine passed.
 
 ## Dispatch and duplicate protection
 
-The scheduler calls the existing **Request device routine** workflow on `dev`
-with `request_origin: workflow-dispatch`, a channel, routine, and exact source
-run/attempt. That trusted producer revalidates the publication and publishes its
-immutable request JSON. The normal callback dispatches the request to the
-private worker, which independently validates its own enrollment, request,
-fixture and artifacts. The scheduler never sends commands to the Mini.
+For each channel, the scheduler calls the existing **Request device routine**
+workflow on `dev` separately for `day1-ota` and `mentra-call`, with
+`request_origin: workflow-dispatch` and the exact source run/attempt. Both
+requests are marked as members of the same nightly sequence. The trusted producer
+revalidates the publication and publishes each immutable request JSON. The
+ordinary callback recognizes these marked requests and skips their dispatch;
+the scheduler owns dispatch of the pair.
 
-The scheduler job name binds the local date, channel and routine. Its started
-send step is the durable fence before dispatch. An earlier started send, an
-ambiguous response, missing/partial history, or a workflow rerun cannot send
-that generation again automatically. A job cancelled before its send step
-does not consume the generation. History is checked across all attempts.
+The scheduler waits for both request generations to succeed, downloads their
+exact artifacts, and verifies that they select the same publication and nightly
+generation. It then queues one private **OTA then Call** job with both exact
+request run IDs and attempts. The private worker independently validates its
+enrollment, requests, fixture and artifacts. The scheduler never sends commands
+to the Mini.
+
+OTA runs first. Call starts only after that exact OTA passes, its fixture return
+is independently verified, its claim settlement is acknowledged, and its result
+and evidence are fully published. The Call phase also verifies that the fixture
+still has that OTA's exact return state. It records a separate Call **not-run**
+result and reason if the prerequisite fails or changes.
+
+The scheduler job name binds the local date, channel and OTA then Call sequence.
+Its started send step fences the entire sequence before dispatch. An earlier
+started send, an ambiguous response, missing/partial history, or a workflow
+rerun cannot send that generation again automatically. A job cancelled before
+its send step does not consume the generation. History is checked across all
+attempts.
 
 Do not delete scheduler history or rerun a failed scheduler to repeat a physical
 test. Inspect the named job and any acknowledged request workflow first. A lost
@@ -71,10 +86,11 @@ Before enabling:
    admin result. Staging supports the same path; do not make staging commits
    just to verify activation.
 4. Configure `TEST_RUN_GITHUB_APP_ID` and `TEST_RUN_GITHUB_APP_PRIVATE_KEY` in
-   both repositories. The callback mints a private Actions-write token; the
-   worker mints a source-read token for each phase and has separate claim and
-   upload secrets. Confirm the default branch is `dev`. GitHub schedules only
-   run from the default branch.
+   both repositories. The scheduler and ordinary callback each mint a private
+   Actions-write token for their respective dispatches; the worker mints a
+   source-read token for each phase and has separate claim and upload secrets.
+   Confirm the default branch is `dev`. GitHub schedules only run from the
+   default branch.
 5. Enable the repository variable, then inspect the next applicable midnight
    run and the four resulting request links. This command is an operator step,
    not part of the workflow:
