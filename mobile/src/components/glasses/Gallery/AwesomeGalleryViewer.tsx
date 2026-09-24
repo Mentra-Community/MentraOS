@@ -22,7 +22,7 @@ import {PhotoInfo} from "@/types/asg"
 
 import {MediaMetadataSheet} from "./MediaMetadataSheet"
 import {MediaDimensions} from "./mediaMetadata"
-import {getVideoSeekTime, isVideoAtEnd} from "./videoSeek"
+import {getVideoSeekTime, isVideoAtEnd, isVideoAtSeekTarget} from "./videoSeek"
 
 // Screen dimensions are now obtained via useWindowDimensions() hook for rotation support
 
@@ -65,6 +65,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
   const [showControls, setShowControls] = useState(true)
   const [currentTime, setCurrentTime] = useState(0)
   const currentTimeRef = useRef(0)
+  const pendingSeekRef = useRef<{time: number} | null>(null)
   const [duration, setDuration] = useState(0)
   const [isSeeking, setIsSeeking] = useState(false)
   const [hasError, setHasError] = useState(false)
@@ -74,18 +75,38 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
   const [videoAspectRatio, setVideoAspectRatio] = useState(4 / 3)
   const wasInactiveRef = useRef(false)
 
+  const seekTo = useCallback((time: number) => {
+    const player = videoRef.current
+    if (!player) return
+
+    const pendingSeek = {time}
+    pendingSeekRef.current = pendingSeek
+    currentTimeRef.current = time
+    setCurrentTime(time)
+    setHasEnded(false)
+    player.seek(time)
+
+    // An unchanged-position seek has no onSeek on iOS. Read the native
+    // position so that case can settle without waiting for another event.
+    void player.getCurrentPosition().then(
+      (position) => {
+        if (pendingSeekRef.current === pendingSeek && isVideoAtSeekTarget(position, time)) {
+          pendingSeekRef.current = null
+        }
+      },
+      (error) => console.warn("[VideoPlayerItem] Could not read seek position:", error),
+    )
+  }, [])
+
   useEffect(() => {
     setIsPlaying(isActive)
     if (isActive && wasInactiveRef.current) {
-      videoRef.current?.seek(0)
-      currentTimeRef.current = 0
-      setCurrentTime(0)
-      setHasEnded(false)
+      seekTo(0)
       setIsSeeking(false)
       setShowControls(true)
     }
     wasInactiveRef.current = !isActive
-  }, [isActive, photo.name])
+  }, [isActive, photo.name, seekTo])
 
   // Hide controls after 3 seconds
   useEffect(() => {
@@ -146,6 +167,13 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
           bufferForPlaybackAfterRebufferMs: 1000,
         }}
         onProgress={({currentTime: time}) => {
+          const pendingSeek = pendingSeekRef.current
+          if (pendingSeek) {
+            // Discard queued progress (including the final progress preceding
+            // onEnd) until native playback has reached the requested position.
+            if (!isVideoAtSeekTarget(time, pendingSeek.time)) return
+            pendingSeekRef.current = null
+          }
           if (!isSeeking && !hasEnded) {
             currentTimeRef.current = time
             setCurrentTime(time)
@@ -180,10 +208,17 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
           setIsPlaying(false)
           setIsBuffering(false)
           setIsSeeking(false)
+          pendingSeekRef.current = null
           if (isSeeking) onSeekingChange?.(false)
         }}
+        onSeek={({seekTime}) => {
+          const pendingSeek = pendingSeekRef.current
+          if (pendingSeek && isVideoAtSeekTarget(seekTime, pendingSeek.time)) {
+            pendingSeekRef.current = null
+          }
+        }}
         onEnd={() => {
-          if (isSeeking || !isVideoAtEnd(currentTimeRef.current, duration)) return
+          if (isSeeking || pendingSeekRef.current || !isVideoAtEnd(currentTimeRef.current, duration)) return
           console.log("🎥 [VideoPlayerItem] Video playback ended:", photo.name)
           setIsPlaying(false)
           setShowControls(true)
@@ -262,10 +297,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
                   if (hasEnded) {
                     // Replay from beginning
                     console.log("🎮 [VideoControls] Replaying video from start")
-                    videoRef.current?.seek(0)
-                    currentTimeRef.current = 0
-                    setCurrentTime(0)
-                    setHasEnded(false)
+                    seekTo(0)
                     setIsPlaying(true)
                   } else {
                     // Toggle play/pause
@@ -306,10 +338,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
                 }}
                 onSlidingComplete={(value) => {
                   const seekTime = getVideoSeekTime(value, duration)
-                  videoRef.current?.seek(seekTime)
-                  currentTimeRef.current = seekTime
-                  setCurrentTime(seekTime)
-                  setHasEnded(false)
+                  seekTo(seekTime)
                   setIsSeeking(false)
                   setShowControls(true)
                   onSeekingChange?.(false)

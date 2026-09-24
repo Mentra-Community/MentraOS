@@ -282,8 +282,12 @@ Both native players send a final progress update before the end event. Completio
 also checks the latest position, allowing up to 50 ms for frame/clock timing.
 Android forwards its playhead rather than forcing it to the duration. The tolerance
 is smaller than the seek inset and capped at half the duration for very short
-clips, so a late end event after a backward seek or replay cannot restore the
-finished state. A ref preserves ordering even when React batches events.
+clips. Explicit seeks also retain their target until a matching native `onSeek`,
+progress update, or position read confirms it. Until then, queued progress and
+end events cannot restore the finished state after a backward seek or replay.
+The native position read handles unchanged-position seeks that emit no `onSeek`;
+it never holds the slider or gallery swipe lock. Responses for superseded seeks
+are ignored. Refs preserve ordering even when React batches events.
 Native decoding errors remain visible; these controls do not repair damaged media.
 
 Run the focused regression suites from `mobile/`:

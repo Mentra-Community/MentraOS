@@ -10,6 +10,7 @@ let mockImageProps: Record<string, unknown> = {}
 let mockVideoProps: Record<string, unknown> = {}
 let mockSliderProps: Record<string, unknown> = {}
 const mockSeek = jest.fn()
+const mockGetCurrentPosition = jest.fn()
 
 jest.mock("@gorhom/bottom-sheet", () => ({
   __esModule: true,
@@ -70,7 +71,7 @@ jest.mock("react-native-vector-icons/MaterialCommunityIcons", () => {
 jest.mock("react-native-video", () => {
   const React = require("react")
   return React.forwardRef((props: Record<string, unknown>, ref: unknown) => {
-    React.useImperativeHandle(ref, () => ({seek: mockSeek}))
+    React.useImperativeHandle(ref, () => ({seek: mockSeek, getCurrentPosition: mockGetCurrentPosition}))
     mockVideoProps = props
     return null
   })
@@ -208,6 +209,7 @@ describe("gallery video playback", () => {
 
   beforeEach(() => {
     mockSeek.mockClear()
+    mockGetCurrentPosition.mockReset().mockResolvedValue(NaN)
   })
 
   it("disables scrubbing until a finite duration is loaded", () => {
@@ -243,10 +245,11 @@ describe("gallery video playback", () => {
     expect(mockSeek).toHaveBeenLastCalledWith(30)
   })
 
-  it("does not wait for an onSeek event after a same-position seek", () => {
+  it("does not wait for an onSeek event after a same-position seek", async () => {
+    mockGetCurrentPosition.mockResolvedValue(0)
     renderVideo()
     emitSlider("onSlidingStart")
-    emitSlider("onSlidingComplete", 0)
+    await act(async () => emitSlider("onSlidingComplete", 0))
     emitVideo("onProgress", {currentTime: 1})
     expect(mockSliderProps.value).toBe(1)
     expect(mockVideoProps.paused).toBe(false)
@@ -310,6 +313,83 @@ describe("gallery video playback", () => {
     expect(mockSeek).toHaveBeenCalledTimes(1)
     expect(mockSeek).toHaveBeenLastCalledWith(30)
     expect(mockVideoProps.paused).toBe(false)
+  })
+
+  it.each([false, true])("ignores queued final progress/end after a backward seek (paused=%s)", (paused) => {
+    const {view} = renderVideo()
+    emitVideo("onProgress", {currentTime: duration - 0.01})
+    if (paused) fireEvent.press(view.getByText("pause"))
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", 30)
+    finishVideo()
+    expect(mockSliderProps.value).toBe(30)
+    expect(view.queryByText("replay")).toBeNull()
+    expect(mockVideoProps.paused).toBe(paused)
+    emitVideo("onSeek", {currentTime: 30, seekTime: 30})
+    emitVideo("onProgress", {currentTime: 30.25})
+    expect(mockSliderProps.value).toBe(30.25)
+    expect(mockVideoProps.paused).toBe(paused)
+  })
+
+  it("ignores queued final progress/end after replay and still completes the replay", () => {
+    const {view} = renderVideo()
+    finishVideo()
+    fireEvent.press(view.getByText("replay"))
+    finishVideo()
+    expect(mockSliderProps.value).toBe(0)
+    expect(mockVideoProps.paused).toBe(false)
+    emitVideo("onSeek", {currentTime: 0, seekTime: 0})
+    emitVideo("onProgress", {currentTime: 1})
+    expect(mockSliderProps.value).toBe(1)
+    finishVideo()
+    expect(view.getByText("replay")).toBeTruthy()
+  })
+
+  it("settles from progress at the seek target when onSeek is absent", () => {
+    renderVideo()
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", 30)
+    finishVideo()
+    emitVideo("onProgress", {currentTime: 30.001})
+    emitVideo("onProgress", {currentTime: 30.25})
+    expect(mockSliderProps.value).toBe(30.25)
+    finishVideo()
+    expect(mockVideoProps.paused).toBe(true)
+  })
+
+  it("accepts completion after a same-position near-end seek without onSeek", async () => {
+    const {view} = renderVideo()
+    const time = duration - 0.1
+    emitVideo("onProgress", {currentTime: time})
+    mockGetCurrentPosition.mockResolvedValue(time)
+    emitSlider("onSlidingStart")
+    await act(async () => emitSlider("onSlidingComplete", time))
+    finishVideo()
+    expect(view.getByText("replay")).toBeTruthy()
+    expect(mockVideoProps.paused).toBe(true)
+  })
+
+  it("does not let an earlier seek callback or position read settle a newer seek", async () => {
+    renderVideo()
+    let resolveEarlier!: (position: number) => void
+    mockGetCurrentPosition.mockReturnValueOnce(
+      new Promise<number>((resolve) => {
+        resolveEarlier = resolve
+      }),
+    )
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", 30)
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", 60)
+    await act(async () => resolveEarlier(30))
+    emitVideo("onSeek", {currentTime: 30, seekTime: 30})
+    emitVideo("onProgress", {currentTime: 30})
+    finishVideo()
+    expect(mockSliderProps.value).toBe(60)
+    expect(mockVideoProps.paused).toBe(false)
+    emitVideo("onSeek", {currentTime: 60, seekTime: 60})
+    finishVideo()
+    expect(mockVideoProps.paused).toBe(true)
   })
 
   it("ignores a late end event after replay starts", () => {
