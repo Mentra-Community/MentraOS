@@ -301,6 +301,12 @@ Unknown owners remain unknown. Ordinary query responses and compact terminal BLE
 frames retain their existing behavior; a terminal BES result alone is not proof
 that every updater is idle.
 
+The durable BES terminal result also settles its matching top-level OTA session's
+final BES install step, even when the phone is disconnected or ASG must replay the
+result after a process restart. A result from another session, an unfinished BES
+transaction, or an earlier step cannot finish the current session; existing session
+failures remain failures. This reconciliation starts no update or next step.
+
 MTK updates prefer an incremental patch whose start version matches the glasses.
 If no patch matches, a pinned `mtk_full_ota` can update a known older firmware
 directly. Full fallback requires a valid target version, URL, SHA-256, and size;

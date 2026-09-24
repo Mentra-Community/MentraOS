@@ -249,6 +249,37 @@ public class OtaSessionManager {
         Log.i(TAG, "Session complete: " + mSessionId);
     }
 
+    /**
+     * Reconcile the native BES terminal result with its owning final install step.
+     *
+     * <p>The durable BES record outlives EventBus delivery and process restarts. An old or debug
+     * transaction must never finish another session, advance a step, or replace an existing failure.
+     */
+    public synchronized boolean reconcileBesTerminalStatus(JSONObject besStatus) {
+        if (besStatus == null
+                || mSessionId == null
+                || mSessionId.isEmpty()
+                || !mSessionId.equals(besStatus.optString("sid", ""))
+                || !"bes".equals(besStatus.optString("st", ""))
+                || !"install".equals(besStatus.optString("phase", ""))
+                || !"in_progress".equals(mStatus)
+                || !"bes".equals(getStepType(mCurrentStepIndex))
+                || !"install".equals(mCurrentPhase)
+                || mCurrentStepIndex != mTotalSteps - 1
+                || mRestartingSinceElapsed >= 0) {
+            return false;
+        }
+        if ("complete".equals(besStatus.optString("status", ""))) {
+            setComplete();
+            return true;
+        }
+        if ("failed".equals(besStatus.optString("status", ""))) {
+            setFailed(besStatus.optString("err", "install_failed"));
+            return true;
+        }
+        return false;
+    }
+
     public synchronized boolean setRestarting() {
         mRestartingSinceElapsed = SystemClock.elapsedRealtime();
         if (!persistImmediately()) {

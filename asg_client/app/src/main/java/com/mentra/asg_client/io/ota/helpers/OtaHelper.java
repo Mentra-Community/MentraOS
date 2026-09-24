@@ -343,6 +343,11 @@ public class OtaHelper {
             Log.i(TAG, "BES_OTA_DIAG phone_projection=absent");
             return false;
         }
+        // Reconcile before checking phone connectivity: native completion may arrive while BLE
+        // is disconnected, or may only be replayed from the durable store after ASG restarts.
+        if (sessionManager != null) {
+            sessionManager.reconcileBesTerminalStatus(status);
+        }
         boolean connected = phoneConnectionProvider != null && isPhoneConnected();
         Log.i(
                 TAG,
