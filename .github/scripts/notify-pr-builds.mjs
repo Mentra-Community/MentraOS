@@ -405,14 +405,19 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   })
   const comment = comments.find((item) => item.user?.type === "Bot" && item.body?.startsWith(marker))
   const incomplete = Boolean(error || ios.error)
-  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${builds
+  const publicationIdentity = builds
     .map((build) => `${build.run.id}-${build.attempt}`)
-    .join(":")}`
-  const verifiedPrefix = `<!-- ${buildIdentity}:android-`
-  if (android.receiptUnavailable && comment?.body.split("\n").some(line =>
-    line.startsWith(verifiedPrefix) && /^[a-f0-9]{64} -->$/.test(line.slice(verifiedPrefix.length)))) {
-    core.info("The verified Android results link was already delivered; do not downgrade it after a receipt read failure.")
-    return
+    .join(":")
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}`
+  if (android.receiptUnavailable) {
+    const previous = comment?.body.split("\n").map(line =>
+      new RegExp(`^<!-- ${sha}:(?:incomplete|ready):${publicationIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
+    if (previous) {
+      // Reuse only the hash already verified for these exact publications. Readiness
+      // can still advance so a newly available Apple download is not suppressed.
+      android.archiveSha256 = previous[1]
+      android.receiptUnavailable = false
+    }
   }
   const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
