@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { createTestRunAdminApi } from "../api/admin/test-runs.api";
 import type { TestRunClaim } from "../types/test-run-claim.types";
 import type { TestRun } from "../types/test-run.types";
 import type { OverviewJob } from "../types/test-run-overview.types";
-import { recoveredClaim, TestRunOverviewService, type OverviewClaimRecord, type TestRunOverviewRepository } from "./test-run-overview.service";
+import { TestRunClaimModel } from "../models/test-run-claim.model";
+import { recoveredClaim, MongoTestRunOverviewRepository, TestRunOverviewService, type OverviewClaimRecord, type TestRunOverviewRepository } from "./test-run-overview.service";
 
 const stamp = "2026-09-24T20:00:00.000Z";
 const claim = (id = "routine-500-1-dev-day1-ota"): TestRunClaim => ({ requestId: id, requestSha256: "a".repeat(64),
@@ -25,7 +26,7 @@ class Repository implements TestRunOverviewRepository {
   rows: OverviewClaimRecord[] = [];
   resultRows: TestRun[] = [];
   admin: number[] = [];
-  async claims() { return { claims: this.rows, truncated: false }; }
+  async claims(_activeRequestIds: string[] = []) { return { claims: this.rows, truncated: false }; }
   async results() { return this.resultRows; }
   async adminRequests() { return this.admin; }
 }
@@ -89,4 +90,30 @@ test("new running work is above old unresolved claims, followed by oldest waitin
   const older = { ...waiting, id: "older", createdAt: "2026-09-24T19:00:00.000Z" };
   const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [waiting, older, active], warnings: [] }) }).overview();
   expect(view.jobs.map(job => job.id)).toEqual(["active", "claim-" + claim().requestId, "older", "waiting"]);
+});
+test("active request claims bypass the historical cap and retain a just-settled checkpoint", async () => {
+  const history = Array.from({ length: 501 }, (_, index) => ({ claim: claim("old-" + index) }));
+  const active = { claim: { ...claim(), state: "terminal", settlement: { state: "terminal", resultRunId: "result" } },
+    progress: { sequence: 4, mode: "complete", phase: "evidence", step: null, completedSteps: 1, totalSteps: 1, receivedAt: stamp } };
+  const queries: unknown[] = [];
+  const find = spyOn(TestRunClaimModel, "find").mockImplementation(((query: { requestId?: unknown }) => {
+    queries.push(query);
+    return { select: () => query.requestId
+      ? { lean: async () => [active] } : { sort: () => ({ limit: (limit: number) => {
+        expect(limit).toBe(501); return { lean: async () => history };
+      } }) } };
+  }) as unknown as typeof TestRunClaimModel.find);
+  try {
+    const repository = new MongoTestRunOverviewRepository();
+    const result = await repository.claims([claim().requestId]);
+    expect(result.truncated).toBe(true); expect(result.claims).toHaveLength(501);
+    expect(result.claims.find(row => row.claim.requestId === claim().requestId)?.progress?.sequence).toBe(4);
+    expect(queries[1]).toEqual({ requestId: { $in: [claim().requestId] } });
+  } finally { find.mockRestore(); }
+});
+test("the overview requests exact active claims after reading the queue", async () => {
+  const repository = new Repository();
+  const lookup = spyOn(repository, "claims");
+  await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [queued()], warnings: [] }) }).overview();
+  expect(lookup.mock.calls[0]).toEqual([[claim().requestId]]);
 });

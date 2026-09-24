@@ -8,15 +8,23 @@ import { GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-o
 
 export interface OverviewClaimRecord { claim: TestRunClaim; progress?: TestRunProgressCheckpoint }
 export interface TestRunOverviewRepository {
-  claims(): Promise<{ claims: OverviewClaimRecord[]; truncated: boolean }>;
+  claims(activeRequestIds: string[]): Promise<{ claims: OverviewClaimRecord[]; truncated: boolean }>;
   results(requestIds: string[]): Promise<TestRun[]>;
   adminRequests(requestRunIds: number[]): Promise<number[]>;
 }
 export class MongoTestRunOverviewRepository implements TestRunOverviewRepository {
-  async claims() {
-    const rows = await TestRunClaimModel.find({ "claim.state": { $ne: "terminal" } })
-      .select({ _id: 0, claim: 1, progress: 1 }).sort({ createdAt: 1 }).limit(501).lean();
-    return { claims: rows.slice(0, 500) as unknown as OverviewClaimRecord[], truncated: rows.length > 500 };
+  async claims(activeRequestIds: string[]) {
+    const [rows, active] = await Promise.all([
+      TestRunClaimModel.find({ "claim.state": { $ne: "terminal" } })
+        .select({ _id: 0, claim: 1, progress: 1 }).sort({ createdAt: 1 }).limit(501).lean(),
+      activeRequestIds.length ? TestRunClaimModel.find({ requestId: { $in: activeRequestIds } })
+        .select({ _id: 0, claim: 1, progress: 1 }).lean() : Promise.resolve([]),
+    ]);
+    // Active claims (including a just-settled checkpoint) are never displaced by
+    // old immutable recovery settlements that still occupy historical storage.
+    const claims = new Map<string, OverviewClaimRecord>();
+    for (const row of [...rows.slice(0, 500), ...active] as unknown as OverviewClaimRecord[]) claims.set(row.claim.requestId, row);
+    return { claims: [...claims.values()], truncated: rows.length > 500 };
   }
   async results(requestIds: string[]) {
     if (!requestIds.length) return [];
@@ -77,7 +85,10 @@ export class TestRunOverviewService {
   constructor(private readonly repository: TestRunOverviewRepository = new MongoTestRunOverviewRepository(),
     private readonly github: TestRunOverviewGateway = new GithubTestRunOverview(), private readonly now = () => new Date()) {}
   async overview(): Promise<TestRunOverview> {
-    const [claimsResult, githubResult] = await Promise.allSettled([this.repository.claims(), this.github.activity()]);
+    const [githubResult] = await Promise.allSettled([this.github.activity()]);
+    const activeRequests = githubResult!.status === "fulfilled"
+      ? [...new Set(githubResult.value.jobs.flatMap(job => job.requests.map(request => request.requestId)))] : [];
+    const [claimsResult] = await Promise.allSettled([this.repository.claims(activeRequests)]);
     const warnings = githubResult.status === "fulfilled" ? [...githubResult.value.warnings] : ["GitHub activity is unavailable. The saved checkpoints below are not proof of a running job."];
     const claims = claimsResult.status === "fulfilled" ? claimsResult.value.claims : [];
     if (claimsResult.status === "rejected") warnings.push("Saved claims and progress could not be refreshed.");
@@ -97,7 +108,7 @@ export class TestRunOverviewService {
         }
       }
     }
-    for (const row of claims) if (!assigned.has(row.claim.requestId) && !resolved.has(row.claim.requestId)) {
+    for (const row of claims) if (row.claim.state !== "terminal" && !assigned.has(row.claim.requestId) && !resolved.has(row.claim.requestId)) {
       const blocked = row.claim.state === "recovery-required";
       jobs.push({ id: "claim-" + row.claim.requestId, kind: "claim", state: blocked ? "blocked" : "unknown",
         title: blocked ? "Fixture recovery required" : "Unsettled routine claim", createdAt: row.claim.claimedAt,

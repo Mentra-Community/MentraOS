@@ -107,3 +107,22 @@ test("queue fetch failures and truncation remain explicit and completed maintena
   expect(result.recentMaintenance?.[0]).toMatchObject({ kind: "maintenance", state: "finished", workflow: { conclusion: "failure" } });
   expect(JSON.stringify(result)).not.toContain("private transport");
 });
+test("a 100-run waiting queue does not poll job detail, and refresh reuses authenticated request metadata", async () => {
+  const { state, gateway } = harness(); state.runs = [];
+  for (let i = 0; i < 100; i++) {
+    state.runs.push(run(i + 1000, "Device routine request " + (i + 500) + " / attempt 1"));
+    state.requests.set(i + 500, request(i + 500));
+  }
+  expect((await gateway.activity()).jobs).toHaveLength(100);
+  expect(state.calls.filter(call => call.url.pathname.endsWith("/jobs"))).toHaveLength(0);
+  const before = state.calls.length; state.now += 16_000;
+  expect((await gateway.activity()).jobs).toHaveLength(100);
+  expect(state.calls.slice(before)).toHaveLength(6); // Five statuses and recent maintenance only.
+});
+test("stable active details are cached and a state change invalidates that cache", async () => {
+  const { state, gateway } = harness(); state.runs[0]!.status = "in_progress";
+  await gateway.activity(); state.now += 16_000; await gateway.activity();
+  expect(state.calls.filter(call => call.url.pathname.endsWith("/jobs"))).toHaveLength(1);
+  state.runs[0]!.status = "waiting"; state.now += 16_000; await gateway.activity();
+  expect(state.calls.filter(call => call.url.pathname.endsWith("/jobs"))).toHaveLength(2);
+});

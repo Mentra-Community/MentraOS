@@ -44,6 +44,7 @@ export interface TestRunOverviewGateway { activity(): Promise<GithubOverview> }
 export class GithubTestRunOverview implements TestRunOverviewGateway {
   private readonly app: TestRunGithubApp;
   private readonly requests = new Map<string, OverviewRequest>();
+  private readonly jobDetails = new Map<string, { until: number; jobs: z.infer<typeof jobSchema>[] }>();
   private cached?: { until: number; value: GithubOverview };
   private pending?: Promise<GithubOverview>;
   constructor(private readonly options: { fetch?: typeof fetch; token?: (scope: "source" | "private") => Promise<string>;
@@ -65,6 +66,17 @@ export class GithubTestRunOverview implements TestRunOverviewGateway {
     this.pending = this.read().then(value => { this.cached = { until: this.now() + 15_000, value }; return value; })
       .finally(() => { this.pending = undefined; });
     return this.pending;
+  }
+  private async details(run: Run) {
+    const key = run.id + "/" + run.run_attempt + "/" + run.status;
+    const cached = this.jobDetails.get(key);
+    if (cached && cached.until > this.now()) return cached.jobs;
+    const data = z.object({ total_count: z.number(), jobs: z.array(jobSchema) }).parse(await this.api(PRIVATE,
+      "/actions/runs/" + run.id + "/attempts/" + run.run_attempt + "/jobs?per_page=100"));
+    ensure(data.total_count === data.jobs.length);
+    if (this.jobDetails.size >= 500) this.jobDetails.delete(this.jobDetails.keys().next().value!);
+    this.jobDetails.set(key, { until: this.now() + (run.status === "completed" ? 24 * 60 * 60_000 : 60_000), jobs: data.jobs });
+    return data.jobs;
   }
   private async read(): Promise<GithubOverview> {
     const warnings: string[] = [];
@@ -103,12 +115,12 @@ export class GithubTestRunOverview implements TestRunOverviewGateway {
       : run.status === "waiting" ? "waiting" : "queued", title: kind === "maintenance" ? "Host maintenance / recovery" : run.display_title,
       createdAt: run.created_at, requests: [], claims: [], workflow: { runId: run.id, url: url(PRIVATE, run.id),
         status: run.status, ...(run.conclusion ? { conclusion: run.conclusion } : {}), updatedAt: run.updated_at } };
-    try {
-      const data = z.object({ total_count: z.number(), jobs: z.array(jobSchema) }).parse(await this.api(PRIVATE,
-        "/actions/runs/" + run.id + "/attempts/" + run.run_attempt + "/jobs?per_page=100"));
-      ensure(data.total_count === data.jobs.length);
-      const current = data.jobs.find(job => job.status === "in_progress") ?? data.jobs.find(job => job.status === "queued")
-        ?? (run.status === "completed" ? data.jobs[0] : undefined);
+    // Queued/requested/pending runs cannot provide a live assigned worker. Do not
+    // spend one detail request per waiting item every time the page refreshes.
+    if (["in_progress", "waiting", "completed"].includes(run.status)) try {
+      const jobs = await this.details(run);
+      const current = jobs.find(job => job.status === "in_progress") ?? jobs.find(job => job.status === "queued")
+        ?? (run.status === "completed" ? jobs[0] : undefined);
       if (current) {
         if (current.runner_name) item.workerName = current.runner_name;
         if (current.status === "in_progress" && current.started_at) item.startedAt = current.started_at;
@@ -143,6 +155,10 @@ export class GithubTestRunOverview implements TestRunOverviewGateway {
     const generation = Number(artifact.name.slice(prefix.length));
     ensure(Number.isSafeInteger(generation) && generation > 0 && !artifact.expired && artifact.size_in_bytes <= 2 * 1024 * 1024
       && artifact.workflow_run.id === id && /^sha256:[a-f0-9]{64}$/.test(artifact.digest));
+    // A nightly title omits the attempt. Recheck uniqueness, then reuse the
+    // already authenticated immutable generation instead of downloading it again.
+    const authenticated = this.requests.get(id + "/" + generation);
+    if (authenticated) return authenticated;
     const sourceRun = runSchema.parse(await this.api(SOURCE, "/actions/runs/" + id + "/attempts/" + generation));
     ensure(sourceRun.id === id && sourceRun.run_attempt === generation && sourceRun.repository.full_name === SOURCE
       && sourceRun.head_repository.full_name === SOURCE && sourceRun.path === ".github/workflows/request-e2e-routine.yml"

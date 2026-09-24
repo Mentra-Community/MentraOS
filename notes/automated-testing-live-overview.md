@@ -12,7 +12,7 @@ The Admin **Test runs** page shows GitHub's active private worker jobs above the
 
 Queued rows are displayed oldest first. This is waiting order, **not a guarantee of execution order**. Compatible workers and resource ownership still determine when GitHub can execute a job. There is no second scheduler, queue mutation, rank, ETA or calculated completion percentage.
 
-The page refreshes every 15 seconds. A checkpoint older than two minutes is marked as having no recent update; this does not declare a failure. Provider errors retain explicit warnings and the last browser view. GitHub job details remain separate from routine checkpoints. The view caps each GitHub status listing at 100 runs and unsettled claims at 500, and warns when either limit is exceeded.
+The page refreshes every 15 seconds. Queued jobs do not fetch runner/step details; active GitHub details are cached for one minute and completed maintenance details for a day. A checkpoint older than two minutes is marked as having no recent update; this does not declare a failure. Provider errors retain explicit warnings and the last browser view. GitHub job details remain separate from routine checkpoints. The view caps each GitHub status listing at 100 runs and historical unsettled claims at 500, and warns when either limit is exceeded. Claims for visible active requests are fetched separately, so old recovery history cannot hide their progress.
 
 ## Worker checkpoint contract
 
