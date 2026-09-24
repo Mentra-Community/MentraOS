@@ -181,8 +181,10 @@ else
 fi
 
 platforms='[]'
+routines='[]'
 if [[ "$scope" != examples ]]; then
   platforms=$(node "$(dirname -- "$0")/coordinated-downloads-slack.mjs" platforms)
+  routines=$(node "$(dirname -- "$0")/coordinated-downloads-slack.mjs" routines)
   if [[ -n "${OTA_MANIFEST_URL:-}" ]]; then
     targets=$(node "$(dirname -- "$0")/coordinated-downloads-slack.mjs" ota)
     asg_line+="${newline}${targets}${newline}<${OTA_MANIFEST_URL}|OTA manifest>"
@@ -192,6 +194,7 @@ fi
 
 payload=$(jq -n \
   --argjson platforms "$platforms" \
+  --argjson routines "$routines" \
   --arg scope "$scope" \
   --arg header "$header_icon $header_text" \
   --arg commit "$commit_subject" \
@@ -217,7 +220,8 @@ payload=$(jq -n \
       else
         $platforms[],
         {type: "section", text: {type: "mrkdwn", text: (($android | split("\n")[1]) + "\n" + ($ios | split("\n")[1]))}},
-        {type: "section", text: {type: "mrkdwn", text: $asg}}
+        {type: "section", text: {type: "mrkdwn", text: $asg}},
+        $routines[]
       end),
       {type: "section", text: {type: "mrkdwn", text: $checks}},
       {type: "context", elements: [{type: "mrkdwn", text: $context}]}

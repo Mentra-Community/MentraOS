@@ -87,13 +87,65 @@ describe("authenticated result navigation", () => {
     routineId: "day1-ota",
     platform: "ios-mac",
   });
+  for (const channel of ["dev", "staging"] as const) {
+    test(`${channel} Slack results link opens the exact coordinated build through login and navigation`, async () => {
+      const { coordinatedRoutineLinks } = await import(
+        new URL("../../../../../.github/scripts/coordinated-downloads-slack.mjs", import.meta.url).href
+      );
+      const { coordinatedFixture } = await import(
+        new URL("../../../../../.github/scripts/coordinated-routine-fixture.mjs", import.meta.url).href
+      );
+      const { state, options } = coordinatedFixture(channel);
+      const blocks = await coordinatedRoutineLinks({
+        BRANCH: channel, RELEASE_SCOPE: "core", FINALIZE_RESULT: "success", RELEASE_PAGE_RESULT: "success",
+        EXAMPLES_DISPATCH_RESULT: "success", RELEASE_IDENTITY: state.plan.releaseIdentity,
+        REPOSITORY: "Mentra-Community/MentraOS", SHA: state.plan.sourceCommit, RUN_ID: "100", RUN_ATTEMPT: "2",
+        MAC_URL: state.receipt.app.otaManifestUrl.replace(state.plan.artifactNames.otaManifest, state.receipt.artifacts.mac.name),
+      }, options.fetchImpl);
+      const location = blocks[0].text.text.match(/<(https:\/\/admin\.dev\.[^|]+)\|/)[1];
+      const login = new URL("/api/console/auth/login", location);
+      login.searchParams.set("return_to", location);
+      const returned = new URL(login.searchParams.get("return_to")!);
+      const scope = readTestRunListScope(returned.search);
+      const expectedScope = {
+        channel, repository: "Mentra-Community/MentraOS", headSha: state.plan.sourceCommit,
+        archiveSha256: state.receipt.artifacts.mac.sha256, routineId: "no-glasses", platform: "ios-mac",
+      } as const;
+      expect(scope).toEqual(expectedScope);
+      const detail = new URL(testRunLocation(returned.href, { runID: "synthetic-coordinated-run" }), returned);
+      expect(readTestRunListScope(detail.search)).toEqual(scope);
+      const back = new URL(testRunLocation(detail.href, null), returned);
+      expect(readTestRunListScope(back.search)).toEqual(scope);
+      expect(testRunListLocation(back.href, null)).toBe("/");
+      const path = new URL(testRunListPath({
+        ...EMPTY_FILTERS, pr: "4136", channel: "pr", routineId: "other", platform: "android", outcome: "failed",
+      }, "next-page", scope), returned);
+      expect(Object.fromEntries(path.searchParams)).toEqual({ ...expectedScope, outcome: "failed", limit: "25", cursor: "next-page" });
+      const client = new QueryClient();
+      client.setQueryData(["admin-test-runs", EMPTY_FILTERS, scope], { pages: [{ runs: [], nextCursor: null }], pageParams: [undefined] });
+      const markup = renderToStaticMarkup(
+        <QueryClientProvider client={client}>
+          <TestRunsPage selection={null} onSelect={() => {}} scope={scope} onClearScope={() => {}} />
+        </QueryClientProvider>,
+      );
+      expect(markup).toContain(channel === "dev" ? "Dev build" : "Staging build");
+      expect(markup).not.toContain("PR #");
+      expect(markup).toContain("No results for this build yet");
+      expect(markup).toContain(state.receipt.artifacts.mac.sha256);
+      expect(markup).toMatch(/disabled=""[^>]*aria-label="PR number"/);
+      expect(markup).toMatch(new RegExp(`<option value="${channel}" selected=""`));
+      client.clear();
+    });
+  }
   test("exact build scope survives login, detail navigation and back to results", () => {
     const location = `https://admin.dev.mentraglass.com/?${buildQuery}`;
     const login = new URL("/api/console/auth/login", location);
     login.searchParams.set("return_to", location);
     const returned = new URL(login.searchParams.get("return_to")!);
     const scope = readTestRunListScope(returned.search)!;
+    if (scope.channel !== "pr") throw new Error("Legacy PR link must retain its PR scope");
     expect(scope).toEqual({
+      channel: "pr",
       repository: "Mentra-Community/MentraOS",
       pr: "4136",
       headSha: "a".repeat(40),
@@ -145,6 +197,36 @@ describe("authenticated result navigation", () => {
       expect(readTestRunListScope(invalid.toString())).toBeNull();
     }
   });
+  test("coordinated scopes require one channel, all build pins and no PR selector", () => {
+    for (const channel of ["dev", "staging"]) {
+      const coordinated = new URLSearchParams(buildQuery);
+      coordinated.delete("pr");
+      coordinated.set("channel", channel);
+      for (const key of [...coordinated.keys()]) {
+        const missing = new URLSearchParams(coordinated);
+        missing.delete(key);
+        expect(readTestRunListScope(missing.toString())).toBeNull();
+        const duplicate = new URLSearchParams(coordinated);
+        duplicate.append(key, coordinated.get(key)!);
+        expect(readTestRunListScope(duplicate.toString())).toBeNull();
+      }
+      for (const value of ["", "4136"]) {
+        const mixed = new URLSearchParams(coordinated);
+        mixed.set("pr", value);
+        expect(readTestRunListScope(mixed.toString())).toBeNull();
+      }
+      for (const value of ["", "pr", "local", "production", "beta"]) {
+        const invalid = new URLSearchParams(coordinated);
+        invalid.set("channel", value);
+        expect(readTestRunListScope(invalid.toString())).toBeNull();
+      }
+    }
+    const explicitPr = new URLSearchParams(buildQuery);
+    explicitPr.set("channel", "pr");
+    expect(readTestRunListScope(explicitPr.toString())).toEqual(readTestRunListScope(buildQuery.toString()));
+    explicitPr.append("channel", "pr");
+    expect(readTestRunListScope(explicitPr.toString())).toBeNull();
+  });
   test("a new build shows an honest empty state and keeps its identity filters fixed", () => {
     const scope = readTestRunListScope(buildQuery.toString())!;
     const client = new QueryClient();
@@ -181,9 +263,11 @@ describe("authenticated result navigation", () => {
     expect(readTestRunLink("?testRun=one&testRun=two")).toBeNull();
     expect(readTestRunLink("?testRun=..%2Fother")).toBeNull();
     expect(testRunAssetPath("run-one", "asset_one")).toBe("/api/admin/test-runs/run-one/assets/asset_one");
-    for (const id of ["..", "../other", "https://elsewhere.invalid/video", "a/b", "%2F"]) {
+    for (const id of ["..", "../other", "https://elsewhere.invalid/video", "a/b", "a\\b", "%2F", "asset.1"]) {
       expect(() => testRunAssetPath("run-one", id)).toThrow();
     }
+    expect(readTestRunLink("?testRun=run.1&step=AUTH-08.1")).toBeNull();
+    expect(() => testRunAssetPath("run.1", "asset_one")).toThrow();
   });
   test("query filters stay on the current admin backend and encode cursor values", () => {
     const path = testRunListPath(
@@ -211,6 +295,30 @@ describe("authenticated result navigation", () => {
 });
 
 describe("recording and chapter integrity", () => {
+  test("dotted login chapter links survive authentication and select the exact recorded step", () => {
+    const chapters = ["AUTH-08.1", "AUTH-08.2", "AUTH-08.3"].map((id, index) => ({
+      ...run.chapters[0], id, instruction: `Login action ${id}`, videoStart: index * 2, videoEnd: index * 2 + 1,
+    }));
+    for (const chapter of chapters) {
+      const current = "https://admin.dev.mentraglass.com/";
+      const location = new URL(testRunLocation(current, { runID: run.runId, stepID: chapter.id }), current);
+      const login = new URL("/api/console/auth/login", current);
+      login.searchParams.set("return_to", location.href);
+      const returned = new URL(login.searchParams.get("return_to")!);
+      const selection = readTestRunLink(returned.search);
+      expect(selection).toEqual({ runID: run.runId, stepID: chapter.id });
+      expect(initialChapter(chapters, selection!.stepID)).toEqual(chapter);
+      expect(chapterSeekTime(chapter, run.assets[0], 10)).toBe(chapter.videoStart);
+      const markup = renderToStaticMarkup(
+        <TestRunView run={{ ...run, chapters }} stepId={selection!.stepID} onStep={() => {}} />,
+      );
+      expect(markup).toContain(chapter.id);
+      expect(markup).toContain(`<h4 class="text-sm font-semibold">${chapter.instruction}</h4>`);
+      expect(markup).not.toContain("The linked step was not found");
+      expect(markup).toContain('aria-current="step"');
+      expect(markup).toContain('src="/api/admin/test-runs/synthetic-run/assets/video-one"');
+    }
+  });
   test("paired recordings use the shared viewer while malformed mappings retain independent playback", () => {
     const browser = { ...run.assets[0], assetId: "browser-recording", filename: "browser.mp4" };
     const paired = { ...run, assets: [...run.assets, browser], provenance: { ...run.provenance, recordingTimeline: JSON.stringify({
