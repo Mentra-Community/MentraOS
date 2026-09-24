@@ -1,12 +1,13 @@
 import * as Linking from "expo-linking"
 import * as WebBrowser from "expo-web-browser"
-import {FC, ReactNode, createContext, useContext, useEffect, useRef} from "react"
+import {FC, ReactNode, createContext, useContext, useEffect, useRef, useState} from "react"
 import {AppState, Platform} from "react-native"
 
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
 import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
 import { useNavigationStore } from "@/stores/navigation"
+import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -443,14 +444,31 @@ const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContext
 export const useDeeplink = () => useContext(DeeplinkContext)
 
 export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
-
+  const [incidentParams, setIncidentParams] = useState<Record<string, unknown> | null>(null)
   const {setSplashEnabled} = useSplashLoader()
   const lastProcessed = useRef({url: null as string | null, time: 0})
   const nav = useNavigationStore.getState()
   const config = {
     scheme: "com.mentra",
     host: "apps.mentra.glass",
-    routes: deepLinkRoutes,
+    routes: [
+      {
+        pattern: "/test/submit-incident-report",
+        handler: (url: string) => {
+          const query = new URL(url).searchParams
+          const params: Record<string, unknown> = {}
+          query.forEach((_value, key) => {
+            const values = query.getAll(key)
+            params[key] = values.length === 1 ? values[0] : values
+          })
+          setIncidentParams(params)
+        },
+        // Diagnostics must preserve the failed screen even when auth is unavailable.
+        // The modal and uploader report that failure without sending the user to login.
+        requiresAuth: false,
+      },
+      ...deepLinkRoutes,
+    ],
     authCheckHandler: async () => {
       // TODO: this is a hack when we should really be using the auth context:
       const res = await mentraAuth.getSession()
@@ -594,7 +612,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         return
       }
 
-      const authed = await config.authCheckHandler()
+      const authed = matchedRoute.requiresAuth === false ? false : await config.authCheckHandler()
 
       // Check authentication if required
       if (matchedRoute.requiresAuth && !authed) {
@@ -608,6 +626,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
             console.warn("Navigation failed, router may not be ready:", error)
           }
         }, 100)
+        return
       }
 
       // Extract parameters from URL
@@ -642,5 +661,10 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     processUrl,
   }
 
-  return <DeeplinkContext.Provider value={contextValue}>{children}</DeeplinkContext.Provider>
+  return (
+    <DeeplinkContext.Provider value={contextValue}>
+      {children}
+      {incidentParams && <IncidentReportRequest params={incidentParams} onDismiss={() => setIncidentParams(null)} />}
+    </DeeplinkContext.Provider>
+  )
 }

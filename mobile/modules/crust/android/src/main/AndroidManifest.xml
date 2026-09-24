@@ -5,6 +5,12 @@
   <uses-permission android:name="${applicationId}.permission.CRUST_NOTIFICATION_BRIDGE" />
 
   <application>
+    <receiver android:name="com.mentra.crust.receivers.SubmitIncidentReportReceiver" android:exported="true">
+      <intent-filter>
+        <action android:name="com.mentra.SUBMIT_INCIDENT_REPORT" />
+      </intent-filter>
+    </receiver>
+
     <meta-data
       android:name="com.mentra.bluetoothsdk.RUNTIME_RECOVERY_SERVICE"
       android:value="com.mentra.crust.services.RuntimeRecoveryService" />

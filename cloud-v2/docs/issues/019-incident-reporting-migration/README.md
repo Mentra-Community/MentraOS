@@ -110,12 +110,15 @@ Gallery media integrity:
   (`MediaMetadataRetriever`/`AVAsset` style) is a separate follow-up if we want
   to prove device-playability before the user opens a video.
 
-Captions tester laptop report:
+External incident requests, including the captions tester:
 
-- Trigger: Android internal Crust event `captions_tester_incident`.
+- Trigger: `com.mentra.SUBMIT_INCIDENT_REPORT` on Android, available in all builds,
+  forwards the Crust event `submit_incident_report` to the engine.
 - Submission:
-  `mobile/modules/engine/src/services/CaptionsTesterReportService.ts`.
-- The service emits the existing `CAPTIONS_TESTER_INCIDENT_RESULT` logcat marker.
+  `mobile/modules/engine/src/services/SubmitIncidentReportService.ts`.
+- The service emits `INCIDENT_REPORT_RESULT` with the request's alert/test IDs
+  and a report ID, skipped reason, or failure error. The Mentra App must be
+  running and signed in. [Android contract](../../../../mobile/docs/incident-report-intent.md).
 - Cloud V2 transcript test logging is emitted from island via
   `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`, and the
   laptop monitor records the marker in
@@ -165,7 +168,7 @@ Island/engine:
 - `mobile/modules/engine/src/services/MentraJSCrashloopReportService.ts`
 - `mobile/modules/engine/src/facades/pairing.ts`
 - `mobile/modules/engine/src/services/asg/GalleryMediaIntegrityReportService.ts`
-- `mobile/modules/engine/src/services/CaptionsTesterReportService.ts`
+- `mobile/modules/engine/src/services/SubmitIncidentReportService.ts`
 - `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`
 
 Host UI:

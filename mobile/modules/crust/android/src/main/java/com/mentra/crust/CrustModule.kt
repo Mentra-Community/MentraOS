@@ -51,8 +51,8 @@ class CrustModule : Module() {
       NotificationProcessBridge.emitDismissed(context, notificationKey, packageName)
     }
 
-    fun emitCaptionsTesterIncident(data: Map<String, Any>) {
-      emitEvent("captions_tester_incident", data)
+    fun emitSubmitIncidentReport(data: Map<String, Any>) {
+      emitEvent("submit_incident_report", data)
     }
 
     private fun emitEvent(eventName: String, data: Map<String, Any>) {
@@ -121,7 +121,7 @@ class CrustModule : Module() {
       "onChange",
       "phone_notification",
       "phone_notification_dismissed",
-      "captions_tester_incident",
+      "submit_incident_report",
       "onNavManeuver",
       "onNavRerouting",
       "onNavArrived",
