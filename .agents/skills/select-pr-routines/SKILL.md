@@ -39,6 +39,9 @@ its CI artifact; it does not mean the test passed or authorize new hardware acce
    path. Mac evidence does not qualify Android-only or physical-iPhone behavior.
    A Call visibility-only change may need the private visibility suite rather than
    a real meeting; report that coverage gap instead of inventing a dispatch ID.
+   If the PR intentionally changes an expected outcome, identify the conflicting
+   step and propose a reviewed routine update. Selecting a relevant routine does
+   not make its old assertions valid for a new behavior.
 
 ## Apply the labels and explain why
 
@@ -71,9 +74,12 @@ product behavior.
   request workflow/Admin path once if a retry is needed. Do not toggle labels or
   repeatedly dispatch to overcome an explicit denial.
 - Existing enabled routines may run after labeling. For firmware/Call tests,
-  respect the approved fixture, readiness, enrollment and finite attempt budget.
-  If authorization or readiness is unknown, list the recommendation and missing
-  prerequisite; do not enable a worker or increase limits to make it run.
+  confirm the request fits the existing authorized fixture and finite attempt
+  budget. If that authorization is unknown, defer adding the label and report
+  the recommendation and missing prerequisite. Do not enable a worker or increase
+  limits. Current device readiness is checked by the worker at admission; an
+  authorized queued request need not wait for an idle device, and an unavailable
+  fixture must be reported as pending/not-run rather than passed.
 - No matching routine: state the gap and propose an extension/new routine with
   English steps, assertions, setup, teardown, recovery and evidence. An absent
   routine must be registered and reviewed before its label becomes a valid request.
