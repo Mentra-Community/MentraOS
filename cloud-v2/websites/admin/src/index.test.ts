@@ -48,9 +48,11 @@ test("the real admin proxy preserves authenticated media range lengths and exact
 });
 
 test("the streaming proxy preserves POST bodies, redirects and separate sign-in cookies", async () => {
+  let publicOrigin = "";
   const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     expect(req.method).toBe("POST");
     expect(await req.text()).toBe("test sign-in body");
+    expect(req.headers.get("x-mentra-public-origin")).toBe(publicOrigin);
     const headers = new Headers({ location: "/signed-in" });
     headers.append("set-cookie", "first=one; HttpOnly");
     headers.append("set-cookie", "second=two; HttpOnly");
@@ -58,9 +60,11 @@ test("the streaming proxy preserves POST bodies, redirects and separate sign-in 
   } });
   const server = startAdminServer({ hostname: "127.0.0.1", port: 0, coreUrl: upstream.url.href });
   await once(server, "listening");
+  publicOrigin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
-    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/auth/callback`, {
+    const response = await fetch(`${publicOrigin}/api/auth/callback`, {
       method: "POST", body: "test sign-in body", redirect: "manual",
+      headers: { "x-mentra-public-origin": "https://untrusted.example" },
     });
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("/signed-in");

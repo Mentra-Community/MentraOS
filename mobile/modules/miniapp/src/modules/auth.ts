@@ -31,6 +31,12 @@ export class AuthModule {
     return auth.token
   }
 
+  /** Return the Cloud Core endpoint selected by the host for this session. */
+  async getCoreUrl(): Promise<string | null> {
+    const auth = await this.session._waitForAuth(0)
+    return auth.coreUrl ?? null
+  }
+
   async getAuthHeader(options: {minTtlMs?: number} = {}): Promise<string> {
     return `Bearer ${await this.getToken(options)}`
   }

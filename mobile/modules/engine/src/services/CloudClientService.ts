@@ -15,7 +15,7 @@
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import {DEFAULT_REFRESH_TOKEN_KEY} from "@mentra/cloud-client"
-import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
@@ -34,7 +34,7 @@ import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
-import {resolveCloudEndpoints} from "./cloudEndpointPolicy"
+import {type CloudEndpoints, resolveCloudEndpoints} from "./cloudEndpointPolicy"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -60,13 +60,15 @@ type Lc3FrameSizeBytes = 20 | 40 | 60
 const LOCAL_AUTH_PORT = 3002
 
 let client: CloudClient | null = null
+/** Core endpoint used to construct this client, independent of later host config changes. */
+let clientCoreUrl: string | undefined
 let connected = false
 let persistentFailureTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
 let persistentFailureNotified = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 /** Endpoints to build with — seeded from config, overridable via reconnect(). */
-let endpointsOverride: {core?: string; runtime: string} | null = null
+let endpointsOverride: CloudEndpoints | null = null
 let runtimeStatusUnsubscribe: (() => void) | null = null
 let transcriptUnsubscribe: (() => void) | null = null
 let translationUnsubscribe: (() => void) | null = null
@@ -95,7 +97,7 @@ const translationListeners = new Set<(d: TranslationData) => void>()
 const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
 
-function resolveEndpoints(): {core?: string; runtime: string} {
+function resolveEndpoints(): CloudEndpoints {
   return resolveCloudEndpoints(getConfigValues(), endpointsOverride)
 }
 
@@ -433,6 +435,7 @@ function construct(): void {
     },
     logger: cloudLogger,
   })
+  clientCoreUrl = endpoints.core
 
   const c = client
   clearRuntimeEventSubscriptions()
@@ -568,7 +571,7 @@ export const cloudClientService = {
    * a prior override and resume the host resolver or boot config (so cleared/default cloud
    * URLs don't keep reconnecting to a stale override); omit to keep the current.
    */
-  reconnect(endpoints?: {core?: string; runtime: string} | null): void {
+  reconnect(endpoints?: CloudEndpoints | null): void {
     if (endpoints !== undefined) endpointsOverride = endpoints
     try {
       client?.runtime.close()
@@ -580,19 +583,13 @@ export const cloudClientService = {
 
     const wasConnected = connected
     client = null
+    clientCoreUrl = undefined
     localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
     if (wasConnected) notifyConnectionListeners(false)
 
     construct()
-  },
-
-  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
-    if (!client) this.init()
-    const c = client
-    if (!c?.core) throw new Error("cloud client core is unavailable")
-    return c.core.miniapps.getRegistry()
   },
 
   /**
@@ -633,11 +630,15 @@ export const cloudClientService = {
     const c = client
     if (!c) throw new Error("cloud client not initialized")
 
+    const coreUrl = clientCoreUrl
+    if (!coreUrl) throw new Error("cloud client core is unavailable")
     const {token, expiresAt} = await c.auth.getMiniappToken(packageName, opts)
+    if (c !== client) throw new Error("cloud client changed while obtaining miniapp credentials")
     const identity = c.auth.identity
     return {
       mentraUserId: identity.mentraUserId,
       tenantId: identity.tenantId,
+      coreUrl,
       token,
       expiresAt: normalizeExpiresAt(expiresAt),
     }
@@ -656,6 +657,7 @@ export const cloudClientService = {
     clearPersistentFailureAlarm()
     const wasConnected = connected
     client = null
+    clientCoreUrl = undefined
     // stop() is part of the logout lifecycle and runs before the host emits
     // SIGNED_OUT. Remove the persisted namespace owner here so a later account
     // can never inherit it. A force-stop/process kill does not call stop(), so

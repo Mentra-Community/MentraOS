@@ -6,14 +6,38 @@
 // inside the app binary.
 
 export const BUNDLED_MINIAPPS: number[] = [
-  require("@assets/miniapps/com.mentra.ai-1.5.3.zip"),
+  require("@assets/miniapps/com.mentra.ai-1.5.4.zip"),
   require("@assets/miniapps/com.mentra.call-2.1.40.zip"),
-  require("@assets/miniapps/com.mentra.captions-1.0.19.zip"),
-  require("@assets/miniapps/com.mentra.livestreamer-1.0.26.zip"),
-  require("@assets/miniapps/com.mentra.merge-0.1.30.zip"),
-  require("@assets/miniapps/com.mentra.navigation-1.1.34.zip"),
-  require("@assets/miniapps/com.mentra.notes-1.0.16.zip"),
-  require("@assets/miniapps/com.mentra.recorder-1.0.8.zip"),
-  require("@assets/miniapps/com.mentra.teleprompter-1.0.10.zip"),
-  require("@assets/miniapps/com.mentra.translation-1.0.22.zip"),
+  require("@assets/miniapps/com.mentra.captions-1.0.20.zip"),
+  require("@assets/miniapps/com.mentra.livestreamer-1.0.27.zip"),
+  require("@assets/miniapps/com.mentra.merge-0.1.32.zip"),
+  require("@assets/miniapps/com.mentra.navigation-1.1.35.zip"),
+  require("@assets/miniapps/com.mentra.notes-1.0.18.zip"),
+  require("@assets/miniapps/com.mentra.recorder-1.0.9.zip"),
+  require("@assets/miniapps/com.mentra.store-1.0.26.zip"),
+  require("@assets/miniapps/com.mentra.teleprompter-1.0.11.zip"),
+  require("@assets/miniapps/com.mentra.translation-1.0.23.zip"),
 ]
+
+// Build-owned package identities. A manifest cannot request SYSTEM; changing
+// this set requires shipping a Mentra App build containing the corresponding
+// ZIP asset.
+export const BUNDLED_SYSTEM_MINIAPP_PACKAGES = [
+  "com.mentra.ai",
+  "com.mentra.call",
+  "com.mentra.captions",
+  "com.mentra.livestreamer",
+  "com.mentra.merge",
+  "com.mentra.navigation",
+  "com.mentra.notes",
+  "com.mentra.recorder",
+  "com.mentra.store",
+  "com.mentra.teleprompter",
+  "com.mentra.translation",
+] as const
+
+// Publisher identities extracted from any SIGNED bundled ZIP. Signing is opt-in
+// per package: an entry here pins that package's publisher for this build, and
+// a package absent from this map accepts any update. Empty is expected while no
+// bundled miniapp ships signed.
+export const BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS = {} as const

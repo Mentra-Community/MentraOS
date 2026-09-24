@@ -1,5 +1,0 @@
-{
-  "lat": 1,
-  "lng": 2,
-  "avoid": {"highways": true, "tolls": false, "ferries": true}
-}

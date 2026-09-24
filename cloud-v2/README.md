@@ -13,8 +13,8 @@ The MentraOS cloud rewrite for the local JS miniapp SDK.
 ```
 cloud-v2/
 ├── packages/
-│   ├── core/      Mentra Services (OEM auth, portal backend, REST, miniapp store)
-│   ├── audio/     Audio Stack (UDP ingress, workers, transcription/translation)
+│   ├── core/      Mentra Services (OEM auth, portal backend, REST, identity)
+│   ├── runtime/     Audio Stack (UDP ingress, workers, transcription/translation)
 │   ├── proxy/     Forwarder / reverse proxy (OEM-deployable)
 │   └── shared/    Types, config, observability primitives
 ├── docs/
@@ -25,6 +25,11 @@ cloud-v2/
 ├── scripts/       bun-based dev tooling (setup, etc.)
 └── docker-compose.dev.yml
 ```
+
+The Mentra Miniapp Store backend, miniapp and Developer Console live in the
+[private miniapp-store repository](https://github.com/Mentra-Community/miniapp-store).
+This checkout builds and runs without access to that repository. Core incident
+reporting and `websites/admin` remain here. See [the Store integration contract](docs/store-integration.md).
 
 ## Quick start
 

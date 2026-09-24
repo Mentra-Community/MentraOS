@@ -28,25 +28,23 @@ import {
   DUMMY_APPLET,
   HardwareType,
   getAppsOrder,
+  isSystemMiniappPackage,
   saveAppsOrder,
   sortAppsByPackageNamePriority,
   engine,
   type ClientApp,
   type OrderMap,
-  useSetForeground,
-  useStart,
   useStop,
 } from "@mentra/engine"
 
-import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
-import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
+import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
+import {openMiniappFromHome} from "@/utils/openMiniappFromHome"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {storage} from "@/utils/storage"
 import {useNavigationStore} from "@/stores/navigation"
-import {setMiniappOpeningAnimation} from "@/stores/miniappLaunch"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
 import {showAlert} from "@/contexts/ModalContext"
@@ -298,9 +296,7 @@ export function AppsGrid({
 }: AppsGridProps) {
   const {themed, theme} = useAppTheme()
 
-  const startApplet = useStart()
   const stopApplet = useStop()
-  const setForeground = useSetForeground()
   const apps = useForegroundApps()
 
   const [orderMap, setOrderMap] = useState<OrderMap>({})
@@ -613,63 +609,11 @@ export function AppsGrid({
 
   const openApp = useCallback(
     async (app: ClientApp) => {
-      if (app.compatibility?.isCompatible === false) {
-        await showCompatibilityAlert(app)
-        return
-      }
-
-      const usesOverlay = isOfflineHosted(app.packageName) || app.local
-      let opened = false
-      const openOverlay = () => {
-        opened = true
-        if (!engine.miniapps.list().some((a) => a.packageName === app.packageName && a.foregrounded)) {
-          setMiniappOpeningAnimation(app.packageName, showAllApps ? "expand" : "slide")
-        }
-        void setForeground(app.packageName)
-        onOpenApp?.(app)
-      }
-      const dismissFailedOpen = () => {
-        if (opened && engine.miniapps.list().some((a) => a.packageName === app.packageName && a.foregrounded)) {
-          engine.miniapps.clearForeground()
-        }
-      }
-
-      try {
-        if (app.running && usesOverlay) {
-          openOverlay()
-          return
-        }
-
-        // Start the slide as soon as launch is accepted, before any bundle or runtime work.
-        const started =
-          app.running ||
-          (await startApplet(app, {
-            skipNavigation: true,
-            onAccepted: usesOverlay
-              ? () => {
-                  openOverlay()
-                  // Paint the slide before running-state updates and runtime startup.
-                  return new Promise<void>((resolve) =>
-                    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-                  )
-                }
-              : undefined,
-          }))
-        if (!started) {
-          dismissFailedOpen()
-          return
-        }
-
-        if (!usesOverlay) {
-          if (app.offlineRoute) push(app.offlineRoute, {transition: "fade"})
-          onOpenApp?.(app)
-        }
-      } catch (error) {
-        dismissFailedOpen()
-        console.warn(`Failed to open miniapp ${app.packageName}:`, error)
-      }
+      if (blockUpdatingMiniapp(app.packageName)) return
+      if (await showCompatibilityAlert(app)) return
+      if (await openMiniappFromHome(app, showAllApps ? "expand" : "slide")) onOpenApp?.(app)
     },
-    [onOpenApp, push, setForeground, startApplet, showAllApps],
+    [onOpenApp, showAllApps],
   )
 
   const placeAppOnHome = useCallback(
@@ -726,16 +670,17 @@ export function AppsGrid({
             }
           },
         },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:settings"),
-          icon: "exclamation-circle",
-          onPress: () => {
-            push("/applet/settings", {
-              packageName: liveSelectedApp?.packageName,
-              appName: liveSelectedApp?.name,
-            })
+        !liveSelectedApp?.offline &&
+          !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
+            label: translate("appInfo:settings"),
+            icon: "exclamation-circle",
+            onPress: () => {
+              push("/applet/settings", {
+                packageName: liveSelectedApp?.packageName,
+                appName: liveSelectedApp?.name,
+              })
+            },
           },
-        },
         !showAllApps && {
           label: translate("appInfo:remove"),
           icon: "circle-minus",
@@ -755,16 +700,17 @@ export function AppsGrid({
             }
           },
         },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:uninstall"),
-          icon: "trash",
-          destructive: true,
-          onPress: () => {
-            if (liveSelectedApp) {
-              uninstallAppUI(liveSelectedApp)
-            }
+        !liveSelectedApp?.offline &&
+          !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
+            label: translate("appInfo:uninstall"),
+            icon: "trash",
+            destructive: true,
+            onPress: () => {
+              if (liveSelectedApp) {
+                uninstallAppUI(liveSelectedApp)
+              }
+            },
           },
-        },
       ].filter(Boolean) as PopoverAction[],
     [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push],
   )
@@ -772,23 +718,19 @@ export function AppsGrid({
   const handlePress = useCallback(
     async (app: ClientApp) => {
       if (app.packageName.includes("@empty")) return // ignore dummy apps
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
 
-      // Check permissions before foregrounding the overlay.
-      const overlayForegrounded = app.local || isOfflineHosted(app.packageName)
+      // Check permissions before accepting a launch or showing its overlay.
       const neededPermissions = await checkPermissionsUI(app)
       if (neededPermissions.length > 0) {
         const result = await askPermissionsUI(app, theme)
         if (result !== 1) return
       }
 
-      if (overlayForegrounded) {
-        setMiniappOpeningAnimation(app.packageName, showAllApps ? "expand" : "slide")
-        await setForeground(app.packageName)
-      }
       await openApp(app)
     },
-    [openApp, setForeground, theme, showAllApps],
+    [openApp, theme],
   )
 
   const showPopover = useCallback(
@@ -882,10 +824,11 @@ export function AppsGrid({
           ref={(ref) => {
             itemRefs.current[item.packageName] = ref
           }}
-          accessibilityRole="button"
-          accessibilityLabel={item.name}
           testID={`${showAllApps ? "allApps" : "home"}.miniapp.${item.packageName}`}
           className="flex-1 items-center justify-center pt-3"
+          accessibilityRole="button"
+          accessibilityLabel={item.updating ? translate("home:miniappUpdatingLabel", {app: item.name}) : item.name}
+          accessibilityState={{busy: Boolean(item.updating)}}
           onPress={() => {
             // if (showAllApps) {
             //   showPopover(item.packageName)
@@ -911,10 +854,11 @@ export function AppsGrid({
                 textShadowOffset: {width: 0, height: 0},
                 textShadowRadius: 30,
               }}
-              numberOfLines={2}
+              numberOfLines={item.updating ? 1 : 2}
               ellipsizeMode="tail"
               text={item.name}
             />
+            {item.updating && <Text className="text-muted-foreground text-[10px]" tx="home:miniappUpdating" />}
           </View>
         </TouchableOpacity>
       )

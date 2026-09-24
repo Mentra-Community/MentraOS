@@ -192,6 +192,9 @@ export {
 } from "./utils/devMiniappLaunch"
 export {decideDevOpenRoute, type DevOpenDecision} from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
+// Build-owned miniapp identity is a pure host policy. Host UI uses the same
+// predicate as AppRegistry so SYSTEM actions cannot drift from enforcement.
+export {isSystemMiniappPackage} from "./services/SystemMiniappPolicy"
 export {getAppBuildInfo} from "./utils/appBuildInfo"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 export {default as glassesMicProbe, parseMicProbeParams} from "./services/GlassesMicProbe"

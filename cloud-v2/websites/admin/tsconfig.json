@@ -13,5 +13,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "build.ts", "bun-env.d.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "functions/**/*.ts",
+    "build.ts", "bun-env.d.ts"]
 }

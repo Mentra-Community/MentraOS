@@ -1,27 +1,40 @@
 /// <reference types="bun-types" />
 
 import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {invalidateDevSnapshotRequests} from "../devSnapshotRequests"
 
 const stored = new Map<string, unknown>()
 let hasSnapshot = false
 let latestVersion: string | null = null
 const installCalls: string[] = []
 let installOk = true
+let downloadWait: Promise<void> | undefined
+let activated = false
+let collected = false
 let fetchImpl: (url: string) => Promise<Response>
 
 mock.module("../../services/AppRegistry", () => ({
   default: {
     hasDevSnapshot: () => hasSnapshot,
     getLatestDevSnapshotVersion: () => latestVersion,
-    installFromUrl: async (url: string) => {
+    installFromUrl: async (url: string, opts: {beforeActivate?: () => void}) => {
       installCalls.push(url)
+      await downloadWait
+      try {
+        opts.beforeActivate?.()
+      } catch (error) {
+        return {is_ok: () => false, is_error: () => true, error}
+      }
+      activated = installOk
       return {
         is_ok: () => installOk,
         is_error: () => !installOk,
         error: installOk ? undefined : new Error("download failed"),
       }
     },
-    gcDevVersions: () => {},
+    gcDevVersions: () => {
+      collected = true
+    },
   },
   getLocalAppRunningState: () => false,
   saveLocalAppRunningState: () => {},
@@ -52,6 +65,9 @@ beforeEach(() => {
   latestVersion = null
   installCalls.length = 0
   installOk = true
+  downloadWait = undefined
+  activated = false
+  collected = false
   stored.clear()
   fetchImpl = async () => {
     throw new TypeError("Unable to resolve host")
@@ -135,4 +151,35 @@ describe("queueDevSnapshot", () => {
     await Promise.resolve()
     expect(installCalls.length).toBe(1)
   })
+})
+
+test("a delayed dev download cannot activate or collect snapshots after release selection", async () => {
+  let finish!: () => void
+  downloadWait = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  queueDevSnapshot("com.mentra.notes", DEV_URL)
+  invalidateDevSnapshotRequests("com.mentra.notes")
+  finish()
+  await new Promise((resolve) => setImmediate(resolve))
+  expect(activated).toBe(false)
+  expect(collected).toBe(false)
+  expect(installCalls).toHaveLength(1) // no obsolete sidecar retry
+  downloadWait = undefined
+  queueDevSnapshot("com.mentra.notes", DEV_URL)
+  await new Promise((resolve) => setImmediate(resolve))
+  expect(activated).toBe(true) // a newly selected dev session may cache normally
+})
+
+test("a dev probe started before release selection cannot queue a snapshot afterward", async () => {
+  let answer!: (response: Response) => void
+  fetchImpl = () =>
+    new Promise((resolve) => {
+      answer = resolve
+    })
+  const probe = decideDevOpenRoute("com.dev.example", DEV_URL)
+  invalidateDevSnapshotRequests("com.dev.example")
+  answer(liveManifest())
+  await probe
+  expect(installCalls).toEqual([])
 })

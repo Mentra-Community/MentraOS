@@ -227,6 +227,8 @@ describe('validateManifest', () => {
           {
             id: 'add_todo',
             description: 'Add an item to the user\'s todo list.',
+            lifecycle: 'transient',
+            audience: 'host',
             parameters: {
               type: 'object',
               properties: {
@@ -248,6 +250,16 @@ describe('validateManifest', () => {
       });
       expect(errors).toEqual([]);
       expect(valid).toBe(true);
+    });
+
+    test('rejects unknown action lifecycle and audience values', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'sync', description: 'Sync.', lifecycle: 'daemon', audience: 'everyone'}],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('lifecycle'))).toBe(true);
+      expect(errors.some((e) => e.includes('audience'))).toBe(true);
     });
 
     test('rejects a non-object output schema', () => {

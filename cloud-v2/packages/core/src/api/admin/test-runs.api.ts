@@ -3,7 +3,7 @@ import { TestRunError, TestRunService } from "../../services/test-run.service";
 import { testRunQuerySchema } from "../../types/test-run.types";
 import type { AppEnv } from "../../types/hono.types";
 
-/** Mounted only behind preinstalled.api's existing adminAuth gate. */
+/** Mounted only behind Core admin.api's existing adminAuth gate. */
 export function createTestRunAdminApi(service = new TestRunService()) {
   const app = new Hono<AppEnv>();
   app.onError((error, c) => {

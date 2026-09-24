@@ -72,4 +72,69 @@ describe("deployment feature policy", () => {
       }),
     ).toBe(false)
   })
+
+  test("a managed pin takes precedence over an unrestricted bundled-app allowlist", () => {
+    configure({
+      auth: {},
+      config: {
+        localMiniappPolicy: {
+          systemPackageNames: null,
+          managed: [
+            {
+              packageName: "com.mentra.call",
+              version: "2.1.31",
+              sha256: "abc",
+              deploymentId: "acme",
+              deploymentOrigin: "https://acme.example",
+            },
+          ],
+        },
+      },
+    })
+    expect(isInstalledMiniappAllowed("com.mentra.call", "2.1.31", {source: "bundled_asset"})).toBe(false)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "1.0.0", {source: "bundled_asset"})).toBe(true)
+  })
+})
+
+describe("workspace Store release visibility", () => {
+  afterEach(resetForTests)
+  const identity = {source: "system_store", storePackageName: "com.mentra.store"}
+  function configureWorkspace(approved: string[] | null, managed: boolean = false) {
+    configure({
+      auth: {},
+      config: {
+        bundledSystemMiniappPackages: ["com.mentra.notes", "com.mentra.store"],
+        bundledStoreMiniappPackages: ["com.mentra.store"],
+        bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
+        localMiniappPolicy: {
+          systemPackageNames: approved,
+          managed: managed
+            ? [
+                {
+                  packageName: "com.mentra.notes",
+                  version: "1.0.0",
+                  sha256: "abc",
+                  deploymentId: "acme",
+                  deploymentOrigin: "https://acme.example",
+                },
+              ]
+            : [],
+        },
+      },
+    })
+  }
+  test.each([null, ["com.mentra.notes"]])("keeps an approved Store-updated release visible (%j)", (approved) => {
+    configureWorkspace(approved)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(true)
+    expect(
+      isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {...identity, storePackageName: "com.other.store"}),
+    ).toBe(false)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {source: "direct_download"})).toBe(false)
+  })
+  test("does not bypass an excluded package or workspace pin", () => {
+    configureWorkspace([])
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
+    configureWorkspace(null, true)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
+  })
 })

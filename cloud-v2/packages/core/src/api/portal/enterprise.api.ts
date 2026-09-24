@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { authenticateConsoleSession } from "../console/cli-auth.api";
+import { authenticateDeveloperRequest } from "../../services/developer-auth.service";
 import {
   EnterpriseService,
   EnterpriseServiceError,
@@ -42,7 +42,7 @@ app.post("/trusted-issuers/validate", postValidateJwks);
 app.patch("/trusted-issuers/:trustedIssuerId", patchTrustedIssuer);
 
 async function getMe(c: AppContext) {
-  const auth = await authenticateConsoleSession(c);
+  const auth = await authenticateDeveloperRequest(c);
   if (!auth.authenticated) {
     return c.json({ authenticated: false, reason: auth.reason }, 401);
   }
@@ -125,7 +125,7 @@ async function requirePortalUser(c: AppContext): Promise<
   | { ok: true; user: { id: string; email: string } }
   | { ok: false; response: Response }
 > {
-  const auth = await authenticateConsoleSession(c);
+  const auth = await authenticateDeveloperRequest(c);
   if (!auth.authenticated) {
     return {
       ok: false,

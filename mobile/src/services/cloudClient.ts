@@ -13,6 +13,7 @@
  * delegating shim while construction and runtime wiring live in island.
  */
 import {cloudClientService} from "@mentra/engine-host-internal"
+import Constants from "expo-constants"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost} from "@/utils/cloudClient/devHost"
@@ -43,6 +44,8 @@ export function cloudConfigValues(): {
   privateMeetings?: boolean
   coreUrl: string | null
   runtimeUrl: string | null
+  hostVersion: string
+  supportedMiniappSdkRange: string
   audioFrameSizeBytes: number
   devServerHost: () => string | undefined
   runtimeRealtimeSession?: boolean
@@ -122,6 +125,8 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
     },
     audioFrameSizeBytes: lc3FrameSizeBytes(),
     devServerHost,
+    hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "0.0.0",
+    supportedMiniappSdkRange: "^0.3.0",
   }
 }
 
@@ -140,7 +145,6 @@ export const cloudClient = {
     // an explicit engine reconnect pin.
     cloudClientService.reconnect(null)
   },
-  getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),
   getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),
   startManagedPhoto: () => cloudClientService.startManagedPhoto(),

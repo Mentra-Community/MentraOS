@@ -15,6 +15,9 @@ import {RouteButton} from "@/components/ui/RouteButton"
 export default function SuperSettingsScreen() {
   const {goBack, push} = useNavigationStore.getState()
   const [superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
+  const [miniappStorePreviewEnabled, setMiniappStorePreviewEnabled] = useSetting(
+    SETTINGS.miniapp_store_preview_enabled.key,
+  )
   const [useNativeDashboard, setUseNativeDashboard] = useSetting(SETTINGS.use_native_dashboard.key)
   const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(
     SETTINGS.debug_navigation_history.key,
@@ -93,6 +96,14 @@ export default function SuperSettingsScreen() {
           </Group>
 
           <Group title="Miniapps">
+            {superMode && (
+              <ToggleSetting
+                label="Mentra Miniapp Store"
+                subtitle="Preview the Store and enable its automatic update checks"
+                value={miniappStorePreviewEnabled}
+                onValueChange={(value) => setMiniappStorePreviewEnabled(value)}
+              />
+            )}
             <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
           </Group>
         </View>

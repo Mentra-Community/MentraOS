@@ -10,6 +10,7 @@ async function proxyCoreRequest(req: Request, upstreamCoreUrl: string) {
   const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, upstreamCoreUrl);
   const headers = new Headers(req.headers);
   headers.delete("host");
+  headers.set("x-mentra-public-origin", sourceUrl.origin);
 
   const response = await fetch(upstreamUrl, {
     method: req.method,

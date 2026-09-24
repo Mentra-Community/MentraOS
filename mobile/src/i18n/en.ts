@@ -556,6 +556,10 @@ const en = {
   },
   home: {
     title: "MentraOS",
+    miniappUpdating: "Updating…",
+    miniappUpdatingLabel: "{{app}} is updating",
+    miniappUpdatingTitle: "Miniapp updating",
+    miniappUpdatingMessage: "This miniapp is updating. Please try again shortly.",
     pairGlasses: "Pair glasses",
     finishPairingGlasses: "Finish pairing",
     pairDifferentGlasses: "Pair different glasses",

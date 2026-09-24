@@ -6,6 +6,8 @@
  * directly instead of exposing host-facing adapter bags.
  */
 
+import {isTrustedSystemMiniappRelease} from "../services/systemMiniappTrust"
+
 export type SubjectTokenType = "supabase" | "authing" | (string & {})
 
 export interface IslandAuth {
@@ -44,6 +46,8 @@ export interface IslandConfigValues {
   localMiniappAllowlist?: readonly string[] | null
   /** Provenance-aware policy for workspace SYSTEM and managed miniapps. */
   localMiniappPolicy?: LocalMiniappPolicy
+  /** Live host availability for discovery/launch, independent of installation or Home hiding. */
+  isMiniappAvailable?: (packageName: string) => boolean
   /** Optional per-package configuration supplied by the host deployment. */
   miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
@@ -56,6 +60,18 @@ export interface IslandConfigValues {
   features?: Partial<Record<IslandFeatureName, boolean>>
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */
   oemId?: string
+  /** User-facing host version used to reject miniapps requiring a newer host. */
+  hostVersion?: string
+  /** Semver range of Mentra Miniapp SDK bundle ABIs this host can execute. */
+  supportedMiniappSdkRange?: string
+  /** Package identities backed by miniapp ZIPs shipped in this host build. */
+  bundledSystemMiniappPackages?: readonly string[]
+  /** Build-selected Store packages; each must also be a bundled SYSTEM package. */
+  bundledStoreMiniappPackages?: readonly string[]
+  /** Build-owned SYSTEM package -> bundled Store package allowed to update it. */
+  bundledSystemMiniappStoreOwners?: Readonly<Record<string, string>>
+  /** Build-pinned Ed25519 publisher fingerprint for every bundled SYSTEM package. */
+  bundledSystemMiniappPublisherKeys?: Readonly<Record<string, string>>
   /**
    * LC3 frame size (bytes) the phone's mic encoder emits — announced to the
    * cloud on connect (20 for G1, 40 for G2, …). Defaults to 20 if unset.
@@ -123,6 +139,10 @@ export interface IslandConfigureOptions {
   ui?: IslandUiSeams
 }
 
+export function isMiniappAvailable(packageName: string): boolean {
+  return options?.config?.isMiniappAvailable?.(packageName) ?? true
+}
+
 export function isLocalMiniappPackageAllowed(packageName: string): boolean {
   const policy = options?.config?.localMiniappPolicy
   if (policy) {
@@ -147,6 +167,7 @@ export function isInstalledMiniappAllowed(
   version: string | undefined,
   releaseIdentity: {
     source: string
+    storePackageName?: string
     bundleSha256?: string
     deploymentId?: string
     deploymentOrigin?: string
@@ -156,7 +177,9 @@ export function isInstalledMiniappAllowed(
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
 
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
-  if (systemApproved && releaseIdentity?.source === "bundled_asset") return true
+  const workspaceManaged = policy.managed.some((entry) => entry.packageName === packageName)
+  if (systemApproved && !workspaceManaged && releaseIdentity?.source === "bundled_asset") return true
+  if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 
   return policy.managed.some(

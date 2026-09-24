@@ -1,3 +1,4 @@
+import referenceManifest from "../../../../cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json"
 import {DeploymentResolutionError, normalizeWorkspaceOrigin, resolveDeploymentCandidate} from "./resolver"
 import {DeploymentStore, type DeploymentStorage} from "./store"
 import type {ActiveDeployment, DeploymentManifest, WorkspaceDeployment} from "./types"
@@ -582,4 +583,34 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
     )
     expect(acquireToken).not.toHaveBeenCalled()
   })
+})
+
+it("resolves the actual Enterprise reference manifest with preinstalled Call managed as userland", async () => {
+  const origin = "https://enterprisedev.mentraglass.com"
+  const fetch = jest.fn(async () =>
+    response(JSON.stringify(referenceManifest), {
+      url: `${origin}/.well-known/mentra-deployment.json`,
+    }),
+  )
+  const candidate = await resolveDeploymentCandidate(origin, {fetch})
+  expect(candidate.manifest.miniapps.managed).toEqual(referenceManifest.miniapps.managed)
+})
+
+it("does not let a workspace replace the build-selected Store", async () => {
+  const value = manifest({
+    miniapps: {
+      configuration: {},
+      managed: [
+        {
+          packageName: "com.mentra.store",
+          version: "1.0.0",
+          bundleUrl: `${WORKSPACE}/miniapps/store.zip`,
+          sha256: "a".repeat(64),
+        },
+      ],
+    },
+  })
+  await expect(
+    resolveDeploymentCandidate(WORKSPACE, {fetch: async () => response(JSON.stringify(value))}),
+  ).rejects.toMatchObject({code: "invalid-manifest"})
 })
