@@ -155,3 +155,13 @@ test("workflow keeps pending routine updates and persists state before chat.upda
   assert.ok(workflow.indexOf("Retain desired message before updating Slack") < workflow.indexOf("name: Update original Slack message"))
   assert.doesNotMatch(workflow, /chat\.postMessage/)
 })
+test("PR and dev workflow-only or notification-script edits run the routine checks", () => {
+  const workflow = readFileSync(new URL("../workflows/e2e-setup-checks.yml", import.meta.url), "utf8")
+  for (const event of ["pull_request", "push"]) {
+    const section = workflow.match(new RegExp(`^  ${event}:\\n((?:    .*\\n|\\n)+)`, "m"))?.[1]
+    assert.ok(section, `${event} trigger is configured`)
+    for (const path of [".github/workflows/notify-release-routine.yml", ".github/scripts/release-slack-message*", ".github/scripts/release-routine-slack*"]) {
+      assert.ok(section.includes(`- "${path}"`), `${event} includes ${path}`)
+    }
+  }
+})
