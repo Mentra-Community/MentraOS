@@ -110,6 +110,23 @@ export function markPendingSelection(model: string): AsyncResult<void, Error> {
   return result
 }
 
+/** Retire an explicitly cancelled selection after native attempt cleanup. */
+export async function clearPendingSelection(model: string): Promise<void> {
+  // Cleanup awaits native I/O. A later selection or completed promotion must
+  // survive cancellation of the earlier attempt.
+  const identity = projectPairingIdentity()
+  if (identity.kind !== "pending" || identity.model !== model) return
+  const result = await useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, "")
+  if (result.is_error()) {
+    // setSetting updates memory optimistically. Keep the retry affordance if
+    // persistence failed, without overwriting a selection/promotion since then.
+    if (projectPairingIdentity().kind !== "paired" && !readIdentityString(SETTINGS.pending_wearable.key)) {
+      await markPendingSelection(model)
+    }
+    throw result.error
+  }
+}
+
 /**
  * Promotion retires the selection: when the native layer promotes the default
  * wearable at pairing success and its save_setting echo lands, the pending

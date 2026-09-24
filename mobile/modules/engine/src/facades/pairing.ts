@@ -23,6 +23,7 @@ import {useGlassesStore} from "../stores/glasses"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
 import {
+  clearPendingSelection,
   markPendingSelection,
   projectPairingIdentity,
   subscribePairingIdentity,
@@ -369,11 +370,17 @@ export const pairing = {
    * - No default device (genuinely unpaired attempt): also forget, clearing
    *   the partial native pairing state.
    * The read fails OPEN to "preserve" — a transient failure must never wipe a
-   * real pairing. The `pending_wearable` marker is deliberately left alone —
-   * the host renders it as a finish-pairing affordance.
+   * real pairing. The `pending_wearable` marker is left for "finish pairing"
+   * unless the user explicitly cancels the unfinished selection.
    */
-  abandonAttempt: async (): Promise<void> => {
-    const nativeHasDefault = await hasDefaultDevice().catch(() => true)
+  abandonAttempt: async (options?: {clearPendingSelection?: boolean}): Promise<void> => {
+    const selection = projectPairingIdentity()
+    const nativeHasDefault = await hasDefaultDevice().catch((error) => {
+      // Explicit cancellation must show its retry affordance when cleanup
+      // cannot establish ownership; ordinary back-out still preserves pairing.
+      if (options?.clearPendingSelection) throw error
+      return true
+    })
     if (nativeHasDefault && isGlassesConnected(useGlassesStore.getState().connection)) {
       // Still connected means no connect attempt is in flight (an attempt drops
       // the existing link first): the user browsed the scan and backed out.
@@ -405,6 +412,9 @@ export const pairing = {
     // IBRT ACL up so glasses never re-advertise for the next scan.
     console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
     await BluetoothSdk.forget()
+    if (options?.clearPendingSelection && selection.kind === "pending") {
+      await clearPendingSelection(selection.model)
+    }
   },
 
   /** Subscribe to pairing failures; returns an unsubscribe. */
