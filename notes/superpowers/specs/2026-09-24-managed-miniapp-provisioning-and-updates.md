@@ -182,6 +182,12 @@ another filesystem installer or weaker replacement rules.
    After commit, a miniapp launch error is reported as a launch error; it does not
    silently revert to an older release.
 
+Unsigned status does not authenticate a publisher. Automatic delivery requires
+authorized release provenance and a verified artifact digest; an explicit QR/manual
+install instead uses the artifact the user chose. A user-installed unsigned build
+with a higher version can therefore block a managed release until an eligible
+version is published. Required assignment status does not bypass this rule.
+
 An exact assignment pinned below an already installed version is **blocked by a
 newer installed version**. Report the actual version instead of claiming that the
 pin was applied. Rollback requires publishing a corrective higher version; normal
@@ -252,10 +258,13 @@ Stop a running private miniapp on explicit authorization loss; this is access
 revocation, not an update interrupting a session. Backend APIs enforce their own
 current authorization regardless of what the phone has observed.
 
-The distribution backend issues a verifiable private-execution access lease only
-after validating Core membership and package access. It is bound to the account,
-organization, workspace, package, and authorization revision, with a **24-hour
-maximum lifetime** from its last successful renewal. This authorization credential
+Private execution uses a verifiable access lease from the package's configured
+authority. For centrally distributed private packages, the distribution backend
+issues it after validating Core membership and package access. For authenticated
+deployment-local packages, the deployment's Core issues it under the manifest
+authorization rules below. A lease binds the issuer, execution audience, account,
+organization, package, authorization revision, and workspace when the access grant
+is workspace-scoped. Its **maximum lifetime is 24 hours** from successful renewal. This authorization credential
 is separate from bundle signing; bundles can remain unsigned. Renew during normal
 reconciliation; explicit denial revokes local access immediately. Offline use is allowed until expiry, then
 private launch is blocked and running private code is stopped until authorization
@@ -264,7 +273,7 @@ cannot extend a lease. If validity cannot be established after restart, renew
 before running. This is a deliberate offline/revocation tradeoff, not a claim that
 an offline phone can receive immediate remote revocation.
 
-Download/commit needs current online authorization; an offline cached desired-state
+Download/commit needs current online authorization from the relevant authority; an offline cached desired-state
 snapshot alone cannot initiate a new private installation. Public/bundled code
 already installed remains available offline. Public assignment removal likewise
 cannot be learned while offline; reconcile after contact returns. Removal/expiry
@@ -293,11 +302,45 @@ the same version, identity, running-state, origin, and integrity rules. Manifest
 pins cannot downgrade an existing installation. Organization-required packages
 cannot be removed by a workspace administrator withdrawing an assignment.
 
-An isolated deployment can supply authenticated or deployment-local artifacts
-without depending on the central distribution service. Lack of that service does
-not disable local Fleet, configured manifest installs, or bundled availability.
-Organization-level manifest administration follows the MFM spec; workspace
-assignment changes cannot rewrite Core URLs or deployment trust settings.
+### Authorization for deployment-local packages
+
+An isolated deployment can supply authenticated local artifacts without depending
+on the central distribution service. Its configured Core is the access authority
+for those manifest-declared packages. A manifest identifies each artifact's trusted
+source and authorization mode: public/offline baseline, or authenticated deployment
+access. A client cannot relabel a centrally distributed private release as a local
+artifact to bypass its publisher's grant or lease requirements.
+
+For authenticated deployment access, Core checks the current account's access to
+that deployment and the active manifest revision. An organization-required package
+is available to authenticated users authorized for that deployment, including users
+with **no workspace**. Its lease has no workspace binding; it uses the deployment
+and manifest authorization revision. A local package restricted by a workspace
+assignment also requires that workspace's current membership/access and includes
+its workspace binding. Neither a matching serial nor a cached manifest grants
+private execution access on its own.
+
+Core issues the execution lease and authorizes artifact delivery/installation using
+the same bounded lease and commit rules as centrally distributed private packages.
+The phone verifies Core against its trusted deployment configuration and verifies
+the lease's issuer, audience, subject, package, scope, revision, and expiry. Only
+the configured distribution authority can issue leases for central private releases;
+a local Core lease is accepted solely for its configured local-artifact scope.
+This Core capability authorizes access; it is not a separate publication catalog.
+
+A deployment may be disconnected from the public internet while its Core and local
+artifact server remain reachable: login, renewal, installation, and updates then
+operate entirely locally. If the phone also loses contact with its Core, an existing
+private execution lease remains usable only until its 24-hour expiry. Loss of
+account/deployment access, or removal of the package from the active manifest,
+prevents renewal and revokes access when the phone learns of it. Workspace changes
+alone do not revoke an organization-wide manifest grant. Public/offline baseline
+packages remain available without a private-execution lease.
+
+Lack of the central distribution service does not disable local Fleet, authorized
+manifest installs, or bundled availability. Organization-level manifest
+administration follows the MFM spec; workspace assignment changes cannot rewrite
+Core URLs or deployment trust settings.
 
 ## Reporting and validation
 
@@ -337,8 +380,10 @@ Implementation acceptance requires:
    reconnection, active miniapps, and termination/recovery. There is no dependence
    on catalog navigation or a UI enablement toggle.
 10. Shared-cloud provisioning and an isolated deployment with manifest artifacts
-    both work through the common installation path, with visible conflict/status
-    reporting and no unauthorized cross-workspace data reuse.
+    both work through the common installation path, including authenticated local
+    packages for users without workspaces. Verify local Core lease issuance/renewal,
+    expiry and revocation, rejection of a local lease for a central private release,
+    visible conflict/status reporting, and no unauthorized cross-workspace data reuse.
 
 These criteria belong in implementation tests and device evidence. This spec does
 not itself enable publication, deployment, or automatic installation.

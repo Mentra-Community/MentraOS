@@ -318,7 +318,11 @@ support-profile and PostHog paths keep their own schemas and behavior; Fleet doe
 not replay through them, duplicate their events, export raw serials, or backfill
 precise history from ambiguous support records. Separately hosted Core receives
 local Fleet data with external Mentra analytics disabled and Mentra endpoints
-blocked. Ordinary Fleet operation must not require distribution-service access.
+blocked. Ordinary Fleet operation must not require distribution-service access. For
+authenticated deployment-local miniapps, this Core also authorizes artifact access
+and issues execution leases under the companion spec's manifest rules, including
+for deployment-authorized users without a workspace. Central private releases
+remain under the distribution backend's access authority.
 
 ## MFM administration and API surface
 
