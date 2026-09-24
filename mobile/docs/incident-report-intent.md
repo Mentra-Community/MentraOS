@@ -41,7 +41,9 @@ INCIDENT_REPORT_RESULT {"alert_id":"request-unique-id","test_run_id":"routine-ru
 ```
 
 `status` is `filed`, `skipped` with `reason`, or `failed` with `error`.
-`report_id` and `incident_id` are the same value. Android's “Broadcast completed”
+`report_id` and `incident_id` are the same value. `filed` confirms the report was
+created; phone and glasses log uploads are best effort, so this receipt alone
+does not prove every artifact was uploaded. Android's “Broadcast completed”
 only acknowledges delivery; it does not prove that a report was submitted.
 The existing automatic-report throttle applies to duplicate request IDs; distinct
 alert IDs use distinct keys. Send once per failure and bound how long the caller
