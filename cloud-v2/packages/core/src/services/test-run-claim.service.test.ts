@@ -5,7 +5,7 @@ import { createTestRunClaimApi } from "../api/internal/test-run-claims.api";
 import { createTestRunIngestApi } from "../api/internal/test-runs.api";
 import { adminAuth } from "../api/middleware/admin-auth.middleware";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
-import type { TestRunClaimRequest, TestRunClaimResponse, TestRunClaimSettlement } from "../types/test-run-claim.types";
+import type { TestRunClaimRequest, TestRunClaimResponse, TestRunClaimSettlement, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
 import {
   MongoTestRunClaimRepository, TestRunClaimService,
   type StoredTestRunClaim, type TestRunClaimRepository,
@@ -26,6 +26,14 @@ class MemoryRepository implements TestRunClaimRepository {
       current.claim = { ...current.claim, state: settlement.state, settlement, settledAt };
     }
     return structuredClone(current);
+  }
+  async progress(id: string, token: string, value: TestRunProgressCheckpoint) {
+    const current = this.claims.get(id)!;
+    const updated = current.executionTokenSha256 === token && current.claim.state !== "terminal"
+      && !(current.claim.state === "recovery-required" && value.mode === "running")
+      && (!current.progress || current.progress.sequence < value.sequence);
+    if (updated) current.progress = structuredClone(value);
+    return { stored: structuredClone(current), updated };
   }
 }
 const TOKEN = "claim-capability-" + "a".repeat(32);
@@ -55,6 +63,66 @@ const send = (method: string, path: string, body?: unknown, token = TOKEN) => ap
 const settle = (settlement: TestRunClaimSettlement, token = fixture().executionToken) =>
   send("PUT", "/request-1/state", { executionToken: token, settlement });
 const body = async (response: Response) => await response.json() as TestRunClaimResponse;
+
+describe("display-only progress checkpoints", () => {
+  const progress = (sequence = 1) => ({ executionToken: fixture().executionToken, sequence, mode: "running", phase: "test",
+    step: { id: "walkthrough", label: "Walk through settings" }, completedSteps: 0, totalSteps: 1,
+    action: { id: "open-settings", label: "Open Settings", completedActions: 2, totalActions: null } });
+  const update = (value: unknown, token = TOKEN) => send("PUT", "/request-1/progress", value, token);
+  test("requires both capabilities and a pre-existing owner; never grants execution", async () => {
+    expect((await update(progress(), "wrong")).status).toBe(401);
+    expect((await update(progress())).status).toBe(404);
+    await send("POST", "/", fixture());
+    expect((await update({ ...progress(), executionToken: "c".repeat(64) })).status).toBe(403);
+    const response = await update(progress());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accepted: true, sequence: 1 });
+    const read = await body(await send("GET", "/request-1"));
+    expect(read.executionGranted).toBe(false);
+    expect(read.claim).not.toHaveProperty("progress");
+    expect(JSON.stringify(read)).not.toContain(fixture().executionToken);
+  });
+  test("newer journal sequence wins; duplicate/older packets cannot refresh the server timestamp", async () => {
+    await send("POST", "/", fixture());
+    const first = await (await update(progress(5))).json() as { accepted: boolean; sequence: number; receivedAt: string };
+    const duplicate = await (await update(progress(5))).json();
+    expect(duplicate).toEqual({ ...first, accepted: false });
+    const old = await (await update(progress(2))).json();
+    expect(old).toEqual(duplicate);
+    expect((await update({ ...progress(5), phase: "teardown" })).status).toBe(409);
+    expect((await update(progress(6))).status).toBe(200);
+    expect(repository.claims.get("request-1")?.progress?.sequence).toBe(6);
+  });
+  test("concurrent equal sequence is idempotent and only one update is accepted", async () => {
+    await send("POST", "/", fixture());
+    const replies = await Promise.all([update(progress()), update(progress())]);
+    const values = await Promise.all(replies.map(async value => await value.json() as { accepted: boolean }));
+    expect(values.filter(value => value.accepted)).toHaveLength(1);
+    expect(repository.claims.get("request-1")?.claim.state).toBe("claimed");
+  });
+  test("recovery can report through its original owner but progress never changes settlement", async () => {
+    await send("POST", "/", fixture());
+    await update(progress());
+    await settle({ state: "recovery-required", reason: "fixture requires recovery" });
+    expect((await update(progress(2))).status).toBe(409);
+    expect((await update({ ...progress(2), mode: "recovering", phase: "teardown" })).status).toBe(200);
+    expect((await update({ ...progress(3), mode: "complete", phase: "evidence" })).status).toBe(200);
+    expect(repository.claims.get("request-1")?.claim.state).toBe("recovery-required");
+    expect(repository.claims.get("request-1")?.claim.settlement).toEqual({ state: "recovery-required", reason: "fixture requires recovery" });
+  });
+  test("terminal settlement refuses newer progress, and rejects unknown fields or invalid counts", async () => {
+    await send("POST", "/", fixture());
+    for (const value of [{ ...progress(), log: "private" }, { ...progress(), observedAt: "2020-01-01" },
+      { ...progress(), completedSteps: 2 }, { ...progress(), sequence: 0 }, { ...progress(), phase: "arbitrary" },
+      { ...progress(), step: { id: "/tmp/private", label: "invalid" } },
+      { ...progress(), action: { id: "action", label: "Action", completedActions: 2, totalActions: 1 } }])
+      expect((await update(value)).status).toBe(400);
+    await update(progress());
+    await settle({ state: "terminal", resultRunId: "result-1" });
+    expect((await update({ ...progress(2), mode: "complete" })).status).toBe(409);
+    expect((await update(progress())).status).toBe(200);
+  });
+});
 
 describe("claim capability and execution ownership", () => {
   test("the internal route mount preserves the grant/status contract", async () => {

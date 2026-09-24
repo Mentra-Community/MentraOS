@@ -5,6 +5,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { api } from "../lib/api";
 import { TestDispatchPanel } from "./test-dispatches";
+import { TestRunOverviewPanel } from "./test-run-overview";
 import { readRecordingTimeline, TestRunRecordings } from "./test-run-recordings";
 import { readTestRunLink, testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
 import {
@@ -61,6 +62,7 @@ export function TestRunsPage({
   const additionalFilters = !!(filters.outcome || filters.fixtureAlias || filters.startedAfter || filters.startedBefore);
   return (
     <section className={PANEL}>
+      <TestRunOverviewPanel onResult={runID => onSelect({ runID })} />
       <TestDispatchPanel onResult={runID => onSelect({ runID })} />
       <div className="border-b border-[#eceeeb] p-5">
         <div className="flex items-start justify-between gap-4">
