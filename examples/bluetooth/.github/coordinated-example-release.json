@@ -1,21 +1,21 @@
 {
   "channel": "dev",
-  "correlationId": "mentraos-35968697841",
-  "expectedStarterKitHead": "09c005e70f95e2ed95f997ed980495fd7673b62e",
+  "correlationId": "mentraos-35973983613",
+  "expectedStarterKitHead": "24e8e2adeef77d7e3b9e5fbfee498a3702219c36",
   "familyBaseVersion": "3.3.0",
   "mentraos": {
-    "coordinatorRunUrl": "https://github.com/Mentra-Community/MentraOS/actions/runs/35968697841",
-    "sourceCommit": "d018a33abc0b7e75a3ee413202b5458c3e2ba03e"
+    "coordinatorRunUrl": "https://github.com/Mentra-Community/MentraOS/actions/runs/35973983613",
+    "sourceCommit": "920b5f84d4d3639848dcd8b610361ac41014e2cd"
   },
   "ota": {
-    "manifestSha256": "e9317f5a477010ac2b359231c8dde46f54f5144ecd79405ca14a5903d25879b7",
-    "manifestUrl": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentra-live-ota-3.3.0-dev.345.json"
+    "manifestSha256": "bf850405219042317e5db1a33a88b252ec5e00136aeb7fe3bbdf3550f9dd40e4",
+    "manifestUrl": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentra-live-ota-3.3.0-dev.346.json"
   },
   "packages": {
-    "@mentra/bluetooth-sdk": "3.3.0-dev.345",
-    "@mentra/engine": "3.3.0-dev.345"
+    "@mentra/bluetooth-sdk": "3.3.0-dev.346",
+    "@mentra/engine": "3.3.0-dev.346"
   },
-  "releaseIdentity": "3.3.0-dev.345",
-  "releaseSetId": "mentra-3.3.0-dev.345",
+  "releaseIdentity": "3.3.0-dev.346",
+  "releaseSetId": "mentra-3.3.0-dev.346",
   "schemaVersion": 1
 }
