@@ -1685,6 +1685,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     private void reconcileBesOtaVersionProof(String actualVersion) {
+        // This callback runs only for the current UART session. Phone clock sync must
+        // not change the freshness of a hardware reply, including time spent reading state.
+        long receivedAtElapsedMs = SystemClock.elapsedRealtime();
         String canonicalActualVersion = BesOtaStateStore.canonicalVersion(actualVersion);
         String diagnosticActualVersion =
                 canonicalActualVersion == null ? "invalid" : canonicalActualVersion;
@@ -1707,6 +1710,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + diagnosticActualVersion
                         + " current_boot="
                         + currentBootId
+                        + " elapsed_realtime_ms="
+                        + receivedAtElapsedMs
                         + " disposition="
                         + (skipReason == null ? "candidate" : "ignored")
                         + (skipReason == null ? "" : " reason=" + skipReason)
