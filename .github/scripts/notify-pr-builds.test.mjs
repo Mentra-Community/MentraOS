@@ -746,4 +746,16 @@ test("a last-callback Android receipt miss publishes all downloads and later enr
   available = true
   await notifyPrBuilds(h.args)
   assert.equal(reads, 6); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+  h.state.missingMac = true
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 3); assert.match(h.posts[2].text, /incomplete/)
+  assert.ok(h.written[2].body.includes(digest))
+  h.state.missingMac = false
+  available = false
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 4); assert.doesNotMatch(h.posts[3].text, /incomplete/)
+  assert.ok(h.written[3].body.includes(digest)); assert.ok(h.written[3].body.includes("Download Mac app"))
+  assert.ok(!h.written[3].body.includes("Android receipt unavailable"))
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 4); assert.equal(h.written.length, 4)
 })
