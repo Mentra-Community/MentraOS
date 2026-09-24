@@ -338,15 +338,22 @@ public class OtaHelper {
      * @return true when a durable projection exists, even if the phone is currently disconnected
      */
     public boolean sendAuthoritativeBesStatusToPhone() {
-        JSONObject status = getAuthoritativeBesStatus();
+        JSONObject status;
+        OtaSessionManager currentSession = sessionManager;
+        if (currentSession == null) {
+            status = getAuthoritativeBesStatus();
+        } else {
+            // Keep the native read and session transition together. New phone admission retires
+            // the old native record before creating its session; it must not reuse this session
+            // between reading the old result and settling it. Phone delivery stays outside.
+            synchronized (currentSession) {
+                status = getAuthoritativeBesStatus();
+                currentSession.reconcileBesTerminalStatus(status);
+            }
+        }
         if (status == null) {
             Log.i(TAG, "BES_OTA_DIAG phone_projection=absent");
             return false;
-        }
-        // Reconcile before checking phone connectivity: native completion may arrive while BLE
-        // is disconnected, or may only be replayed from the durable store after ASG restarts.
-        if (sessionManager != null) {
-            sessionManager.reconcileBesTerminalStatus(status);
         }
         boolean connected = phoneConnectionProvider != null && isPhoneConnected();
         Log.i(
