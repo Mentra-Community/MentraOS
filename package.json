@@ -1,6 +1,6 @@
 {
   "name": "@mentra/release-family",
-  "version": "3.3.0",
+  "version": "3.2.1",
   "private": true,
   "workspaces": [
     "cloud-v2/packages/*",

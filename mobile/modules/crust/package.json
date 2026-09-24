@@ -1,6 +1,6 @@
 {
   "name": "@mentra/crust",
-  "version": "3.3.0",
+  "version": "3.2.1",
   "description": "Mentra Native Module",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -35,7 +35,7 @@
   "license": "Apache-2.0",
   "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/crust#readme",
   "dependencies": {
-    "@mentra/jspolyfill": "3.3.0"
+    "@mentra/jspolyfill": "3.2.1"
   },
   "devDependencies": {
     "@expo/config-plugins": ">=8.0.0",

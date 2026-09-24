@@ -1,6 +1,6 @@
 {
   "name": "@mentra/frame-preview",
-  "version": "3.3.0",
+  "version": "3.2.1",
   "description": "Raw decoded-frame preview transport into the miniapp WebView",
   "main": "src/index.ts",
   "react-native": "src/index.ts",
@@ -15,7 +15,7 @@
   "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/frame-preview#readme",
   "private": true,
   "dependencies": {
-    "@mentra/glasses-media": "3.3.0"
+    "@mentra/glasses-media": "3.2.1"
   },
   "peerDependencies": {
     "expo": "*",

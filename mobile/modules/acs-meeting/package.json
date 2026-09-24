@@ -1,6 +1,6 @@
 {
   "name": "@mentra/acs-meeting",
-  "version": "3.3.0",
+  "version": "3.2.1",
   "description": "MentraOS native ACS Teams meeting module (WHEP decode \u2192 ACS raw media)",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@expo/config-plugins": "~55.0.10",
-    "@mentra/glasses-media": "3.3.0"
+    "@mentra/glasses-media": "3.2.1"
   },
   "devDependencies": {
     "expo-module-scripts": "^55.0.2",
