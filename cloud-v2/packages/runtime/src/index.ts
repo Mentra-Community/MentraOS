@@ -64,6 +64,7 @@ import {
   parseDeploymentManifest,
 } from "./services/deployment-manifest";
 import { loadDeploymentMiniappBundles } from "./services/deployment-miniapps";
+import { parseWorkspaceAliases } from "./services/deployment-workspace-aliases";
 
 const logger = createLogger("runtime");
 
@@ -212,6 +213,8 @@ export interface StartRuntimeOptions {
   services?: ReadonlySet<RuntimeServiceName>;
   /** Exact JSON served at /.well-known/mentra-deployment.json. */
   deploymentManifest?: string;
+  /** Existing HTTPS workspace origins retained during hostname migrations. */
+  deploymentWorkspaceAliases?: string[];
   /** Optional customer-owned HTML served by this Runtime for manifest legal links. */
   legalDocuments?: {
     privacy?: string;
@@ -363,6 +366,7 @@ export async function startRuntime(
     readinessChecks: realtimeAudio ? [redisReadinessCheck] : [],
     services,
     deploymentManifest,
+    deploymentWorkspaceAliases: opts.deploymentWorkspaceAliases ?? parseWorkspaceAliases(process.env.DEPLOYMENT_WORKSPACE_ALIASES),
     legalDocuments,
     deploymentBranding,
     deploymentMiniappBundles,

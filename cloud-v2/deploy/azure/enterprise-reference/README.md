@@ -33,8 +33,8 @@ Feedback also opens the same form.
 
 The demo workspace is branded **Acme Industries**. The original
 `https://enterprisedev.mentraglass.com` remains an HTTPS alias for existing
-installs. Both addresses serve the same deployment; the manifest advertises the
-Acme address. The deployment ID, Core origin, Entra tenant, and existing sessions
+installs. Both addresses serve the same deployment, with discovery URLs matching
+the address used to enroll. The deployment ID, Core origin, Entra tenant, and existing sessions
 are preserved. `acmeworkspace.com` is also verified as an Entra sign-in domain;
 demo employee accounts still require their own assignment and Teams license.
 
@@ -150,9 +150,14 @@ in place. To keep existing clients working, include the old binding in
 
 Additional certificates must already exist in the same Container Apps
 environment. Preserve their DNS records, and serve the old hostname directly
-rather than redirecting API requests. Update manifest-owned asset URLs to the
-new origin without changing bundle versions or hashes. These settings are also
-accepted by `scripts/deploy.sh`.
+rather than redirecting API requests. Bicep also configures Runtime's
+`DEPLOYMENT_WORKSPACE_ALIASES` as a JSON array of the retained HTTPS origins.
+For those explicit hosts, Runtime serves a discovery manifest with Runtime,
+branding, and managed-bundle URLs on the requesting origin. Core, Entra identity,
+miniapp configuration, bundle versions and hashes remain unchanged. Arbitrary
+hosts and forwarded-host headers cannot introduce another manifest origin.
+These settings are also accepted by `scripts/deploy.sh`. Upgrade Runtime to a
+version supporting the alias setting before changing the canonical manifest.
 
 This procedure supports subdomains only (for example `mentra.acme.example`).
 An apex domain cannot carry a CNAME; Azure requires an A record to the

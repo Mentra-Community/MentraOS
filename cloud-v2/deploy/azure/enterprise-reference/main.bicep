@@ -339,6 +339,7 @@ var additionalWorkspaceBindings = [for domain in additionalWorkspaceDomains: {
   bindingType: 'SniEnabled'
   certificateId: resourceId('Microsoft.App/managedEnvironments/managedCertificates', environmentName, domain.certificateName)
 }]
+var workspaceAliasOrigins = [for domain in additionalWorkspaceDomains: 'https://${domain.hostname}']
 
 resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   name: runtimeName
@@ -392,6 +393,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'DEPLOYMENT_MANIFEST_JSON'
               value: string(deploymentManifest)
             }
+            { name: 'DEPLOYMENT_WORKSPACE_ALIASES', value: string(workspaceAliasOrigins) }
             { name: 'DEPLOYMENT_PRIVACY_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/privacy.html' }
             { name: 'DEPLOYMENT_TERMS_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/terms.html' }
             {
