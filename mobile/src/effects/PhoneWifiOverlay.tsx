@@ -56,7 +56,7 @@ export function PhoneWifiOverlay() {
             className="items-center gap-3 rounded-2xl px-8 py-7"
             style={{backgroundColor: theme.colors.primary_foreground}}>
             <Animated.View style={{transform: [{scale: iconScale}]}}>
-              <Icon name="wifi" size={36} color={theme.colors.palette.mediumBlue} />
+              <Icon name="wifi" size={36} color={theme.colors.primary} />
             </Animated.View>
             <Animated.Text style={{color: theme.colors.text, fontSize: 18, fontWeight: "600"}}>
               {request.title}
@@ -70,7 +70,7 @@ export function PhoneWifiOverlay() {
               request.tone === "still-off" ? (
                 <Icon name="wifi-off" size={28} color={theme.colors.textDim} />
               ) : (
-                <Icon name="wifi" size={28} color={theme.colors.palette.mediumBlue} />
+                <Icon name="wifi" size={28} color={theme.colors.primary} />
               )
             }
             leftButtonText={translate("common:cancel")}
