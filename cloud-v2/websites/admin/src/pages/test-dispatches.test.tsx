@@ -7,6 +7,8 @@ test("inventory distinguishes PR and release selectors and rejects unsafe input"
   expect(testBuildInventoryPath("pr", "4148")).toBe("/api/admin/test-builds?channel=pr&pr=4148");
   expect(testBuildInventoryPath("staging", "ignored")).toBe("/api/admin/test-builds?channel=staging");
   expect(testBuildInventoryPath("dev", "")).toBe("/api/admin/test-builds?channel=dev");
+  expect(testBuildInventoryPath("pr", "4148", "no-glasses-android")).toBe("/api/admin/test-builds?channel=pr&pr=4148&routineId=no-glasses-android");
+  expect(testBuildInventoryPath("staging", "", "no-glasses-android")).toBe("/api/admin/test-builds?channel=staging&routineId=no-glasses-android");
   for (const value of ["-1", "0", "1&ref=main", "9999999999999999999999"])
     expect(() => testBuildInventoryPath("pr", value)).toThrow("positive PR");
   expect(() => testBuildInventoryPath("main", "")).toThrow("channel");
