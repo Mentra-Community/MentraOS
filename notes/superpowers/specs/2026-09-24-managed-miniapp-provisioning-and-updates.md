@@ -138,7 +138,7 @@ sequenceDiagram
     Core-->>App: Membership and assignment revisions
     App->>Dist: Resolve eligible release with scoped authorization
     Dist-->>App: Immutable release descriptor and bounded download access
-    App->>App: Wait until idle; validate; install through shared transaction
+    App->>App: Wait until idle, validate, and install through shared transaction
     App->>Core: Report actual inventory and reconciliation outcome
 ```
 
