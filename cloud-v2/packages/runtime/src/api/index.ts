@@ -23,12 +23,14 @@ import { ttsApi } from "./tts.api";
 import { meetingsApi } from "./meetings.api";
 import type { RuntimeServiceName } from "../services/runtime-services";
 import { serviceList } from "../services/runtime-services";
+import { createWorkspaceManifestAliases } from "../services/deployment-workspace-aliases";
 
 export interface CreateApiAppOptions {
   /** Readiness probes surfaced at the health app's `/readyz`. */
   readinessChecks: ReadinessCheck[];
   services?: ReadonlySet<RuntimeServiceName>;
   deploymentManifest?: string;
+  deploymentWorkspaceAliases?: string[];
   legalDocuments?: {
     privacy?: string;
     terms?: string;
@@ -72,8 +74,9 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
 
   if (opts.deploymentManifest) {
     const deploymentManifest = opts.deploymentManifest;
+    const aliases = createWorkspaceManifestAliases(deploymentManifest, opts.deploymentWorkspaceAliases ?? []);
     app.get("/.well-known/mentra-deployment.json", (c) =>
-      c.body(deploymentManifest, 200, {
+      c.body(aliases.get(new URL(c.req.url).host) ?? deploymentManifest, 200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       }),

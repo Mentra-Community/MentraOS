@@ -31,6 +31,12 @@ param reportStorageAccountName string = 'mentra${uniqueString(subscription().id,
 @description('Optional canonical workspace hostname. DNS must point directly to the Container App before enabling it.')
 param workspaceHostname string = ''
 
+@description('Managed certificate resource name for the canonical hostname. Use a new name when changing hostnames so the previous certificate can remain bound.')
+param workspaceCertificateName string = '${runtimeName}-workspace'
+
+@description('Existing hostname bindings to retain during a migration. Each entry has hostname and certificateName; the managed certificate must already exist in this Container Apps environment.')
+param additionalWorkspaceDomains array = []
+
 @description('Create the AcrPull assignment. Set false for CI after an administrator has bootstrapped it.')
 param manageAcrPullRoleAssignment bool = true
 
@@ -145,7 +151,7 @@ resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
 
 resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (!empty(workspaceHostname)) {
   parent: environment
-  name: '${runtimeName}-workspace'
+  name: workspaceCertificateName
   location: location
   properties: {
     subjectName: workspaceHostname
@@ -328,6 +334,13 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
   dependsOn: [registryPull]
 }
 
+var additionalWorkspaceBindings = [for domain in additionalWorkspaceDomains: {
+  name: domain.hostname
+  bindingType: 'SniEnabled'
+  certificateId: resourceId('Microsoft.App/managedEnvironments/managedCertificates', environmentName, domain.certificateName)
+}]
+var workspaceAliasOrigins = [for domain in additionalWorkspaceDomains: 'https://${domain.hostname}']
+
 resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   name: runtimeName
   location: location
@@ -344,7 +357,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 3001
         transport: 'auto'
         allowInsecure: false
-        customDomains: empty(workspaceHostname)
+        customDomains: concat(empty(workspaceHostname)
           ? []
           : [
               {
@@ -352,7 +365,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
                 bindingType: 'SniEnabled'
                 certificateId: workspaceCertificate.id
               }
-            ]
+            ], additionalWorkspaceBindings)
       }
       registries: [
         {
@@ -380,6 +393,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'DEPLOYMENT_MANIFEST_JSON'
               value: string(deploymentManifest)
             }
+            { name: 'DEPLOYMENT_WORKSPACE_ALIASES', value: string(workspaceAliasOrigins) }
             { name: 'DEPLOYMENT_PRIVACY_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/privacy.html' }
             { name: 'DEPLOYMENT_TERMS_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/terms.html' }
             {
