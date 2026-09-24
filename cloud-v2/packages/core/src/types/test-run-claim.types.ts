@@ -37,13 +37,13 @@ const progressFields = z.object({
   mode: z.enum(["running", "recovering", "complete"]),
   phase: z.enum(["preflight", "setup", "test", "final-assertions", "teardown", "return-verification", "evidence"]),
   step: z.object({
-    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/),
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/),
     label: z.string().trim().min(1).max(240).regex(/^[^\x00-\x1f\x7f]+$/),
   }).strict().nullable(),
   completedSteps: z.number().int().min(0).max(10_000),
   totalSteps: z.number().int().min(0).max(10_000),
   action: z.object({
-    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/),
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/),
     label: z.string().trim().min(1).max(240).regex(/^[^\x00-\x1f\x7f]+$/),
     completedActions: z.number().int().min(0).max(10_000),
     totalActions: z.number().int().min(0).max(10_000).nullable(),

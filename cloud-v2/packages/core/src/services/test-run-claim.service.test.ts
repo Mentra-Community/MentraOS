@@ -82,6 +82,12 @@ describe("display-only progress checkpoints", () => {
     expect(read.claim).not.toHaveProperty("progress");
     expect(JSON.stringify(read)).not.toContain(fixture().executionToken);
   });
+  test("accepts the publisher's colon-bearing semantic step and action IDs", async () => {
+    await send("POST", "/", fixture());
+    expect((await update({ ...progress(), step: { id: "phase:walkthrough", label: "Walk through app" },
+      action: { id: "android:settings", label: "Open Settings", completedActions: 0, totalActions: null } })).status).toBe(200);
+    expect(repository.claims.get("request-1")?.progress?.action?.id).toBe("android:settings");
+  });
   test("newer journal sequence wins; duplicate/older packets cannot refresh the server timestamp", async () => {
     await send("POST", "/", fixture());
     const first = await (await update(progress(5))).json() as { accepted: boolean; sequence: number; receivedAt: string };
