@@ -122,3 +122,40 @@ test("Internal App Sharing publications carry the Play download link for the exa
   assert.equal(dryRun.publications.mentraos["google-play"].url, "https://play.google.com/console/")
   assert.equal(dryRun.publications.mentraos["google-play"].playArtifact, undefined)
 })
+
+test("the Android record carries the version code it was built with, never below the family number", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "coordinated-mobile-records-code-"))
+  const apk = path.join(root, "app.apk")
+  const aab = path.join(root, "app.aab")
+  const ipa = path.join(root, "app.ipa")
+  writeFileSync(apk, "apk")
+  writeFileSync(aab, "aab")
+  writeFileSync(ipa, "ipa")
+  const base = "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0"
+  const provenanceUrl = "https://github.com/Mentra-Community/MentraOS/actions/runs/123"
+  const input = {
+    plan,
+    apk,
+    apkUrl: `${base}/${plan.artifactNames.androidApp}`,
+    aab,
+    aabUrl: `${base}/${plan.artifactNames.androidStoreApp}`,
+    playTrack: "beta",
+    storeStatus: "published",
+    provenanceUrl,
+  }
+  const floored = createAndroidRecord({...input, androidBuildNumber: 310000213})
+  assert.deepEqual(floored.native, {androidBuildNumber: 310000213})
+  assert.equal(floored.publications.mentraos["google-play"].coordinate, "com.mentra.mentra:310000213:beta")
+  const plain = createAndroidRecord(input)
+  assert.deepEqual(plain.native, {androidBuildNumber: 310000057})
+  assert.throws(() => createAndroidRecord({...input, androidBuildNumber: 310000056}), /below the family build number/)
+  const ios = createIosRecord({
+    plan,
+    ipa,
+    ipaUrl: `${base}/${plan.artifactNames.iosApp}`,
+    testflightGroup: "Mentra Staging",
+    storeStatus: "published",
+    provenanceUrl,
+  })
+  assert.deepEqual(mergeMobileRecords({plan, android: floored, ios}).native, {androidBuildNumber: 310000213})
+})
