@@ -434,16 +434,18 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     }
     this.view = view
     for (const wake of [...this.viewWaiters]) wake()
-    const binding = this.deps.native
-      .bind({
+    // Behind the previous view's queued unbind: native keeps one binding, and an unbind that ran
+    // after this bind would clear it.
+    const binding = this.runNative(() =>
+      this.deps.native.bind({
         hostViewTag: options.hostViewTag,
         packageName: options.packageName,
         traceId: this.lease?.previewTraceId ?? "",
-      })
-      .catch((error: unknown) => ({
-        installReloadRequired: false,
-        unavailableReason: error instanceof Error ? error.message : String(error),
-      }))
+      }),
+    ).catch((error: unknown) => ({
+      installReloadRequired: false,
+      unavailableReason: error instanceof Error ? error.message : String(error),
+    }))
     view.binding = binding
     const result = await binding
     view.binding = null
@@ -745,8 +747,9 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
   private prepare(doc: DocumentState, lease: Lease): Promise<StreamPreviewDocumentConfig | null> {
     if (doc.config) return Promise.resolve(doc.config)
     if (!doc.preparing) {
-      doc.preparing = this.deps.native
-        .prepareDocument({docGen: doc.docGen, traceId: lease.previewTraceId})
+      doc.preparing = this.runNative(() =>
+        this.deps.native.prepareDocument({docGen: doc.docGen, traceId: lease.previewTraceId}),
+      )
         .then((config) => {
           if (this.doc !== doc || doc.preparing === null) return null
           doc.config = config
@@ -851,8 +854,18 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     }
   }
 
+  /** Every native call runs in order on one chain; the caller gets the result, the chain moves on. */
+  private runNative<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.nativeChain.then(work)
+    this.nativeChain = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
   private enqueueNative(op: string, work: () => Promise<void>): void {
-    this.nativeChain = this.nativeChain.then(async () => {
+    void this.runNative(async () => {
       try {
         await work()
       } catch (error) {
