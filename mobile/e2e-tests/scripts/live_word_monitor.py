@@ -57,7 +57,7 @@ DEFAULT_INCIDENT_CONFIG = {
         "resolve_threshold_ms": 10000,
     },
 }
-CAPTIONS_TESTER_INCIDENT_RESULT_MARKER = "CAPTIONS_TESTER_INCIDENT_RESULT "
+INCIDENT_REPORT_RESULT_MARKER = "INCIDENT_REPORT_RESULT "
 CONSOLE_INCIDENT_BASE_URL = "https://console.mentra.glass/admin/incidents/"
 DEFAULT_PUBLIC_DASHBOARD_URL = "http://captions.smartglasses.art"
 CAPTIONS_TESTER_FILED_RE = re.compile(r"CaptionsTesterBugReport\]\s+Incident filed:\s*([0-9a-fA-F-]+)")
@@ -116,12 +116,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--alert-intent-action",
-        default="com.mentra.CAPTIONS_TESTER_INCIDENT",
+        default="com.mentra.SUBMIT_INCIDENT_REPORT",
         help="Android broadcast action to fire when an alert is raised.",
     )
     parser.add_argument(
         "--alert-intent-component",
-        default="com.mentra.mentra/com.mentra.crust.receivers.CaptionsTesterIncidentReceiver",
+        default="com.mentra.mentra/com.mentra.crust.receivers.SubmitIncidentReportReceiver",
         help="Optional explicit Android broadcast component for alert dispatch.",
     )
     parser.add_argument(
@@ -1349,7 +1349,7 @@ class MonitorWorker:
                     return device_id
         return None
 
-    def handle_captions_tester_incident_result(self, device_id: str, payload: dict[str, Any], now_ms: int) -> dict[str, Any] | None:
+    def handle_submit_incident_report_result(self, device_id: str, payload: dict[str, Any], now_ms: int) -> dict[str, Any] | None:
         alert_id = str(payload.get("alert_id") or payload.get("test_run_id") or "").strip()
         if not alert_id:
             return None
@@ -2014,13 +2014,13 @@ class MonitorWorker:
                     if self.stop_event.is_set():
                         break
                     now_ms = int(time.time() * 1000)
-                    if CAPTIONS_TESTER_INCIDENT_RESULT_MARKER in line:
-                        payload_text = line.split(CAPTIONS_TESTER_INCIDENT_RESULT_MARKER, 1)[1].strip()
+                    if INCIDENT_REPORT_RESULT_MARKER in line:
+                        payload_text = line.split(INCIDENT_REPORT_RESULT_MARKER, 1)[1].strip()
                         try:
                             payload = json.loads(payload_text)
                         except json.JSONDecodeError:
                             continue
-                        self.handle_captions_tester_incident_result(device_id, payload, now_ms)
+                        self.handle_submit_incident_report_result(device_id, payload, now_ms)
                         continue
                     if self.handle_legacy_captions_tester_filed_log(device_id, line, now_ms) is not None:
                         continue

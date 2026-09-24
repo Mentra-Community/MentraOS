@@ -269,7 +269,7 @@ For `audio_output_device_mismatch`, the thresholds live in the TOML config, but 
 
 For `captions_app_not_running`, the thresholds live in the TOML config, but the specific monitored app package is still provided at runtime with `--captions-package` and defaults to `com.mentra.captions`. The monitor opens this incident when logcat shows `SOCKET: Received app_stopped message for package: ...` for that package, and resolves it on the matching `app_started` log.
 
-When an alert is raised, the monitor also broadcasts an Android intent to the connected phone by default. This is intended for the `internal` Android build, which registers the `com.mentra.CAPTIONS_TESTER_INCIDENT` receiver and files a normal automatic incident through the mobile app.
+When an alert is raised, the monitor broadcasts `com.mentra.SUBMIT_INCIDENT_REPORT` to the connected phone. The receiver is included in every Android build. Keep the Mentra App running and signed in; it files a normal incident with phone logs through the existing report pipeline. The monitor matches the `INCIDENT_REPORT_RESULT` logcat receipt to its alert ID. See the [broadcast contract](../docs/incident-report-intent.md) for commands, fields, and failure outcomes.
 
 ## Running it
 

@@ -12,6 +12,7 @@
 
 // The namespaced OEM-facing engine API (the "(A) host API"). See ./engine.
 export {engine} from "./engine"
+export {submitIncidentReport, type IncidentReportResult} from "./services/SubmitIncidentReportService"
 export type {
   ReportAttachmentInput,
   ReportContext,
