@@ -1,5 +1,5 @@
 import {execFileSync, spawnSync} from "node:child_process"
-import {appendFileSync, readFileSync} from "node:fs"
+import {appendFileSync, existsSync, readFileSync} from "node:fs"
 import path from "node:path"
 import {
   appendXcodeEnvironment,
@@ -42,11 +42,12 @@ if (signed) {
   )
 } else args.push("CODE_SIGN_IDENTITY=", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGNING_ALLOWED=NO")
 args.push(...xcodeBuildSettings(env, process.execPath))
-let result = await runXcode(args, {cwd: path.join(mobile, "ios"), env})
+const options = {cwd: path.join(mobile, "ios"), env, keychain: signed ? env.PR_IOS_KEYCHAIN : undefined}
+let result = await runXcode(args, options)
 if (signed && signingOnlyFailure(result)) {
   console.log("Signing failed after compilation. Unlocking the job keychain and retrying with existing build outputs.")
   execFileSync("security", ["unlock-keychain", "-p", env.PR_IOS_KEYCHAIN_PASSWORD, env.PR_IOS_KEYCHAIN])
-  result = await runXcode(args, {cwd: path.join(mobile, "ios"), env})
+  result = await runXcode(args, options)
 }
 if (signed && signingOnlyFailure(result) && env.GITHUB_OUTPUT) {
   appendFileSync(env.GITHUB_OUTPUT, "failure_kind=signing\n")
@@ -54,6 +55,25 @@ if (signed && signingOnlyFailure(result) && env.GITHUB_OUTPUT) {
 }
 if (result.signal) console.error(`xcodebuild terminated by ${result.signal}`)
 if (signed && result.status !== 0) {
+  const probeArgs = [
+    path.join(mobile, "ci/pr-ios/artifacts.py"),
+    "probe",
+    "--keychain",
+    env.PR_IOS_KEYCHAIN,
+    "--output",
+    path.join(mobile, "build/pr-ios"),
+  ]
+  const framework = path.join(
+    mobile,
+    "ios/build-device/Build/Intermediates.noindex/ArchiveIntermediates/Mentra/InstallationBuildProductsLocation/Applications/Mentra.app/Frameworks/Turf.framework",
+  )
+  if (signingOnlyFailure(result) && existsSync(framework) && result.output.includes("Turf.framework"))
+    probeArgs.push("--framework", framework)
+  console.error("Checking current iOS key access and the failed framework without changing the archive.")
+  const probe = spawnSync("python3", probeArgs, {stdio: "inherit", timeout: 90_000})
+  console.error(
+    `Signing diagnostic exit: ${probe.status ?? probe.signal ?? "unavailable"}; original xcodebuild failure is retained.`,
+  )
   // Public signing metadata only; never dump keychain contents or credentials.
   for (const args of [
     ["list-keychains", "-d", "user"],

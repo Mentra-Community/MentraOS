@@ -7,32 +7,36 @@
  * Sentry events and the user-facing alert via `router.onCrashloop` /
  * `router.onRestartToast`.
  *
- * Called once from MantleManager.initServices. Idempotent — the island engine is
- * a singleton and the host attach runs once.
+ * Called from MantleManager.initServices on every init. Idempotent — the host
+ * attach runs once per island engine instance.
  */
 
 import {engine} from "@mentra/engine"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
-import {ensureMiniappEngine, getMiniappEngine} from "@mentra/engine-host-internal"
+import {ensureMiniappEngine, getMiniappEngine, type MiniappEngine} from "@mentra/engine-host-internal"
 
+import {installStreamPreviewCoordinator} from "@/services/streamPreview"
 import showAlert from "@/utils/AlertUtils"
 
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
 const MENTRA_OS_VERSION = process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "unknown"
 
-let hostAttached = false
+let attachedEngine: MiniappEngine | null = null
 
 export function bootstrapMentraJS() {
   // Construct (or reuse) the island-owned engine, then attach the host concerns
-  // once. ensureMiniappEngine() is idempotent; the hostAttached guard keeps the
-  // telemetry from re-binding on repeat calls.
+  // once per engine. engine.stop() (logout) drops the singletons and the next
+  // engine.start() builds a new UI router; it must get the `_preview` channel
+  // and crashloop hooks too, or every stream-preview handshake falls through to
+  // the miniapp's background and fails as `unsupported`.
   const miniappEngine = ensureMiniappEngine()
-  if (hostAttached) return miniappEngine
-  hostAttached = true
+  if (attachedEngine === miniappEngine) return miniappEngine
+  attachedEngine = miniappEngine
 
-  const {router} = miniappEngine
+  const {router, uiRouter} = miniappEngine
+  installStreamPreviewCoordinator(uiRouter)
 
   // Surface crashloop transitions as Sentry events tagged with the
   // miniapp packageName + engine + host version + platform so on-call

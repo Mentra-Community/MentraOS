@@ -1,0 +1,16 @@
+# Helper flow: turn the Mentra Call preview eye on and wait for frames.
+#
+# The uplink card ("Glasses camera is streaming", "Connecting your glasses
+# camera", ...) covers the stage until <StreamPreview> is drawing, and comes back
+# if the preview fails, so its absence is the "frames are showing" signal.
+#
+# Env: FRAMES_TIMEOUT_MS (how long to wait for the first frame).
+---
+- tapOn: "Turn preview on"
+- extendedWaitUntil:
+    visible: "Turn preview off"
+    timeout: 5000
+- extendedWaitUntil:
+    notVisible:
+      text: "(?i).*glasses camera.*"
+    timeout: ${FRAMES_TIMEOUT_MS}

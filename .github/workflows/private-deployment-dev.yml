@@ -27,6 +27,8 @@ on:
         required: true
       ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY:
         required: true
+      ENTERPRISE_DEV_ADMIN_TOKEN:
+        required: true
     outputs:
       result_artifact:
         value: ${{ jobs.deploy.outputs.result_artifact }}
@@ -161,6 +163,10 @@ jobs:
           MENTRA_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MENTRA_JWT_PUBLIC_KEY }}
           MINIAPP_JWT_PRIVATE_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PRIVATE_KEY }}
           MINIAPP_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY }}
+          CORE_ADMIN_EMAILS: ${{ vars.ENTERPRISE_DEV_CORE_ADMIN_EMAILS }}
+          TEAMS_GRAPH_CLIENT_ID: ${{ vars.ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID }}
+          TEAMS_GRAPH_ORGANIZER_ID: ${{ vars.ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID }}
+          TEAMS_GRAPH_CLIENT_SECRET: ${{ secrets.ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
@@ -174,6 +180,7 @@ jobs:
             --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
             --arg mobileClientId "$ENTRA_MOBILE_CLIENT_ID" \
             --arg workspaceHostname "enterprisedev.mentraglass.com" \
+            --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
             '{
               "$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
               contentVersion:"1.0.0.0",
@@ -189,7 +196,13 @@ jobs:
                 mentraJwtPublicKey:{value:env.MENTRA_JWT_PUBLIC_KEY},
                 miniappJwtPrivateKey:{value:env.MINIAPP_JWT_PRIVATE_KEY},
                 miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
+                coreAdminEmails:{value:env.CORE_ADMIN_EMAILS},
                 workspaceHostname:{value:$workspaceHostname},
+                approvedSystemMiniapps:{value:$reference[0].systemMiniapps.approvedPackageNamesOverride},
+                teamsGraphClientId:{value:env.TEAMS_GRAPH_CLIENT_ID},
+                teamsGraphClientSecret:{value:env.TEAMS_GRAPH_CLIENT_SECRET},
+                teamsGraphOrganizerId:{value:env.TEAMS_GRAPH_ORGANIZER_ID},
+                managedMiniapps:{value:$reference[0].miniapps.managed},
                 manageAcrPullRoleAssignment:{value:false}
               }
             }' > "$parameters"
@@ -205,6 +218,8 @@ jobs:
       - name: Verify the live enterprise contract
         id: verify
         if: inputs.dry_run != true
+        env:
+          MENTRA_ADMIN_TOKEN: ${{ secrets.ENTERPRISE_DEV_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           workspace_origin=$(az deployment group show \
@@ -226,6 +241,56 @@ jobs:
             --output tsv)
           [[ "$core_hostname" == "$AZURE_CORE_CONTAINER_APP".*.azurecontainerapps.io ]]
           [[ "$core_origin" == "https://$core_hostname" ]]
+
+          image_digest=$(az acr manifest show-metadata \
+            --registry "$AZURE_REGISTRY" \
+            --name "${{ steps.source.outputs.acr_tag }}" \
+            --query digest \
+            --output tsv)
+          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$image_digest" == "${{ steps.source.outputs.source_digest }}" ]]
+          # The ready revisions must run exactly the digest-pinned image this
+          # run imported; otherwise the evidence would describe another build.
+          expected_image="${{ steps.source.outputs.image }}"
+
+          # `az deployment group create` returns once ARM accepts the update,
+          # not once Container Apps has finished rolling the new revision out,
+          # so latestReadyRevisionName can still name the previous revision.
+          # Wait before any HTTP probes: the previous revision can return a
+          # healthy 200 while still serving the previous manifest and Call ZIP.
+          # Only verify the contract after both services run this run's image.
+          ready_revision_for_image() {
+            local app="$1" attempt revision image latest
+            for attempt in $(seq 1 30); do
+              revision=$(az containerapp show \
+                --name "$app" \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --query properties.latestReadyRevisionName \
+                --output tsv)
+              latest=$(az containerapp show --name "$app" --resource-group "$AZURE_RESOURCE_GROUP" \
+                --query properties.latestRevisionName --output tsv)
+              if [[ -n "$revision" && "$revision" == "$latest" ]]; then
+                image=$(az containerapp revision show \
+                  --name "$app" \
+                  --revision "$revision" \
+                  --resource-group "$AZURE_RESOURCE_GROUP" \
+                  --query 'properties.template.containers[0].image' \
+                  --output tsv)
+                if [[ "$image" == "$expected_image" ]]; then
+                  echo "$revision"
+                  return 0
+                fi
+              fi
+              sleep 10
+            done
+            echo "$app has no ready revision running $expected_image" >&2
+            return 1
+          }
+
+          revision=$(ready_revision_for_image "$AZURE_CONTAINER_APP")
+          test -n "$revision"
+          core_revision=$(ready_revision_for_image "$AZURE_CORE_CONTAINER_APP")
+          test -n "$core_revision"
 
           curl_status() {
             curl \
@@ -275,6 +340,7 @@ jobs:
             --arg tenant "$ENTRA_TENANT_ID" \
             --arg mobile "$ENTRA_MOBILE_CLIENT_ID" \
             --arg coreClient "$ENTRA_CORE_CLIENT_ID" \
+            --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
             '.schemaVersion == 1
              and (has("releaseIdentity") | not)
              and .services.coreUrl == $core
@@ -288,9 +354,15 @@ jobs:
              and .features.runtimeRealtimeSession == false
              and .features.managedStreams == false
              and .features.nativeMeetings == true
-             and .miniapps.managed == []
+             and .systemMiniapps == $reference[0].systemMiniapps
+             and .miniapps.managed == $reference[0].miniapps.managed
              and .telemetry == false' \
             <<< "$manifest"
+
+          bundle_url=$(jq -er '.miniapps.managed[] | select(.packageName == "com.mentra.call") | .bundleUrl' <<< "$manifest")
+          bundle_sha=$(jq -er '.miniapps.managed[] | select(.packageName == "com.mentra.call") | .sha256' <<< "$manifest")
+          curl --fail --silent --show-error "$bundle_url" --output "$RUNNER_TEMP/mentra-call.zip"
+          echo "$bundle_sha  $RUNNER_TEMP/mentra-call.zip" | sha256sum --check
 
           curl --fail --silent --show-error --location "$workspace_origin/legal/privacy" >/dev/null
           curl --fail --silent --show-error --location "$workspace_origin/legal/terms" >/dev/null
@@ -310,53 +382,16 @@ jobs:
           [[ "$unauthenticated_status" == "401" ]]
 
           jq -s . private-deployment-checks.ndjson > private-deployment-checks.json
-          image_digest=$(az acr manifest show-metadata \
-            --registry "$AZURE_REGISTRY" \
-            --name "${{ steps.source.outputs.acr_tag }}" \
-            --query digest \
-            --output tsv)
-          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "$image_digest" == "${{ steps.source.outputs.source_digest }}" ]]
-          # The ready revisions must run exactly the digest-pinned image this
-          # run imported; otherwise the evidence would describe another build.
-          expected_image="${{ steps.source.outputs.image }}"
 
-          # `az deployment group create` returns once ARM accepts the update,
-          # not once Container Apps has finished rolling the new revision out,
-          # so latestReadyRevisionName can still name the previous revision.
-          # Reading it once made this step fail whenever a release landed while
-          # the rollout before it was still settling. Wait for the revision that
-          # actually runs this run's image, then assert on that one.
-          ready_revision_for_image() {
-            local app="$1" attempt revision image
-            for attempt in $(seq 1 30); do
-              revision=$(az containerapp show \
-                --name "$app" \
-                --resource-group "$AZURE_RESOURCE_GROUP" \
-                --query properties.latestReadyRevisionName \
-                --output tsv)
-              if [[ -n "$revision" ]]; then
-                image=$(az containerapp revision show \
-                  --name "$app" \
-                  --revision "$revision" \
-                  --resource-group "$AZURE_RESOURCE_GROUP" \
-                  --query 'properties.template.containers[0].image' \
-                  --output tsv)
-                if [[ "$image" == "$expected_image" ]]; then
-                  echo "$revision"
-                  return 0
-                fi
-              fi
-              sleep 10
-            done
-            echo "$app has no ready revision running $expected_image" >&2
-            return 1
-          }
-
-          revision=$(ready_revision_for_image "$AZURE_CONTAINER_APP")
-          test -n "$revision"
-          core_revision=$(ready_revision_for_image "$AZURE_CORE_CONTAINER_APP")
-          test -n "$core_revision"
+          curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
+            -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
+            "$core_origin/api/admin/reports?limit=1" | jq -e '.reports | type == "array"' >/dev/null
+          az containerapp revision show --name "$AZURE_CORE_CONTAINER_APP" --revision "$core_revision" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.template --output json | jq -e '
+              any(.volumes[]; .name == "core-attachments" and .storageType == "AzureFile") and
+              any(.containers[].volumeMounts[]; .mountPath == "/mnt/core-attachments")
+            ' >/dev/null
 
           {
             echo "workspace_origin=$workspace_origin"

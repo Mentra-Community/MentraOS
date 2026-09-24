@@ -120,7 +120,10 @@ jobs:
         run: |
           node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs mobile/scripts/release-bundle-config.test.mjs
           python3 mobile/ci/pr-ios/test_artifacts.py
+          python3 mobile/ci/pr-ios/test_mac_installer.py
+          bash mobile/ci/pr-ios/mac-installer/test.sh
           python3 mobile/ci/pr-ios/test_repackage.py
+          python3 mobile/ci/pr-ios/test_keychain_search.py
           node --test mobile/ci/pr-ios/xcode-attempt.test.mjs
           node --test .github/scripts/pr-mobile-build.test.mjs
 
@@ -284,7 +287,7 @@ jobs:
           echo "::add-mask::$password"
           echo "PR_IOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "PR_IOS_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
-          security create-keychain -p "$password" "$keychain"
+          python3 ci/pr-ios/keychain-search.py locked security create-keychain -p "$password" "$keychain"
           # Match release signing: keep only this disposable job keychain
           # unlocked through archive/export; always delete it at job cleanup.
           security set-keychain-settings "$keychain"
@@ -303,6 +306,26 @@ jobs:
           bundle exec fastlane match adhoc --readonly --skip_provisioning_profiles true --keychain_name "$keychain" --keychain_password "$password"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
           python3 ci/pr-ios/artifacts.py configure --keychain "$keychain" --output build/pr-ios
+
+      - name: Configure Developer ID signing and notarization for the Mac download
+        if: env.PR_IOS_SIGNED == 'true'
+        env:
+          DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
+          ASC_API_KEY_P8_B64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          certificate="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl --fail --silent --show-error --location --retry 2 \
+            "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer" -o "$certificate"
+          python3 mobile/ci/pr-ios/mac_installer.py configure \
+            --keychain "$PR_IOS_KEYCHAIN" --output mobile/build/pr-ios \
+            --intermediate "$certificate"
+          # The Mac import touches the same job keychain; verify that the iOS
+          # identity remains usable before spending time compiling the app.
+          python3 mobile/ci/pr-ios/artifacts.py probe \
+            --keychain "$PR_IOS_KEYCHAIN" --output mobile/build/pr-ios
 
       - name: Fingerprint compiled mobile inputs
         if: env.PR_IOS_SIGNED == 'true'
@@ -352,7 +375,7 @@ jobs:
       - name: Cache Xcode DerivedData (device build)
         if: steps.select-ipa.outputs.reused != 'true'
         id: xcode-derived-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: mobile/ios/build-device
           # DerivedData and SwiftPM artifacts embed absolute workspace paths.
@@ -643,7 +666,8 @@ jobs:
         run: |
           set -euo pipefail
           security unlock-keychain -p "$PR_IOS_KEYCHAIN_PASSWORD" "$PR_IOS_KEYCHAIN"
-          xcodebuild -exportArchive -archivePath mobile/build/pr-ios/Mentra.xcarchive \
+          python3 mobile/ci/pr-ios/keychain-search.py run "$PR_IOS_KEYCHAIN" \
+            xcodebuild -exportArchive -archivePath mobile/build/pr-ios/Mentra.xcarchive \
             -exportOptionsPlist mobile/build/pr-ios/ExportOptions.plist \
             -exportPath mobile/build/pr-ios/export
 
@@ -657,7 +681,17 @@ jobs:
           source=mobile/build/pr-ios/export/Mentra.ipa
           if [[ "$PR_IOS_REUSED" == true ]]; then source=pr-mobile-candidate.ipa; fi
           python3 mobile/ci/pr-ios/repackage.py package "$source" "$MENTRA_PR_MOBILE_FINGERPRINT" mobile/build/pr-ios/Mentra-pr.ipa
-          python3 mobile/ci/pr-ios/artifacts.py package --ipa mobile/build/pr-ios/Mentra-pr.ipa --output pr-ios-output
+          python3 mobile/ci/pr-ios/artifacts.py package --ipa mobile/build/pr-ios/Mentra-pr.ipa \
+            --mac-signing mobile/build/pr-ios/mac-signing.json --output pr-ios-output
+
+      - name: Preserve notarization diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-notarization-${{ github.run_id }}-${{ github.run_attempt }}
+          path: mac-installer-diagnostics/*.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Hand off signed PR downloads
         id: handoff
@@ -685,8 +719,24 @@ jobs:
       - name: Remove this job's signing keychain
         if: always() && env.PR_IOS_KEYCHAIN != ''
         run: |
+          rm -rf mobile/build/pr-ios/mac-installer-private
+          rm -f mobile/build/pr-ios/mac-signing.json
           python3 mobile/ci/pr-ios/keychain-search.py remove "$PR_IOS_KEYCHAIN"
-          security delete-keychain "$PR_IOS_KEYCHAIN"
+          python3 mobile/ci/pr-ios/keychain-search.py locked security delete-keychain "$PR_IOS_KEYCHAIN"
+
+      - name: Save Xcode DerivedData (best effort)
+        if: >-
+          success() && steps.select-ipa.outputs.reused != 'true' &&
+          steps.xcode-derived-cache.outputs.cache-hit != 'true' &&
+          steps.xcode-derived-cache.outputs.cache-primary-key != ''
+        timeout-minutes: 3
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: mobile/ios/build-device
+          # Bound this optimization after the signed downloads are safe. Reuse
+          # the restore key even if CocoaPods changed generated files afterward.
+          key: ${{ steps.xcode-derived-cache.outputs.cache-primary-key }}
 
   publish:
     needs: build

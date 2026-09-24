@@ -1,4 +1,4 @@
-import {afterEach, describe, expect, test} from "bun:test"
+import {afterEach, beforeEach, describe, expect, test} from "bun:test"
 
 import {
   ACS_GUEST_STATE_MAX_ENTRIES,
@@ -6,33 +6,72 @@ import {
   mintAcsGuestToken,
   resetAcsTeamsAuthCache,
   setAcsIdentityClientForTests,
-  validateTeamsSubjectClaims,
+  bindTeamsSubject,
+  exchangeAcsTeamsUserToken,
   type AcsIdentityClient,
 } from "./acs-teams.service"
 
-const configuration = {tenantId: "tenant-1", clientId: "mobile-client"}
-const expected = {tenantId: "tenant-1", objectId: "employee-1"}
-
-function payload(overrides: Record<string, unknown> = {}) {
-  return {
-    tid: "tenant-1",
-    oid: "employee-1",
-    azp: "mobile-client",
-    scp: "Teams.ManageCalls Teams.ManageChats",
-    ...overrides,
-  }
-}
-
-describe("ACS Teams subject validation", () => {
-  test("accepts the same Entra employee with both delegated Teams permissions", () => {
-    expect(() => validateTeamsSubjectClaims(payload(), expected, configuration)).not.toThrow()
+describe("ACS Teams opaque subject tokens", () => {
+  const names = ["ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ACS_CONNECTION_STRING"] as const
+  let saved: (string | undefined)[]
+  const expected = {tenantId: "tenant-1", objectId: "employee-1"}
+  beforeEach(() => {
+    saved = names.map((name) => process.env[name])
+    process.env.ENTRA_TENANT_ID = expected.tenantId
+    process.env.ENTRA_CLIENT_ID = "mobile-client"
+    process.env.ACS_CONNECTION_STRING = "endpoint=https://test.communication.azure.com/;accesskey=test"
+  })
+  afterEach(() => {
+    names.forEach((name, i) => {
+      if (saved[i] === undefined) delete process.env[name]
+      else process.env[name] = saved[i]
+    })
+    resetAcsTeamsAuthCache()
   })
 
-  test("rejects cross-user, cross-client, and incomplete delegated tokens", () => {
-    expect(() => validateTeamsSubjectClaims(payload({oid: "other-employee"}), expected, configuration)).toThrow()
-    expect(() => validateTeamsSubjectClaims(payload({azp: "other-client"}), expected, configuration)).toThrow()
-    expect(() => validateTeamsSubjectClaims(payload({scp: "Teams.ManageCalls"}), expected, configuration)).toThrow()
+  test("lets Microsoft validate opaque tokens against the trusted user and application", async () => {
+    const opaque = "opaque-microsoft-token-not-a-jwt"
+    setAcsIdentityClientForTests({
+      async createUserAndToken() {
+        throw new Error("must not mint a guest")
+      },
+      async getTokenForTeamsUser(input) {
+        expect(input).toEqual({teamsUserAadToken: opaque, userObjectId: expected.objectId, clientId: "mobile-client"})
+        return {token: "teams-credential", expiresOn: new Date("2030-01-01")}
+      },
+    })
+    expect(await exchangeAcsTeamsUserToken(bindTeamsSubject(opaque, expected))).toMatchObject({
+      identityMode: "teams-user",
+    })
   })
+
+  test("rejects a foreign Runtime tenant before contacting Microsoft", () => {
+    expect(() => bindTeamsSubject("opaque", {...expected, tenantId: "other"})).toThrow("Runtime identity")
+    expect(() => bindTeamsSubject("opaque", {...expected, objectId: ""})).toThrow("Runtime identity")
+  })
+
+  test.each([400, 401, 403, 429, 500])(
+    "preserves Microsoft rejection %s without leaking its request",
+    async (statusCode) => {
+      setAcsIdentityClientForTests({
+        async createUserAndToken() {
+          throw new Error("must not mint a guest")
+        },
+        async getTokenForTeamsUser() {
+          throw Object.assign(new Error("secret-token"), {statusCode, request: {body: "secret-token"}})
+        },
+      })
+      try {
+        await exchangeAcsTeamsUserToken(bindTeamsSubject("opaque", expected))
+        throw new Error("expected failure")
+      } catch (error) {
+        expect(String(error)).not.toContain("secret-token")
+        expect(String(error)).toContain(
+          statusCode < 429 ? "could not verify" : statusCode === 429 ? "busy" : "unavailable",
+        )
+      }
+    },
+  )
 })
 
 describe("ACS guest credentials", () => {

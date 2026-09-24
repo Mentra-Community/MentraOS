@@ -1,0 +1,23 @@
+# Helper flow: open Mentra Call from Home and join MEETING_URL.
+# Ends on the in-call screen with the preview eye showing ("Turn preview on").
+#
+# Requires: signed in, Mentra Live connected and able to stream, no Mentra Call
+# call already running, and MEETING_URL set to a Microsoft Teams meeting link.
+---
+- launchApp:
+    clearState: false
+- tapOn: "Home"
+- tapOn: "Mentra Call"
+- extendedWaitUntil:
+    visible: "Join via Link"
+    timeout: 30000
+- tapOn: "Join via Link"
+- tapOn: ".*meetup-join.*"
+- inputText: ${MEETING_URL}
+- hideKeyboard
+- tapOn: "Join Meeting.*"
+# The eye exists only on the in-call screen of a phone-native (ACS) call, so it
+# doubles as the "connected" signal. Joining includes the glasses link setup.
+- extendedWaitUntil:
+    visible: "Turn preview on"
+    timeout: 180000

@@ -48,6 +48,14 @@ export const MOBILE_PR_PATHS = [
 
 const packagingKeys = new Set(["EXPO_PUBLIC_ASG_OTA_VERSION_URL"])
 const hash = (value) => createHash("sha256").update(value).digest("hex")
+const transientNetworkCodes = new Set(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ECONNRESET", "EAI_AGAIN"])
+
+function transientCacheFailure(error) {
+  if (transientNetworkCodes.has(error?.code)) return error.code
+  const status = error?.$metadata?.httpStatusCode
+  if ([429, 500, 502, 503, 504].includes(status)) return `HTTP ${status}`
+  return null
+}
 
 export function fingerprintMobile({tree, env, tools}) {
   const embeddedEnv = Object.fromEntries(
@@ -97,7 +105,17 @@ export async function selectMobile({
     per_page: 100,
   })
   const repository = `${repo.owner}/${repo.repo}`
-  const assets = mergeAssets(legacy, (await readIndex(repository, "pr-builds")).assets)
+  let indexed = []
+  try {
+    indexed = (await readIndex(repository, "pr-builds")).assets
+  } catch (error) {
+    const transient = transientCacheFailure(error)
+    if (!transient) throw error
+    // Reuse is optional. Do not hide credential/configuration/integrity errors,
+    // and leave publication's required upload and verification unchanged.
+    core.warning(`Reuse index temporarily unavailable (${transient}); checking GitHub candidates or building the app.`)
+  }
+  const assets = mergeAssets(legacy, indexed)
   for (const asset of candidateAssets(assets, fingerprint, platform)) {
     try {
       if (String(asset.id).startsWith("r2:")) {

@@ -1,0 +1,150 @@
+name: Nightly device routines
+
+on:
+  schedule:
+    # Los Angeles midnight is 07:00 UTC in summer and 08:00 UTC in winter.
+    # The planner selects the applicable trigger, including DST transition days.
+    - cron: '0 7 * * *'
+    - cron: '0 8 * * *'
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: read
+
+jobs:
+  plan:
+    if: github.repository == 'Mentra-Community/MentraOS' && vars.DEVICE_ROUTINE_NIGHTLY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has-work: ${{ steps.plan.outputs.has-work }}
+      unavailable: ${{ steps.plan.outputs.unavailable }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Select verified publications for local midnight
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          retries: 0
+          script: |
+            const {planNightlyRequests} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
+            const plan = await planNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT)});
+            core.setOutput('matrix', JSON.stringify({include: plan.requests}));
+            core.setOutput('has-work', String(plan.requests.length > 0));
+            core.setOutput('unavailable', JSON.stringify(plan.unavailable));
+            await core.summary.addCodeBlock(JSON.stringify(plan, null, 2), 'json').write();
+
+  availability:
+    needs: plan
+    if: needs.plan.outputs.unavailable != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report unavailable channel publications
+        uses: actions/github-script@v7
+        env:
+          UNAVAILABLE: ${{ needs.plan.outputs.unavailable }}
+        with:
+          script: |
+            await core.summary.addCodeBlock(process.env.UNAVAILABLE, 'json').write();
+            core.setFailed('Some channels have no verified retained publication. Eligible channels are requested independently.');
+
+  request:
+    needs: plan
+    if: needs.plan.outputs.has-work == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    name: Nightly ${{ matrix.date }} / ${{ matrix.channel }} / OTA then Call
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: nightly-device-${{ matrix.date }}-${{ matrix.channel }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # The started send step fences the entire channel sequence, including a
+      # partial or ambiguous response. Never rerun to resend either member.
+      - name: Send the nightly routine sequence
+        id: send
+        uses: actions/github-script@v7
+        env:
+          NIGHTLY_PLAN: ${{ toJSON(matrix) }}
+        with:
+          retries: 0
+          script: |
+            const {sendNightlySequence} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
+            const result = await sendNightlySequence({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              plan: JSON.parse(process.env.NIGHTLY_PLAN)});
+            core.setOutput('sent', JSON.stringify(result));
+            await core.summary.addCodeBlock(JSON.stringify(result, null, 2), 'json').write();
+      - name: Wait for both immutable request generations
+        id: ready
+        uses: actions/github-script@v7
+        env:
+          SENT: ${{ steps.send.outputs.sent }}
+        with:
+          retries: 0
+          script: |
+            const {waitForNightlyRequests} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
+            const ready = await waitForNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              sent: JSON.parse(process.env.SENT)});
+            core.setOutput('ready', JSON.stringify(ready));
+            core.setOutput('ota', JSON.stringify(ready.members[0]));
+            core.setOutput('call', JSON.stringify(ready.members[1]));
+      - name: Download the exact OTA request
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ fromJSON(steps.ready.outputs.ota).artifactId }}
+          run-id: ${{ fromJSON(steps.ready.outputs.ota).runId }}
+          github-token: ${{ github.token }}
+          path: routine-request/ota
+          merge-multiple: true
+      - name: Download the exact Call request
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ fromJSON(steps.ready.outputs.call).artifactId }}
+          run-id: ${{ fromJSON(steps.ready.outputs.call).runId }}
+          github-token: ${{ github.token }}
+          path: routine-request/call
+          merge-multiple: true
+      - name: Create scoped private dispatch token
+        id: dispatch-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.TEST_RUN_GITHUB_APP_ID }}
+          private-key: ${{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: Mentra-Automated-Testing
+          permission-actions: write
+      - name: Queue one private OTA then Call job
+        uses: actions/github-script@v7
+        env:
+          NIGHTLY_PLAN: ${{ toJSON(matrix) }}
+          READY: ${{ steps.ready.outputs.ready }}
+          TEST_RUN_DISPATCH_TOKEN: ${{ steps.dispatch-token.outputs.token }}
+        with:
+          retries: 0
+          script: |
+            const {dispatchNightlySequence} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
+            const {readRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
+            const privateGithub = process.env.TEST_RUN_DISPATCH_TOKEN ? new github.constructor({auth: process.env.TEST_RUN_DISPATCH_TOKEN, retry: {enabled: false}}) : null;
+            const result = await dispatchNightlySequence({github, privateGithub, context,
+              attempt: Number(process.env.GITHUB_RUN_ATTEMPT), plan: JSON.parse(process.env.NIGHTLY_PLAN),
+              ready: JSON.parse(process.env.READY), bytes: await Promise.all([
+                readRequest('routine-request/ota/request.json'), readRequest('routine-request/call/request.json')])});
+            await core.summary.addCodeBlock(JSON.stringify(result, null, 2), 'json').write();

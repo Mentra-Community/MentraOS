@@ -9,6 +9,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowSystemClock;
+import java.time.Duration;
+import org.json.JSONObject;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -93,5 +96,22 @@ public class OtaSessionManagerRestartPreservationTest {
         manager.setFailed("test failure");
 
         assertThat(new OtaSessionManager(context).shouldPreserveHotspotOnShutdown()).isFalse();
+    }
+
+    @Test
+    public void activitySnapshotDoesNotExpireAnOldUnfinishedSession() throws Exception {
+        OtaSessionManager manager = new OtaSessionManager(context);
+        assertThat(manager.createSession(new String[] {"apk"}, "https://example.com/ota.json"))
+                .isTrue();
+        String before = context.getSharedPreferences("ota_session", Context.MODE_PRIVATE)
+                .getString("ota_session_data", null);
+        ShadowSystemClock.advanceBy(Duration.ofMinutes(31));
+
+        JSONObject activity = manager.getActivitySnapshot();
+
+        assertThat(activity.getString("status")).isEqualTo("in_progress");
+        assertThat(activity.getBoolean("restart_pending")).isFalse();
+        assertThat(context.getSharedPreferences("ota_session", Context.MODE_PRIVATE)
+                .getString("ota_session_data", null)).isEqualTo(before);
     }
 }

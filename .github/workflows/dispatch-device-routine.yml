@@ -1,0 +1,124 @@
+name: Dispatch requested device routine
+run-name: Device request callback ${{ github.event.workflow_run.id }} / attempt ${{ github.event.workflow_run.run_attempt }}
+
+on:
+  workflow_run:
+    workflows: [Mobile App iOS Build, Coordinated Mentra Release, Request device routine]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: read
+
+jobs:
+  resolve:
+    if: github.repository == 'Mentra-Community/MentraOS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has-work: ${{ steps.plan.outputs.has-work }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Resolve completed producer from GitHub metadata
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          retries: 0
+          script: |
+            const {planDeviceDispatches} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
+            const plans = await planDeviceDispatches({github, context, callbackAttempt: Number(process.env.GITHUB_RUN_ATTEMPT)});
+            const work = plans.filter(plan => ['request', 'dispatch'].includes(plan.mode));
+            core.setOutput('matrix', JSON.stringify({include: work}));
+            core.setOutput('has-work', String(work.length > 0));
+            for (const plan of plans.filter(plan => !work.includes(plan))) {
+              await core.summary.addRaw(JSON.stringify(plan)).write();
+              if (plan.mode === 'reconcile') core.setFailed(plan.reason);
+            }
+
+  dispatch:
+    needs: resolve
+    if: needs.resolve.outputs.has-work == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    # This name binds the retained send step to one routine/build/publication.
+    name: ${{ matrix.mode == 'request' && (matrix.channel && format('Request coordinated source {0} / routine {1}', matrix.sourceRunId, matrix.routine) || format('Request publication {0} / attempt {1} / routine {2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine)) || 'Dispatch trusted request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ${{ matrix.mode == 'request' && (matrix.channel && format('device-coordinated-{0}-{1}', matrix.sourceRunId, matrix.routine) || format('device-publication-{0}-{1}-{2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine)) || format('device-request-callback-{0}-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt) }}
+      cancel-in-progress: false
+    # Never delete callback history to authorize replay; unknown sends need reconciliation.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # An App-created request can emit the workflow_run callback that queues it.
+      - name: Create scoped public request token
+        if: matrix.mode == 'request'
+        id: request-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.TEST_RUN_GITHUB_APP_ID }}
+          private-key: ${{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: MentraOS
+          permission-actions: write
+      - name: Send trusted publication request
+        if: matrix.mode == 'request'
+        uses: actions/github-script@v7
+        env:
+          DISPATCH_PLAN: ${{ toJSON(matrix) }}
+        with:
+          github-token: ${{ steps.request-token.outputs.token }}
+          retries: 0
+          script: |
+            const {requestAfterPublication} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
+            const result = await requestAfterPublication({github, context, plan: JSON.parse(process.env.DISPATCH_PLAN)});
+            await core.summary.addRaw(JSON.stringify(result)).write();
+            if (result.status !== 'request-dispatched') core.setFailed(result.reason);
+      - name: Download the exact immutable request artifact
+        if: matrix.mode == 'dispatch'
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ matrix.artifactId }}
+          run-id: ${{ matrix.runId }}
+          github-token: ${{ github.token }}
+          path: routine-request
+          merge-multiple: true
+      - name: Create scoped private dispatch token
+        if: matrix.mode == 'dispatch'
+        id: dispatch-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.TEST_RUN_GITHUB_APP_ID }}
+          private-key: ${{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: Mentra-Automated-Testing
+          permission-actions: write
+      - name: Queue the ready request in the private repository
+        if: matrix.mode == 'dispatch'
+        uses: actions/github-script@v7
+        env:
+          DISPATCH_PLAN: ${{ toJSON(matrix) }}
+          TEST_RUN_DISPATCH_TOKEN: ${{ steps.dispatch-token.outputs.token }}
+        with:
+          retries: 0
+          script: |
+            const {dispatchReadyRequest, readRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
+            const privateGithub = process.env.TEST_RUN_DISPATCH_TOKEN ? new github.constructor({auth: process.env.TEST_RUN_DISPATCH_TOKEN, retry: {enabled: false}}) : null;
+            const result = await dispatchReadyRequest({github, privateGithub, context,
+              plan: JSON.parse(process.env.DISPATCH_PLAN), bytes: await readRequest('routine-request/request.json')});
+            await core.summary.addRaw(JSON.stringify(result)).write();

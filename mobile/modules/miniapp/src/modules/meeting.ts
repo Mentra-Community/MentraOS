@@ -1,9 +1,8 @@
 /**
  * @fileoverview MeetingModule — phone-native meeting (ACS Teams).
  *
- * V1 token pass-through is deliberate technical debt (identity ticket):
- * later, join(meetingUrl, whepUrl) and the host fetches the credential from
- * Porter. Miniapps must not persist the token.
+ * Workspace credentials belong to the host. Consumer token pass-through remains
+ * available for older hosts and Call backends. Never persist credentials.
  */
 
 import {MiniappErrorCode, MiniappRequestType} from "../protocol"
@@ -30,7 +29,7 @@ export interface MeetingWhepVideoSource {
  * hotspot, binds a local WHIP endpoint, and tells the glasses where to publish. The miniapp only
  * chooses the transport.
  *
- * Android only for now. iOS hosts reject this with `NOT_IMPLEMENTED`.
+ * Supported by current Android and iOS hosts.
  */
 export interface MeetingSoftApVideoSource {
   type: "softap"
@@ -102,11 +101,26 @@ export interface MeetingJoinOptions {
   provider: MeetingProvider
   meetingUrl: string
   videoSource: MeetingVideoSource
-  /** V1-only: Porter-minted ACS guest token. Do not persist. */
-  token: string
+  /** Legacy consumer credential. Omit when getConfiguration().credentialSource is runtime. */
+  token?: string
   displayName?: string
   video?: MeetingOutgoingVideo
   origin?: MeetingOrigin
+}
+
+export interface MeetingCreateOptions {
+  provider: MeetingProvider
+  subject?: string
+  durationMinutes?: number
+}
+
+export interface CreatedMeeting {
+  provider: MeetingProvider
+  joinUrl: string
+  /** Opaque ownership receipt. Keep it to retire this meeting later. */
+  meetingRef: string
+  identityMode: MeetingIdentityMode
+  guestReason?: "no-entra-identity" | "teams-license-unavailable"
 }
 
 export type MeetingParticipantState = "idle" | "connecting" | "connected" | "lobby" | "hold" | "disconnected"
@@ -121,9 +135,43 @@ export interface MeetingParticipant {
   isSpeaking: boolean
 }
 
+export type MeetingIdentityMode = "guest" | "teams-user"
+export type MeetingGuestReason = "no-entra-identity" | "teams-license-unavailable" | "legacy-credential"
+
+/**
+ * Identity resolved before joining. `teams-user` means Microsoft accepted the
+ * Teams calling license, not that the account owns a particular M365 SKU or
+ * has permission to organize every meeting. Credentials never cross this API.
+ * Acquisition/consent/provider errors reject instead of reporting guest mode.
+ */
+export interface MeetingIdentity {
+  identityMode: MeetingIdentityMode
+  guestReason?: MeetingGuestReason
+  /** Present when the host has a signed-in Entra account, including unlicensed accounts. */
+  account?: {displayName?: string; email?: string}
+}
+
+/** Host policy; this contains no credentials or deployment endpoints. */
+export interface MeetingConfiguration {
+  enabled: boolean
+  credentialSource: "runtime" | "miniapp"
+  externalBackendAllowed: boolean
+  managedStreams: boolean
+  /** Omitted by older hosts. Runtime creation requires Graph organizer configuration. */
+  creationSource?: "runtime" | "miniapp"
+}
+
 export interface MeetingState {
+  /** Omitted by older hosts. Tokens never cross this boundary. */
+  identityMode?: MeetingIdentityMode
+  guestReason?: MeetingGuestReason
   state: MeetingPhase
   muted: boolean
+  /**
+   * Whether remote participants receive the glasses camera. False after `setVideoEnabled(false)`;
+   * every new join starts true. Omitted by hosts that cannot toggle outgoing video.
+   */
+  videoEnabled?: boolean
   error?: string
   /** Provider termination details, including Teams' invalid meeting-link codes. */
   endReason?: MeetingEndReason
@@ -212,12 +260,16 @@ export function parseMeetingCapabilities(raw: unknown): MeetingCapabilities | un
   if (!value || typeof value !== "object") return undefined
   const capability = value as Record<string, unknown>
   const rawLobby = (raw as Record<string, unknown>).manageLobby
-  const lobby = rawLobby && typeof rawLobby === "object" ? rawLobby as Record<string, unknown> : undefined
+  const lobby = rawLobby && typeof rawLobby === "object" ? (rawLobby as Record<string, unknown>) : undefined
   return {
-    ...(lobby ? {manageLobby: {
-      allowed: typeof lobby.allowed === "boolean" ? lobby.allowed : null,
-      reason: typeof lobby.reason === "string" && lobby.reason ? lobby.reason : null,
-    }} : {}),
+    ...(lobby
+      ? {
+          manageLobby: {
+            allowed: typeof lobby.allowed === "boolean" ? lobby.allowed : null,
+            reason: typeof lobby.reason === "string" && lobby.reason ? lobby.reason : null,
+          },
+        }
+      : {}),
     hangUpForEveryone: {
       allowed: typeof capability.allowed === "boolean" ? capability.allowed : null,
       reason: typeof capability.reason === "string" && capability.reason ? capability.reason : null,
@@ -264,14 +316,7 @@ export interface MeetingSoftApRecovery {
 
 const SOFTAP_STEPS: ReadonlySet<string> = new Set(["hotspot", "scopedJoin", "acsJoin", "publish", "live"])
 const SOFTAP_STEP_STATUSES: ReadonlySet<string> = new Set(["pending", "running", "done", "failed"])
-const SOFTAP_PHASES: ReadonlySet<string> = new Set([
-  "idle",
-  "starting",
-  "recovering",
-  "live",
-  "stopping",
-  "failed",
-])
+const SOFTAP_PHASES: ReadonlySet<string> = new Set(["idle", "starting", "recovering", "live", "stopping", "failed"])
 
 /** Tolerant parse of a host `softap` payload. Unknown steps are dropped; a malformed payload reads as absent. */
 export function parseMeetingSoftApProgress(raw: unknown): MeetingSoftApProgress | undefined {
@@ -386,9 +431,7 @@ export class MeetingModule {
       throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "meetingUrl is required"}
     }
     const videoSource = validateMeetingVideoSource(options.videoSource)
-    if (!options.token?.trim()) {
-      throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "token is required"}
-    }
+
     try {
       const result = await this.session.sendRequest<MeetingState | null>(
         {
@@ -396,7 +439,7 @@ export class MeetingModule {
           provider: options.provider,
           meetingUrl: options.meetingUrl,
           videoSource,
-          token: options.token,
+          ...(options.token ? {token: options.token} : {}),
           displayName: options.displayName,
           ...(options.origin ? {origin: options.origin} : {}),
           ...(options.video ? {video: options.video} : {}),
@@ -405,6 +448,52 @@ export class MeetingModule {
       )
       if (result) this._applyState(result)
       return this.state
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /** Query before using a separate Call backend. Older hosts return NOT_IMPLEMENTED. */
+  async getConfiguration(): Promise<MeetingConfiguration> {
+    return this.session.sendRequest<MeetingConfiguration>({type: MiniappRequestType.MEETING_GET_CONFIGURATION})
+  }
+
+  /** Resolve the current calling identity without creating or joining a meeting. */
+  async getIdentity(): Promise<MeetingIdentity> {
+    try {
+      return await this.session.sendRequest<MeetingIdentity>(
+        {type: MiniappRequestType.MEETING_GET_IDENTITY},
+        {timeoutMs: 30_000},
+      )
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /** Create a Teams meeting in the selected Runtime without exposing provider credentials. */
+  async create(options: MeetingCreateOptions): Promise<CreatedMeeting> {
+    if (options.provider !== "acs-teams") {
+      throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "Unsupported meeting provider"}
+    }
+    try {
+      return await this.session.sendRequest<CreatedMeeting>(
+        {
+          type: MiniappRequestType.MEETING_CREATE,
+          provider: options.provider,
+          subject: options.subject,
+          durationMinutes: options.durationMinutes,
+        },
+        {timeoutMs: 0},
+      )
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /** Delete a meeting created by this caller. Does not hang up an active call. */
+  async retire(meetingRef: string): Promise<void> {
+    try {
+      await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_RETIRE, meetingRef}, {timeoutMs: 0})
     } catch (error) {
       mapHostError(error)
     }
@@ -460,6 +549,23 @@ export class MeetingModule {
   }
 
   /**
+   * Stop or resume the glasses camera the meeting receives. The call and the glasses stream stay
+   * up, so a local `<StreamPreview>` keeps drawing while remote participants see the camera off.
+   * Check `state.videoEnabled !== undefined` before offering it; older hosts reject.
+   */
+  async setVideoEnabled(enabled: boolean): Promise<void> {
+    try {
+      const result = await this.session.sendRequest<MeetingState | null>({
+        type: MiniappRequestType.MEETING_SET_VIDEO_ENABLED,
+        enabled,
+      })
+      if (result) this._applyState(result)
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /**
    * Repoint the host at a new WHEP URL mid-call, the recovery path for a re-published stream.
    *
    * WHEP only. A SoftAP source has no URL to update — the host owns the endpoint — and its
@@ -502,8 +608,12 @@ export class MeetingModule {
   /** @internal — applied by MiniappSession on inbound MEETING_STATE. */
   _applyState(event: MeetingState): void {
     this._state = {
+      identityMode:
+        event.identityMode === "guest" || event.identityMode === "teams-user" ? event.identityMode : undefined,
+      guestReason: event.identityMode === "guest" ? event.guestReason : undefined,
       state: event.state,
       muted: Boolean(event.muted),
+      videoEnabled: typeof event.videoEnabled === "boolean" ? event.videoEnabled : undefined,
       error: event.error,
       endReason: parseMeetingEndReason(event.endReason),
       meetingUrl: event.meetingUrl,

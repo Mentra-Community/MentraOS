@@ -5,6 +5,7 @@ import semver from "semver"
 
 import {shouldHideMiniapp} from "./miniappVisibility"
 import {cloudClient} from "@/services/cloudClient"
+import {deploymentStore} from "@/services/deployment/store"
 
 const LOG_TAG = "PreinstalledMiniappSync"
 
@@ -60,12 +61,12 @@ function shouldInstall(entry: PreinstalledMiniappRegistryEntry): boolean {
   return true
 }
 
-async function installEntry(entry: PreinstalledMiniappRegistryEntry): Promise<void> {
+async function installEntry(entry: PreinstalledMiniappRegistryEntry, isCurrent: () => boolean): Promise<void> {
   if (!shouldInstall(entry)) return
 
   console.log(`${LOG_TAG}: installing ${entry.packageName}@${entry.version} (${entry.installPolicy})`)
   const zipPath = await downloadVerifiedBundle(entry)
-  if (shouldHideMiniapp(entry.packageName)) return
+  if (!isCurrent() || shouldHideMiniapp(entry.packageName)) return
   const result = await appRegistry.installFromLocalZip(zipPath, {
     releaseIdentity: {
       source: "preinstalled_registry",
@@ -215,6 +216,9 @@ function rotr(value: number, bits: number): number {
 
 export const preinstalledMiniappSync = {
   async sync(): Promise<void> {
+    const deployment = deploymentStore.getActive()
+    if (deployment.kind !== "consumer") return
+    const isCurrent = () => deploymentStore.getActive() === deployment
     let registry
     try {
       registry = await cloudClient.getPreinstalledMiniappRegistry()
@@ -224,8 +228,9 @@ export const preinstalledMiniappSync = {
     }
 
     for (const entry of registry.entries) {
+      if (!isCurrent()) return
       try {
-        await installEntry(entry)
+        await installEntry(entry, isCurrent)
       } catch (error) {
         console.warn(
           `${LOG_TAG}: failed to install ${entry.packageName}@${entry.version}: ${(error as Error)?.message ?? error}`,

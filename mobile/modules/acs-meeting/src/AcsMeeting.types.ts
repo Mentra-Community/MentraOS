@@ -23,6 +23,8 @@ export type AcsMeetingParticipant = {
 export type AcsMeetingState = {
   state: MeetingPhase
   muted: boolean
+  /** Whether ACS is sending the glasses camera. Resets to true on every join. */
+  videoEnabled?: boolean
   error?: string
   meetingUrl?: string
   provider?: "acs-teams"
@@ -51,6 +53,7 @@ export type AcsOutgoingVideo = {
 export type AcsMeetingJoinOptions = {
   meetingUrl: string
   token: string
+  identityMode?: "guest" | "teams-user"
   whepUrl?: string
   videoSource?: {type: "whep"; url: string} | {type: "softap"; bindAddress: string}
   displayName?: string

@@ -12,7 +12,11 @@ import com.azure.android.communication.calling.AudioStreamState
 import com.azure.android.communication.calling.AudioStreamType
 import com.azure.android.communication.calling.CapabilitiesCallFeature
 import com.azure.android.communication.calling.CapabilitiesChangedListener
-import com.azure.android.communication.calling.Call
+import com.azure.android.communication.calling.CommonCall
+import com.azure.android.communication.calling.CommonCallAgent
+import com.azure.android.communication.calling.TeamsCallAgent
+import com.azure.android.communication.calling.TeamsCallAgentOptions
+import com.azure.android.communication.calling.JoinTeamsCallOptions
 import com.azure.android.communication.calling.CallAgent
 import com.azure.android.communication.calling.CallAgentOptions
 import com.azure.android.communication.calling.CallClient
@@ -70,6 +74,7 @@ import com.mentra.glassesmedia.source.OutgoingRateArm
 import com.mentra.glassesmedia.source.PixelFormatArm
 import com.mentra.glassesmedia.source.GlassesMediaController
 import com.mentra.glassesmedia.network.ScopedSoftApNetwork
+import com.mentra.glassesmedia.source.DecodedFrameTap
 import com.mentra.glassesmedia.source.GlassesMediaSourceFactory
 import com.mentra.glassesmedia.source.LocalWhipIngestSource
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
@@ -200,12 +205,14 @@ class AcsMeetingSession(
   private var noNetworkListener: DiagnosticFlagChangedListener? = null
   private var relaysListener: DiagnosticFlagChangedListener? = null
   private var callClient: CallClient? = null
-  private var callAgent: CallAgent? = null
-  private var call: Call? = null
+  private var callAgent: CommonCallAgent? = null
+  private var call: CommonCall? = null
   private var audioOut: RawOutgoingAudioStream? = null
   private var localOut: LocalOutgoingAudioStream? = null
   private var audioIn: RawIncomingAudioStream? = null
   private var videoOut: VirtualOutgoingVideoStream? = null
+  /** Whether ACS is sending [videoOut]. Only [setVideoEnabled] turns it off; every call starts on. */
+  @Volatile private var videoEnabled = true
   @Volatile private var meetingUrl: String? = null
   @Volatile private var phase = "idle"
   @Volatile private var lastError: String? = null
@@ -265,13 +272,15 @@ class AcsMeetingSession(
    * `createCallAgent` Future we stopped waiting on. ACS still finishes signing in; this is the only
    * handle that can dispose that leftover agent before the next join.
    */
-  private var abandonedAgent: Future<CallAgent>? = null
+  private var abandonedAgent: Future<out CommonCallAgent>? = null
   /**
    * Agent signed in before the glasses hotspot came up. SoftAP DNS cannot resolve ACS hosts, so
    * `createCallAgent` after the scoped join stalls until the hotspot is torn down. Join reuses this
    * instead of signing in again on the broken resolver.
    */
   @Volatile private var agentPrepared = false
+  private var preparedToken: String? = null
+  private var preparedIdentityMode: String? = null
   private val controller = SessionAudioController()
   private val applier = AudioPolicyApplier(controller, scheduler) { Log.i(TAG, it) }
 
@@ -279,6 +288,7 @@ class AcsMeetingSession(
     val result = mutableMapOf<String, Any>(
       "state" to phase,
       "muted" to muted.get(),
+      "videoEnabled" to videoEnabled,
       "provider" to "acs-teams",
       "audioSource" to audioSource,
       "activeStream" to controller.readActive().name.lowercase(),
@@ -314,7 +324,7 @@ class AcsMeetingSession(
    * hotspot too. Here nothing is torn down while we wait, and a cold sign-in on a slow AP measured
    * 35 s on device — under the old 20 s cap that agent arrived just in time to be thrown away.
    */
-  fun prepareAgent(token: String, displayName: String?) {
+  fun prepareAgent(token: String, displayName: String?, identityMode: String = "guest") {
     val done = CountDownLatch(1)
     val error = AtomicReference<Exception?>(null)
     phase = "connecting"
@@ -332,8 +342,10 @@ class AcsMeetingSession(
         callClient = CallClient()
         val agentOptions = CallAgentOptions()
         agentOptions.displayName = displayName ?: "Mentra Call"
-        callAgent = obtainCallAgent(callClient!!, credential, agentOptions, generation, PREPARE_AGENT_WAIT_MS)
+        callAgent = obtainCallAgent(callClient!!, credential, agentOptions, generation, identityMode, PREPARE_AGENT_WAIT_MS)
         agentPrepared = true
+        preparedToken = token
+        preparedIdentityMode = identityMode
         Log.i(TAG, "ACS call agent prepared before SoftAP")
         SoftApTrace.stage(
           "session_prepare_agent_end",
@@ -379,6 +391,7 @@ class AcsMeetingSession(
     audioDelayMs: Int? = null,
     /** `created` (Start) or `joined` (Join); see [callOrigin]. Diagnostic only. */
     origin: String = "unknown",
+    identityMode: String = "guest",
     /**
      * Runs the WHIP listener bind, and exists so the caller can lift a process-wide network pin
      * across exactly that call. Takes the block rather than being a pair of before/after hooks so
@@ -426,7 +439,7 @@ class AcsMeetingSession(
         // the host and miniapp flash out of "joining" on every join.
         // A SoftAP join that already signed in on cellular must keep that agent:
         // recreating it on the glasses hotspot is the ACS_AGENT_TIMEOUT we just hit.
-        val reuseAgent = agentPrepared && callAgent != null
+        val reuseAgent = agentPrepared && callAgent != null && preparedToken == token && preparedIdentityMode == identityMode
         leaveLocked(emitIdle = false, keepAgent = reuseAgent)
         // After the teardown, because that teardown bumps the generation itself. Everything that
         // moves it runs on this executor, so the value is stable for the rest of this join.
@@ -483,7 +496,7 @@ class AcsMeetingSession(
           callClient = CallClient()
           val agentOptions = CallAgentOptions()
           agentOptions.displayName = displayName ?: "Mentra Call"
-          callAgent = obtainCallAgent(callClient!!, credential, agentOptions, generation)
+          callAgent = obtainCallAgent(callClient!!, credential, agentOptions, generation, identityMode)
         }
 
         val videoOptions = RawOutgoingVideoStreamOptions()
@@ -632,7 +645,10 @@ class AcsMeetingSession(
           bindIngestUnpinned {
             media.attach(
               video = { planes ->
-                frameSender.sendPlanes(planes)
+                // Preview first, deliberately: the tap must see frames ACS's pacing and
+                // readiness gates would otherwise hide, and it cannot delay or break this call.
+                DecodedFrameTap.offer(planes)
+                if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
               },
               pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
               config = videoSource.toConfig(),
@@ -641,7 +657,12 @@ class AcsMeetingSession(
         }
 
         val locator = TeamsMeetingLinkLocator(teamsUrl)
-        val joined = callAgent!!.join(context, locator, joinOptions)
+        val joined = when (val agent = callAgent!!) {
+          is TeamsCallAgent -> agent.join(context, locator, JoinTeamsCallOptions()
+            .setOutgoingVideoOptions(ov).setOutgoingAudioOptions(oa).setIncomingAudioOptions(ia))
+          is CallAgent -> agent.join(context, locator, joinOptions)
+          else -> throw IllegalStateException("Unsupported meeting agent")
+        }
         call = joined
         roster.attach(joined)
         joined.addOnStateChangedListener { pushCallState(joined.state) }
@@ -654,7 +675,8 @@ class AcsMeetingSession(
         if (videoSource !is MeetingVideoSourceSpec.SoftAp) {
           media.attach(
             video = { planes ->
-              frameSender.sendPlanes(planes)
+              DecodedFrameTap.offer(planes)
+              if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
             },
             pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
             config = if (synthetic) SourceConfig("", SourceKind.DIRECT) else videoSource.toConfig(),
@@ -884,6 +906,45 @@ class AcsMeetingSession(
     val snap = snapshot()
     onState(snap)
     return snap
+  }
+
+  /**
+   * Stop or resume the camera Teams receives without leaving the call. The glasses source, the
+   * preview tap and the WHEP/WHIP transport keep running; [frameSender] drops frames while ACS
+   * reports the stream stopped. [videoEnabled] only moves once ACS accepts the change.
+   */
+  fun setVideoEnabled(next: Boolean, complete: (Map<String, Any>?, Throwable?) -> Unit) {
+    val generation = joinGeneration.get()
+    executor.execute {
+      val active = call
+      val stream = videoOut
+      if (active == null || stream == null || joinGeneration.get() != generation) {
+        complete(null, IllegalStateException("No active meeting"))
+        return@execute
+      }
+      if (videoEnabled == next) {
+        complete(snapshot(), null)
+        return@execute
+      }
+      val result = runCatching {
+        val change = if (next) active.startVideo(context, stream) else active.stopVideo(context, stream)
+        change.get(VIDEO_TOGGLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+      }
+      if (call !== active || joinGeneration.get() != generation) {
+        complete(null, IllegalStateException("The meeting ended before the camera changed"))
+        return@execute
+      }
+      result.exceptionOrNull()?.let { error ->
+        Log.e(TAG, "setVideoEnabled=$next failed", error)
+        complete(null, error)
+        return@execute
+      }
+      Log.i(TAG, "setVideoEnabled=$next")
+      videoEnabled = next
+      val snap = snapshot()
+      onState(snap)
+      complete(snap, null)
+    }
   }
 
   fun setAudioSource(source: String): Map<String, Any> {
@@ -1224,7 +1285,7 @@ class AcsMeetingSession(
     ""
   }
 
-  private fun attachMediaStats(joined: Call) {
+  private fun attachMediaStats(joined: CommonCall) {
     detachMediaStats()
     mediaStatsReports.set(0)
     lastWireSizeKey = null
@@ -1443,7 +1504,7 @@ class AcsMeetingSession(
    * "sender's video is frozen" guidance points at these diagnostics instead:
    * they are the only send-side network signal the SDK exposes.
    */
-  private fun attachDiagnostics(joined: Call) {
+  private fun attachDiagnostics(joined: CommonCall) {
     detachDiagnostics()
     try {
       val feature = joined.feature(Features.LOCAL_USER_DIAGNOSTICS) as LocalUserDiagnosticsCallFeature
@@ -1638,7 +1699,7 @@ class AcsMeetingSession(
    * The capability that matters is `HANG_UP_FOR_EVERYONE`. It can flip mid-call — a presenter role
    * granted or removed — so the listener stays attached rather than reading once at connect.
    */
-  private fun attachCapabilities(joined: Call) {
+  private fun attachCapabilities(joined: CommonCall) {
     detachCapabilities()
     try {
       val feature = joined.feature(Features.CAPABILITIES)
@@ -1750,16 +1811,17 @@ class AcsMeetingSession(
     credential: CommunicationTokenCredential,
     options: CallAgentOptions,
     generation: Int,
+    identityMode: String,
     waitMs: Long = CALL_AGENT_WAIT_MS,
-  ): CallAgent {
+  ): CommonCallAgent {
     disposeAbandonedAgent(waitMs = ABANDONED_AGENT_REJOIN_WAIT_MS)
     return try {
-      awaitCallAgent(client, credential, options, generation, waitMs)
+      awaitCallAgent(client, credential, options, generation, identityMode, waitMs)
     } catch (error: Exception) {
       if (!AbandonedCallAgent.isExistingAgentError(error)) throw error
       Log.w(TAG, "createCallAgent hit leftover identity; disposing abandoned agent and retrying")
       disposeAbandonedAgent(waitMs = ABANDONED_AGENT_REJOIN_WAIT_MS)
-      awaitCallAgent(client, credential, options, generation, waitMs)
+      awaitCallAgent(client, credential, options, generation, identityMode, waitMs)
     }
   }
 
@@ -1768,11 +1830,16 @@ class AcsMeetingSession(
     credential: CommunicationTokenCredential,
     options: CallAgentOptions,
     generation: Int,
+    identityMode: String,
     waitMs: Long,
-  ): CallAgent {
+  ): CommonCallAgent {
     val startedAt = SystemClock.elapsedRealtime()
     SoftApTrace.stage("session_call_agent_wait", "waitMs" to waitMs, "generation" to generation)
-    val pending = client.createCallAgent(context, credential, options)
+    val pending: Future<out CommonCallAgent> = when (identityMode) {
+      "guest" -> client.createCallAgent(context, credential, options)
+      "teams-user" -> client.createTeamsCallAgent(context, credential, TeamsCallAgentOptions())
+      else -> throw IllegalArgumentException("Unsupported meeting identity mode")
+    }
     val agent = try {
       pending.get(waitMs, TimeUnit.MILLISECONDS)
     } catch (timeout: TimeoutException) {
@@ -1815,7 +1882,7 @@ class AcsMeetingSession(
    * Gives up after a bounded number of sweeps: by then the process has either got the agent or the
    * future is never completing, and an endless timer is its own leak.
    */
-  private fun sweepLateAgent(pending: Future<CallAgent>, sweep: Int) {
+  private fun sweepLateAgent(pending: Future<out CommonCallAgent>, sweep: Int) {
     if (sweep >= LATE_AGENT_SWEEPS) {
       Log.w(TAG, "abandoned call agent never completed; stopping sweep")
       // Giving up on the sweep is giving up on disposing that agent. It is a bounded leak by
@@ -1992,6 +2059,8 @@ class AcsMeetingSession(
       callClient = null
       call = null
       callAgent = null
+      preparedToken = null
+      preparedIdentityMode = null
       agentPrepared = false
     }
     media.stop()
@@ -1999,6 +2068,7 @@ class AcsMeetingSession(
     localOut = null
     audioIn = null
     videoOut = null
+    videoEnabled = true
     outgoingReady.set(false)
     muted.set(false)
     hangUpForEveryone = CapabilityStatus()
@@ -2075,6 +2145,7 @@ class AcsMeetingSession(
     private const val TAG = "ACS-SPIKE"
     const val GLASSES_REQUIRES_UNMUTED_TRANSPORT = true
     private const val ROSTER_COALESCE_MS = 150L
+    private const val VIDEO_TOGGLE_TIMEOUT_MS = 10_000L
     private const val MEDIA_RESTART_BASE_MS = 1_000L
     private const val MEDIA_RESTART_MAX_MS = 10_000L
 
@@ -2151,7 +2222,7 @@ class AcsMeetingSession(
       null -> null
     }
 
-    private fun describeEndReason(call: Call?): Map<String, Any?> {
+    private fun describeEndReason(call: CommonCall?): Map<String, Any?> {
       if (call == null) return mapOf("hasCall" to false)
       return try {
         val getter = call.javaClass.methods.firstOrNull {

@@ -401,6 +401,7 @@ jobs:
       release_id: ${{ needs.plan.outputs.release_id }}
       ota_manifest_url: ${{ needs.ota.outputs.manifest_url }}
       ota_manifest_sha256: ${{ needs.ota.outputs.manifest_sha256 }}
+      installable_downloads: true
       backend_environment: ${{ needs.plan.outputs.backend_environment }}
       play_track: ${{ needs.plan.outputs.play_track }}
       testflight_group: ${{ needs.plan.outputs.testflight_group }}
@@ -665,6 +666,7 @@ jobs:
 
   notify-slack:
     name: Notify release Slack channel
+    environment: build-notifications
     needs:
       [
         plan,
@@ -690,12 +692,16 @@ jobs:
         env:
           STAGING_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}
           DEV_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
+          SLACK_BUILDS_BOT_TOKEN: ${{ secrets.SLACK_BUILDS_BOT_TOKEN }}
+          SLACK_DEV_BUILDS_CHANNEL_ID: ${{ vars.SLACK_DEV_BUILDS_CHANNEL_ID }}
+          SLACK_STAGING_BUILDS_CHANNEL_ID: ${{ vars.SLACK_STAGING_BUILDS_CHANNEL_ID }}
           RELEASE_SCOPE: core
           RELEASE_PAGE_RESULT: ${{ needs.publish-release-page.result }}
           EXAMPLES_DISPATCH_RESULT: ${{ needs.dispatch-examples.result }}
           BRANCH: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           SHA: ${{ github.sha }}
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
           COMMIT_AUTHOR: ${{ github.event.head_commit.author.name }}
@@ -722,7 +728,19 @@ jobs:
           APK_NAME: ${{ needs.mobile.outputs.apk_name }}
           IPA_NAME: ${{ needs.mobile.outputs.ipa_name }}
           MOBILE_APK_URL: ${{ needs.mobile.outputs.apk_url }}
+          IPHONE_MANIFEST_URL: ${{ needs.mobile.outputs.iphone_manifest_url }}
+          IPHONE_SHARE_URL: ${{ needs.mobile.outputs.iphone_share_url }}
+          MAC_URL: ${{ needs.mobile.outputs.mac_url }}
+          OTA_MANIFEST_URL: ${{ needs.ota.outputs.manifest_url }}
           MOBILE_IPA_URL: ${{ needs.mobile.outputs.ipa_url }}
           ASG_APK_NAME: ${{ needs.ota.outputs.asg_apk_name }}
           ASG_APK_URL: ${{ needs.ota.outputs.asg_apk_url }}
         run: .github/scripts/notify-coordinated-release-slack.sh
+
+      - name: Retain the exact editable release message
+        if: always() && hashFiles('slack-release-message.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-slack-message-${{ github.run_id }}-${{ github.run_attempt }}
+          path: slack-release-message.json
+          if-no-files-found: error

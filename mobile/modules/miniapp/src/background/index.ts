@@ -92,6 +92,9 @@ export type {SpeakerModule} from "../modules/speaker"
 export type {
   MeetingModule,
   MeetingJoinOptions,
+  MeetingConfiguration,
+  MeetingIdentityMode,
+  MeetingGuestReason,
   MeetingState,
   MeetingPhase,
   MeetingProvider,
@@ -108,7 +111,15 @@ export {
   parseMeetingParticipants,
   validateMeetingVideoSource,
 } from "../modules/meeting"
-export type {StreamModule} from "../modules/stream"
+export type {
+  StreamModule,
+  StreamPreviewOptions,
+  PreviewHandle,
+  PreviewHandleState,
+  PreviewHandleStatus,
+} from "../modules/stream"
+export {PreviewError} from "../modules/stream"
+export type {PreviewErrorCode, PreviewSource, PreviewStatus} from "../protocol"
 export type {SystemModule} from "../modules/system"
 export type {TranscriptionModule} from "../modules/transcription"
 export type {TranslationModule} from "../modules/translation"
@@ -132,6 +143,8 @@ export type {
   RenderRectStyle,
   RenderResult,
   RenderTextStyle,
+  RenderTextLayout,
+  RenderTextLine,
 } from "../modules/display"
 export type {DashboardMode} from "../modules/dashboard"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"

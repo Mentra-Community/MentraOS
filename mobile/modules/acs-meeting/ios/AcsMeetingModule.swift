@@ -38,11 +38,12 @@ public class AcsMeetingModule: Module {
 
     public func definition() -> ModuleDefinition {
         Name("MentraAcsMeeting")
+        Function("supportsTeamsIdentity") { true }
         Events("onState", "onIncomingPcm", "onScopedNetworkLost", "onScopedNetworkProgress")
 
         AsyncFunction("prepareAgent") { (options: [String: Any], promise: Promise) in
             let token = try requireString(options, "token")
-            self.meetingSession().prepareAgent(token: token, displayName: options["displayName"] as? String) { result in
+            self.meetingSession().prepareAgent(token: token, displayName: options["displayName"] as? String, identityMode: options["identityMode"] as? String ?? "guest") { result in
                 switch result {
                 case let .success(state): promise.resolve(state)
                 case let .failure(error): promise.reject(error)
@@ -59,7 +60,7 @@ public class AcsMeetingModule: Module {
             }
             let video = try parseAcsOutgoingVideo(options["video"])
             self.meetingSession().join(
-                token: token, meetingUrl: meetingUrl, sourceConfig: source,
+                token: token, identityMode: options["identityMode"] as? String ?? "guest", meetingUrl: meetingUrl, sourceConfig: source,
                 displayName: options["displayName"] as? String,
                 dumpWav: options["dumpPcmWav"] as? Bool ?? false,
                 audioSource: options["audioSource"] as? String ?? "glasses", video: video
@@ -163,6 +164,19 @@ public class AcsMeetingModule: Module {
             session.setMuted(muted) { promise.resolve($0) }
         }
 
+        AsyncFunction("setVideoEnabled") { (enabled: Bool, promise: Promise) in
+            guard let session = self.session else {
+                promise.reject(AcsMeetingError("No active meeting"))
+                return
+            }
+            session.setVideoEnabled(enabled) { result in
+                switch result {
+                case let .success(state): promise.resolve(state)
+                case let .failure(error): promise.reject(error)
+                }
+            }
+        }
+
         AsyncFunction("setAudioSource") { (source: String, promise: Promise) in
             guard let session = self.session else {
                 promise.resolve(["state": "idle", "muted": false, "audioSource": source]); return
@@ -235,16 +249,20 @@ final class AcsMeetingSession {
     private lazy var applier = AudioPolicyApplier(controller: controller, scheduler: scheduler) { NSLog("ACS-SPIKE \($0)") }
     private var phase = "idle"
     private var muted = false
+    /// Whether ACS is sending `videoStream`. Only `setVideoEnabled` turns it off; every call starts on.
+    private var videoEnabled = true
+    private var videoStream: VirtualOutgoingVideoStream?
     private var meetingUrl: String?
     private var lastError: String?
     private var callEndReason: (code: Int, subcode: Int)?
     private var callClient: CallClient?
-    private var callAgent: CallAgent?
-    private var call: Call?
+    private var callAgent: CommonCallAgent?
+    private var call: CommonCall?
     private var media: DecodedGlassesMediaSource?
     private var sourceConfig = SourceConfig(url: "")
-    private var preparedAgent: CallAgent?
+    private var preparedAgent: CommonCallAgent?
     private var preparedClient: CallClient?
+    private var preparedIdentityMode: String?
     private var preparedToken: String?
     private var pendingJoin: ((Result<[String: Any], Error>) -> Void)?
     private var pendingPrepare: ((Result<[String: Any], Error>) -> Void)?
@@ -281,6 +299,11 @@ final class AcsMeetingSession {
         onMuteChange: { [weak self] call in self?.handleCallMuteChange(call) },
         onRosterChange: { [weak self] call in self?.refreshRoster(call) }
     )
+    private lazy var teamsCallDelegateProxy = AcsTeamsCallDelegateProxy(
+        onStateChange: { [weak self] call in self?.handleCallStateChange(call) },
+        onMuteChange: { [weak self] call in self?.handleCallMuteChange(call) },
+        onRosterChange: { [weak self] call in self?.refreshRoster(call) }
+    )
     private var remoteParticipants: [ObjectIdentifier: RemoteParticipant] = [:]
     private lazy var participantDelegateProxy = AcsParticipantDelegateProxy { [weak self] participant in
         self?.queue.async {
@@ -308,6 +331,7 @@ final class AcsMeetingSession {
         var result: [String: Any] = [
             "state": phase,
             "muted": muted,
+            "videoEnabled": videoEnabled,
             "provider": "acs-teams",
             "audioSource": audioSource,
             "activeStream": controller.readActive().rawValue,
@@ -342,7 +366,7 @@ final class AcsMeetingSession {
         return result
     }
 
-    func prepareAgent(token: String, displayName: String?, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+    func prepareAgent(token: String, displayName: String?, identityMode: String = "guest", completion: @escaping (Result<[String: Any], Error>) -> Void) {
         queue.async {
             guard self.cleanup.wait(timeout: .now()) == .success, self.pendingPrepare == nil, self.pendingJoin == nil, self.call == nil, self.media == nil else {
                 completion(.failure(AcsMeetingError("Previous call cleanup is still pending"))); return
@@ -356,7 +380,7 @@ final class AcsMeetingSession {
                 let credential = try CommunicationTokenCredential(token: token)
                 let options = CallAgentOptions()
                 options.displayName = displayName ?? "Mentra Call"
-                client.createCallAgent(userCredential: credential, options: options) { agent, error in
+                createMeetingAgent(client: client, credential: credential, guestOptions: options, identityMode: identityMode) { agent, error in
                     self.queue.async {
                         guard self.joinGeneration == generation, self.pendingPrepare != nil else { agent?.dispose(); return }
                         let reply = self.pendingPrepare
@@ -364,6 +388,7 @@ final class AcsMeetingSession {
                         if let agent, error == nil {
                             self.preparedAgent = agent
                             self.preparedToken = token
+                            self.preparedIdentityMode = identityMode
                             reply?(.success(self.snapshotLocked()))
                         } else {
                             agent?.dispose()
@@ -384,7 +409,7 @@ final class AcsMeetingSession {
         }
     }
 
-    func join(token: String, meetingUrl: String, sourceConfig: SourceConfig, displayName: String?, dumpWav: Bool,
+    func join(token: String, identityMode: String = "guest", meetingUrl: String, sourceConfig: SourceConfig, displayName: String?, dumpWav: Bool,
               audioSource: String = "glasses", video: AcsOutgoingVideo = .hd,
               completion: @escaping (Result<[String: Any], Error>) -> Void)
     {
@@ -392,7 +417,7 @@ final class AcsMeetingSession {
             guard self.cleanup.wait(timeout: .now()) == .success, self.pendingPrepare == nil, self.pendingJoin == nil, self.call == nil, self.media == nil else {
                 completion(.failure(AcsMeetingError("Previous call cleanup is still pending"))); return
             }
-            let prepared = self.preparedToken == token ? self.preparedAgent : nil
+            let prepared = self.preparedToken == token && self.preparedIdentityMode == identityMode ? self.preparedAgent : nil
             let preparedClient = self.preparedClient
             if prepared != nil { self.preparedAgent = nil; self.preparedClient = nil; self.preparedToken = nil }
             self.leaveLocked(emitIdle: false)
@@ -404,7 +429,7 @@ final class AcsMeetingSession {
             self.lastError = nil
             self.callEndReason = nil
             self.emit("connecting")
-            let useAgent: (CallAgent) -> Void = { agent in
+            let useAgent: (CommonCallAgent) -> Void = { agent in
                 do { try self.joinWithAgentLocked(agent, generation: generation, meetingUrl: meetingUrl,
                                                   sourceConfig: sourceConfig, dumpWav: dumpWav, video: video) } catch { self.failJoinLocked(error, generation: generation) }
             }
@@ -421,7 +446,7 @@ final class AcsMeetingSession {
                     options.displayName = displayName ?? "Mentra Call"
                     let agentStartedAt = ProcessInfo.processInfo.systemUptime
                     NSLog("ACS-SPIKE iOS agent creation started generation=\(generation)")
-                    client.createCallAgent(userCredential: credential, options: options) { agent, error in
+                    createMeetingAgent(client: client, credential: credential, guestOptions: options, identityMode: identityMode) { agent, error in
                         self.queue.async {
                             let elapsedMs = Int((ProcessInfo.processInfo.systemUptime - agentStartedAt) * 1000)
                             NSLog("ACS-SPIKE iOS agent creation completed generation=\(generation) elapsedMs=\(elapsedMs) success=\(agent != nil && error == nil)")
@@ -444,7 +469,7 @@ final class AcsMeetingSession {
     }
 
     private func joinWithAgentLocked(
-        _ agent: CallAgent,
+        _ agent: CommonCallAgent,
         generation: UInt64,
         meetingUrl: String,
         sourceConfig: SourceConfig,
@@ -463,6 +488,7 @@ final class AcsMeetingSession {
         let videoOptions = RawOutgoingVideoStreamOptions()
         videoOptions.formats = [videoFormat]
         let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
+        self.videoStream = videoStream
         frameSender = AcsFrameSender()
         frameSender.attach(videoStream)
 
@@ -523,14 +549,14 @@ final class AcsMeetingSession {
         let locator = TeamsMeetingLinkLocator(meetingLink: meetingUrl)
         // Cancellation reserves cleanup and retains the agent until the late join result
         // can be hung up. The retirement deadline still handles an SDK callback that is lost.
-        let joinRetirement = CallJoinRetirement<Call>(group: cleanup, queue: queue, dispose: { agent.dispose() }) { call, finished in
+        let joinRetirement = CallJoinRetirement<CommonCall>(group: cleanup, queue: queue, dispose: { agent.dispose() }) { call, finished in
             call.hangUp(options: nil) { error in
                 if let error { NSLog("ACS-SPIKE cancelled join hangUp failed: \(error)") }
                 finished()
             }
         }
         cancelPendingCallJoin = { joinRetirement.cancel() }
-        agent.join(with: locator, joinCallOptions: joinOptions) { call, error in
+        joinMeeting(agent: agent, locator: locator, guestOptions: joinOptions) { call, error in
             self.queue.async {
                 guard joinRetirement.receive(call) else { return }
                 guard self.callAgent === agent, self.joinGeneration == generation else {
@@ -559,7 +585,7 @@ final class AcsMeetingSession {
     }
 
     private func finishJoinLocked(
-        _ call: Call,
+        _ call: CommonCall,
         generation: UInt64,
         sourceConfig: SourceConfig,
         dumpWav: Bool,
@@ -571,7 +597,8 @@ final class AcsMeetingSession {
             return
         }
         self.call = call
-        call.delegate = callDelegateProxy
+        (call as? Call)?.delegate = callDelegateProxy
+        (call as? TeamsCall)?.delegate = teamsCallDelegateProxy
         refreshRosterLocked(call)
         attachCapabilities(call)
 
@@ -581,7 +608,12 @@ final class AcsMeetingSession {
             self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)
         }
         let source: DecodedGlassesMediaSource = sourceConfig.kind == .softap ? LocalWhipIngestSource() : WhepVideoSource()
-        source.onFrame = { [frameSender] buffer in frameSender.send(buffer) }
+        source.onFrame = { [frameSender] buffer in
+            // Preview first, deliberately: the tap must see frames the ACS sender's pacing and
+            // readiness gates would otherwise hide, and it cannot delay or break this call.
+            DecodedFrameTap.shared.offer(buffer)
+            if frameSender.send(buffer) { DecodedFrameTap.shared.recordAcsSend() }
+        }
         source.onPcm = { [weak self] pcm, rate, channels in
             self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)
         }
@@ -717,6 +749,46 @@ final class AcsMeetingSession {
         }
     }
 
+    /// Stop or resume the camera Teams receives without leaving the call. The glasses source, the
+    /// preview tap and the WHEP/WHIP transport keep running; `AcsFrameSender` drops frames while
+    /// ACS reports the stream stopped. `videoEnabled` only moves once ACS accepts the change.
+    func setVideoEnabled(_ next: Bool, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        queue.async {
+            guard let call = self.call, let stream = self.videoStream else {
+                completion(.failure(AcsMeetingError("No active meeting")))
+                return
+            }
+            guard self.videoEnabled != next else {
+                completion(.success(self.snapshotLocked()))
+                return
+            }
+            let generation = self.joinGeneration
+            let finished: (Error?) -> Void = { error in
+                self.queue.async {
+                    guard self.joinGeneration == generation, self.call === call else {
+                        completion(.failure(AcsMeetingError("The meeting ended before the camera changed")))
+                        return
+                    }
+                    if let error {
+                        NSLog("ACS-SPIKE setVideoEnabled=\(next) failed: \(error)")
+                        completion(.failure(error))
+                        return
+                    }
+                    NSLog("ACS-SPIKE setVideoEnabled=\(next)")
+                    self.videoEnabled = next
+                    let snapshot = self.snapshotLocked()
+                    self.onState(snapshot)
+                    completion(.success(snapshot))
+                }
+            }
+            if next {
+                call.startVideo(stream: stream, completionHandler: finished)
+            } else {
+                call.stopVideo(stream: stream, completionHandler: finished)
+            }
+        }
+    }
+
     func setAudioSource(_ source: String, completion: @escaping ([String: Any]) -> Void) {
         queue.async {
             if AcsAudioPolicy.parseSource(source) == nil {
@@ -845,7 +917,7 @@ final class AcsMeetingSession {
      promoted to presenter mid-call), and an End button that never turns on is the same bug as one
      that lies about what it does.
      */
-    private func attachCapabilities(_ call: Call) {
+    private func attachCapabilities(_ call: CommonCall) {
         let feature = call.feature(Features.capabilities)
         capabilitiesFeature = feature
         feature.delegate = capabilitiesDelegateProxy
@@ -976,7 +1048,8 @@ final class AcsMeetingSession {
         let leavingAgent = callAgent
         let cancelJoin = cancelPendingCallJoin
         cancelPendingCallJoin = nil
-        leavingCall?.delegate = nil
+        (leavingCall as? Call)?.delegate = nil
+        (leavingCall as? TeamsCall)?.delegate = nil
         if let leavingCall {
             // CallAgent.dispose releases all local SDK resources. The retirement deadline
             // also disposes the agent if hangUp loses its callback, before opening the barrier.
@@ -1004,6 +1077,8 @@ final class AcsMeetingSession {
         pcmBridge = nil
         outgoingReady = false
         muted = false
+        videoEnabled = true
+        videoStream = nil
         audioSource = "glasses"
         lastSafety = .degraded
         meetingUrl = nil
@@ -1017,7 +1092,7 @@ final class AcsMeetingSession {
         }
     }
 
-    fileprivate func currentCall() -> Call? {
+    fileprivate func currentCall() -> CommonCall? {
         call
     }
 
@@ -1029,14 +1104,14 @@ final class AcsMeetingSession {
         phoneMic.setEnabled(enabled)
     }
 
-    private func handleCallStateChange(_ changedCall: Call) {
+    private func handleCallStateChange(_ changedCall: CommonCall) {
         queue.async {
             guard self.call === changedCall, self.lastError == nil else { return }
             self.refreshCallStateLocked(changedCall)
         }
     }
 
-    private func refreshCallStateLocked(_ changedCall: Call) {
+    private func refreshCallStateLocked(_ changedCall: CommonCall) {
         switch changedCall.state {
         case .connecting: emit("connecting")
         case .inLobby: emit("lobby")
@@ -1071,14 +1146,14 @@ final class AcsMeetingSession {
         }
     }
 
-    private func handleCallMuteChange(_ changedCall: Call) {
+    private func handleCallMuteChange(_ changedCall: CommonCall) {
         queue.async {
             guard self.call === changedCall, self.lastError == nil else { return }
             self.applyAudioPolicyOnQueue("outgoing-audio-state")
         }
     }
 
-    private func refreshRoster(_ changedCall: Call) {
+    private func refreshRoster(_ changedCall: CommonCall) {
         queue.async {
             guard self.call === changedCall else { return }
             self.refreshRosterLocked(changedCall)
@@ -1086,7 +1161,7 @@ final class AcsMeetingSession {
         }
     }
 
-    private func refreshRosterLocked(_ changedCall: Call) {
+    private func refreshRosterLocked(_ changedCall: CommonCall) {
         dispatchPrecondition(condition: .onQueue(queue))
         let current = Dictionary(uniqueKeysWithValues: changedCall.remoteParticipants.map {
             (ObjectIdentifier($0), $0)
@@ -1209,12 +1284,12 @@ final class SessionAudioController: AudioStreamController {
 }
 
 private final class AcsCallDelegateProxy: NSObject, CallDelegate {
-    private let onStateChange: (Call) -> Void
-    private let onMuteChange: (Call) -> Void
-    private let onRosterChange: (Call) -> Void
+    private let onStateChange: (CommonCall) -> Void
+    private let onMuteChange: (CommonCall) -> Void
+    private let onRosterChange: (CommonCall) -> Void
 
-    init(onStateChange: @escaping (Call) -> Void, onMuteChange: @escaping (Call) -> Void,
-         onRosterChange: @escaping (Call) -> Void)
+    init(onStateChange: @escaping (CommonCall) -> Void, onMuteChange: @escaping (CommonCall) -> Void,
+         onRosterChange: @escaping (CommonCall) -> Void)
     {
         self.onStateChange = onStateChange
         self.onMuteChange = onMuteChange
@@ -1230,6 +1305,32 @@ private final class AcsCallDelegateProxy: NSObject, CallDelegate {
     }
 
     func call(_ call: Call, didUpdateRemoteParticipant _: ParticipantsUpdatedEventArgs) {
+        onRosterChange(call)
+    }
+}
+
+private final class AcsTeamsCallDelegateProxy: NSObject, TeamsCallDelegate {
+    private let onStateChange: (CommonCall) -> Void
+    private let onMuteChange: (CommonCall) -> Void
+    private let onRosterChange: (CommonCall) -> Void
+
+    init(onStateChange: @escaping (CommonCall) -> Void, onMuteChange: @escaping (CommonCall) -> Void,
+         onRosterChange: @escaping (CommonCall) -> Void)
+    {
+        self.onStateChange = onStateChange
+        self.onMuteChange = onMuteChange
+        self.onRosterChange = onRosterChange
+    }
+
+    func teamsCall(_ call: TeamsCall, didChangeState _: PropertyChangedEventArgs) {
+        onStateChange(call)
+    }
+
+    func teamsCall(_ call: TeamsCall, didUpdateOutgoingAudioState _: PropertyChangedEventArgs) {
+        onMuteChange(call)
+    }
+
+    func teamsCall(_ call: TeamsCall, didUpdateRemoteParticipant _: ParticipantsUpdatedEventArgs) {
         onRosterChange(call)
     }
 }
@@ -1336,4 +1437,37 @@ private func parseAcsOutgoingVideo(_ raw: Any?) throws -> AcsOutgoingVideo {
         throw NSError(domain: "MentraAcsMeeting", code: 1, userInfo: [NSLocalizedDescriptionKey: "unsupported ACS video \(width)x\(height)@\(fps)"])
     }
     return AcsOutgoingVideo(width: width, height: height, fps: fps, maxBitrateBps: bitrate)
+}
+
+/// Both identity modes use the same raw media and lifecycle code. Only agent creation and
+/// join options differ; the authenticated Teams display name is supplied by Microsoft.
+private func createMeetingAgent(client: CallClient, credential: CommunicationTokenCredential,
+                                guestOptions: CallAgentOptions, identityMode: String,
+                                completion: @escaping (CommonCallAgent?, Error?) -> Void)
+{
+    switch identityMode {
+    case "guest":
+        client.createCallAgent(userCredential: credential, options: guestOptions) { completion($0, $1) }
+    case "teams-user":
+        client.createTeamsCallAgent(userCredential: credential, options: TeamsCallAgentOptions()) { completion($0, $1) }
+    default:
+        completion(nil, AcsMeetingError("Unsupported meeting identity mode"))
+    }
+}
+
+private func joinMeeting(agent: CommonCallAgent, locator: TeamsMeetingLinkLocator,
+                         guestOptions: JoinCallOptions,
+                         completion: @escaping (CommonCall?, Error?) -> Void)
+{
+    if let teams = agent as? TeamsCallAgent {
+        let options = JoinTeamsCallOptions()
+        options.outgoingVideoOptions = guestOptions.outgoingVideoOptions
+        options.outgoingAudioOptions = guestOptions.outgoingAudioOptions
+        options.incomingAudioOptions = guestOptions.incomingAudioOptions
+        teams.join(with: locator, joinTeamsCallOptions: options) { completion($0, $1) }
+    } else if let guest = agent as? CallAgent {
+        guest.join(with: locator, joinCallOptions: guestOptions) { completion($0, $1) }
+    } else {
+        completion(nil, AcsMeetingError("Unsupported meeting agent"))
+    }
 }

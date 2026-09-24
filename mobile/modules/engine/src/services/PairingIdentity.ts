@@ -44,6 +44,9 @@ export type IdentitySnapshot =
   | {kind: "pending"; model: string}
   | {kind: "paired"; model: string; name: string; address?: string}
 
+type PendingSelection = {model: string; revision: number}
+let pendingSelectionRevision = 0
+
 // Identity keys hold model/name strings; anything else (legacy null, a stray
 // non-string) reads as absent, matching native currentDefaultDevice()'s
 // blank checks.
@@ -100,6 +103,7 @@ export function markPendingSelection(model: string): AsyncResult<void, Error> {
     console.warn(`PairingIdentity: ignoring pending selection with empty model (got ${JSON.stringify(model)})`)
     return Res.try_async(async () => {})
   }
+  pendingSelectionRevision += 1
   console.log(`PairingIdentity: pending selection -> "${trimmed}"`)
   const result = useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, trimmed)
   // setSetting resolves to a Result (never rejects); a persist failure would
@@ -110,6 +114,31 @@ export function markPendingSelection(model: string): AsyncResult<void, Error> {
   return result
 }
 
+/** A pending selection can coexist with a paired default that hides it in the identity projection. */
+export function snapshotPendingSelection(): PendingSelection | null {
+  const model = readIdentityString(SETTINGS.pending_wearable.key)
+  return model ? {model, revision: pendingSelectionRevision} : null
+}
+
+/** Retire the cancelled marker without changing a preserved default pairing. */
+export async function clearPendingSelection(selection: PendingSelection): Promise<void> {
+  // Native cleanup can yield to another selection, including the same model.
+  if (
+    pendingSelectionRevision !== selection.revision ||
+    readIdentityString(SETTINGS.pending_wearable.key) !== selection.model
+  )
+    return
+  const result = await useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, "")
+  if (result.is_error()) {
+    // setSetting updates memory optimistically. Keep the retry affordance if
+    // persistence failed, without overwriting a selection/promotion since then.
+    if (pendingSelectionRevision === selection.revision && !readIdentityString(SETTINGS.pending_wearable.key)) {
+      await markPendingSelection(selection.model)
+    }
+    throw result.error
+  }
+}
+
 /**
  * Promotion retires the selection: when the native layer promotes the default
  * wearable at pairing success and its save_setting echo lands, the pending
@@ -118,6 +147,7 @@ export function markPendingSelection(model: string): AsyncResult<void, Error> {
  */
 export async function retirePendingSelectionOnPromotion(echoedKey: string, echoedValue: unknown): Promise<void> {
   if (echoedKey !== SETTINGS.default_wearable.key || !echoedValue) return
+  pendingSelectionRevision += 1
   const settings = useSettingsStore.getState()
   const pending = settings.getSetting(SETTINGS.pending_wearable.key)
   if (pending) {
@@ -146,6 +176,7 @@ export async function demoteDefaultToPending(model: string): Promise<void> {
       : `PairingIdentity: demote "${model}" -> pending`,
   )
   if (!fresher) {
+    pendingSelectionRevision += 1
     await settings.setSetting(SETTINGS.pending_wearable.key, model)
   }
   await settings.setSetting(SETTINGS.default_wearable.key, "")

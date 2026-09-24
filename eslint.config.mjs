@@ -170,7 +170,11 @@ export default defineConfig([
   // The @/ alias is mobile-app-only, so internal relative imports are correct.
   // bun:test is a Bun built-in that the import resolver doesn't know about.
   {
-    files: ["mobile/modules/engine/**/*.{js,ts,jsx,tsx}", "mobile/modules/miniapp/**/*.{js,ts,jsx,tsx}"],
+    files: [
+      "mobile/modules/engine/**/*.{js,ts,jsx,tsx}",
+      "mobile/modules/miniapp/**/*.{js,ts,jsx,tsx}",
+      "mobile/modules/frame-preview/tools/**/*.ts",
+    ],
     rules: {
       "no-restricted-imports": "off",
       "import/no-unresolved": ["error", {ignore: ["^bun:"]}],

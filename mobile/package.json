@@ -2,7 +2,7 @@
   "name": "mentraos",
   "version": "3.2.1",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "index.js",
   "workspaces": [
     "modules/*",
     "../cloud-v2/packages/cloud-client",
@@ -73,6 +73,7 @@
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/acs-meeting": "workspace:*",
+    "@mentra/frame-preview": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
     "@mentra/crust": "workspace:*",
     "@mentra/engine": "workspace:*",

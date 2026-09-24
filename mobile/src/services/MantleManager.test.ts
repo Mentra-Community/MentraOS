@@ -9,6 +9,13 @@ import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {deploymentStore} from "@/services/deployment/store"
+import {createConsumerDeployment} from "@/services/deployment/officialManifest"
+import type {WorkspaceDeployment} from "@/services/deployment/types"
+import {storage} from "@/utils/storage"
+import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
+import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
+import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import {
   appRegistry,
   audioPlaybackService,
@@ -667,6 +674,213 @@ describe("MantleManager", () => {
     }
   })
 
+  it("skips excluded bundled miniapps without logging startup errors", async () => {
+    const consumer = createConsumerDeployment()
+    const workspace: WorkspaceDeployment = {
+      kind: "workspace",
+      source: "manual",
+      activatedAt: "2026-09-22T00:00:00Z",
+      workspaceOrigin: "https://enterprise.example",
+      manifestUrl: "https://enterprise.example/.well-known/mentra-deployment.json",
+      manifest: {
+        ...consumer.manifest,
+        systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings", "com.mentra.feedback"]},
+      },
+    }
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
+    const asset = {
+      name: "com.mentra.ai-1.0.0.zip",
+      downloadAsync: jest.fn(),
+    } as unknown as Asset
+    const fromModule = jest.spyOn(Asset, "fromModule").mockReturnValue(asset)
+    const originalInstall = appRegistry.installFromLocalZip
+    const install = jest.fn()
+    appRegistry.installFromLocalZip = install
+    const log = jest.spyOn(console, "error").mockImplementation(() => {})
+    const instance = new (mantle.constructor as new () => {installBundledMiniapps: () => Promise<void>})()
+    try {
+      await instance.installBundledMiniapps()
+      expect(asset.downloadAsync).not.toHaveBeenCalled()
+      expect(install).not.toHaveBeenCalled()
+      expect(log).not.toHaveBeenCalled()
+    } finally {
+      active.mockRestore()
+      fromModule.mockRestore()
+      appRegistry.installFromLocalZip = originalInstall
+      log.mockRestore()
+    }
+  })
+
+  it.each(["ios", "android"])("restores consumer bundles after workspace cleanup on %s", async (platform) => {
+    const originalPlatform = Platform.OS
+    Object.defineProperty(Platform, "OS", {configurable: true, value: platform})
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+    let workspaceCopyPresent = true
+    const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockImplementation(async () => {
+      workspaceCopyPresent = false
+    })
+    const preinstall = jest.spyOn(preinstalledMiniappSync, "sync").mockResolvedValue(undefined)
+    const instance = new (mantle.constructor as new () => {
+      initMiniapps: () => Promise<void>
+      installBundledMiniapps: () => Promise<void>
+    })()
+    instance.installBundledMiniapps = jest.fn(async () => {
+      expect(workspaceCopyPresent).toBe(false)
+    })
+    try {
+      await instance.initMiniapps()
+      expect(instance.installBundledMiniapps).toHaveBeenCalledTimes(1)
+    } finally {
+      active.mockRestore()
+      sync.mockRestore()
+      preinstall.mockRestore()
+      Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+    }
+  })
+
+  it("does not resume miniapp startup after cleanup cancels its managed synchronization", async () => {
+    const internal = require("@mentra/engine-host-internal") as {
+      phoneLocationService?: {stopPhoneLocation: () => void}
+    }
+    const previousLocationService = internal.phoneLocationService
+    internal.phoneLocationService = {stopPhoneLocation: jest.fn()}
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+    let entered!: () => void
+    let finish!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockImplementation(() => {
+      entered()
+      return pending
+    })
+    const cancel = jest.spyOn(deploymentManagedMiniappSync, "cancel")
+    const instance = new (mantle.constructor as new () => {
+      initMiniapps: () => Promise<void>
+      cleanup: () => Promise<void>
+      installBundledMiniapps: () => Promise<void>
+    })()
+    instance.installBundledMiniapps = jest.fn(async () => {})
+    try {
+      const initialization = instance.initMiniapps()
+      await started
+      await instance.cleanup()
+      finish()
+      await initialization
+      expect(cancel).toHaveBeenCalledTimes(1)
+      expect(instance.installBundledMiniapps).not.toHaveBeenCalled()
+    } finally {
+      finish()
+      internal.phoneLocationService = previousLocationService
+      active.mockRestore()
+      sync.mockRestore()
+      cancel.mockRestore()
+    }
+  })
+
+  it.each([true, false])(
+    "publishes Enterprise Call after startup recovery (previously enabled=%s)",
+    async (previouslyEnabled) => {
+      const consumer = createConsumerDeployment()
+      const entry = {
+        packageName: mentraCallPackageName,
+        version: "2.1.29",
+        bundleUrl: "https://enterprise.example/miniapps/call.zip",
+        sha256: "a".repeat(64),
+      }
+      const workspace: WorkspaceDeployment = {
+        kind: "workspace",
+        source: "manual",
+        activatedAt: "2026-09-22T00:00:00Z",
+        workspaceOrigin: "https://enterprise.example",
+        manifestUrl: "https://enterprise.example/.well-known/mentra-deployment.json",
+        manifest: {
+          ...consumer.manifest,
+          deploymentId: "enterprise",
+          features: {...consumer.manifest.features, nativeMeetings: true},
+          systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
+          miniapps: {configuration: {}, managed: [entry]},
+        },
+      }
+      const originalPlatform = Platform.OS
+      const originalIdentity = appRegistry.getReleaseIdentity
+      const originalVersions = appRegistry.getInstalledVersions
+      let verified = false
+      const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
+      const sync = jest
+        .spyOn(deploymentManagedMiniappSync, "sync")
+        .mockResolvedValueOnce(undefined)
+        .mockImplementation(async () => {
+          verified = true
+        })
+      appRegistry.getInstalledVersions = jest.fn(() => [entry.version])
+      appRegistry.getReleaseIdentity = jest.fn(() =>
+        verified
+          ? {
+              source: "deployment_manifest",
+              deploymentId: "enterprise",
+              deploymentOrigin: workspace.workspaceOrigin,
+              bundleSha256: entry.sha256,
+            }
+          : null,
+      )
+      const assets = jest.spyOn(Asset, "fromModule")
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+      const instance = new (mantle.constructor as new () => {
+        setupIosMiniappVisibility: () => void
+        initMiniapps: () => Promise<void>
+        installBundledMiniapps: () => Promise<void>
+        installBundledMiniapp: (asset: Asset) => Promise<void>
+        iosMiniappVisibility: Map<string, {reconcile: () => Promise<void>; dispose: () => void}>
+      })()
+      instance.installBundledMiniapps = jest.fn(async () => {})
+      try {
+        await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+        storage.save("mentra_call_ios_last_enabled", previouslyEnabled)
+        instance.setupIosMiniappVisibility()
+        // A stale visible consumer entry is restricted before any async work.
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, true)
+        await instance.initMiniapps()
+        expect(sync).toHaveBeenCalledTimes(1)
+        expect(shouldHideMiniapp(mentraCallPackageName, entry.version)).toBe(true)
+        expect(engine.miniapps.setHiddenStatus).not.toHaveBeenCalledWith(mentraCallPackageName, false)
+        expect(storage.load("mentra_call_ios_last_enabled")).toMatchObject({value: false})
+
+        // The next startup succeeds: the same lifecycle must clear the forced
+        // hidden flag before it finishes, without an independent second sync.
+        await instance.initMiniapps()
+        expect(sync).toHaveBeenCalledTimes(2)
+        expect(sync).toHaveBeenLastCalledWith(workspace)
+        expect(shouldHideMiniapp(mentraCallPackageName, entry.version)).toBe(false)
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, false)
+        expect(storage.load("mentra_call_ios_last_enabled")).toMatchObject({value: true})
+        // Android's general bundle loop must also honor the pin, including a
+        // valid workspace with an unrestricted system-miniapp allowlist.
+        workspace.manifest.systemMiniapps.approvedPackageNamesOverride = null
+        Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+        const newerConsumerBundle = {
+          name: "com.mentra.call-2.1.30.zip",
+          downloadAsync: jest.fn(async () => {}),
+        } as unknown as Asset
+        await instance.installBundledMiniapp(newerConsumerBundle)
+        expect(newerConsumerBundle.downloadAsync).not.toHaveBeenCalled()
+        expect(assets).not.toHaveBeenCalled()
+        expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+      } finally {
+        for (const visibility of instance.iosMiniappVisibility.values()) visibility.dispose()
+        appRegistry.getReleaseIdentity = originalIdentity
+        appRegistry.getInstalledVersions = originalVersions
+        active.mockRestore()
+        sync.mockRestore()
+        assets.mockRestore()
+        Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+      }
+    },
+  )
+
   it("rechecks Call policy after downloading and propagates an install failure", async () => {
     const originalPlatform = Platform.OS
     const originalVersions = appRegistry.getInstalledVersions
@@ -712,12 +926,12 @@ describe("MantleManager", () => {
     const instance = new (mantle.constructor as new () => {
       setupIosMiniappVisibility: () => void
       setupSubscriptions: () => Promise<void>
-      installBundledCall: () => Promise<void>
+      prepareIosCall: () => Promise<void>
       subs: Array<{remove: () => void}>
       iosMiniappVisibility: Map<string, {dispose: () => void}>
     })()
     const installCall = jest.fn(async () => {})
-    instance.installBundledCall = installCall
+    instance.prepareIosCall = installCall
     const installNotify = jest.spyOn(builtInMiniappCatalog, "installNotify").mockImplementation(() => {})
     const install = packageName === mentraCallPackageName ? installCall : installNotify
     const otherInstall = packageName === mentraCallPackageName ? installNotify : installCall
@@ -775,5 +989,160 @@ describe("MantleManager", () => {
       installNotify.mockRestore()
       Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
     }
+  })
+})
+
+describe("runtime recovery initialization", () => {
+  type Manager = {
+    init: typeof mantle.init
+    cleanup: typeof mantle.cleanup
+    waitForMiniapps: typeof mantle.waitForMiniapps
+    initialized: boolean
+    initialize(options: {background?: boolean}): Promise<void>
+    initServices(): Promise<void>
+    installBundledMiniapps(): Promise<void>
+    setupPeriodicTasks(): Promise<void>
+    setupSubscriptions(): Promise<void>
+  }
+  const internal = require("@mentra/engine-host-internal") as {
+    phoneLocationService?: {stopPhoneLocation(): void}
+  }
+  const originalLocationService = internal.phoneLocationService
+  const originalPlatform = Platform.OS
+  let manager: Manager
+
+  function deferred() {
+    let resolve!: () => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<void>((yes, no) => {
+      resolve = yes
+      reject = no
+    })
+    return {promise, resolve, reject}
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    jest.useFakeTimers()
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    internal.phoneLocationService = {stopPhoneLocation: jest.fn()}
+    jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+    jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue(undefined)
+    jest.spyOn(preinstalledMiniappSync, "sync").mockResolvedValue(undefined)
+    manager = new (mantle.constructor as new () => Manager)()
+    jest.spyOn(manager, "installBundledMiniapps").mockResolvedValue(undefined)
+    jest.spyOn(manager, "initServices").mockResolvedValue(undefined)
+    jest.spyOn(manager, "setupPeriodicTasks").mockResolvedValue(undefined)
+    jest.spyOn(manager, "setupSubscriptions").mockResolvedValue(undefined)
+  })
+
+  afterEach(async () => {
+    await manager.cleanup()
+    internal.phoneLocationService = originalLocationService
+    Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+    jest.restoreAllMocks()
+    jest.clearAllTimers()
+    jest.useRealTimers()
+  })
+
+  it.each([false, true])(
+    "runs deferred foreground synchronization once after recovery (still pending=%s)",
+    async (stillPending) => {
+      const start = deferred()
+      jest.spyOn(engine, "start").mockReturnValueOnce(start.promise)
+      const background = manager.init({background: true})
+      if (!stillPending) {
+        start.resolve()
+        await background
+        expect(deploymentManagedMiniappSync.sync).not.toHaveBeenCalled()
+        expect(preinstalledMiniappSync.sync).not.toHaveBeenCalled()
+      }
+      const activity = manager.init()
+      const secondActivity = manager.init()
+      if (stillPending) {
+        expect(manager.initServices).not.toHaveBeenCalled()
+        start.resolve()
+      }
+      await Promise.all([background, activity, secondActivity])
+      await manager.waitForMiniapps()
+      await manager.init()
+      expect(engine.start).toHaveBeenCalledTimes(1)
+      expect(localMiniappRuntime.initialize).toHaveBeenCalledTimes(1)
+      expect(manager.initServices).toHaveBeenCalledTimes(1)
+      expect(deploymentManagedMiniappSync.sync).toHaveBeenCalledTimes(1)
+      expect(preinstalledMiniappSync.sync).toHaveBeenCalledTimes(1)
+      expect(manager.initialized).toBe(true)
+    },
+  )
+
+  it.each([false, true])("starts a fresh generation after cleanup (old startup rejects=%s)", async (rejectOld) => {
+    const start = deferred()
+    jest.spyOn(engine, "start").mockReturnValueOnce(start.promise).mockResolvedValue(undefined)
+    const background = manager.init({background: true})
+    const cancelled = expect(background).rejects.toThrow(rejectOld ? "old startup failed" : "cancelled by cleanup")
+    await manager.cleanup()
+    const activity = manager.init()
+    const secondActivity = manager.init()
+    expect(engine.start).toHaveBeenCalledTimes(1)
+    if (rejectOld) start.reject(new Error("old startup failed"))
+    else start.resolve()
+    await Promise.all([cancelled, activity, secondActivity])
+    await manager.waitForMiniapps()
+    expect(engine.start).toHaveBeenCalledTimes(2)
+    expect(manager.initServices).toHaveBeenCalledTimes(1)
+    expect(manager.initialized).toBe(true)
+  })
+
+  it("waits for teardown before starting the next session", async () => {
+    await manager.init({background: true})
+    const stopped = deferred()
+    jest.spyOn(audioPlaybackService, "stopForApp").mockReturnValueOnce(stopped.promise)
+    const cleanup = manager.cleanup()
+    const activity = manager.init()
+    await Promise.resolve()
+    expect(engine.start).toHaveBeenCalledTimes(1)
+    stopped.resolve()
+    await Promise.all([cleanup, activity])
+    await manager.waitForMiniapps()
+    expect(engine.start).toHaveBeenCalledTimes(2)
+    expect(manager.initialized).toBe(true)
+  })
+
+  it("retries failed foreground reconciliation without restarting the runtime", async () => {
+    await manager.init({background: true})
+    jest.mocked(deploymentManagedMiniappSync.sync).mockRejectedValueOnce(new Error("sync failed"))
+    await manager.init()
+    await expect(manager.waitForMiniapps()).rejects.toThrow("sync failed")
+    await manager.init()
+    await manager.waitForMiniapps()
+    expect(engine.start).toHaveBeenCalledTimes(1)
+    expect(localMiniappRuntime.initialize).toHaveBeenCalledTimes(1)
+    expect(deploymentManagedMiniappSync.sync).toHaveBeenCalledTimes(2)
+    expect(preinstalledMiniappSync.sync).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not perform deferred synchronization after cleanup", async () => {
+    await manager.init({background: true})
+    // Foreground reconciliation waits for local restoration on a microtask;
+    // cleanup must invalidate it before it can update the signed-out session.
+    const activity = manager.init()
+    await manager.cleanup()
+    await activity
+    await expect(manager.waitForMiniapps()).resolves.toBeUndefined()
+    expect(deploymentManagedMiniappSync.sync).not.toHaveBeenCalled()
+    expect(preinstalledMiniappSync.sync).not.toHaveBeenCalled()
+  })
+
+  it("failed background initialization does not permanently suppress startup", async () => {
+    const start = jest
+      .spyOn(engine, "start")
+      .mockRejectedValueOnce(new Error("startup failed"))
+      .mockResolvedValue(undefined)
+    await expect(manager.init({background: true})).rejects.toThrow("startup failed")
+    expect(manager.initialized).toBe(false)
+    await manager.init()
+    await manager.waitForMiniapps()
+    expect(start).toHaveBeenCalledTimes(2)
+    expect(manager.initialized).toBe(true)
   })
 })

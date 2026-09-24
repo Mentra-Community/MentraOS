@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Preview Probe</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 96px 24px 24px;
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      button {
+        width: 100%;
+        padding: 14px;
+        font-size: 16px;
+      }
+      p {
+        font-size: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="request" type="button">Request call preview</button>
+    <p id="result" role="status" aria-live="polite">Preview result: none</p>
+    <script>
+      const result = document.getElementById("result")
+      document.getElementById("request").addEventListener("click", async () => {
+        result.textContent = "Preview result: pending"
+        try {
+          const response = await window.mentra.request("probe:preview")
+          result.textContent = `Preview result: ${response.result}`
+        } catch (error) {
+          result.textContent = `Preview result: rpc_failed ${error && error.message ? error.message : error}`
+        }
+      })
+      window.mentra?.ready?.()
+    </script>
+  </body>
+</html>

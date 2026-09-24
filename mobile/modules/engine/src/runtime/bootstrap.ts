@@ -9,6 +9,10 @@
 export type SubjectTokenType = "supabase" | "authing" | (string & {})
 
 export interface IslandAuth {
+  /** Public profile of the selected Entra account, never bearer credentials. */
+  getMeetingAccount?: () => Promise<{displayName?: string; email?: string} | undefined>
+  /** Host-owned Teams subject token from the selected deployment account. */
+  getTeamsToken?: () => Promise<string>
   /** Returns the host's current (auto-refreshed) subject token for the backend. */
   getSubjectToken?: () => Promise<{token: string; type: SubjectTokenType}>
   /** Supplies a token issued directly for Runtime in a Core-free deployment. */
@@ -24,6 +28,8 @@ export interface IslandAuth {
 }
 
 export interface IslandConfigValues {
+  /** Workspace calls use Runtime credentials and cannot access the public Call backend. */
+  privateMeetings?: boolean
   /** cloud-v2 core service base URL (defaults resolved by the cloud client). */
   coreUrl?: string | null
   /** cloud-v2 runtime service base URL. */

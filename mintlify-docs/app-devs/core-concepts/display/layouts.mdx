@@ -31,7 +31,7 @@ so the miniapp only installs on glasses that can show anything.
 
 | Element | Fields | Shows |
 |---|---|---|
-| `{type: "text", box, text, style?, id?}` | `style`: `border`, `radius`, `overflow`, `breakMode` | Wrapped text inside the box. |
+| `{type: "text", box, text, style?, id?}` | `style`: `border`, `radius`, `overflow`, `breakMode`, `maxLines`, `textWindow`, `verticalAlign` | Wrapped text inside the box. |
 | `{type: "image", box, data, id?}` | `data`: base64 PNG/JPEG | A bitmap, converted to the glasses' native format by the phone. |
 | `{type: "rect", box, style?, id?}` | `style`: `border`, `radius` | An empty bordered box. |
 
@@ -123,6 +123,59 @@ session.display.render([
 
 Per-element `style.breakMode` (`"character" | "character-no-hyphen" | "word" |
 "strict-word"`) controls how the text wraps inside its box.
+
+## Fitting text
+
+The host wraps text using the connected glasses' font metrics. The box is the
+available area; optional `style.maxLines` imposes an additional line limit.
+Leave it out to use the box's capacity. Miniapps do not need device font tables.
+
+`style.textWindow` chooses which end stays visible when text overflows:
+`"start"` (default) keeps the beginning; `"end"` keeps the newest content.
+`style.overflow` remains `"clip"` (default) or `"ellipsis"`. An ellipsis appears
+on the omitted side. These controls require Mentra App 3.2.1 or newer.
+
+```typescript
+session.display.render([{
+  type: "text",
+  id: "caption",
+  box: captionArea,
+  text: recentTranscript,
+  style: {maxLines: 3, textWindow: "end", breakMode: "word"},
+}]);
+```
+
+Each call still supplies the complete content. The host does not append to
+history or accumulate text behind an element id.
+
+Optional `style.verticalAlign: "top" | "bottom"` places the line region inside
+its box. With `maxLines`, that region reserves the selected number of rows so
+bottom captions don't jump as partial transcripts grow. The outer box is always
+a hard bound. On devices without calibrated text positioning, placement falls
+back to the top and the result reports degradation for a bottom request.
+G1/Z100 use their text-only row budgets; position and images degrade as above.
+
+### Text feedback
+
+Pass `{includeTextLayout: true}` as the second render argument when a preview or
+line-based progression needs the actual host-computed text:
+
+```typescript
+const result = await session.display.render(elements, {includeTextLayout: true});
+const caption = result.textLayout?.caption;
+// caption.lines: visible {text, start, end} entries
+// caption.lineStarts: source starts of all wrapped lines
+// caption.capacity: effective line limit; caption.truncated: whether text was omitted
+```
+
+Offsets use JavaScript UTF-16 string indices into that element's supplied text;
+`end` is exclusive. Source spans describe wrapped lines before an ellipsis is
+applied. Inserted hyphens and ellipses do not consume source characters.
+`lineStarts` lets a teleprompter replace its text at a host-computed line boundary
+without measuring fonts. Feedback is keyed by the element id, or `text[index]`
+for unnamed text. Dropped elements have no feedback. It describes the frame the
+host compiled, not a hardware acknowledgment. Ignore older responses when a
+newer frame has been submitted. Waiting for feedback is optional.
 
 ## Dashboard view
 

@@ -3,6 +3,8 @@ export interface PhoneWifiPrompt {
   title: string
   message: string
   actionLabel: string
+  /** `on` is a short confirmation with no buttons. `still-off` is the same dialog after a no-op. */
+  tone?: "ask" | "on" | "still-off"
 }
 
 let nextId = 0

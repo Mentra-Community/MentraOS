@@ -278,13 +278,24 @@ jobs:
         # (mobile/scripts/build-number.mjs: the family's non-release band from
         # the HEAD committer time), so the APK, the app built for the same PR
         # head and the OTA manifest written below agree, and the build is
-        # OTA-installable above every release of the family.
+        # OTA-installable above every release of the family. On PRs the
+        # versionName is <family base>-pr.<number> (e.g. 3.3.0-pr.4145) so the
+        # app's OTA screen names the PR instead of repeating the bare code.
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           code=$(node --input-type=module -e "import('./mobile/scripts/build-number.mjs').then(m => console.log(m.getBuildNumber()))")
           [[ "$code" =~ ^[1-9][0-9]*$ ]]
           echo "ASG_VERSION_CODE=$code" >> "$GITHUB_ENV"
           echo "ASG versionCode pinned to $code"
+          if [[ -n "${PR_NUMBER:-}" ]]; then
+            base=$(jq -er .version package.json)
+            [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            name="${base}-pr.${PR_NUMBER}"
+            echo "ASG_VERSION_NAME=$name" >> "$GITHUB_ENV"
+            echo "ASG versionName set to $name"
+          fi
 
       - name: Cache Gradle dependencies
         uses: actions/cache@v4
