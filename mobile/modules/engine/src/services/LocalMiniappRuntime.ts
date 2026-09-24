@@ -6442,6 +6442,12 @@ class LocalMiniappRuntime {
       const current = this.connectedApps.get(packageName)
       if (!current) return
       if (current.lastPongAt >= probeStartedAt) return
+      // Respawning tears down an ACS call and its hotspot. A busy background during a join
+      // misses one short ping; leave it to the regular ping loop, which needs several misses.
+      if (acsMeetingService.ownerPackage() === packageName) {
+        console.warn(`${LOG_TAG}: ${packageName} missed a foreground probe (${reason}) during a call; not respawning`)
+        return
+      }
 
       console.warn(`${LOG_TAG}: ${packageName} failed foreground liveness probe (${reason}), respawning`)
       this.unregisterApp(packageName)

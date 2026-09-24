@@ -455,6 +455,11 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     }
     view.bound = true
     this.log.info("bound", {packageName: view.packageName, installReloadRequired: result.installReloadRequired})
+    // The page may already have given up on an earlier handshake. Tell it to ask again.
+    const lease = this.lease
+    if (lease && lease.packageName === view.packageName && lease.state === "held") {
+      this.push(view.packageName, {t: "lease_available"})
+    }
     return {installReloadRequired: result.installReloadRequired, available: true}
   }
 

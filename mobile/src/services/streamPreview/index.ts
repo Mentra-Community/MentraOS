@@ -72,6 +72,7 @@ export function installStreamPreviewCoordinator(uiRouter: MentraUIRouter): void 
   if (router === uiRouter) return
   const first = router === null
   router = uiRouter
+  console.log(`[PREVIEW_TRACE] layer=host phase=host_channel_installed channel=${PREVIEW_UI_CHANNEL} first=${first}`)
   const instance = getStreamPreviewCoordinator()
   uiRouter.setHostChannel(PREVIEW_UI_CHANNEL, (packageName, message) =>
     instance.handleUiRequest(packageName, message.requestId, message.payload),

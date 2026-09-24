@@ -286,15 +286,16 @@ describe("PreviewConnection", () => {
     expect(h.transports).toHaveLength(0)
   })
 
-  test("a host refusal is surfaced with its code", async () => {
+  test("a host refusal is surfaced with its code and retried within the reconnect budget", async () => {
     const h = setup()
     h.channel.refuse = "unsupported"
     const epoch = h.connection.nextMountEpoch()
     h.connection.attach(h.sinkFor(epoch))
     show(h.connection, epoch)
     await settle()
-    expect(h.errors).toEqual(["unsupported"])
-    expect(h.connection.currentState).toBe("unsupported")
+    // The first attempt plus three budgeted reconnects, then it stops asking.
+    expect(h.errors).toEqual(["unsupported", "unsupported", "unsupported", "unsupported"])
+    expect(h.connection.currentState).toBe("error")
   })
 
   test("lease_ended closes the transport and waits for the next lease", async () => {

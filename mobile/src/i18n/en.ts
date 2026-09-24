@@ -1179,11 +1179,19 @@ const en = {
   phoneWifi: {
     title: "Wi-Fi required",
     reason: "Mentra uses your phone’s Wi-Fi to connect to your glasses.",
-    instructionsAndroid: "Turn on Wi-Fi, then return to Mentra. Your glasses will connect automatically.",
+    instructionsAndroid:
+      "When you tap Turn on Wi-Fi, a system Wi-Fi panel will open. Turn the Wi-Fi switch on, tap Done, and return to Mentra to continue.",
     instructionsIos:
-      "Open Settings, go back to the main Settings screen, then tap Wi-Fi and turn it on. Return to Mentra to continue.",
+      "When you tap Open Settings, Mentra’s Settings page will open. Go back to the main Settings screen, tap Wi-Fi, turn it on, then return to Mentra to continue.",
     turnOn: "Turn on Wi-Fi",
     openSettings: "Open Settings",
+    stillOffTitle: "Wi-Fi is still off",
+    stillOffAndroid:
+      "Wi-Fi is still off. Tap Turn on Wi-Fi again to open the panel, turn the switch on, tap Done, and return to Mentra.",
+    stillOffIos:
+      "Wi-Fi is still off. Tap Open Settings again, go to Wi-Fi, turn it on, then return to Mentra.",
+    onTitle: "Wi-Fi is on",
+    onMessage: "Continuing the call.",
   },
   common: {
     miniappUiUnavailable: "This miniapp has no page to display. You can minimize or close it.",

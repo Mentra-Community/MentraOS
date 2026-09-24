@@ -81,17 +81,30 @@ test("cancel keeps settings closed", async () => {
   expect(Linking.sendIntent).not.toHaveBeenCalled()
 })
 
-test.each([true, false])("panel focus rechecks the radio (%s) and cleans up listeners", async (enabled) => {
+test("panel focus sees Wi-Fi on, shows it, then finishes", async () => {
   const pending = requestPhoneWifiEnable()
   await acceptPrompt()
   expect(Linking.sendIntent).toHaveBeenCalledWith("android.settings.panel.action.WIFI")
   events.get("blur")!()
-  ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(enabled)
+  ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("focus")!()
   await jest.advanceTimersByTimeAsync(500)
-  await expect(pending).resolves.toEqual({enabled, cancelled: false})
+  expect(getPhoneWifiPrompt()?.tone).toBe("on")
+  await jest.advanceTimersByTimeAsync(900)
+  await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
   expect(removed).toHaveBeenCalledTimes(3)
   expect(jest.getTimerCount()).toBe(0)
+})
+
+test("returning without turning Wi-Fi on asks again instead of continuing", async () => {
+  const pending = requestPhoneWifiEnable()
+  await acceptPrompt()
+  events.get("blur")!()
+  events.get("focus")!()
+  await jest.advanceTimersByTimeAsync(500)
+  expect(getPhoneWifiPrompt()?.tone).toBe("still-off")
+  completePhoneWifiPrompt(false)
+  await expect(pending).resolves.toEqual({enabled: false, cancelled: true})
 })
 
 test("missing panel falls back to Wi-Fi settings; background/active also resumes", async () => {
@@ -103,10 +116,12 @@ test("missing panel falls back to Wi-Fi settings; background/active also resumes
   events.get("focus")!()
   await jest.advanceTimersByTimeAsync(1000)
   expect(WifiManager.isEnabled).toHaveBeenCalledTimes(1)
+  ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("change")!("background")
   events.get("change")!("active")
   await jest.advanceTimersByTimeAsync(500)
-  await pending
+  await jest.advanceTimersByTimeAsync(900)
+  await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
 test("iOS opens public app settings and preserves unknown on return", async () => {
@@ -136,6 +151,7 @@ test("a fast panel return waits for Settings launch confirmation", async () => {
   ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   confirmLaunch()
   await jest.advanceTimersByTimeAsync(500)
+  await jest.advanceTimersByTimeAsync(900)
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
@@ -151,6 +167,7 @@ test("losing focus during the debounce waits for the next stable return", async 
   ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("focus")!()
   await jest.advanceTimersByTimeAsync(500)
+  await jest.advanceTimersByTimeAsync(900)
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
@@ -171,6 +188,7 @@ test("a radio read from an interrupted return cannot settle the request", async 
   ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("change")!("active")
   await jest.advanceTimersByTimeAsync(500)
+  await jest.advanceTimersByTimeAsync(900)
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
