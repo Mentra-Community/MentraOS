@@ -1,4 +1,4 @@
-import {act, render} from "@testing-library/react-native"
+import {act, fireEvent, render} from "@testing-library/react-native"
 import * as Linking from "expo-linking"
 
 import {DeeplinkProvider, useDeeplink} from "./DeeplinkContext"
@@ -6,6 +6,19 @@ import {DeeplinkProvider, useDeeplink} from "./DeeplinkContext"
 const mockSetSplashEnabled = jest.fn()
 const mockReplaceAll = jest.fn()
 const mockCompleteOAuthHandoff = jest.fn()
+const mockPush = jest.fn()
+const mockSetPendingRoute = jest.fn()
+const mockGetSession = jest.fn()
+const mockIncidentRequest = jest.fn()
+
+jest.mock("@/components/diagnostics/IncidentReportRequest", () => ({
+  __esModule: true,
+  default: (props: unknown) => {
+    mockIncidentRequest(props)
+    const {Pressable} = require("react-native")
+    return <Pressable testID="incident-report-done" onPress={(props as {onDismiss: () => void}).onDismiss} />
+  },
+}))
 
 jest.mock("expo-linking", () => ({
   addEventListener: jest.fn(() => ({remove: jest.fn()})),
@@ -20,13 +33,19 @@ jest.mock("@/contexts/SplashLoaderProvider", () => ({
 }))
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {
-    getState: () => ({replaceAll: mockReplaceAll, replace: jest.fn(), setAnimation: jest.fn()}),
+    getState: () => ({
+      replaceAll: mockReplaceAll,
+      replace: jest.fn(),
+      setAnimation: jest.fn(),
+      push: mockPush,
+      setPendingRoute: mockSetPendingRoute,
+    }),
   },
 }))
 jest.mock("@/utils/auth/authClient", () => ({
   __esModule: true,
   default: {
-    getSession: jest.fn(async () => ({is_error: () => false, value: {token: undefined}})),
+    getSession: (...args: unknown[]) => mockGetSession(...args),
     completeOAuthHandoff: (...args: unknown[]) => mockCompleteOAuthHandoff(...args),
   },
 }))
@@ -43,6 +62,7 @@ beforeEach(() => {
   jest.useFakeTimers()
   jest.clearAllMocks()
   mockCompleteOAuthHandoff.mockResolvedValue({is_error: () => false})
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: undefined}})
 })
 
 afterEach(() => jest.useRealTimers())
@@ -108,4 +128,46 @@ it("removes its native URL subscription on unmount", () => {
   const subscription = jest.mocked(Linking.addEventListener).mock.results[0].value
   tree.unmount()
   expect(subscription.remove).toHaveBeenCalledTimes(1)
+})
+
+const incidentUrl =
+  "com.mentra://test/submit-incident-report?alert_id=run-1&failure_code=ota_failed&failure_message=failed%20%26%20stopped"
+
+it("queues an incident link for authentication without executing its route", async () => {
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(incidentUrl)
+  })
+  expect(mockSetPendingRoute).toHaveBeenCalledWith(incidentUrl)
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockIncidentRequest).not.toHaveBeenCalled()
+})
+
+it("shows a dismissible authenticated incident modal without changing the existing navigation", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  const tree = render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(incidentUrl)
+  })
+  expect(mockIncidentRequest).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      params: {
+        alert_id: "run-1",
+        failure_code: "ota_failed",
+        failure_message: "failed & stopped",
+      },
+    }),
+  )
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(tree.queryByTestId("incident-report-done")).toBeNull()
 })

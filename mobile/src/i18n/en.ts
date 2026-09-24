@@ -1279,6 +1279,12 @@ const en = {
     noAppsOpen: "No miniapps open",
     yourRecentlyUsedAppsWillAppearHere: "Your recently used miniapps will appear here",
   },
+  incidentAutomation: {
+    title: "Incident report",
+    signInRequired: "Sign in to the Mentra App before requesting an incident report.",
+    submitting: "Submitting the incident report and recent phone logs…",
+    finished: "Incident report request finished.",
+  },
   feedback: {
     thankYou: "Thank You!",
     feedbackReceived: "Your feedback has been received.",
