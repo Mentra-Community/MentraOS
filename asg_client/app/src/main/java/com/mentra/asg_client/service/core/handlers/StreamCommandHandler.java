@@ -137,7 +137,8 @@ public class StreamCommandHandler implements ICommandHandler {
                 case "stop_stream":
                     return handleStopCommand();
                 case "get_stream_status":
-                    return handleStatusCommand();
+                    Object requestId = data == null ? null : data.opt("request_id");
+                    return handleStatusCommand(requestId instanceof String ? (String) requestId : null);
                 case "keep_stream_alive":
                     return handleKeepAliveCommand(data);
                 case "stream_controller_response":
@@ -553,11 +554,25 @@ public class StreamCommandHandler implements ICommandHandler {
 
     /** Handle get stream status command. */
     public boolean handleStatusCommand() {
+        return handleStatusCommand(null);
+    }
+
+    private boolean handleStatusCommand(String requestId) {
         if (Looper.myLooper() != mLifecycleHandler.getLooper()) {
-            mLifecycleHandler.post(this::handleStatusCommand);
+            mLifecycleHandler.post(() -> handleStatusCommand(requestId));
             return true;
         }
-        streamingManager.sendStreamStatusResponse(true, streamingManager.getStreamSnapshot());
+        JSONObject snapshot = streamingManager.getStreamSnapshot();
+        if (requestId != null && requestId.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,119}")) {
+            try {
+                // Correlate this snapshot before the BLE transport queues its payload.
+                snapshot.put("request_id", requestId);
+            } catch (JSONException e) {
+                Log.e(TAG, "Error correlating stream status response", e);
+                return false;
+            }
+        }
+        streamingManager.sendStreamStatusResponse(true, snapshot);
         return true;
     }
 

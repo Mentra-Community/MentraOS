@@ -337,6 +337,13 @@ it never reports partial version data as complete because the transport went qui
 Older firmware's `version_info_3` remains the immediate terminal boundary for a
 legacy sequence that began with `version_info_1`.
 
+Explicit `get_stream_status` queries can carry a bounded `request_id`, echoed only
+on that response so queued older snapshots cannot satisfy a fresh query. Actual
+current-session BES UART version diagnostics include `elapsed_realtime_ms`, sampled
+from Android's monotonic elapsed realtime before reading OTA state. Phone clock
+synchronization does not change these freshness signals. Neither field starts an
+update or changes stream state; clients omitting the request ID retain existing behavior.
+
 Mentra Live's canonical product serial is provisioned by the Android firmware in
 `ro.serialno`. `asg_client` reads that property directly and forwards a valid
 value to the phone as `serial_number` in `version_info_3`. It must not substitute

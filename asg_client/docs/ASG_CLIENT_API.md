@@ -393,6 +393,13 @@ Response includes a `streaming` boolean and a `reconnecting` flag. When reconnec
 {"type": "stream_status", "kind": "snapshot", "status": "streaming", "streaming": true, "reconnecting": false, "timestamp": 1708963201234}
 ```
 
+An optional `request_id` matching `[A-Za-z0-9][A-Za-z0-9_-]{0,119}` is echoed on
+that snapshot, before it enters the outbound BLE queue. For example,
+`{"type":"get_stream_status","request_id":"status-123"}` returns the existing
+snapshot with `"request_id":"status-123"`. Omitted or invalid IDs retain the
+uncorrelated response. The ID is not retained on later snapshots or stream events;
+`timestamp` remains display time and can change when the phone synchronizes the clock.
+
 #### `keep_stream_alive`
 
 Stream-control version 1 adds `sid` (ASG process identity), monotonically increasing `revision`,
