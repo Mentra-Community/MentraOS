@@ -59,7 +59,7 @@ function JobRow({ job, now }: { job: OverviewJob; now: number }) {
         {" · "}{platformName(job.requests.find(request => request.requestId === claim.requestId)?.platform)}</p> : null}
       <Checkpoint claim={claim} now={now} /></div>)
       : <p className="text-[#68746d]">No routine checkpoint reported.</p>}
-      {job.workflow?.step && !job.claims.some(claim => claim.progress && checkpointIsFresh(claim.progress.receivedAt, now))
+      {job.workflow?.step && !job.claims.some(claim => claim.progress && claim.progress.mode !== "complete" && checkpointIsFresh(claim.progress.receivedAt, now))
         ? <p className="mt-2 text-[11px] text-[#68746d]">GitHub step: {job.workflow.step}</p> : null}</td>
     <td className="whitespace-nowrap px-4 py-3"><p>{elapsed(job.startedAt ?? job.createdAt, now)}</p>
       <p className="mt-0.5 text-[11px] text-[#68746d]">{job.kind === "claim" ? "Since claim" : job.startedAt ? "Job elapsed" : "Waiting"}</p>

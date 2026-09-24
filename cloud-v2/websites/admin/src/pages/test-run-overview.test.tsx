@@ -32,9 +32,23 @@ test("fresh action progress is concise, while workflow details remain a fallback
   value.jobs[0]!.claims[0]!.progress!.action = null;
   html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp) + 15_000} onResult={() => {}} />);
   expect(html).toContain("Lifecycle steps 0/1 in this phase");
+  value.jobs[0]!.claims[0]!.progress!.mode = "complete";
+  html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp) + 15_000} onResult={() => {}} />);
+  expect(html).toContain("GitHub step: Enter the enrolled worker once");
   value.jobs[0]!.claims = [];
   html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp) + 15_000} onResult={() => {}} />);
   expect(html).toContain("GitHub step: Enter the enrolled worker once");
+});
+test("a completed first nightly member cannot hide the next member's workflow step", () => {
+  const value = data();
+  const job = value.jobs[0]!;
+  job.kind = "nightly";
+  job.claims[0]!.progress!.mode = "complete";
+  job.requests.push({...job.requests[0]!, requestId: "request-2", routineId: "mentra-call"});
+  job.workflow!.step = "Run the requested Call routine";
+  const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp) + 15_000} onResult={() => {}} />);
+  expect(html).toContain("Completed checkpoint");
+  expect(html).toContain("GitHub step: Run the requested Call routine");
 });
 test("missing progress and partial outages never render an empty-success message", () => {
   const value = data(); value.jobs[0]!.claims = [];
