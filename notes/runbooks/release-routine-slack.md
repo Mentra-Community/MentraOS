@@ -8,9 +8,27 @@ targets stay in the same message. Release publication does not wait for testing.
 
 | GitHub setting | Value |
 | --- | --- |
-| Secret `SLACK_BUILDS_BOT_TOKEN` | Slack bot token with `chat:write` |
-| Variable `SLACK_DEV_BUILDS_CHANNEL_ID` | ID of `#dev-builds` |
-| Variable `SLACK_STAGING_BUILDS_CHANNEL_ID` | ID of `#staging-builds` |
+| Environment `build-notifications` → secret `SLACK_BUILDS_BOT_TOKEN` | Slack bot token with `chat:write` |
+| Repository variable `SLACK_DEV_BUILDS_CHANNEL_ID` | ID of `#dev-builds` |
+| Repository variable `SLACK_STAGING_BUILDS_CHANNEL_ID` | ID of `#staging-builds` |
+
+Create the environment in [MentraOS environment settings](https://github.com/Mentra-Community/MentraOS/settings/environments).
+Store the token there; it does not need a repository-secret slot. Allow the
+`dev` and `staging` branches. Leave required reviewers and wait timers off for
+unattended notifications.
+
+Three GitHub-hosted jobs select this environment: `coordinated-release.yml`'s
+`notify-slack`, and `notify-release-routine.yml`'s `resolve` and `update`. The
+resolver needs it because it checks token availability before producing work.
+These are ordinary jobs, not `workflow_call` jobs: GitHub resolves the secret
+from each job's environment, without passing it through `secrets: inherit`.
+The sibling reusable build jobs do not receive this environment secret.
+Existing repository webhook secrets and channel variables remain available.
+
+Trigger behavior is unchanged: initial release posts run only on dev/staging
+pushes; the result updater accepts manual/callback dispatch on `dev`. A manual
+coordinated build does not post. Example and production notifications keep
+their existing workflows and webhook configuration.
 
 Invite that bot to both existing channels. The same bot must author and update
 the post. Do not use the reports bot merely because its token already exists.

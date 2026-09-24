@@ -148,6 +148,26 @@ test("same-second ambiguous update order does not silently discard a routine", a
   const fixture = historyFixture(); fixture.oldJob.started_at = fixture.currentJob.started_at
   await assert.rejects(prepareRoutineUpdate(fixture.options), /Ambiguous/)
 })
+test("every Slack credential consumer selects the notification environment on a hosted job", () => {
+  const expected = ["coordinated-release.yml/notify-slack", "notify-release-routine.yml/resolve", "notify-release-routine.yml/update"]
+  const consumers = [], environmentJobs = []
+  for (const name of ["coordinated-release.yml", "notify-release-routine.yml"]) {
+    const source = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
+    const jobs = source.split("\njobs:\n")[1].split(/(?=^  [a-z0-9-]+:\n)/m)
+    for (const job of jobs) {
+      const id = `${name}/${job.match(/^  ([a-z0-9-]+):/)?.[1]}`
+      if (/^    environment: build-notifications$/m.test(job)) environmentJobs.push(id)
+      if (!job.includes("secrets.SLACK_BUILDS_BOT_TOKEN")) continue
+      consumers.push(id)
+      assert.match(job, /^    environment: build-notifications$/m, `${id} cannot read the environment secret`)
+      assert.match(job, /^    runs-on: ubuntu-latest$/m)
+      assert.doesNotMatch(job, /^    uses:/m)
+    }
+  }
+  assert.deepEqual(consumers, expected)
+  assert.deepEqual(environmentJobs, expected)
+})
+
 test("workflow keeps pending routine updates and persists state before chat.update", () => {
   const workflow = readFileSync(new URL("../workflows/notify-release-routine.yml", import.meta.url), "utf8")
   assert.match(workflow, /queue: max/)
