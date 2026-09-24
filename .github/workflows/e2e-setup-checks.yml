@@ -61,6 +61,8 @@ jobs:
           .github/scripts/nightly-device-routines.test.mjs
           .github/scripts/coordinated-routine-request.test.mjs
           .github/scripts/notify-pr-builds.test.mjs
+          .github/scripts/release-slack-message.test.mjs
+          .github/scripts/release-routine-slack.test.mjs
           .github/scripts/pr-ios-artifacts.test.mjs
       - name: Verify shared Mac installer and ownership
         run: node --test mobile/scripts/install-ios-mac.test.mjs
