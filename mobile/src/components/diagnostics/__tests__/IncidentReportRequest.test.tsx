@@ -49,13 +49,22 @@ beforeEach(() => {
   jest.mocked(submitIncidentReportOnce).mockResolvedValue(receipt)
 })
 
-it("does not file a report without authentication", () => {
-  jest.mocked(useAuth).mockReturnValue(auth(false))
+it.each(["signed out", "expired"])("returns an immediate correlated failure when %s without uploading", (state) => {
+  jest.mocked(useAuth).mockReturnValue(state === "signed out" ? auth(false) : {...auth(true), session: null})
   const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
   expect(JSON.parse(tree.getByTestId("incident-report-state").props.children)).toMatchObject({
-    status: "authentication_required",
+    status: "finished",
+  })
+  expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual({
+    alert_id: request.alert_id,
+    test_run_id: request.test_run_id,
+    failure_code: request.failure_code,
+    status: "failed",
+    error: "Authentication is unavailable; the incident report was not submitted",
   })
   expect(submitIncidentReportOnce).not.toHaveBeenCalled()
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
 })
 
 it("shows the correlated incident ID and returns to the previous screen with Done", async () => {

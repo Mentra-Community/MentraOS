@@ -5,6 +5,7 @@ import {DeeplinkProvider, useDeeplink} from "./DeeplinkContext"
 
 const mockSetSplashEnabled = jest.fn()
 const mockReplaceAll = jest.fn()
+const mockReplace = jest.fn()
 const mockCompleteOAuthHandoff = jest.fn()
 const mockPush = jest.fn()
 const mockSetPendingRoute = jest.fn()
@@ -35,7 +36,7 @@ jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {
     getState: () => ({
       replaceAll: mockReplaceAll,
-      replace: jest.fn(),
+      replace: mockReplace,
       setAnimation: jest.fn(),
       push: mockPush,
       setPendingRoute: mockSetPendingRoute,
@@ -133,19 +134,46 @@ it("removes its native URL subscription on unmount", () => {
 const incidentUrl =
   "com.mentra://test/submit-incident-report?alert_id=run-1&failure_code=ota_failed&failure_message=failed%20%26%20stopped"
 
-it("queues an incident link for authentication without executing its route", async () => {
+it("still defers a protected home link to sign-in without running its handler", async () => {
   render(
     <DeeplinkProvider>
       <Probe />
     </DeeplinkProvider>,
   )
   await act(async () => {
-    await processUrl(incidentUrl)
+    await processUrl("com.mentra://home")
+    jest.advanceTimersByTime(100)
   })
-  expect(mockSetPendingRoute).toHaveBeenCalledWith(incidentUrl)
-  expect(mockPush).not.toHaveBeenCalled()
-  expect(mockIncidentRequest).not.toHaveBeenCalled()
+  expect(mockGetSession).toHaveBeenCalledTimes(1)
+  expect(mockSetPendingRoute).toHaveBeenCalledWith("com.mentra://home")
+  expect(mockReplace).toHaveBeenCalledWith("/auth/start")
+  expect(mockReplaceAll).not.toHaveBeenCalled()
 })
+
+it.each(["signed out", "expired", "unavailable"])(
+  "opens the diagnostic modal without auth redirection when the session is %s",
+  async (state) => {
+    if (state === "expired") mockGetSession.mockResolvedValue({is_error: () => true})
+    if (state === "unavailable") mockGetSession.mockRejectedValue(new Error("session unavailable"))
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(incidentUrl)
+      jest.advanceTimersByTime(100)
+    })
+    expect(mockIncidentRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({params: expect.objectContaining({alert_id: "run-1"})}),
+    )
+    expect(mockGetSession).not.toHaveBeenCalled()
+    expect(mockSetPendingRoute).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockReplace).not.toHaveBeenCalled()
+    expect(mockReplaceAll).not.toHaveBeenCalled()
+  },
+)
 
 it("shows a dismissible authenticated incident modal without changing the existing navigation", async () => {
   mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})

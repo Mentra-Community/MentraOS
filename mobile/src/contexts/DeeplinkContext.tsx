@@ -463,7 +463,9 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
           })
           setIncidentParams(params)
         },
-        requiresAuth: true,
+        // Diagnostics must preserve the failed screen even when auth is unavailable.
+        // The modal and uploader report that failure without sending the user to login.
+        requiresAuth: false,
       },
       ...deepLinkRoutes,
     ],
@@ -610,7 +612,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         return
       }
 
-      const authed = await config.authCheckHandler()
+      const authed = matchedRoute.requiresAuth === false ? false : await config.authCheckHandler()
 
       // Check authentication if required
       if (matchedRoute.requiresAuth && !authed) {

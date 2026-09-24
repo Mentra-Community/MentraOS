@@ -1281,7 +1281,7 @@ const en = {
   },
   incidentAutomation: {
     title: "Incident report",
-    signInRequired: "Sign in to the Mentra App before requesting an incident report.",
+    signInRequired: "Incident report unavailable because the Mentra App is not signed in.",
     submitting: "Submitting the incident report and recent phone logs…",
     finished: "Incident report request finished.",
   },

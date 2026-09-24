@@ -3,12 +3,14 @@
 The Mentra App exposes a report trigger in **every Android and iOS build**, including
 iOS apps running on macOS. Use the existing signed-in app after a failure. The
 normal incident pipeline creates the report in the selected deployment, uploads
-recent phone logs (JavaScript and native), and requests logs from connected glasses.
+recent phone console logs (including the Bluetooth SDK's forwarded native log
+events), and requests logs from connected glasses. This is the app's recent
+in-memory log buffer, not a complete Android logcat or iOS system-log capture.
 
 | Platform | Trigger | Receipt |
 | --- | --- | --- |
 | Android | `com.mentra.SUBMIT_INCIDENT_REPORT` broadcast | `INCIDENT_REPORT_RESULT` in logcat |
-| iPhone / iOS on Mac | `com.mentra://test/submit-incident-report?...` | JSON in the incident modal; same log marker |
+| iPhone / iOS on Mac | `com.mentra://test/submit-incident-report?...` | JSON in the incident modal |
 
 These commands request real reports using the app's current account. No credentials
 are passed in the request. Capture the failed screen first, send once, and continue
@@ -51,13 +53,15 @@ its intended app process is already running before delivery. Do not pass
 `--terminate-existing`. Cold launch and sign-in recovery are outside the failure
 hook: this trigger uses the current engine and does not initialize or reset it.
 If no report service is available, the receipt reports that failure.
+If the current app session is unavailable, the modal returns a correlated failed
+receipt immediately without uploading or navigating to sign-in.
 
 A native modal appears **above the current screen, including Mentra Call**. It
 does not close the miniapp or change navigation. The UI automation contract is:
 
 | Accessibility `testID` | Value / action |
 | --- | --- |
-| `incident-report-state` | JSON with `alert_id`, `test_run_id`, and `status`: `submitting`, `finished`, or `authentication_required`. |
+| `incident-report-state` | JSON with `alert_id`, `test_run_id`, and `status`: `submitting` or `finished`. |
 | `incident-report-result` | Final JSON using the result format below. Only present after completion. |
 | `incident-report-done` | Dismiss the modal and expose the unchanged prior screen. Available while pending too. |
 

@@ -30,16 +30,26 @@ export default function IncidentReportRequest({
   const state = {
     alert_id: typeof params.alert_id === "string" ? params.alert_id : undefined,
     test_run_id: typeof params.test_run_id === "string" ? params.test_run_id : undefined,
-    status: !authenticated ? "authentication_required" : result ? "finished" : "submitting",
+    status: result ? "finished" : "submitting",
   }
 
   useEffect(() => {
     setResult(null)
     // Re-check when authentication changes while this modal is open.
-    if (!authenticated) return
     const parsed = parseIncidentReportRequest(JSON.parse(input))
     if (!parsed.ok) {
       setResult({status: "failed", failure_code: "invalid_request", error: parsed.error})
+      return
+    }
+    if (!authenticated) {
+      setResult({
+        alert_id: parsed.request.alert_id,
+        test_run_id: parsed.request.test_run_id,
+        failure_code: parsed.request.failure_code,
+        scenario_name: parsed.request.scenario_name,
+        status: "failed",
+        error: "Authentication is unavailable; the incident report was not submitted",
+      })
       return
     }
     let mounted = true
