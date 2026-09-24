@@ -8,6 +8,9 @@ const triggerNames: Record<OverviewRequest["trigger"], string> = {
   nightly: "Nightly", admin: "Admin", unknown: "Origin unavailable",
 };
 const platformName = (value?: OverviewRequest["platform"]) => value === "ios-on-mac" ? "iOS on Mac" : value === "ios" ? "iPhone" : value === "android" ? "Android" : "Platform not reported";
+const phaseNames = { preflight: "Checking prerequisites", setup: "Setting up", test: "Testing", "final-assertions": "Final checks",
+  teardown: "Cleaning up", "return-verification": "Verifying return state", evidence: "Saving evidence" };
+const checkpointIsFresh = (receivedAt: string, now: number) => now - Date.parse(receivedAt) <= 120_000;
 export function elapsed(since: string, now: number) {
   const seconds = Math.max(0, Math.floor((now - Date.parse(since)) / 1000));
   if (!Number.isFinite(seconds)) return "Unknown";
@@ -26,13 +29,14 @@ function RequestLabel({ request }: { request: OverviewRequest }) {
 function Checkpoint({ claim, now }: { claim: OverviewClaim; now: number }) {
   const progress = claim.progress;
   if (!progress) return <p className="text-[#68746d]">No routine checkpoint reported.</p>;
-  const stale = now - Date.parse(progress.receivedAt) > 120_000;
+  const stale = !checkpointIsFresh(progress.receivedAt, now);
   return <div className="mb-2 last:mb-0" aria-label="Recorded routine checkpoint">
     <p className="font-medium">{progress.action?.label ?? progress.step?.label ?? "No step reported"}</p>
     <p className="mt-0.5 text-[11px] text-[#68746d]">{progress.mode === "recovering" ? "Recovery · " : progress.mode === "complete" ? "Completed checkpoint · " : ""}
-      {progress.phase.replaceAll("-", " ")} · Lifecycle steps {progress.completedSteps}/{progress.totalSteps} in this phase</p>
-    {progress.action ? <p className="text-[11px] text-[#68746d]">{progress.action.completedActions} actions completed{progress.action.totalActions === null
-      ? "; total unknown" : " of " + progress.action.totalActions}</p> : null}
+      {phaseNames[progress.phase]}{!progress.action ? <> · Lifecycle steps {progress.completedSteps}/{progress.totalSteps} in this phase</> : null}</p>
+    {progress.action ? <p className="text-[11px] text-[#68746d]">{progress.action.totalActions === null
+      ? progress.action.completedActions + " actions completed; total unknown"
+      : progress.action.completedActions + " of " + progress.action.totalActions + " actions completed"}</p> : null}
     <p className={"mt-1 text-[11px] " + (stale ? "text-[#94631b]" : "text-[#68746d]")}>Last checkpoint {elapsed(progress.receivedAt, now)} ago{stale ? " · No recent checkpoint; activity is unconfirmed" : ""}</p>
   </div>;
 }
@@ -55,7 +59,8 @@ function JobRow({ job, now }: { job: OverviewJob; now: number }) {
         {" · "}{platformName(job.requests.find(request => request.requestId === claim.requestId)?.platform)}</p> : null}
       <Checkpoint claim={claim} now={now} /></div>)
       : <p className="text-[#68746d]">No routine checkpoint reported.</p>}
-      {job.workflow?.step ? <p className="mt-2 text-[11px] text-[#68746d]">GitHub step: {job.workflow.step}</p> : null}</td>
+      {job.workflow?.step && !job.claims.some(claim => claim.progress && checkpointIsFresh(claim.progress.receivedAt, now))
+        ? <p className="mt-2 text-[11px] text-[#68746d]">GitHub step: {job.workflow.step}</p> : null}</td>
     <td className="whitespace-nowrap px-4 py-3"><p>{elapsed(job.startedAt ?? job.createdAt, now)}</p>
       <p className="mt-0.5 text-[11px] text-[#68746d]">{job.kind === "claim" ? "Since claim" : job.startedAt ? "Job elapsed" : "Waiting"}</p>
       {job.workflow ? <p className="mt-2 text-[11px] text-[#68746d]">GitHub update {elapsed(job.workflow.updatedAt, now)} ago</p> : null}</td>

@@ -15,12 +15,26 @@ const data = (): TestRunOverview => ({ observedAt: stamp, warnings: [], resolved
 }] });
 test("shows the actual reported action and distinguishes phase counts from an unknown action total", () => {
   const html = renderToStaticMarkup(<TestRunOverviewView data={data()} now={Date.parse(stamp) + 180_000} onResult={() => {}} />);
-  expect(html).toContain("Open Settings"); expect(html).toContain("Lifecycle steps 0/1 in this phase");
+  expect(html).toContain("Open Settings"); expect(html).toContain("Testing");
+  expect(html).not.toContain("Lifecycle steps");
   expect(html).toContain("7 actions completed; total unknown");
   expect(html).toContain("No recent checkpoint; activity is unconfirmed");
   expect(html).toContain("GitHub step: Enter the enrolled worker once");
   expect(html).toContain("samsung-phone-only"); expect(html).toContain("Android · Automatic build");
   expect(html).not.toContain("% complete");
+});
+test("fresh action progress is concise, while workflow details remain a fallback", () => {
+  const value = data();
+  value.jobs[0]!.claims[0]!.progress!.action!.totalActions = 38;
+  let html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp) + 15_000} onResult={() => {}} />);
+  expect(html).toContain("7 of 38 actions completed"); expect(html).toContain("Testing");
+  expect(html).not.toContain("Lifecycle steps"); expect(html).not.toContain("GitHub step:");
+  value.jobs[0]!.claims[0]!.progress!.action = null;
+  html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp) + 15_000} onResult={() => {}} />);
+  expect(html).toContain("Lifecycle steps 0/1 in this phase");
+  value.jobs[0]!.claims = [];
+  html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp) + 15_000} onResult={() => {}} />);
+  expect(html).toContain("GitHub step: Enter the enrolled worker once");
 });
 test("missing progress and partial outages never render an empty-success message", () => {
   const value = data(); value.jobs[0]!.claims = [];
