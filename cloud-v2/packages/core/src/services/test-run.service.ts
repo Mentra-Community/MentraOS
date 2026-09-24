@@ -145,7 +145,8 @@ export class TestRunService {
   private async present(run: TestRun) {
     const uploaded = new Set((await this.repository.assets(run.runId)).map(asset => asset.assetId));
     const complete = run.outcomes.evidence === "complete" && run.assets.every(asset => uploaded.has(asset.assetId));
-    return { ...run, outcome: run.outcome === "passed" && !complete ? "blocked" as const : run.outcome,
+    return { ...run, ...(run.release || run.provenance.releaseIdentity ? { release: run.release ?? run.provenance.releaseIdentity } : {}),
+      outcome: run.outcome === "passed" && !complete ? "blocked" as const : run.outcome,
       outcomes: { ...run.outcomes, evidence: complete ? "complete" as const : "incomplete" as const },
       assets: run.assets.map(asset => ({ ...asset, uploaded: uploaded.has(asset.assetId) })) };
   }

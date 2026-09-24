@@ -80,6 +80,14 @@ const put = (bytes: Uint8Array = video, id = "video-1") => ingest.request(`/run-
   method: "PUT", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "video/mp4" }, body: bytes,
 });
 
+test("history and detail show the export's release identity without rewriting its immutable payload", async () => {
+  const run = fixture(); run.provenance.releaseIdentity = "3.3.0-dev.351";
+  await service.ingest(run);
+  expect((await service.detail(run.runId)).release).toBe("3.3.0-dev.351");
+  expect((await service.list({ limit: 25 })).runs[0]?.release).toBe("3.3.0-dev.351");
+  expect(repository.runs.get(run.runId)?.run.release).toBeUndefined();
+});
+
 test("build-scoped list links reach Mongo as exact provenance filters and reject malformed hashes", async () => {
   const query = {repository: "Mentra-Community/MentraOS", pr: "4136", headSha: "a".repeat(40),
     archiveSha256: "b".repeat(64), routineId: "day1-ota", platform: "ios-mac", channel: "pr"};
