@@ -12,6 +12,7 @@ on:
       - ".github/scripts/release-slack-message*"
       - ".github/scripts/release-routine-slack*"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/workflows/request-e2e-routine.yml"
       - ".github/workflows/dispatch-device-routine.yml"
       - ".github/workflows/nightly-device-routines.yml"
@@ -33,6 +34,7 @@ on:
       - ".github/scripts/release-slack-message*"
       - ".github/scripts/release-routine-slack*"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/workflows/request-e2e-routine.yml"
       - ".github/workflows/dispatch-device-routine.yml"
       - ".github/workflows/nightly-device-routines.yml"
@@ -70,6 +72,7 @@ jobs:
           .github/scripts/release-slack-message.test.mjs
           .github/scripts/release-routine-slack.test.mjs
           .github/scripts/pr-ios-artifacts.test.mjs
+          .github/scripts/pr-android-artifacts.test.mjs
       - name: Verify shared Mac installer and ownership
         run: node --test mobile/scripts/install-ios-mac.test.mjs
       - name: Verify Mac installer packaging

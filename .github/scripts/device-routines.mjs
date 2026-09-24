@@ -22,6 +22,16 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${definitions}tools/mentra-e2e/flows/no-glasses.ts`,
     worker: `${definitions}worker/no-glasses.ts`,
   }),
+  "no-glasses-android": Object.freeze({
+    label: "routine:no-glasses-android", name: "Android no-glasses UI", platform: "android",
+    coverage: "Signed-in English unpaired Home, All Apps search, Settings and account forms without submitting, miniapp switcher and local glasses-required dialogs; recorded Android steps and verified app return state.",
+    relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/app.config.ts", "mobile/modules/**/android/**"],
+    prerequisites: "CI signed Android APK and immutable OTA manifest; enrolled Android phone with its own existing test account and no paired glasses.",
+    exclusions: "No login/logout, onboarding, permission changes, pairing, connected glasses, OTA, Call, acoustic qualification or physical-iPhone coverage. Mac and Android results are independent.",
+    definition: `${definitions}tools/mentra-e2e/ANDROID.md`,
+    implementation: `${definitions}tools/mentra-e2e/runner/android-walkthrough.ts`,
+    worker: `${definitions}worker/android-no-glasses.ts`,
+  }),
   "mentra-call": Object.freeze({
     label: "routine:mentra-call", name: "Mentra Call", platform: "ios-on-mac",
     coverage: "Real Teams guest admission, advancing glasses video, required two-way audio evidence, mute, background, roster/leave/rejoin and owned meeting/network cleanup.",

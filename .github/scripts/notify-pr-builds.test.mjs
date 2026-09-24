@@ -689,3 +689,23 @@ test("Mentra Call opt-in adds its exact results link without posting again on re
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 1)
 })
+
+
+test("Android opt-in links the APK receipt hash and Android result platform, independently of Mac", async () => {
+  const h = harness({files: [], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
+  const original = h.args.fetchImpl
+  const digest = "e".repeat(64)
+  h.args.fetchImpl = async (url, options) => url.includes("mentra-android-pr-") ? new Response(JSON.stringify({
+    schemaVersion: 1, pr: 123, headSha: sha, baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
+    app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40),
+      backend: "dev", otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
+    artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 1234}},
+  })) : original(url, options)
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+  assert.match(text, /Android no-glasses UI · Android/)
+  const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(result.searchParams.get("archiveSha256"), digest)
+  assert.equal(result.searchParams.get("platform"), "android")
+  assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
+})

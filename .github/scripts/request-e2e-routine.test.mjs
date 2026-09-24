@@ -1,3 +1,4 @@
+import {ANDROID_PUBLICATION_STEP} from "./pr-android-artifacts.mjs"
 import assert from "node:assert/strict"
 import {createHash} from "node:crypto"
 import test from "node:test"
@@ -6,6 +7,7 @@ import {
   REQUEST_LABEL,
   REQUEST_WORKFLOW,
   successfulMacPublication,
+  successfulAndroidPublication,
 } from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -479,4 +481,49 @@ test("cloned successful jobs retain original attempts but an active/new failed b
     ]),
     null,
   )
+})
+
+
+function androidFixture() {
+  const f = fixture(), run = f.state.runs[0]
+  run.path = ".github/workflows/mentra-app-android-build.yml"
+  f.state.pr.labels = [{name: "routine:no-glasses-android"}]
+  f.state.jobs = [{...job("build", 2), steps: [{name: ANDROID_PUBLICATION_STEP, status: "completed", conclusion: "success"}]}]
+  const receipt = {schemaVersion: 1, pr: 4136, headSha: head, baseSha: base, buildSha: merge, runId: 100, runAttempt: 2,
+    app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: head, buildSha: merge,
+      backend: "dev", otaManifestUrl: otaUrl}, artifacts: {android: {name: `mentra-android-pr-4136-${head}-100-2.apk`,
+      sha256: digest, size: 1234}}}
+  f.state.receipts[url(`mentra-android-pr-4136-${head}-100-2.json`)] = receipt
+  return {...f, android: receipt, resolveAndroid: overrides => f.resolve({routine: "no-glasses-android", ...overrides})}
+}
+
+test("Android requests select the exact APK receipt, version and merge without a Mac publication", async () => {
+  const f = androidFixture()
+  const request = await f.resolveAndroid()
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.selection.platform, "android")
+  assert.equal(request.selection.producer.workflow, f.state.runs[0].path)
+  assert.deepEqual(request.selection.producer.buildAttempt, 2)
+  assert.deepEqual(request.selection.app, f.android.app)
+  assert.equal(request.selection.archive.name, f.android.artifacts.android.name)
+  f.manual()
+  assert.equal((await f.resolveAndroid({...originalPublication})).status, "ready")
+})
+
+test("Android rejects missing publication steps, mismatching APK identity and stale bases", async () => {
+  for (const change of [f => f.state.jobs[0].steps = [], f => f.state.jobs[0].steps[0].conclusion = "failure",
+    f => f.android.runAttempt++, f => f.android.app.packageId += ".other", f => f.android.baseSha = head,
+    f => f.android.app.otaManifestUrl += "old", f => f.state.parents.reverse(), f => f.state.missingArchive = true,
+    f => f.state.runs[0].path = ".github/workflows/mentra-app-ios-build.yml", f => f.state.removeLabelOnReread = true]) {
+    const f = androidFixture(); change(f)
+    assert.equal((await f.resolveAndroid()).status, "no-artifact")
+  }
+})
+
+test("Android retained build jobs select the first publication attempt and a failed newest build is not reused", () => {
+  const first = {...job("build"), steps: [{name: ANDROID_PUBLICATION_STEP, status: "completed", conclusion: "success"}]}
+  const retained = {...first, id: 30, run_attempt: 2}
+  assert.deepEqual(successfulAndroidPublication({run_attempt: 2, status: "completed"}, [first, retained]),
+    {buildAttempt: 1, publicationAttempt: 1})
+  assert.equal(successfulAndroidPublication({run_attempt: 2, status: "completed"}, [first, {...retained, conclusion: "failure"}]), null)
 })

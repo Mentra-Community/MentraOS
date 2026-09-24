@@ -22,6 +22,7 @@ on:
       - ".github/workflows/mentra-app-ios-build.yml"
       - ".github/workflows/reusable-pr-build-notification.yml"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
       - ".github/scripts/allocate-asg-version.mjs"
@@ -170,7 +171,7 @@ jobs:
 
       - name: Verify PR packaging and notification contracts
         run: |
-          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs
+          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs
           python3 .github/scripts/test_repackage_pr_apk.py
 
       - name: Setup environment
@@ -482,6 +483,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          node .github/scripts/pr-android-artifacts.mjs mobile/android/app/build/outputs/apk/release/app-release.apk
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/pr-builds" --jq .id)
           name="mobile-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
           node .github/scripts/publish-immutable-release-asset.mjs \

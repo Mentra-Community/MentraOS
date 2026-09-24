@@ -21,6 +21,7 @@ on:
       - ".github/workflows/mentra-app-ios-build.yml"
       - ".github/workflows/reusable-pr-build-notification.yml"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
       - ".github/scripts/allocate-asg-version.mjs"

@@ -2,13 +2,13 @@ import {createHash} from "node:crypto"
 import {execFileSync} from "node:child_process"
 import {writeFile} from "node:fs/promises"
 import {isDeepStrictEqual} from "node:util"
-import {verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
+import {publishedCoordinatedBuild, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 import {applyRoutineResult, assertNotification, positive, receiptName, REPOSITORY, requireThat, sha} from "./release-slack-message.mjs"
 
 export const WORKFLOW = ".github/workflows/notify-release-routine.yml"
 const PRIVATE = {owner: "Mentra-Community", repo: "Mentra-Automated-Testing"}
 const REQUEST = ".github/workflows/request-e2e-routine.yml"
-const routines = ["no-glasses", "day1-ota", "mentra-call"]
+const routines = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"]
 export const jobName = plan => `Update release ${plan.notification.build.runId} / post ${plan.notification.producer.runAttempt} / ${plan.row.routineId}`
 export const stateName = (runId, attempt, routine) => `release-slack-state-${runId}-${attempt}-${routine}`
 
@@ -69,7 +69,7 @@ export function terminalRow(terminal, run, request) {
 }
 
 export async function resolveRoutineNotifications({github, privateGithub, context, workerRunId, workerAttempt,
-  read = readActionsJson, verify = verifyCoordinatedReadyRequest}) {
+  read = readActionsJson, verify = verifyCoordinatedReadyRequest, published = publishedCoordinatedBuild}) {
   requireThat(context.eventName === "workflow_dispatch" && context.ref === "refs/heads/dev" &&
     `${context.repo.owner}/${context.repo.repo}` === REPOSITORY && positive(workerRunId) && positive(workerAttempt), "Unsupported result callback")
   const {data: run} = await privateGithub.rest.actions.getWorkflowRunAttempt({...PRIVATE, run_id: workerRunId, attempt_number: workerAttempt})
@@ -92,6 +92,12 @@ export async function resolveRoutineNotifications({github, privateGithub, contex
     if (request.schemaVersion !== 2) continue // PR build messages are outside this coordinated-release change.
     await verify({github, context, request})
     const row = terminalRow(terminal, run, request)
+    // The original release post was pinned to its Mac download. Authenticate that
+    // sibling archive for Android results; never compare the APK hash to a ZIP hash.
+    const postArchive = request.selection.platform === "android"
+      ? (await published({identity: request.selection.build.releaseIdentity, channel: request.source.channel,
+          sourceCommit: request.selection.build.sourceCommit})).archive.sha256
+      : request.selection.archive.sha256
     const {data: buildRun} = await github.rest.actions.getWorkflowRunAttempt({...context.repo,
       run_id: request.source.buildRunId, attempt_number: request.source.publicationAttempt})
     const prefix = `release-slack-message-${buildRun.id}-`
@@ -108,7 +114,7 @@ export async function resolveRoutineNotifications({github, privateGithub, contex
       requireThat(message.producer.runAttempt === attempt && message.build.runId === request.source.buildRunId &&
         message.build.channel === request.source.channel && message.build.headSha === request.selection.build.sourceCommit &&
         message.build.release === request.selection.build.releaseIdentity &&
-        message.build.archiveSha256 === request.selection.archive.sha256, "Release post belongs to another tested build")
+        message.build.archiveSha256 === postArchive, "Release post belongs to another tested build")
       messages.push(message)
     }
     if (!messages.length) continue // Webhook-era/unconfigured posts have no editable receipt.

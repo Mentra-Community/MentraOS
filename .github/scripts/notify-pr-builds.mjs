@@ -1,3 +1,4 @@
+import {androidReceiptName, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
 import {MOBILE_PR_PATHS} from "./pr-mobile-build.mjs"
 import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
@@ -125,8 +126,8 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
   for (const routine of routines)
     lines.push(
-      `*Requested tests:* ${deviceRoutine(routine.id).name} · iOS on Mac\n${[
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : "Results link available with the Mac build",
+      `*Requested tests:* ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n${[
+        routine.resultsUrl ? link(routine.resultsUrl, "View results") : `Results link available with the ${deviceRoutine(routine.id).platform === "android" ? "Android" : "Mac"} build`,
         link(routine.pipelineUrl, routine.pipelineLabel),
       ].join(" · ")}\nResults appear after the device run is uploaded.`,
     )
@@ -165,12 +166,12 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
     headSha: sha,
     archiveSha256,
     routineId,
-    platform: "ios-mac",
+    platform: DEVICE_ROUTINES[routineId].platform === "android" ? "android" : "ios-mac",
   }).toString()
   return url.href
 }
 
-async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
+async function requestedRoutineLinks({github, context, pr, sha, ios, android, core}) {
   const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
   if (!requested.length) return []
   const repository = `${context.repo.owner}/${context.repo.repo}`
@@ -209,7 +210,7 @@ async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
     core.warning(`Could not locate this revision's routine request; linking its workflow: ${error.message}`)
   }
   return requested.map(id => ({...result, id,
-    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: ios.archiveSha256, routineId: id})}))
+    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: DEVICE_ROUTINES[id].platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id})}))
 }
 
 export function matchingBuildRun(runs, pr, sha) {
@@ -397,7 +398,16 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     core.info("This PR revision's notification was already delivered.")
     return
   }
-  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, core})
+  const android = {}
+  if (hasRoutineLabel(pr, "no-glasses-android") && !error) {
+    try {
+      const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
+      const receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
+        androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
+      android.archiveSha256 = validateAndroidReceipt(receipt, coordinates).android.sha256
+    } catch (failure) { core.warning(`Android routine receipt unavailable: ${failure.message}`) }
+  }
+  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core})
   if (!(await current())) {
     core.info("PR superseded before notification.")
     return
@@ -436,7 +446,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
   for (const routine of routines)
     downloads.push(
-      `**Requested tests:** ${deviceRoutine(routine.id).name} · iOS on Mac\n\n${[
+      `**Requested tests:** ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n\n${[
         ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
         `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
       ].join(" · ")}\n\nResults appear after the device run is uploaded.`,

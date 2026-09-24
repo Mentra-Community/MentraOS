@@ -36,7 +36,7 @@ function resolver(overrides = {}) {
   const privateGithub = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: values.worker})}}}
   return {github, privateGithub, context, workerRunId: 600, workerAttempt: 1,
     verify: async () => {}, read: async (_github, _repo, _run, name) => name.startsWith("routine-terminal-")
-      ? {"routine-terminal-no-glasses.json": values.terminal} : name.startsWith("mentra-routine-request-")
+      ? {[`routine-terminal-${values.terminal.request.routineId}.json`]: values.terminal} : name.startsWith("mentra-routine-request-")
       ? {"request.json": values.request} : {"slack-release-message.json": values.notification}}
 }
 
@@ -184,4 +184,29 @@ test("PR and dev workflow-only or notification-script edits run the routine chec
       assert.ok(section.includes(`- "${path}"`), `${event} includes ${path}`)
     }
   }
+})
+
+
+test("Android results authenticate the sibling Mac archive attached to the original release post", async () => {
+  const androidRequest = structuredClone(request)
+  androidRequest.routine.id = "no-glasses-android"
+  androidRequest.requestId += "-android"
+  androidRequest.selection.platform = "android"
+  androidRequest.selection.archive.sha256 = "9".repeat(64)
+  const result = terminal()
+  result.request.routineId = "no-glasses-android"
+  result.resultRunId = androidRequest.requestId
+  let lookups = 0
+  const f = {...resolver({request: androidRequest, terminal: result}), published: async input => {
+    lookups++
+    assert.deepEqual(input, {identity: request.selection.build.releaseIdentity, channel: "dev",
+      sourceCommit: request.selection.build.sourceCommit})
+    return {archive: {sha256: "e".repeat(64)}}
+  }}
+  const plans = await resolveRoutineNotifications(f)
+  assert.equal(lookups, 1)
+  assert.equal(plans[0].row.routineId, "no-glasses-android")
+  const applied = applyRoutineResult(plans[0].notification, plans[0].row)
+  assert.match(JSON.stringify(applied.payload), /Android no-glasses UI/)
+  await assert.rejects(resolveRoutineNotifications({...f, published: async () => ({archive: {sha256: "f".repeat(64)}})}), /another tested build/)
 })

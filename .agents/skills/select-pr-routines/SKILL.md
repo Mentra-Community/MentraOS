@@ -31,6 +31,7 @@ its CI artifact; it does not mean the test passed or authorize new hardware acce
    | Changed behavior | Candidate label |
    | --- | --- |
    | Unpaired All Apps search, Settings navigation or existing-account sign-in | `routine:no-glasses` |
+   | Android unpaired Home, All Apps or Settings navigation | `routine:no-glasses-android` |
    | Customer update chaining or effective OTA manifest | `routine:day1-ota` |
    | Call admission, direct-link media, roster or meeting cleanup | `routine:mentra-call` |
    | Admin-only UI, unrelated backend logic, documentation | None unless a specific covered behavior also changes |

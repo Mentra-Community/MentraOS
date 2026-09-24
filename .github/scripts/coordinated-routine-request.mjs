@@ -58,7 +58,7 @@ function releaseCoordinates(identity, channel) {
 }
 
 /** Existing immutable publication files, read only as bounded JSON metadata. */
-export async function publishedCoordinatedBuild({identity, channel, sourceCommit, fetchImpl = fetch}) {
+export async function publishedCoordinatedBuild({identity, channel, sourceCommit, platform = "ios-on-mac", fetchImpl = fetch}) {
   const {tag, releaseChannel} = releaseCoordinates(identity, channel)
   requireThat(SHA.test(sourceCommit ?? ""), "Invalid coordinated source commit")
   const plan = await jsonArtifact(artifactUrl(REPOSITORY, tag, `mentra-release-plan-${identity}.json`), fetchImpl)
@@ -67,24 +67,44 @@ export async function publishedCoordinatedBuild({identity, channel, sourceCommit
     value.sourceCommit === sourceCommit && value.channel === releaseChannel && value.artifactContainerTag === tag &&
     value.artifactNames?.otaManifest === `mentra-live-ota-${identity}.json` && positive(value.native?.buildNumber),
   "Published release plan differs from the selected source")
+  requireThat(["ios-on-mac", "android"].includes(platform), "Unsupported app platform")
   const names = downloadNames(value)
-  const receipt = await jsonArtifact(artifactUrl(REPOSITORY, tag, names.receipt), fetchImpl)
+  let receipt, app, archive
   const otaUrl = artifactUrl(REPOSITORY, tag, value.artifactNames.otaManifest)
-  validateDownloads(receipt.value, value, otaUrl)
-  const app = receipt.value.app
-  requireThat(app.teamId === "T5XXXL6N36" && app.app === "Mentra.app" && app.buildSha === sourceCommit &&
-    app.releaseIdentity === identity, "Mac app package identity differs")
-  const archive = {url: artifactUrl(REPOSITORY, tag, names.mac), ...receipt.value.artifacts.mac}
+  if (platform === "android") {
+    requireThat(value.artifactNames.releaseManifest === `mentra-release-${identity}.json` &&
+      value.artifactNames.androidApp === `mentraos-${identity}-android.apk` &&
+      /^\d+\.\d+\.\d+$/.test(value.native.marketingVersion ?? ""), "Release plan has no Android publication")
+    receipt = await jsonArtifact(artifactUrl(REPOSITORY, tag, value.artifactNames.releaseManifest), fetchImpl)
+    const record = receipt.value
+    requireThat(record.schemaVersion === 1 && record.releaseIdentity === identity && record.releaseSetId === value.releaseSetId &&
+      record.sourceCommit === sourceCommit && record.channel === releaseChannel && record.releasePlanSha256 === plan.sha256 &&
+      isDeepStrictEqual(record.native, value.native) && Array.isArray(record.artifacts), "Android release manifest differs from its plan")
+    const assets = record.artifacts.filter(asset => asset.coordinate === value.artifactNames.androidApp)
+    const url = artifactUrl(REPOSITORY, tag, value.artifactNames.androidApp)
+    requireThat(assets.length === 1 && assets[0].url === url && HASH.test(assets[0].sha256 ?? "") &&
+      positive(assets[0].size) && ["built", "published", "reused"].includes(assets[0].status), "Missing or ambiguous published Android APK")
+    archive = {name: value.artifactNames.androidApp, url, sha256: assets[0].sha256, size: assets[0].size}
+    app = {packageId: "com.mentra.mentra", version: value.native.marketingVersion, build: String(value.native.buildNumber),
+      headSha: sourceCommit, buildSha: sourceCommit, backend: channel, otaManifestUrl: otaUrl, releaseIdentity: identity}
+  } else {
+    receipt = await jsonArtifact(artifactUrl(REPOSITORY, tag, names.receipt), fetchImpl)
+    validateDownloads(receipt.value, value, otaUrl)
+    app = receipt.value.app
+    requireThat(app.teamId === "T5XXXL6N36" && app.app === "Mentra.app" && app.buildSha === sourceCommit &&
+      app.releaseIdentity === identity, "Mac app package identity differs")
+    archive = {url: artifactUrl(REPOSITORY, tag, names.mac), ...receipt.value.artifacts.mac}
+  }
   const available = await fetchImpl(archive.url, {method: "HEAD", redirect: "error", signal: AbortSignal.timeout(30_000)})
   requireThat(available.ok && Number(available.headers.get("content-length")) === archive.size,
-    "Published Mac archive is missing or its size differs from the receipt")
+    "Published app archive is missing or its size differs from the receipt")
   const ota = await jsonArtifact(otaUrl, fetchImpl)
   const asg = ota.value.apps?.["com.mentra.asg_client"]
   requireThat(ota.value.releaseVersion === identity && asg?.versionName && positive(asg.versionCode) &&
     HASH.test(asg.sha256 ?? "") && positive(asg.apkSize) && /^https:\/\//.test(asg.apkUrl ?? "") &&
     ota.value.bes_firmware?.version && ota.value.mtk_full_ota?.end_firmware,
   "OTA manifest does not identify the selected release and firmware targets")
-  return {platform: "ios-on-mac", releasePlan: pin(plan), receipt: pin(receipt), archive, otaManifest: pin(ota),
+  return {platform, releasePlan: pin(plan), receipt: pin(receipt), archive, otaManifest: pin(ota),
     app, build: {sourceCommit, releaseIdentity: identity, artifactContainerTag: tag}}
 }
 
@@ -114,7 +134,7 @@ export async function coordinatedSourceRun(github, context, source) {
   return run
 }
 
-export async function resolveCoordinatedSelection({github, context, source, fetchImpl = fetch}) {
+export async function resolveCoordinatedSelection({github, context, source, platform = "ios-on-mac", fetchImpl = fetch}) {
   const run = await coordinatedSourceRun(github, context, source)
   const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
     ...context.repo, run_id: run.id, per_page: 100,
@@ -124,7 +144,7 @@ export async function resolveCoordinatedSelection({github, context, source, fetc
     plans[0].workflow_run?.id === run.id && plans[0].workflow_run.head_sha === run.head_sha,
   "Producing run has no unambiguous immutable release plan")
   const identity = plans[0].name.replace(/^coordinated-release-plan-mentra-/, "")
-  const selection = await publishedCoordinatedBuild({identity, channel: source.channel, sourceCommit: run.head_sha, fetchImpl})
+  const selection = await publishedCoordinatedBuild({identity, channel: source.channel, sourceCommit: run.head_sha, platform, fetchImpl})
   // Reauthenticate after downloads without requiring this historical build to be the branch tip.
   const current = await coordinatedSourceRun(github, context, source)
   requireThat(current.head_sha === run.head_sha, "Producing run changed during selection")
@@ -134,10 +154,10 @@ export async function resolveCoordinatedSelection({github, context, source, fetc
 
 export async function createCoordinatedRoutineRequest({github, context, number, channel, routine = "no-glasses",
   requestOrigin = "workflow-dispatch", source, sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, fetchImpl = fetch, now = () => new Date()}) {
-  deviceRoutine(routine)
+  const registered = deviceRoutine(routine)
   const selected = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
   requireThat(!number && selected && ["dev", "staging"].includes(channel), "Coordinated requests require an exact run/attempt and no PR number")
-  requireThat(requestOrigin === "workflow-dispatch" || (requestOrigin === "successful-build" && routine === "no-glasses"),
+  requireThat(requestOrigin === "workflow-dispatch" || (requestOrigin === "successful-build" && ["no-glasses", "no-glasses-android"].includes(routine)),
     "Unsupported coordinated routine authorization")
   requireThat(`${context.repo.owner}/${context.repo.repo}` === REPOSITORY && context.eventName === "workflow_dispatch" &&
     positive(context.runId) && positive(source?.runAttempt) && source.ref === "refs/heads/dev" && SHA.test(source.sha ?? "") &&
@@ -158,9 +178,9 @@ export async function createCoordinatedRoutineRequest({github, context, number, 
     await authenticateNightlyMarker({github, context, request})
   }
   try {
-    request.selection = await resolveCoordinatedSelection({github, context, source: request.source, fetchImpl})
+    request.selection = await resolveCoordinatedSelection({github, context, source: request.source, platform: deviceRoutine(request.routine.id).platform, fetchImpl})
     request.status = "ready"
-    request.reason = "Verified exact coordinated run, channel ancestry, immutable release plan, Mac receipt and OTA pin"
+    request.reason = `Verified exact coordinated run, channel ancestry, immutable release plan, ${registered.platform === "android" ? "Android" : "Mac"} receipt and OTA pin`
   } catch (error) {
     request.reason = error instanceof Error ? error.message : "Coordinated publication could not be verified"
   }
@@ -172,8 +192,8 @@ export async function verifyCoordinatedReadyRequest({github, context, request, f
   requireThat(request.schemaVersion === 2 && request.source?.kind === "coordinated-release" && !request.pullRequest &&
     request.requestId === `routine-${request.trigger.runId}-${request.trigger.runAttempt}-${request.source.channel}-${request.routine.id}` &&
     (request.routine.authorization === "workflow-dispatch" ||
-      (request.routine.authorization === "successful-build" && request.routine.id === "no-glasses")), "Invalid coordinated request")
-  const selection = await resolveCoordinatedSelection({github, context, source: request.source, fetchImpl})
+      (request.routine.authorization === "successful-build" && ["no-glasses", "no-glasses-android"].includes(request.routine.id))), "Invalid coordinated request")
+  const selection = await resolveCoordinatedSelection({github, context, source: request.source, platform: deviceRoutine(request.routine.id).platform, fetchImpl})
   requireThat(isDeepStrictEqual(selection, request.selection), "Ready coordinated selection differs from its published source")
   const {data: issuer} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})
   requireThat(issuer.ref === "refs/heads/dev" && issuer.object?.type === "commit" &&

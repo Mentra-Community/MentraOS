@@ -16,7 +16,7 @@ on:
       routine:
         description: Requested device routine
         type: choice
-        options: [day1-ota, no-glasses, mentra-call]
+        options: [day1-ota, no-glasses, no-glasses-android, mentra-call]
         default: day1-ota
         required: true
       request_origin:
@@ -59,6 +59,7 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository &&
        (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') ||
         contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') ||
+        contains(github.event.pull_request.labels.*.name, 'routine:no-glasses-android') ||
         contains(github.event.pull_request.labels.*.name, 'routine:mentra-call')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -77,7 +78,7 @@ jobs:
         env:
           REQUEST_PR: ${{ inputs.pr || github.event.pull_request.number }}
           REQUEST_CHANNEL: ${{ inputs.channel || 'pr' }}
-          REQUEST_ROUTINE: ${{ inputs.routine || (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') && 'day1-ota' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') && 'no-glasses' || 'mentra-call') }}
+          REQUEST_ROUTINE: ${{ inputs.routine || (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') && 'day1-ota' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') && 'no-glasses' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses-android') && 'no-glasses-android' || 'mentra-call') }}
           REQUEST_ORIGIN: ${{ inputs.request_origin || 'pr-label' }}
           SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
           SOURCE_PUBLICATION_ATTEMPT: ${{ inputs.source_publication_attempt }}
