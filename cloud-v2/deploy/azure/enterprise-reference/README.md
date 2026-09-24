@@ -29,7 +29,14 @@ Feedback also opens the same form.
 - Mobile public client: `95ad08c2-7837-4ddf-933c-1fce3d6d2799`
 - Core API: `20424d9e-4b99-44e8-82c9-0ad06f08a8db`
 - Core scope: `api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.session`
-- Workspace: `https://enterprisedev.mentraglass.com`
+- Workspace: `https://mentra.acmeworkspace.com`
+
+The demo workspace is branded **Acme Industries**. The original
+`https://enterprisedev.mentraglass.com` remains an HTTPS alias for existing
+installs. Both addresses serve the same deployment; the manifest advertises the
+Acme address. The deployment ID, Core origin, Entra tenant, and existing sessions
+are preserved. `acmeworkspace.com` is also verified as an Entra sign-in domain;
+demo employee accounts still require their own assignment and Teams license.
 
 The Mobile enterprise application is assignment-required. Its public-client
 redirects cover iOS, the Mentra-signed Android APK, and Google Play signing.
@@ -123,6 +130,30 @@ DNS-only CNAME to the printed `generatedRuntimeHostname`, and create
 helper. The Core reference uses its Azure-generated TLS hostname and is declared
 separately in `services.coreUrl`.
 
+When migrating an existing hostname, set `workspaceCertificateName` to a new
+managed-certificate resource name; Azure certificates cannot change their subject
+in place. To keep existing clients working, include the old binding in
+`additionalWorkspaceDomains`, for example:
+
+```json
+{
+  "workspaceHostname": "mentra.acmeworkspace.com",
+  "workspaceCertificateName": "ca-mentra-enterprise-reference-acme-workspace",
+  "additionalWorkspaceDomains": [
+    {
+      "hostname": "enterprisedev.mentraglass.com",
+      "certificateName": "ca-mentra-enterprise-reference-workspace"
+    }
+  ]
+}
+```
+
+Additional certificates must already exist in the same Container Apps
+environment. Preserve their DNS records, and serve the old hostname directly
+rather than redirecting API requests. Update manifest-owned asset URLs to the
+new origin without changing bundle versions or hashes. These settings are also
+accepted by `scripts/deploy.sh`.
+
 This procedure supports subdomains only (for example `mentra.acme.example`).
 An apex domain cannot carry a CNAME; Azure requires an A record to the
 environment's static inbound IP plus TXT or HTTP domain-control validation,
@@ -140,7 +171,7 @@ Treat this as a documented tradeoff, not a production network posture; see
 ## Smoke test
 
 ```bash
-export MENTRA_WORKSPACE=https://enterprisedev.mentraglass.com
+export MENTRA_WORKSPACE=https://mentra.acmeworkspace.com
 cloud-v2/deploy/azure/enterprise-reference/scripts/smoke-test.sh "$MENTRA_WORKSPACE"
 ```
 

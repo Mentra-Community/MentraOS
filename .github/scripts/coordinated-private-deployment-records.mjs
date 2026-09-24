@@ -13,7 +13,7 @@ const TARGET = Object.freeze({
   containerApp: "ca-mentra-enterprise-reference",
   coreContainerApp: "ca-mentra-ent-ref-core",
   imageRepository: "mentra-cloud-enterprise",
-  workspaceOrigin: "https://enterprisedev.mentraglass.com",
+  workspaceOrigin: "https://mentra.acmeworkspace.com",
   services: Object.freeze(["meetings"]),
   meetingProvider: "acs-teams",
 })
