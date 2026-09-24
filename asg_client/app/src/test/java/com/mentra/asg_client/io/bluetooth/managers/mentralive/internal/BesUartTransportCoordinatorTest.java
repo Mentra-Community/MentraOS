@@ -43,6 +43,69 @@ public class BesUartTransportCoordinatorTest {
         coordinator.shutdown();
     }
 
+    private void flushIoLane() throws Exception {
+        Field field = BesUartTransportCoordinator.class.getDeclaredField("ioLane");
+        field.setAccessible(true);
+        ((BesUartIoLane) field.get(coordinator)).submit(() -> {}).get(1, TimeUnit.SECONDS);
+    }
+
+    @Test
+    public void explicitStatusRefreshUsesBesQueryAndStopsForExclusiveOwners() throws Exception {
+        assertThat(coordinator.requestSystemVersionRefresh()).isFalse();
+        coordinator.onSerialReady(host.session);
+        assertThat(coordinator.requestSystemVersionRefresh()).isFalse();
+        systemVersion("17.26.7.4");
+        flushIoLane();
+        host.controlCommands.clear();
+
+        assertThat(coordinator.requestSystemVersionRefresh()).isTrue();
+        awaitControlCommandCount("cs_syvr", 1);
+        org.json.JSONObject query = new org.json.JSONObject(host.controlCommands.get(0));
+        assertThat(query.getString("C")).isEqualTo("cs_syvr");
+        assertThat(query.getInt("V")).isEqualTo(1);
+        assertThat(query.getString("B")).isEmpty();
+
+        BesUartTransportCoordinator.OperationLease lease = coordinator.beginFileTransfer();
+        assertThat(lease).isNotNull();
+        assertThat(coordinator.requestSystemVersionRefresh()).isFalse();
+        coordinator.endFileTransfer(lease);
+        for (BesUartTransportCoordinator.SafetyPolicy policy
+                : BesUartTransportCoordinator.SafetyPolicy.values()) {
+            if (policy == BesUartTransportCoordinator.SafetyPolicy.NORMAL) continue;
+            safety.policy = policy;
+            assertThat(coordinator.requestSystemVersionRefresh()).isFalse();
+        }
+        assertThat(host.controlCommands).hasSize(1);
+    }
+
+    @Test
+    public void queuedStatusRefreshIsDiscardedWhenSessionCloses() throws Exception {
+        coordinator.onSerialReady(host.session);
+        systemVersion("17.26.7.4");
+        flushIoLane();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        try {
+            Future<Boolean> blocker = caller.submit(() -> coordinator.runNormalWrite(() -> {
+                started.countDown();
+                try { return release.await(2, TimeUnit.SECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+            }));
+            assertThat(started.await(1, TimeUnit.SECONDS)).isTrue();
+            host.controlCommands.clear();
+            assertThat(coordinator.requestSystemVersionRefresh()).isTrue();
+            coordinator.onSerialClosed();
+            release.countDown();
+            blocker.get(1, TimeUnit.SECONDS);
+            flushIoLane();
+            assertThat(host.controlCommands).isEmpty();
+        } finally {
+            release.countDown();
+            caller.shutdownNow();
+        }
+    }
+
     @Test
     public void supportedFirmware_startsSwitchWithoutPublishingReadyWindow() throws Exception {
         coordinator.onSerialReady(host.session);

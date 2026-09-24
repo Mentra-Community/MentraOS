@@ -195,7 +195,12 @@ grace tolerates brief BLE outages. Reconnection cancels that deadline, while rep
 unknown-presence reports never extend it. Deadline work is scoped to a stream generation so an
 old callback cannot stop a replacement stream, even if its public id is reused.
 
-Starting a stream requires confirmed phone presence. BES builds that do not expose that signal
+Starting a stream requires confirmed phone presence. If the cached state is absent or unknown,
+ASG requests `cs_syvr` snapshots from BES every 400ms for up to two seconds before rejecting the
+start. Stop, replacement start and handler cleanup cancel that pending admission. Refreshes use
+the UART coordinator and cannot interrupt file/OTA ownership or baud recovery. `phone_ready`
+also requests a snapshot; receipt of a phone command never directly sets presence to connected.
+BES builds that do not expose that signal
 must be updated before starting phone-owned streaming; unknown presence must not authorize an
 indefinitely running camera. If presence becomes unknown during a stream (for example, during
 BES transport recovery), the same bounded grace applies.

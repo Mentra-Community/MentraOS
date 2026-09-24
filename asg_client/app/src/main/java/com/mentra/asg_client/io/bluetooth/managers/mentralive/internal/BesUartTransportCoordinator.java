@@ -708,6 +708,35 @@ public final class BesUartTransportCoordinator {
         }
     }
 
+    /**
+     * Request an authoritative BES snapshot without waiting on the UART lane. Callers may retry
+     * after a refused request; a file/OTA owner or baud transition must never be interrupted.
+     */
+    public boolean requestSystemVersionRefresh() {
+        synchronized (monitor) {
+            if (!canRefreshSystemVersionLocked() || executor.isShutdown()) return false;
+            long phase = phaseGeneration;
+            SerialSession session = serialSession;
+            ioLane.submit(() -> {
+                synchronized (monitor) {
+                    if (phase != phaseGeneration || session != serialSession
+                            || !canRefreshSystemVersionLocked()) return;
+                }
+                // All ownership barriers share this FIFO lane, so a subsequently acquired
+                // operation cannot start writing before this already admitted probe.
+                if (!host.writeControlCommand(buildSystemVersionRequest())) {
+                    Log.w(TAG, "BES status refresh write failed");
+                }
+            });
+            return true;
+        }
+    }
+
+    private boolean canRefreshSystemVersionLocked() {
+        return isReadyLocked() && operation == Operation.NONE
+                && safetyState.currentPolicy() == SafetyPolicy.NORMAL;
+    }
+
     public boolean runNormalWrite(WriteAction action) {
         Future<Boolean> write;
         synchronized (monitor) {
