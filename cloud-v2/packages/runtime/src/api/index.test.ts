@@ -1,8 +1,46 @@
 import { describe, expect, test } from "bun:test";
 
 import { createApiApp } from "./index";
+import { parseWorkspaceAliases } from "../services/deployment-workspace-aliases";
 
 describe("Runtime API composition", () => {
+  test("serves origin-consistent discovery for explicit legacy hosts without changing identity", async () => {
+    const source = await Bun.file(new URL("../../../../deploy/azure/enterprise-reference/mentra-deployment.json", import.meta.url)).text();
+    const original = JSON.parse(source);
+    const legacy = "https://legacy.example.com";
+    const app = createApiApp({readinessChecks: [], services: new Set(["meetings"]),
+      deploymentManifest: source, deploymentWorkspaceAliases: [legacy]});
+    for (const origin of [original.services.runtimeUrl, legacy]) {
+      const response = await app.request(origin + "/.well-known/mentra-deployment.json");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const manifest = await response.json() as typeof original;
+      expect(manifest.services.runtimeUrl).toBe(origin);
+      expect(manifest.branding.logoUrls.light).toBe(origin + "/branding/logo-light.png");
+      expect(manifest.links.privacyPolicyUrl).toBe(origin + "/legal/privacy");
+      expect(manifest.miniapps.managed[0].bundleUrl).toBe(origin + new URL(original.miniapps.managed[0].bundleUrl).pathname);
+      expect(manifest.miniapps.managed[0].sha256).toBe(original.miniapps.managed[0].sha256);
+      expect(manifest.services.coreUrl).toBe(original.services.coreUrl);
+      expect(manifest.deploymentId).toBe(original.deploymentId);
+      expect(manifest.auth).toEqual(original.auth);
+      expect(manifest.miniapps.configuration).toEqual(original.miniapps.configuration);
+    }
+    // TLS terminates at ingress; only the explicitly configured host is used.
+    const behindIngress = await app.request("http://legacy.example.com/.well-known/mentra-deployment.json");
+    expect((await behindIngress.json() as typeof original).services.runtimeUrl).toBe(legacy);
+    const untrusted = await app.request("https://attacker.example/.well-known/mentra-deployment.json", {
+      headers: {"X-Forwarded-Host": "legacy.example.com"},
+    });
+    expect(await untrusted.text()).toBe(source);
+  });
+
+  test("rejects insecure or non-origin workspace aliases", () => {
+    expect(parseWorkspaceAliases(undefined)).toEqual([]);
+    for (const value of ['{}', '[1]', '["http://old.example"]', '["https://old.example/path"]', '["https://user:pass@old.example"]', '["https://old.example?next=evil"]']) {
+      expect(() => parseWorkspaceAliases(value)).toThrow();
+    }
+  });
+
   test("serves configured deployment and legal documents without enabling other modules", async () => {
     const app = createApiApp({
       readinessChecks: [],

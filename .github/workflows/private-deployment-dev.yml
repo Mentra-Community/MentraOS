@@ -179,7 +179,7 @@ jobs:
             --arg tenantId "$ENTRA_TENANT_ID" \
             --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
             --arg mobileClientId "$ENTRA_MOBILE_CLIENT_ID" \
-            --arg workspaceHostname "enterprisedev.mentraglass.com" \
+            --arg workspaceHostname "mentra.acmeworkspace.com" \
             --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
             '{
               "$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
@@ -198,6 +198,9 @@ jobs:
                 miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
                 coreAdminEmails:{value:env.CORE_ADMIN_EMAILS},
                 workspaceHostname:{value:$workspaceHostname},
+                workspaceCertificateName:{value:"ca-mentra-enterprise-reference-acme-workspace"},
+                additionalWorkspaceDomains:{value:[{hostname:"enterprisedev.mentraglass.com",certificateName:"ca-mentra-enterprise-reference-workspace"}]},
+                displayName:{value:$reference[0].displayName},
                 approvedSystemMiniapps:{value:$reference[0].systemMiniapps.approvedPackageNamesOverride},
                 teamsGraphClientId:{value:env.TEAMS_GRAPH_CLIENT_ID},
                 teamsGraphClientSecret:{value:env.TEAMS_GRAPH_CLIENT_SECRET},

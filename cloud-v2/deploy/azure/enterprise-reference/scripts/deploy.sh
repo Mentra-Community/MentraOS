@@ -156,6 +156,8 @@ jq -n \
       miniappJwtPublicKey:{value:$s.miniappJwtPublicKey},
       coreAdminEmails:{value:($c.coreAdminEmails // "")},
       workspaceHostname:{value:($c.workspaceHostname // "")},
+      workspaceCertificateName:{value:($c.workspaceCertificateName // (($c.runtimeName // "ca-mentra-enterprise-reference") + "-workspace"))},
+      additionalWorkspaceDomains:{value:($c.additionalWorkspaceDomains // [])},
       clientMinVersion:{value:($c.clientMinVersion // "0.0.0")},
       clientRecommendedVersion:{value:($c.clientRecommendedVersion // $c.clientMinVersion // "0.0.0")},
       deploymentId:{value:$c.deploymentId},

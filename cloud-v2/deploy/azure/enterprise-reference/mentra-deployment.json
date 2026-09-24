@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "deploymentId": "mentra-enterprise-reference",
-  "displayName": "Mentra Enterprise Demo",
+  "displayName": "Acme Industries",
   "branding": {
     "logoUrls": {
-      "light": "https://enterprisedev.mentraglass.com/branding/logo-light.png",
-      "dark": "https://enterprisedev.mentraglass.com/branding/logo-dark.png"
+      "light": "https://mentra.acmeworkspace.com/branding/logo-light.png",
+      "dark": "https://mentra.acmeworkspace.com/branding/logo-dark.png"
     }
   },
   "services": {
     "coreUrl": "https://ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io",
-    "runtimeUrl": "https://enterprisedev.mentraglass.com"
+    "runtimeUrl": "https://mentra.acmeworkspace.com"
   },
   "auth": {
     "mode": "microsoft-entra",
@@ -34,8 +34,8 @@
   },
   "content": {"wallpaperUrls": []},
   "links": {
-    "privacyPolicyUrl": "https://enterprisedev.mentraglass.com/legal/privacy",
-    "termsOfServiceUrl": "https://enterprisedev.mentraglass.com/legal/terms",
+    "privacyPolicyUrl": "https://mentra.acmeworkspace.com/legal/privacy",
+    "termsOfServiceUrl": "https://mentra.acmeworkspace.com/legal/terms",
     "documentationUrl": null,
     "supportUrl": null
   },
@@ -47,7 +47,7 @@
       {
         "packageName": "com.mentra.call",
         "version": "2.1.40",
-        "bundleUrl": "https://enterprisedev.mentraglass.com/miniapps/com.mentra.call-2.1.40.zip",
+        "bundleUrl": "https://mentra.acmeworkspace.com/miniapps/com.mentra.call-2.1.40.zip",
         "sha256": "3dae63e5024534fb09b458ed86f77edcc693b8eec8d35cadd4f41ac2a8306d08"
       }
     ],

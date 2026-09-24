@@ -84,7 +84,7 @@ test("dev can finalize GitHub Android artifacts without a Google Play publicatio
       ]),
   )
   const runtimeImage = runtimeImageRecordForPlan(plan)
-  const workspaceOrigin = "https://enterprisedev.mentraglass.com"
+  const workspaceOrigin = "https://mentra.acmeworkspace.com"
   const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
   const coreOrigin = `https://${coreHostname}`
   const privateDeployment = createPrivateDeploymentRecord({
