@@ -8,7 +8,7 @@ export const hash = value => /^[a-f0-9]{64}$/.test(value ?? "")
 export const positive = value => Number.isSafeInteger(value) && value > 0
 export const requireThat = (condition, message) => { if (!condition) throw new Error(message) }
 export const receiptName = (runId, attempt) => `release-slack-message-${runId}-${attempt}`
-const routineNames = {"no-glasses": "No-glasses UI", "day1-ota": "Day-one OTA", "mentra-call": "Mentra Call"}
+const routineNames = {"no-glasses": "No-glasses UI", "no-glasses-android": "Android no-glasses UI", "day1-ota": "Day-one OTA", "mentra-call": "Mentra Call"}
 
 export function slackDestination(env) {
   const channel = env.BRANCH === "dev" ? env.SLACK_DEV_BUILDS_CHANNEL_ID

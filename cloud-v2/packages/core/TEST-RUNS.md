@@ -56,6 +56,33 @@ JPEG and WebP, plus JSON/plain-text logs. Uploaded HTML and SVG are rejected.
 
 ## Admin API
 
+### Dispatch an existing build
+
+In **Run a routine**, choose the routine first, then PR, dev or staging and **Find builds**.
+`no-glasses` selects the Mac UI walkthrough; `no-glasses-android` selects the dedicated
+Android phone. The latter requires no glasses paired. The worker preserves the
+phone's account and pairing state; it does not clear app data or unpair devices to
+make the prerequisite pass.
+
+- `GET /api/admin/test-routines` lists supported routine IDs.
+- `GET /api/admin/test-builds?channel=pr&pr=123&routineId=no-glasses-android`
+  lists the PR's Android builds. Use `channel=dev` or `channel=staging` without `pr`
+  for coordinated releases. Omitting `routineId` preserves the Mac inventory.
+- `POST /api/admin/test-dispatches` keeps the existing input: `source` (channel,
+  optional PR number, build run and publication attempt), `routineId`, the selected
+  `archiveSha256`, and an `idempotencyKey`. The routine determines the platform;
+  callers cannot supply an arbitrary platform, artifact URL, ref or command.
+
+Android PRs use the immutable `mentra-android-pr-…json` receipt and matching APK.
+Dev/staging use the coordinated release manifest's APK, bound to its release-plan
+hash. Core checks the producing workflow, exact revision/attempt, publication,
+manifest identity and APK size before sending. The worker then verifies the bytes
+and runs the test. An APK cannot qualify a Mac routine or vice versa.
+
+Deployment must include `no-glasses-android` in `TEST_RUN_DISPATCH_ROUTINES` only
+after its private worker lane is enrolled; `TEST_RUN_DISPATCH_CHANNELS` still
+controls PR/dev/staging availability. This code does not enable a new lane by itself.
+
 Existing `adminAuth` protects all three routes using the admin console session:
 
 - `GET /api/admin/test-runs/` returns `{runs, nextCursor}`. Filters: `pr`,

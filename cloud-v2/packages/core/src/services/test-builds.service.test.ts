@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { zipSync, strToU8 } from "fflate";
 import { GithubTestBuildGateway, readRequestZip, readTestMetadata } from "./test-builds.service";
-import { testBuildQuerySchema, testDispatchInputSchema, type TestDispatchInput } from "../types/test-dispatch.types";
+import { testBuildQuerySchema, testDispatchInputSchema, testRoutinePlatform, type TestDispatchInput } from "../types/test-dispatch.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPO = "Mentra-Community/MentraOS";
@@ -51,6 +51,10 @@ test("strict user input accepts only supported selectors and never a ref, comman
     expect(testDispatchInputSchema.safeParse({ ...input, ...change }).success).toBe(false);
   expect(testBuildQuerySchema.safeParse({ channel: "dev", pr: "12" }).success).toBe(false);
   expect(testBuildQuerySchema.safeParse({ channel: "pr" }).success).toBe(false);
+  expect(testBuildQuerySchema.parse({ channel: "dev", routineId: "no-glasses-android" }).routineId).toBe("no-glasses-android");
+  expect(testDispatchInputSchema.parse({ ...input, routineId: "no-glasses-android" }).routineId).toBe("no-glasses-android");
+  expect(testBuildQuerySchema.safeParse({ channel: "dev", platform: "android" }).success).toBe(false);
+  expect(testBuildQuerySchema.safeParse({ channel: "dev", routineId: "shell" }).success).toBe(false);
 });
 
 describe("exact PR build inventory", () => {
@@ -140,7 +144,7 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
   expect(available.routines.find(routine => routine.id === "mentra-call")?.available).toBe(false);
   const commissioned = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
     routines: ["no-glasses", "day1-ota", "mentra-call"] });
-  expect((await commissioned.inventory({ channel }))[0]!.routines.every(routine => routine.available)).toBe(true);
+  expect((await commissioned.inventory({ channel }))[0]!.routines.filter(routine => testRoutinePlatform(routine.id) === "ios-on-mac").every(routine => routine.available)).toBe(true);
 });
 
 for (const channel of ["dev", "staging"] as const) test(`${channel} retained artifacts cannot qualify a non-publishing attempt`, async () => {
@@ -238,16 +242,17 @@ test("request artifact reads are bounded and reject other files before decompres
   expect(() => readRequestZip(zipSync({ "request.json": new Uint8Array(1024 * 1024 + 1) }))).toThrow("Unexpected");
 });
 
-for (const channel of ["pr", "dev", "staging"] as const) test(`${channel} ready and no-artifact requests authenticate the exact source and artifact digest`, async () => {
-  const selected: TestDispatchInput = { ...input, source: channel === "pr" ? input.source : { channel, buildRunId: 50, publicationAttempt: 1 } };
+for (const channel of ["pr", "dev", "staging"] as const) for (const routineId of ["no-glasses", "no-glasses-android"] as const)
+  test(`${channel} ${routineId} ready and no-artifact requests authenticate the exact source and artifact digest`, async () => {
+  const selected: TestDispatchInput = { ...input, routineId, source: channel === "pr" ? input.source : { channel, buildRunId: 50, publicationAttempt: 1 } };
   for (const status of ["ready", "no-artifact"] as const) {
     const f = fixture();
     f.rows.set(`${API}/actions/runs/70/attempts/1`, run({ id: 70, event: "workflow_dispatch", head_branch: "dev", path: ".github/workflows/request-e2e-routine.yml" }));
     const request = { schemaVersion: channel === "pr" ? 1 : 2,
       ...(channel === "pr" ? {} : { source: { ...selected.source, kind: "coordinated-release" } }),
-      kind: "mentra-routine-request", requestId: `routine-70-1-${channel === "pr" ? 12 : channel}-no-glasses`, status, reason: "No artifact for this revision", routine: { id: "no-glasses", authorization: "workflow-dispatch" },
+      kind: "mentra-routine-request", requestId: `routine-70-1-${channel === "pr" ? 12 : channel}-${routineId}`, status, reason: "No artifact for this revision", routine: { id: routineId, authorization: "workflow-dispatch" },
       trigger: { repository: REPO, kind: "workflow_dispatch", runId: 70, runAttempt: 1, sha: HEAD, workflowSha: HEAD, ref: "refs/heads/dev", workflow: ".github/workflows/request-e2e-routine.yml" },
-      selection: status === "ready" ? { archive: f.receipt.artifacts.mac, producer: { runId: 50, publicationAttempt: 1 } } : null };
+      selection: status === "ready" ? { platform: testRoutinePlatform(routineId), archive: f.receipt.artifacts.mac, producer: { runId: 50, publicationAttempt: 1 } } : null };
     const bytes = zipSync({ "request.json": strToU8(JSON.stringify(request)) });
     f.rows.set(`${API}/actions/runs/70/artifacts?per_page=100`, { artifacts: [{ id: 80, name: "mentra-routine-request-70-1", expired: false,
       size_in_bytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, workflow_run: { id: 70, head_sha: HEAD } }] });
@@ -273,6 +278,12 @@ for (const channel of ["pr", "dev", "staging"] as const) test(`${channel} ready 
       expect(calls.filter(call => call.url.startsWith(`${API}/`)).every(call => call.authorization === "Bearer token-MentraOS")).toBe(true);
       expect(calls.find(call => call.url.includes("/repos/Mentra-Community/Mentra-Automated-Testing/"))?.authorization).toBe("Bearer token-Mentra-Automated-Testing");
       expect(calls.find(call => call.url.includes("blob.core.windows.net"))?.authorization).toBeNull();
+      request.selection!.platform = routineId === "no-glasses-android" ? "ios-on-mac" : "android";
+      const changed = zipSync({ "request.json": strToU8(JSON.stringify(request)) });
+      f.rows.set(`${API}/actions/runs/70/artifacts?per_page=100`, { artifacts: [{ id: 80, name: "mentra-routine-request-70-1", expired: false,
+        size_in_bytes: changed.length, digest: `sha256:${createHash("sha256").update(changed).digest("hex")}`, workflow_run: { id: 70, head_sha: HEAD } }] });
+      f.rows.set("https://test.blob.core.windows.net/request.zip?signature=synthetic", new Response(changed));
+      await expect(f.gateway.progress(70, selected)).rejects.toThrow("different app publication");
     }
     if (channel !== "pr") {
       for (const source of [{ ...selected.source, channel: channel === "dev" ? "staging" as const : "dev" as const },
@@ -283,5 +294,115 @@ for (const channel of ["pr", "dev", "staging"] as const) test(`${channel} ready 
       await expect(f.gateway.progress(70, { ...input, source: { channel: "dev", buildRunId: 50, publicationAttempt: 1 } }))
         .rejects.toThrow("Published request source differs");
     }
+  }
+});
+
+
+function androidPrFixture() {
+  const f = fixture(), name = `mentra-android-pr-12-${HEAD}-50-1`;
+  const androidRun = run({ path: ".github/workflows/mentra-app-android-build.yml" });
+  const publicationJobs = [{ ...jobs[0]!, steps: [{ name: "Upload APK to the public artifact CDN", status: "completed", conclusion: "success" }] }];
+  const receipt = { schemaVersion: 1, pr: 12, headSha: HEAD, baseSha: BASE, buildSha: MERGE, runId: 50, runAttempt: 1,
+    app: { packageId: "com.mentra.mentra", version: "3.3.0", build: "303000325", backend: "dev", headSha: HEAD, buildSha: MERGE,
+      otaManifestUrl: `${CDN}pr-builds/ota-pr-12-${HEAD}.json` },
+    artifacts: { android: { name: `${name}.apk`, sha256: HASH, size: 100 } } };
+  f.rows.set(`${API}/actions/runs/50/attempts/1`, androidRun);
+  f.rows.set(`${API}/actions/workflows/mentra-app-android-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, { workflow_runs: [androidRun] });
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: publicationJobs.length, jobs: publicationJobs });
+  f.rows.set(`${CDN}pr-builds/${name}.json`, receipt);
+  f.rows.set(`HEAD ${CDN}pr-builds/${name}.apk`, new Response(null, { headers: { "Content-Length": "100" } }));
+  return { ...f, androidRun, receipt, publicationJobs, gateway: new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch,
+    routines: ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"] }) };
+}
+
+test("Android PR inventory validates its own signed APK receipt without needing an Apple build", async () => {
+  const f = androidPrFixture();
+  for (const build of [await f.gateway.resolve(input.source, "no-glasses-android"),
+    ...(await f.gateway.inventory({ channel: "pr", pr: 12, routineId: "no-glasses-android" }))]) {
+    expect(build.platform).toBe("android");
+    expect(build.availability).toBe("available");
+    expect(build.archive).toEqual(f.receipt.artifacts.android);
+    expect(build.routines.filter(routine => routine.available).map(routine => routine.id)).toEqual(["no-glasses-android"]);
+  }
+  expect(f.calls.some(call => call.url.includes("mentra-ios") || call.url.includes("apple-downloads"))).toBe(false);
+  await expect(f.gateway.resolve(input.source, "no-glasses")).rejects.toThrow("selected source");
+});
+
+test("Android PR rejects stale revisions, unsafe metadata, missing publication and wrong APK bytes", async () => {
+  for (const scenario of ["base", "merge", "package", "receipt-run", "build-sha", "manifest", "name", "size", "publish", "later-failure"]) {
+    const f = androidPrFixture();
+    if (scenario === "base") f.receipt.baseSha = HEAD;
+    if (scenario === "merge") f.rows.set(`${API}/commits/${MERGE}`, { sha: MERGE, parents: [{ sha: HEAD }, { sha: HEAD }] });
+    if (scenario === "package") f.receipt.app.packageId = "other.app";
+    if (scenario === "receipt-run") f.receipt.runId = 51;
+    if (scenario === "build-sha") f.receipt.app.buildSha = HEAD;
+    if (scenario === "manifest") f.rows.set(`${CDN}pr-builds/ota-pr-12-${HEAD}.json`, { releaseVersion: "another" });
+    if (scenario === "name") f.receipt.artifacts.android.name = "other.apk";
+    if (scenario === "size") f.receipt.artifacts.android.size = 101;
+    if (scenario === "publish") f.publicationJobs[0]!.steps[0]!.conclusion = "skipped";
+    if (scenario === "later-failure") {
+      f.androidRun.run_attempt = 2;
+      f.rows.set(`${API}/actions/runs/50/attempts/2`, f.androidRun);
+      f.publicationJobs.push({ ...f.publicationJobs[0]!, id: 99, run_attempt: 2, conclusion: "failure" });
+      f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
+    }
+    // Inventory retains a useful unavailable row even for malformed metadata.
+    const build = (await f.gateway.inventory({ channel: "pr", pr: 12, routineId: "no-glasses-android" }))[0]!;
+    expect(build.availability).toBe("unavailable");
+    expect(build.routines.every(routine => !routine.available)).toBe(true);
+  }
+});
+
+test("Android notification-only retries retain the original successful APK publication attempt", async () => {
+  const f = androidPrFixture();
+  f.androidRun.run_attempt = 2; f.androidRun.conclusion = "failure";
+  f.rows.set(`${API}/actions/runs/50/attempts/2`, f.androidRun);
+  f.publicationJobs.push({ ...structuredClone(f.publicationJobs[0]!), id: 99, run_attempt: 2 });
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
+  const build = (await f.gateway.inventory({ channel: "pr", pr: 12, routineId: "no-glasses-android" }))[0]!;
+  expect(build.availability).toBe("available");
+  expect(build.source.publicationAttempt).toBe(1);
+  await expect(f.gateway.resolve({ ...input.source, publicationAttempt: 2 }, "no-glasses-android")).rejects.toThrow("retained a different publication");
+});
+
+function androidReleaseFixture(channel: "dev" | "staging") {
+  const f = releaseFixture(channel), tag = "mentra-builds-v3.3.0";
+  const plan = f.rows.get(`${CDN}${tag}/mentra-release-plan-${f.identity}.json`) as Record<string, any>;
+  plan.artifactNames.androidApp = `mentraos-${f.identity}-android.apk`;
+  plan.artifactNames.releaseManifest = `mentra-release-${f.identity}.json`;
+  const asset = { coordinate: plan.artifactNames.androidApp, url: `${CDN}${tag}/${plan.artifactNames.androidApp}`,
+    sha256: HASH, size: 100, status: "built" };
+  const receipt = { schemaVersion: 1, releaseSetId: `mentra-${f.identity}`, releaseIdentity: f.identity,
+    sourceCommit: HEAD, channel: channel === "dev" ? "dev" : "beta", native: structuredClone(plan.native),
+    releasePlanSha256: createHash("sha256").update(JSON.stringify(plan)).digest("hex"), artifacts: [asset] };
+  f.rows.set(`${CDN}${tag}/${plan.artifactNames.releaseManifest}`, receipt);
+  f.rows.set(`HEAD ${asset.url}`, new Response(null, { headers: { "Content-Length": "100" } }));
+  return { ...f, receipt, asset, plan, gateway: new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch,
+    channels: [channel], routines: ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"] }) };
+}
+
+for (const channel of ["dev", "staging"] as const) test(`${channel} Android uses the published release manifest APK and preserves exact source pins`, async () => {
+  const f = androidReleaseFixture(channel);
+  const source = { channel, buildRunId: 50, publicationAttempt: 1 };
+  for (const build of [await f.gateway.resolve(source, "no-glasses-android"),
+    ...(await f.gateway.inventory({ channel, routineId: "no-glasses-android" }))]) {
+    expect(build.availability).toBe("available"); expect(build.platform).toBe("android");
+    expect(build.source).toEqual(source); expect(build.release).toBe(f.identity);
+    expect(build.archive?.name).toBe(f.asset.coordinate);
+    expect(build.routines.filter(routine => routine.available).map(routine => routine.id)).toEqual(["no-glasses-android"]);
+  }
+  expect(f.calls.some(call => call.url.includes("apple-downloads") || call.url.endsWith("-mac.zip"))).toBe(false);
+  for (const scenario of ["channel", "native", "plan-pin", "duplicate", "url", "status", "size", "publication"]) {
+    const invalid = androidReleaseFixture(channel);
+    if (scenario === "channel") invalid.receipt.channel = "prod";
+    if (scenario === "native") invalid.receipt.native.buildNumber++;
+    if (scenario === "plan-pin") invalid.receipt.releasePlanSha256 = HASH;
+    if (scenario === "duplicate") invalid.receipt.artifacts.push({ ...invalid.asset });
+    if (scenario === "url") invalid.asset.url = "https://elsewhere.example/other.apk";
+    if (scenario === "status") invalid.asset.status = "failed";
+    if (scenario === "size") invalid.asset.size = 101;
+    if (scenario === "publication") invalid.publicationJobs[0]!.steps[0]!.conclusion = "skipped";
+    const build = (await invalid.gateway.inventory({ channel, routineId: "no-glasses-android" }))[0]!;
+    expect(build.availability).toBe("unavailable");
   }
 });

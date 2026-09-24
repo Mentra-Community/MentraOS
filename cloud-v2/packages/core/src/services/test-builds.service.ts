@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { unzipSync } from "fflate";
 import { z } from "zod";
-import { TEST_ROUTINES, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
+import { TEST_ROUTINES, testRoutinePlatform, type TestBuildPlatform, type TestRoutineId, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPOSITORY = "Mentra-Community/MentraOS";
 const PRIVATE_REPOSITORY = "Mentra-Community/Mentra-Automated-Testing";
 const REQUEST_WORKFLOW = "request-e2e-routine.yml";
-const PR_WORKFLOW = "mentra-app-ios-build.yml";
+const prWorkflow = (platform: TestBuildPlatform) => platform === "android" ? "mentra-app-android-build.yml" : "mentra-app-ios-build.yml";
 const RELEASE_WORKFLOW = "coordinated-release.yml";
 const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
 const RELEASE_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets";
@@ -95,7 +95,7 @@ export interface RequestProgress {
 }
 export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
-  resolve(source: TestBuildSource): Promise<TestBuild>;
+  resolve(source: TestBuildSource, routineId?: TestRoutineId): Promise<TestBuild>;
   dispatch(input: TestDispatchInput): Promise<{ requestRunId: number; requestUrl: string }>;
   progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
 }
@@ -151,59 +151,64 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       .parse(await this.api(`${REPOSITORY}/git/ref/heads/dev`));
     return ref.object.sha;
   }
-  private routines(channel: TestBuildSource["channel"], available: boolean) {
+  private routines(channel: TestBuildSource["channel"], available: boolean, platform: TestBuildPlatform) {
     const channels = this.options.channels ?? (process.env.TEST_RUN_DISPATCH_CHANNELS ?? "pr").split(",");
     const enabledRoutines = this.options.routines ?? (process.env.TEST_RUN_DISPATCH_ROUTINES ?? "no-glasses").split(",");
     return TEST_ROUTINES.map(routine => {
-      const compatible = enabledRoutines.includes(routine.id);
-      return { id: routine.id, available: available && channels.includes(channel) && compatible,
-        ...(!available ? { reason: "A verified published Mac build is required" }
+      const compatible = testRoutinePlatform(routine.id) === platform;
+      const enabled = enabledRoutines.includes(routine.id);
+      return { id: routine.id, available: available && channels.includes(channel) && compatible && enabled,
+        ...(!compatible ? { reason: `This routine requires a ${testRoutinePlatform(routine.id) === "android" ? "published Android APK" : "published Mac build"}` }
+          : !available ? { reason: "A verified published app build is required" }
           : !channels.includes(channel) ? { reason: "Dispatch for this channel is not enabled on the trusted issuer yet" }
-          : !compatible ? { reason: "This routine is not enabled on the test workers yet" } : {}) };
+          : !enabled ? { reason: "This routine is not enabled on the test workers yet" } : {}) };
     });
   }
   async inventory(query: TestBuildQuery): Promise<TestBuild[]> {
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
-    const workflow = pr ? PR_WORKFLOW : RELEASE_WORKFLOW;
+    const platform = testRoutinePlatform(query.routineId);
+    const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
     const filter = pr ? `event=pull_request&head_sha=${pr.head.sha}` : `branch=${query.channel}`;
     const data = z.object({ workflow_runs: z.array(runSchema) }).parse(
       await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=10`));
     const base = pr ? await this.baseSha() : undefined;
-    return Promise.all(data.workflow_runs.filter(run => this.matches(run, query.channel, pr)).map(run =>
-      this.describe(run, query.channel, pr, base)));
+    return Promise.all(data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr)).map(run =>
+      this.describe(run, query.channel, platform, pr, base)));
   }
-  private matches(run: GithubRun, channel: TestBuildSource["channel"], pr?: PullRequest) {
+  private matches(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PullRequest) {
     return run.repository.full_name === REPOSITORY && run.head_repository.full_name === REPOSITORY
-      && run.path === `.github/workflows/${pr ? PR_WORKFLOW : RELEASE_WORKFLOW}`
+      && run.path === `.github/workflows/${pr ? prWorkflow(platform) : RELEASE_WORKFLOW}`
       && (pr ? run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref
         : ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === channel);
   }
-  async resolve(source: TestBuildSource): Promise<TestBuild> {
+  async resolve(source: TestBuildSource, routineId: TestRoutineId = "no-glasses"): Promise<TestBuild> {
+    const platform = testRoutinePlatform(routineId);
     const pr = source.channel === "pr" ? await this.pr(source.prNumber) : undefined;
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
-    requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, pr),
+    requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, platform, pr),
       "Build does not match the selected source and publication attempt");
-    const result = await this.describe(run, source.channel, pr, pr ? await this.baseSha() : undefined, true);
+    const result = await this.describe(run, source.channel, platform, pr, pr ? await this.baseSha() : undefined, true);
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
   }
-  private async describe(run: GithubRun, channel: TestBuildSource["channel"], pr?: PullRequest, baseSha?: string, exact = false): Promise<TestBuild> {
+  private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PullRequest, baseSha?: string, exact = false): Promise<TestBuild> {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
       : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
-    const build: TestBuild = { source, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
+    const build: TestBuild = { source, platform, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
       headSha: run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
-      availability: "unavailable", routines: this.routines(channel, false) };
+      availability: "unavailable", routines: this.routines(channel, false, platform) };
     try {
       requireThat(run.status === "completed", "Build is still running");
-      const artifacts = pr ? await this.prArtifacts(run, pr, baseSha!) : await this.releaseArtifacts(run, channel);
+      const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha!) : this.prArtifacts(run, pr, baseSha!))
+        : await this.releaseArtifacts(run, channel, platform);
       build.source.publicationAttempt = artifacts.attempt;
       const archive = artifacts.archive;
       const response = await this.fetcher(`${CDN}${artifacts.tag}/${archive.name}`, { method: "HEAD" });
       if (!response.ok && response.status !== 404)
-        throw new TestDispatchError(502, `Published Mac archive is temporarily unavailable (HTTP ${response.status})`);
+        throw new TestDispatchError(502, `Published app archive is temporarily unavailable (HTTP ${response.status})`);
       requireThat(response.ok && Number(response.headers.get("content-length")) === archive.size,
-        "Published Mac archive is missing or its size differs from the receipt");
-      return { ...build, ...artifacts.result, archive, availability: "available", routines: this.routines(channel, true) };
+        "Published app archive is missing or its size differs from the receipt");
+      return { ...build, ...artifacts.result, archive, availability: "available", routines: this.routines(channel, true, platform) };
     } catch (error) {
       // Inventory can describe an unavailable row, but dispatch must not make a
       // permanent rejection from a transient provider or network failure.
@@ -237,7 +242,40 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return { attempt: attempts.publish, tag: "pr-builds", archive: data.artifacts.mac,
       result: { receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
   }
-  private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"]) {
+  private async androidPrArtifacts(run: GithubRun, pr: PullRequest, baseSha: string) {
+    const jobs = await this.jobs(run.id);
+    const builds = jobs.filter(job => job.name === "build" && job.run_attempt <= run.run_attempt);
+    const latest = Math.max(0, ...builds.map(job => job.run_attempt));
+    const candidates = builds.filter(job => job.run_attempt === latest);
+    requireThat(candidates.length === 1 && candidates[0]!.status === "completed" && candidates[0]!.conclusion === "success"
+      && candidates[0]!.steps?.some(step => step.name === "Upload APK to the public artifact CDN"
+        && step.status === "completed" && step.conclusion === "success"), "Android APK publication has not succeeded");
+    const build = candidates[0]!;
+    const attempt = Math.min(latest, ...builds.filter(job => build.started_at && build.completed_at
+      && job.started_at === build.started_at && job.completed_at === build.completed_at && job.conclusion === build.conclusion)
+      .map(job => job.run_attempt));
+    const name = `mentra-android-pr-${pr.number}-${pr.head.sha}-${run.id}-${attempt}`;
+    const receipt = await this.metadata("pr-builds", `${name}.json`);
+    const data = z.object({ schemaVersion: z.literal(1), pr: positive, headSha: sha, baseSha: sha, buildSha: sha,
+      runId: positive, runAttempt: positive,
+      app: z.object({ packageId: z.literal("com.mentra.mentra"), version: z.string().min(1), build: z.string().regex(/^[1-9]\d*$/),
+        headSha: sha, buildSha: sha, backend: z.literal("dev"), otaManifestUrl: z.string() }),
+      artifacts: z.object({ android: assetSchema }) }).parse(receipt.value);
+    const otaName = `ota-pr-${pr.number}-${pr.head.sha}.json`;
+    requireThat(data.pr === pr.number && data.headSha === pr.head.sha && data.baseSha === baseSha
+      && data.runId === run.id && data.runAttempt === attempt && data.app.headSha === data.headSha
+      && data.app.buildSha === data.buildSha && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
+      && data.artifacts.android.name === `${name}.apk`, "Android receipt belongs to a different PR build");
+    const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
+    requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === baseSha
+      && commit.parents[1]!.sha === pr.head.sha, "Android build does not contain the current PR head and dev base");
+    const ota = await this.metadata("pr-builds", otaName);
+    requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
+      "OTA manifest belongs to another PR revision");
+    return { attempt, tag: "pr-builds", archive: data.artifacts.android,
+      result: { receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+  }
+  private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform) {
     // Downstream failures and notification-only retries do not erase a publication.
     // A newer finalizer execution must qualify itself; never fall back past it.
     const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt);
@@ -260,12 +298,31 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const match = /^(\d+\.\d+\.\d+)-(dev|beta)\.[1-9]\d*$/.exec(identity);
     requireThat(match && match[2] === (channel === "dev" ? "dev" : "beta"), "Release identity does not match the selected channel");
     const tag = `mentra-builds-v${match[1]}`;
+    const planMetadata = await this.metadata(tag, `mentra-release-plan-${identity}.json`);
     const plan = z.object({ releaseIdentity: z.string(), sourceCommit: sha, channel: z.string(), artifactContainerTag: z.string(),
-      native: z.object({ buildNumber: positive, marketingVersion: z.string() }), artifactNames: z.object({ otaManifest: z.string() }) })
-      .parse((await this.metadata(tag, `mentra-release-plan-${identity}.json`)).value);
+      native: z.object({ buildNumber: positive, marketingVersion: z.string() }), artifactNames: z.object({ otaManifest: z.string(), androidApp: z.string().optional(), releaseManifest: z.string().optional() }) })
+      .parse(planMetadata.value);
     requireThat(plan.releaseIdentity === identity && plan.sourceCommit === run.head_sha && plan.channel === match[2]
       && plan.artifactContainerTag === tag && plan.artifactNames.otaManifest === `mentra-live-ota-${identity}.json`,
       "Published plan does not match the producing run");
+    if (platform === "android") {
+      requireThat(plan.artifactNames.androidApp === `mentraos-${identity}-android.apk`
+        && plan.artifactNames.releaseManifest === `mentra-release-${identity}.json`, "Release plan has no matching Android APK");
+      const receipt = await this.metadata(tag, plan.artifactNames.releaseManifest);
+      const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), releaseSetId: z.string(), sourceCommit: sha,
+        releasePlanSha256: digest, channel: z.string(), native: z.object({ buildNumber: positive, marketingVersion: z.string() }),
+        artifacts: z.array(z.object({ coordinate: z.string() }).passthrough()) }).parse(receipt.value);
+      const assets = data.artifacts.filter(asset => asset.coordinate === plan.artifactNames.androidApp);
+      requireThat(data.releaseIdentity === identity && data.releaseSetId === `mentra-${identity}`
+        && data.sourceCommit === run.head_sha && data.channel === match[2] && data.releasePlanSha256 === planMetadata.sha256
+        && data.native.buildNumber === plan.native.buildNumber && data.native.marketingVersion === plan.native.marketingVersion
+        && assets.length === 1 && assets[0]!.url === `${CDN}${tag}/${plan.artifactNames.androidApp}`
+        && ["built", "published", "reused"].includes(String(assets[0]!.status)), "Android receipt does not match the selected coordinated release");
+      const archive = assetSchema.parse({ name: assets[0]!.coordinate, sha256: assets[0]!.sha256, size: assets[0]!.size });
+      const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
+      requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
+      return { attempt, tag, archive, result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+    }
     const receipt = await this.metadata(tag, `mentraos-${identity}-apple-downloads.json`);
     const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), sourceCommit: sha,
       app: z.object({ bundleId: z.literal("com.mentra.mentra"), headSha: sha, backend: z.string(), build: z.string(),
@@ -321,7 +378,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       routine: z.object({ id: z.string(), authorization: z.literal("workflow-dispatch") }),
       trigger: z.object({ repository: z.literal(REPOSITORY), kind: z.literal("workflow_dispatch"), runId: positive, runAttempt: positive,
         sha, workflowSha: sha, ref: z.literal("refs/heads/dev"), workflow: z.literal(`.github/workflows/${REQUEST_WORKFLOW}`) }),
-      selection: z.object({ archive: assetSchema, producer: z.object({ runId: positive, publicationAttempt: positive }) }).passthrough().nullable(),
+      selection: z.object({ platform: z.enum(["ios-on-mac", "android"]), archive: assetSchema, producer: z.object({ runId: positive, publicationAttempt: positive }) }).passthrough().nullable(),
     });
     const request = z.discriminatedUnion("schemaVersion", [
       requestFields.extend({ schemaVersion: z.literal(1) }),
@@ -337,8 +394,8 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && request.trigger.runId === run.id && request.trigger.runAttempt === 1 && request.trigger.sha === run.head_sha
       && request.trigger.workflowSha === run.head_sha, "Published request identity differs");
     if (request.status === "no-artifact") return { state: "unavailable", requestId: request.requestId, message: request.reason };
-    requireThat(request.selection?.archive.sha256 === input.archiveSha256 && request.selection.producer.runId === input.source.buildRunId
-      && request.selection.producer.publicationAttempt === input.source.publicationAttempt, "Request selected a different Mac publication");
+    requireThat(request.selection?.platform === testRoutinePlatform(input.routineId) && request.selection.archive.sha256 === input.archiveSha256 && request.selection.producer.runId === input.source.buildRunId
+      && request.selection.producer.publicationAttempt === input.source.publicationAttempt, "Request selected a different app publication");
     if (!this.options.privateReadToken && !this.appAuth.configured) return { state: "requesting", requestId: request.requestId,
       message: "Request published. Private queue visibility is not configured; awaiting a recorded result." };
     const privateToken = await this.token("private");

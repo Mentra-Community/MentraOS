@@ -217,3 +217,33 @@ test("all dispatch endpoints require the same admin authentication as recorded r
   }
   expect(f.sends()).toBe(0);
 });
+
+
+test("Android dispatch resolves the selected routine's APK before its single send", async () => {
+  const f = fixture();
+  const androidInput = { ...input, routineId: "no-glasses-android" as const };
+  let observed: unknown;
+  f.github.resolve = async (source, routineId) => {
+    observed = { source, routineId };
+    return { source, platform: "android", title: "Android candidate", headSha: "a".repeat(40),
+      buildUrl: "https://github.com/test", createdAt: new Date().toISOString(), availability: "available",
+      archive: { name: "candidate.apk", sha256: input.archiveSha256, size: 100 },
+      routines: [{ id: "no-glasses-android", available: true }] };
+  };
+  await f.service.create(androidInput, "admin@example.test");
+  expect(observed).toEqual({ source: input.source, routineId: "no-glasses-android" });
+  expect(f.sends()).toBe(1);
+  await f.service.create(androidInput, "admin@example.test");
+  expect(f.sends()).toBe(1);
+});
+
+test("Admin inventory forwards the optional routine selector and rejects arbitrary platforms", async () => {
+  const f = fixture(); let observed: unknown;
+  f.github.inventory = async query => { observed = query; return []; };
+  const api = createTestDispatchAdminApi(f.service, f.github);
+  expect((await api.request("/test-builds?channel=dev&routineId=no-glasses-android")).status).toBe(200);
+  expect(observed).toEqual({ channel: "dev", routineId: "no-glasses-android" });
+  expect((await api.request("/test-builds?channel=dev&platform=android")).status).toBe(400);
+  const routines = await (await api.request("/test-routines")).json() as { routines: { id: string }[] };
+  expect(routines.routines.some(routine => routine.id === "no-glasses-android")).toBe(true);
+});

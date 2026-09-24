@@ -375,7 +375,7 @@ test("all routine labels create independent fenced generations for one exact pub
   const pull = {...pr, labels: routines.map(routine => ({name: `routine:${routine}`}))}
   const jobs = routines.map(routine => ({...publicationJob, name: publicationJobName(123, 2, routine)}))
   const f = fake({pull, callbackJobs: {[callback.id]: jobs}})
-  const plans = await planDeviceDispatches({...f, context})
+  const plans = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
   assert.deepEqual(plans.map(plan => plan.routine), routines)
   for (const plan of plans) assert.equal((await requestAfterPublication({...f, context, plan})).status, "request-dispatched")
   assert.deepEqual(f.calls.filter(([kind]) => kind === "dispatch").map(([, call]) => call.inputs), [
@@ -477,13 +477,13 @@ test("observed automatic request metadata selects dispatch while the unrelated p
 const coordinatedJob = (attempt = 2) => ({id: 1000 + attempt, name: COORDINATED_FINALIZE_JOB, run_attempt: attempt,
   status: "completed", conclusion: "success", steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "success"}]})
 
-test("successful dev and staging builds automatically request only no-glasses through dev", async () => {
+test("successful dev and staging builds request independent Mac and Android no-glasses routines through dev", async () => {
   for (const channel of ["dev", "staging"]) {
     const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: channel, pull_requests: []}
     const job = {...publicationJob, name: publicationJobName(123, 2, "no-glasses", channel)}
     const f = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: [job]}})
     const work = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
-    assert.equal(work.length, 1)
+    assert.deepEqual(work.map(plan => plan.routine), ["no-glasses", "no-glasses-android"])
     assert.equal(work[0].routine, "no-glasses")
     assert.equal(work[0].pr, undefined)
     assert.equal((await requestAfterPublication({...f, context, plan: work[0]})).status, "request-dispatched")
@@ -640,4 +640,28 @@ test("automatic requests use a separate public-repository App token for the call
   assert.match(send, /github-token: \$\{\{ steps.request-token.outputs.token \}\}/)
   assert.doesNotMatch(send, /github\.token|GITHUB_TOKEN|dispatch-token|PRIVATE_KEY/)
   assert.doesNotMatch(step("Queue the ready request in the private repository"), /request-token/)
+})
+
+
+test("an Android producer callback requests only its matching Android label, and private dispatch preserves platform", async () => {
+  const routine = "no-glasses-android"
+  const pull = {...pr, labels: [{name: `routine:${routine}`}, {name: "routine:no-glasses"}]}
+  const run = {...build, path: ".github/workflows/mentra-app-android-build.yml"}
+  const jobs = [{...publishedJobs[0], steps: [{name: "Upload APK to the public artifact CDN", status: "completed", conclusion: "success"}]}]
+  const send = {...publicationJob, name: publicationJobName(run.id, run.run_attempt, routine)}
+  const f = fake({run, pull, jobs, callbackJobs: {[callback.id]: [send]}})
+  const plans = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
+  assert.deepEqual(plans.map(plan => plan.routine), [routine])
+  assert.equal((await requestAfterPublication({...f, context, plan: plans[0]})).status, "request-dispatched")
+  assert.equal(f.calls.at(-1)[1].inputs.routine, routine)
+  const ready = structuredClone(request)
+  ready.routine.id = routine
+  ready.requestId = "routine-123-2-42-no-glasses-android"
+  ready.selection.platform = "android"
+  const remote = fake({pull}), selected = {mode: "dispatch", runId: 123, runAttempt: 2, sourceSha: source}
+  await dispatchReadyRequest({...remote, privateGithub: remote.github, context, plan: selected, bytes: Buffer.from(JSON.stringify(ready))})
+  assert.equal(remote.calls.at(-1)[1].inputs.routine_id, routine)
+  ready.selection.platform = "ios-on-mac"
+  await assert.rejects(dispatchReadyRequest({...remote, privateGithub: remote.github, context, plan: selected,
+    bytes: Buffer.from(JSON.stringify(ready))}), /Invalid ready selection/)
 })

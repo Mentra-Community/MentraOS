@@ -689,3 +689,61 @@ test("Mentra Call opt-in adds its exact results link without posting again on re
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 1)
 })
+
+
+test("Android opt-in links the APK receipt hash and Android result platform, independently of Mac", async () => {
+  const h = harness({files: [], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
+  const original = h.args.fetchImpl
+  const digest = "e".repeat(64)
+  h.args.fetchImpl = async (url, options) => url.includes("mentra-android-pr-") ? new Response(JSON.stringify({
+    schemaVersion: 1, pr: 123, headSha: sha, baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
+    app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40),
+      backend: "dev", otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
+    artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 1234}},
+  })) : original(url, options)
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+  assert.match(text, /Android no-glasses UI · Android/)
+  const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(result.searchParams.get("archiveSha256"), digest)
+  assert.equal(result.searchParams.get("platform"), "android")
+  assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
+})
+
+
+test("a last-callback Android receipt miss publishes all downloads and later enriches results once", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
+  const original = h.args.fetchImpl, digest = "e".repeat(64)
+  let available = false, reads = 0
+  h.args.fetchImpl = async (url, options) => {
+    if (!url.includes("mentra-android-pr-")) return original(url, options)
+    reads++
+    if (!available) return new Response("temporarily unavailable", {status: 404})
+    return new Response(JSON.stringify({schemaVersion: 1, pr: 123, headSha: sha, baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
+      app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40), backend: "dev",
+        otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
+      artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 1234}}}))
+  }
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 1); assert.equal(h.posts.length, 1); assert.equal(h.written.length, 1)
+  assert.ok(h.written[0].body.includes("Download Android APK"))
+  assert.ok(h.written[0].body.includes("Download iPhone IPA"))
+  assert.ok(h.written[0].body.includes("Download Mac app"))
+  assert.ok(h.written[0].body.includes("Android receipt unavailable"))
+  assert.ok(JSON.stringify(h.posts[0]).includes("rerun the build notification"))
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 2); assert.equal(h.posts.length, 1); assert.equal(h.written.length, 1)
+  available = true
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 3); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+  assert.ok(JSON.stringify(h.posts[1]).includes(digest)); assert.ok(h.written[1].body.includes(digest))
+  assert.ok(!h.written[1].body.includes("Android receipt unavailable"))
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 4); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+  available = false
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 5); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+  available = true
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 6); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+})

@@ -1,3 +1,4 @@
+import {androidReceiptName, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
 import {MOBILE_PR_PATHS} from "./pr-mobile-build.mjs"
 import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
@@ -125,8 +126,8 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
   for (const routine of routines)
     lines.push(
-      `*Requested tests:* ${deviceRoutine(routine.id).name} · iOS on Mac\n${[
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : "Results link available with the Mac build",
+      `*Requested tests:* ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n${[
+        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable || `Results link available with the ${deviceRoutine(routine.id).platform === "android" ? "Android" : "Mac"} build`,
         link(routine.pipelineUrl, routine.pipelineLabel),
       ].join(" · ")}\nResults appear after the device run is uploaded.`,
     )
@@ -165,12 +166,12 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
     headSha: sha,
     archiveSha256,
     routineId,
-    platform: "ios-mac",
+    platform: DEVICE_ROUTINES[routineId].platform === "android" ? "android" : "ios-mac",
   }).toString()
   return url.href
 }
 
-async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
+async function requestedRoutineLinks({github, context, pr, sha, ios, android, core}) {
   const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
   if (!requested.length) return []
   const repository = `${context.repo.owner}/${context.repo.repo}`
@@ -209,7 +210,9 @@ async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
     core.warning(`Could not locate this revision's routine request; linking its workflow: ${error.message}`)
   }
   return requested.map(id => ({...result, id,
-    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: ios.archiveSha256, routineId: id})}))
+    ...(DEVICE_ROUTINES[id].platform === "android" && android.receiptUnavailable
+      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
+    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: DEVICE_ROUTINES[id].platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id})}))
 }
 
 export function matchingBuildRun(runs, pr, sha) {
@@ -383,6 +386,18 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       ios.error = failure.message
     }
   }
+  const android = {}
+  if (hasRoutineLabel(pr, "no-glasses-android") && !error) {
+    try {
+      const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
+      const receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
+        androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
+      android.archiveSha256 = validateAndroidReceipt(receipt, coordinates).android.sha256
+    } catch (failure) {
+      core.warning(`Android routine receipt unavailable: ${failure.message}; publish available downloads and keep receipt enrichment retryable.`)
+      android.receiptUnavailable = true
+    }
+  }
   const comments = await github.paginate(github.rest.issues.listComments, {
     ...repo,
     issue_number: pr.number,
@@ -390,14 +405,21 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   })
   const comment = comments.find((item) => item.user?.type === "Bot" && item.body?.startsWith(marker))
   const incomplete = Boolean(error || ios.error)
-  const identity = `${sha}:${incomplete ? "incomplete" : "ready"}:${builds
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${builds
     .map((build) => `${build.run.id}-${build.attempt}`)
     .join(":")}`
+  const verifiedPrefix = `<!-- ${buildIdentity}:android-`
+  if (android.receiptUnavailable && comment?.body.split("\n").some(line =>
+    line.startsWith(verifiedPrefix) && /^[a-f0-9]{64} -->$/.test(line.slice(verifiedPrefix.length)))) {
+    core.info("The verified Android results link was already delivered; do not downgrade it after a receipt read failure.")
+    return
+  }
+  const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
     core.info("This PR revision's notification was already delivered.")
     return
   }
-  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, core})
+  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core})
   if (!(await current())) {
     core.info("PR superseded before notification.")
     return
@@ -436,8 +458,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
   for (const routine of routines)
     downloads.push(
-      `**Requested tests:** ${deviceRoutine(routine.id).name} · iOS on Mac\n\n${[
+      `**Requested tests:** ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n\n${[
         ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
+        ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
         `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
       ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
     )

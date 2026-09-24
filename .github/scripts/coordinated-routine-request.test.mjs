@@ -3,7 +3,7 @@ import test from "node:test"
 import {readFile} from "node:fs/promises"
 import {createRoutineRequest} from "./request-e2e-routine.mjs"
 import {verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
-import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
+import {coordinatedAndroidFixture, coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 
 test("the shared private/public wire fixture is the actual producer output", async () => {
   const {state, options} = coordinatedFixture()
@@ -170,4 +170,27 @@ test("dev advancing during publication revalidation preserves the immutable requ
   }})
   assert.equal(JSON.stringify(request), frozen)
   assert.ok(state.calls.some(call => call.compare === `${request.trigger.sha}...${nextDev}`))
+})
+
+
+for (const channel of ["dev", "staging"]) test(`${channel} selects its exact Android APK from the coordinated manifest`, async () => {
+  const {state, options, pin} = coordinatedAndroidFixture(channel)
+  const request = await createRoutineRequest({...options, requestOrigin: "successful-build"})
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.selection.platform, "android")
+  assert.equal(request.selection.archive.name, state.plan.artifactNames.androidApp)
+  assert.equal(request.selection.receipt.sha256, pin(state.androidReceipt))
+  assert.deepEqual(request.selection.app, {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000223",
+    headSha: state.plan.sourceCommit, buildSha: state.plan.sourceCommit, backend: channel,
+    releaseIdentity: state.plan.releaseIdentity, otaManifestUrl: state.receipt.app.otaManifestUrl})
+  await verifyCoordinatedReadyRequest({...options, request})
+})
+
+test("Android coordinated requests reject another release, mismatching native version and ambiguous or missing APK bytes", async () => {
+  for (const change of [s => s.androidReceipt.sourceCommit = "f".repeat(40), s => s.androidReceipt.native.buildNumber++, s => s.androidReceipt.releasePlanSha256 = "0".repeat(64),
+    s => s.androidReceipt.artifacts.push({...s.androidReceipt.artifacts[0]}), s => s.androidReceipt.artifacts[0].url += "other",
+    s => s.androidReceipt.artifacts[0].sha256 = "bad", s => s.androidSize = 1, s => s.jobs[0].steps = []]) {
+    const f = coordinatedAndroidFixture(); change(f.state)
+    assert.equal((await createRoutineRequest(f.options)).status, "no-artifact")
+  }
 })

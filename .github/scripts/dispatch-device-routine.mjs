@@ -1,6 +1,6 @@
 import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
-import {successfulMacPublication} from "./request-e2e-routine.mjs"
+import {successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
 import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
 import {validateNightlyMarker} from "./nightly-device-routines.mjs"
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
@@ -8,7 +8,6 @@ import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedRe
 const REPOSITORY = "Mentra-Community/MentraOS"
 const PRIVATE_REPOSITORY = "Mentra-Automated-Testing"
 const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
-const BUILD_WORKFLOW = ".github/workflows/mentra-app-ios-build.yml"
 const CALLBACK_WORKFLOW = ".github/workflows/dispatch-device-routine.yml"
 const SHA = /^[a-f0-9]{40}$/
 const positive = (value) => Number.isSafeInteger(value) && value > 0
@@ -108,10 +107,11 @@ async function currentPr(github, context, number, headSha, routine, labelRequire
 /** Runs only from the trusted default-branch workflow; reads PR metadata, never PR code. */
 export async function planDeviceDispatch({github, context, callbackAttempt, routine = "day1-ota"}) {
   deviceRoutine(routine)
+  const buildWorkflow = `.github/workflows/${routineProducer(routine)}`
   const run = await completedRun(github, context)
   if (!run) return {mode: "skip", reason: "Workflow has not completed"}
   if (run.path === COORDINATED_WORKFLOW) {
-    if (routine !== "no-glasses" || !["dev", "staging"].includes(run.head_branch) ||
+    if (!["no-glasses", "no-glasses-android"].includes(routine) || !["dev", "staging"].includes(run.head_branch) ||
       !["push", "workflow_dispatch"].includes(run.event) || run.conclusion !== "success")
       return {mode: "skip", reason: "Automatic coordinated requests require successful dev/staging builds and no-glasses"}
     if (callbackAttempt !== 1) return {mode: "reconcile", callbackUrl: callbackUrl(context.runId),
@@ -124,12 +124,12 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
     ? {mode: "reconcile", callbackUrl: callbackUrl(context.runId), reason: "This callback was already attempted; reconcile manually"}
     : {mode: "request", routine, pr: pr.number, sourceRunId: build.id, publicationAttempt: publication.publicationAttempt,
       sourceCreatedAt: build.created_at, callbackRunId: context.runId, callbackAttempt}
-  if (run.path === BUILD_WORKFLOW && run.event === "pull_request") {
+  if (run.path === buildWorkflow && run.event === "pull_request") {
     // A Slack notification failure does not invalidate an already published app.
     const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
       ...context.repo, run_id: run.id, filter: "all", per_page: 100,
     })
-    const publication = successfulMacPublication(run, jobs)
+    const publication = successfulRoutinePublication(routine, run, jobs)
     if (!publication) return {mode: "skip", reason: "Build/publication has not succeeded"}
     if (publication.publicationAttempt !== run.run_attempt)
       return {mode: "skip", reason: "Notification-only retry retained an earlier publication; no new request generation"}
@@ -146,22 +146,22 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
     if (numbers.length !== 1) return {mode: "skip", reason: "Request wake-up has no unambiguous PR association"}
     const pr = await currentPr(github, context, numbers[0], run.head_sha, routine)
     if (!pr) return {mode: "skip", reason: "PR opt-in was removed or the wake-up was superseded"}
-    const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id: BUILD_WORKFLOW,
+    const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id: buildWorkflow,
       event: "pull_request", head_sha: pr.head.sha, per_page: 100})
     let candidates = data.workflow_runs
     while (candidates.length) {
       const build = matchingBuildRun(candidates, pr, pr.head.sha)
       if (!build) break
       candidates = candidates.filter((item) => item.id !== build.id)
-      if (build.path !== BUILD_WORKFLOW || build.repository?.full_name !== REPOSITORY ||
+      if (build.path !== buildWorkflow || build.repository?.full_name !== REPOSITORY ||
         !positive(build.id) || build.status !== "completed") continue
       const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
         ...context.repo, run_id: build.id, filter: "all", per_page: 100,
       })
-      const publication = successfulMacPublication(build, jobs)
+      const publication = successfulRoutinePublication(routine, build, jobs)
       if (publication) return requestPlan(build, publication, pr)
     }
-    return {mode: "skip", reason: "No successful Mac publication for the current PR revision"}
+    return {mode: "skip", reason: "No successful compatible app publication for the current PR revision"}
   }
   // Only the trusted dev producer's artifact can reach private dispatch.
   if (run.path === REQUEST_WORKFLOW && run.event === "workflow_dispatch" && run.head_branch === "dev" && run.conclusion === "success") {
@@ -195,7 +195,7 @@ export async function planDeviceDispatches(options) {
 export async function requestAfterPublication({github, context, plan}) {
   deviceRoutine(plan.routine)
   const coordinated = ["dev", "staging"].includes(plan.channel)
-  requireThat(plan.mode === "request" && (coordinated ? !plan.pr && plan.routine === "no-glasses" : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
+  requireThat(plan.mode === "request" && (coordinated ? !plan.pr && ["no-glasses", "no-glasses-android"].includes(plan.routine) : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
     && plan.callbackRunId === context.runId && plan.callbackAttempt === 1, "Invalid request dispatch")
   const prior = await automaticGenerationFence(github, context, plan)
   if (prior) return {status: "request-reconcile", ...prior}
@@ -242,10 +242,10 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
     reason: "Nightly sequence member; only the scheduled source may dispatch the paired OTA then Call job"}
   if (request.status === "no-artifact") return {status: "not-dispatched", reason: "No eligible artifact"}
   if (coordinated) {
-    requireThat(request.status === "ready" && request.selection?.platform === "ios-on-mac", "Invalid ready coordinated selection")
+    requireThat(request.status === "ready" && request.selection?.platform === deviceRoutine(request.routine.id).platform, "Invalid ready coordinated selection")
     await verifyCoordinatedReadyRequest({github, context, request, fetchImpl})
   } else {
-    requireThat(request.status === "ready" && request.selection?.platform === "ios-on-mac" &&
+    requireThat(request.status === "ready" && request.selection?.platform === deviceRoutine(request.routine.id).platform &&
       request.selection.build?.headSha === request.pullRequest.headSha &&
       request.selection.build?.baseSha === request.pullRequest.baseSha, "Invalid ready selection")
     const pr = await currentPr(github, context, request.pullRequest.number, request.pullRequest.headSha,

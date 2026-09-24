@@ -77,7 +77,7 @@ export class TestDispatchService {
     if (before) return replay(before);
     let rejectionReason: string | undefined;
     try {
-      const build = await this.github.resolve(data.source);
+      const build = await this.github.resolve(data.source, data.routineId);
       if (build.availability !== "available" || build.archive?.sha256 !== data.archiveSha256)
         throw new TestDispatchError(409, build.reason ?? "Selected build changed or is unavailable; refresh the build list");
       const routine = build.routines.find(item => item.id === data.routineId);
