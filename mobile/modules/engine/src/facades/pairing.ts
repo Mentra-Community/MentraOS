@@ -26,6 +26,7 @@ import {
   clearPendingSelection,
   markPendingSelection,
   projectPairingIdentity,
+  snapshotPendingSelection,
   subscribePairingIdentity,
   type IdentitySnapshot,
 } from "../services/PairingIdentity"
@@ -369,12 +370,12 @@ export const pairing = {
    *   connectDefault() would otherwise target the abandoned device.
    * - No default device (genuinely unpaired attempt): also forget, clearing
    *   the partial native pairing state.
-   * The read fails OPEN to "preserve" — a transient failure must never wipe a
-   * real pairing. The `pending_wearable` marker is left for "finish pairing"
-   * unless the user explicitly cancels the unfinished selection.
+   * Native read failures preserve identity; explicit cancellation rejects so
+   * the host can offer retry. The `pending_wearable` marker is left for "finish
+   * pairing" unless the user explicitly cancels the unfinished selection.
    */
   abandonAttempt: async (options?: {clearPendingSelection?: boolean}): Promise<void> => {
-    const selection = projectPairingIdentity()
+    const selection = snapshotPendingSelection()
     const nativeHasDefault = await hasDefaultDevice().catch((error) => {
       // Explicit cancellation must show its retry affordance when cleanup
       // cannot establish ownership; ordinary back-out still preserves pairing.
@@ -387,9 +388,7 @@ export const pairing = {
       // Stop the scan and leave the live pairing untouched.
       console.log("PairingIdentity: abandonAttempt — pairing intact and connected; stopping scan only")
       await BluetoothSdk.stopScan()
-      return
-    }
-    if (projectPairingIdentity().kind === "paired") {
+    } else if (projectPairingIdentity().kind === "paired") {
       // The persisted settings describe a COMPLETE pairing: restore it to
       // native (the attempt's connect-by-name overwrote the native
       // device_name; and if native somehow lost its default entirely, this
@@ -397,23 +396,21 @@ export const pairing = {
       console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
       await BluetoothSdk.disconnect()
       await pushAllBluetoothSettings()
-      return
-    }
-    if (nativeHasDefault) {
+    } else if (nativeHasDefault) {
       // Mid-relay: native promoted and its echoes are still landing — the
       // incomplete JS snapshot must not be pushed over the fresher native
       // identity (the on-connect replay's race). Native holds the truth.
       console.log("PairingIdentity: abandonAttempt — preserving pairing; JS identity mid-relay, native kept as-is")
       await BluetoothSdk.disconnect()
-      return
+    } else {
+      // Partial attempt: forget owns teardown. Do NOT disconnect() first — that
+      // nulls the MentraLive SGC and used to skip Classic removeBond, leaving
+      // IBRT ACL up so glasses never re-advertise for the next scan.
+      console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
+      await BluetoothSdk.forget()
     }
-    // Partial attempt: forget owns teardown. Do NOT disconnect() first — that
-    // nulls the MentraLive SGC and used to skip Classic removeBond, leaving
-    // IBRT ACL up so glasses never re-advertise for the next scan.
-    console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
-    await BluetoothSdk.forget()
-    if (options?.clearPendingSelection && selection.kind === "pending") {
-      await clearPendingSelection(selection.model)
+    if (options?.clearPendingSelection && selection) {
+      await clearPendingSelection(selection)
     }
   },
 
