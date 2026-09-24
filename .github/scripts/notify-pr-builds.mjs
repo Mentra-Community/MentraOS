@@ -127,7 +127,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   for (const routine of routines)
     lines.push(
       `*Requested tests:* ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n${[
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : `Results link available with the ${deviceRoutine(routine.id).platform === "android" ? "Android" : "Mac"} build`,
+        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable || `Results link available with the ${deviceRoutine(routine.id).platform === "android" ? "Android" : "Mac"} build`,
         link(routine.pipelineUrl, routine.pipelineLabel),
       ].join(" · ")}\nResults appear after the device run is uploaded.`,
     )
@@ -210,6 +210,8 @@ async function requestedRoutineLinks({github, context, pr, sha, ios, android, co
     core.warning(`Could not locate this revision's routine request; linking its workflow: ${error.message}`)
   }
   return requested.map(id => ({...result, id,
+    ...(DEVICE_ROUTINES[id].platform === "android" && android.receiptUnavailable
+      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
     resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: DEVICE_ROUTINES[id].platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id})}))
 }
 
@@ -392,8 +394,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
         androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
       android.archiveSha256 = validateAndroidReceipt(receipt, coordinates).android.sha256
     } catch (failure) {
-      core.warning(`Android routine receipt unavailable: ${failure.message}; defer notification so the next callback can retry.`)
-      return
+      core.warning(`Android routine receipt unavailable: ${failure.message}; publish available downloads and keep receipt enrichment retryable.`)
+      android.receiptUnavailable = true
     }
   }
   const comments = await github.paginate(github.rest.issues.listComments, {
@@ -403,9 +405,16 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   })
   const comment = comments.find((item) => item.user?.type === "Bot" && item.body?.startsWith(marker))
   const incomplete = Boolean(error || ios.error)
-  const identity = `${sha}:${incomplete ? "incomplete" : "ready"}:${builds
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${builds
     .map((build) => `${build.run.id}-${build.attempt}`)
     .join(":")}`
+  const verifiedPrefix = `<!-- ${buildIdentity}:android-`
+  if (android.receiptUnavailable && comment?.body.split("\n").some(line =>
+    line.startsWith(verifiedPrefix) && /^[a-f0-9]{64} -->$/.test(line.slice(verifiedPrefix.length)))) {
+    core.info("The verified Android results link was already delivered; do not downgrade it after a receipt read failure.")
+    return
+  }
+  const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
     core.info("This PR revision's notification was already delivered.")
     return
@@ -451,6 +460,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     downloads.push(
       `**Requested tests:** ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n\n${[
         ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
+        ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
         `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
       ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
     )
