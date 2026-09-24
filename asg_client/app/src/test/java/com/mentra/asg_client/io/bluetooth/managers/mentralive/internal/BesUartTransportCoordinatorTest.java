@@ -79,6 +79,60 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void admittedStatusRefreshPrecedesLaterFileOwnershipBarrier() throws Exception {
+        assertQueuedStatusRefreshBeforeFileBarrier(false);
+    }
+
+    @Test
+    public void admittedStatusRefreshStillRejectsLaterSafetyRestriction() throws Exception {
+        assertQueuedStatusRefreshBeforeFileBarrier(true);
+    }
+
+    private void assertQueuedStatusRefreshBeforeFileBarrier(boolean restrictSafety) throws Exception {
+        coordinator.onSerialReady(host.session);
+        systemVersion("17.26.7.4");
+        flushIoLane();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService callers = Executors.newFixedThreadPool(2);
+        BesUartTransportCoordinator.OperationLease lease = null;
+        try {
+            Future<Boolean> blocker = callers.submit(() -> coordinator.runNormalWrite(() -> {
+                started.countDown();
+                try { return release.await(2, TimeUnit.SECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+            }));
+            assertThat(started.await(1, TimeUnit.SECONDS)).isTrue();
+            host.controlCommands.clear();
+            assertThat(coordinator.requestSystemVersionRefresh()).isTrue();
+            Future<BesUartTransportCoordinator.OperationLease> file =
+                    callers.submit(coordinator::beginFileTransfer);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            while (coordinator.getOperation() != BesUartTransportCoordinator.Operation.FILE_TRANSFER
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertThat(coordinator.getOperation())
+                    .isEqualTo(BesUartTransportCoordinator.Operation.FILE_TRANSFER);
+            assertThat(file.isDone()).isFalse(); // Its FIFO barrier is behind the queued probe.
+            assertThat(host.controlCommands).isEmpty();
+            if (restrictSafety) {
+                safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+            }
+            release.countDown();
+            assertThat(blocker.get(1, TimeUnit.SECONDS)).isTrue();
+            lease = file.get(1, TimeUnit.SECONDS);
+            assertThat(lease).isNotNull();
+            assertThat(countControlCommands("cs_syvr")).isEqualTo(restrictSafety ? 0 : 1);
+            assertThat(coordinator.requestSystemVersionRefresh()).isFalse();
+        } finally {
+            release.countDown();
+            if (lease != null) coordinator.endFileTransfer(lease);
+            callers.shutdownNow();
+        }
+    }
+
+    @Test
     public void queuedStatusRefreshIsDiscardedWhenSessionCloses() throws Exception {
         coordinator.onSerialReady(host.session);
         systemVersion("17.26.7.4");

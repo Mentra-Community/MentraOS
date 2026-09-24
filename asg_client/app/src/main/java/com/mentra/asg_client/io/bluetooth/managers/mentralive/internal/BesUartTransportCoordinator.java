@@ -720,7 +720,8 @@ public final class BesUartTransportCoordinator {
             ioLane.submit(() -> {
                 synchronized (monitor) {
                     if (phase != phaseGeneration || session != serialSession
-                            || !canRefreshSystemVersionLocked()) return;
+                            || !isReadyLocked()
+                            || safetyState.currentPolicy() != SafetyPolicy.NORMAL) return;
                 }
                 // All ownership barriers share this FIFO lane, so a subsequently acquired
                 // operation cannot start writing before this already admitted probe.
