@@ -688,6 +688,9 @@ jobs:
         env:
           STAGING_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}
           DEV_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
+          SLACK_BUILDS_BOT_TOKEN: ${{ secrets.SLACK_BUILDS_BOT_TOKEN }}
+          SLACK_DEV_BUILDS_CHANNEL_ID: ${{ vars.SLACK_DEV_BUILDS_CHANNEL_ID }}
+          SLACK_STAGING_BUILDS_CHANNEL_ID: ${{ vars.SLACK_STAGING_BUILDS_CHANNEL_ID }}
           RELEASE_SCOPE: core
           RELEASE_PAGE_RESULT: ${{ needs.publish-release-page.result }}
           EXAMPLES_DISPATCH_RESULT: ${{ needs.dispatch-examples.result }}
@@ -729,3 +732,11 @@ jobs:
           ASG_APK_NAME: ${{ needs.ota.outputs.asg_apk_name }}
           ASG_APK_URL: ${{ needs.ota.outputs.asg_apk_url }}
         run: .github/scripts/notify-coordinated-release-slack.sh
+
+      - name: Retain the exact editable release message
+        if: always() && hashFiles('slack-release-message.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-slack-message-${{ github.run_id }}-${{ github.run_attempt }}
+          path: slack-release-message.json
+          if-no-files-found: error
