@@ -36,9 +36,16 @@ export default function IncidentReportRequest({
   useEffect(() => {
     setResult(null)
     // Re-check when authentication changes while this modal is open.
-    const parsed = parseIncidentReportRequest(JSON.parse(input))
+    const request: Record<string, unknown> = JSON.parse(input)
+    const parsed = parseIncidentReportRequest(request)
     if (!parsed.ok) {
-      setResult({status: "failed", failure_code: "invalid_request", error: parsed.error})
+      setResult({
+        alert_id: typeof request.alert_id === "string" ? request.alert_id : undefined,
+        test_run_id: typeof request.test_run_id === "string" ? request.test_run_id : undefined,
+        status: "failed",
+        failure_code: "invalid_request",
+        error: parsed.error,
+      })
       return
     }
     if (!authenticated) {

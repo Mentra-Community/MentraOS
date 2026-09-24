@@ -76,6 +76,20 @@ it("shows the correlated incident ID and returns to the previous screen with Don
   expect(mockDismiss).toHaveBeenCalledTimes(1)
 })
 
+it("preserves the correlation IDs when invalid details prevent submission", () => {
+  const tree = render(
+    <IncidentReportRequest params={{...request, failure_message: ""}} onDismiss={mockDismiss} />,
+  )
+  expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual({
+    alert_id: request.alert_id,
+    test_run_id: request.test_run_id,
+    failure_code: "invalid_request",
+    status: "failed",
+    error: "Invalid failure_message",
+  })
+  expect(submitIncidentReportOnce).not.toHaveBeenCalled()
+})
+
 it("lets cleanup return immediately while the report remains pending", () => {
   jest.mocked(submitIncidentReportOnce).mockReturnValue(new Promise(() => {}))
   const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
