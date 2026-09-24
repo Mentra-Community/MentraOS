@@ -66,6 +66,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
   const [currentTime, setCurrentTime] = useState(0)
   const currentTimeRef = useRef(0)
   const pendingSeekRef = useRef<{time: number} | null>(null)
+  const [isNativeSeeking, setIsNativeSeeking] = useState(false)
   const [duration, setDuration] = useState(0)
   const [isSeeking, setIsSeeking] = useState(false)
   const [hasError, setHasError] = useState(false)
@@ -81,9 +82,13 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
 
     const pendingSeek = {time}
     pendingSeekRef.current = pendingSeek
+    setIsNativeSeeking(true)
     currentTimeRef.current = time
     setCurrentTime(time)
     setHasEnded(false)
+    // These native commands run in order on the UI queue. Keep the clock
+    // stopped through the position read, including when seek is a no-op.
+    player.pause()
     player.seek(time)
 
     // An unchanged-position seek has no onSeek on iOS. Read the native
@@ -92,11 +97,26 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
       (position) => {
         if (pendingSeekRef.current === pendingSeek && isVideoAtSeekTarget(position, time)) {
           pendingSeekRef.current = null
+          setIsNativeSeeking(false)
         }
       },
-      (error) => console.warn("[VideoPlayerItem] Could not read seek position:", error),
+      (error) => {
+        console.warn("[VideoPlayerItem] Could not read seek position:", error)
+        // A failed optional read must not leave callback-free seeks paused.
+        if (pendingSeekRef.current === pendingSeek) {
+          pendingSeekRef.current = null
+          setIsNativeSeeking(false)
+        }
+      },
     )
   }, [])
+
+  useEffect(
+    () => () => {
+      pendingSeekRef.current = null
+    },
+    [],
+  )
 
   useEffect(() => {
     setIsPlaying(isActive)
@@ -153,7 +173,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
         posterResizeMode="contain"
         style={{width: "100%", aspectRatio: videoAspectRatio, backgroundColor: theme.colors.background}}
         resizeMode="contain"
-        paused={!isPlaying || !isActive || isSeeking || hasError}
+        paused={!isPlaying || !isActive || isSeeking || isNativeSeeking || hasError}
         controls={false}
         repeat={false}
         playInBackground={false}
@@ -173,6 +193,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
             // onEnd) until native playback has reached the requested position.
             if (!isVideoAtSeekTarget(time, pendingSeek.time)) return
             pendingSeekRef.current = null
+            setIsNativeSeeking(false)
           }
           if (!isSeeking && !hasEnded) {
             currentTimeRef.current = time
@@ -209,12 +230,14 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
           setIsBuffering(false)
           setIsSeeking(false)
           pendingSeekRef.current = null
+          setIsNativeSeeking(false)
           if (isSeeking) onSeekingChange?.(false)
         }}
         onSeek={({seekTime}) => {
           const pendingSeek = pendingSeekRef.current
           if (pendingSeek && isVideoAtSeekTarget(seekTime, pendingSeek.time)) {
             pendingSeekRef.current = null
+            setIsNativeSeeking(false)
           }
         }}
         onEnd={() => {

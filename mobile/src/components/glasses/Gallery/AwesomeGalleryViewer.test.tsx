@@ -10,6 +10,7 @@ let mockImageProps: Record<string, unknown> = {}
 let mockVideoProps: Record<string, unknown> = {}
 let mockSliderProps: Record<string, unknown> = {}
 const mockSeek = jest.fn()
+const mockPause = jest.fn()
 const mockGetCurrentPosition = jest.fn()
 
 jest.mock("@gorhom/bottom-sheet", () => ({
@@ -71,7 +72,11 @@ jest.mock("react-native-vector-icons/MaterialCommunityIcons", () => {
 jest.mock("react-native-video", () => {
   const React = require("react")
   return React.forwardRef((props: Record<string, unknown>, ref: unknown) => {
-    React.useImperativeHandle(ref, () => ({seek: mockSeek, getCurrentPosition: mockGetCurrentPosition}))
+    React.useImperativeHandle(ref, () => ({
+      seek: mockSeek,
+      pause: mockPause,
+      getCurrentPosition: mockGetCurrentPosition,
+    }))
     mockVideoProps = props
     return null
   })
@@ -209,6 +214,7 @@ describe("gallery video playback", () => {
 
   beforeEach(() => {
     mockSeek.mockClear()
+    mockPause.mockClear()
     mockGetCurrentPosition.mockReset().mockResolvedValue(NaN)
   })
 
@@ -232,8 +238,10 @@ describe("gallery video playback", () => {
     emitSlider("onSlidingComplete", duration)
     expect(mockSeek).toHaveBeenLastCalledWith(duration - 0.1)
     expect(mockSliderProps.value).toBe(duration - 0.1)
-    expect(mockVideoProps.paused).toBe(false)
+    expect(mockVideoProps.paused).toBe(true)
     expect(mockGalleryProps.swipeEnabled).toBe(true)
+    emitVideo("onSeek", {currentTime: duration - 0.1, seekTime: duration - 0.1})
+    expect(mockVideoProps.paused).toBe(false)
   })
 
   it("preserves playback intent if an old end event arrives while dragging", () => {
@@ -241,6 +249,7 @@ describe("gallery video playback", () => {
     emitSlider("onSlidingStart")
     finishVideo()
     emitSlider("onSlidingComplete", 30)
+    emitVideo("onSeek", {currentTime: 30, seekTime: 30})
     expect(mockVideoProps.paused).toBe(false)
     expect(mockSeek).toHaveBeenLastCalledWith(30)
   })
@@ -277,6 +286,7 @@ describe("gallery video playback", () => {
     fireEvent.press(view.getByText("replay"))
     expect(mockSeek).toHaveBeenLastCalledWith(0)
     expect(mockSliderProps.value).toBe(0)
+    emitVideo("onSeek", {currentTime: 0, seekTime: 0})
     expect(mockVideoProps.paused).toBe(false)
   })
 
@@ -295,6 +305,7 @@ describe("gallery video playback", () => {
     emitSlider("onSlidingStart")
     emitSlider("onSlidingComplete", 30)
     expect(mockVideoProps.paused).toBe(true)
+    emitVideo("onSeek", {currentTime: 30, seekTime: 30})
     fireEvent.press(view.getByText("play"))
     expect(mockSeek).toHaveBeenCalledTimes(1)
     expect(mockSeek).toHaveBeenLastCalledWith(30)
@@ -309,6 +320,7 @@ describe("gallery video playback", () => {
     emitVideo("onEnd")
     expect(mockSliderProps.value).toBe(30)
     expect(view.queryByText("replay")).toBeNull()
+    emitVideo("onSeek", {currentTime: 30, seekTime: 30})
     fireEvent.press(view.getByText("play"))
     expect(mockSeek).toHaveBeenCalledTimes(1)
     expect(mockSeek).toHaveBeenLastCalledWith(30)
@@ -324,7 +336,7 @@ describe("gallery video playback", () => {
     finishVideo()
     expect(mockSliderProps.value).toBe(30)
     expect(view.queryByText("replay")).toBeNull()
-    expect(mockVideoProps.paused).toBe(paused)
+    expect(mockVideoProps.paused).toBe(true)
     emitVideo("onSeek", {currentTime: 30, seekTime: 30})
     emitVideo("onProgress", {currentTime: 30.25})
     expect(mockSliderProps.value).toBe(30.25)
@@ -337,8 +349,9 @@ describe("gallery video playback", () => {
     fireEvent.press(view.getByText("replay"))
     finishVideo()
     expect(mockSliderProps.value).toBe(0)
-    expect(mockVideoProps.paused).toBe(false)
+    expect(mockVideoProps.paused).toBe(true)
     emitVideo("onSeek", {currentTime: 0, seekTime: 0})
+    expect(mockVideoProps.paused).toBe(false)
     emitVideo("onProgress", {currentTime: 1})
     expect(mockSliderProps.value).toBe(1)
     finishVideo()
@@ -369,6 +382,43 @@ describe("gallery video playback", () => {
     expect(mockVideoProps.paused).toBe(true)
   })
 
+  it("holds the native clock until a delayed no-op position read, then completes normally", async () => {
+    const {view} = renderVideo()
+    const time = duration - 0.1
+    emitVideo("onProgress", {currentTime: time})
+    // Execute the read only after the release props have committed. A resumed
+    // native clock can already have reached the end instead of the target.
+    let readPosition!: (position: number) => void
+    mockGetCurrentPosition.mockReturnValue(
+      new Promise<number>((resolve) => {
+        readPosition = resolve
+      }),
+    )
+    emitSlider("onSlidingStart")
+    emitSlider("onSlidingComplete", time)
+    await act(async () => readPosition(mockVideoProps.paused ? time : duration))
+    expect(mockVideoProps.paused).toBe(false)
+    expect(mockGalleryProps.swipeEnabled).toBe(true)
+    finishVideo()
+    expect(view.getByText("replay")).toBeTruthy()
+  })
+
+  it("does not stay paused if the optional native position read rejects", async () => {
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      renderVideo()
+      mockGetCurrentPosition.mockRejectedValue(new Error("Position unavailable"))
+      emitSlider("onSlidingStart")
+      await act(async () => emitSlider("onSlidingComplete", 0))
+      expect(mockVideoProps.paused).toBe(false)
+      expect(mockGalleryProps.swipeEnabled).toBe(true)
+      emitVideo("onProgress", {currentTime: 1})
+      expect(mockSliderProps.value).toBe(1)
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
   it("does not let an earlier seek callback or position read settle a newer seek", async () => {
     renderVideo()
     let resolveEarlier!: (position: number) => void
@@ -386,7 +436,7 @@ describe("gallery video playback", () => {
     emitVideo("onProgress", {currentTime: 30})
     finishVideo()
     expect(mockSliderProps.value).toBe(60)
-    expect(mockVideoProps.paused).toBe(false)
+    expect(mockVideoProps.paused).toBe(true)
     emitVideo("onSeek", {currentTime: 60, seekTime: 60})
     finishVideo()
     expect(mockVideoProps.paused).toBe(true)
@@ -397,6 +447,7 @@ describe("gallery video playback", () => {
     finishVideo()
     fireEvent.press(view.getByText("replay"))
     emitVideo("onEnd")
+    emitVideo("onSeek", {currentTime: 0, seekTime: 0})
     expect(mockVideoProps.paused).toBe(false)
     expect(mockSliderProps.value).toBe(0)
     expect(view.queryByText("replay")).toBeNull()
@@ -409,6 +460,7 @@ describe("gallery video playback", () => {
     expect(mockVideoProps.paused).toBe(true)
     view.rerender(cloneElement(item, {isActive: true}))
     expect(mockSeek).toHaveBeenLastCalledWith(0)
+    emitVideo("onSeek", {currentTime: 0, seekTime: 0})
     expect(mockVideoProps.paused).toBe(false)
     expect(view.queryByText("replay")).toBeNull()
   })

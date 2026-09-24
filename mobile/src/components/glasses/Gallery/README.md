@@ -285,8 +285,10 @@ is smaller than the seek inset and capped at half the duration for very short
 clips. Explicit seeks also retain their target until a matching native `onSeek`,
 progress update, or position read confirms it. Until then, queued progress and
 end events cannot restore the finished state after a backward seek or replay.
-The native position read handles unchanged-position seeks that emit no `onSeek`;
-it never holds the slider or gallery swipe lock. Responses for superseded seeks
+The native player stays paused until the seek settles, preserving play/pause
+intent while keeping the position stable for unchanged-position seeks that emit
+no `onSeek`. The slider and gallery swipe lock still release immediately. A
+failed optional position read releases the native pause rather than stranding it. Responses for superseded seeks
 are ignored. Refs preserve ordering even when React batches events.
 Native decoding errors remain visible; these controls do not repair damaged media.
 
