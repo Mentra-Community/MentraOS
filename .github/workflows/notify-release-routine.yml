@@ -18,6 +18,7 @@ jobs:
   resolve:
     if: github.repository == 'Mentra-Community/MentraOS' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    environment: build-notifications
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -68,6 +69,7 @@ jobs:
       matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
     name: Update release ${{ matrix.notification.build.runId }} / post ${{ matrix.notification.producer.runAttempt }} / ${{ matrix.row.routineId }}
     runs-on: ubuntu-latest
+    environment: build-notifications
     timeout-minutes: 10
     concurrency:
       group: release-slack-${{ matrix.notification.build.runId }}-${{ matrix.notification.producer.runAttempt }}

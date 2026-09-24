@@ -663,6 +663,7 @@ jobs:
 
   notify-slack:
     name: Notify release Slack channel
+    environment: build-notifications
     needs:
       [
         plan,
