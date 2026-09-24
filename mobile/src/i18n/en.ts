@@ -150,6 +150,8 @@ const en = {
     forget: "Forget",
   },
   pairing: {
+    cancelPairing: "Cancel pairing",
+    cancelFailed: "Pairing could not be cancelled. Please try again.",
     selectModel: "Select Model",
     pairingGuide: "Pairing Guide",
     pairing: "Pairing",

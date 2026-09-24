@@ -9,10 +9,13 @@ on:
       - ".github/scripts/nightly-device-routines*"
       - ".github/scripts/coordinated-routine-*"
       - ".github/scripts/notify-pr-builds*"
+      - ".github/scripts/release-slack-message*"
+      - ".github/scripts/release-routine-slack*"
       - ".github/scripts/pr-ios-artifacts*"
       - ".github/workflows/request-e2e-routine.yml"
       - ".github/workflows/dispatch-device-routine.yml"
       - ".github/workflows/nightly-device-routines.yml"
+      - ".github/workflows/notify-release-routine.yml"
       - "mobile/scripts/install-ios-mac*"
       - "mobile/scripts/app-ownership.*"
       - "mobile/ci/pr-ios/mac_installer.py"
@@ -27,10 +30,13 @@ on:
       - ".github/scripts/nightly-device-routines*"
       - ".github/scripts/coordinated-routine-*"
       - ".github/scripts/notify-pr-builds*"
+      - ".github/scripts/release-slack-message*"
+      - ".github/scripts/release-routine-slack*"
       - ".github/scripts/pr-ios-artifacts*"
       - ".github/workflows/request-e2e-routine.yml"
       - ".github/workflows/dispatch-device-routine.yml"
       - ".github/workflows/nightly-device-routines.yml"
+      - ".github/workflows/notify-release-routine.yml"
       - "mobile/scripts/install-ios-mac*"
       - "mobile/scripts/app-ownership.*"
       - "mobile/ci/pr-ios/mac_installer.py"
@@ -61,6 +67,8 @@ jobs:
           .github/scripts/nightly-device-routines.test.mjs
           .github/scripts/coordinated-routine-request.test.mjs
           .github/scripts/notify-pr-builds.test.mjs
+          .github/scripts/release-slack-message.test.mjs
+          .github/scripts/release-routine-slack.test.mjs
           .github/scripts/pr-ios-artifacts.test.mjs
       - name: Verify shared Mac installer and ownership
         run: node --test mobile/scripts/install-ios-mac.test.mjs

@@ -107,8 +107,11 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch) {
         : "Not requested: the coordinated workflow has not met the successful-completion requirement."
     } catch { detail = "Unavailable: published Mac metadata could not be verified." }
   }
-  return [{type: "section", text: {type: "mrkdwn", text:
-    `*Requested tests*\nNo-glasses UI — ${detail}\n<${pipeline.href}|Request pipeline>${results}`}}]
+  const botConfigured = env.SLACK_BUILDS_BOT_TOKEN && /^C[A-Z0-9]+$/.test(env.BRANCH === "dev"
+    ? env.SLACK_DEV_BUILDS_CHANNEL_ID ?? "" : env.SLACK_STAGING_BUILDS_CHANNEL_ID ?? "")
+  const updates = botConfigured ? "" : "\nTerminal Slack updates unavailable; use the results link."
+  return [{type: "section", block_id: "mentra-release-routines", text: {type: "mrkdwn", text:
+    `*Requested tests*\nNo-glasses UI — ${detail}\n<${pipeline.href}|Request pipeline>${results}${updates}`}}]
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
