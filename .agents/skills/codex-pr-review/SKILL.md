@@ -88,12 +88,16 @@ are not moved. This is configured per host: a Mini review needs the folder regis
 as a project on the Mini's connection. Do not use `--ephemeral` or a separate
 `CODEX_HOME`, which would hide sessions from the usual desktop account.
 
-If the host's supported project listing supplies a project ID, save that ID in
+For durable project assignment, initialize the same host's `codex app-server --stdio`
+and call its documented `project/list` method. Follow pagination and match the
+project's `roots[].path` to the exact configured directory. Save that returned ID in
 `$CODEX_REVIEW_HOME/project-id` (default `~/.codex-reviews/project-id`) or set
-`CODEX_REVIEW_PROJECT_ID`. The adapter passes it as the documented durable
-`thread/start.projectId` and verifies the response. It never reads or edits Codex's
-database. Without an ID, grouping uses the registered folder; verify visibility
-on the next actual review rather than creating a duplicate review as a probe.
+`CODEX_REVIEW_PROJECT_ID`. Desktop-tool `list_projects` IDs can use a different
+namespace: do not copy those IDs into this configuration. The adapter passes the
+app-server ID as `thread/start.projectId` and verifies the response. It never reads
+or edits Codex's database. Without an ID, grouping depends on the registered folder;
+verify visibility on the next actual review rather than creating a duplicate review
+as a probe.
 
 Override the saved path with `CODEX_REVIEW_PROJECT_DIR=/absolute/path`, or set it to
 an empty string for one invocation to start in the PR worktree instead. Without a
