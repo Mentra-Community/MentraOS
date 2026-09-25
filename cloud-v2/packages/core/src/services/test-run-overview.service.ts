@@ -3,12 +3,17 @@ import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { TestRunModel } from "../models/test-run.model";
 import type { TestRunClaim, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
 import type { TestRun } from "../types/test-run.types";
-import type { OverviewClaim, OverviewJob, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
+import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
 import { completeGithubActivity, GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
 
 export interface OverviewClaimRecord { claim: TestRunClaim; progress?: TestRunProgressCheckpoint; followUpCancellation?: TestRunFollowUpCancellation }
+export interface FixtureIdentity { workerId: string; fixtureId: string }
+/** Fixture summaries check at most this many worker/fixture identities per overview. */
+export const FIXTURE_SUMMARY_LIMIT = 100;
 export interface TestRunOverviewRepository {
   claims(activeRequestIds: string[]): Promise<{ claims: OverviewClaimRecord[]; truncated: boolean }>;
+  /** The newest stored claim, in any state, for each exact worker + fixture identity. */
+  latestFixtureClaims(identities: FixtureIdentity[]): Promise<TestRunClaim[]>;
   results(requestIds: string[]): Promise<TestRun[]>;
   adminRequests(requestRunIds: number[]): Promise<number[]>;
 }
@@ -35,6 +40,19 @@ export class MongoTestRunOverviewRepository implements TestRunOverviewRepository
     const claims = new Map<string, OverviewClaimRecord>();
     for (const row of [...rows.slice(0, 500), ...active] as unknown as OverviewClaimRecord[]) claims.set(row.claim.requestId, row);
     return { claims: [...claims.values()], truncated: rows.length > 500 || unsafe.length > 500 };
+  }
+  async latestFixtureClaims(identities: FixtureIdentity[]) {
+    if (!identities.length) return [];
+    if (identities.length > FIXTURE_SUMMARY_LIMIT) throw new Error("Fixture summary exceeds overview limit");
+    // Claims include normal terminal passes, which `claims()` deliberately omits.
+    // claimedAt is always written with toISOString(), so string order is time order.
+    const rows = await TestRunClaimModel.aggregate<{ claim: TestRunClaim }>([
+      { $match: { $or: identities.map(({ workerId, fixtureId }) => ({ "claim.workerId": workerId, "claim.fixtureId": fixtureId })) } },
+      { $sort: { "claim.claimedAt": -1, requestId: 1 } },
+      { $group: { _id: { workerId: "$claim.workerId", fixtureId: "$claim.fixtureId" }, claim: { $first: "$claim" } } },
+      { $project: { _id: 0, claim: 1 } },
+    ]);
+    return rows.map(row => row.claim);
   }
   async results(requestIds: string[]) {
     if (!requestIds.length) return [];
@@ -191,8 +209,57 @@ export class TestRunOverviewService {
     // Activity first; the waiting group is oldest-first, not a scheduling promise.
     const priority = (job: OverviewJob) => job.state === "running" ? 0 : ["blocked", "unknown"].includes(job.state) ? 1 : 2;
     jobs.sort((a, b) => priority(a) - priority(b) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    return { observedAt: this.now().toISOString(), jobs, warnings, resolvedRecoveries, fixtureAttention,
+    // `assigned` holds claims inside GitHub jobs; claim-only blocker rows report their own result instead.
+    const fixtureSummary = await this.summarizeFixtures(fixtureAttention, assigned,
+      resultsAvailable ? { results, requestIds: new Set(claims.map(row => row.claim.requestId)) } : null, warnings);
+    return { observedAt: this.now().toISOString(), jobs, warnings, resolvedRecoveries, fixtureAttention, fixtureSummary,
       recentMaintenance: githubResult.status === "fulfilled" ? githubResult.value.recentMaintenance ?? [] : [] };
+  }
+
+  /**
+   * Groups cancelled attempts by exact worker + fixture and decides each group only
+   * from the newest stored claim on that identity and that claim's own results. A
+   * matching alias on another worker, an older return, or a lookup that failed never
+   * establishes the fixture's state. Nothing here writes claims, results or verdicts.
+   */
+  private async summarizeFixtures(history: OverviewJob[], live: Set<string>,
+    loaded: { results: TestRun[]; requestIds: Set<string> } | null, warnings: string[]): Promise<OverviewFixtureSummary[]> {
+    const groups = new Map<string, OverviewClaim[]>();
+    for (const claim of history.flatMap(job => job.claims)) groups.set(identity(claim), [...groups.get(identity(claim)) ?? [], claim]);
+    if (!groups.size) return [];
+    const checked = [...groups.values()].slice(0, FIXTURE_SUMMARY_LIMIT).map(attempts => attempts[0]!);
+    if (groups.size > FIXTURE_SUMMARY_LIMIT) warnings.push(`Only ${FIXTURE_SUMMARY_LIMIT} fixtures with cancelled attempts are checked for newer claims.`);
+    let latest: Map<string, TestRunClaim> | null = null, results: TestRun[] = [], resultsChecked = false;
+    try {
+      latest = new Map((await this.repository.latestFixtureClaims(checked.map(({ workerId, fixtureId }) => ({ workerId, fixtureId }))))
+        .map(claim => [identity(claim), claim]));
+      const missing = [...latest.values()].map(claim => claim.requestId).filter(id => !loaded?.requestIds.has(id));
+      if (loaded) { results = [...loaded.results, ...await this.repository.results(missing)]; resultsChecked = true; }
+    } catch {
+      // Reported per fixture as not-checked; an older return is never substituted.
+      warnings.push("Newer claims on fixtures with cancelled attempts could not be checked.");
+    }
+    const checkedKeys = new Set(checked.map(identity));
+    const order = { "current-work": 0, "not-checked": 1, unverified: 2, "latest-return-verified": 3 } as const;
+    return [...groups.values()].map((attempts): OverviewFixtureSummary => {
+      attempts.sort(newestFirst);
+      const { workerId, fixtureId, claimedAt } = attempts[0]!;
+      const base = { workerId, fixtureId, cancelledRequestIds: attempts.map(claim => claim.requestId), latestCancelledClaimAt: claimedAt };
+      if (!checkedKeys.has(identity(attempts[0]!)) || !latest) return { ...base, status: "not-checked" };
+      const newest = latest.get(identity(attempts[0]!));
+      // The newest claim is one of these cancelled attempts (or the lookup saw nothing newer).
+      if (!newest || attempts.some(claim => claim.requestId === newest.requestId) || Date.parse(newest.claimedAt) <= Date.parse(claimedAt))
+        return { ...base, status: "unverified" };
+      const recorded = { requestId: newest.requestId, claimedAt: newest.claimedAt };
+      if (newest.state === "claimed" || live.has(newest.requestId))
+        return { ...base, status: "current-work", latest: { ...recorded, reason: "This newer claim still owns the fixture; follow it in Live activity." } };
+      if (!resultsChecked) return { ...base, status: "not-checked", latest: { ...recorded, reason: "Published return evidence could not be checked." } };
+      const state = classifyEvidence(newest, results, true);
+      const resultRunId = state.resolution?.recoveryRunId ?? state.latest?.runId;
+      return { ...base, status: state.resolution ? "latest-return-verified" : "unverified",
+        latest: { ...recorded, reason: state.reason, ...(resultRunId ? { resultRunId } : {}) } };
+    }).sort((a, b) => order[a.status] - order[b.status] || newestFirst({ claimedAt: a.latestCancelledClaimAt }, { claimedAt: b.latestCancelledClaimAt })
+      || a.workerId.localeCompare(b.workerId) || a.fixtureId.localeCompare(b.fixtureId));
   }
 }
 
@@ -204,3 +271,6 @@ function attention(row: OverviewClaimRecord, state: ReturnType<typeof classifyEv
       : canCancel ? { cancelRequestId: row.claim.requestId } : {}),
   };
 }
+
+const identity = (claim: { workerId: string; fixtureId: string }) => JSON.stringify([claim.workerId, claim.fixtureId]);
+const newestFirst = (a: { claimedAt: string }, b: { claimedAt: string }) => Date.parse(b.claimedAt) - Date.parse(a.claimedAt);

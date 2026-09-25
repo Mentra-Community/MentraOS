@@ -1,11 +1,12 @@
-import { expect, spyOn, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createTestRunAdminApi } from "../api/admin/test-runs.api";
 import type { TestRunClaim } from "../types/test-run-claim.types";
 import type { TestRun } from "../types/test-run.types";
 import type { OverviewJob } from "../types/test-run-overview.types";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { TestRunModel } from "../models/test-run.model";
-import { recoveredClaim, MongoTestRunOverviewRepository, TestRunOverviewService, type OverviewClaimRecord, type TestRunOverviewRepository } from "./test-run-overview.service";
+import { recoveredClaim, MongoTestRunOverviewRepository, TestRunOverviewService, type FixtureIdentity, type OverviewClaimRecord,
+  type TestRunOverviewRepository } from "./test-run-overview.service";
 
 const stamp = "2026-09-24T20:00:00.000Z";
 const claim = (id = "routine-500-1-dev-day1-ota"): TestRunClaim => ({ requestId: id, requestSha256: "a".repeat(64),
@@ -28,7 +29,20 @@ class Repository implements TestRunOverviewRepository {
   resultRows: TestRun[] = [];
   admin: number[] = [];
   async claims(_activeRequestIds: string[] = []) { return { claims: this.rows, truncated: false }; }
-  async results() { return this.resultRows; }
+  /** Claims `claims()` does not return, such as normal terminal passes. */
+  stored: TestRunClaim[] = [];
+  latestLookups: FixtureIdentity[][] = [];
+  resultLookups: string[][] = [];
+  async latestFixtureClaims(identities: FixtureIdentity[]) {
+    this.latestLookups.push(identities);
+    const all = [...this.rows.map(row => row.claim), ...this.stored];
+    return identities.flatMap(({ workerId, fixtureId }) => all.filter(item => item.workerId === workerId && item.fixtureId === fixtureId)
+      .sort((a, b) => b.claimedAt.localeCompare(a.claimedAt)).slice(0, 1));
+  }
+  async results(requestIds: string[]) {
+    this.resultLookups.push(requestIds);
+    return this.resultRows.filter(run => requestIds.includes(run.requestId));
+  }
   async adminRequests() { return this.admin; }
 }
 test("all GitHub triggers remain visible; only matched send receipts get Admin origin", async () => {
@@ -228,4 +242,130 @@ test("Cancel is not offered when unrelated GitHub request metadata is incomplete
     const row = view.jobs.find(job => job.kind === "claim")!;
     expect(row.attention?.cancelRequestId).toBeUndefined(); expect(row.attention?.responsible).toBe("Test runner / operator");
   }
+});
+
+describe("fixture summaries follow the newest claim on each exact worker and fixture", () => {
+  const at = (minute: number) => new Date(Date.parse(stamp) + minute * 60_000).toISOString();
+  const id = (minute: number, routine: string) => "routine-" + (36_076_273_000 + minute) + "-1-dev-" + routine;
+  const identityOf = (minute: number, fixtureId: string, workerId: string, routine: string) => ({ requestId: id(minute, routine),
+    requestSha256: "a".repeat(64), workerId, fixtureId, executionId: "execution-" + minute, claimedAt: at(minute) });
+  const settled = (minute: number, fixtureId: string, workerId = "mini-1", routine = "no-glasses"): TestRunClaim => ({
+    ...identityOf(minute, fixtureId, workerId, routine), state: "terminal", settledAt: at(minute + 1),
+    settlement: { state: "terminal", resultRunId: id(minute, routine) } });
+  const active = (minute: number, fixtureId: string, workerId = "mini-1"): TestRunClaim => ({
+    ...identityOf(minute, fixtureId, workerId, "no-glasses"), state: "claimed" });
+  const cancelled = (minute: number, fixtureId: string, workerId = "mini-1"): OverviewClaimRecord => ({
+    claim: { ...claim(id(minute, "ui-unpaired")), workerId, fixtureId, claimedAt: at(minute) },
+    followUpCancellation: { cancelledAt: at(minute + 1), cancelledBy: "admin" } });
+  const result = (item: TestRunClaim, outcomes: TestRun["outcomes"], returnVerification: string): TestRun => ({ ...original(),
+    runId: item.requestId, requestId: item.requestId, fixture: { alias: item.fixtureId }, outcome: outcomes.test === "passed" && outcomes.fixture === "ready" ? "passed" : "failed",
+    outcomes, provenance: { ...original().provenance, returnVerification } });
+  const pass = (item: TestRunClaim) => result(item, { test: "passed", teardown: "passed", fixture: "ready", evidence: "complete" }, "passed");
+  const unsafe = (item: TestRunClaim) => result(item, { test: "failed", teardown: "blocked", fixture: "unavailable", evidence: "complete" }, "deferred");
+  const failedCancelled = (row: OverviewClaimRecord) => ({ ...original(), runId: "original-" + row.claim.requestId,
+    requestId: row.claim.requestId, fixture: { alias: row.claim.fixtureId } });
+  const scenario = () => {
+    const repository = new Repository();
+    // mini-ui-unpaired on mini-1 mirrors dev.358 and dev.362: ordinary passes after cancelled attempts.
+    const unpaired = [0, 1, 2].map(minute => cancelled(minute, "mini-ui-unpaired"));
+    const dev358 = settled(10, "mini-ui-unpaired"), dev362 = settled(12, "mini-ui-unpaired");
+    // A newer failure after a pass is the latest evidence; the older pass is not presented as readiness.
+    const glasses = cancelled(3, "glasses-03be"), glassesPass = settled(11, "glasses-03be"), glassesFailure = settled(13, "glasses-03be");
+    // The same alias on another worker is a different fixture.
+    const otherWorker = cancelled(4, "mini-ui-unpaired", "mini-2");
+    // An active newer claim after a pass owns the fixture.
+    const phone = cancelled(5, "android-phone"), phonePass = settled(14, "android-phone"), phoneActive = active(15, "android-phone");
+    // A settled newer claim without a published result proves nothing.
+    const tablet = cancelled(6, "tablet"), tabletMissing = settled(16, "tablet");
+    // Only claims() rows are loaded by the base overview: unsettled, unsafe-result and active.
+    repository.rows = [...unpaired, glasses, otherWorker, phone, tablet, { claim: glassesFailure }, { claim: phoneActive }];
+    repository.stored = [dev358, dev362, glassesPass, phonePass, tabletMissing];
+    repository.resultRows = [...[...unpaired, glasses, otherWorker, phone, tablet].map(failedCancelled),
+      pass(dev358), pass(dev362), pass(glassesPass), unsafe(glassesFailure), pass(phonePass)];
+    return { repository, unpaired, dev358, dev362, glassesPass, glassesFailure, otherWorker, phoneActive, tabletMissing };
+  };
+  const idle = { activity: async () => ({ jobs: [], warnings: [] }) };
+  const summary = (view: Awaited<ReturnType<TestRunOverviewService["overview"]>>, workerId: string, fixtureId: string) =>
+    view.fixtureSummary.find(item => item.workerId === workerId && item.fixtureId === fixtureId);
+
+  test("ordinary terminal passes after historical cancellations are the latest known return; history is unchanged", async () => {
+    const { repository, unpaired, dev358, dev362 } = scenario();
+    const view = await new TestRunOverviewService(repository, idle).overview();
+    expect(summary(view, "mini-1", "mini-ui-unpaired")).toEqual({ workerId: "mini-1", fixtureId: "mini-ui-unpaired",
+      status: "latest-return-verified", latestCancelledClaimAt: at(2), cancelledRequestIds: [...unpaired].reverse().map(row => row.claim.requestId),
+      latest: { requestId: dev362.requestId, claimedAt: dev362.claimedAt, reason: "Verified return evidence is published.", resultRunId: dev362.requestId } });
+    // One bounded lookup per identity, then results only for newest claims the overview had not loaded.
+    expect(repository.latestLookups).toHaveLength(1); expect(repository.latestLookups[0]).toHaveLength(5);
+    expect(repository.resultLookups[1]).toEqual(expect.arrayContaining([dev362.requestId]));
+    expect(repository.resultLookups[1]).not.toContain(dev358.requestId);
+    // Every cancelled attempt and its original failed result stay in history; passes are not recovery resolutions.
+    expect(view.fixtureAttention?.map(job => job.claims[0]!.requestId)).toEqual(expect.arrayContaining(unpaired.map(row => row.claim.requestId)));
+    expect(view.fixtureAttention?.every(job => job.state === "blocked" && job.attention?.cancelledAt && job.resultRunId?.startsWith("original-"))).toBe(true);
+    expect(view.fixtureAttention).toHaveLength(7); expect(view.resolvedRecoveries).toHaveLength(0);
+    expect(repository.rows.filter(row => row.followUpCancellation).every(row => row.claim.state === "recovery-required")).toBe(true);
+    expect(repository.resultRows.filter(run => run.runId.startsWith("original-")).every(run => run.outcome === "failed")).toBe(true);
+  });
+  test("a newer unsafe result after a success keeps the fixture unverified and remains a live blocker", async () => {
+    const { repository, glassesFailure } = scenario();
+    const view = await new TestRunOverviewService(repository, idle).overview();
+    expect(summary(view, "mini-1", "glasses-03be")).toMatchObject({ status: "unverified", latest: { requestId: glassesFailure.requestId,
+      reason: "The recorded run left the fixture unavailable.", resultRunId: glassesFailure.requestId } });
+    expect(view.jobs.find(job => job.id === "claim-" + glassesFailure.requestId)?.state).toBe("blocked");
+  });
+  test("separate workers, active latest claims and missing results are never replaced by another return", async () => {
+    const { repository, phoneActive, tabletMissing } = scenario();
+    let view = await new TestRunOverviewService(repository, idle).overview();
+    expect(summary(view, "mini-2", "mini-ui-unpaired")).toEqual(expect.objectContaining({ status: "unverified" }));
+    expect(summary(view, "mini-2", "mini-ui-unpaired")?.latest).toBeUndefined();
+    expect(summary(view, "mini-1", "android-phone")).toMatchObject({ status: "current-work", latest: { requestId: phoneActive.requestId } });
+    expect(summary(view, "mini-1", "tablet")).toMatchObject({ status: "unverified", latest: { requestId: tabletMissing.requestId,
+      reason: "No published result proves the fixture's return state." } });
+    expect(view.fixtureSummary.map(item => item.status)).toEqual(["current-work", "unverified", "unverified", "unverified", "latest-return-verified"]);
+    // A settled pass that is still inside a live GitHub job is current work, not readiness.
+    const { repository: again, dev362 } = scenario();
+    const running = { ...queued(), state: "running" as const, requests: [{ ...queued().requests[0]!, requestId: dev362.requestId }] };
+    again.rows.push({ claim: dev362 });
+    view = await new TestRunOverviewService(again, { activity: async () => ({ jobs: [running], warnings: [] }) }).overview();
+    expect(summary(view, "mini-1", "mini-ui-unpaired")).toMatchObject({ status: "current-work", latest: { requestId: dev362.requestId } });
+  });
+  test("claim or result lookup failures are not-checked and never fall back to an older return", async () => {
+    const statuses = (view: Awaited<ReturnType<TestRunOverviewService["overview"]>>) => new Set(view.fixtureSummary.map(item => item.status));
+    let { repository } = scenario();
+    repository.latestFixtureClaims = async () => { throw Error("Private DB context"); };
+    let view = await new TestRunOverviewService(repository, idle).overview();
+    expect(statuses(view)).toEqual(new Set(["not-checked"])); expect(view.fixtureSummary.every(item => !item.latest)).toBe(true);
+    expect(view.warnings.join(" ")).toContain("Newer claims on fixtures with cancelled attempts could not be checked.");
+    expect(JSON.stringify(view)).not.toContain("Private DB context");
+    ({ repository } = scenario());
+    const loadedOnly = repository.results.bind(repository);
+    repository.results = async ids => { if (repository.resultLookups.length) throw Error("offline"); return loadedOnly(ids); };
+    view = await new TestRunOverviewService(repository, idle).overview();
+    expect(summary(view, "mini-1", "mini-ui-unpaired")?.status).toBe("not-checked");
+    expect(summary(view, "mini-1", "android-phone")?.status).toBe("current-work");
+    expect(statuses(view).has("latest-return-verified")).toBe(false);
+    ({ repository } = scenario());
+    repository.results = async () => { throw Error("offline"); };
+    view = await new TestRunOverviewService(repository, idle).overview();
+    // Only mini-2 is unverified: its newest claim is its own cancelled attempt.
+    expect(statuses(view)).toEqual(new Set(["current-work", "not-checked", "unverified"]));
+    expect(view.fixtureSummary.filter(item => item.status === "unverified").map(item => item.workerId)).toEqual(["mini-2"]);
+  });
+  test("identities beyond the bound are not-checked; the Mongo query matches exact worker and fixture pairs", async () => {
+    const repository = new Repository();
+    repository.rows = Array.from({ length: 101 }, (_, index) => cancelled(index, "fixture-" + index));
+    const view = await new TestRunOverviewService(repository, idle).overview();
+    expect(repository.latestLookups[0]).toHaveLength(100);
+    expect(view.fixtureSummary.filter(item => item.status === "not-checked")).toHaveLength(1);
+    expect(view.warnings.join(" ")).toContain("Only 100 fixtures");
+    const aggregate = spyOn(TestRunClaimModel, "aggregate").mockResolvedValue([{ claim: settled(1, "a") }]);
+    try {
+      const mongo = new MongoTestRunOverviewRepository();
+      expect(await mongo.latestFixtureClaims([{ workerId: "mini-1", fixtureId: "a" }, { workerId: "mini-2", fixtureId: "a" }])).toEqual([settled(1, "a")]);
+      expect(aggregate.mock.calls[0]?.[0]?.[0]).toEqual({ $match: { $or: [{ "claim.workerId": "mini-1", "claim.fixtureId": "a" },
+        { "claim.workerId": "mini-2", "claim.fixtureId": "a" }] } });
+      await expect(mongo.latestFixtureClaims(Array.from({ length: 101 }, (_, index) => ({ workerId: "w", fixtureId: "f" + index }))))
+        .rejects.toThrow("exceeds");
+      expect(aggregate).toHaveBeenCalledTimes(1);
+    } finally { aggregate.mockRestore(); }
+  });
 });

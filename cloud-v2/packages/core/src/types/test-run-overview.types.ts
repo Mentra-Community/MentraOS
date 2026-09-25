@@ -53,11 +53,36 @@ export interface OverviewResolution {
   kind?: "late-result" | "recovery";
   originalAvailable?: boolean;
 }
+/**
+ * One row per exact worker + fixture identity with cancelled, unverified attempts.
+ * Decided only by the newest stored claim on that exact identity and that claim's
+ * own results. It never changes an attempt's verdict, claim or cancellation.
+ */
+export interface OverviewFixtureSummary {
+  workerId: string;
+  fixtureId: string;
+  /** Cancelled attempts without their own verified return, newest first (full history is in `fixtureAttention`). */
+  cancelledRequestIds: string[];
+  latestCancelledClaimAt: string;
+  /**
+   * `current-work`: the newest claim on this worker/fixture is unsettled or in `jobs`.
+   * `latest-return-verified`: the newest claim settled and its own results prove verified
+   *   return. This is the latest known routine return, not an observation of later activity.
+   * `unverified`: the newest claim is a cancelled attempt, or its result failed, is missing or conflicts.
+   * `not-checked`: the claim or result lookup failed or exceeded its bound; no older return is shown.
+   */
+  status: "current-work" | "latest-return-verified" | "unverified" | "not-checked";
+  /** Newest claim on this worker/fixture after the newest cancelled attempt, when one exists. */
+  latest?: { requestId: string; claimedAt: string; reason: string; resultRunId?: string };
+}
 export interface TestRunOverview {
   observedAt: string;
   jobs: OverviewJob[];
   warnings: string[];
   recentMaintenance: OverviewJob[];
   resolvedRecoveries: OverviewResolution[];
+  /** Every cancelled attempt whose own return is unverified. Historical; not running jobs. */
   fixtureAttention?: OverviewJob[];
+  /** One readiness summary per worker/fixture in `fixtureAttention`. */
+  fixtureSummary: OverviewFixtureSummary[];
 }
