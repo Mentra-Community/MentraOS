@@ -8,7 +8,7 @@ The Admin **Test runs** page shows GitHub's active private worker jobs above the
 | Build and routine | Published request ZIP from its exact Actions run/attempt | The selected build; unavailable metadata does not hide the job |
 | Worker / fixture | Assigned GitHub runner and existing Core claim | Unassigned or unreported values remain explicit |
 | Phase, step, action and counts | Last committed lifecycle journal checkpoint | Phase step counts and action counts stay separate; dynamic totals may be unknown |
-| Recovery required | Original Core settlement | Cleared from the live view only by a correlated recovery result with verified return, passed teardown and a ready fixture |
+| Recovery required | Original Core settlement | Resolved in one of two ways. A valid recovery result correlated with the same claim, with verified return, passed teardown and a ready fixture, clears it and links the original and recovery results. An original-owner closure (for example, a released Android install refusal) resolves the request without a test: the failed result is unchanged and the fixture stays uncommissioned and unverified. A GitHub job that is still active stays in the live view; closure only removes its recovery blocker. An inactive closed claim moves to fixture history |
 
 Queued rows are displayed oldest first. This is waiting order, **not a guarantee of execution order**. Compatible workers and resource ownership still determine when GitHub can execute a job. There is no second scheduler, queue mutation, rank, ETA or calculated completion percentage.
 

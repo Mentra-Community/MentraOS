@@ -84,6 +84,35 @@ assertion that uploads have completed. Recovery authorization and later result
 generations remain in the existing local lifecycle/results systems; they do not
 replace this original settlement or permit a fresh execution of the request.
 
+## Close a released recovery-required claim
+
+`PUT /api/internal/test-run-claims/:requestId/closure` lets the original owner
+record, after the fact, that a `recovery-required` request is resolved. The body
+is the owner's frozen claim request (the five identity fields and its private
+`executionToken`) plus one `closure` (`testRunClaimCloseRequestSchema`). The only
+supported closure is `android-refused-install-released`: Android completed a
+refusal of the in-place update, and the reviewed release appended
+`setup-abandoned-after-refusal` directly after the original first terminal. It
+pins that terminal's sequence and SHA256, the journal prefix, the release event
+SHA256, its reviewed revision and implementation SHA256, and states
+`fixture: "uncommissioned"`, `selectedCandidateInstalled`, `candidateTestRun` and
+`recordingStarted` as `false`. Unknown fields or other values return 400.
+
+The first closure is stored in a separate `closure` field with server `closedAt`.
+The claim, its settlement, token digest and progress are unchanged, and the
+response is `{executionGranted:false, claim, closure}`. An identical body replays
+the stored closure, so a lost acknowledgement is retried with the same body. A
+wrong execution token returns 403. Changed identity fields, an unsettled or
+`terminal` claim, and a different closure return 409. A closed claim does not
+accept newer progress. Claim, GET and settlement responses keep their shape.
+
+A closure is not a result, a recovery generation or a readiness check. Admin
+removes the request from active and blocked work. The request stays in fixture
+history with its failed result, and that fixture stays unverified until newer
+evidence. The dispatch detail reports it as `failed`, not as passed.
+The private harness command that publishes this closure is documented in its
+Android no-glasses routine guide.
+
 ## Persistence and validation
 
 Mongo `test_run_claims` is separate from `test_runs`: results intentionally allow

@@ -8,7 +8,7 @@ import type { TestContinuationBinding } from "../types/test-continuation.types";
 import { TestRunService } from "./test-run.service";
 
 interface StoredDispatch { inputSha256: string; receipt: TestDispatchReceipt }
-interface ClaimState { state: string; resultRunId?: string }
+interface ClaimState { state: string; resultRunId?: string; closed?: boolean }
 interface ResultState { runId: string; requestId: string; outcome: string; outcomes: Record<string, string>; provenance: Record<string, string> }
 export interface TestDispatchRepository {
   get(id: string): Promise<StoredDispatch | null>;
@@ -54,7 +54,7 @@ export class MongoTestDispatchRepository implements TestDispatchRepository {
     const row = await TestRunClaimModel.findOne({ requestId }).lean();
     if (!row) return null;
     const value = row.claim as { state: string; settlement?: { resultRunId?: string } };
-    return { state: value.state, resultRunId: value.settlement?.resultRunId };
+    return { state: value.state, resultRunId: value.settlement?.resultRunId, ...(row.closure ? { closed: true } : {}) };
   }
   async result(runId: string) { return new TestRunService().detail(runId); }
 }
@@ -135,6 +135,9 @@ export class TestDispatchService {
       let workerUrl: string | undefined;
       try { workerUrl = (await this.github.progress(value.requestRunId, value.input)).workerUrl; }
       catch { /* Recovery ownership remains authoritative when GitHub status is unavailable. */ }
+      // The original owner closed the request: resolved, but neither a pass nor a ready fixture.
+      if (claim.closed) return { ...value, requestId, state: "failed", ...(workerUrl ? { workerUrl } : {}),
+        message: "Closed by its original worker without a test: Android refused the app update and no recording started. The failed result is unchanged and is not a pass. The fixture was left uncommissioned." };
       return { ...value, requestId, state: "recovery-required", ...(workerUrl ? { workerUrl } : {}),
         message: "The worker retained this fixture for recovery. Review the worker evidence before reuse." };
     }

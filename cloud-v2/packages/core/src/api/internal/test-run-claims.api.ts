@@ -26,6 +26,7 @@ export function createTestRunClaimApi(service = new TestRunClaimService()) {
   });
   app.get("/:requestId", async c => c.json(await service.get(c.req.param("requestId"))));
   app.put("/:requestId/state", limit, async c => c.json(await service.settle(c.req.param("requestId"), await parse(c.req))));
+  app.put("/:requestId/closure", limit, async c => c.json(await service.close(c.req.param("requestId"), await parse(c.req))));
   app.put("/:requestId/progress", limit, async c => c.json(await service.progress(c.req.param("requestId"), await parse(c.req))));
   return app;
 }
