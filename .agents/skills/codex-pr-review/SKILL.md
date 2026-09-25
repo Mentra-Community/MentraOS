@@ -52,7 +52,8 @@ total, and retries once unless the verdict was already posted. Never launch a ba
   and maintenance cost versus benefit, smaller change possible) and let that weigh in the
   verdict, not only implementation quality.
 - Runs `codex-review.sh` (watchdog + one retry) and prints Codex's final message. The runner
-  starts `codex exec --json` and uses its event stream as the heartbeat, so other Codex sessions
+  starts `codex exec --json` by default, or the small stdio app-server adapter for a configured
+  desktop project. Both use their own server event stream as the heartbeat, so other Codex sessions
   on the machine can never be mistaken for this one; every process of the attempt carries a
   unique `CODEX_REVIEW_ATTEMPT` marker so it can be terminated even if Codex exits first. Success means
   a review carrying the marker was found on the head commit after the run started, checked
@@ -63,11 +64,62 @@ total, and retries once unless the verdict was already posted. Never launch a ba
 
 ## Configuration
 
+### Use a desktop Review project
+
+On the host that runs reviews, create a folder and add it as a local Codex project
+named **Review**. Save its absolute path once:
+
+```bash
+mkdir -p "$HOME/dev/Codex-Reviews" "${CODEX_REVIEW_HOME:-$HOME/.codex-reviews}"
+printf '%s\n' "$HOME/dev/Codex-Reviews" > "${CODEX_REVIEW_HOME:-$HOME/.codex-reviews}/project-directory"
+```
+
+Future skill invocations use `codex app-server --stdio` and the documented
+`initialize` → `thread/start` → `turn/start` protocol, with that folder as the
+saved session's starting directory. The server creates a persistent interactive
+session and the adapter gives it a `<repo> #<PR> · review` title. This matters:
+`codex exec` has a separate session source that default history lists exclude;
+changing its cwd alone does not establish desktop visibility. `--thread-source`
+is an analytics label and does not change that history source.
+
+The reviewer receives the separate PR worktree path for all code inspection and tests;
+worktree ownership, locks, watchdogs and verdict checks still apply. Existing sessions
+are not moved. This is configured per host: a Mini review needs the folder registered
+as a project on the Mini's connection. Do not use `--ephemeral` or a separate
+`CODEX_HOME`, which would hide sessions from the usual desktop account.
+
+For durable project assignment, initialize the same host's `codex app-server --stdio`
+and call its documented `project/list` method. Follow pagination and match the
+project's `roots[].path` to the exact configured directory. Save that returned ID in
+`$CODEX_REVIEW_HOME/project-id` (default `~/.codex-reviews/project-id`) or set
+`CODEX_REVIEW_PROJECT_ID`. Desktop-tool `list_projects` IDs can use a different
+namespace: do not copy those IDs into this configuration. The adapter passes the
+app-server ID as `thread/start.projectId` and verifies the response. It never reads
+or edits Codex's database. Without an ID, grouping depends on the registered folder;
+verify visibility on the next actual review rather than creating a duplicate review
+as a probe.
+
+Override the saved path with `CODEX_REVIEW_PROJECT_DIR=/absolute/path`, or set it to
+an empty string for one invocation to start in the PR worktree instead. Without a
+saved path or override, the existing `exec` behavior is unchanged. A configured
+missing directory is an error, so reviews cannot silently appear somewhere else.
+An explicit directory override ignores the saved project ID; also pass
+`CODEX_REVIEW_PROJECT_ID` if that different folder needs a durable assignment.
+Project reviews require Node.js and a Codex version supporting the app-server
+protocol. Incompatible protocol, failed/interrupted turns and missing final text
+fail the attempt; they never produce a successful review merely from progress.
+
+Protocol reference: [Codex App Server](https://learn.chatgpt.com/docs/app-server),
+including its `sourceKinds` history filter. The adapter uses the server's normal
+session source; it does not relabel existing sessions or spoof a source.
+
 | Variable                                                      | Default                                                | Purpose                                                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | `CODEX_BIN`                                                   | `codex`                                                | Codex CLI binary. Point it at a specific install if the shim on PATH does not support `exec`. |
 | `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`                  | `gpt-6-astra` / `medium`                               | Model and reasoning effort.                                                                   |
 | `CODEX_REVIEW_HOME`                                           | `~/.codex-reviews`                                     | Where prompts, final messages and runner logs are kept.                                       |
+| `CODEX_REVIEW_PROJECT_DIR`                                    | Saved `project-directory` file, otherwise PR worktree | Starting directory for future sessions; register that folder in Codex to group reviews. |
+| `CODEX_REVIEW_PROJECT_ID`                                     | Saved `project-id` file, otherwise unset             | Optional durable project assignment for the configured project on this host. |
 | `MENTRA_RELEASE_COORDINATOR_KEY`                              | `~/.config/mentra-release-coordinator/private-key.pem` | App private key (0600) for posting on your own PRs.                                           |
 | `GH_ACCOUNT`                                                  | auto                                                   | `app` or `own`, see above.                                                                    |
 | `STALL_SECONDS` / `MAX_SECONDS` / `ATTEMPTS` / `POLL_SECONDS` | 480 / 1800 / 2 / 5                                     | Watchdog limits and poll interval.                                                            |
@@ -85,8 +137,10 @@ The usual self-review comment fallback still applies. Controllers can inspect
 ## Tests
 
 `bun test scripts/codex-review` runs the lifecycle suite with fake `gh` and `codex` binaries:
-markers on every exit path, worktree ownership, lock behaviour, receipt-before-retry, and
-stall handling. CI runs it on changes under `scripts/codex-review/`.
+markers on every exit path, worktree ownership, lock behaviour, receipt-before-retry,
+and stall handling. Project transport tests cover the real JSON protocol, completion
+ordering, final-text validation, cancellation and detached-child cleanup. They do
+not claim a live desktop sidebar check. CI runs them on changes under `scripts/codex-review/`.
 
 ## Extra prompt file
 

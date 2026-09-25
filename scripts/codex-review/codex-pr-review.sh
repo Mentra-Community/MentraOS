@@ -231,7 +231,8 @@ mkdir -p "$out_dir"
 prompt="$out_dir/prompt.txt"
 cat > "$prompt" <<PROMPT
 You are reviewing GitHub pull request #${pr} in ${slug} ("${title}", author ${author}).
-This checkout is the PR head (commit ${head_sha}); the base branch is origin/${base}.
+The review checkout is ${wt}, at PR head ${head_sha}; the base branch is origin/${base}.
+Run all repository commands from that checkout, even if the session starts in a separate desktop project folder.
 
 Do the following, in order:
 
