@@ -53,11 +53,33 @@ export interface OverviewResolution {
   kind?: "late-result" | "recovery";
   originalAvailable?: boolean;
 }
+/**
+ * One row per exact worker + fixture identity with cancelled, unverified attempts.
+ * Uses only claims and results already read for this overview. It never certifies
+ * present readiness or changes an attempt's verdict.
+ */
+export interface OverviewFixtureSummary {
+  workerId: string;
+  fixtureId: string;
+  /** Cancelled attempts without their own verified return, newest first (full history is in `fixtureAttention`). */
+  cancelledRequestIds: string[];
+  latestCancelledClaimAt: string;
+  /**
+   * `current-work`: a newer claim on this worker/fixture is in `jobs`.
+   * `later-return-verified`: a newer claim on this worker/fixture published verified return evidence.
+   * `unverified`: this view has no newer evidence; the fixture's present state is not proven here.
+   */
+  status: "current-work" | "later-return-verified" | "unverified";
+  currentRequestIds?: string[];
+  laterReturn?: { requestId: string; claimedAt: string; recoveryRunId: string };
+}
 export interface TestRunOverview {
   observedAt: string;
   jobs: OverviewJob[];
   warnings: string[];
   recentMaintenance: OverviewJob[];
   resolvedRecoveries: OverviewResolution[];
+  /** Every cancelled attempt whose own return is unverified. Historical; not running jobs. */
   fixtureAttention?: OverviewJob[];
+  fixtureSummary?: OverviewFixtureSummary[];
 }

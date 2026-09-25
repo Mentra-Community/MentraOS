@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { OverviewClaim, OverviewJob, OverviewRequest, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRequest, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import { api } from "../lib/api";
 
 const triggerNames: Record<OverviewRequest["trigger"], string> = {
@@ -89,6 +89,64 @@ function JobRow({ job, now, onResult, onCancel }: { job: OverviewJob; now: numbe
   </tr>;
 }
 
+const summaryText: Record<OverviewFixtureSummary["status"], { badge: string; colors: string; next: string }> = {
+  "current-work": { badge: "current work", colors: "bg-[#fff0e9] text-[#a64235]", next: "Follow the newer work on this fixture in Live activity above." },
+  unverified: { badge: "unverified", colors: "bg-[#fff5df] text-[#805619]",
+    next: "Confirm this fixture's present state. If it is not ready, recover it once and publish verified return evidence." },
+  "later-return-verified": { badge: "returned later", colors: "bg-[#e6f5ed] text-[#087d50]",
+    next: "No recovery is needed for these cancelled attempts. Activity after that return is not checked here." },
+};
+/** Summaries from Core; an older response without them is treated as unverified per worker/fixture, never as ready. */
+function summaries(data: TestRunOverview): OverviewFixtureSummary[] {
+  if (data.fixtureSummary) return data.fixtureSummary;
+  const groups = new Map<string, OverviewClaim[]>();
+  for (const claim of (data.fixtureAttention ?? []).flatMap(job => job.claims)) {
+    const key = JSON.stringify([claim.workerId, claim.fixtureId]);
+    groups.set(key, [...groups.get(key) ?? [], claim]);
+  }
+  return [...groups.values()].map(claims => {
+    claims.sort((a, b) => b.claimedAt.localeCompare(a.claimedAt));
+    return { workerId: claims[0]!.workerId, fixtureId: claims[0]!.fixtureId, status: "unverified",
+      cancelledRequestIds: claims.map(claim => claim.requestId), latestCancelledClaimAt: claims[0]!.claimedAt };
+  });
+}
+const unverifiedFixtures = (data: TestRunOverview) => summaries(data).filter(item => item.status !== "later-return-verified");
+function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: number; onResult: (id: string) => void }) {
+  const items = summaries(data), attempts = data.fixtureAttention ?? [];
+  const count = (status: OverviewFixtureSummary["status"]) => items.filter(item => item.status === status).length;
+  return <section className="mt-5" aria-label="Fixture readiness after cancelled follow-up">
+    <h4 className="text-sm font-semibold">Fixture readiness after cancelled follow-up</h4>
+    <p className="mt-1 text-xs text-[#68746d]">One row per worker and fixture. Cancelled attempts are history, not running jobs; their results are unchanged.
+      Only newer claims on the same worker and fixture are compared.</p>
+    <div className="mt-2 flex flex-wrap gap-2 text-xs">{(["current-work", "unverified", "later-return-verified"] as const).map(status =>
+      <span key={status} className="rounded-md bg-[#f1f4ef] px-2 py-1"><strong>{count(status)}</strong> {summaryText[status].badge}</span>)}</div>
+    <div className="mt-2 overflow-x-auto rounded-xl border border-[#e0e4de]"><table className="w-full text-left text-xs">
+      <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Readiness", "Worker / fixture", "Latest evidence", "Next action"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
+      <tbody>{items.map(item => <tr key={item.workerId + "/" + item.fixtureId} className="border-t border-[#eceeeb] align-top">
+        <td className="px-4 py-3"><span className={"inline-block rounded-md px-2 py-1 text-[11px] font-medium " + summaryText[item.status].colors}>{summaryText[item.status].badge}</span></td>
+        <td className="max-w-[190px] break-words px-4 py-3"><p>{item.workerId}</p><p className="mt-1 text-[11px] text-[#68746d]">Fixture: {item.fixtureId}</p></td>
+        <td className="min-w-[250px] max-w-[340px] px-4 py-3 text-[11px]">
+          <p>{item.cancelledRequestIds.length} cancelled {item.cancelledRequestIds.length === 1 ? "attempt" : "attempts"} without their own verified return; newest claimed {elapsed(item.latestCancelledClaimAt, now)} ago.</p>
+          {item.status === "current-work" ? <p className="mt-1">Newer work on this fixture is in Live activity: {item.currentRequestIds?.join(", ")}.</p> : null}
+          {item.laterReturn ? <p className="mt-1">A newer request, {item.laterReturn.requestId}, published verified return evidence.{" "}
+            <button className="text-[#087d50] underline" onClick={() => onResult(item.laterReturn!.recoveryRunId)}>Return result</button></p> : null}
+          {item.status === "unverified" ? <p className="mt-1">This view has no newer claim or verified return for this worker and fixture, so it cannot prove the fixture's present state.</p> : null}
+        </td>
+        <td className="min-w-[220px] max-w-[300px] px-4 py-3 text-[11px]"><p>{summaryText[item.status].next}</p>
+          {item.status !== "later-return-verified" ? <p className="mt-1">Responsible: Test runner / operator</p> : null}</td>
+      </tr>)}</tbody>
+    </table></div>
+    <details className="mt-2 text-xs"><summary className="cursor-pointer text-[#68746d]">Cancelled attempt history ({attempts.length})</summary>
+      <ul className="mt-2 space-y-2">{attempts.map(job => <li key={job.id}>
+        {job.requests.length ? job.requests.map(request => <RequestLabel key={request.requestId} request={request} />) : <p className="font-medium">{job.claims[0]?.requestId ?? job.title}</p>}
+        <p className="text-[11px] text-[#68746d]">{job.claims[0] ? job.claims[0].workerId + " · Fixture: " + job.claims[0].fixtureId : "Fixture not reported"}
+          {job.attention?.cancelledAt ? " · Follow-up cancelled " + elapsed(job.attention.cancelledAt, now) + " ago" : ""}</p>
+        {job.attention ? <p className="text-[11px]">{job.attention.reason}</p> : null}
+        {job.resultRunId ? <button className="text-[11px] text-[#087d50] underline" onClick={() => onResult(job.resultRunId!)}>Recorded result</button> : null}
+      </li>)}</ul></details>
+  </section>;
+}
+
 export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: TestRunOverview; now: number; onResult: (id: string) => void; onCancel?: (id: string) => Promise<void> }) {
   const states = ["running", "queued", "waiting", "blocked", "unknown"] as const;
   return <>
@@ -100,15 +158,9 @@ export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: T
       <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Status", "Build / routine", "Worker / fixture", "Last recorded progress", "Elapsed / update"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
       <tbody>{data.jobs.map(job => <JobRow key={job.id} job={job} now={now} onResult={onResult} onCancel={onCancel} />)}</tbody>
     </table></div> : <p className="mt-3 text-sm text-[#68746d]">{data.warnings.length ? "No activity could be confirmed from the available sources."
-      : data.fixtureAttention?.length ? "No active jobs. The fixtures below still need attention." : "No active jobs or unresolved claims were observed."}</p>}
-    {data.fixtureAttention?.length ? <section className="mt-5" aria-label="Fixtures needing attention">
-      <h4 className="text-sm font-semibold">Fixtures needing attention</h4>
-      <p className="mt-1 text-xs text-[#68746d]">These requests have no further follow-up work. Their physical return still needs proof; they are not running jobs.</p>
-      <div className="mt-2 overflow-x-auto rounded-xl border border-[#e0e4de]"><table className="w-full text-left text-xs">
-        <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Readiness", "Cancelled attempt", "Worker / fixture", "Reason / next action", "Since recorded claim"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
-        <tbody>{data.fixtureAttention.map(job => <JobRow key={job.id} job={job} now={now} onResult={onResult} />)}</tbody>
-      </table></div>
-    </section> : null}
+      : data.fixtureAttention?.length ? unverifiedFixtures(data).length ? "No active jobs. Fixture readiness below is unverified."
+        : "No active jobs. Cancelled attempt history is below." : "No active jobs or unresolved claims were observed."}</p>}
+    {data.fixtureAttention?.length ? <FixtureHistory data={data} now={now} onResult={onResult} /> : null}
     {data.resolvedRecoveries.length ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-[#68746d]">Verified return evidence ({data.resolvedRecoveries.length})</summary>
       <ul className="mt-2 space-y-1">{data.resolvedRecoveries.map(item => <li key={item.requestId}>{item.fixtureId} · {item.kind === "late-result"
         ? <button className="text-[#087d50] underline" onClick={() => onResult(item.recoveryRunId)}>Completed result</button>

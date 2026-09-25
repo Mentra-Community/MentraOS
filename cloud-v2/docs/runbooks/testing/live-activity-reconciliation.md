@@ -12,8 +12,9 @@ proof of cleanup. GitHub completion alone is not a routine verdict.
 | Linked recovery proves the fixture returned | Remove its follow-up and retain links to original and recovery results. The original test failure remains unchanged. |
 | Original result was never published, but trusted recovery binds its frozen snapshot | Use the recovery's return proof and show **Original result not published**. |
 | Export succeeded but fixture is unavailable | Show the result as a blocker even if an older worker settled its claim as terminal. |
-| Follow-up is abandoned | **Cancel further work** closes only inactive follow-up. Any unverified physical state moves to **Fixtures needing attention**. |
-| Another request passes on the same fixture | Does not silently resolve this request or overwrite its history. |
+| Follow-up is abandoned | **Cancel further work** closes only inactive follow-up. The attempt moves to **Cancelled attempt history** with its reason and result link, and is summarized under **Fixture readiness after cancelled follow-up**. |
+| Repeated cancelled attempts on one fixture | One summary row per exact worker + fixture: **current work** (a newer claim is in Live activity), **returned later** (a newer claim on that worker and fixture published verified return evidence), or **unverified** (this view has no newer evidence and cannot prove present state). |
+| Another request passes on the same fixture | Does not silently resolve this request or overwrite its history. A newer verified return is shown only as later fixture evidence; the same alias on another worker is not compared. |
 
 Every blocker names its reason, responsible role, and next action. Without an
 explicit structured input request, responsibility is the test runner/operator,

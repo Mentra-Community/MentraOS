@@ -3,7 +3,7 @@ import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { TestRunModel } from "../models/test-run.model";
 import type { TestRunClaim, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
 import type { TestRun } from "../types/test-run.types";
-import type { OverviewClaim, OverviewJob, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
+import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
 import { completeGithubActivity, GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
 
 export interface OverviewClaimRecord { claim: TestRunClaim; progress?: TestRunProgressCheckpoint; followUpCancellation?: TestRunFollowUpCancellation }
@@ -191,7 +191,9 @@ export class TestRunOverviewService {
     // Activity first; the waiting group is oldest-first, not a scheduling promise.
     const priority = (job: OverviewJob) => job.state === "running" ? 0 : ["blocked", "unknown"].includes(job.state) ? 1 : 2;
     jobs.sort((a, b) => priority(a) - priority(b) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    const live = new Set(jobs.flatMap(job => job.claims.map(claim => claim.requestId)));
     return { observedAt: this.now().toISOString(), jobs, warnings, resolvedRecoveries, fixtureAttention,
+      fixtureSummary: summarizeFixtures(fixtureAttention, claims, evidence, live),
       recentMaintenance: githubResult.status === "fulfilled" ? githubResult.value.recentMaintenance ?? [] : [] };
   }
 }
@@ -203,4 +205,34 @@ function attention(row: OverviewClaimRecord, state: ReturnType<typeof classifyEv
     ...(cancellation ? { cancelledAt: cancellation.cancelledAt }
       : canCancel ? { cancelRequestId: row.claim.requestId } : {}),
   };
+}
+
+const identity = (claim: { workerId: string; fixtureId: string }) => JSON.stringify([claim.workerId, claim.fixtureId]);
+const newestFirst = (a: { claimedAt: string }, b: { claimedAt: string }) => Date.parse(b.claimedAt) - Date.parse(a.claimedAt);
+/**
+ * Groups cancelled attempts by exact worker + fixture and compares them only with
+ * newer claims on that same identity. Evidence on another worker, an older claim,
+ * or a claim this view did not read never establishes this fixture's state.
+ */
+function summarizeFixtures(history: OverviewJob[], claims: OverviewClaimRecord[],
+  evidence: Map<string, ReturnType<typeof classifyEvidence>>, live: Set<string>): OverviewFixtureSummary[] {
+  const groups = new Map<string, OverviewClaim[]>();
+  for (const claim of history.flatMap(job => job.claims)) groups.set(identity(claim), [...groups.get(identity(claim)) ?? [], claim]);
+  const order = { "current-work": 0, unverified: 1, "later-return-verified": 2 } as const;
+  return [...groups.values()].map(attempts => {
+    attempts.sort(newestFirst);
+    const { workerId, fixtureId, claimedAt } = attempts[0]!;
+    const cancelled = new Set(attempts.map(claim => claim.requestId));
+    const later = claims.map(row => row.claim).filter(claim => !cancelled.has(claim.requestId)
+      && identity(claim) === identity(attempts[0]!) && Date.parse(claim.claimedAt) > Date.parse(claimedAt)).sort(newestFirst);
+    const current = later.filter(claim => live.has(claim.requestId)).map(claim => claim.requestId);
+    const returned = later.find(claim => evidence.get(claim.requestId)?.resolution);
+    const base = { workerId, fixtureId, cancelledRequestIds: attempts.map(claim => claim.requestId), latestCancelledClaimAt: claimedAt };
+    const laterReturn = returned ? { laterReturn: { requestId: returned.requestId, claimedAt: returned.claimedAt,
+      recoveryRunId: evidence.get(returned.requestId)!.resolution!.recoveryRunId } } : {};
+    const summary: OverviewFixtureSummary = current.length ? { ...base, status: "current-work", currentRequestIds: current, ...laterReturn }
+      : returned ? { ...base, status: "later-return-verified", ...laterReturn } : { ...base, status: "unverified" };
+    return summary;
+  }).sort((a, b) => order[a.status] - order[b.status] || newestFirst({ claimedAt: a.latestCancelledClaimAt }, { claimedAt: b.latestCancelledClaimAt })
+    || a.workerId.localeCompare(b.workerId) || a.fixtureId.localeCompare(b.fixtureId));
 }
