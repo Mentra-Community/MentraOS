@@ -11,12 +11,12 @@ import type { ContinuationTarget } from "./test-continuation.github";
 const occurrenceId = "tfo_" + "a".repeat(64), headSha = "b".repeat(40), archiveSha256 = "c".repeat(64);
 const secret = "continuation-test-only-".repeat(3);
 const grant: ContinuationGrant = { purpose: "mentra-routine-fixer-continuation-v1", environment: "dev", occurrenceId,
-  agentRunId: "run_123", leaseGeneration: 1, leaseTokenSha256: "e".repeat(64), candidate: { repository: "Mentra-Community/MentraOS", pullRequest: 44, headSha },
+  agentRunId: "run_123", executionAttempt: 1, leaseGeneration: 1, leaseTokenSha256: "e".repeat(64), candidate: { repository: "Mentra-Community/MentraOS", pullRequest: 44, headSha },
   routineIds: ["no-glasses"], actions: ["request-routine", "read-results"], expires: Math.floor(Date.now() / 1000) + 600 };
 const input = { source: { channel: "pr" as const, prNumber: 44, buildRunId: 80, publicationAttempt: 1 }, routineId: "no-glasses" as const, archiveSha256 };
 function fixture() {
   const packet = { schemaVersion: 1, occurrenceId, sourceStatus: "recorded", source: { repository: "Mentra-Community/MentraOS", headSha },
-    delivery: { state: "acknowledged", agentRunId: "run_123" } } as Awaited<ReturnType<TestRunService["failureDetail"]>>;
+    delivery: { state: "acknowledged", agentRunId: "run_123" }, evidence: { complete: true, assets: [{ assetId: "asset" }] } } as unknown as Awaited<ReturnType<TestRunService["failureDetail"]>>;
   let sends = 0, since = "", existing: { requestRunId: number; requestUrl: string } | null = null;
   let target: ContinuationTarget = { query: { channel: "pr", pr: 44 }, expectedHeadSha: headSha, automaticExpected: false };
   let claim: { state: string; resultRunId?: string } | null = null;
@@ -137,4 +137,29 @@ test("lease lost during artifact validation is checked again before the durable 
   f.builds.resolve = async (...args) => { const value = await original(...args); if (++calls === 2) f.loseLease(); return value; };
   await expect(f.service.request(grant, input)).rejects.toThrow("Stale lease");
   expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+});
+
+test("known cleaned-up attempt permits one budgeted same-head retry with its own permanent receipt", async () => {
+  const f = fixture(); await f.service.request(grant, input);
+  const retryGrant = { ...grant, executionAttempt: 2 };
+  await expect(f.service.request(retryGrant, { ...input, executionAttempt: 2, retryReason: "Recovered fixture infrastructure" })).rejects.toThrow("verified fixture cleanup");
+  f.claim({ state: "terminal", resultRunId: "result1" }); f.results();
+  const request = { ...input, executionAttempt: 2, retryReason: "Recovered fixture infrastructure" };
+  const second = await f.service.request(retryGrant, request);
+  expect(second.dispatchId).not.toBe(continuationOperationId(grant, input.routineId)); expect(f.sends()).toBe(2);
+  await f.service.request(retryGrant, request); expect(f.sends()).toBe(2); expect(f.rows.size).toBe(2);
+});
+
+test("registered failure asset links are followable with the same narrow continuation grant", async () => {
+  const f = fixture(); process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = secret; process.env.CLOUD_CORE_ENVIRONMENT = "dev";
+  await f.service.request(grant, input); f.results(); f.claim({ state: "recovery-required" });
+  const app = createTestFailureAgentApi(f.runs, f.service), id = continuationOperationId(grant, input.routineId);
+  const failureId = f.result.failureOccurrences[0]!.occurrenceId, headers = { authorization: `Bearer ${signTestContinuationGrant(grant, secret)}` };
+  const response = await app.request(`/${occurrenceId}/reruns/${id}/failures/${failureId}`, { headers });
+  expect(response.status).toBe(200);
+  const packet = await response.json() as { evidence: { assets: { path: string }[] } };
+  const path = packet.evidence.assets[0]!.path;
+  expect(path).toBe(`/api/agent/test-failures/${occurrenceId}/reruns/${id}/failures/${failureId}/assets/asset`);
+  const asset = await app.request(path.replace("/api/agent/test-failures", ""), { headers });
+  expect(asset.status).toBe(200); expect(await asset.text()).toBe("assigned");
 });

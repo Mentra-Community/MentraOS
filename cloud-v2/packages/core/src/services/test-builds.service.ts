@@ -98,7 +98,7 @@ export interface TestBuildGateway {
   resolve(source: TestBuildSource, routineId?: TestRoutineId): Promise<TestBuild>;
   dispatch(input: TestDispatchInput): Promise<{ requestRunId: number; requestUrl: string }>;
   progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
-  findExisting?(input: TestDispatchInput, since: string): Promise<{ requestRunId: number; requestUrl: string } | null>;
+  findExisting?(input: TestDispatchInput, since: string, excludeRequestRunIds?: number[]): Promise<{ requestRunId: number; requestUrl: string } | null>;
 }
 
 export class GithubTestBuildGateway implements TestBuildGateway {
@@ -338,17 +338,19 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return { attempt, tag, archive: data.artifacts.mac,
       result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
   }
-  async findExisting(input: TestDispatchInput, since: string) {
+  async findExisting(input: TestDispatchInput, since: string, excludeRequestRunIds: number[] = []) {
     requireThat(Number.isFinite(Date.parse(since)), "Invalid candidate publication time");
     const data = z.object({ total_count: z.number().int().nonnegative(), workflow_runs: z.array(runSchema) }).parse(await this.api(
       `${REPOSITORY}/actions/workflows/${REQUEST_WORKFLOW}/runs?event=workflow_dispatch&branch=dev&created=${encodeURIComponent(">=" + since)}&per_page=100`));
     requireThat(data.total_count === data.workflow_runs.length, "Request history is incomplete; reconcile before sending");
     const found: { requestRunId: number; requestUrl: string }[] = [];
     for (const run of data.workflow_runs) {
+      if (excludeRequestRunIds.includes(run.id)) continue;
       if (run.status !== "completed" || run.run_attempt !== 1)
         throw new TestDispatchError(503, "An unresolved request may own this build; reconcile before sending");
+      if (run.conclusion !== "success") continue;
       try {
-        const progress = await this.requestProgress(run.id, input, true);
+        const progress = await this.progress(run.id, input);
         if (progress.requestId && progress.state !== "unavailable") found.push({ requestRunId: run.id, requestUrl: runUrl(REPOSITORY, run.id) });
       } catch (error) {
         // Only an authenticated different selection is a miss. Missing, expired
@@ -373,19 +375,14 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return { requestRunId: data.workflow_run_id, requestUrl: data.html_url };
   }
   async progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress> {
-    return this.requestProgress(requestRunId, input);
-  }
-  private async requestProgress(requestRunId: number, input: TestDispatchInput, discovery = false): Promise<RequestProgress> {
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${requestRunId}/attempts/1`));
     requireThat(run.id === requestRunId && run.run_attempt === 1 && run.repository.full_name === REPOSITORY
       && run.head_repository.full_name === REPOSITORY && run.path === `.github/workflows/${REQUEST_WORKFLOW}`
       && run.event === "workflow_dispatch" && run.head_branch === "dev", "Unexpected request workflow identity");
     if (run.status !== "completed") return { state: "requesting", message: "GitHub is resolving the selected build." };
-    if (run.conclusion !== "success" && !discovery) return { state: "failed", message: "The request workflow did not complete successfully; no passing test is implied." };
+    if (run.conclusion !== "success") return { state: "failed", message: "The request workflow did not complete successfully; no passing test is implied." };
     const listed = z.object({ artifacts: z.array(artifactSchema) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
     const matches = listed.artifacts.filter(item => item.name === `mentra-routine-request-${run.id}-1`);
-    if (discovery && !matches.length && run.conclusion !== "success")
-      return { state: "unavailable", message: "Failed before publishing a request; no private dispatch was authorized." };
     requireThat(matches.length === 1 && !matches[0]!.expired && matches[0]!.size_in_bytes <= 2 * 1024 * 1024
       && matches[0]!.workflow_run.id === run.id && matches[0]!.workflow_run.head_sha === run.head_sha, "Request artifact is missing or ambiguous");
     const artifact = matches[0]!;

@@ -14,7 +14,7 @@ export async function requireContinuationLease(grant: ContinuationGrant, routine
   const url = new URL("/internal/routine-failure-lease", base);
   if (url.protocol !== "https:" || url.username || url.password) throw new TestDispatchError(503, "Invalid lease validator origin");
   const body = JSON.stringify({ schemaVersion: 1, environment: grant.environment, occurrenceId: grant.occurrenceId,
-    agentRunId: grant.agentRunId, candidate: grant.candidate, leaseGeneration: grant.leaseGeneration,
+    agentRunId: grant.agentRunId, candidate: grant.candidate, executionAttempt: grant.executionAttempt, leaseGeneration: grant.leaseGeneration,
     leaseTokenSha256: grant.leaseTokenSha256, routineId });
   const expires = Math.floor(Date.now() / 1000) + 30;
   const signature = createHmac("sha256", secret).update(`mentra-mini-lease-check-v1\n${expires}\n${body}`).digest("hex");

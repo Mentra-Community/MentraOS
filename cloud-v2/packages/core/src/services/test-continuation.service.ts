@@ -32,7 +32,7 @@ class MongoContinuationRepository implements ContinuationRepository {
 }
 export function continuationOperationId(grant: ContinuationGrant, routineId: TestRoutineId): string {
   const digest = createHash("sha256").update(JSON.stringify([grant.occurrenceId, grant.agentRunId, grant.candidate.repository,
-    grant.candidate.pullRequest, grant.candidate.headSha, routineId])).digest("hex");
+    grant.candidate.pullRequest, grant.candidate.headSha, routineId, grant.executionAttempt])).digest("hex");
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }
 const fail = (message: string): never => { throw new TestDispatchError(409, message); };
@@ -66,13 +66,23 @@ export class TestContinuationService {
       expectedHeadSha: target.expectedHeadSha, ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
   }
   async request(grant: ContinuationGrant, input: unknown) {
-    const data = continuationRequestSchema.parse(input), routineId = this.routine(grant, data.routineId);
+    const { executionAttempt, retryReason, ...data } = continuationRequestSchema.parse(input), routineId = this.routine(grant, data.routineId);
+    if (executionAttempt !== grant.executionAttempt) fail("Execution attempt differs from the capability");
     const packet = await this.case(grant), idempotencyKey = continuationOperationId(grant, routineId);
     const saved = await this.dispatch.receipt(idempotencyKey);
     if (saved) {
       this.bound(grant, saved);
-      if (!same(saved.input, { ...data, idempotencyKey })) fail("This candidate/routine already owns a different build request; reconcile it");
+      if (!same(saved.input, { ...data, idempotencyKey }) || saved.continuation?.executionAttempt !== executionAttempt
+        || saved.continuation.retryReason !== retryReason) fail("This candidate/routine already owns a different build request; reconcile it");
       return this.detail(grant, idempotencyKey);
+    }
+    const excludeRequestRunIds: number[] = [];
+    if (executionAttempt > 1) {
+      const previousId = continuationOperationId({ ...grant, executionAttempt: executionAttempt - 1 }, routineId);
+      const previous = await this.detail(grant, previousId);
+      if (previous.state !== "finished" || !previous.result || previous.result.outcomes.fixture !== "ready"
+        || previous.result.outcomes.teardown !== "passed" || previous.result.outcomes.evidence !== "complete") fail("Additional execution requires a completed request with verified fixture cleanup");
+      if (previous.requestRunId) excludeRequestRunIds.push(previous.requestRunId);
     }
     await this.checkLease(grant, routineId);
     const target = await this.source.target(packet, grant, routineId);
@@ -82,14 +92,14 @@ export class TestContinuationService {
     if (build.headSha !== target.expectedHeadSha || build.archive?.sha256 !== data.archiveSha256 || build.availability !== "available")
       fail("Published build does not match the candidate");
     const binding: TestContinuationBinding = { occurrenceId: grant.occurrenceId, agentRunId: grant.agentRunId,
-      candidate: grant.candidate, expectedHeadSha: target.expectedHeadSha,
+      candidate: grant.candidate, executionAttempt, ...(retryReason ? { retryReason } : {}), expectedHeadSha: target.expectedHeadSha,
       ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
     const request: TestDispatchInput = { ...data, idempotencyKey };
     if (!this.builds.findExisting) throw new TestDispatchError(503, "Trusted request reconciliation is unavailable");
     const since = target.requestNotBefore && Date.parse(target.requestNotBefore) > Date.parse(build.createdAt)
       ? target.requestNotBefore : build.createdAt;
-    const existing = await this.builds.findExisting(request, since);
-    if (!existing && target.automaticExpected)
+    const existing = await this.builds.findExisting(request, since, excludeRequestRunIds);
+    if (!existing && target.automaticExpected && executionAttempt === 1)
       throw new TestDispatchError(503, "Waiting for the existing automatic request; no duplicate was sent");
     await this.dispatch.create(request, `routine-fixer:${grant.agentRunId}`, binding, existing ?? undefined, () => this.checkLease(grant, routineId));
     return this.detail(grant, idempotencyKey);
@@ -137,7 +147,9 @@ export class TestContinuationService {
     const view = await this.detail(grant, operationId);
     if (!view.recordedResults.some(result => result.failureOccurrenceIds.includes(occurrenceId)))
       throw new TestDispatchError(404, "Failure is not part of this registered result");
-    return this.runs.failureDetail(occurrenceId);
+    const packet = await this.runs.failureDetail(occurrenceId);
+    return { ...packet, evidence: { ...packet.evidence, assets: packet.evidence.assets.map(asset => ({ ...asset,
+      path: `/api/agent/test-failures/${grant.occurrenceId}/reruns/${operationId}/failures/${occurrenceId}/assets/${asset.assetId}` })) } };
   }
   async media(grant: ContinuationGrant, operationId: string, occurrenceId: string, assetId: string, request: Request) {
     await this.failure(grant, operationId, occurrenceId);

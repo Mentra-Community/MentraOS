@@ -13,6 +13,7 @@ export const continuationGrantSchema = z.object({
   occurrenceId: testFailureOccurrenceIdSchema,
   agentRunId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/),
   candidate: continuationCandidateSchema,
+  executionAttempt: z.number().int().min(1).max(2),
   leaseGeneration: z.number().int().positive().safe(),
   leaseTokenSha256: z.string().regex(/^[a-f0-9]{64}$/),
   routineIds: z.array(testRoutineIdSchema).min(1).max(4).refine(ids => new Set(ids).size === ids.length),
@@ -25,9 +26,16 @@ export interface TestContinuationBinding {
   occurrenceId: string;
   agentRunId: string;
   candidate: ContinuationCandidate;
+  executionAttempt: number;
+  retryReason?: string;
   expectedHeadSha: string;
   expectedHarnessSha?: string;
 }
 // The caller selects only a published build. Repository, branch and URLs are
 // resolved from authenticated case/candidate metadata, never request text.
-export const continuationRequestSchema = testDispatchInputSchema.omit({ idempotencyKey: true });
+export const continuationRequestSchema = testDispatchInputSchema.omit({ idempotencyKey: true }).extend({
+  executionAttempt: z.number().int().min(1).max(2).default(1),
+  retryReason: z.string().min(1).max(400).optional(),
+}).superRefine((value, ctx) => {
+  if (value.executionAttempt > 1 && !value.retryReason) ctx.addIssue({ code: "custom", message: "An additional execution requires a recorded reason" });
+});
