@@ -95,14 +95,14 @@ const summaryText: Record<OverviewFixtureSummary["status"], { badge: string; col
   unverified: { badge: "unverified", colors: "bg-[#fff5df] text-[#805619]",
     next: "Confirm this fixture's state. If it is not ready, recover it once and publish verified return evidence." },
   "latest-return-verified": { badge: "returned", colors: "bg-[#e6f5ed] text-[#087d50]",
-    next: "No recovery is needed for the cancelled attempts. Use outside routine claims is not observed." },
+    next: "No recovery is needed for the resolved requests. Use outside routine claims is not observed." },
 };
 const statusOrder = ["current-work", "not-checked", "unverified", "latest-return-verified"] as const;
 const unverifiedFixtures = (data: TestRunOverview) => (data.fixtureSummary ?? []).filter(item => item.status !== "latest-return-verified");
 function LatestClaim({ item, now, onResult }: { item: OverviewFixtureSummary; now: number; onResult: (id: string) => void }) {
   const latest = item.latest;
   if (!latest) return <p>{item.status === "not-checked" ? "Newer claims on this worker and fixture could not be checked."
-    : "No newer claim on this worker and fixture since the newest cancelled attempt."}</p>;
+    : "No newer claim on this worker and fixture since the newest resolved request."}</p>;
   return <p>Latest claim {latest.requestId}, {elapsed(latest.claimedAt, now)} ago: {item.status === "latest-return-verified"
     ? "cleanup and return were verified." : latest.reason}{latest.resultRunId ? <>{" "}
       <button className="text-[#087d50] underline" onClick={() => onResult(latest.resultRunId!)}>Result</button></> : null}</p>;
@@ -110,9 +110,9 @@ function LatestClaim({ item, now, onResult }: { item: OverviewFixtureSummary; no
 function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: number; onResult: (id: string) => void }) {
   const items = data.fixtureSummary ?? [], attempts = data.fixtureAttention ?? [];
   const count = (status: OverviewFixtureSummary["status"]) => items.filter(item => item.status === status).length;
-  return <section className="mt-5" aria-label="Fixture readiness after cancelled follow-up">
-    <h4 className="text-sm font-semibold">Fixture readiness after cancelled follow-up</h4>
-    <p className="mt-1 text-xs text-[#68746d]">One row per worker and fixture, judged only by its newest routine claim. Cancelled attempts keep their original results.</p>
+  return <section className="mt-5" aria-label="Fixture readiness after resolved follow-up">
+    <h4 className="text-sm font-semibold">Fixture readiness after resolved follow-up</h4>
+    <p className="mt-1 text-xs text-[#68746d]">One row per worker and fixture, judged only by its newest routine claim. Cancelled and closed requests keep their original results.</p>
     {items.length ? <>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">{statusOrder.filter(status => count(status)).map(status =>
         <span key={status} className="rounded-md bg-[#f1f4ef] px-2 py-1"><strong>{count(status)}</strong> {summaryText[status].badge}</span>)}</div>
@@ -122,12 +122,12 @@ function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: n
           <td className="px-4 py-3"><span className={"inline-block rounded-md px-2 py-1 text-[11px] font-medium " + summaryText[item.status].colors}>{summaryText[item.status].badge}</span></td>
           <td className="max-w-[190px] break-words px-4 py-3"><p>{item.workerId}</p><p className="mt-1 text-[11px] text-[#68746d]">Fixture: {item.fixtureId}</p></td>
           <td className="min-w-[250px] max-w-[340px] px-4 py-3 text-[11px]"><LatestClaim item={item} now={now} onResult={onResult} />
-            <p className="mt-1 text-[#68746d]">{item.cancelledRequestIds.length} cancelled {item.cancelledRequestIds.length === 1 ? "attempt" : "attempts"} before it; newest {elapsed(item.latestCancelledClaimAt, now)} ago.</p></td>
+            <p className="mt-1 text-[#68746d]">{item.cancelledRequestIds.length} resolved {item.cancelledRequestIds.length === 1 ? "request" : "requests"} before it; newest {elapsed(item.latestCancelledClaimAt, now)} ago.</p></td>
           <td className="min-w-[220px] max-w-[300px] px-4 py-3 text-[11px]"><p>{summaryText[item.status].next}</p>
             {item.status !== "latest-return-verified" ? <p className="mt-1">Responsible: Test runner / operator</p> : null}</td>
         </tr>)}</tbody>
       </table></div></> : <p className="mt-2 text-xs text-[#805619]">Fixture readiness was not reported by Core. Treat these fixtures as unverified.</p>}
-    <details className="mt-2 text-xs"><summary className="cursor-pointer text-[#68746d]">Cancelled attempt history ({attempts.length})</summary>
+    <details className="mt-2 text-xs"><summary className="cursor-pointer text-[#68746d]">Resolved follow-up history ({attempts.length})</summary>
       <ul className="mt-2 space-y-2">{attempts.map(job => <li key={job.id}>
         {job.requests.length ? job.requests.map(request => <RequestLabel key={request.requestId} request={request} />) : <p className="font-medium">{job.claims[0]?.requestId ?? job.title}</p>}
         <p className="text-[11px] text-[#68746d]">{job.claims[0] ? job.claims[0].workerId + " · Fixture: " + job.claims[0].fixtureId : "Fixture not reported"}
@@ -151,7 +151,7 @@ export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: T
       <tbody>{data.jobs.map(job => <JobRow key={job.id} job={job} now={now} onResult={onResult} onCancel={onCancel} />)}</tbody>
     </table></div> : <p className="mt-3 text-sm text-[#68746d]">{data.warnings.length ? "No activity could be confirmed from the available sources."
       : data.fixtureAttention?.length ? unverifiedFixtures(data).length || !data.fixtureSummary?.length ? "No active jobs. Some fixture readiness below is not verified."
-        : "No active jobs. Cancelled attempt history is below." : "No active jobs or unresolved claims were observed."}</p>}
+        : "No active jobs. Resolved follow-up history is below." : "No active jobs or unresolved claims were observed."}</p>}
     {data.fixtureAttention?.length ? <FixtureHistory data={data} now={now} onResult={onResult} /> : null}
     {data.resolvedRecoveries.length ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-[#68746d]">Verified return evidence ({data.resolvedRecoveries.length})</summary>
       <ul className="mt-2 space-y-1">{data.resolvedRecoveries.map(item => <li key={item.requestId}>{item.fixtureId} · {item.kind === "late-result"
