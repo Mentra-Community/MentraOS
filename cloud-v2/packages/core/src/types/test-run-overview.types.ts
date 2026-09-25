@@ -55,8 +55,8 @@ export interface OverviewResolution {
 }
 /**
  * One row per exact worker + fixture identity with cancelled, unverified attempts.
- * Uses only claims and results already read for this overview. It never certifies
- * present readiness or changes an attempt's verdict.
+ * Decided only by the newest stored claim on that exact identity and that claim's
+ * own results. It never changes an attempt's verdict, claim or cancellation.
  */
 export interface OverviewFixtureSummary {
   workerId: string;
@@ -65,13 +65,15 @@ export interface OverviewFixtureSummary {
   cancelledRequestIds: string[];
   latestCancelledClaimAt: string;
   /**
-   * `current-work`: a newer claim on this worker/fixture is in `jobs`.
-   * `later-return-verified`: a newer claim on this worker/fixture published verified return evidence.
-   * `unverified`: this view has no newer evidence; the fixture's present state is not proven here.
+   * `current-work`: the newest claim on this worker/fixture is unsettled or in `jobs`.
+   * `latest-return-verified`: the newest claim settled and its own results prove verified
+   *   return. This is the latest known routine return, not an observation of later activity.
+   * `unverified`: the newest claim is a cancelled attempt, or its result failed, is missing or conflicts.
+   * `not-checked`: the claim or result lookup failed or exceeded its bound; no older return is shown.
    */
-  status: "current-work" | "later-return-verified" | "unverified";
-  currentRequestIds?: string[];
-  laterReturn?: { requestId: string; claimedAt: string; recoveryRunId: string };
+  status: "current-work" | "latest-return-verified" | "unverified" | "not-checked";
+  /** Newest claim on this worker/fixture after the newest cancelled attempt, when one exists. */
+  latest?: { requestId: string; claimedAt: string; reason: string; resultRunId?: string };
 }
 export interface TestRunOverview {
   observedAt: string;
@@ -81,5 +83,6 @@ export interface TestRunOverview {
   resolvedRecoveries: OverviewResolution[];
   /** Every cancelled attempt whose own return is unverified. Historical; not running jobs. */
   fixtureAttention?: OverviewJob[];
-  fixtureSummary?: OverviewFixtureSummary[];
+  /** One readiness summary per worker/fixture in `fixtureAttention`. */
+  fixtureSummary: OverviewFixtureSummary[];
 }

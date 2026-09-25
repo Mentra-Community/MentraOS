@@ -52,6 +52,17 @@ describe.skipIf(!uri)("Mongo live activity reconciliation", () => {
     expect((await TestRunClaimModel.findOne({ requestId: late }).lean())?.claim).toEqual(claim(late));
     expect((await TestRunModel.findOne({ runId: late }).lean())?.payload.outcomes.test).toBe("failed");
   });
+  test("the newest stored claim per exact worker and fixture includes ordinary terminal passes", async () => {
+    const at = (minute: number) => new Date(Date.parse(stamp) + minute * 60_000).toISOString();
+    const stored = (id: string, workerId: string, fixtureId: string, minute: number) => ({ ...claim(id, true), workerId, fixtureId, claimedAt: at(minute) });
+    const rows = [stored("latest-a", "mini-1", "UNPAIRED", 20), stored("older-a", "mini-1", "UNPAIRED", 10),
+      stored("other-worker", "mini-2", "UNPAIRED", 30), stored("unrequested", "mini-1", "OTHER", 40)];
+    await TestRunClaimModel.create(rows.map(value => ({ requestId: value.requestId, claim: value, executionTokenSha256: "e".repeat(64) })));
+    const latest = await new MongoTestRunOverviewRepository().latestFixtureClaims([{ workerId: "mini-1", fixtureId: "UNPAIRED" },
+      { workerId: "mini-2", fixtureId: "UNPAIRED" }, { workerId: "mini-3", fixtureId: "UNPAIRED" }]);
+    expect(latest.map(value => value.requestId).sort()).toEqual(["latest-a", "other-worker"]);
+    expect(latest.find(value => value.requestId === "latest-a")).toEqual(rows[0]!);
+  });
   test("competing cancellation persists one audit without rewriting settlement; a concurrent progress update rejects stale closure", async () => {
     const id = "routine-102-1-dev-day1-ota";
     const repository = new MongoTestRunFollowUpRepository();
