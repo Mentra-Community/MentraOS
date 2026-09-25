@@ -12,7 +12,7 @@ export const BUNDLED_MINIAPPS: number[] = [
   require("@assets/miniapps/com.mentra.livestreamer-1.0.34.zip"),
   require("@assets/miniapps/com.mentra.merge-0.1.33.zip"),
   require("@assets/miniapps/com.mentra.navigation-1.1.34.zip"),
-  require("@assets/miniapps/com.mentra.notes-1.0.19.zip"),
+  require("@assets/miniapps/com.mentra.notes-1.0.20.zip"),
   require("@assets/miniapps/com.mentra.recorder-1.0.10.zip"),
   require("@assets/miniapps/com.mentra.teleprompter-1.0.12.zip"),
   require("@assets/miniapps/com.mentra.translation-1.0.24.zip"),
