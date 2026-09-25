@@ -127,7 +127,6 @@ class MantleManager {
   private subs: Array<any> = []
   private initialized: boolean = false
   private miniappGeneration = 0
-  private storePreviewUnsubscribe: (() => void) | null = null
   private initialization: Promise<void> | null = null
   private initializationGeneration = 0
   private cleanupTask: Promise<void> | null = null
@@ -525,9 +524,8 @@ class MantleManager {
         bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
         bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
         bundledSystemMiniappPublisherKeys: BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
-        isMiniappAvailable: (packageName) =>
-          !BUNDLED_STORE_MINIAPP_PACKAGES.some((store) => store === packageName) ||
-          Boolean(engine.settings.get(SETTINGS.miniapp_store_preview_enabled.key)),
+        isMiniappAvailable: (packageName, mode) =>
+          mode === "background" || !BUNDLED_STORE_MINIAPP_PACKAGES.some((store) => store === packageName),
       },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
@@ -668,8 +666,6 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
     storeUpdateScheduler.stop()
-    this.storePreviewUnsubscribe?.()
-    this.storePreviewUnsubscribe = null
     this.activePhoneNotificationId = null
 
     phoneLocationService.stopPhoneLocation()
@@ -763,19 +759,10 @@ class MantleManager {
       if (!isCurrent()) return
     }
 
-    // The Store ships as a real build-owned SYSTEM miniapp so its trust and
-    // update paths are exercised before launch, but it is a host-gated preview:
-    // normal users get no Home tile, running-tray entry, catalog traffic, or
-    // maintenance warnings. miniapp.json cannot opt into this gate.
-    await this.applyStorePreview(Boolean(engine.settings.get(SETTINGS.miniapp_store_preview_enabled.key)))
+    // Store packages run only as background update workers. Clear any old
+    // preview UI/autostart state without interrupting an active maintenance action.
+    await this.prepareBackgroundStores()
     if (!isCurrent()) return
-    this.storePreviewUnsubscribe?.()
-    this.storePreviewUnsubscribe = engine.settings.onChanged<boolean>(
-      SETTINGS.miniapp_store_preview_enabled.key,
-      (enabled) => {
-        void this.applyStorePreview(Boolean(enabled))
-      },
-    )
 
     // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
@@ -790,22 +777,22 @@ class MantleManager {
     await miniappLauncher
       .autostartLocalMiniapps()
       .catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
+    if (!isCurrent()) return
+
+    // Restore user sessions before the first check so updates defer for apps
+    // the user left running. Only schedule Stores allowed by this deployment.
+    const installed = await appRegistry.getInstalledMiniapps({includeBackgroundOnly: true})
+    if (!isCurrent()) return
+    void storeUpdateScheduler.start(
+      BUNDLED_STORE_MINIAPP_PACKAGES.filter((packageName) => installed.some((app) => app.packageName === packageName)),
+    )
   }
 
-  private async applyStorePreview(enabled: boolean): Promise<void> {
+  private async prepareBackgroundStores(): Promise<void> {
     for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
-      engine.miniapps.setHiddenStatus(packageName, !enabled)
-    }
-    if (enabled) {
-      // Store maintenance is a host-triggered transient action. It wakes each
-      // bundled Store without projecting it into the running tray and tears the
-      // context down after reconciliation unless the user opens it.
-      await engine.miniapps.refresh()
-      void storeUpdateScheduler.start(BUNDLED_STORE_MINIAPP_PACKAGES)
-      return
+      engine.miniapps.setHiddenStatus(packageName, true)
     }
 
-    storeUpdateScheduler.stop()
     const menuItems = engine.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | null
     const visibleMenuItems = menuItems?.filter(
       (item) => !BUNDLED_STORE_MINIAPP_PACKAGES.some((packageName) => packageName === item.packageName),
@@ -816,13 +803,12 @@ class MantleManager {
     for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
       const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
       if (app?.foregrounded) engine.miniapps.clearForeground()
-      // Also clears the persisted running bit so a Store opened in preview
-      // cannot reappear in the tray after preview is later disabled.
-      if (app) await engine.miniapps.stop(packageName)
-      // Availability may already have removed the tile during a refresh.
-      // Stop the context and clear autostart even when it is no longer listed.
+      // A user-started context from an older preview must not survive. An
+      // invocation-owned background context may already be applying an update.
+      if (app?.running || miniappLauncher.isProjectedRunning(packageName)) {
+        await miniappLauncher.stop(packageName)
+      }
       saveLocalAppRunningState(packageName, false)
-      await miniappLauncher.stop(packageName)
     }
     await engine.miniapps.refresh()
   }

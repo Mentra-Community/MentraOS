@@ -76,6 +76,7 @@ import {
   getMiniappConfiguration,
   getUiSeams,
   isFeatureEnabled,
+  isMiniappAvailable,
 } from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
 import {invokePhoneWifiSeam} from "../runtime/phoneWifiSeam"
@@ -6589,7 +6590,15 @@ class LocalMiniappRuntime {
       throw this.actionError(MiniappErrorCode.PAYLOAD_TOO_LARGE, "action params exceeded the 256 KB cap")
     }
 
-    const app = this.interopApps().find((candidate) => candidate.packageName === target)
+    // Background-only packages stay out of every user/miniapp-facing list.
+    // The host can resolve their installed declarations without exposing them.
+    const backgroundOnly = !isMiniappAvailable(target)
+    const app =
+      backgroundOnly && allowHostAudience
+        ? (await appRegistry.getInstalledMiniapps({includeBackgroundOnly: true})).find(
+            (candidate) => candidate.packageName === target,
+          )
+        : this.interopApps().find((candidate) => candidate.packageName === target)
     if (!app) throw this.actionError(MiniappErrorCode.APP_NOT_FOUND, `Miniapp not found: ${target}`)
     if (!allowHostAudience && isStoreMiniappPackage(target) && app.hidden) {
       throw this.actionError(MiniappErrorCode.ACTION_NOT_FOUND, `${target} is not available`)
@@ -6609,7 +6618,11 @@ class LocalMiniappRuntime {
     }
 
     const action = (app.actions ?? []).find((candidate) => candidate.id === actionId)
-    if (!action || (action.audience === "host" && !allowHostAudience)) {
+    if (
+      !action ||
+      (action.audience === "host" && !allowHostAudience) ||
+      (backgroundOnly && (!allowHostAudience || action.audience !== "host" || action.lifecycle !== "transient"))
+    ) {
       throw this.actionError(MiniappErrorCode.ACTION_NOT_FOUND, `${target} does not declare action "${actionId}"`)
     }
 

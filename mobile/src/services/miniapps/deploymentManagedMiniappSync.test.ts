@@ -1132,6 +1132,21 @@ it("keeps an unavailable bundled release installed while excluding it from regis
   expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
 })
 
+it("resolves background-only packages for maintenance without adding them to cached discovery", async () => {
+  selectDeployment(consumer)
+  const config = getConfigValues()
+  configure({auth: {}, config: {...config, isMiniappAvailable: (_packageName, mode) => mode === "background"}})
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)).toBeUndefined()
+  expect(
+    (await registry.getInstalledMiniapps({includeBackgroundOnly: true})).find((app) => app.packageName === pkg)
+      ?.version,
+  ).toBe(version)
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)).toBeUndefined()
+
+  configure({auth: {}, config: {...getConfigValues(), localMiniappAllowlist: [], localMiniappPolicy: undefined}})
+  expect(await registry.getInstalledMiniapps({includeBackgroundOnly: true})).toEqual([])
+})
+
 it.each(["manual", "store", "bundled"] as const)(
   "%s installs accept equal/newer versions and reject older ones",
   async (source) => {

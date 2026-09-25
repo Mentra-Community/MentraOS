@@ -6,6 +6,7 @@ function harness() {
   let foreground: (() => void) | null = null
   let reconnect: (() => void) | null = null
   let interval: (() => void) | null = null
+  let intervalMs = 0
   const scheduler = new StoreUpdateSchedulerCore({
     invoke: async (packageName) => {
       calls.push(packageName)
@@ -22,8 +23,9 @@ function harness() {
         reconnect = null
       }
     },
-    setInterval: (handler) => {
+    setInterval: (handler, ms) => {
       interval = handler
+      intervalMs = ms
       return 1
     },
     clearInterval: () => {
@@ -38,6 +40,7 @@ function harness() {
     foreground: () => foreground?.(),
     reconnect: () => reconnect?.(),
     interval: () => interval?.(),
+    intervalMs: () => intervalMs,
   }
 }
 
@@ -46,6 +49,7 @@ describe("StoreUpdateSchedulerCore", () => {
     const h = harness()
     await h.scheduler.start(["com.mentra.store", "com.oem.store"])
     expect(h.calls).toEqual(["com.mentra.store", "com.oem.store"])
+    expect(h.intervalMs()).toBe(15 * 60_000)
 
     h.foreground()
     await h.scheduler.waitForIdle()
@@ -66,5 +70,18 @@ describe("StoreUpdateSchedulerCore", () => {
     h.interval()
     await h.scheduler.trigger()
     expect(h.calls).toEqual(["com.mentra.store"])
+  })
+
+  test("stops maintenance when the active deployment has no permitted Stores", async () => {
+    const h = harness()
+    await h.scheduler.start(["com.mentra.store"])
+    await h.scheduler.start([])
+    h.foreground()
+    h.reconnect()
+    h.interval()
+    await h.scheduler.trigger()
+    expect(h.calls).toEqual(["com.mentra.store"])
+    await h.scheduler.start(["com.mentra.store"])
+    expect(h.calls).toHaveLength(2)
   })
 })

@@ -11,6 +11,7 @@ import type {MentraJSRouter} from "../MentraJSRouter"
 // getActiveVersion is mutable so a test can force an "unresolvable" bundle.
 let activeVersion = "1.0.0"
 let available = true
+let backgroundAvailable = false
 let releaseSource = "bundled_asset"
 let releaseStorePackageName: string | undefined
 
@@ -70,7 +71,7 @@ beforeAll(async () => {
   configure({
     auth: {getSubjectToken: async () => ({token: "test", type: "test"})},
     config: {
-      isMiniappAvailable: () => available,
+      isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
       bundledSystemMiniappPackages: ["com.mentra.store", "com.mentra.notes"],
       bundledStoreMiniappPackages: ["com.mentra.store"],
       bundledSystemMiniappStoreOwners: {
@@ -132,6 +133,7 @@ describe("MiniappLauncher", () => {
   beforeEach(() => {
     activeVersion = "1.0.0"
     available = true
+    backgroundAvailable = false
     releaseSource = "bundled_asset"
     releaseStorePackageName = undefined
     waitForConnectCalls = []
@@ -149,6 +151,36 @@ describe("MiniappLauncher", () => {
   test("disabling availability during bundle resolution prevents the pending spawn", async () => {
     const launch = miniappLauncher.ensureRunning("com.mentra.store")
     available = false
+    await expect(launch).rejects.toThrow()
+    expect(mockRouter.spawnCalls).toHaveLength(0)
+  })
+
+  test("a background-only Store can reconcile without becoming launchable or exposing its UI", async () => {
+    available = false
+    backgroundAvailable = true
+    await miniappLauncher.ensureConnected("com.mentra.store", 5000, undefined, {projectRunning: false})
+    expect(waitForConnectCalls).toEqual(["com.mentra.store"])
+    expect(mockRouter.spawnCalls[0].projectRunning).toBe(false)
+    expect(miniappLauncher.isProjectedRunning("com.mentra.store")).toBe(false)
+    expect(await miniappLauncher.resolveBundle("com.mentra.store")).toBeNull()
+    await expect(miniappLauncher.ensureRunning("com.mentra.store")).rejects.toThrow("disabled")
+    expect(mockRouter.spawnCalls).toHaveLength(1)
+    expect(miniappLauncher.isProjectedRunning("com.mentra.store")).toBe(false)
+  })
+
+  test("background execution cannot bypass a host policy that disables both modes", async () => {
+    available = false
+    await expect(
+      miniappLauncher.ensureConnected("com.mentra.store", 5000, undefined, {projectRunning: false}),
+    ).rejects.toThrow("disabled")
+    expect(mockRouter.spawnCalls).toHaveLength(0)
+  })
+
+  test("background availability is rechecked after resolving the bundle", async () => {
+    available = false
+    backgroundAvailable = true
+    const launch = miniappLauncher.ensureConnected("com.mentra.store", 5000, undefined, {projectRunning: false})
+    backgroundAvailable = false
     await expect(launch).rejects.toThrow()
     expect(mockRouter.spawnCalls).toHaveLength(0)
   })

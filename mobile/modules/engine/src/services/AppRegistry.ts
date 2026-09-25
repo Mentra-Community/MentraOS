@@ -1720,7 +1720,7 @@ class AppRegistry {
    * disk install of the same package; installing a release clears that dev
    * registration in finalizeInstall. Native offline apps keep top priority.
    */
-  private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
+  private mergeProjectedApps(diskApps: ClientApp[], includeBackgroundOnly = false): ClientApp[] {
     const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
     const dev = this.projectDevApps().filter(
@@ -1737,10 +1737,14 @@ class AppRegistry {
         !offlinePackages.has(app.packageName) &&
         !devPackages.has(app.packageName),
     )
-    return [...installed, ...dev, ...offline].filter((app) => isMiniappAvailable(app.packageName))
+    return [...installed, ...dev, ...offline].filter((app) =>
+      isMiniappAvailable(app.packageName, includeBackgroundOnly ? "background" : "interactive"),
+    )
   }
 
-  public async getInstalledMiniapps(): Promise<ClientApp[]> {
+  public async getInstalledMiniapps({includeBackgroundOnly = false}: {includeBackgroundOnly?: boolean} = {}): Promise<
+    ClientApp[]
+  > {
     // The same on-disk package may select a different release in a workspace.
     // A policy transition must re-derive metadata, not just filter cached tiles.
     const selectionPolicy = getConfigValues().localMiniappPolicy
@@ -1756,6 +1760,7 @@ class AppRegistry {
           ...a,
           running: miniappRunningRegistry.has(a.packageName),
         })),
+        includeBackgroundOnly,
       )
     }
 
@@ -1826,7 +1831,7 @@ class AppRegistry {
 
       this.cachedApps = out
       this.refreshNeeded = false
-      return this.mergeProjectedApps(this.cachedApps)
+      return this.mergeProjectedApps(this.cachedApps, includeBackgroundOnly)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local applets", error)
       return this.mergeProjectedApps(
@@ -1834,6 +1839,7 @@ class AppRegistry {
           ...a,
           running: miniappRunningRegistry.has(a.packageName),
         })),
+        includeBackgroundOnly,
       )
     }
   }

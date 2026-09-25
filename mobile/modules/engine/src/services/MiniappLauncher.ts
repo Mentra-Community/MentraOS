@@ -161,8 +161,14 @@ class MiniappLauncher {
    * NOT spawn. Returns null when the bundle can't be resolved (dev server
    * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
-  async resolveBundle(packageName: string, hints?: LaunchHints): Promise<ResolvedBundle | null> {
-    if (!isMiniappAvailable(packageName)) return null
+  async resolveBundle(
+    packageName: string,
+    hints?: LaunchHints,
+    runtimeOptions?: RuntimeLaunchOptions,
+  ): Promise<ResolvedBundle | null> {
+    if (!isMiniappAvailable(packageName, runtimeOptions?.projectRunning === false ? "background" : "interactive")) {
+      return null
+    }
     // QR-selected local code can override a bundled identity, but receives no
     // SYSTEM privileges. Workspace pins never follow consumer dev URLs.
     const devUrl = canUseManualMiniappRelease(packageName)
@@ -330,7 +336,10 @@ class MiniappLauncher {
   ): Promise<LaunchResult> {
     const installation = this.installing.get(packageName)
     if (installation) await installation
-    if (!isMiniappAvailable(packageName) || !isLocalMiniappPackageAllowed(packageName)) {
+    if (
+      !isMiniappAvailable(packageName, runtimeOptions?.projectRunning === false ? "background" : "interactive") ||
+      !isLocalMiniappPackageAllowed(packageName)
+    ) {
       throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
     }
     const router = this.requireRouter()
@@ -341,7 +350,7 @@ class MiniappLauncher {
     // the dev server has since dropped.
     if (router.registeredPackages().includes(packageName)) {
       if (projectRunning) router.projectRunning(packageName)
-      const existing = await this.resolveBundle(packageName, hints).catch(() => null)
+      const existing = await this.resolveBundle(packageName, hints, runtimeOptions).catch(() => null)
       return {uiUri: existing?.uiUri ?? null, uiBaseDir: existing?.uiBaseDir ?? null}
     }
 
@@ -369,13 +378,13 @@ class MiniappLauncher {
     runtimeOptions?: RuntimeLaunchOptions,
   ): Promise<LaunchResult> {
     const router = this.requireRouter()
-    const resolved = await this.resolveBundle(packageName, hints)
+    const resolved = await this.resolveBundle(packageName, hints, runtimeOptions)
     if (!resolved) {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
     }
     const version = resolved.installedManifest?.version
     if (
-      !isMiniappAvailable(packageName) ||
+      !isMiniappAvailable(packageName, runtimeOptions?.projectRunning === false ? "background" : "interactive") ||
       !isInstalledMiniappAllowed(
         packageName,
         version,

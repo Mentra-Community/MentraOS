@@ -21,6 +21,10 @@ export class StoreUpdateSchedulerCore {
 
   start(packages: readonly string[]): Promise<void> {
     this.packages = [...new Set(packages)]
+    if (this.packages.length === 0) {
+      this.stop()
+      return Promise.resolve()
+    }
     if (this.started) {
       return this.trigger()
     }

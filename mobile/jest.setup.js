@@ -991,6 +991,7 @@ const mockIslandEntries = () => {
     configureRuntime: jest.fn(),
     configureLauncher: jest.fn(),
     miniappLauncher: {
+      isProjectedRunning: jest.fn(() => false),
       ensureConnected: jest.fn(() => Promise.resolve(true)),
       ensureRunning: jest.fn(() => Promise.resolve(true)),
       resolveBundle: jest.fn(() => Promise.resolve(null)),

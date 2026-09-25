@@ -119,7 +119,7 @@ function resetMantleTestState() {
   useDisplayStore.setState({view: "main"})
 }
 
-let miniappAvailability: (packageName: string) => boolean
+let miniappAvailability: (packageName: string, mode?: "interactive" | "background") => boolean
 let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
 let routerPushSpy: jest.SpiedFunction<typeof router.push>
 let syncCoreDisplayOwner: () => void
@@ -659,64 +659,76 @@ describe("MantleManager", () => {
     })
   })
 
-  it("keeps the bundled Store hidden and unscheduled until Store preview is enabled", async () => {
-    expect(SETTINGS.miniapp_store_preview_enabled.defaultValue()).toBe(false)
-    const start = jest.spyOn(storeUpdateScheduler, "start").mockResolvedValue()
-    const stop = jest.spyOn(storeUpdateScheduler, "stop").mockImplementation(() => {})
+  it("keeps Store interactive access disabled regardless of an old preview preference", async () => {
+    expect(SETTINGS).not.toHaveProperty("miniapp_store_preview_enabled")
+    const get = engine.settings.get as jest.Mock
+    const originalGet = get.getMockImplementation()!
+    get.mockImplementation((key) => (key === "miniapp_store_preview_enabled" ? true : originalGet(key)))
+    try {
+      expect(miniappAvailability("com.mentra.store")).toBe(false)
+      expect(miniappAvailability("com.mentra.store", "interactive")).toBe(false)
+      expect(miniappAvailability("com.mentra.store", "background")).toBe(true)
+      expect(miniappAvailability("com.mentra.notes")).toBe(true)
+    } finally {
+      get.mockImplementation(originalGet)
+    }
+  })
+
+  it("clears old Store UI and autostart state without interrupting a background update", async () => {
+    const instance = mantle as unknown as {prepareBackgroundStores: () => Promise<void>}
     useAppStatusStore.setState({
-      apps: [
-        {
-          packageName: "com.mentra.store",
-          local: true,
-          running: true,
-          foregrounded: true,
-        },
-      ] as any,
+      apps: [{packageName: "com.mentra.store", local: true, running: true, foregrounded: true}] as any,
     })
     await engine.settings.set(SETTINGS.menu_apps.key, [
       {name: "Store", packageName: "com.mentra.store", running: true},
       {name: "Notes", packageName: "com.mentra.notes", running: false},
     ])
-
-    await (mantle as any).applyStorePreview(false)
+    await instance.prepareBackgroundStores()
     expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.store", true)
-    expect(stop).toHaveBeenCalled()
     expect(engine.miniapps.clearForeground).toHaveBeenCalled()
-    expect(engine.miniapps.stop).toHaveBeenCalledWith("com.mentra.store")
+    expect(miniappLauncher.stop).toHaveBeenCalledWith("com.mentra.store")
+    expect(saveLocalAppRunningState).toHaveBeenCalledWith("com.mentra.store", false)
     expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([
       {name: "Notes", packageName: "com.mentra.notes", running: false},
     ])
-    expect(start).not.toHaveBeenCalled()
 
-    await (mantle as any).applyStorePreview(true)
-    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.store", false)
-    expect(start).toHaveBeenCalledWith(["com.mentra.store"])
-
-    start.mockRestore()
-    stop.mockRestore()
+    useAppStatusStore.setState({apps: []})
+    ;(miniappLauncher.stop as jest.Mock).mockClear()
+    ;(miniappLauncher.isProjectedRunning as jest.Mock).mockReturnValueOnce(true)
+    await instance.prepareBackgroundStores()
+    expect(miniappLauncher.stop).toHaveBeenCalledWith("com.mentra.store")
+    ;(miniappLauncher.stop as jest.Mock).mockClear()
+    await instance.prepareBackgroundStores()
+    expect(miniappLauncher.stop).not.toHaveBeenCalled()
   })
 
-  it("wires Store preview as a live availability policy and stops an already-filtered Store", async () => {
-    const availability = miniappAvailability
-    const get = engine.settings.get as jest.Mock
-    const list = engine.miniapps.list as jest.Mock
-    const originalGet = get.getMockImplementation()!
-    const originalList = list.getMockImplementation()!
-    let preview = false
-    get.mockImplementation((key) => (key === SETTINGS.miniapp_store_preview_enabled.key ? preview : originalGet(key)))
-    list.mockReturnValue([])
-    const instance = mantle as unknown as {applyStorePreview: (enabled: boolean) => Promise<void>}
+  it("starts background updates after restoring user sessions and respects deployment availability", async () => {
+    const instance = mantle as unknown as {
+      restoreMiniapps: () => Promise<void>
+      installBundledMiniapps: () => Promise<void>
+    }
+    const start = jest.spyOn(storeUpdateScheduler, "start").mockResolvedValue()
+    const install = jest.spyOn(instance, "installBundledMiniapps").mockResolvedValue()
+    const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue()
+    const originalInstalled = appRegistry.getInstalledMiniapps
+    const installed = jest.fn(async () => [{packageName: "com.mentra.store"} as any])
+    appRegistry.getInstalledMiniapps = installed
+    const autostart = miniappLauncher.autostartLocalMiniapps as jest.Mock
     try {
-      expect(availability("com.mentra.store")).toBe(false)
-      expect(availability("com.mentra.notes")).toBe(true)
-      await instance.applyStorePreview(false)
-      expect(miniappLauncher.stop).toHaveBeenCalledWith("com.mentra.store")
-      expect(saveLocalAppRunningState).toHaveBeenCalledWith("com.mentra.store", false)
-      preview = true
-      expect(availability("com.mentra.store")).toBe(true)
+      await instance.restoreMiniapps()
+      expect(installed).toHaveBeenCalledWith({includeBackgroundOnly: true})
+      expect(start).toHaveBeenLastCalledWith(["com.mentra.store"])
+      expect(autostart.mock.invocationCallOrder.at(-1)).toBeLessThan(start.mock.invocationCallOrder.at(-1)!)
+      expect(miniappAvailability("com.mentra.store")).toBe(false)
+
+      installed.mockResolvedValue([])
+      await instance.restoreMiniapps()
+      expect(start).toHaveBeenLastCalledWith([])
     } finally {
-      get.mockImplementation(originalGet)
-      list.mockImplementation(originalList)
+      start.mockRestore()
+      install.mockRestore()
+      sync.mockRestore()
+      appRegistry.getInstalledMiniapps = originalInstalled
     }
   })
 

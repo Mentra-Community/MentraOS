@@ -147,12 +147,25 @@ changed, so interrupted workspace installs cannot overwrite the consumer choice.
 This also preserves both builds when a host upgrade, Store release, or workspace
 pin uses the same version number as an existing consumer manual release.
 
-### Store preview availability
+### Background updates and Store availability
 
-The Mentra App supplies a live host availability rule for its bundled Store.
-With preview disabled, the Store remains installed but is excluded from registry
-and app-list discovery (including All Apps and inter-miniapp discovery), and
-both launch and foreground requests are blocked. The launcher rechecks after
-asynchronous resolution. This rule is separate from the user's Home-hidden flag.
-Enabling preview refreshes discovery before scheduling maintenance; disabling
-preview stops the runtime and clears autostart even if the tile is already absent.
+The bundled Store runs as a background update worker. There is no Store toggle in
+Super Settings, and the Store is excluded from Home, All Apps, and inter-miniapp
+discovery. User-facing launch and foreground requests remain blocked, including
+when an old preview preference is persisted. Bundled ZIPs remain installed and
+available offline.
+
+After bundled installation and restoration of running miniapps, the host starts
+update checks for the installed Stores permitted by the active deployment. Checks
+run immediately, on foregrounding, on Cloud reconnection, and every 15 minutes
+while the runtime operates. Logout/runtime cleanup stops the scheduler; updates
+are not guaranteed while the Mentra App is terminated.
+
+The host invokes the Store's declared, host-only `reconcile_updates` action in a
+transient background context. Background availability is distinct from interactive
+availability; deployment and installed-release policies still apply in both modes.
+Only host-only transient actions may resolve a background-only package. The Store
+selects newer compatible releases and requests the shared host installer, deferring
+running miniapps until a later check. The worker stays out of the running tray and
+its context is released when maintenance finishes. Foreground reconciliation clears
+old Store UI/autostart state without stopping an active background update.
