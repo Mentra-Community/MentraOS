@@ -74,7 +74,7 @@ export class TestContinuationService {
       this.bound(grant, saved);
       if (!same(saved.input, { ...data, idempotencyKey }) || saved.continuation?.executionAttempt !== executionAttempt
         || saved.continuation.retryReason !== retryReason) fail("This candidate/routine already owns a different build request; reconcile it");
-      return this.detail(grant, idempotencyKey);
+      return this.acknowledgement(grant, idempotencyKey);
     }
     const excludeRequestRunIds: number[] = [];
     if (executionAttempt > 1) {
@@ -102,7 +102,17 @@ export class TestContinuationService {
     if (!existing && target.automaticExpected && executionAttempt === 1)
       throw new TestDispatchError(503, "Waiting for the existing automatic request; no duplicate was sent");
     await this.dispatch.create(request, `routine-fixer:${grant.agentRunId}`, binding, existing ?? undefined, () => this.checkLease(grant, routineId));
-    return this.detail(grant, idempotencyKey);
+    return this.acknowledgement(grant, idempotencyKey);
+  }
+  /** POST acknowledges only the send. Results always require the read endpoint. */
+  private async acknowledgement(grant: ContinuationGrant, operationId: string) {
+    const receipt = await this.dispatch.receipt(operationId);
+    if (!receipt) throw new TestDispatchError(404, "Registered routine request not found");
+    this.bound(grant, receipt);
+    return { dispatchId: receipt.dispatchId, sendState: receipt.sendState,
+      ...(receipt.requestRunId ? { requestRunId: receipt.requestRunId } : {}),
+      ...(receipt.requestUrl ? { requestUrl: receipt.requestUrl } : {}),
+      ...(receipt.adopted ? { adopted: true } : {}) };
   }
   private bound(grant: ContinuationGrant, receipt: TestDispatchReceipt) {
     const binding = receipt.continuation;

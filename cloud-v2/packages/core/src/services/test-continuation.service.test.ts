@@ -79,7 +79,7 @@ test("matching automatic request is adopted; pending automatic work never duplic
   const f = fixture(); f.target({ automaticExpected: true });
   await expect(f.service.request(grant, input)).rejects.toThrow("Waiting for the existing automatic request");
   expect(f.rows.size).toBe(0); f.existing();
-  expect(await f.service.request(grant, input)).toMatchObject({ adopted: true, state: "running" }); expect(f.sends()).toBe(0);
+  expect(await f.service.request(grant, input)).toMatchObject({ adopted: true, sendState: "accepted" }); expect(f.sends()).toBe(0);
 });
 test("new harness candidate excludes requests created before its merge", async () => {
   const f = fixture(); f.target({ expectedHarnessSha: "e".repeat(40), requestNotBefore: "2026-09-25T09:00:00Z" });
@@ -130,6 +130,25 @@ test("reclaim rejects a delayed signed request before dispatch, while old regist
   await expect(f.service.request(grant, input)).rejects.toThrow("Stale lease"); expect(f.sends()).toBe(0);
   const g = fixture(); await g.service.request(grant, input); g.loseLease(); g.results();
   expect((await g.service.detail(grant, continuationOperationId(grant, input.routineId))).recordedResults).toHaveLength(1);
+});
+
+test("POST replay only acknowledges dispatch even after results exist; reads require read-results", async () => {
+  const f = fixture(); process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = secret; process.env.CLOUD_CORE_ENVIRONMENT = "dev";
+  const app = createTestFailureAgentApi(f.runs, f.service), base = `/${occurrenceId}/reruns`;
+  const token = signTestContinuationGrant({ ...grant, actions: ["request-routine"] }, secret);
+  const headers = { authorization: `Bearer ${token}` };
+  const post = () => app.request(base, { method: "POST", headers, body: JSON.stringify(input) });
+  const first = await post(); expect(first.status).toBe(202);
+  const acknowledgement = await first.json() as Record<string, unknown>;
+  expect(Object.keys(acknowledgement).sort()).toEqual(["dispatchId", "requestRunId", "requestUrl", "sendState"]);
+  f.results(); f.claim({ state: "terminal", resultRunId: "result1" });
+  const replay = await post(); expect(replay.status).toBe(202);
+  expect(await replay.json()).toEqual(acknowledgement); expect(f.sends()).toBe(1);
+  expect((await app.request(`${base}/${continuationOperationId(grant, input.routineId)}`, { headers })).status).toBe(401);
+  const read = await app.request(`${base}/${continuationOperationId(grant, input.routineId)}`, {
+    headers: { authorization: `Bearer ${signTestContinuationGrant(grant, secret)}` },
+  });
+  expect(read.status).toBe(200); expect((await read.json() as { recordedResults: unknown[] }).recordedResults).toHaveLength(1);
 });
 
 test("lease lost during artifact validation is checked again before the durable send fence", async () => {
