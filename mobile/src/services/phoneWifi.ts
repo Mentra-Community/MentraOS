@@ -4,7 +4,7 @@ import {AppState, Linking, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 
 import {translate} from "@/i18n"
-import {completePhoneWifiPrompt, requestPhoneWifiPrompt} from "./phoneWifiPrompt"
+import {requestPhoneWifiPrompt} from "./phoneWifiPrompt"
 
 /** Read the radio directly on Android; NetInfo's cached isWifiEnabled can be stale. */
 export async function isPhoneWifiEnabled(): Promise<boolean | null> {
@@ -123,21 +123,6 @@ function visitWifiSettings(): Promise<PhoneWifiEnableResult> {
 
 let promptInFlight = false
 
-/** Long enough to read "Wi-Fi is on" before the call checklist takes over. */
-const WIFI_ON_HOLD_MS = 900
-
-async function showWifiOn(): Promise<void> {
-  const shown = requestPhoneWifiPrompt({
-    title: translate("phoneWifi:onTitle"),
-    message: translate("phoneWifi:onMessage"),
-    actionLabel: translate("phoneWifi:onTitle"),
-    tone: "on",
-  })
-  await new Promise((resolve) => setTimeout(resolve, WIFI_ON_HOLD_MS))
-  completePhoneWifiPrompt(true)
-  await shown
-}
-
 /** Host overlay only: never clear miniapp foreground or send UI_CLOSE to a live call. */
 export async function requestPhoneWifiEnable(reason?: string): Promise<PhoneWifiEnableResult> {
   if (promptInFlight || AppState.currentState !== "active") {
@@ -147,17 +132,13 @@ export async function requestPhoneWifiEnable(reason?: string): Promise<PhoneWifi
   try {
     const enabled = await isPhoneWifiEnabled()
     if (enabled === true) return {enabled, cancelled: false}
-    const ios = Platform.OS === "ios"
-    const instructions = translate(ios ? "phoneWifi:instructionsIos" : "phoneWifi:instructionsAndroid")
-    const actionLabel = translate(ios ? "phoneWifi:openSettings" : "phoneWifi:turnOn")
-    const stillOffMessage = translate(ios ? "phoneWifi:stillOffIos" : "phoneWifi:stillOffAndroid")
+    const actionLabel = translate(Platform.OS === "ios" ? "phoneWifi:openSettings" : "phoneWifi:openWifiSettings")
+    const message = reason?.trim() || translate("phoneWifi:reason")
     let stillOff = false
     for (;;) {
       const confirmed = await requestPhoneWifiPrompt({
         title: translate(stillOff ? "phoneWifi:stillOffTitle" : "phoneWifi:title"),
-        message: stillOff
-          ? stillOffMessage
-          : [reason?.trim() || translate("phoneWifi:reason"), instructions].join("\n\n"),
+        message: Platform.OS === "ios" ? `${message}\n\n${translate("phoneWifi:instructionsIos")}` : message,
         actionLabel,
         tone: stillOff ? "still-off" : "ask",
       })
@@ -165,7 +146,6 @@ export async function requestPhoneWifiEnable(reason?: string): Promise<PhoneWifi
       const result = await visitWifiSettings()
       if (result.cancelled || result.enabled == null) return result
       if (result.enabled) {
-        await showWifiOn()
         return {enabled: true, cancelled: false}
       }
       stillOff = true

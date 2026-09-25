@@ -179,6 +179,8 @@ interface ManagedEntry {
   webrtcUrl?: string
   stopping?: boolean
   relay?: ManagedRelay
+  relayConnected?: boolean
+  relayConnectionRevision?: number
   publisherStart?: StreamPublisherStartResult
   subscribers: Set<string>
   hlsReady: boolean
@@ -503,11 +505,19 @@ export class PhoneStreamCoordinator {
 
       try {
         if (mode === "webrtc") {
+          entry.relayConnected = false
+          entry.relayConnectionRevision = 0
           entry.relay = this.relayFactory(
             {streamId, ingestUrl, ...opts},
             (status, reason) => {
-              if (this.current === entry && !entry.stopping)
+              if (this.current === entry && !entry.stopping) {
+                const connected = status === "connected" || status === "reconnected"
+                if (entry.relayConnected !== connected) {
+                  entry.relayConnected = connected
+                  entry.relayConnectionRevision = (entry.relayConnectionRevision ?? 0) + 1
+                }
                 this.fanout({streamId, source: "coordinator", status, data: {reason, transport: "softap_relay"}})
+              }
             },
             (error) => {
               void this.runExclusive(async () => {
@@ -558,7 +568,7 @@ export class PhoneStreamCoordinator {
       this.startCloudflareStatusPoll(entry)
       // hls mode: readiness = a real HLS manifest exists. webrtc mode: HLS
       // never materializes (Cloudflare WHIP limitation) — readiness resolves
-      // off the status poll's first "connected" instead.
+      // once both the native uplink and Cloudflare report connected.
       if (entry.mode === "hls") {
         this.startHlsReadinessPoll(entry)
       }
@@ -831,6 +841,7 @@ export class PhoneStreamCoordinator {
     const poll = async () => {
       if (this.current !== entry || entry.stopping) return
       const requestStartedAtMs = Date.now()
+      const relayRevision = entry.relayConnectionRevision
       let keepPolling = true
       entry.cloudflareAttempts += 1
       try {
@@ -864,11 +875,13 @@ export class PhoneStreamCoordinator {
             }
           }
         }
-        // webrtc mode readiness: first "connected" means WHEP playback is
-        // available (WebRTC playback follows the ingest directly; there is no
-        // manifest to probe).
+        // Cloudflare can report connected after signaling, before ICE succeeds.
+        // Require the native uplink too, and reject a cloud result spanning a retry.
         if (entry.mode === "webrtc" && !entry.hlsReady) {
-          if (status.isConnected) {
+          if (
+            status.isConnected &&
+            (!entry.relay || (entry.relayConnected && relayRevision === entry.relayConnectionRevision))
+          ) {
             entry.hlsReady = true
             console.info("[STREAM_STARTUP]", {
               streamId: entry.streamId,
