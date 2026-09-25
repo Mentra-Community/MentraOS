@@ -57,8 +57,8 @@
     "size": 640343781
   },
   "bes_firmware": {
-    "version": "26.9.23.0",
-    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.9.23.0.bin",
-    "sha256": "cd36a80b3045eed12e7c293004ff85c75a15f8c2128214f0aa200f4f91f683b9"
+    "version": "26.9.25.0",
+    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.9.25.0.bin",
+    "sha256": "5299f0deadcb4b6eb49a3a5a16058768fba0dcab61f1e3644403b36338256b36"
   }
 }
