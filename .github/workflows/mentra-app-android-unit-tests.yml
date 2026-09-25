@@ -99,7 +99,18 @@ jobs:
 
       - name: Run JVM unit tests
         working-directory: ./mobile/android
-        run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-glasses-media:testDebugUnitTest :mentra-frame-preview:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest :mentra-crust:testDebugUnitTest --build-cache --parallel
+        env:
+          # Mapbox Downloads:Read secret token (sk.…). :mentra-crust compiles
+          # against com.mapbox.navigationcore from Mapbox's Maven repo, which
+          # Mapbox documents as authenticated; the repo block injected by the
+          # crust config plugin reads this variable. The dummy .env does not
+          # reach Gradle. Build-time only, as in mentra-app-android-build.yml.
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          if [ -z "$MAPBOX_DOWNLOADS_TOKEN" ]; then
+            echo "::warning::MAPBOX_DOWNLOADS_TOKEN secret not set; :mentra-crust resolves Mapbox Navigation anonymously and fails if the repository requires authentication."
+          fi
+          ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-glasses-media:testDebugUnitTest :mentra-frame-preview:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest :mentra-crust:testDebugUnitTest --build-cache --parallel
 
       # The device-proof analyzer decides whether a SoftAP hardware run passed, so an analyzer that
       # reports success on a broken capture would turn a real failure into recorded evidence that
