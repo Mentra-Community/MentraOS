@@ -5286,7 +5286,8 @@ class MentraLive: NSObject, SGCManager {
         if let requestId {
             json["request_id"] = requestId
         }
-        sendJson(json)
+        // Wake ASG so the version request and its response can finish after idle.
+        sendJson(json, wakeUp: true)
     }
 
     private func sendCoreTokenToAsgClient() {

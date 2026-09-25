@@ -6163,7 +6163,8 @@ class MentraLive : SGCManager() {
             val json = JSONObject()
             json.put("type", "request_version")
             requestId?.let { json.put("request_id", it) }
-            sendJson(json, false)
+            // Wake ASG so the version request and its response can finish after idle.
+            sendJson(json, true)
             Bridge.log("LIVE: 📱 Requesting version info from glasses")
         } catch (e: JSONException) {
             Log.e(TAG, "📱 Error creating request_version command", e)
