@@ -15,7 +15,9 @@ export const testFailureBranchSchema = z.string().min(1).max(255).refine(value =
 
 export const testFailureSourceSchema = z.object({
   schemaVersion: z.literal(1),
-  trigger: z.enum(["pr", "dev", "staging", "nightly", "admin", "local"]),
+  // `manual`: an authenticated explicit request for a published build whose Admin/CLI
+  // caller was not recorded. Routing uses channel/branch/pullRequest, never the trigger.
+  trigger: z.enum(["pr", "dev", "staging", "nightly", "admin", "manual", "local"]),
   repository,
   channel: z.enum(["pr", "dev", "staging", "local"]),
   headSha: commit,
@@ -31,6 +33,7 @@ export const testFailureSourceSchema = z.object({
     problem("trigger contradicts selected source channel");
   if (source.trigger === "nightly" && !["dev", "staging"].includes(source.channel)) problem("nightly source must be dev or staging");
   if (source.trigger === "admin" && source.channel === "local") problem("Admin source must be a published build");
+  if (source.trigger === "manual" && source.channel === "local") problem("manual source must be a published build");
   if (["dev", "staging"].includes(source.channel) && source.branch !== source.channel) problem("coordinated source branch must match channel");
 });
 

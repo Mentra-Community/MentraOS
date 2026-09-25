@@ -537,6 +537,8 @@ describe("canonical failure occurrences and existing agent queue delivery", () =
       { trigger: "nightly", channel: "staging", branch: "staging" }, { trigger: "admin", channel: "dev", branch: "dev" },
       { trigger: "pr", channel: "pr", branch: "fix/unpair" }, { trigger: "admin", channel: "pr", branch: "fix/historical" },
       { trigger: "local", channel: "local", branch: "operator/diagnosis" },
+      { trigger: "manual", channel: "dev", branch: "dev" }, { trigger: "manual", channel: "staging", branch: "staging" },
+      { trigger: "manual", channel: "pr", branch: "fix/manual-request" },
     ] as const;
     for (const [index, scenario] of scenarios.entries()) {
       const run = failureFixture(); run.runId += index; run.channel = scenario.channel;
@@ -558,6 +560,12 @@ describe("canonical failure occurrences and existing agent queue delivery", () =
       { ...run, failures: [run.failures![0], run.failures![0]] },
       { ...run, failures: [{ ...run.failures![0], assetIds: ["missing"] }] },
       ...["../dev", "refs//dev", "-dev", "bad ref", "bad@{ref", "branch.lock"].map(branch => ({ ...run, source: { ...run.source, branch } })),
+      // A manual request never admits a local build, a PR without its identity or another channel branch.
+      { ...run, channel: "local", prNumber: undefined,
+        source: { ...run.source, trigger: "manual", channel: "local", branch: "operator/diagnosis", pullRequest: undefined } },
+      { ...run, source: { ...run.source, trigger: "manual", pullRequest: undefined } },
+      { ...run, channel: "dev", prNumber: undefined,
+        source: { ...run.source, trigger: "manual", channel: "dev", branch: "main", pullRequest: undefined } },
     ];
     for (const value of variants) expect((await post(value)).status).toBe(400);
     expect(repository.runs.size).toBe(0);
