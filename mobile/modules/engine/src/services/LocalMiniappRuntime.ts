@@ -1062,16 +1062,7 @@ class LocalMiniappRuntime {
 
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
-    this.transientActionWakes.forget(packageName)
-    for (const [callId, pending] of this.actionCalls) {
-      if (pending.targetPackageName !== packageName) continue
-      void this.finalizeActionCall(
-        callId,
-        false,
-        undefined,
-        this.actionError(MiniappErrorCode.WAKE_FAILED, `${packageName} disconnected during action execution`),
-      )
-    }
+    this.clearActionState(packageName)
     const releasedMicGateOverride = micStateCoordinator.clearMiniappGateOverrides(packageName)
     // Backstop for a miniapp that crashed or was killed mid-call: the microphone profile and the
     // PCM claim must not outlive the app that asked for them.
@@ -6717,6 +6708,19 @@ class LocalMiniappRuntime {
         message: (error as Error)?.message ?? "action invocation failed",
       })
       this.auditInterop({caller: callerPackageName, op: "invoke", target, actionId, ok: false, errorCode: code})
+    }
+  }
+
+  private clearActionState(packageName: string): void {
+    this.transientActionWakes.forget(packageName)
+    for (const [callId, pending] of this.actionCalls) {
+      if (pending.targetPackageName !== packageName) continue
+      void this.finalizeActionCall(
+        callId,
+        false,
+        undefined,
+        this.actionError(MiniappErrorCode.WAKE_FAILED, `${packageName} disconnected during action execution`),
+      )
     }
   }
 

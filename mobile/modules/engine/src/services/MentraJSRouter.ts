@@ -292,6 +292,14 @@ export class MentraJSRouter {
    * to respawn (with delay) or leave the context dead.
    */
   private handleCrash(packageName: string, reason: string): void {
+    const cached = this.spawnCache.get(packageName)
+    // A transient action cannot resume after a crash. Reject its pending calls
+    // and remove the worker; only a new invocation may create its replacement.
+    // Promoted/user contexts retain normal crash recovery.
+    if (cached?.projectRunning === false) {
+      void this.unregister(packageName)
+      return
+    }
     // The native context is dead the instant a crash is observed — invalidate
     // its CONNECT handshake NOW so waitForConnect() blocks through the respawn
     // backoff window instead of resolving immediately against the dead context
@@ -299,7 +307,6 @@ export class MentraJSRouter {
     this.runtime.resetHandshake(packageName)
     const controller = this.crashController
     if (!controller) return
-    const cached = this.spawnCache.get(packageName)
     if (!cached) {
       this.logger.warn(`crash for ${packageName} but no cached spawn args — cannot respawn`)
       controller.onCrash(packageName, reason)
