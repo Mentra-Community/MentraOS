@@ -3016,8 +3016,8 @@ class MentraLive: NSObject, SGCManager {
 
         case "stream_controller_probe":
             if let response = StreamControllerProbe.response(json) {
-                // BES drops non-waking commands when the glasses screen is off,
-                // even while the streaming CPU wake lock is held.
+                // BES buffers non-waking commands when MTK enters standby, even while
+                // its streaming CPU lease is held. The current probe needs a live reply.
                 sendJson(response, wakeUp: true)
             }
 

@@ -210,8 +210,12 @@ BLE presence does not prove the controlling app is executing. Updated native SDK
 without that support, sends a fresh native controller challenge every two seconds, and stops
 after ten seconds without a matching response. Retransmissions and duplicate/late responses
 never renew this deadline. Challenges are answered directly in the native BLE receive path,
-without JavaScript, cloud connectivity, or a phone-side periodic timer. The controller identity
-survives BLE reconnects but changes after app termination; reopening the app cannot silently
+without JavaScript, cloud connectivity, or a phone-side periodic timer.
+Replies use the transport's MTK wake flag: BES can buffer non-waking phone commands after
+Android enters standby even while the stream's CPU wake lock keeps media running. A valid
+native challenge response must reach ASG before its existing deadline.
+The controller identity survives BLE reconnects but changes after app termination; reopening
+the app cannot silently
 take over the old session. Both phone-presence and controller-response checks must remain healthy.
 Physical qualification must verify screen-off/background operation, force-kill on both phone
 platforms, and short BLE outages before release; native callback wake behavior is not proven by
