@@ -16,11 +16,11 @@ MentraOS retains:
 
 ## Request and dispatch
 
-1. Add `routine:no-glasses`, `routine:day1-ota` or `routine:mentra-call` to a
+1. Add `routine:no-glasses`, `routine:no-glasses-android`, `routine:day1-ota` or `routine:mentra-call` to a
    same-repository PR targeting `dev`. Multiple labels request separate routines.
 2. The [request workflow](workflows/request-e2e-routine.yml) records the current
-   PR revisions, exact successful iOS build/publication attempt, receipt, Mac
-   archive and OTA manifest in an immutable `request.json` artifact. If these
+   PR revisions, exact successful platform build/publication attempt, receipt, Mac
+   archive or Android APK and OTA manifest in an immutable `request.json` artifact. If these
    are unavailable it records `no-artifact`; no device test has run.
 3. Once app publication succeeds, the trusted default-branch
    [dispatch callback](workflows/dispatch-device-routine.yml) validates the
@@ -62,8 +62,23 @@ without claiming a request exists. A label expresses requested coverage, not a p
 The results link opens dev admin filtered to repository, PR number, full head
 SHA, exact Mac archive SHA256, routine and platform. It shows **No results for
 this build yet** until a matching export is uploaded. It never substitutes an
-older candidate. Later test completion does not edit or republish the Slack post;
-the results page is the current source of uploaded outcomes.
+older candidate. Later test completion does not edit or republish the PR Slack post.
+
+When a private worker finishes and retains its terminal receipt, the
+[result callback](workflows/notify-release-routine.yml) posts a separate result
+comment on the originating PR. It includes the customer test verdict, cleanup
+and publication checks, exact head/base/build and artifact hashes, request and
+worker attempts, and the recording/result link when uploaded. Setup failures
+say **test not run**; older receipts without that verdict say **unknown**.
+Results still post after the PR advances or merges and explicitly identify the
+revision covered.
+
+Each worker run/attempt/routine has its own comment, preserving failed and
+successful reruns. Retrying the notification finds and reuses that exact
+GitHub Actions comment; it neither reruns a device nor replaces another run's
+history. If a send response is lost, rerun the result callback with the same
+private run ID and attempt. A failure before any terminal receipt is retained
+has no verified result to post; inspect its worker workflow instead.
 
 The private worker uploads an immutable export with the original result and
 recovery verdicts. Upload retries do not repeat device actions. See the public

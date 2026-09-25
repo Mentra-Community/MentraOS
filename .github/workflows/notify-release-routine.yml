@@ -1,4 +1,4 @@
-name: Update release routine results
+name: Publish routine results
 run-name: Release routine status ${{ inputs.worker_run_id }} / attempt ${{ inputs.worker_attempt }}
 on:
   workflow_dispatch:
@@ -23,6 +23,8 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has-work: ${{ steps.plan.outputs.has-work }}
+      pr-matrix: ${{ steps.plan.outputs.pr-matrix }}
+      has-pr-work: ${{ steps.plan.outputs.has-pr-work }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,14 +55,50 @@ jobs:
         with:
           script: |
             const {resolveRoutineNotifications} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-routine-slack.mjs`);
+            const {resolvePrRoutineResults} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-routine-result.mjs`);
             const {slackDestination} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-slack-message.mjs`);
             const privateGithub = new github.constructor({auth: process.env.PRIVATE_TOKEN});
+            const prPlans = await resolvePrRoutineResults({github, privateGithub, context,
+              workerRunId: Number(process.env.WORKER_RUN_ID), workerAttempt: Number(process.env.WORKER_ATTEMPT)});
+            core.setOutput('pr-matrix', JSON.stringify({include: prPlans}));
+            core.setOutput('has-pr-work', String(prPlans.length > 0));
             const plans = process.env.SLACK_BUILDS_BOT_TOKEN ? await resolveRoutineNotifications({github, privateGithub, context,
               workerRunId: Number(process.env.WORKER_RUN_ID), workerAttempt: Number(process.env.WORKER_ATTEMPT)}) : [];
             const ready = plans.filter(plan => slackDestination({...process.env, BRANCH: plan.notification.build.channel}));
             core.setOutput('matrix', JSON.stringify({include: ready}));
             core.setOutput('has-work', String(ready.length > 0));
             if (!ready.length) core.notice('No configured bot-owned release post; terminal updates unavailable. Admin results are unchanged.');
+  comment:
+    needs: resolve
+    if: needs.resolve.outputs.has-pr-work == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.pr-matrix) }}
+    name: PR ${{ matrix.pr }} / worker ${{ matrix.privateRunId }} / attempt ${{ matrix.privateAttempt }} / ${{ matrix.routineId }}
+    concurrency:
+      group: pr-routine-result-${{ matrix.privateRunId }}-${{ matrix.privateAttempt }}-${{ matrix.routineId }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Retain each execution on its originating PR
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          RESULT_PLAN: ${{ toJSON(matrix) }}
+        with:
+          retries: 0
+          script: |
+            const {publishPrRoutineResult} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-routine-result.mjs`);
+            const result = await publishPrRoutineResult({github, context, plan: JSON.parse(process.env.RESULT_PLAN)});
+            core.notice(`PR routine result: ${result.status} (${result.commentId})`);
   update:
     needs: resolve
     if: needs.resolve.outputs.has-work == 'true'
