@@ -38,7 +38,12 @@ const requestFields = z.object({ kind: z.literal("mentra-routine-request"), requ
 });
 
 export interface GithubOverview { jobs: OverviewJob[]; warnings: string[]; recentMaintenance?: OverviewJob[] }
-export interface TestRunOverviewGateway { activity(): Promise<GithubOverview> }
+export interface TestRunOverviewGateway { activity(options?: { fresh?: boolean }): Promise<GithubOverview> }
+/** Both the UI offer and the administrative action require the same complete view. */
+export function completeGithubActivity(activity: GithubOverview) {
+  return activity.warnings.length === 0 && activity.jobs.every(job => job.kind === "routine" ? job.requests.length === 1
+    : job.kind === "nightly" ? job.requests.length === 2 : true);
+}
 
 /** Read-only view of GitHub's actual queue. It does not dispatch or choose a worker. */
 export class GithubTestRunOverview implements TestRunOverviewGateway {
@@ -60,7 +65,9 @@ export class GithubTestRunOverview implements TestRunOverviewGateway {
       "https://api.github.com/repos/" + repository + path, { headers: { Authorization: "Bearer " + token,
         Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } }), 4 * 1024 * 1024)));
   }
-  async activity(): Promise<GithubOverview> {
+  async activity(options: { fresh?: boolean } = {}): Promise<GithubOverview> {
+    // Administrative closure must re-read the queue, not rely on the view cache.
+    if (options.fresh) return this.read();
     if (this.cached && this.cached.until > this.now()) return this.cached.value;
     if (this.pending) return this.pending;
     this.pending = this.read().then(value => { this.cached = { until: this.now() + 15_000, value }; return value; })

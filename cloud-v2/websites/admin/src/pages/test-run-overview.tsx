@@ -40,7 +40,10 @@ function Checkpoint({ claim, now }: { claim: OverviewClaim; now: number }) {
     <p className={"mt-1 text-[11px] " + (stale ? "text-[#94631b]" : "text-[#68746d]")}>Last checkpoint {elapsed(progress.receivedAt, now)} ago{stale ? " · No recent checkpoint; activity is unconfirmed" : ""}</p>
   </div>;
 }
-function JobRow({ job, now }: { job: OverviewJob; now: number }) {
+function JobRow({ job, now, onResult, onCancel }: { job: OverviewJob; now: number; onResult: (id: string) => void; onCancel?: (id: string) => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string>();
   const colors = job.state === "blocked" ? "bg-[#fff0e9] text-[#a64235]" : job.state === "running"
     ? "bg-[#e6f5ed] text-[#087d50]" : "bg-[#f0f2ef] text-[#59655e]";
   const label = job.kind === "maintenance" ? "Host maintenance / recovery" : job.kind === "nightly" ? "Nightly sequence" : null;
@@ -54,7 +57,26 @@ function JobRow({ job, now }: { job: OverviewJob; now: number }) {
     <td className="max-w-[190px] break-words px-4 py-3"><p>{job.workerName ?? (job.claims[0]?.workerId || "Not assigned")}</p>
       {job.claims.length ? [...new Set(job.claims.map(claim => claim.fixtureId))].map(fixture => <p key={fixture} className="mt-1 text-[11px] text-[#68746d]">Fixture: {fixture}</p>)
         : <p className="mt-1 text-[11px] text-[#68746d]">Fixture not reported</p>}</td>
-    <td className="min-w-[250px] max-w-[340px] px-4 py-3">{job.claims.length ? job.claims.map(claim => <div key={claim.requestId}>
+    <td className="min-w-[250px] max-w-[340px] px-4 py-3">
+      {job.attention ? <div className="mb-3 text-[11px]">
+        <p className="font-medium">{job.attention.reason}</p>
+        <p className="mt-1">Responsible: {job.attention.responsible}</p>
+        <p className="mt-1">Next: {job.attention.nextAction}</p>
+        {job.resultRunId ? <button className="mt-1 text-[#087d50] underline" onClick={() => onResult(job.resultRunId!)}>Recorded result</button> : null}
+        {job.attention.cancelledAt ? <p className="mt-2 text-[#68746d]">Follow-up cancelled {elapsed(job.attention.cancelledAt, now)} ago. Fixture readiness remains unverified.</p> : null}
+        {job.attention.cancelRequestId && onCancel ? confirming ? <div className="mt-2 rounded border border-[#e0e4de] p-2">
+          <p>Cancel further work on this inactive request? This preserves its result and does not stop a writer, release a device, or repair the fixture.</p>
+          <button disabled={cancelling} className="mr-3 mt-2 text-[#a64235] underline" onClick={async () => {
+            setCancelling(true); setCancelError(undefined);
+            try { await onCancel(job.attention!.cancelRequestId!); setConfirming(false); }
+            catch (error) { setCancelError(error instanceof Error ? error.message : "Cancellation failed. Refresh and try again."); }
+            finally { setCancelling(false); }
+          }}>{cancelling ? "Cancelling…" : "Confirm cancellation"}</button>
+          <button disabled={cancelling} className="underline" onClick={() => setConfirming(false)}>Keep open</button>
+        </div> : <button className="mt-2 block text-[#a64235] underline" onClick={() => setConfirming(true)}>Cancel further work</button> : null}
+        {cancelError ? <p role="alert" className="mt-2 text-[#a64235]">{cancelError}</p> : null}
+      </div> : null}
+      {job.claims.length ? job.claims.map(claim => <div key={claim.requestId}>
       {job.claims.length > 1 ? <p className="mt-2 text-[11px] font-semibold">{job.requests.find(request => request.requestId === claim.requestId)?.routineId ?? claim.requestId}
         {" · "}{platformName(job.requests.find(request => request.requestId === claim.requestId)?.platform)}</p> : null}
       <Checkpoint claim={claim} now={now} /></div>)
@@ -62,12 +84,12 @@ function JobRow({ job, now }: { job: OverviewJob; now: number }) {
       {job.workflow?.step && !job.claims.some(claim => claim.progress && claim.progress.mode !== "complete" && checkpointIsFresh(claim.progress.receivedAt, now))
         ? <p className="mt-2 text-[11px] text-[#68746d]">GitHub step: {job.workflow.step}</p> : null}</td>
     <td className="whitespace-nowrap px-4 py-3"><p>{elapsed(job.startedAt ?? job.createdAt, now)}</p>
-      <p className="mt-0.5 text-[11px] text-[#68746d]">{job.kind === "claim" ? "Since claim" : job.startedAt ? "Job elapsed" : "Waiting"}</p>
+      <p className="mt-0.5 text-[11px] text-[#68746d]">{["claim", "fixture"].includes(job.kind) ? "Since recorded claim" : job.startedAt ? "Job elapsed" : "Waiting"}</p>
       {job.workflow ? <p className="mt-2 text-[11px] text-[#68746d]">GitHub update {elapsed(job.workflow.updatedAt, now)} ago</p> : null}</td>
   </tr>;
 }
 
-export function TestRunOverviewView({ data, now, onResult }: { data: TestRunOverview; now: number; onResult: (id: string) => void }) {
+export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: TestRunOverview; now: number; onResult: (id: string) => void; onCancel?: (id: string) => Promise<void> }) {
   const states = ["running", "queued", "waiting", "blocked", "unknown"] as const;
   return <>
     <p className="mt-2 text-[11px] text-[#68746d]">View refreshed {elapsed(data.observedAt, now)} ago.</p>
@@ -76,11 +98,22 @@ export function TestRunOverviewView({ data, now, onResult }: { data: TestRunOver
     {data.warnings.length ? <div role="status" className="mt-3 space-y-1 rounded-lg bg-[#fff5df] p-3 text-xs text-[#805619]">{data.warnings.map(message => <p key={message}>{message}</p>)}</div> : null}
     {data.jobs.length ? <div className="mt-3 overflow-x-auto rounded-xl border border-[#e0e4de]"><table className="w-full text-left text-xs">
       <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Status", "Build / routine", "Worker / fixture", "Last recorded progress", "Elapsed / update"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
-      <tbody>{data.jobs.map(job => <JobRow key={job.id} job={job} now={now} />)}</tbody>
-    </table></div> : <p className="mt-3 text-sm text-[#68746d]">{data.warnings.length ? "No activity could be confirmed from the available sources." : "No active jobs or unresolved claims were observed."}</p>}
-    {data.resolvedRecoveries.length ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-[#68746d]">Verified recoveries ({data.resolvedRecoveries.length})</summary>
-      <ul className="mt-2 space-y-1">{data.resolvedRecoveries.map(item => <li key={item.requestId}>{item.fixtureId} · <button className="text-[#087d50] underline" onClick={() => onResult(item.originalRunId)}>Original result</button>
-        {" · "}<button className="text-[#087d50] underline" onClick={() => onResult(item.recoveryRunId)}>Recovery result</button></li>)}</ul></details> : null}
+      <tbody>{data.jobs.map(job => <JobRow key={job.id} job={job} now={now} onResult={onResult} onCancel={onCancel} />)}</tbody>
+    </table></div> : <p className="mt-3 text-sm text-[#68746d]">{data.warnings.length ? "No activity could be confirmed from the available sources."
+      : data.fixtureAttention?.length ? "No active jobs. The fixtures below still need attention." : "No active jobs or unresolved claims were observed."}</p>}
+    {data.fixtureAttention?.length ? <section className="mt-5" aria-label="Fixtures needing attention">
+      <h4 className="text-sm font-semibold">Fixtures needing attention</h4>
+      <p className="mt-1 text-xs text-[#68746d]">These requests have no further follow-up work. Their physical return still needs proof; they are not running jobs.</p>
+      <div className="mt-2 overflow-x-auto rounded-xl border border-[#e0e4de]"><table className="w-full text-left text-xs">
+        <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Readiness", "Cancelled attempt", "Worker / fixture", "Reason / next action", "Since recorded claim"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
+        <tbody>{data.fixtureAttention.map(job => <JobRow key={job.id} job={job} now={now} onResult={onResult} />)}</tbody>
+      </table></div>
+    </section> : null}
+    {data.resolvedRecoveries.length ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-[#68746d]">Verified return evidence ({data.resolvedRecoveries.length})</summary>
+      <ul className="mt-2 space-y-1">{data.resolvedRecoveries.map(item => <li key={item.requestId}>{item.fixtureId} · {item.kind === "late-result"
+        ? <button className="text-[#087d50] underline" onClick={() => onResult(item.recoveryRunId)}>Completed result</button>
+        : <>{item.originalAvailable === false ? <span>Original result not published</span> : <button className="text-[#087d50] underline" onClick={() => onResult(item.originalRunId)}>Original result</button>}
+          {" · "}<button className="text-[#087d50] underline" onClick={() => onResult(item.recoveryRunId)}>Recovery result</button></>}</li>)}</ul></details> : null}
     {data.recentMaintenance.length ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-[#68746d]">Recent host maintenance (last 24 hours)</summary>
       <p className="mt-2 text-[#68746d]">These are host job outcomes, not routine test verdicts.</p>
       <ul className="mt-2 space-y-1">{data.recentMaintenance.map(job => <li key={job.id}>
@@ -100,6 +133,9 @@ export function TestRunOverviewPanel({ onResult }: { onResult: (id: string) => v
       <p className="mt-1 text-xs text-[#68746d]">All builds and triggers. Running jobs first; waiting requests oldest first. Execution order depends on GitHub and available workers.</p></div>
       <button className="text-xs text-[#087d50] underline" disabled={query.isFetching} onClick={() => query.refetch()}>{query.isFetching ? "Refreshing…" : "Refresh"}</button></div>
     {query.error ? <p role="alert" className="mt-3 text-xs text-[#a64235]">Live activity could not refresh. {query.data ? "The last view remains below." : "Try Refresh."}</p> : null}
-    {query.data ? <TestRunOverviewView data={query.data} now={now} onResult={onResult} /> : query.isPending ? <p className="mt-3 text-sm text-[#68746d]">Loading worker activity…</p> : null}
+    {query.data ? <TestRunOverviewView data={query.data} now={now} onResult={onResult} onCancel={async id => {
+      await api("/api/admin/test-runs/claims/" + encodeURIComponent(id) + "/cancel-follow-up", { method: "POST", body: { confirmation: "cancel-follow-up" } });
+      await query.refetch();
+    }} /> : query.isPending ? <p className="mt-3 text-sm text-[#68746d]">Loading worker activity…</p> : null}
   </section>;
 }
