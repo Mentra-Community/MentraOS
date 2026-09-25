@@ -66,6 +66,9 @@ public class StreamCommandHandler implements ICommandHandler {
     private long mOwnedStartRevision = -1;
     private Runnable mResourceRefresh;
     private Runnable mControllerProbeTick;
+    private JSONObject mPendingStart;
+    private long mPresenceRefreshDeadlineMs;
+    private Runnable mPresenceRefreshTick;
     private final StreamControllerLease mControllerLease = new StreamControllerLease(
             AsgConstants.STREAM_CONTROLLER_RESPONSE_TIMEOUT_MS,
             () -> java.util.UUID.randomUUID().toString());
@@ -133,6 +136,13 @@ public class StreamCommandHandler implements ICommandHandler {
         try {
             switch (commandType) {
                 case "start_stream":
+                    if (mPendingStart != null && data != null
+                            && !data.optString("streamId", "").isEmpty()
+                            && mPendingStart.optString("streamId").equals(data.optString("streamId"))
+                            && mPendingStart.optString("controllerId").equals(data.optString("controllerId"))) {
+                        return true; // Retransmission must not renew the admission deadline.
+                    }
+                    cancelPendingStart("Stream start superseded by a newer request");
                     return handleStartCommand(data);
                 case "stop_stream":
                     return handleStopCommand();
@@ -204,9 +214,8 @@ public class StreamCommandHandler implements ICommandHandler {
             }
             bindPhonePresence();
             if (!mPhonePolicy.canStart()) {
-                sendStreamErrorStatus(streamId,
-                        "Phone BLE presence unavailable; connect the Mentra App and update BES firmware");
-                return false;
+                data.put("streamId", streamId);
+                return awaitPhonePresence(data);
             }
             // Accept streamUrl first, then legacy rtmpUrl / srtUrl keys
             String streamUrl = data.optString("streamUrl", "");
@@ -502,6 +511,7 @@ public class StreamCommandHandler implements ICommandHandler {
             mLifecycleHandler.post(this::handleStopCommand);
             return true;
         }
+        cancelPendingStart("Stream start cancelled");
         String stoppedId = mOwnedStreamId;
         if (stoppedId == null) stoppedId = streamingManager.getStreamSnapshot().optString("streamId", null);
         if (stoppedId != null) sendStreamStoppingStatus(stoppedId);
@@ -614,6 +624,59 @@ public class StreamCommandHandler implements ICommandHandler {
             link.addListener(mPresenceListener);
         }
         updatePhonePresence(link.getPhonePresence());
+    }
+
+    /** Bounded reconciliation of a missed edge, without blocking the lifecycle dispatcher. */
+    private boolean awaitPhonePresence(JSONObject data) {
+        mPendingStart = data;
+        mPresenceRefreshDeadlineMs = SystemClock.elapsedRealtime()
+                + AsgConstants.STREAM_PHONE_PRESENCE_REFRESH_TIMEOUT_MS;
+        mPresenceRefreshTick = () -> {
+            if (mDisposed || mPendingStart == null) return;
+            if (mPhoneLink != null
+                    && mPhoneLink.getPhonePresence() == LinkStateMachine.PhonePresence.PRESENT) {
+                JSONObject pending = mPendingStart;
+                clearPendingStart();
+                handleStartCommand(pending);
+                return;
+            }
+            if (SystemClock.elapsedRealtime() >= mPresenceRefreshDeadlineMs) {
+                String presence = mPhoneLink == null ? "UNKNOWN" : mPhoneLink.getPhonePresence().name();
+                try {
+                    BesLivenessLog.warn("stream_presence_refresh_timeout", new JSONObject()
+                            .put("presence", presence)
+                            .put("streamId", mPendingStart.optString("streamId", "")));
+                } catch (JSONException ignored) {
+                    // Preserve the rejection even if diagnostics cannot be constructed.
+                }
+                cancelPendingStart("ABSENT".equals(presence)
+                        ? "BES reports the phone BLE link disconnected; reconnect the Mentra App"
+                        : "BES phone BLE state could not be synchronized; reconnect and try again");
+                return;
+            }
+            if (mServiceManager != null
+                    && mServiceManager.getBluetoothManager() instanceof K900BluetoothManager) {
+                ((K900BluetoothManager) mServiceManager.getBluetoothManager())
+                        .requestSystemVersionRefresh();
+            }
+            mLifecycleHandler.postDelayed(mPresenceRefreshTick,
+                    AsgConstants.STREAM_PHONE_PRESENCE_REFRESH_RETRY_MS);
+        };
+        mPresenceRefreshTick.run();
+        return true;
+    }
+
+    private void cancelPendingStart(String reason) {
+        if (mPendingStart != null) {
+            sendStreamErrorStatus(mPendingStart.optString("streamId", ""), reason);
+        }
+        clearPendingStart();
+    }
+
+    private void clearPendingStart() {
+        mPendingStart = null;
+        if (mPresenceRefreshTick != null) mLifecycleHandler.removeCallbacks(mPresenceRefreshTick);
+        mPresenceRefreshTick = null;
     }
 
     private void beginStreamOwnership(String streamId, String controllerId) {
@@ -744,6 +807,7 @@ public class StreamCommandHandler implements ICommandHandler {
     public void cleanup() {
         mLifecycleHandler.post(() -> {
             mDisposed = true;
+            cancelPendingStart("Stream command owner closed");
             streamingManager.setStreamStatusListener(null);
             if (mPhoneLink != null) mPhoneLink.removeListener(mPresenceListener);
             stopAllServices();
