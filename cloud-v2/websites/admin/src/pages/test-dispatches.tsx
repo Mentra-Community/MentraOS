@@ -17,6 +17,32 @@ export function testBuildInventoryPath(channel: string, pr: string, routineId?: 
   return `/api/admin/test-builds?${query}`;
 }
 const buildKey = (build: TestBuild) => `${build.platform ?? "ios-on-mac"}-${build.source.channel}-${build.source.buildRunId}-${build.source.publicationAttempt}`;
+/** Only a build Core reports as available, with a published archive, can be selected. */
+export const buildSelectable = (build: TestBuild) => build.availability === "available" && !!build.archive;
+export function canRequestRoutine(selected: TestBuild | undefined, routineId: TestRoutineId) {
+  return !!selected && buildSelectable(selected) && !!selected.routines.find(routine => routine.id === routineId)?.available;
+}
+
+export function TestBuildOption({ build, checked, locked, onSelect }: { build: TestBuild; checked: boolean; locked: boolean; onSelect: () => void }) {
+  const selectable = buildSelectable(build);
+  const statusId = `test-build-status-${buildKey(build)}`;
+  return <label className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${selectable ? "border-[#e0e4de]" : "cursor-not-allowed border-dashed border-[#d5d9d3] bg-[#f5f7f4] text-[#68746d]"}`}>
+    <input type="radio" name="test-build" aria-label={`${build.title}, publication ${build.source.publicationAttempt}`} aria-describedby={statusId}
+      disabled={!selectable || locked} checked={checked} onChange={onSelect} />
+    <span className="min-w-0">
+      <span className="flex flex-wrap items-center gap-2"><span className="font-medium">{build.title}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${selectable ? "bg-[#edf7f0] text-[#087d50]" : "bg-[#f0e9e1] text-[#8a5a1f]"}`}>{selectable ? "Published" : "Not selectable"}</span></span>
+      <span className="mt-1 block text-xs text-[#68746d]">
+        {build.release ? `${build.release} · ` : ""}{build.headSha.slice(0, 12)} · run {build.source.buildRunId} / publication {build.source.publicationAttempt}
+      </span>
+      <span id={statusId} className="mt-1 block">{selectable
+        ? `${build.platform === "android" ? "Android APK" : "Mac artifact"} published; the request workflow completes validation`
+        : `Unavailable: ${build.reason ?? "no published artifact is available for this build"}`}</span>
+      {build.archive ? <span className="mt-1 block break-all font-mono text-[10px]">SHA256 {build.archive.sha256}</span> : null}
+      <a href={build.buildUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[#087d50] underline">View build in GitHub</a>
+    </span>
+  </label>;
+}
 
 export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -40,6 +66,7 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
     refetchInterval: query => query.state.data && ["finished", "unavailable", "failed", "recovery-required"].includes(query.state.data.state) ? false : 5000 });
   const selected = builds.data?.builds.find(build => buildKey(build) === selection);
   const compatibility = selected?.routines.find(routine => routine.id === routineId);
+  const requestable = canRequestRoutine(selected, routineId);
 
   async function send(input: TestDispatchInput) {
     if (submitting) return;
@@ -60,7 +87,7 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
     } finally { setSubmitting(false); }
   }
   function submit() {
-    if (!selected?.archive || !compatibility?.available || submitting || dispatchId) return;
+    if (!requestable || !selected?.archive || submitting || dispatchId) return;
     void send({ source: selected.source, routineId, archiveSha256: selected.archive.sha256, idempotencyKey: crypto.randomUUID() });
   }
   function clearSelection() { setInventoryPath(null); setSelection(""); setError(null); }
@@ -90,18 +117,10 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
         </form>
         {error || builds.error || routines.error ? <p role="alert" className="text-sm text-[#a64235]">{error ?? builds.error?.message ?? routines.error?.message}</p> : null}
         {builds.data ? <div className="space-y-2">
-          {builds.data.builds.length ? builds.data.builds.map(build => <label key={buildKey(build)} className="flex items-start gap-3 rounded-xl border border-[#e0e4de] p-3 text-sm">
-            <input type="radio" name="test-build" aria-label={`${build.title}, publication ${build.source.publicationAttempt}`} disabled={build.availability !== "available" || !!dispatchId}
-              checked={selection === buildKey(build)} onChange={() => setSelection(buildKey(build))} />
-            <span className="min-w-0"><span className="font-medium">{build.title}</span><span className="mt-1 block text-xs text-[#68746d]">
-              {build.release ? `${build.release} · ` : ""}{build.headSha.slice(0, 12)} · run {build.source.buildRunId} / publication {build.source.publicationAttempt}
-            </span><span className="mt-1 block">{build.availability === "available" ? `${build.platform === "android" ? "Android APK" : "Mac artifact"} published; the request workflow completes validation` : build.reason ?? "Artifact unavailable"}</span>
-              {build.archive ? <span className="mt-1 block break-all font-mono text-[10px]">SHA256 {build.archive.sha256}</span> : null}
-              <a href={build.buildUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[#087d50] underline">View build in GitHub</a>
-            </span>
-          </label>) : <p className="text-sm text-[#68746d]">No matching build runs were found.</p>}
+          {builds.data.builds.length ? builds.data.builds.map(build => <TestBuildOption key={buildKey(build)} build={build} locked={!!dispatchId}
+            checked={selection === buildKey(build)} onSelect={() => setSelection(buildKey(build))} />) : <p className="text-sm text-[#68746d]">No matching build runs were found.</p>}
           <div className="flex flex-wrap items-end gap-3 pt-2">
-            <Button disabled={!compatibility?.available || submitting || !!dispatchId} onClick={submit}>{submitting ? "Submitting…" : "Request routine"}</Button>
+            <Button disabled={!requestable || submitting || !!dispatchId} onClick={submit}>{submitting ? "Submitting…" : "Request routine"}</Button>
           </div>
           {compatibility?.reason ? <p role="status" className="text-sm text-[#68746d]">{compatibility.reason}</p> : null}
         </div> : null}

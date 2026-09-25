@@ -12,6 +12,7 @@ import {
   chapterSeekTime,
   EMPTY_FILTERS,
   initialChapter,
+  runDuration,
   safeProducerUrl,
   testRunListPath,
   type TestRunDetail,
@@ -460,5 +461,59 @@ describe("recording and chapter integrity", () => {
     expect(safeProducerUrl("https://github.com/example/repo/actions/runs/1")).toBe(
       "https://github.com/example/repo/actions/runs/1",
     );
+  });
+});
+
+describe("recorded run duration", () => {
+  test("uses only the recorded start and finish and never fabricates a value", () => {
+    expect(runDuration("2026-09-22T01:00:00Z", "2026-09-22T01:10:00Z")).toBe("10m 0s");
+    expect(runDuration("2026-09-22T01:00:00Z", "2026-09-22T01:00:42.900Z")).toBe("42s");
+    expect(runDuration("2026-09-22T01:00:00Z", "2026-09-22T03:05:30Z")).toBe("2h 5m");
+    expect(runDuration("2026-09-22T01:00:00Z", "2026-09-22T01:00:00Z")).toBe("0s");
+    expect(runDuration("2026-09-22T01:00:00Z", "2026-09-22T01:00:00.250Z")).toBe("<1s");
+    for (const [start, finish] of [
+      ["2026-09-22T01:10:00Z", "2026-09-22T01:00:00Z"],
+      ["not a time", "2026-09-22T01:00:00Z"],
+      ["2026-09-22T01:00:00Z", ""],
+      [undefined, "2026-09-22T01:00:00Z"],
+      ["2026-09-22T01:00:00Z", null],
+      [Number.POSITIVE_INFINITY, Number.NaN],
+    ])
+      expect(runDuration(start, finish)).toBeNull();
+  });
+
+  test("history rows show each run's duration beside its date and keep filters", () => {
+    const client = new QueryClient();
+    const rows = [
+      { ...run, runId: "synthetic-complete" },
+      { ...run, runId: "synthetic-zero", finishedAt: run.startedAt },
+      { ...run, runId: "synthetic-reversed", startedAt: "2026-09-22T02:00:00Z" },
+      { ...run, runId: "synthetic-missing", finishedAt: undefined as unknown as string },
+    ];
+    client.setQueryData(["admin-test-runs", EMPTY_FILTERS, null], { pages: [{ runs: rows, nextCursor: null }], pageParams: [undefined] });
+    const markup = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <TestRunsPage selection={null} onSelect={() => {}} />
+      </QueryClientProvider>,
+    );
+    const texts = [...markup.matchAll(/<p class="mt-1 text-xs text-\[#747780\]">(.*?)<\/p>/g)].map((match) => match[1]);
+    expect(texts).toHaveLength(4);
+    expect(texts[0]).toMatch(/2026.* · Took 10m 0s$/);
+    expect(texts[1]).toMatch(/ · Took 0s$/);
+    expect(texts[2]).toMatch(/ · Duration not available$/);
+    expect(texts[3]).toMatch(/ · Duration not available$/);
+    expect(markup).not.toContain("NaN");
+    expect(markup).toContain('aria-label="Fixture alias"');
+    expect(markup).toContain("Apply filters");
+  });
+
+  test("run detail shows the recorded duration or states it is unavailable", () => {
+    const valid = renderToStaticMarkup(<TestRunView run={run} onStep={() => {}} />);
+    expect(valid).toMatch(/<dt[^>]*>Duration<\/dt><dd[^>]*>10m 0s<\/dd>/);
+    const reversed = renderToStaticMarkup(
+      <TestRunView run={{ ...run, finishedAt: "2026-09-22T00:00:00Z" }} onStep={() => {}} />,
+    );
+    expect(reversed).toMatch(/<dt[^>]*>Duration<\/dt><dd[^>]*>Not available from the recorded times<\/dd>/);
+    expect(reversed).not.toContain("NaN");
   });
 });
