@@ -4138,7 +4138,9 @@ class MentraLive : SGCManager() {
                     "controllerId" to json.opt("controllerId"), "streamId" to json.opt("streamId"),
                     "probeId" to json.opt("probeId"))
                 com.mentra.bluetoothsdk.streaming.StreamControllerProbe.response(values)?.let {
-                    sendJson(JSONObject(it))
+                    // BES buffers non-waking commands when MTK enters standby, even while
+                    // its streaming CPU lease is held. The current probe needs a live reply.
+                    sendJson(JSONObject(it), true)
                 }
             }
             "pong" ->
