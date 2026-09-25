@@ -2148,7 +2148,7 @@ class MentraLive : SGCManager() {
                             // than scanning).
                             // Falls back to name-based scan if no address is saved.
                             val lastDeviceAddress =
-                                    DeviceStore.get("bluetooth", "device_address") as String?
+                                    selectedConnectionAddress()
                             if (lastDeviceAddress != null &&
                                             !lastDeviceAddress.isEmpty() &&
                                             bluetoothAdapter != null
@@ -4138,7 +4138,9 @@ class MentraLive : SGCManager() {
                     "controllerId" to json.opt("controllerId"), "streamId" to json.opt("streamId"),
                     "probeId" to json.opt("probeId"))
                 com.mentra.bluetoothsdk.streaming.StreamControllerProbe.response(values)?.let {
-                    sendJson(JSONObject(it))
+                    // BES buffers non-waking commands when MTK enters standby, even while
+                    // its streaming CPU lease is held. The current probe needs a live reply.
+                    sendJson(JSONObject(it), true)
                 }
             }
             "pong" ->
@@ -6161,7 +6163,8 @@ class MentraLive : SGCManager() {
             val json = JSONObject()
             json.put("type", "request_version")
             requestId?.let { json.put("request_id", it) }
-            sendJson(json, false)
+            // Wake ASG so the version request and its response can finish after idle.
+            sendJson(json, true)
             Bridge.log("LIVE: 📱 Requesting version info from glasses")
         } catch (e: JSONException) {
             Log.e(TAG, "📱 Error creating request_version command", e)
@@ -6623,6 +6626,14 @@ class MentraLive : SGCManager() {
         return false
     }
 
+    private fun selectedConnectionAddress(): String? = SelectedDeviceAddress.resolve(
+        savedDeviceName,
+        DeviceStore.get("bluetooth", "pending_device_name") as? String,
+        DeviceStore.get("bluetooth", "pending_device_address") as? String,
+        DeviceStore.get("bluetooth", "device_name") as? String,
+        DeviceStore.get("bluetooth", "device_address") as? String,
+    )
+
     fun connectToSmartGlasses() {
         if (postGattLifecycle { connectToSmartGlasses() }) return
         if (pairingYieldActive) {
@@ -6657,13 +6668,7 @@ class MentraLive : SGCManager() {
         // var context = Bridge.getContext();
         // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         // String lastDeviceAddress = prefs.getString(PREF_DEVICE_NAME, null);
-        val pendingAddress =
-                (DeviceStore.get("bluetooth", "pending_device_address") as String?)?.takeIf {
-                    it.isNotEmpty()
-                }
-        val lastDeviceAddress =
-                pendingAddress
-                        ?: (DeviceStore.get("bluetooth", "device_address") as String?)
+        val lastDeviceAddress = selectedConnectionAddress()
 
         if (lastDeviceAddress != null && lastDeviceAddress.length > 0) {
             // Connect to last known device if available

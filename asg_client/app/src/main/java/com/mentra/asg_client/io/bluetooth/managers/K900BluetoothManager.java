@@ -31,8 +31,11 @@ import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrat
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
+import com.mentra.asg_client.io.bes.log.BesLivenessLog;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.PhonePresenceReport;
 
 import org.greenrobot.eventbus.EventBus;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -788,6 +791,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Whether the BES has proven binary relay support (wire_caps advert or an observed frame). */
     public boolean isBesBinaryRelaySupported() {
         return linkState.getNegotiatedCaps().binary;
+    }
+
+    /** Request a fresh BES status; returns false while another UART operation owns the lane. */
+    public boolean requestSystemVersionRefresh() {
+        return transportCoordinator.requestSystemVersionRefresh();
     }
 
     /**
@@ -1602,6 +1610,24 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    private void applyPhonePresence(JSONObject body, String key, String source) {
+        Boolean present = PhonePresenceReport.parse(body.opt(key));
+        if (present == null) {
+            Log.w(TAG, "Ignoring malformed phone presence from " + source);
+            return;
+        }
+        if (linkState.getPhonePresence() != (present
+                ? LinkStateMachine.PhonePresence.PRESENT : LinkStateMachine.PhonePresence.ABSENT)) {
+            try {
+                BesLivenessLog.info("phone_presence",
+                        new JSONObject().put("source", source).put("present", present));
+            } catch (JSONException ignored) {
+                // Diagnostics must not prevent applying an authoritative report.
+            }
+        }
+        linkState.phonePresenceReported(present);
+    }
+
     /**
      * Sync phone BLE presence from the {@code phone_ble} field the BES adds to its sr_syvr reply
      * body (firmware >= 17.26.7.23). This is the boot/wake/recovery sync for the initial value;
@@ -1612,7 +1638,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (bData == null || !bData.has("phone_ble")) {
             return;
         }
-        linkState.phonePresenceReported(bData.optInt("phone_ble", 0) == 1);
+        applyPhonePresence(bData, "phone_ble", "sr_syvr");
     }
 
     /**
@@ -1644,14 +1670,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 return true; // Still consumed: a malformed edge must not reach CommandProcessor.
             }
 
-            boolean present = bData.optInt("on", 0) == 1;
-            Log.i(
-                    TAG,
-                    "📱 BES reported phone BLE "
-                            + (present ? "connected" : "disconnected")
-                            + " (sr_phble)");
+            JSONObject body = bData;
             transportCoordinator.runForCurrentSerialSession(
-                    receiveSession, () -> linkState.phonePresenceReported(present));
+                    receiveSession, () -> applyPhonePresence(body, "on", "sr_phble"));
             return true;
         } catch (Exception e) {
             Log.e(TAG, "💥 Error parsing sr_phble", e);

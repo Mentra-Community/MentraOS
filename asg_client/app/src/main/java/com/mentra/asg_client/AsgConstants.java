@@ -137,6 +137,10 @@ public class AsgConstants {
     /** Tolerate brief phone BLE outages before releasing a remotely owned camera stream. */
     public static final long STREAM_PHONE_DISCONNECT_GRACE_MS = 10_000L;
 
+    /** Bound stream admission while reconciling a missed BES phone-presence report. */
+    public static final long STREAM_PHONE_PRESENCE_REFRESH_TIMEOUT_MS = 2_000L;
+    public static final long STREAM_PHONE_PRESENCE_REFRESH_RETRY_MS = 400L;
+
     /** Native controller challenge cadence; retransmission never renews the response deadline. */
     public static final long STREAM_CONTROLLER_PROBE_INTERVAL_MS = 2_000L;
 

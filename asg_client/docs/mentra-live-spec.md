@@ -195,7 +195,12 @@ grace tolerates brief BLE outages. Reconnection cancels that deadline, while rep
 unknown-presence reports never extend it. Deadline work is scoped to a stream generation so an
 old callback cannot stop a replacement stream, even if its public id is reused.
 
-Starting a stream requires confirmed phone presence. BES builds that do not expose that signal
+Starting a stream requires confirmed phone presence. If the cached state is absent or unknown,
+ASG requests `cs_syvr` snapshots from BES every 400ms for up to two seconds before rejecting the
+start. Stop, replacement start and handler cleanup cancel that pending admission. Refreshes use
+the UART coordinator and cannot interrupt file/OTA ownership or baud recovery. `phone_ready`
+also requests a snapshot; receipt of a phone command never directly sets presence to connected.
+BES builds that do not expose that signal
 must be updated before starting phone-owned streaming; unknown presence must not authorize an
 indefinitely running camera. If presence becomes unknown during a stream (for example, during
 BES transport recovery), the same bounded grace applies.
@@ -205,8 +210,12 @@ BLE presence does not prove the controlling app is executing. Updated native SDK
 without that support, sends a fresh native controller challenge every two seconds, and stops
 after ten seconds without a matching response. Retransmissions and duplicate/late responses
 never renew this deadline. Challenges are answered directly in the native BLE receive path,
-without JavaScript, cloud connectivity, or a phone-side periodic timer. The controller identity
-survives BLE reconnects but changes after app termination; reopening the app cannot silently
+without JavaScript, cloud connectivity, or a phone-side periodic timer.
+Replies use the transport's MTK wake flag: BES can buffer non-waking phone commands after
+Android enters standby even while the stream's CPU wake lock keeps media running. A valid
+native challenge response must reach ASG before its existing deadline.
+The controller identity survives BLE reconnects but changes after app termination; reopening
+the app cannot silently
 take over the old session. Both phone-presence and controller-response checks must remain healthy.
 Physical qualification must verify screen-off/background operation, force-kill on both phone
 platforms, and short BLE outages before release; native callback wake behavior is not proven by

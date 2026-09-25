@@ -97,7 +97,12 @@ export class ManagedWebRtcRelay implements ManagedRelay {
       console.log("[ManagedRelay]", {attemptId: event.attemptId, state: event.state, reason: event.reason})
       if (event.state === "diagnostic") return
       if (event.state === "failed") this.failed(new Error(event.reason))
-      else this.onStatus(event.state, event.reason)
+      else if (event.state === "connected") {
+        // A glasses start ACK only proves the local leg; wait for the internet publisher.
+        if (this.attemptError || this.readyAt !== null) return
+        this.readyAt = this.deps.now()
+        this.onStatus(this.attempt > 1 ? "reconnected" : "connected", event.reason)
+      } else this.onStatus(event.state, event.reason)
     })
     const start = this.startAttempt()
     this.operation = start
@@ -201,7 +206,6 @@ export class ManagedWebRtcRelay implements ManagedRelay {
       ...(this.options.audio !== undefined ? {audio: this.options.audio} : {}),
     })
     this.checkpoint()
-    this.readyAt = this.deps.now()
     return result
   }
 
@@ -211,6 +215,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     // Bound consecutive trouble, not the lifetime number of recoveries in a long stream.
     if (this.readyAt !== null && this.deps.now() - this.readyAt >= 60_000) this.retries = 0
     this.readyAt = null
+    this.onStatus("reconnecting", error.message)
     if (this.restarting) return
     this.restarting = true
     // Await startup before cleanup: late native/BLE success still belongs to this attempt.
@@ -222,11 +227,9 @@ export class ManagedWebRtcRelay implements ManagedRelay {
             await this.cleanupAttempt()
             if (this.cancelled) return
             if (this.retries >= 3) throw error
-            this.onStatus("reconnecting", error.message)
             await this.deps.sleep(1_000 * 2 ** this.retries++)
             if (this.cancelled) return
             await this.startAttempt()
-            this.onStatus("reconnected", "Glasses relay restarted")
             return
           } catch (failure) {
             // Cleanup failure retains ownership; never create another stream on uncertain state.
