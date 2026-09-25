@@ -124,7 +124,7 @@ function visitWifiSettings(): Promise<PhoneWifiEnableResult> {
 let promptInFlight = false
 
 /** Host overlay only: never clear miniapp foreground or send UI_CLOSE to a live call. */
-export async function requestPhoneWifiEnable(_reason?: string): Promise<PhoneWifiEnableResult> {
+export async function requestPhoneWifiEnable(reason?: string): Promise<PhoneWifiEnableResult> {
   if (promptInFlight || AppState.currentState !== "active") {
     throw Object.assign(new Error("Phone Wi-Fi setup requires an available foreground host"), {code: "REQUEST_ABORTED"})
   }
@@ -133,14 +133,12 @@ export async function requestPhoneWifiEnable(_reason?: string): Promise<PhoneWif
     const enabled = await isPhoneWifiEnabled()
     if (enabled === true) return {enabled, cancelled: false}
     const actionLabel = translate(Platform.OS === "ios" ? "phoneWifi:openSettings" : "phoneWifi:openWifiSettings")
+    const message = reason?.trim() || translate("phoneWifi:reason")
     let stillOff = false
     for (;;) {
       const confirmed = await requestPhoneWifiPrompt({
         title: translate(stillOff ? "phoneWifi:stillOffTitle" : "phoneWifi:title"),
-        message:
-          Platform.OS === "ios"
-            ? `${translate("phoneWifi:videoReason")}\n\n${translate("phoneWifi:instructionsIos")}`
-            : translate("phoneWifi:videoReason"),
+        message: Platform.OS === "ios" ? `${message}\n\n${translate("phoneWifi:instructionsIos")}` : message,
         actionLabel,
         tone: stillOff ? "still-off" : "ask",
       })
