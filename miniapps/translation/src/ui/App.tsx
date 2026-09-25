@@ -1,4 +1,4 @@
-import {useState} from "react"
+import {useHistoryState} from "../../../shared/useHistoryState"
 import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
 
 import {BottomNav} from "./components/BottomNav"
@@ -20,8 +20,8 @@ import {useTranslations} from "./hooks/useTranslations"
  * cross-origin backend to authenticate against in the local runtime.
  */
 export function App() {
-  const [activeTab, setActiveTab] = useState<"translation" | "settings">("translation")
-  const [showTargetLanguageSelector, setShowTargetLanguageSelector] = useState(false)
+  const [activeTab, setActiveTab] = useHistoryState<"translation" | "settings">("tab", "translation")
+  const [showTargetLanguageSelector, setShowTargetLanguageSelector] = useHistoryState("languageSelector", false)
   const isDark = useColorScheme() === "dark"
   const {insets} = useSafeArea()
   const {developerMode, holdHandlers} = useDeveloperMode()
@@ -224,7 +224,8 @@ function CloudStatusFooter({
         />
         <span className="text-sm font-semibold truncate">{label}</span>
       </div>
-      <span className={`text-xs font-medium flex-shrink-0 ${dark ? "text-zinc-300" : "text-zinc-500 dark:text-zinc-400"}`}>
+      <span
+        className={`text-xs font-medium flex-shrink-0 ${dark ? "text-zinc-300" : "text-zinc-500 dark:text-zinc-400"}`}>
         {detail}
       </span>
     </div>

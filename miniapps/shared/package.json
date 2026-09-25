@@ -1,0 +1,16 @@
+{
+  "name": "@mentra/bundled-miniapp-navigation",
+  "private": true,
+  "type": "module",
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.6",
+    "jsdom": "^20.0.3",
+    "react-dom": "^19.0.0"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}
