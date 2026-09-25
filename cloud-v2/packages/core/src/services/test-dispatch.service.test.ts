@@ -8,6 +8,7 @@ import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from
 import { TestRunGithubApp } from "./test-run-github-app";
 import type { TestDispatchInput, TestDispatchReceipt, TestDispatchView } from "../types/test-dispatch.types";
 import type { AppEnv } from "../types/hono.types";
+import type { TestContinuationBinding } from "../types/test-continuation.types";
 
 const input: TestDispatchInput = { source: { channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1 }, routineId: "no-glasses",
   archiveSha256: "d".repeat(64), idempotencyKey: "ad616c04-c5e5-4dcd-b7c4-d9d4a626166d" };
@@ -158,6 +159,37 @@ describe("durable dispatch ownership", () => {
     expect((await f.service.detail(input.idempotencyKey)).sendState).toBe("rejected");
     expect((await f.service.create(input, "admin@example.test")).state).toBe("unavailable");
     expect(f.sends()).toBe(0);
+  });
+  test("failed continuation admission keeps its unsent execution available for a fresh publication", async () => {
+    const f = fixture(), resolve = f.github.resolve;
+    const binding: TestContinuationBinding = { occurrenceId: "tfo_" + "e".repeat(64), agentRunId: "agent", executionAttempt: 1,
+      candidate: { repository: "Mentra-Community/MentraOS", pullRequest: 12, headSha: "a".repeat(40) }, expectedHeadSha: "a".repeat(40) };
+    f.github.resolve = async () => { throw new TestDispatchError(409, "Publication expired"); };
+    await expect(f.service.create(input, "agent", binding)).rejects.toThrow("Publication expired");
+    expect(f.repository.rows.size).toBe(0); expect(f.sends()).toBe(0);
+    f.github.resolve = resolve;
+    const selected = { ...input, source: { ...input.source, publicationAttempt: 2 } };
+    expect((await f.service.create(selected, "agent", binding)).sendState).toBe("accepted");
+    await f.service.create(selected, "agent", binding); expect(f.sends()).toBe(1);
+  });
+  for (const first of ["rejection", "send"]) test(`continuation ${first} cannot replace the concurrent sent receipt`, async () => {
+    const f = fixture(), valid = await f.github.resolve(input.source);
+    const binding: TestContinuationBinding = { occurrenceId: "tfo_" + "e".repeat(64), agentRunId: "agent", executionAttempt: 1,
+      candidate: { repository: "Mentra-Community/MentraOS", pullRequest: 12, headSha: "a".repeat(40) }, expectedHeadSha: "a".repeat(40) };
+    const pending = [deferred<typeof valid>(), deferred<typeof valid>()], entered = deferred<void>(); let calls = 0;
+    f.github.resolve = async () => { const index = calls++; if (calls === 2) entered.resolve(); return pending[index]!.promise; };
+    const sending = f.service.create(input, "agent", binding), rejecting = f.service.create(input, "agent", binding);
+    await entered.promise;
+    if (first === "rejection") {
+      pending[1]!.reject(new TestDispatchError(409, "Expired publication"));
+      await expect(rejecting).rejects.toThrow("Expired publication");
+      expect(f.repository.rows.size).toBe(0); pending[0]!.resolve(valid);
+      expect((await sending).sendState).toBe("accepted");
+    } else {
+      pending[0]!.resolve(valid); const sent = await sending;
+      pending[1]!.reject(new TestDispatchError(409, "Expired publication")); expect(await rejecting).toEqual(sent);
+    }
+    expect(f.repository.rows.size).toBe(1); expect(f.sends()).toBe(1);
   });
   test("transient source validation leaves the same submission available for retry", async () => {
     for (const failure of [new TestDispatchError(503, "GitHub unavailable"), new Error("Network timeout")]) {

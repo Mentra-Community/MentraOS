@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { TestContinuationBinding } from "./test-continuation.types";
 
 const positive = z.number().int().positive().safe();
 export const testRoutineIdSchema = z.enum(["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"]);
@@ -59,6 +60,8 @@ export interface TestDispatchReceipt {
   createdAt: string;
   // This is a send receipt, not another queue. A send is never retried here.
   sendState: "sending" | "accepted" | "unknown" | "rejected";
+  continuation?: TestContinuationBinding;
+  adopted?: boolean;
   rejectionReason?: string;
   requestRunId?: number;
   requestUrl?: string;

@@ -98,6 +98,7 @@ export interface TestBuildGateway {
   resolve(source: TestBuildSource, routineId?: TestRoutineId): Promise<TestBuild>;
   dispatch(input: TestDispatchInput): Promise<{ requestRunId: number; requestUrl: string }>;
   progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
+  findExisting?(input: TestDispatchInput, since: string, excludeRequestRunIds?: number[]): Promise<{ requestRunId: number; requestUrl: string } | null>;
 }
 
 export class GithubTestBuildGateway implements TestBuildGateway {
@@ -337,6 +338,30 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return { attempt, tag, archive: data.artifacts.mac,
       result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
   }
+  async findExisting(input: TestDispatchInput, since: string, excludeRequestRunIds: number[] = []) {
+    requireThat(Number.isFinite(Date.parse(since)), "Invalid candidate publication time");
+    const data = z.object({ total_count: z.number().int().nonnegative(), workflow_runs: z.array(runSchema) }).parse(await this.api(
+      `${REPOSITORY}/actions/workflows/${REQUEST_WORKFLOW}/runs?event=workflow_dispatch&branch=dev&created=${encodeURIComponent(">=" + since)}&per_page=100`));
+    requireThat(data.total_count === data.workflow_runs.length, "Request history is incomplete; reconcile before sending");
+    const found: { requestRunId: number; requestUrl: string }[] = [];
+    for (const run of data.workflow_runs) {
+      if (excludeRequestRunIds.includes(run.id)) continue;
+      if (run.status !== "completed" || run.run_attempt !== 1)
+        throw new TestDispatchError(503, "An unresolved request may own this build; reconcile before sending");
+      if (run.conclusion !== "success") continue;
+      try {
+        const progress = await this.progress(run.id, input);
+        if (progress.requestId && progress.state !== "unavailable") found.push({ requestRunId: run.id, requestUrl: runUrl(REPOSITORY, run.id) });
+      } catch (error) {
+        // Only an authenticated different selection is a miss. Missing, expired
+        // or invalid metadata cannot authorize another device execution.
+        if (!(error instanceof TestDispatchError) || !["Published request source differs", "Published request identity differs",
+          "Request selected a different app publication"].includes(error.message)) throw error;
+      }
+    }
+    requireThat(found.length <= 1, "Multiple requests already selected this build; reconcile before sending");
+    return found[0] ?? null;
+  }
   async dispatch(input: TestDispatchInput) {
     const source = input.source;
     const inputs = { routine: input.routineId, request_origin: "workflow-dispatch",
@@ -375,7 +400,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(`sha256:${hash(bytes)}` === artifact.digest, "Request artifact digest changed");
     const requestFields = z.object({ kind: z.literal("mentra-routine-request"),
       requestId: z.string(), status: z.enum(["ready", "no-artifact"]), reason: z.string(),
-      routine: z.object({ id: z.string(), authorization: z.literal("workflow-dispatch") }),
+      routine: z.object({ id: z.string(), authorization: z.enum(["workflow-dispatch", "pr-label", "successful-build"]) }),
       trigger: z.object({ repository: z.literal(REPOSITORY), kind: z.literal("workflow_dispatch"), runId: positive, runAttempt: positive,
         sha, workflowSha: sha, ref: z.literal("refs/heads/dev"), workflow: z.literal(`.github/workflows/${REQUEST_WORKFLOW}`) }),
       selection: z.object({ platform: z.enum(["ios-on-mac", "android"]), archive: assetSchema, producer: z.object({ runId: positive, publicationAttempt: positive }) }).passthrough().nullable(),
