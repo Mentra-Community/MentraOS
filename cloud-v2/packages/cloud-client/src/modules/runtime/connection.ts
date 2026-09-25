@@ -410,7 +410,15 @@ export class Connection {
     // session is live by then.
     this.failPendingAck(new SupersededAttemptError());
 
-    const token = await this.deps.getToken();
+    let token: string;
+    try {
+      token = await this.deps.getToken();
+    } catch (err) {
+      // A newer attempt owns the connection now; this token failure is no
+      // longer a failed connect and must not schedule a reconnect over it.
+      if (attempt !== this.connectSeq) throw new SupersededAttemptError();
+      throw err;
+    }
     if (attempt !== this.connectSeq) {
       // A newer attempt started while we were resolving the token.
       throw new SupersededAttemptError();
