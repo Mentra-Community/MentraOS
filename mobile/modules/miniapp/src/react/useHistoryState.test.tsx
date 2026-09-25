@@ -45,7 +45,8 @@ class SessionHistory {
       const target = this.index + delta
       if (delta === 0 || target < 0 || target >= this.entries.length) return
       this.index = target
-      this.window.dispatchEvent(new this.window.PopStateEvent("popstate", {state: this.state}))
+      // The hook reads history.state, not event.state.
+      this.window.dispatchEvent(new this.window.Event("popstate"))
     }, 0)
   }
 }
