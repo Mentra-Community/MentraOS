@@ -2148,7 +2148,7 @@ class MentraLive : SGCManager() {
                             // than scanning).
                             // Falls back to name-based scan if no address is saved.
                             val lastDeviceAddress =
-                                    DeviceStore.get("bluetooth", "device_address") as String?
+                                    selectedConnectionAddress()
                             if (lastDeviceAddress != null &&
                                             !lastDeviceAddress.isEmpty() &&
                                             bluetoothAdapter != null
@@ -6625,6 +6625,14 @@ class MentraLive : SGCManager() {
         return false
     }
 
+    private fun selectedConnectionAddress(): String? = SelectedDeviceAddress.resolve(
+        savedDeviceName,
+        DeviceStore.get("bluetooth", "pending_device_name") as? String,
+        DeviceStore.get("bluetooth", "pending_device_address") as? String,
+        DeviceStore.get("bluetooth", "device_name") as? String,
+        DeviceStore.get("bluetooth", "device_address") as? String,
+    )
+
     fun connectToSmartGlasses() {
         if (postGattLifecycle { connectToSmartGlasses() }) return
         if (pairingYieldActive) {
@@ -6659,13 +6667,7 @@ class MentraLive : SGCManager() {
         // var context = Bridge.getContext();
         // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         // String lastDeviceAddress = prefs.getString(PREF_DEVICE_NAME, null);
-        val pendingAddress =
-                (DeviceStore.get("bluetooth", "pending_device_address") as String?)?.takeIf {
-                    it.isNotEmpty()
-                }
-        val lastDeviceAddress =
-                pendingAddress
-                        ?: (DeviceStore.get("bluetooth", "device_address") as String?)
+        val lastDeviceAddress = selectedConnectionAddress()
 
         if (lastDeviceAddress != null && lastDeviceAddress.length > 0) {
             // Connect to last known device if available
