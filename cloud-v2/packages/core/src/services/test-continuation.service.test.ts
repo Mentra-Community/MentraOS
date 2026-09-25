@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { createTestFailureAgentApi } from "../api/agent/test-failures.api";
 import type { ContinuationGrant } from "../types/test-continuation.types";
 import type { TestDispatchReceipt } from "../types/test-dispatch.types";
@@ -9,13 +10,14 @@ import type { TestBuildGateway } from "./test-builds.service";
 import type { TestRunService } from "./test-run.service";
 import type { ContinuationTarget } from "./test-continuation.github";
 import type { TestRunClaim } from "../types/test-run-claim.types";
+import { TestFailureIncidentService, type IncidentReportStore } from "./test-failure-incident.service";
 const occurrenceId = "tfo_" + "a".repeat(64), headSha = "b".repeat(40), archiveSha256 = "c".repeat(64);
 const secret = "continuation-test-only-".repeat(3);
 const grant: ContinuationGrant = { purpose: "mentra-routine-fixer-continuation-v1", environment: "dev", occurrenceId,
   agentRunId: "run_123", executionAttempt: 1, leaseGeneration: 1, leaseTokenSha256: "e".repeat(64), candidate: { repository: "Mentra-Community/MentraOS", pullRequest: 44, headSha },
   routineIds: ["no-glasses"], actions: ["request-routine", "read-results"], expires: Math.floor(Date.now() / 1000) + 600 };
 const input = { source: { channel: "pr" as const, prNumber: 44, buildRunId: 80, publicationAttempt: 1 }, routineId: "no-glasses" as const, archiveSha256 };
-function fixture() {
+function fixture(incidents?: IncidentReportStore) {
   const packet = { schemaVersion: 1, occurrenceId, sourceStatus: "recorded", source: { repository: "Mentra-Community/MentraOS", headSha },
     delivery: { state: "acknowledged", agentRunId: "run_123" }, evidence: { complete: true, assets: [{ assetId: "asset" }] } } as unknown as Awaited<ReturnType<TestRunService["failureDetail"]>>;
   let sends = 0, since = "", existing: { requestRunId: number; requestUrl: string } | null = null;
@@ -61,7 +63,7 @@ function fixture() {
       workerId: "mini", executionId: "execution", claimedAt: "2026-09-25T08:00:00Z", settledAt: "2026-09-25T08:00:00Z",
       state: claim.state, settlement: claim.resultRunId ? { state: "terminal", resultRunId: claim.resultRunId }
         : { state: "recovery-required", reason: "Retained for recovery" } } as TestRunClaim) : null,
-  }, async value => { leaseChecks.push(value); if (!leaseValid) throw new Error("Stale lease"); });
+  }, async value => { leaseChecks.push(value); if (!leaseValid) throw new Error("Stale lease"); }, incidents ? new TestFailureIncidentService(runs, incidents) : undefined);
   return { packet, rows, builds, runs, service, result, leaseChecks, targets, anchor: (id: string, agentRunId: string) => { anchors.set(id, agentRunId); },
     loseLease: () => { leaseValid = false; }, sends: () => sends, since: () => since,
     target: (value: Partial<ContinuationTarget>) => { target = { ...target, ...value }; },
@@ -325,4 +327,62 @@ test("signed grants carry the optional case binding and reject malformed ones", 
   expect(verifyTestContinuationGrant(token, devOccurrence, secret, "dev")).toEqual(value);
   expect(() => signTestContinuationGrant({ ...value, caseBinding: { caseId: "case", candidateOwnerRunId: "run_owner" } }, secret)).toThrow();
   expect(() => signTestContinuationGrant({ ...value, caseBinding: { ...value.caseBinding!, extra: true } as never }, secret)).toThrow();
+});
+
+test("registered rerun incidents require the exact result binding before the incident membership guard", async () => {
+  process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = secret; process.env.CLOUD_CORE_ENVIRONMENT = "dev";
+  // Synthetic reports: the rerun failure owns rep_01RERUN; the original occurrence owns rep_01ORIGINAL.
+  const bytes = Buffer.from(JSON.stringify({ entries: [{ timestamp: 1, level: "info", message: "synthetic rerun frame" }] }));
+  const calls: string[] = [];
+  const report = (reportId: string) => ({ report: { reportId, kind: "automatic", status: "ready", mentraUserId: "mu_synthetic", trigger: null,
+    report: null, feedback: null, context: {}, createdAt: null, updatedAt: null, artifacts: [{ artifactId: `art_${reportId.slice(4)}`,
+      type: "logs", source: "phone", filename: null, contentType: "application/json", sizeBytes: bytes.byteLength, createdAt: null }] },
+  assets: [{ artifactId: `art_${reportId.slice(4)}`, storageKey: `reports/${reportId}`, fileName: null, contentType: "application/json",
+    sizeBytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex"), createdAt: null }] }) as never;
+  const store: IncidentReportStore = {
+    getReport: async id => { calls.push(id); return report(id); },
+    readReportArtifactPayload: async (id, artifactId) => { calls.push(`${id}/${artifactId}`);
+      return artifactId === `art_${id.slice(4)}` ? { bytes, contentType: "application/json", fileName: null } : null; },
+  };
+  const f = fixture(store), failureId = f.result.failureOccurrences[0]!.occurrenceId;
+  const byOccurrence: Record<string, string[]> = { [occurrenceId]: ["rep_01ORIGINAL"], [failureId]: ["rep_01RERUN"] };
+  (f.runs as { failureDetail: unknown }).failureDetail = async (id: string) =>
+    ({ ...f.packet, occurrenceId: id, failure: { incidentIds: byOccurrence[id] ?? [] } });
+  await f.service.request(grant, input);
+  const app = createTestFailureAgentApi(f.runs, f.service, new TestFailureIncidentService(f.runs, store));
+  const id = continuationOperationId(grant, input.routineId), rerun = `/${occurrenceId}/reruns/${id}/failures/${failureId}/incidents`;
+  const headers = { authorization: `Bearer ${signTestContinuationGrant(grant, secret)}` };
+  // No recorded result yet: the failure is not part of the registered request, so storage is never queried.
+  expect((await app.request(`${rerun}/rep_01RERUN`, { headers })).status).toBe(404);
+  expect(calls).toEqual([]);
+  f.results();
+  const response = await app.request(`${rerun}/rep_01RERUN`, { headers });
+  expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toBe("private, no-store");
+  const meta = await response.json() as { occurrenceId: string; logs: { state: string; artifacts: Array<{ representation: { path: string; sha256: string } }> } };
+  expect(meta.occurrenceId).toBe(failureId); expect(meta.logs.state).toBe("usable");
+  const path = meta.logs.artifacts[0]!.representation.path;
+  expect(path).toBe(`/api/agent/test-failures${rerun}/rep_01RERUN/artifacts/art_01RERUN`);
+  const artifact = await app.request(path.replace("/api/agent/test-failures", ""), { headers });
+  expect(artifact.status).toBe(200);
+  expect(createHash("sha256").update(new Uint8Array(await artifact.arrayBuffer())).digest("hex")).toBe(meta.logs.artifacts[0]!.representation.sha256);
+  calls.length = 0;
+  // The original occurrence's incident, another failure, another candidate and other credentials are all denied.
+  expect((await app.request(`${rerun}/rep_01ORIGINAL`, { headers })).status).toBe(404);
+  expect((await app.request(`${rerun}/rep_01RERUN/artifacts/art_01ORIGINAL`, { headers })).status).toBe(404);
+  expect((await app.request(`/${occurrenceId}/reruns/${id}/failures/tfo_${"0".repeat(64)}/incidents/rep_01RERUN`, { headers })).status).toBe(404);
+  const otherCandidate = signTestContinuationGrant({ ...grant, candidate: { ...grant.candidate, headSha: "f".repeat(40) } }, secret);
+  expect((await app.request(`${rerun}/rep_01RERUN`, { headers: { authorization: `Bearer ${otherCandidate}` } })).status).toBe(404);
+  const writeOnly = signTestContinuationGrant({ ...grant, actions: ["request-routine"] }, secret);
+  expect((await app.request(`${rerun}/rep_01RERUN`, { headers: { authorization: `Bearer ${writeOnly}` } })).status).toBe(401);
+  const originalRead = { authorization: `Bearer ${signTestFailureReadGrant(occurrenceId, "dev", grant.expires, secret)}` };
+  expect((await app.request(`${rerun}/rep_01RERUN`, { headers: originalRead })).status).toBe(401);
+  expect((await app.request(`${rerun}/rep_01RERUN`)).status).toBe(401);
+  // Only the assigned report was consulted (to see the artifact is not listed); nothing else was read.
+  expect(calls).toEqual(["rep_01RERUN"]);
+  // The original read grant reaches only the original occurrence's incident on the original route.
+  expect((await app.request(`/${occurrenceId}/incidents/rep_01RERUN`, { headers: originalRead })).status).toBe(404);
+  expect((await app.request(`/${occurrenceId}/incidents/rep_01ORIGINAL`, { headers: originalRead })).status).toBe(200);
+  expect((await app.request(`/${occurrenceId}/incidents/rep_01ORIGINAL`, { headers })).status).toBe(401);
+  process.env.CLOUD_CORE_ENVIRONMENT = "staging";
+  expect((await app.request(`${rerun}/rep_01RERUN`, { headers })).status).toBe(401);
 });
