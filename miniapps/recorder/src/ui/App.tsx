@@ -1,7 +1,6 @@
-import {useHistoryState} from "../../../shared/useHistoryState"
-import {useEffect, useMemo, useState, useRef} from "react"
+import {useEffect, useMemo, useRef, useState} from "react"
 import {AudioWaveform, Mic, Search, Trash2} from "lucide-react"
-import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
+import {useColorScheme, useHistoryState, useSafeArea} from "@mentra/miniapp/ui"
 
 import type {RecordingItem} from "../shared/types"
 import {Header} from "./components/Header"

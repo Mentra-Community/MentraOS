@@ -57,7 +57,11 @@
           {
             "group": "UI Layer",
             "icon": "browser",
-            "pages": ["app-devs/core-concepts/webviews/react-webviews", "app-devs/core-concepts/webviews/safe-areas"]
+            "pages": [
+              "app-devs/core-concepts/webviews/react-webviews",
+              "app-devs/core-concepts/webviews/safe-areas",
+              "app-devs/core-concepts/webviews/back-navigation"
+            ]
           },
           {
             "group": "Display",

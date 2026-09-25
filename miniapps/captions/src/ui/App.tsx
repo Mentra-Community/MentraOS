@@ -1,5 +1,4 @@
-import {useHistoryState} from "../../../shared/useHistoryState"
-import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
+import {useColorScheme, useHistoryState, useSafeArea} from "@mentra/miniapp/ui"
 
 import {BottomNav} from "./components/BottomNav"
 import {Header} from "./components/Header"
