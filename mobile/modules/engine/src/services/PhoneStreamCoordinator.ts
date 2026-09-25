@@ -335,6 +335,7 @@ export class PhoneStreamCoordinator {
           subscribers: [...this.current.subscribers].sort(),
           mode: this.current.mode,
           playbackReady: this.current.hlsReady,
+          stopping: this.current.stopping === true,
           ...link,
         }
       : {
@@ -554,12 +555,22 @@ export class PhoneStreamCoordinator {
         })
       } catch (err) {
         entry.stopping = true
+        // Startup has not reached startLifecycle yet. Retain a link observer if
+        // cleanup fails so a reconnect can drain the owned relay/hotspot.
+        this.attachLink()
         try {
           await entry.relay?.stop()
           this.current = null
           await this.flushPendingBleStop()
+          this.detachLinkIfIdle()
+        } catch (cleanupError) {
+          console.warn("[STREAM] startup cleanup failed", cleanupError)
         } finally {
-          await teardownManagedStream(provision.liveInputId).catch(() => undefined)
+          // Preserve the startup failure even if cleanup fails, and do not hold
+          // the transition lock while the remote cleanup request is pending.
+          void teardownManagedStream(provision.liveInputId).catch((cleanupError) =>
+            console.warn("[STREAM] teardownManagedStream failed:", cleanupError),
+          )
         }
         throw err
       }
@@ -706,6 +717,13 @@ export class PhoneStreamCoordinator {
   }
 
   private handleLinkChange(connected: boolean): void {
+    if (this.current?.kind === "managed" && this.current.stopping) {
+      // A failed stop must not resume as a live stream. A disconnect lets the
+      // relay release local resources and defer BLE cleanup; a reconnect lets
+      // it retry cleanup that previously timed out. Both stay under the lock.
+      this.requestTeardown(this.current.streamId, "cleanup_link_changed")
+      return
+    }
     if (connected) {
       if (this.current && this.suspended) {
         this.resumeLocked()
