@@ -60,7 +60,9 @@ modified automatically.
 complete evidence, acknowledged settlement and successful result publication.
 Uploading a result is different from passing it. Runs stopped before a terminal
 receipt exists do not claim a Slack result; their workflow remains the diagnostic
-source. PR posts are outside this coordinated-release change.
+source. PR requests use this same authenticated callback to post one comment
+per worker run/attempt/routine on the originating PR; they do not need Slack
+configuration. See [PR result history](../../.github/DEVICE-ROUTINES.md#results-and-slack).
 
 ## Concurrent routines and retries
 

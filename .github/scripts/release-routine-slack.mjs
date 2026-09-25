@@ -60,6 +60,8 @@ export function terminalRow(terminal, run, request) {
     "Terminal result does not match its private workflow and source request")
   const checks = ["test", "teardown", "returnVerification", "evidence", "fixture", "publication", "settlement"]
   requireThat(terminal.checks && checks.every(key => typeof terminal.checks[key] === "boolean") &&
+    (terminal.testOutcome === undefined || ["passed", "failed", "not-run", "cancelled", "unknown"].includes(terminal.testOutcome)) &&
+    (terminal.testOutcome === undefined || (terminal.testOutcome === "passed") === terminal.checks.test) &&
     (terminal.status !== "passed" || checks.every(key => terminal.checks[key]) && terminal.resultRunId === request.requestId) &&
     (!terminal.resultRunId || terminal.checks.publication === true && terminal.resultRunId === request.requestId),
     "Terminal outcome contradicts verification or publication")
@@ -68,8 +70,8 @@ export function terminalRow(terminal, run, request) {
     ...(terminal.resultRunId ? {resultRunId: terminal.resultRunId} : {})}
 }
 
-export async function resolveRoutineNotifications({github, privateGithub, context, workerRunId, workerAttempt,
-  read = readActionsJson, verify = verifyCoordinatedReadyRequest, published = publishedCoordinatedBuild}) {
+/** Both destinations use the same exact private attempt and trusted dev request. */
+export async function resolveRoutineResults({github, privateGithub, context, workerRunId, workerAttempt, read = readActionsJson}) {
   requireThat(context.eventName === "workflow_dispatch" && context.ref === "refs/heads/dev" &&
     `${context.repo.owner}/${context.repo.repo}` === REPOSITORY && positive(workerRunId) && positive(workerAttempt), "Unsupported result callback")
   const {data: run} = await privateGithub.rest.actions.getWorkflowRunAttempt({...PRIVATE, run_id: workerRunId, attempt_number: workerAttempt})
@@ -77,7 +79,7 @@ export async function resolveRoutineNotifications({github, privateGithub, contex
   requireThat(run.id === workerRunId && run.run_attempt === workerAttempt, "Private attempt changed")
   const terminals = await read(privateGithub, PRIVATE, run, `routine-terminal-${run.id}-${run.run_attempt}`,
     routines.map(id => `routine-terminal-${id}.json`))
-  const plans = []
+  const results = []
   for (const [file, terminal] of Object.entries(terminals)) {
     requireThat(file === `routine-terminal-${terminal.request?.routineId}.json`, "Terminal filename differs from routine")
     const selector = terminal.request
@@ -89,9 +91,17 @@ export async function resolveRoutineNotifications({github, privateGithub, contex
     requireThat(request.trigger?.runId === source.id && request.trigger?.runAttempt === source.run_attempt &&
       request.trigger.sha === source.head_sha && request.trigger.workflowSha === source.head_sha && request.trigger.workflow === REQUEST &&
       request.trigger.repository === REPOSITORY && request.status === "ready", "Request differs from its trusted producer")
-    if (request.schemaVersion !== 2) continue // PR build messages are outside this coordinated-release change.
+    results.push({request, terminal, row: terminalRow(terminal, run, request)})
+  }
+  return results
+}
+
+export async function resolveRoutineNotifications({github, context, read = readActionsJson,
+  verify = verifyCoordinatedReadyRequest, published = publishedCoordinatedBuild, ...options}) {
+  const plans = []
+  for (const {request, row} of await resolveRoutineResults({github, context, read, ...options})) {
+    if (request.schemaVersion !== 2) continue
     await verify({github, context, request})
-    const row = terminalRow(terminal, run, request)
     // The original release post was pinned to its Mac download. Authenticate that
     // sibling archive for Android results; never compare the APK hash to a ZIP hash.
     const postArchive = request.selection.platform === "android"
