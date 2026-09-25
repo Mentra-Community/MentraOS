@@ -126,3 +126,11 @@ test("stable active details are cached and a state change invalidates that cache
   state.runs[0]!.status = "waiting"; state.now += 16_000; await gateway.activity();
   expect(state.calls.filter(call => call.url.pathname.endsWith("/jobs"))).toHaveLength(2);
 });
+test("administrative closure bypasses the display queue cache", async () => {
+  const { state, gateway } = harness();
+  state.runs = [];
+  expect((await gateway.activity()).jobs).toHaveLength(0);
+  state.runs = [run(10, "Device routine request 500 / attempt 1")];
+  expect((await gateway.activity()).jobs).toHaveLength(0);
+  expect((await gateway.activity({ fresh: true })).jobs).toHaveLength(1);
+});

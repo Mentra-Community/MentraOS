@@ -21,9 +21,18 @@ export interface OverviewClaim {
   claimedAt: string;
   progress?: TestRunProgressCheckpoint;
 }
+/** Cancels only outstanding follow-up. The original claim and physical ownership do not change. */
+export interface TestRunFollowUpCancellation { cancelledAt: string; cancelledBy: string }
+export interface OverviewAttention {
+  reason: string;
+  responsible: "Test runner / operator" | "GitHub / runner operator";
+  nextAction: string;
+  cancelRequestId?: string;
+  cancelledAt?: string;
+}
 export interface OverviewJob {
   id: string;
-  kind: "routine" | "nightly" | "maintenance" | "claim";
+  kind: "routine" | "nightly" | "maintenance" | "claim" | "fixture";
   state: "running" | "queued" | "waiting" | "blocked" | "unknown" | "finished";
   title: string;
   createdAt: string;
@@ -34,11 +43,21 @@ export interface OverviewJob {
   workflow?: { runId: number; url: string; status: string; conclusion?: string; step?: string; updatedAt: string };
   message?: string;
   resultRunId?: string;
+  attention?: OverviewAttention;
+}
+export interface OverviewResolution {
+  requestId: string;
+  originalRunId: string;
+  recoveryRunId: string;
+  fixtureId: string;
+  kind?: "late-result" | "recovery";
+  originalAvailable?: boolean;
 }
 export interface TestRunOverview {
   observedAt: string;
   jobs: OverviewJob[];
   warnings: string[];
   recentMaintenance: OverviewJob[];
-  resolvedRecoveries: { requestId: string; originalRunId: string; recoveryRunId: string; fixtureId: string }[];
+  resolvedRecoveries: OverviewResolution[];
+  fixtureAttention?: OverviewJob[];
 }

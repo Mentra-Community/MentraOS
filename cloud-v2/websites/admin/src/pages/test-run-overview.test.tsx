@@ -67,3 +67,32 @@ test("maintenance failures are separate from routine verdicts, with original/rec
   expect(html).toContain("Original result"); expect(html).toContain("Recovery result");
   expect(elapsed(stamp, Date.parse(stamp) + 61_000)).toBe("1m 1s");
 });
+test("blocked work names a reason, responsible role and next action without pretending user input is required", () => {
+  const value = data(); value.jobs[0]!.state = "blocked";
+  value.jobs[0]!.attention = { reason: "Cleanup did not pass.", responsible: "Test runner / operator",
+    nextAction: "Publish verified return evidence.", cancelRequestId: "request-1" };
+  value.jobs[0]!.resultRunId = "original";
+  const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} onCancel={async () => {}} />);
+  expect(html).toContain("Cleanup did not pass."); expect(html).toContain("Responsible: Test runner / operator");
+  expect(html).toContain("Next: Publish verified return evidence."); expect(html).toContain("Cancel further work");
+  expect(html).toContain("Recorded result"); expect(html).not.toContain("Waiting for user");
+});
+test("cancelled work is absent from live job counts while physical readiness has a separate section", () => {
+  const value = data(); value.fixtureAttention = [{ ...value.jobs[0]!, kind: "fixture", state: "blocked", attention: {
+    reason: "Physical return remains unverified.", responsible: "Test runner / operator", nextAction: "Recover the fixture.", cancelledAt: stamp } }];
+  value.jobs = [];
+  const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} onCancel={async () => {}} />);
+  expect(html).toContain("<strong>0</strong> blocked"); expect(html).toContain("Fixtures needing attention");
+  expect(html).toContain("Cancelled attempt"); expect(html).toContain("they are not running jobs");
+  expect(html).toContain("Fixture readiness remains unverified"); expect(html).not.toContain("Cancel further work");
+  expect(html).not.toContain("No active jobs or unresolved claims");
+});
+test("late export and missing original recovery links describe only evidence that actually exists", () => {
+  const value = data(); value.jobs = []; value.resolvedRecoveries = [
+    { requestId: "request-1", originalRunId: "request-1", recoveryRunId: "request-1", fixtureId: "phone", kind: "late-result", originalAvailable: true },
+    { requestId: "request-2", originalRunId: "request-2", recoveryRunId: "recovery-5", fixtureId: "03BE", kind: "recovery", originalAvailable: false },
+  ];
+  const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} />);
+  expect(html).toContain("Completed result"); expect(html).toContain("Original result not published");
+  expect(html).toContain("Recovery result"); expect(html).not.toContain(">Original result</button>");
+});

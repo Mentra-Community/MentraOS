@@ -9,6 +9,8 @@ const schema = new Schema({
   executionTokenSha256: { type: String, required: true },
   // Separate projection: old claim/settlement responses stay byte-shape compatible.
   progress: { type: Schema.Types.Mixed },
+  // Admin follow-up closure is separate from the immutable worker settlement.
+  followUpCancellation: { type: Schema.Types.Mixed },
 }, { collection: "test_run_claims", timestamps: true });
 
 export const TestRunClaimModel = registerModel("TestRunClaim", schema);
