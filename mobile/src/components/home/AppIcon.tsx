@@ -61,7 +61,12 @@ const AppIcon = ({app, onClick, style, disableLoader, instant, resolveCachedSour
   }
 
   return (
-    <View className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-15"}`}>
+    <View
+      // Pairing changes compatibility while Home may be leaving the native
+      // stack. Keep the opacity owner native so dimming does not reparent the
+      // existing icon during that transition (Android Fabric addViewAt).
+      collapsable={false}
+      className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-15"}`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
