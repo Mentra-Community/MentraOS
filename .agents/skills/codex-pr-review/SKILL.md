@@ -63,11 +63,34 @@ total, and retries once unless the verdict was already posted. Never launch a ba
 
 ## Configuration
 
+### Show future reviews in a desktop project
+
+On the host that runs reviews, create a folder and add it as a local Codex project
+named **Review**. Save its absolute path once:
+
+```bash
+mkdir -p "$HOME/dev/Codex-Reviews" "${CODEX_REVIEW_HOME:-$HOME/.codex-reviews}"
+printf '%s\n' "$HOME/dev/Codex-Reviews" > "${CODEX_REVIEW_HOME:-$HOME/.codex-reviews}/project-directory"
+```
+
+Future skill invocations use that folder as the saved session's starting directory.
+The reviewer receives the separate PR worktree path for all code inspection and tests;
+worktree ownership, locks, watchdogs and verdict checks still apply. Existing sessions
+are not moved. This is configured per host: a Mini review needs the folder registered
+as a project on the Mini's connection. Do not use `--ephemeral` or a separate
+`CODEX_HOME`, which would hide sessions from the usual desktop account.
+
+Override the saved path with `CODEX_REVIEW_PROJECT_DIR=/absolute/path`, or set it to
+an empty string for one invocation to start in the PR worktree instead. Without a
+saved path or override, the existing worktree behavior is unchanged. A configured
+missing directory is an error, so reviews cannot silently appear somewhere else.
+
 | Variable                                                      | Default                                                | Purpose                                                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | `CODEX_BIN`                                                   | `codex`                                                | Codex CLI binary. Point it at a specific install if the shim on PATH does not support `exec`. |
 | `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`                  | `gpt-6-astra` / `medium`                               | Model and reasoning effort.                                                                   |
 | `CODEX_REVIEW_HOME`                                           | `~/.codex-reviews`                                     | Where prompts, final messages and runner logs are kept.                                       |
+| `CODEX_REVIEW_PROJECT_DIR`                                    | Saved `project-directory` file, otherwise PR worktree | Starting directory for future sessions; register that folder in Codex to group reviews. |
 | `MENTRA_RELEASE_COORDINATOR_KEY`                              | `~/.config/mentra-release-coordinator/private-key.pem` | App private key (0600) for posting on your own PRs.                                           |
 | `GH_ACCOUNT`                                                  | auto                                                   | `app` or `own`, see above.                                                                    |
 | `STALL_SECONDS` / `MAX_SECONDS` / `ATTEMPTS` / `POLL_SECONDS` | 480 / 1800 / 2 / 5                                     | Watchdog limits and poll interval.                                                            |

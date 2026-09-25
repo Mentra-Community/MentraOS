@@ -45,6 +45,7 @@ esac
 
 const FAKE_CODEX = `#!/usr/bin/env bash
 # Fake codex exec: honours -o <file>, streams JSON events, and behaves per FAKE_CODEX_MODE.
+printf '%s\\0' "$@" > "$FAKE_STATE/codex-args"
 out=""
 while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
 echo $(( $(cat "$FAKE_STATE/codex-calls" 2>/dev/null || echo 0) + 1 )) > "$FAKE_STATE/codex-calls"
@@ -152,6 +153,45 @@ const codexCalls = (f) =>
   existsSync(join(f.state, "codex-calls")) ? Number(readFileSync(join(f.state, "codex-calls"), "utf8").trim()) : 0
 
 describe("codex-pr-review.sh lifecycle", () => {
+  test("groups a saved session under the project while reviewing the isolated PR checkout", () => {
+    const f = makeFixture()
+    const project = join(f.root, "Review project with spaces")
+    mkdirSync(project)
+    mkdirSync(f.reviews)
+    writeFileSync(join(f.reviews, "project-directory"), `${project}\n`)
+    const r = run(f, [f.repo, "1"])
+    expect(r.code).toBe(0)
+    const args = readFileSync(join(f.state, "codex-args"), "utf8").split("\0")
+    expect(args[args.indexOf("-C") + 1]).toBe(sh(project, "pwd -P"))
+    expect(args[args.indexOf("--add-dir") + 1]).toBe(f.worktree)
+    expect(args).toContain("--skip-git-repo-check")
+    expect(args).not.toContain("--ephemeral")
+    expect(args.at(-2)).toContain(`Review checkout: ${f.worktree}`)
+    expect(sh(f.worktree, "git rev-parse HEAD")).toBe(sh(f.origin, "git rev-parse refs/pull/1/head"))
+    expect(existsSync(join(project, ".git"))).toBe(false)
+    expect(codexCalls(f)).toBe(1)
+  }, 90_000)
+
+  test("an empty project override keeps the normal PR working directory", () => {
+    const f = makeFixture()
+    mkdirSync(f.reviews)
+    writeFileSync(join(f.reviews, "project-directory"), "/missing/saved/project\n")
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: ""})
+    expect(r.code).toBe(0)
+    const args = readFileSync(join(f.state, "codex-args"), "utf8").split("\0")
+    expect(args[args.indexOf("-C") + 1]).toBe(f.worktree)
+    expect(args).not.toContain("--add-dir")
+  }, 90_000)
+
+  test("a missing configured project fails before launching a reviewer and releases the lock", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: join(f.root, "missing")})
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain("invalid project directory")
+    expect(codexCalls(f)).toBe(0)
+    expect(existsSync(`${f.worktree}.lock`)).toBe(false)
+  }, 90_000)
+
   test("explicit credentials support installation auth without the user endpoint", () => {
     const f = makeFixture()
     const automatic = run(f, [f.repo, "1"], {FAKE_GH_INSTALLATION: "1"})
