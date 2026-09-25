@@ -131,7 +131,8 @@ function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: n
       <ul className="mt-2 space-y-2">{attempts.map(job => <li key={job.id}>
         {job.requests.length ? job.requests.map(request => <RequestLabel key={request.requestId} request={request} />) : <p className="font-medium">{job.claims[0]?.requestId ?? job.title}</p>}
         <p className="text-[11px] text-[#68746d]">{job.claims[0] ? job.claims[0].workerId + " · Fixture: " + job.claims[0].fixtureId : "Fixture not reported"}
-          {job.attention?.cancelledAt ? " · Follow-up cancelled " + elapsed(job.attention.cancelledAt, now) + " ago" : ""}</p>
+          {job.attention?.cancelledAt ? " · Follow-up cancelled " + elapsed(job.attention.cancelledAt, now) + " ago" : ""}
+          {job.attention?.closedAt ? " · Closed by its original worker " + elapsed(job.attention.closedAt, now) + " ago; no test ran and the fixture was left uncommissioned" : ""}</p>
         {job.attention ? <p className="text-[11px]">{job.attention.reason}</p> : null}
         {job.resultRunId ? <button className="text-[11px] text-[#087d50] underline" onClick={() => onResult(job.resultRunId!)}>Recorded result</button> : null}
       </li>)}</ul></details>

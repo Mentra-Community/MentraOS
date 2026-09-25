@@ -1,12 +1,16 @@
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { TestRunModel } from "../models/test-run.model";
-import type { TestRunClaim, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
+import type { TestRunClaim, TestRunClaimClosureRecord, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
 import type { TestRun } from "../types/test-run.types";
 import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
 import { completeGithubActivity, GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
 
-export interface OverviewClaimRecord { claim: TestRunClaim; progress?: TestRunProgressCheckpoint; followUpCancellation?: TestRunFollowUpCancellation }
+export interface OverviewClaimRecord {
+  claim: TestRunClaim; progress?: TestRunProgressCheckpoint; followUpCancellation?: TestRunFollowUpCancellation;
+  /** The original owner's closure: resolved history, never a pass or a ready fixture. */
+  closure?: TestRunClaimClosureRecord;
+}
 export interface FixtureIdentity { workerId: string; fixtureId: string }
 /** Fixture summaries check at most this many worker/fixture identities per overview. */
 export const FIXTURE_SUMMARY_LIMIT = 100;
@@ -31,9 +35,9 @@ export class MongoTestRunOverviewRepository implements TestRunOverviewRepository
     const included = [...new Set([...activeRequestIds, ...unsafe.slice(0, 500).map(row => row._id)])];
     const [rows, active] = await Promise.all([
       TestRunClaimModel.find({ "claim.state": { $ne: "terminal" } })
-        .select({ _id: 0, claim: 1, progress: 1, followUpCancellation: 1 }).sort({ createdAt: 1 }).limit(501).lean(),
+        .select({ _id: 0, claim: 1, progress: 1, followUpCancellation: 1, closure: 1 }).sort({ createdAt: 1 }).limit(501).lean(),
       included.length ? TestRunClaimModel.find({ requestId: { $in: included } })
-        .select({ _id: 0, claim: 1, progress: 1, followUpCancellation: 1 }).lean() : Promise.resolve([]),
+        .select({ _id: 0, claim: 1, progress: 1, followUpCancellation: 1, closure: 1 }).lean() : Promise.resolve([]),
     ]);
     // Active claims (including a just-settled checkpoint) are never displaced by
     // old immutable recovery settlements that still occupy historical storage.
@@ -178,7 +182,7 @@ export class TestRunOverviewService {
       for (const row of claims) if (job.requests.some(request => request.requestId === row.claim.requestId)) {
         job.claims.push(project(row)); assigned.add(row.claim.requestId);
         const state = evidence.get(row.claim.requestId)!;
-        if (state.needsAttention && state.blocked) {
+        if (state.needsAttention && state.blocked && !row.closure) {
           job.state = "blocked";
           job.attention = attention(row, state, false);
           if (state.latest) job.resultRunId = state.latest.runId;
@@ -189,9 +193,11 @@ export class TestRunOverviewService {
       const state = evidence.get(row.claim.requestId)!;
       if (!state.needsAttention) continue;
       const blocked = state.blocked;
-      const cancelled = row.followUpCancellation;
-      const job: OverviewJob = { id: "claim-" + row.claim.requestId, kind: cancelled ? "fixture" : "claim", state: blocked ? "blocked" : "unknown",
-        title: blocked ? "Fixture recovery required" : "Unsettled routine claim", createdAt: row.claim.claimedAt,
+      // A closure resolves the request; like a cancellation, it moves to fixture history.
+      const cancelled = row.followUpCancellation || row.closure;
+      const job: OverviewJob = { id: "claim-" + row.claim.requestId, kind: cancelled ? "fixture" : "claim",
+        state: row.closure ? "finished" : blocked ? "blocked" : "unknown",
+        title: row.closure ? "Closed without a test" : blocked ? "Fixture recovery required" : "Unsettled routine claim", createdAt: row.claim.claimedAt,
         startedAt: row.claim.claimedAt, claims: [project(row)], requests: requestFromClaim(row.claim, results),
         attention: attention(row, state, canCancel),
         ...(state.latest ? { resultRunId: state.latest.runId } : {}) };
@@ -264,6 +270,9 @@ export class TestRunOverviewService {
 }
 
 function attention(row: OverviewClaimRecord, state: ReturnType<typeof classifyEvidence>, canCancel: boolean): NonNullable<OverviewJob["attention"]> {
+  if (row.closure) return { reason: "Android refused the selected app update. The original worker released the phone without installing it, testing or recording.",
+    responsible: "Test runner / operator", closedAt: row.closure.closedAt,
+    nextAction: "Commission this fixture before another request. It was left uncommissioned; the failed result is unchanged and is not a pass." };
   const cancellation = row.followUpCancellation;
   return { reason: state.reason, responsible: "Test runner / operator",
     nextAction: state.nextAction,

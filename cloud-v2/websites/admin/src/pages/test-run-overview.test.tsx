@@ -90,6 +90,17 @@ test("cancelled work is absent from live job counts while physical readiness has
   expect(html).toContain("No active jobs. Some fixture readiness below is not verified.");
   expect(html).not.toContain("No active jobs or unresolved claims");
 });
+test("a closed claim is history with its failed result and uncommissioned fixture, not a live block or pass", () => {
+  const value = data(); value.fixtureAttention = [{ ...value.jobs[0]!, kind: "fixture", state: "finished", title: "Closed without a test",
+    resultRunId: "request-1", attention: { reason: "Android refused the selected app update.", responsible: "Test runner / operator",
+      nextAction: "Commission this fixture before another request.", closedAt: stamp } }];
+  value.fixtureSummary = [{ workerId: "mini-1", fixtureId: "phone", cancelledRequestIds: ["request-1"], latestCancelledClaimAt: stamp, status: "unverified" }];
+  value.jobs = [];
+  const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} onCancel={async () => {}} />);
+  expect(html).toContain("<strong>0</strong> blocked"); expect(html).toContain("Closed by its original worker 0s ago; no test ran and the fixture was left uncommissioned");
+  expect(html).toContain("Recorded result"); expect(html).toContain(">unverified<"); expect(html).not.toContain(">returned<");
+  expect(html).not.toContain("Cancel further work"); expect(html).toContain("No active jobs. Some fixture readiness below is not verified.");
+});
 test("late export and missing original recovery links describe only evidence that actually exists", () => {
   const value = data(); value.jobs = []; value.resolvedRecoveries = [
     { requestId: "request-1", originalRunId: "request-1", recoveryRunId: "request-1", fixtureId: "phone", kind: "late-result", originalAvailable: true },

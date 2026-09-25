@@ -31,6 +31,39 @@ export type TestRunClaim = TestRunClaimIdentity & { claimedAt: string } & (
 );
 export interface TestRunClaimResponse { executionGranted: boolean; claim: TestRunClaim }
 
+const sequence = z.number().int().positive().safe();
+/**
+ * Evidence pins for the one supported closure: the original owner's completed
+ * in-place install refusal, released by the reviewed `setup-abandoned-after-refusal`
+ * event appended directly after the original (first-generation) terminal. It is
+ * not a recovery terminal, a result or a readiness verdict: no candidate test ran
+ * and the fixture was left uncommissioned.
+ */
+export const testRunClaimClosureSchema = z.object({
+  kind: z.literal("android-refused-install-released"),
+  originalTerminal: z.object({ sequence, sha256 }).strict(),
+  journalPrefix: z.object({ bytes: sequence, sha256 }).strict(),
+  release: z.object({
+    type: z.literal("setup-abandoned-after-refusal"),
+    sequence,
+    eventSha256: sha256,
+    revision: z.string().regex(/^[a-f0-9]{40}$/),
+    implementationSha256: sha256,
+  }).strict(),
+  fixture: z.literal("uncommissioned"),
+  selectedCandidateInstalled: z.literal(false),
+  candidateTestRun: z.literal(false),
+  recordingStarted: z.literal(false),
+}).strict().refine(value => value.release.sequence === value.originalTerminal.sequence + 1,
+  "release must directly follow the original terminal");
+/** The original owner's frozen identity and execution token, plus one closure. */
+export const testRunClaimCloseRequestSchema = testRunClaimRequestSchema.extend({ closure: testRunClaimClosureSchema }).strict();
+export type TestRunClaimClosure = z.infer<typeof testRunClaimClosureSchema>;
+export type TestRunClaimCloseRequest = z.infer<typeof testRunClaimCloseRequestSchema>;
+/** Stored separately from the immutable claim and settlement; `closedAt` is server time. */
+export type TestRunClaimClosureRecord = TestRunClaimClosure & { closedAt: string };
+export interface TestRunClaimCloseResponse { executionGranted: false; claim: TestRunClaim; closure: TestRunClaimClosureRecord }
+
 /** A display checkpoint, never an execution grant, lease heartbeat or settlement. */
 const progressFields = z.object({
   sequence: z.number().int().positive().safe(),
