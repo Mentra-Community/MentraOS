@@ -2653,6 +2653,9 @@ class LocalMiniappRuntime {
               appId: packageName,
               volume,
               stopOtherAudio,
+              // A successful HEAD only validates the route. Bound the native
+              // GET/startup wait so stalled cloud speech reaches offline TTS.
+              startTimeoutMs: 10_000,
             },
             (_respId, success, error, duration, completionReason) => {
               if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
