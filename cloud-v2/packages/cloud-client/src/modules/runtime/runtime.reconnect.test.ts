@@ -525,3 +525,118 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
     runtime.close();
   });
 });
+
+/**
+ * A scheduler the test fires by hand. Only the Connection gets it, so the
+ * 15 s handshake timeout and the reconnect backoff run exactly when the test
+ * says so.
+ */
+class ManualTimers implements CloudClientTimers {
+  private nextId = 1;
+  private readonly timeouts = new Map<number, { callback: () => void; delayMs: number }>();
+
+  setTimeout(callback: () => void, delayMs: number): unknown {
+    const id = this.nextId++;
+    this.timeouts.set(id, { callback, delayMs });
+    return id;
+  }
+  clearTimeout(handle: unknown): void {
+    this.timeouts.delete(handle as number);
+  }
+  setInterval(): unknown {
+    return -1;
+  }
+  clearInterval(): void {}
+
+  /** Run every pending timeout scheduled with this delay. */
+  fire(delayMs: number): void {
+    for (const [id, t] of [...this.timeouts]) {
+      if (t.delayMs !== delayMs) continue;
+      this.timeouts.delete(id);
+      t.callback();
+    }
+  }
+}
+
+describe("Runtime AUTH_EXPIRED reopen", () => {
+  test("the reopened session survives the handshake timeout of a superseded attempt", async () => {
+    const sockets = [new FakeSocket(), new FakeSocket(), new FakeSocket(), new FakeSocket()];
+    let created = 0;
+    const ws = (_url: string): WebSocketLike => sockets[created++]!;
+    const timers = new ManualTimers();
+
+    let releaseRefresh!: () => void;
+    const refreshed = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+
+    const emitter = new RuntimeEmitter();
+    const subscriptions = new Subscriptions({ http: fakeHttp() });
+    const connection = new Connection({
+      ws,
+      url: "wss://example.test/ws",
+      getToken: async () => "tok",
+      initPayload: () => ({ protocolVersion: "2.0.0" }),
+      reconnect: FAST_RECONNECT,
+      timers,
+      logger: noopLogger,
+    });
+    const runtime = new Runtime({
+      connection,
+      emitter,
+      subscriptions,
+      camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
+      tts: fakeTts(),
+      audio: new UdpAudio({ udp: fakeUdp }),
+      logger: noopLogger,
+      forceRefreshToken: async () => {
+        await refreshed;
+        return "fresh-tok";
+      },
+    });
+
+    const disconnects: string[] = [];
+    runtime.onDisconnected(({ reason }) => disconnects.push(reason));
+
+    // 1. The cloud rejects the first handshake with a fatal AUTH_EXPIRED.
+    const connecting = runtime.connect();
+    await waitUntil(() => created === 1);
+    sockets[0]!.openCb?.();
+    sockets[0]!.messageCb?.(
+      JSON.stringify({
+        v: PROTOCOL_MAJOR,
+        type: "error",
+        timestamp: Date.now(),
+        payload: { code: "AUTH_EXPIRED", message: "token expired", fatal: true },
+      }),
+    );
+    await wait(5);
+
+    // 2. The connection's own reconnect backoff fires while the runtime is
+    //    still waiting on the forced token refresh.
+    timers.fire(FAST_RECONNECT.baseMs);
+    await waitUntil(() => created === 2);
+
+    // 3. The refresh lands; the runtime reopens once and that handshake succeeds.
+    releaseRefresh();
+    await waitUntil(() => created === 3);
+    sockets[2]!.handshake(ACK);
+    await connecting;
+    expect(runtime.getStatus().status).toBe("connected");
+    const disconnectsWhileConnected = disconnects.length;
+
+    // 4. 15 s later the handshake timer of the superseded attempt (socket 2)
+    //    goes off. It must not tear down the live session on socket 3.
+    timers.fire(15_000);
+    await wait(5);
+    timers.fire(FAST_RECONNECT.baseMs);
+    await wait(5);
+
+    expect(created).toBe(3);
+    expect(runtime.getStatus().status).toBe("connected");
+    expect(disconnects.length).toBe(disconnectsWhileConnected);
+
+    runtime.close();
+  });
+});

@@ -75,6 +75,20 @@ export class HandshakeRejectedError extends Error {
 }
 
 /**
+ * Rejection for a connect attempt that a newer attempt replaced before its
+ * handshake finished (for example the AUTH_EXPIRED reopen racing a scheduled
+ * reconnect). The newer attempt owns the connection now, so callers must not
+ * treat this as a failed connect and schedule another reconnect.
+ */
+class SupersededAttemptError extends Error {
+  constructor() {
+    super("Connect attempt superseded by a newer attempt");
+    this.name = "SupersededAttemptError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
  * How often the client sends `control.ping`, and how long it waits for the
  * matching `control.pong` before declaring the socket dead.
  *
@@ -229,6 +243,12 @@ export class Connection {
   // While `open()` is awaiting `connection.ack`, these settle that promise. They
   // are cleared the moment the handshake resolves, rejects, or times out, so a
   // late ack or error cannot settle an already-finished promise.
+  /**
+   * Incremented by every connect attempt, so an attempt can tell that a newer
+   * one started while it was still resolving its token.
+   */
+  private connectSeq = 0;
+
   private pendingAck: {
     resolve: (ack: ConnectionAck) => void;
     reject: (err: Error) => void;
@@ -282,6 +302,7 @@ export class Connection {
     this.startWatchdog();
 
     return this.connectOnce().catch((err) => {
+      if (err instanceof SupersededAttemptError) throw err;
       if (!this.closedByHost) {
         this.setState("closed");
         this.scheduleReconnect("initial open failed");
@@ -364,6 +385,7 @@ export class Connection {
    * happens next).
    */
   private async connectOnce(): Promise<ConnectionAck> {
+    const attempt = ++this.connectSeq;
     this.setState("connecting");
 
     // Close any previous socket FIRST. Replacing `this.socket` without closing
@@ -382,7 +404,17 @@ export class Connection {
       }
     }
 
+    // An older attempt still waiting for its ack is replaced by this one:
+    // settle it and cancel its handshake timer. Left armed, that timer would
+    // fire 15 s later, reject, and make the reconnect loop tear down whatever
+    // session is live by then.
+    this.failPendingAck(new SupersededAttemptError());
+
     const token = await this.deps.getToken();
+    if (attempt !== this.connectSeq) {
+      // A newer attempt started while we were resolving the token.
+      throw new SupersededAttemptError();
+    }
     const url = this.appendTokenParam(this.deps.url, token);
     const socket = this.deps.ws(url);
     this.socket = socket;
@@ -633,7 +665,8 @@ export class Connection {
       // The host may have called close() during the wait; honor it.
       if (this.closedByHost) return;
 
-      this.connectOnce().catch(() => {
+      this.connectOnce().catch((err) => {
+        if (err instanceof SupersededAttemptError) return;
         // The attempt failed. Historically we relied on the socket's close event
         // to schedule the next try -- but a failure WITHOUT a clean onClose (a
         // mid-handshake network blip, or a transport that emits only onError)
