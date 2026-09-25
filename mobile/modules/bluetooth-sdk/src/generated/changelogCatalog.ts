@@ -3,11 +3,11 @@ export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
 [
   {
     "version": "3.2.1",
-    "markdown": "- Mentra Miniapp SDK: `session.stream.preview({source: \"call\"})` and the `<StreamPreview>` component (from `@mentra/miniapp/react`) show the live video of a call your miniapp owns inside its UI. Requires the `CAMERA` permission; the lease survives the UI closing and ends with `handle.stop()` or the meeting. See [Stream preview](https://docs.mentraglass.com/app-devs/core-concepts/stream-preview)."
+    "markdown": "- **Livestreamer:** \"Stream Here\" now works without a Wi-Fi network. Improved stream startup and connection reliability.\n- **Photos and gallery:** More reliable photo capture and gallery syncing.\n- **Mentra AI:** Reliability improvements and bug fixes.\n- **Miniapps:** Smoother transitions, with back buttons and gestures that take you to the previous screen inside a miniapp.\n- **Pairing and connections:** Improved G1 pairing and G2 background reconnection.\n- **Glasses updates:** Fixed repeated update checks and improved recovery after interrupted updates.\n- **Mentra Maps:** Bug fixes.\n- **NIMO:** Improved text and map layouts.\n- **Self-hosting:** Connect the Mentra App to your own self-hosted Mentra backend."
   },
   {
     "version": "3.2.0",
-    "markdown": "- Breaking Bluetooth SDK change: `forgetWifiNetwork(ssid)` now returns `WifiForgetResult` instead of `WifiStatusChangeEvent`. Migrate status-only consumers to the semantic `outcome`; the requested network remains `ssid`, while optional post-command connectivity is reported by `connected`, `currentSsid`, and `localIp`."
+    "markdown": "- Improved glasses connectivity and Wi-Fi setup."
   },
   {
     "version": "3.1.1",
