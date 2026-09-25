@@ -4,6 +4,7 @@ import type { TestRunClaim } from "../types/test-run-claim.types";
 import type { TestRun } from "../types/test-run.types";
 import type { OverviewJob } from "../types/test-run-overview.types";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
+import { TestRunModel } from "../models/test-run.model";
 import { recoveredClaim, MongoTestRunOverviewRepository, TestRunOverviewService, type OverviewClaimRecord, type TestRunOverviewRepository } from "./test-run-overview.service";
 
 const stamp = "2026-09-24T20:00:00.000Z";
@@ -62,7 +63,7 @@ test("correlated recovery preserves original verdict but removes only its recove
   const repository = new Repository(); repository.rows = [{ claim: claim() }]; repository.resultRows = [original(), recovery()];
   const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
   expect(view.jobs).toHaveLength(0);
-  expect(view.resolvedRecoveries).toEqual([{ requestId: claim().requestId, originalRunId: "original", recoveryRunId: "recovery-2", fixtureId: claim().fixtureId }]);
+  expect(view.resolvedRecoveries).toEqual([{ requestId: claim().requestId, originalRunId: "original", recoveryRunId: "recovery-2", fixtureId: claim().fixtureId, kind: "recovery", originalAvailable: true }]);
   expect(repository.rows[0]?.claim.state).toBe("recovery-required"); expect(repository.resultRows[0]?.outcome).toBe("failed");
 });
 test("unrelated result, missing original, wrong fixture/build/hash and newer failed recovery cannot clear a blocker", () => {
@@ -92,6 +93,7 @@ test("new running work is above old unresolved claims, followed by oldest waitin
   expect(view.jobs.map(job => job.id)).toEqual(["active", "claim-" + claim().requestId, "older", "waiting"]);
 });
 test("active request claims bypass the historical cap and retain a just-settled checkpoint", async () => {
+  const unsafe = spyOn(TestRunModel, "aggregate").mockResolvedValue([]);
   const history = Array.from({ length: 501 }, (_, index) => ({ claim: claim("old-" + index) }));
   const active = { claim: { ...claim(), state: "terminal", settlement: { state: "terminal", resultRunId: "result" } },
     progress: { sequence: 4, mode: "complete", phase: "evidence", step: null, completedSteps: 1, totalSteps: 1, receivedAt: stamp } };
@@ -109,11 +111,121 @@ test("active request claims bypass the historical cap and retain a just-settled 
     expect(result.truncated).toBe(true); expect(result.claims).toHaveLength(501);
     expect(result.claims.find(row => row.claim.requestId === claim().requestId)?.progress?.sequence).toBe(4);
     expect(queries[1]).toEqual({ requestId: { $in: [claim().requestId] } });
-  } finally { find.mockRestore(); }
+  } finally { find.mockRestore(); unsafe.mockRestore(); }
 });
 test("the overview requests exact active claims after reading the queue", async () => {
   const repository = new Repository();
   const lookup = spyOn(repository, "claims");
   await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [queued()], warnings: [] }) }).overview();
   expect(lookup.mock.calls[0]).toEqual([[claim().requestId]]);
+});
+
+test("a late original export closes abandoned follow-up without changing the test verdict or settlement", async () => {
+  for (const testOutcome of ["passed", "failed", "not-run"] as const) {
+    const repository = new Repository(); repository.rows = [{ claim: claim() }];
+    repository.resultRows = [{ ...original(), runId: claim().requestId,
+      outcomes: { ...original().outcomes, test: testOutcome, teardown: "passed", fixture: "ready" },
+      provenance: { ...original().provenance, returnVerification: "passed" } }];
+    const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+    expect(view.jobs).toHaveLength(0); expect(view.resolvedRecoveries[0]?.kind).toBe("late-result");
+    expect(repository.resultRows[0]?.outcomes.test).toBe(testOutcome);
+    expect(repository.rows[0]?.claim.state).toBe("recovery-required");
+  }
+});
+test("bound recovery can establish return when the original upload is missing, and says so explicitly", () => {
+  const run = { ...recovery(), runId: "recovery-" + "a".repeat(32) + "-5", provenance: {
+    ...recovery().provenance, resultGeneration: "5", originalRunId: claim().requestId, recoveryHistorySha256: "e".repeat(64) } };
+  expect(recoveredClaim(claim(), [run])).toMatchObject({ kind: "recovery", originalAvailable: false, recoveryRunId: run.runId });
+  for (const provenance of [{ ...run.provenance, originalRunId: "other" },
+    { ...run.provenance, originalTerminalSnapshotSha256: "" }, { ...run.provenance, recoveryHistorySha256: "" }])
+    expect(recoveredClaim(claim(), [{ ...run, provenance }])).toBeNull();
+  expect(recoveredClaim(claim(), [{ ...run, runId: "unrelated" }])).toBeNull();
+});
+test("a terminal export with unsafe return is actionable; progress completion is not physical recovery", async () => {
+  const repository = new Repository();
+  repository.rows = [{ claim: { ...claim(), state: "terminal", settledAt: stamp, settlement: { state: "terminal", resultRunId: "original" } } }];
+  repository.resultRows = [{ ...original(), outcomes: { ...original().outcomes, fixture: "unavailable", teardown: "blocked" } }];
+  let view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+  expect(view.jobs[0]).toMatchObject({ state: "blocked", resultRunId: "original", attention: {
+    reason: "The recorded run left the fixture unavailable.", responsible: "Test runner / operator", cancelRequestId: claim().requestId } });
+  repository.resultRows.push(recovery());
+  view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+  expect(view.jobs).toHaveLength(0);
+});
+test("cancelled follow-up leaves only a separate physical-readiness item until bound evidence arrives", async () => {
+  const repository = new Repository(); repository.rows = [{ claim: claim(), followUpCancellation: { cancelledAt: stamp, cancelledBy: "admin-1" } }];
+  repository.resultRows = [original()];
+  let view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+  expect(view.jobs).toHaveLength(0); expect(view.fixtureAttention).toHaveLength(1);
+  expect(view.fixtureAttention?.[0]).toMatchObject({ kind: "fixture", resultRunId: "original", attention: { cancelledAt: stamp } });
+  expect(view.fixtureAttention?.[0]?.attention?.cancelRequestId).toBeUndefined();
+  expect(JSON.stringify(view)).not.toContain("admin-1");
+  repository.resultRows.push(recovery());
+  view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+  expect(view.fixtureAttention).toHaveLength(0); expect(repository.rows[0]?.claim.state).toBe("recovery-required");
+});
+test("another request on the same fixture and duplicate generation cannot certify this claim", () => {
+  const readyRun = { ...original(), runId: claim().requestId, outcomes: recovery().outcomes,
+    provenance: { ...original().provenance, returnVerification: "passed" } };
+  expect(recoveredClaim(claim(), [{ ...readyRun, requestId: "other" }])).toBeNull();
+  expect(recoveredClaim(claim(), [readyRun, { ...readyRun, runId: "duplicate-generation" }])).toBeNull();
+});
+test("the query includes terminal claims with unsafe metadata, not just active and unsettled claims", async () => {
+  const unsafe = spyOn(TestRunModel, "aggregate").mockResolvedValue([{ _id: "terminal-unsafe" }]);
+  const queries: unknown[] = [];
+  const find = spyOn(TestRunClaimModel, "find").mockImplementation(((query: unknown) => {
+    queries.push(query);
+    const chain = { select: () => chain, sort: () => chain, limit: () => chain, lean: async () => [] }; return chain;
+  }) as unknown as typeof TestRunClaimModel.find);
+  try {
+    await new MongoTestRunOverviewRepository().claims(["active"]);
+    expect(queries[1]).toEqual({ requestId: { $in: ["active", "terminal-unsafe"] } });
+    expect(unsafe.mock.calls[0]?.[0]?.[0]).toMatchObject({ $match: { "payload.provenance.executionMode": "ci-registered" } });
+  } finally { find.mockRestore(); unsafe.mockRestore(); }
+});
+test("a result lookup outage cannot make an unsafe terminal candidate disappear", async () => {
+  const repository = new Repository(); repository.rows = [{ claim: { ...claim(), state: "terminal", settledAt: stamp,
+    settlement: { state: "terminal", resultRunId: "original" } } }];
+  repository.results = async () => { throw Error("Private DB context"); };
+  const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+  expect(view.jobs).toHaveLength(1); expect(view.jobs[0]?.state).toBe("unknown");
+  expect(view.warnings.join(" ")).toContain("could not be checked"); expect(JSON.stringify(view)).not.toContain("Private DB context");
+});
+test("terminal and cancelled claims retain their blocker when ready recovery lineage is rejected", async () => {
+  const badBinding = { ...recovery(), provenance: { ...recovery().provenance, originalTerminalSnapshotSha256: "f".repeat(64) } };
+  for (const cancelled of [false, true]) for (const state of ["terminal", "recovery-required"] as const) {
+    const repository = new Repository(); repository.rows = [{ claim: { ...claim(), state, settledAt: stamp,
+      settlement: state === "terminal" ? { state: "terminal", resultRunId: "original" } : claim().settlement! },
+      ...(cancelled ? { followUpCancellation: { cancelledAt: stamp, cancelledBy: "admin" } } : {}) }];
+    repository.resultRows = [original(), badBinding];
+    const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+    const rows = cancelled ? view.fixtureAttention! : view.jobs;
+    expect(rows).toHaveLength(1); expect(rows[0]?.state).toBe("blocked"); expect(view.resolvedRecoveries).toHaveLength(0);
+    expect(rows[0]?.attention?.reason).toContain("could not be verified against this request's result history");
+    expect(rows[0]?.attention?.reason).not.toContain("return verification did not pass");
+    expect(rows[0]?.attention?.nextAction).toContain("Check the result's request and recovery links");
+  }
+});
+test("both duplicate-generation orders block terminal/cancelled claims and active jobs identically", async () => {
+  const unsafeDuplicate = { ...recovery(), runId: "unsafe-recovery-2", outcomes: original().outcomes };
+  for (const ordered of [[recovery(), unsafeDuplicate], [unsafeDuplicate, recovery()]])
+    for (const location of ["inactive", "cancelled", "active"] as const) {
+      const repository = new Repository(); repository.rows = [{ claim: { ...claim(), state: "terminal", settledAt: stamp,
+        settlement: { state: "terminal", resultRunId: "original" } },
+        ...(location === "cancelled" ? { followUpCancellation: { cancelledAt: stamp, cancelledBy: "admin" } } : {}) }];
+      repository.resultRows = [original(), ...ordered];
+      const view = await new TestRunOverviewService(repository, { activity: async () => ({
+        jobs: location === "active" ? [{ ...queued(), state: "running" }] : [], warnings: [] }) }).overview();
+      const rows = location === "cancelled" ? view.fixtureAttention! : view.jobs;
+      expect(rows).toHaveLength(1); expect(rows[0]?.state).toBe("blocked"); expect(view.resolvedRecoveries).toHaveLength(0);
+      expect(rows[0]?.attention?.reason).toContain("Conflicting results");
+    }
+});
+test("Cancel is not offered when unrelated GitHub request metadata is incomplete", async () => {
+  for (const missing of [{ ...queued(), requests: [] }, { ...queued(), kind: "nightly" as const }]) {
+    const repository = new Repository(); repository.rows = [{ claim: claim("routine-999-1-dev-day1-ota") }];
+    const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [missing], warnings: [] }) }).overview();
+    const row = view.jobs.find(job => job.kind === "claim")!;
+    expect(row.attention?.cancelRequestId).toBeUndefined(); expect(row.attention?.responsible).toBe("Test runner / operator");
+  }
 });
