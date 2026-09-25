@@ -1,6 +1,7 @@
 import {ANDROID_PUBLICATION_STEP} from "./pr-android-artifacts.mjs"
 import assert from "node:assert/strict"
 import {createHash} from "node:crypto"
+import {readFile} from "node:fs/promises"
 import test from "node:test"
 import {
   createRoutineRequest,
@@ -193,6 +194,26 @@ function fixture() {
 }
 
 const originalPublication = {sourceBuildRunId: "100", sourcePublicationAttempt: "2", requestOrigin: "pr-label"}
+
+test("the shared private/public PR wire fixture is the actual producer output", async () => {
+  // The private harness projects each request's authenticated failure source from these exact bytes.
+  const label = fixture(), manual = fixture()
+  label.manual()
+  manual.manual()
+  manual.state.pr.labels = []
+  const produced = JSON.parse(JSON.stringify({
+    bootstrap: await fixture().resolve(),
+    labelCallback: await label.resolve(originalPublication),
+    manual: await manual.resolve({routine: "no-glasses", requestOrigin: "workflow-dispatch"}),
+  }))
+  for (const [name, kind, authorization] of [["bootstrap", "pull_request", "pr-label"],
+    ["labelCallback", "workflow_dispatch", "pr-label"], ["manual", "workflow_dispatch", "workflow-dispatch"]]) {
+    assert.equal(produced[name].status, "ready")
+    assert.equal(produced[name].trigger.kind, kind)
+    assert.equal(produced[name].routine.authorization, authorization)
+  }
+  assert.deepEqual(JSON.parse(await readFile(new URL("./fixtures/pr-routine-requests.json", import.meta.url))), produced)
+})
 
 test("delayed automatic requests keep the original run while manual requests select the newer build", async () => {
   const f = fixture()

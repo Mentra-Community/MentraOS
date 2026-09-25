@@ -1,0 +1,260 @@
+{
+  "bootstrap": {
+    "schemaVersion": 1,
+    "kind": "mentra-routine-request",
+    "requestId": "routine-200-1-4136-day1-ota",
+    "createdAt": "2026-09-21T10:10:00.000Z",
+    "status": "ready",
+    "reason": "Exact current PR Mac build selected; hardware qualification has not run",
+    "trigger": {
+      "kind": "pull_request",
+      "repository": "Mentra-Community/MentraOS",
+      "workflow": ".github/workflows/request-e2e-routine.yml",
+      "runId": 200,
+      "runAttempt": 1,
+      "ref": "refs/pull/4136/merge",
+      "sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "workflowSha": "cccccccccccccccccccccccccccccccccccccccc",
+      "workflowRef": "Mentra-Community/MentraOS/.github/workflows/request-e2e-routine.yml@refs/pull/4136/merge",
+      "actor": "tester"
+    },
+    "pullRequest": {
+      "number": 4136,
+      "url": "https://github.com/Mentra-Community/MentraOS/pull/4136",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "headRepository": "Mentra-Community/MentraOS",
+      "baseRef": "dev"
+    },
+    "routine": {
+      "id": "day1-ota",
+      "authorization": "pr-label",
+      "reason": "Explicit routine:day1-ota PR label",
+      "harnessRevision": "cccccccccccccccccccccccccccccccccccccccc"
+    },
+    "selection": {
+      "platform": "ios-on-mac",
+      "producer": {
+        "workflow": ".github/workflows/mentra-app-ios-build.yml",
+        "runId": 100,
+        "buildAttempt": 1,
+        "publicationAttempt": 2,
+        "url": "https://github.com/Mentra-Community/MentraOS/actions/runs/100"
+      },
+      "receipt": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/mentra-ios-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-2.json",
+        "sha256": "3449c285c71a67dd096ca3d058d7fce30ab41ca600261330eb99d13f40cf8ab0",
+        "size": 1148
+      },
+      "app": {
+        "pr": 4136,
+        "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "buildSha": "cccccccccccccccccccccccccccccccccccccccc",
+        "runId": 100,
+        "runAttempt": 1,
+        "bundleId": "com.mentra.mentra",
+        "teamId": "T5XXXL6N36",
+        "backend": "dev",
+        "version": "3.2.1",
+        "build": "302010030",
+        "executableSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "javascriptSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "otaManifestUrl": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"
+      },
+      "archive": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/mentra-ios-mac-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-1.zip",
+        "name": "mentra-ios-mac-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-1.zip",
+        "size": 1234,
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "otaManifest": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+        "sha256": "3d2c4e60fb3f0115bcaac47b50860dd2962d29ceec9c76355590d07e3673bf7b",
+        "size": 374
+      },
+      "build": {
+        "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "buildSha": "cccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    "attempts": [
+      {
+        "runId": 100,
+        "reason": "Verified published Mac receipt, archive availability, OTA pin and merge provenance"
+      }
+    ]
+  },
+  "labelCallback": {
+    "schemaVersion": 1,
+    "kind": "mentra-routine-request",
+    "requestId": "routine-200-1-4136-day1-ota",
+    "createdAt": "2026-09-21T10:10:00.000Z",
+    "status": "ready",
+    "reason": "Exact current PR Mac build selected; hardware qualification has not run",
+    "trigger": {
+      "kind": "workflow_dispatch",
+      "repository": "Mentra-Community/MentraOS",
+      "workflow": ".github/workflows/request-e2e-routine.yml",
+      "runId": 200,
+      "runAttempt": 1,
+      "ref": "refs/heads/dev",
+      "sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "workflowSha": "cccccccccccccccccccccccccccccccccccccccc",
+      "workflowRef": "Mentra-Community/MentraOS/.github/workflows/request-e2e-routine.yml@refs/heads/dev",
+      "actor": "tester"
+    },
+    "pullRequest": {
+      "number": 4136,
+      "url": "https://github.com/Mentra-Community/MentraOS/pull/4136",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "headRepository": "Mentra-Community/MentraOS",
+      "baseRef": "dev"
+    },
+    "routine": {
+      "id": "day1-ota",
+      "authorization": "pr-label",
+      "reason": "Explicit routine:day1-ota PR label",
+      "harnessRevision": "cccccccccccccccccccccccccccccccccccccccc"
+    },
+    "selection": {
+      "platform": "ios-on-mac",
+      "producer": {
+        "workflow": ".github/workflows/mentra-app-ios-build.yml",
+        "runId": 100,
+        "buildAttempt": 1,
+        "publicationAttempt": 2,
+        "url": "https://github.com/Mentra-Community/MentraOS/actions/runs/100"
+      },
+      "receipt": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/mentra-ios-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-2.json",
+        "sha256": "3449c285c71a67dd096ca3d058d7fce30ab41ca600261330eb99d13f40cf8ab0",
+        "size": 1148
+      },
+      "app": {
+        "pr": 4136,
+        "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "buildSha": "cccccccccccccccccccccccccccccccccccccccc",
+        "runId": 100,
+        "runAttempt": 1,
+        "bundleId": "com.mentra.mentra",
+        "teamId": "T5XXXL6N36",
+        "backend": "dev",
+        "version": "3.2.1",
+        "build": "302010030",
+        "executableSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "javascriptSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "otaManifestUrl": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"
+      },
+      "archive": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/mentra-ios-mac-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-1.zip",
+        "name": "mentra-ios-mac-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-1.zip",
+        "size": 1234,
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "otaManifest": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+        "sha256": "3d2c4e60fb3f0115bcaac47b50860dd2962d29ceec9c76355590d07e3673bf7b",
+        "size": 374
+      },
+      "build": {
+        "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "buildSha": "cccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    "attempts": [
+      {
+        "runId": 100,
+        "reason": "Verified published Mac receipt, archive availability, OTA pin and merge provenance"
+      }
+    ]
+  },
+  "manual": {
+    "schemaVersion": 1,
+    "kind": "mentra-routine-request",
+    "requestId": "routine-200-1-4136-no-glasses",
+    "createdAt": "2026-09-21T10:10:00.000Z",
+    "status": "ready",
+    "reason": "Exact current PR Mac build selected; hardware qualification has not run",
+    "trigger": {
+      "kind": "workflow_dispatch",
+      "repository": "Mentra-Community/MentraOS",
+      "workflow": ".github/workflows/request-e2e-routine.yml",
+      "runId": 200,
+      "runAttempt": 1,
+      "ref": "refs/heads/dev",
+      "sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "workflowSha": "cccccccccccccccccccccccccccccccccccccccc",
+      "workflowRef": "Mentra-Community/MentraOS/.github/workflows/request-e2e-routine.yml@refs/heads/dev",
+      "actor": "tester"
+    },
+    "pullRequest": {
+      "number": 4136,
+      "url": "https://github.com/Mentra-Community/MentraOS/pull/4136",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "headRepository": "Mentra-Community/MentraOS",
+      "baseRef": "dev"
+    },
+    "routine": {
+      "id": "no-glasses",
+      "authorization": "workflow-dispatch",
+      "reason": "Explicit workflow_dispatch opt-in",
+      "harnessRevision": "cccccccccccccccccccccccccccccccccccccccc"
+    },
+    "selection": {
+      "platform": "ios-on-mac",
+      "producer": {
+        "workflow": ".github/workflows/mentra-app-ios-build.yml",
+        "runId": 100,
+        "buildAttempt": 1,
+        "publicationAttempt": 2,
+        "url": "https://github.com/Mentra-Community/MentraOS/actions/runs/100"
+      },
+      "receipt": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/mentra-ios-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-2.json",
+        "sha256": "3449c285c71a67dd096ca3d058d7fce30ab41ca600261330eb99d13f40cf8ab0",
+        "size": 1148
+      },
+      "app": {
+        "pr": 4136,
+        "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "buildSha": "cccccccccccccccccccccccccccccccccccccccc",
+        "runId": 100,
+        "runAttempt": 1,
+        "bundleId": "com.mentra.mentra",
+        "teamId": "T5XXXL6N36",
+        "backend": "dev",
+        "version": "3.2.1",
+        "build": "302010030",
+        "executableSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "javascriptSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "otaManifestUrl": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"
+      },
+      "archive": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/mentra-ios-mac-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-1.zip",
+        "name": "mentra-ios-mac-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-100-1.zip",
+        "size": 1234,
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "otaManifest": {
+        "url": "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-4136-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+        "sha256": "3d2c4e60fb3f0115bcaac47b50860dd2962d29ceec9c76355590d07e3673bf7b",
+        "size": 374
+      },
+      "build": {
+        "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "buildSha": "cccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    "attempts": [
+      {
+        "runId": 100,
+        "reason": "Verified published Mac receipt, archive availability, OTA pin and merge provenance"
+      }
+    ]
+  }
+}
