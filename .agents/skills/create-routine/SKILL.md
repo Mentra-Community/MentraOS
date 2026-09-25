@@ -57,6 +57,13 @@ The next job establishes its own starting state. Teardown need not predict that
 job's versions: reuse the selected build's return target, check the actual state,
 and restore only what differs. A successful test may already satisfy it.
 
+Declare the account needed, then use the platform's runtime account loader and
+the worker recipe's account reference. Reuse its secret-input and report-redaction
+helpers. Keep passwords out of routine definitions, prompts, request JSON and
+evidence. Provision separate accounts for concurrent authenticated sessions.
+Account files belong to host configuration, outside Git; credential rotation
+must also refresh any pinned copy/reference used by that worker.
+
 ## 3. Reuse the lifecycle
 
 Compose **setup → test → final checks → cleanup → return verification** using
@@ -105,7 +112,18 @@ different revision or platform.
    coverage, platform, prerequisites, exclusions and links pinned to the reviewed
    private implementation. Coordinate the private worker rollout before public
    requests can reach the new ID; a label alone cannot make it executable.
-3. Once registered and admitted by the worker, request the routine against an
+3. Ensure the exact `routine:<id>` label exists in MentraOS. Catalog registration
+   does not create it. Check with `gh label list --repo Mentra-Community/MentraOS
+   --search 'routine:gallery'`; inspect the exact name. Only if absent, create it:
+
+   ```bash
+   gh label create routine:gallery --repo Mentra-Community/MentraOS \
+     --color 0E8A16 --description 'Request the registered gallery routine'
+   ```
+
+   Substitute the actual registered ID. Preserve existing labels and their
+   settings; do not use `--force` to overwrite them.
+4. Once registered and admitted by the worker, request the routine against an
    exact existing build. Use [select-pr-routines](../select-pr-routines/SKILL.md)
    to append its label to a relevant PR, or use Admin for a selected PR/dev/staging
    artifact. For example, after `gallery` is registered:
@@ -114,7 +132,7 @@ different revision or platform.
    gh pr edit PR --repo Mentra-Community/MentraOS --add-label routine:gallery
    ```
 
-4. Check the resulting run: tested build and harness revision, assertions,
+5. Check the resulting run: tested build and harness revision, assertions,
    recordings, duration, failure/incident details and verified return state.
    Report pending or failed qualification explicitly. Registration does not
    automatically opt the routine into dev/staging defaults or nightly schedules;
