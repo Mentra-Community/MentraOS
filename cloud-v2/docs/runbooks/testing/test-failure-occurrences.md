@@ -102,6 +102,10 @@ An acknowledgment means the existing agent queue retained the reference. It does
 cd cloud-v2
 bun test packages/core/src/services/test-run.service.test.ts
 bunx tsc -b packages/core --pretty false
+# Optional real Mongo atomicity checks: creates/drops only a unique test database.
+TEST_FAILURE_MONGO_URI=mongodb://127.0.0.1:27017 bun test packages/core/src/services/test-failure.mongo.test.ts
 ```
 
 Coverage includes AI-offline persistence, metadata-plus-intent atomic insertion, legacy replay reconciliation, unchanged failed verdicts, all trigger branch mappings, invalid provenance, scoped asset reads, dropped acknowledgments and idempotent queue delivery. Physical devices and a running model are not needed.
+
+The real Mongo suite checks concurrent metadata ingestion, competing acknowledgments, passing runs with no occurrence and reconciliation after a prior accepted row. It refuses non-loopback URLs and always uses its own database.
