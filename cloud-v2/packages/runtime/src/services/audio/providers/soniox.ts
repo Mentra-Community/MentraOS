@@ -112,13 +112,29 @@ export function sonioxLanguageHints(
   language: string | undefined,
   hints: string[] | undefined,
 ): string[] | undefined {
-  const toBareCode = (code: string) => code.split("-")[0].toLowerCase();
   if (language && language !== "auto") {
-    return [toBareCode(language)];
+    return [toSonioxCode(language)];
   }
   if (!hints || hints.length === 0) return undefined;
-  const bare = [...new Set(hints.map(toBareCode).filter(Boolean))];
+  const bare = [...new Set(hints.map(toSonioxCode).filter(Boolean))];
   return bare.length > 0 ? bare : undefined;
+}
+
+/**
+ * Primary subtags the language registry produces that Soniox names
+ * differently. The registry canonicalizes "tl" (Tagalog) to "fil-PH" and
+ * "no"/"nb" (Norwegian) to "nb-NO", but Soniox's supported-language codes
+ * are "tl" and "no"; "fil" and "nb" would be rejected like any unknown code.
+ */
+const SONIOX_CODE_BY_PRIMARY_SUBTAG: Record<string, string> = {
+  fil: "tl",
+  nb: "no",
+};
+
+/** Reduce a tag or bare code to the bare code Soniox accepts ("en-US" -> "en"). */
+function toSonioxCode(code: string): string {
+  const primary = code.split("-")[0].toLowerCase();
+  return SONIOX_CODE_BY_PRIMARY_SUBTAG[primary] ?? primary;
 }
 
 /**
@@ -130,7 +146,7 @@ export function sonioxLanguageHints(
  * routing keep the full tag; only the provider config is reduced (issue 021).
  */
 export function sonioxTranslationTarget(target: string): string {
-  return target.split("-")[0].toLowerCase();
+  return toSonioxCode(target);
 }
 
 /** Shared client per worker. Soniox SDK is happy with one client for many streams. */
