@@ -3016,7 +3016,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "stream_controller_probe":
             if let response = StreamControllerProbe.response(json) {
-                sendJson(response)
+                // BES buffers non-waking commands when MTK enters standby, even while
+                // its streaming CPU lease is held. The current probe needs a live reply.
+                sendJson(response, wakeUp: true)
             }
 
         case "pong":
