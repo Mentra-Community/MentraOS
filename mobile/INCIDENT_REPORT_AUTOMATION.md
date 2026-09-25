@@ -88,6 +88,15 @@ Keep the Mentra App running and signed in. The request uses its normal report
 pipeline: authenticated submission, phone logs, diagnostic context, and a request
 for logs from connected glasses. It does not start a stopped app's report engine.
 
+Submission starts as soon as the broadcast is received, but only while the app's
+report service is running. That service starts after the app's signed-in engine
+starts, so a process that Android started for other work, or that has crashed and
+restarted, can exist without it. If the service is not running, the app does not
+queue the request. The broadcast immediately logs a correlated `failed` receipt with
+`error` starting `Incident report service is not running`. Nothing is uploaded or
+retried later. After the app is reopened and signed in, send a new request if one
+is still needed.
+
 ```bash
 adb -s PHONE_SERIAL shell am broadcast \
   -a com.mentra.SUBMIT_INCIDENT_REPORT \
@@ -124,11 +133,13 @@ INCIDENT_REPORT_RESULT {"alert_id":"request-unique-id","test_run_id":"routine-ru
 ```
 
 `status` is `filed`, `skipped` with `reason`, or `failed` with `error`.
-`report_id` and `incident_id` are the same value. `filed` confirms the report was
+Only `filed` has a `report_id`. `report_id` and `incident_id` are the same value. `filed` confirms the report was
 created; phone and glasses log uploads are best effort, so this receipt alone
 does not prove every artifact was uploaded. Android's “Broadcast completed”
 only acknowledges delivery; it does not prove that a report was submitted.
 The existing automatic-report throttle applies to duplicate request IDs; distinct
-alert IDs use distinct keys. Send once per failure and bound how long the caller
-waits for a receipt. A missing receipt is an unconfirmed submission and must not
+alert IDs use distinct keys. It is in memory and only records completed uploads:
+retransmitting within 90 seconds of a filed request returns `skipped`, while a
+retransmit after an app restart may file again. Each broadcast gets at most one
+receipt. Send once per failure and bound how long the caller waits for a receipt. A missing receipt is an unconfirmed submission and must not
 replace the original test failure or prevent teardown.

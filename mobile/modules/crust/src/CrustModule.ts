@@ -13,6 +13,8 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
     body?: string | null,
   ): Promise<{status: number; statusText: string; headers: Record<string, string>; body: string}>
   showAVRoutePicker(tintColor?: string | null): void
+  /** Android: whether the JS incident report service is subscribed to submit_incident_report. */
+  setIncidentReportServiceReady(ready: boolean): void
 
   /**
    * iOS: configure `preferredScreenEdgesDeferringSystemGestures`. When an

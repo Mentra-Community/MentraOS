@@ -1,6 +1,6 @@
 name: Mobile App Android Unit Tests
 
-# The acs-meeting, glasses-media, frame-preview, and bluetooth-sdk modules carry
+# The acs-meeting, glasses-media, frame-preview, bluetooth-sdk, and crust modules carry
 # JVM suites that ran nowhere in CI: mentra-app-android-build.yml builds with
 # `-x test`, and the mobile quality workflow is Jest/bun only. This job runs them
 # on every PR that touches any of these modules.
@@ -12,6 +12,7 @@ on:
       - "mobile/modules/glasses-media/**"
       - "mobile/modules/frame-preview/**"
       - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/crust/**"
       - "scripts/softap-call-proof*.mjs"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
   push:
@@ -23,6 +24,7 @@ on:
       - "mobile/modules/glasses-media/**"
       - "mobile/modules/frame-preview/**"
       - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/crust/**"
       - "scripts/softap-call-proof*.mjs"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
   workflow_dispatch:
@@ -97,7 +99,7 @@ jobs:
 
       - name: Run JVM unit tests
         working-directory: ./mobile/android
-        run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-glasses-media:testDebugUnitTest :mentra-frame-preview:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest --build-cache --parallel
+        run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-glasses-media:testDebugUnitTest :mentra-frame-preview:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest :mentra-crust:testDebugUnitTest --build-cache --parallel
 
       # The device-proof analyzer decides whether a SoftAP hardware run passed, so an analyzer that
       # reports success on a broken capture would turn a real failure into recorded evidence that
@@ -115,8 +117,10 @@ jobs:
             mobile/modules/glasses-media/android/build/reports/tests/
             mobile/modules/frame-preview/android/build/reports/tests/
             mobile/modules/bluetooth-sdk/android/build/reports/tests/
+            mobile/modules/crust/android/build/reports/tests/
             mobile/modules/acs-meeting/android/build/test-results/
             mobile/modules/glasses-media/android/build/test-results/
             mobile/modules/frame-preview/android/build/test-results/
             mobile/modules/bluetooth-sdk/android/build/test-results/
+            mobile/modules/crust/android/build/test-results/
           retention-days: 7
