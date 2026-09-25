@@ -998,11 +998,15 @@ struct ViewState {
         Bridge.log("MAN: handleDeviceReady(): \(sgc.type)")
         resetMicHealth()
 
+        // A new identity must never inherit the previous glasses' address when
+        // pairing supplied only a name. Same-device reconnects retain their cache.
+        let identityChanged = !pendingDeviceName.isEmpty &&
+            (pendingDeviceName != deviceName || sgc.type != defaultWearable)
+        if identityChanged || !pendingDeviceAddress.isEmpty {
+            deviceAddress = pendingDeviceAddress
+        }
         if !pendingDeviceName.isEmpty {
             deviceName = pendingDeviceName
-        }
-        if !pendingDeviceAddress.isEmpty {
-            deviceAddress = pendingDeviceAddress
         }
         clearPendingConnection()
         defaultWearable = sgc.type
