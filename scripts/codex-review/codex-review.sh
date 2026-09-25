@@ -14,6 +14,12 @@
 # attempt then crashed, so a posted verdict is never retried into a duplicate.
 set -uo pipefail
 repo_dir="$1"; repo_name="$2"; output="$3"; prompt_file="$4"
+# The standalone runner also accepts relative paths. Resolve them before an
+# interactive review changes its starting directory to the separate project.
+if [[ ! -d "$repo_dir" ]] || ! repo_dir=$(cd -- "$repo_dir" && pwd); then
+  echo "codex-review: invalid repository directory (use an existing directory)" >&2
+  exit 1
+fi
 STALL_SECONDS="${STALL_SECONDS:-480}"
 MAX_SECONDS="${MAX_SECONDS:-1800}"
 ATTEMPTS="${ATTEMPTS:-2}"

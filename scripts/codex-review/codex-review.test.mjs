@@ -1,5 +1,5 @@
 import {afterAll, describe, expect, test} from "bun:test"
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from "fs"
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from "fs"
 import {tmpdir} from "os"
 import {dirname, join} from "path"
 import {spawn, spawnSync} from "child_process"
@@ -10,6 +10,7 @@ import {spawn, spawnSync} from "child_process"
 
 const here = dirname(new URL(import.meta.url).pathname)
 const wrapper = join(here, "codex-pr-review.sh")
+const runner = join(here, "codex-review.sh")
 const receipt = join(here, "review-receipt.sh")
 const roots = []
 
@@ -155,6 +156,41 @@ const codexCalls = (f) =>
   existsSync(join(f.state, "codex-calls")) ? Number(readFileSync(join(f.state, "codex-calls"), "utf8").trim()) : 0
 
 describe("codex-pr-review.sh lifecycle", () => {
+  test("the standalone project runner resolves a relative checkout against its caller", () => {
+    const f = makeFixture()
+    const project = join(f.root, "Review project with spaces")
+    mkdirSync(project)
+    mkdirSync(f.reviews)
+    writeFileSync(join(f.reviews, "project-directory"), `${project}\n`)
+    const prompt = join(f.state, "prompt.txt")
+    writeFileSync(prompt, "Review this checkout")
+    const result = spawnSync("bash", [runner, ".", "fixture", join(f.state, "last-message.txt"), prompt], {
+      cwd: f.repo, encoding: "utf8", timeout: 30_000,
+      env: env(f, {GH_ACCOUNT: "own", ATTEMPTS: "1"}),
+    })
+    expect(result.status).toBe(0)
+    const messages = readFileSync(join(f.state, "requests.jsonl"), "utf8").trim().split("\n").map(JSON.parse)
+    const start = messages.find((message) => message.method === "thread/start").params
+    const checkout = realpathSync(f.repo)
+    expect(start.cwd).toBe(sh(project, "pwd -P"))
+    expect(start.runtimeWorkspaceRoots).toEqual([sh(project, "pwd -P"), checkout])
+    const reviewPrompt = messages.find((message) => message.method === "turn/start").params.input[0].text
+    expect(reviewPrompt).toContain(`Review checkout: ${checkout}\n`)
+    expect(reviewPrompt).toContain(`(cd ${checkout})`)
+    expect(codexCalls(f)).toBe(1)
+  }, 30_000)
+
+  test("the standalone runner rejects a missing checkout before starting a reviewer", () => {
+    const f = makeFixture()
+    const result = spawnSync("bash", [runner, "missing", "fixture", join(f.state, "out"), join(f.state, "prompt")], {
+      cwd: f.repo, encoding: "utf8", timeout: 30_000,
+      env: env(f, {GH_ACCOUNT: "own", CODEX_REVIEW_PROJECT_DIR: f.root}),
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain("invalid repository directory")
+    expect(codexCalls(f)).toBe(0)
+  })
+
   test("starts an interactive project session while reviewing the isolated PR checkout", () => {
     const f = makeFixture()
     const project = join(f.root, "Review project with spaces")
