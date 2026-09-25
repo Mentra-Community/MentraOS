@@ -88,6 +88,25 @@ test("release finalization reads the preserved OTA artifact layout", () => {
   )
 })
 
+test("coordinated release retries restore the finalized immutable result", () => {
+  const finalize = jobBlock(workflow("coordinated-release.yml"), "finalize")
+  const restore = finalize.indexOf("name: Restore finalized release result from an earlier attempt")
+  const resultDownload = finalize.indexOf("name: ${{ needs.cloud-v2.outputs.result_artifact }}")
+  const assemble = finalize.indexOf("name: Assemble complete publication evidence")
+  const persist = finalize.indexOf("name: coordinated-release-result-")
+  const publish = finalize.indexOf("name: Publish immutable plan, package, and manifest assets")
+
+  assert.ok(restore >= 0 && restore < resultDownload)
+  assert.ok(resultDownload < assemble)
+  assert.ok(assemble < persist && persist < publish)
+  assert.match(finalize, /cmp "\$plan" "restored-release\/\$plan_name"/)
+  assert.match(finalize, /\.releaseSetId/)
+  assert.match(finalize, /\.sourceCommit/)
+  assert.match(finalize, /Finalize release manifest\n        if: .*steps\.restore-result\.outputs\.restored != 'true'/)
+  assert.match(finalize, /name: Restore finalized release result from an earlier attempt\n        id: restore-result\n        if: needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(finalize, /actions\/upload-artifact@v4\n        if: needs\.plan\.outputs\.dry_run != 'true' && steps\.restore-result\.outputs\.restored != 'true'/)
+})
+
 test("completed releases publish a version page and example notices carry the main app links", () => {
   const core = workflow("coordinated-release.yml")
   const finalize = jobBlock(core, "finalize")
