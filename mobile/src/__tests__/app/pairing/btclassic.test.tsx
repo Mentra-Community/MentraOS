@@ -55,8 +55,19 @@ jest.mock("@/components/ignite", () => {
       </TouchableOpacity>
     )
   }
-  return {Screen: MockScreen, Button: MockButton}
+  function MockHeader({
+    onLeftPress,
+    leftIconAccessibilityLabel,
+  }: {
+    onLeftPress: () => void
+    leftIconAccessibilityLabel: string
+  }) {
+    return <TouchableOpacity accessibilityLabel={leftIconAccessibilityLabel} onPress={onLeftPress} />
+  }
+  return {Screen: MockScreen, Button: MockButton, Header: MockHeader}
 })
+
+jest.mock("@/components/brands/MentraLogoStandalone", () => ({MentraLogoStandalone: () => null}))
 
 jest.mock("@/components/onboarding/OnboardingGuide", () => {
   const {View} = require("react-native")
@@ -129,12 +140,13 @@ describe("btclassic pairing screen", () => {
     )
     const screen = render(<BtClassicPairingScreen />)
 
-    fireEvent.press(screen.getByText("pairing:cancelPairing"))
+    expect(screen.queryByText("pairing:cancelPairing")).toBeNull()
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
     expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
     expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
     act(() => useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true}))
     expect(pushPrevious).not.toHaveBeenCalled()
-    fireEvent.press(screen.getByText("pairing:cancelPairing"))
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
     expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(1)
 
     await act(async () => finishCleanup())
@@ -146,11 +158,11 @@ describe("btclassic pairing screen", () => {
   it("retains the screen and permits retry when cancellation fails", async () => {
     ;(engine.pairing.abandonAttempt as jest.Mock).mockRejectedValueOnce(new Error("cleanup failed"))
     const screen = render(<BtClassicPairingScreen />)
-    fireEvent.press(screen.getByText("pairing:cancelPairing"))
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
     await waitFor(() => expect(showAlert).toHaveBeenCalledWith("pairing:errorTitle", "pairing:cancelFailed"))
     expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
 
-    fireEvent.press(screen.getByText("pairing:cancelPairing"))
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
     await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalledTimes(1))
     expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(2)
   })
@@ -158,7 +170,7 @@ describe("btclassic pairing screen", () => {
   it("does not offer unfinished-pairing cancellation in a paired audio recovery flow", () => {
     ;(useRoute as jest.Mock).mockReturnValue({params: {}})
     const screen = render(<BtClassicPairingScreen />)
-    expect(screen.queryByText("pairing:cancelPairing")).toBeNull()
+    expect(screen.queryByLabelText("pairing:cancelPairing")).toBeNull()
   })
 
   it("routes a connectDefault rejection to the failure screen while loading is on top", async () => {

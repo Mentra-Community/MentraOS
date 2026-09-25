@@ -7,7 +7,6 @@ import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import GlassView from "@/components/ui/GlassView"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
@@ -493,14 +492,6 @@ export default function SelectGlassesBluetoothScreen() {
                 })}
               </Group>
             </ScrollView>
-          )}
-          {!scanTimedOut && (
-            <>
-              <Divider />
-              <View className="flex-row justify-end">
-                <Button preset="primary" compact tx="common:cancel" onPress={handleBackOut} className="min-w-[100px]" />
-              </View>
-            </>
           )}
         </GlassView>
       </View>

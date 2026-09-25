@@ -3,16 +3,14 @@ appId: ${MAESTRO_APP_ID}
 # Test: Mentra Live adaptive pairing scan
 # Description: Verifies that Mentra Live skips the redundant prep screen and
 # that a no-result scan exposes pairing-mode help plus an in-place retry.
+# Start signed in at an unpaired Home, with no nearby pairable glasses.
+# The top-left back arrow is the only cancel control, including on small phones.
 
 - launchApp
-
-- tapOn: "Glasses"
-- tapOn: "Connect Glasses"
-
-- assertVisible: "Before you begin"
-- tapOn: "Continue"
-
-- assertVisible: "Select your glasses"
+- tapOn: "Pair glasses"
+- tapOn:
+    text: "Continue"
+    optional: true
 - tapOn:
     id: "pairing-model-mentra_live"
 
@@ -50,6 +48,9 @@ appId: ${MAESTRO_APP_ID}
     timeout: 20000
 - assertVisible: "We're looking for your Mentra Live."
 - assertNotVisible: "Ready to pair"
+- assertVisible:
+    id: "navigation.back"
+- assertNotVisible: "Cancel"
 
 # With no physical glasses in the test environment, the same screen should
 # reveal the five-press instructions and restart discovery in place.
@@ -64,3 +65,7 @@ appId: ${MAESTRO_APP_ID}
 - assertVisible: "We're looking for your Mentra Live."
 - assertNotVisible: "Ready to pair"
 - takeScreenshot: "mentra-live-adaptive-scan"
+- tapOn:
+    id: "navigation.back"
+- assertVisible: "Select Model"
+- assertNotVisible: "We're looking for your Mentra Live."
