@@ -69,13 +69,21 @@ do not substitute `dev`. Do not create staging commits just to test this system.
 
 ## Retest and resume
 
-Routine labels may start CI and testing while review is still running. Adopt an
+For supported PR targets, labels may start CI and testing while review is still running. Adopt an
 existing request for the exact new head instead of dispatching duplicates. After
 review passes, request any missing selected routines using that head's CI
 artifacts through the existing dispatch path. Qualification requires both an
 independent approval and passing routine results for that same head, regardless
 of which finishes first. Never SSH into fixtures to bypass the routine worker.
 Wait for artifacts or a free fixture as a recorded waiting state.
+
+The current PR artifact requester and dispatcher accept PRs targeting `dev` only.
+A fix targeting `staging` cannot use that PR-head retest path yet. Record this
+coverage gap; do not retarget the fix or use a dev pass. Follow the existing merge
+authority and checks, then qualify the fix against its exact coordinated staging
+publication and OTA manifest. Keep the case open until those staging results
+pass. Missing artifacts or merge authority remain explicit waiting states; never
+create staging commits merely to verify the testing system.
 
 Consume every selected routine result as it arrives. Ensure each run's outcome
 and evidence are posted on the originating PR, preserving prior attempts. Check
