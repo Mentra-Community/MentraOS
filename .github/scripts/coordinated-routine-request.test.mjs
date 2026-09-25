@@ -186,6 +186,96 @@ for (const channel of ["dev", "staging"]) test(`${channel} selects its exact And
   await verifyCoordinatedReadyRequest({...options, request})
 })
 
+// A family number below Play's beta floor: finalization records the code the APK was built with.
+function flooredAndroidFixture(recorded = {androidBuildNumber: 310000224}) {
+  const f = coordinatedAndroidFixture("staging"), {plan} = f.state
+  plan.native = {buildNumber: 302010043, marketingVersion: "3.3.0", playTrack: "beta",
+    testflight: {audience: "external", group: "Mentra Staging Public"}}
+  f.state.androidReceipt.native = {...structuredClone(plan.native), ...recorded}
+  f.state.androidReceipt.releasePlanSha256 = f.pin(plan)
+  return f
+}
+
+test("Android selection uses the version code its manifest records above the family number", async () => {
+  const {state, options} = flooredAndroidFixture()
+  const request = await createRoutineRequest({...options, requestOrigin: "successful-build"})
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.selection.app.build, "310000224")
+  assert.equal(request.selection.app.version, "3.3.0")
+  assert.deepEqual(request.selection.archive, {name: state.plan.artifactNames.androidApp, url: state.androidReceipt.artifacts[0].url,
+    sha256: "2".repeat(64), size: 9999})
+  await verifyCoordinatedReadyRequest({...options, request})
+  const family = structuredClone(request); family.selection.app.build = "302010043"
+  await assert.rejects(verifyCoordinatedReadyRequest({...options, request: family}), /differs/)
+  state.androidReceipt.native.androidBuildNumber++
+  await assert.rejects(verifyCoordinatedReadyRequest({...options, request}), /differs/)
+})
+
+test("Android selection keeps the family number when the manifest records no higher code", async () => {
+  for (const recorded of [{}, {androidBuildNumber: 302010043}]) {
+    const {state, options} = flooredAndroidFixture(recorded)
+    assert.equal(state.androidReceipt.native.androidBuildNumber, recorded.androidBuildNumber)
+    const request = await createRoutineRequest(options)
+    assert.equal(request.status, "ready", request.reason)
+    assert.equal(request.selection.app.build, "302010043")
+    await verifyCoordinatedReadyRequest({...options, request})
+  }
+})
+
+test("Android selection rejects a malformed, lower or out-of-range recorded version code before reading the APK", async () => {
+  for (const code of [null, "310000224", 310000224.5, 302010042, 0, -1, 2100000001, 9007199254740993, true, {}, [310000224]]) {
+    const {state, options} = flooredAndroidFixture({androidBuildNumber: code})
+    const request = await createRoutineRequest(options)
+    assert.equal(request.status, "no-artifact", JSON.stringify(code))
+    assert.equal(request.selection, null)
+    assert.match(request.reason, /androidBuildNumber/)
+    assert.equal(state.calls.some(call => call.method === "HEAD"), false)
+  }
+  // Without a recorded code the family number itself must still be a Play version code.
+  const {state, options, pin} = flooredAndroidFixture({})
+  state.plan.native.buildNumber = state.androidReceipt.native.buildNumber = 2100000001
+  state.androidReceipt.releasePlanSha256 = pin(state.plan)
+  const request = await createRoutineRequest(options)
+  assert.equal(request.status, "no-artifact")
+  assert.match(request.reason, /exceeds Google Play's limit/)
+})
+
+test("Android selection accepts no other native, release or APK change beside the recorded version code", async () => {
+  const repin = (s, pin) => { s.androidReceipt.releasePlanSha256 = pin(s.plan) }
+  const changes = [s => s.androidReceipt.native.marketingVersion = "3.3.1", s => s.androidReceipt.native.buildNumber = 310000224,
+    s => s.androidReceipt.native.buildNumber--, s => delete s.androidReceipt.native.playTrack,
+    s => s.androidReceipt.native.playTrack = "internal", s => s.androidReceipt.native.testflight.group = "Other",
+    s => s.androidReceipt.native.iosBuildNumber = 310000224, s => s.androidReceipt.native = null, s => delete s.androidReceipt.native,
+    (s, pin) => { s.plan.native.androidBuildNumber = 310000224; repin(s, pin) },
+    s => s.androidReceipt.sourceCommit = "f".repeat(40), s => s.androidReceipt.releasePlanSha256 = "0".repeat(64),
+    s => s.androidReceipt.releaseIdentity = "3.3.0-beta.224", s => s.androidReceipt.releaseSetId = "mentra-other",
+    s => s.androidReceipt.channel = "dev", s => s.androidReceipt.schemaVersion = 2,
+    s => s.androidReceipt.artifacts[0].coordinate = "mentraos-3.3.0-beta.224-android.apk",
+    s => s.androidReceipt.artifacts[0].url = s.androidReceipt.artifacts[0].url.replace("artifactscdn.mentraglass.com", "example.com"),
+    s => s.androidReceipt.artifacts[0].sha256 = "bad", s => s.androidReceipt.artifacts[0].size = 0,
+    s => s.androidReceipt.artifacts[0].status = "failed", s => s.androidReceipt.artifacts.push({...s.androidReceipt.artifacts[0]}),
+    s => s.androidSize = 1]
+  for (const change of changes) {
+    const {state, options, pin} = flooredAndroidFixture(); change(state, pin)
+    const request = await createRoutineRequest(options)
+    assert.equal(request.status, "no-artifact", change.toString())
+    assert.equal(request.selection, null)
+  }
+})
+
+test("a recorded Android version code leaves the Mac selection on the family number", async () => {
+  const {state, options} = coordinatedAndroidFixture("staging")
+  state.androidReceipt.native.androidBuildNumber = 310000224
+  const mac = {...options, routine: "no-glasses"}
+  const request = await createRoutineRequest(mac)
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.selection.platform, "ios-on-mac")
+  assert.equal(request.selection.app.build, "303000223")
+  await verifyCoordinatedReadyRequest({...mac, request})
+  state.receipt.app.build = "310000224"
+  assert.equal((await createRoutineRequest(mac)).status, "no-artifact")
+})
+
 test("Android coordinated requests reject another release, mismatching native version and ambiguous or missing APK bytes", async () => {
   for (const change of [s => s.androidReceipt.sourceCommit = "f".repeat(40), s => s.androidReceipt.native.buildNumber++, s => s.androidReceipt.releasePlanSha256 = "0".repeat(64),
     s => s.androidReceipt.artifacts.push({...s.androidReceipt.artifacts[0]}), s => s.androidReceipt.artifacts[0].url += "other",

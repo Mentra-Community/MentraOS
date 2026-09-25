@@ -29,6 +29,8 @@ export interface OverviewAttention {
   nextAction: string;
   cancelRequestId?: string;
   cancelledAt?: string;
+  /** Original-owner closure time. The request is resolved; the fixture is not ready. */
+  closedAt?: string;
 }
 export interface OverviewJob {
   id: string;

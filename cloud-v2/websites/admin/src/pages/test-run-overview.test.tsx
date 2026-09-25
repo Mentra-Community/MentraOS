@@ -82,13 +82,48 @@ test("cancelled work is absent from live job counts while physical readiness has
     reason: "Physical return remains unverified.", responsible: "Test runner / operator", nextAction: "Recover the fixture.", cancelledAt: stamp } }];
   value.jobs = [];
   const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} onCancel={async () => {}} />);
-  expect(html).toContain("<strong>0</strong> blocked"); expect(html).toContain("Fixture readiness after cancelled follow-up");
-  expect(html).toContain("Cancelled attempt history (1)"); expect(html).toContain("keep their original results");
+  expect(html).toContain("<strong>0</strong> blocked"); expect(html).toContain("Fixture readiness after resolved follow-up");
+  expect(html).toContain("Resolved follow-up history (1)"); expect(html).toContain("keep their original results");
   // Without a Core summary, nothing is presented as ready.
   expect(html).toContain("Fixture readiness was not reported by Core. Treat these fixtures as unverified.");
   expect(html).not.toContain("Cancel further work"); expect(html).not.toContain(">returned<");
   expect(html).toContain("No active jobs. Some fixture readiness below is not verified.");
   expect(html).not.toContain("No active jobs or unresolved claims");
+});
+test("a closed claim is history with its failed result and uncommissioned fixture, not a live block or pass", () => {
+  const value = data(); value.fixtureAttention = [{ ...value.jobs[0]!, kind: "fixture", state: "finished", title: "Closed without a test",
+    resultRunId: "request-1", attention: { reason: "Android refused the selected app update.", responsible: "Test runner / operator",
+      nextAction: "Commission this fixture before another request.", closedAt: stamp } }];
+  value.fixtureSummary = [{ workerId: "mini-1", fixtureId: "phone", cancelledRequestIds: ["request-1"], latestCancelledClaimAt: stamp, status: "unverified" }];
+  value.jobs = [];
+  const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} onCancel={async () => {}} />);
+  expect(html).toContain("<strong>0</strong> blocked"); expect(html).toContain("Closed by its original worker 0s ago; no test ran and the fixture was left uncommissioned");
+  expect(html).toContain("Recorded result"); expect(html).toContain(">unverified<"); expect(html).not.toContain(">returned<");
+  expect(html).not.toContain("Cancel further work"); expect(html).toContain("No active jobs. Some fixture readiness below is not verified.");
+});
+test("shared history names cancelled and owner-closed requests neutrally while each entry keeps its own resolution", () => {
+  const value = data(); const base = value.jobs[0]!;
+  const entry = (id: string, attention: NonNullable<typeof base.attention>) => ({ ...base, id: "claim-" + id, kind: "fixture" as const,
+    state: "finished" as const, workflow: undefined, resultRunId: "original-" + id,
+    requests: [{ ...base.requests[0]!, requestId: id, routineId: "no-glasses-" + id }],
+    claims: [{ requestId: id, workerId: "mini-1", fixtureId: "phone", claimedAt: stamp }], attention });
+  value.fixtureAttention = [
+    entry("cancelled", { reason: "Physical return remains unverified.", responsible: "Test runner / operator", nextAction: "Recover the fixture.", cancelledAt: stamp }),
+    entry("closed", { reason: "Android refused the selected app update.", responsible: "Test runner / operator",
+      nextAction: "Commission this fixture before another request.", closedAt: stamp }),
+  ];
+  value.fixtureSummary = [{ workerId: "mini-1", fixtureId: "phone", cancelledRequestIds: ["closed", "cancelled"], latestCancelledClaimAt: stamp, status: "unverified" }];
+  value.jobs = [];
+  const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} />);
+  expect(html).not.toMatch(/cancelled attempt/i);
+  expect(html).toContain("Fixture readiness after resolved follow-up"); expect(html).toContain("Cancelled and closed requests keep their original results.");
+  expect(html).toContain("2 resolved requests before it"); expect(html).toContain("No newer claim on this worker and fixture since the newest resolved request.");
+  expect(html).toContain("No active jobs. Some fixture readiness below is not verified.");
+  const history = html.slice(html.indexOf("Resolved follow-up history (2)"));
+  const [cancelled, closed] = history.split("no-glasses-closed");
+  expect(cancelled).toContain("no-glasses-cancelled"); expect(cancelled).toContain("Follow-up cancelled 0s ago"); expect(cancelled).not.toContain("Closed by its original worker");
+  expect(closed).toContain("Closed by its original worker 0s ago; no test ran and the fixture was left uncommissioned"); expect(closed).not.toContain("Follow-up cancelled");
+  expect(history.match(/Recorded result/g)).toHaveLength(2);
 });
 test("late export and missing original recovery links describe only evidence that actually exists", () => {
   const value = data(); value.jobs = []; value.resolvedRecoveries = [
@@ -125,20 +160,20 @@ test("one readiness row per worker/fixture shows its newest claim; every cancell
         resultRunId: "routine-36080522386-1-dev-no-glasses" } },
   ];
   const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(later) + 60_000} onResult={() => {}} />);
-  const section = html.slice(html.indexOf("Fixture readiness after cancelled follow-up"));
-  const [summary, history] = section.split("Cancelled attempt history");
+  const section = html.slice(html.indexOf("Fixture readiness after resolved follow-up"));
+  const [summary, history] = section.split("Resolved follow-up history");
   // One compact row per worker/fixture; no per-attempt blocked wall or per-request recovery instruction.
   expect(summary!.match(/<tr class="border-t/g)).toHaveLength(5);
   expect(summary).not.toContain(">blocked<"); expect(section).not.toContain("Complete recovery for this request");
   for (const [count, badge] of [[1, "in use"], [1, "not checked"], [2, "unverified"], [1, "returned"]] as const)
     expect(summary).toContain("<strong>" + count + "</strong> " + badge + "</span>");
   expect(summary).toContain("Latest claim routine-36080522386-1-dev-no-glasses, 1m 0s ago: cleanup and return were verified.");
-  expect(summary).toContain("3 cancelled attempts before it");
-  expect(summary).toContain("No recovery is needed for the cancelled attempts. Use outside routine claims is not observed.");
+  expect(summary).toContain("3 resolved requests before it");
+  expect(summary).toContain("No recovery is needed for the resolved requests. Use outside routine claims is not observed.");
   expect(summary).toContain("Latest claim glasses-failure, 1m 0s ago: The recorded run left the fixture unavailable.");
   expect(summary).toContain("Latest claim phone-active, 1m 0s ago: This newer claim still owns the fixture");
   expect(summary).toContain("Newer claims on this worker and fixture could not be checked.");
-  expect(summary).toContain("No newer claim on this worker and fixture since the newest cancelled attempt.");
+  expect(summary).toContain("No newer claim on this worker and fixture since the newest resolved request.");
   expect(summary!.match(/>Result<\/button>/g)).toHaveLength(2);
   // The live blocker remains in the main table, and all original attempts and result links are retained.
   expect(html).toContain("<strong>1</strong> blocked");

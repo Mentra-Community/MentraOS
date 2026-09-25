@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { unzipSync } from "fflate";
 import { z } from "zod";
 import { TEST_ROUTINES, testRoutinePlatform, type TestBuildPlatform, type TestRoutineId, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
@@ -12,6 +13,8 @@ const RELEASE_WORKFLOW = "coordinated-release.yml";
 const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
 const RELEASE_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets";
 const CDN = `https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/`;
+// Google Play's largest accepted version code.
+const ANDROID_MAX_VERSION_CODE = 2_100_000_000;
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const positive = z.number().int().positive().safe();
@@ -311,12 +314,17 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         && plan.artifactNames.releaseManifest === `mentra-release-${identity}.json`, "Release plan has no matching Android APK");
       const receipt = await this.metadata(tag, plan.artifactNames.releaseManifest);
       const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), releaseSetId: z.string(), sourceCommit: sha,
-        releasePlanSha256: digest, channel: z.string(), native: z.object({ buildNumber: positive, marketingVersion: z.string() }),
+        releasePlanSha256: digest, channel: z.string(),
+        native: z.record(z.string(), z.unknown()),
         artifacts: z.array(z.object({ coordinate: z.string() }).passthrough()) }).parse(receipt.value);
       const assets = data.artifacts.filter(asset => asset.coordinate === plan.artifactNames.androidApp);
+      // The manifest copies the plan's native identity and may add only the Android version code it built.
+      const { androidBuildNumber: versionCode = plan.native.buildNumber, ...planNative } = data.native;
       requireThat(data.releaseIdentity === identity && data.releaseSetId === `mentra-${identity}`
         && data.sourceCommit === run.head_sha && data.channel === match[2] && data.releasePlanSha256 === planMetadata.sha256
-        && data.native.buildNumber === plan.native.buildNumber && data.native.marketingVersion === plan.native.marketingVersion
+        && isDeepStrictEqual(planNative, (planMetadata.value as { native?: unknown }).native)
+        && typeof versionCode === "number" && Number.isSafeInteger(versionCode)
+        && versionCode >= plan.native.buildNumber && versionCode <= ANDROID_MAX_VERSION_CODE
         && assets.length === 1 && assets[0]!.url === `${CDN}${tag}/${plan.artifactNames.androidApp}`
         && ["built", "published", "reused"].includes(String(assets[0]!.status)), "Android receipt does not match the selected coordinated release");
       const archive = assetSchema.parse({ name: assets[0]!.coordinate, sha256: assets[0]!.sha256, size: assets[0]!.size });

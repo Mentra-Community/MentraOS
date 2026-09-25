@@ -178,6 +178,33 @@ test("cancelled follow-up leaves only a separate physical-readiness item until b
   view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
   expect(view.fixtureAttention).toHaveLength(0); expect(repository.rows[0]?.claim.state).toBe("recovery-required");
 });
+test("an original-owner closure leaves active/blocked work but keeps its failed history and unverified fixture", async () => {
+  const closure = { kind: "android-refused-install-released" as const, originalTerminal: { sequence: 26, sha256: "b".repeat(64) },
+    journalPrefix: { bytes: 4096, sha256: "c".repeat(64) }, release: { type: "setup-abandoned-after-refusal" as const, sequence: 27,
+      eventSha256: "d".repeat(64), revision: "1".repeat(40), implementationSha256: "e".repeat(64) }, fixture: "uncommissioned" as const,
+    selectedCandidateInstalled: false as const, candidateTestRun: false as const, recordingStarted: false as const, closedAt: stamp };
+  const failed: TestRun = { ...original(), runId: claim().requestId, outcomes: { ...original().outcomes, test: "not-run", fixture: "unknown" } };
+  for (const active of [false, true]) {
+    const repository = new Repository(); repository.rows = [{ claim: claim(), closure }]; repository.resultRows = [failed];
+    const view = await new TestRunOverviewService(repository, { activity: async () => ({
+      jobs: active ? [{ ...queued(), state: "running" }] : [], warnings: [] }) }).overview();
+    expect(view.jobs.filter(job => job.state === "blocked")).toHaveLength(0);
+    expect(view.resolvedRecoveries).toHaveLength(0);
+    if (active) { expect(view.jobs[0]?.attention).toBeUndefined(); continue; }
+    expect(view.jobs).toHaveLength(0);
+    expect(view.fixtureAttention).toEqual([expect.objectContaining({ kind: "fixture", state: "finished", title: "Closed without a test",
+      resultRunId: claim().requestId, attention: expect.objectContaining({ closedAt: stamp }) })]);
+    expect(view.fixtureAttention?.[0]?.attention?.cancelRequestId).toBeUndefined();
+    expect(view.fixtureAttention?.[0]?.attention?.nextAction).toContain("not a pass");
+    expect(view.fixtureSummary).toEqual([expect.objectContaining({ fixtureId: claim().fixtureId, status: "unverified" })]);
+    expect(repository.rows[0]?.claim.settlement).toEqual(claim().settlement);
+    expect(repository.resultRows[0]?.outcome).toBe("failed");
+    expect(JSON.stringify(view)).not.toContain("Private error");
+  }
+  // Without the closure the same claim is still an active blocker.
+  const open = new Repository(); open.rows = [{ claim: claim() }]; open.resultRows = [failed];
+  expect((await new TestRunOverviewService(open, { activity: async () => ({ jobs: [], warnings: [] }) }).overview()).jobs[0]?.state).toBe("blocked");
+});
 test("another request on the same fixture and duplicate generation cannot certify this claim", () => {
   const readyRun = { ...original(), runId: claim().requestId, outcomes: recovery().outcomes,
     provenance: { ...original().provenance, returnVerification: "passed" } };
@@ -186,14 +213,15 @@ test("another request on the same fixture and duplicate generation cannot certif
 });
 test("the query includes terminal claims with unsafe metadata, not just active and unsettled claims", async () => {
   const unsafe = spyOn(TestRunModel, "aggregate").mockResolvedValue([{ _id: "terminal-unsafe" }]);
-  const queries: unknown[] = [];
+  const queries: unknown[] = [], selections: unknown[] = [];
   const find = spyOn(TestRunClaimModel, "find").mockImplementation(((query: unknown) => {
     queries.push(query);
-    const chain = { select: () => chain, sort: () => chain, limit: () => chain, lean: async () => [] }; return chain;
+    const chain = { select: (value: unknown) => { selections.push(value); return chain; }, sort: () => chain, limit: () => chain, lean: async () => [] }; return chain;
   }) as unknown as typeof TestRunClaimModel.find);
   try {
     await new MongoTestRunOverviewRepository().claims(["active"]);
     expect(queries[1]).toEqual({ requestId: { $in: ["active", "terminal-unsafe"] } });
+    expect(selections).toEqual([{ _id: 0, claim: 1, progress: 1, followUpCancellation: 1, closure: 1 }, { _id: 0, claim: 1, progress: 1, followUpCancellation: 1, closure: 1 }]);
     expect(unsafe.mock.calls[0]?.[0]?.[0]).toMatchObject({ $match: { "payload.provenance.executionMode": "ci-registered" } });
   } finally { find.mockRestore(); unsafe.mockRestore(); }
 });

@@ -13,6 +13,7 @@ import {
   EMPTY_FILTERS,
   FIRMWARE_PHASE_LABELS,
   initialChapter,
+  runDuration,
   safeProducerUrl,
   testRunListPath,
   valueText,
@@ -258,7 +259,7 @@ export function TestRunsPage({
                     <h3 className="mt-2 font-semibold">{run.routineId}</h3>
                     <p className="mt-1 text-xs text-[#747780]">
                       {run.fixture.alias} · {run.release ?? short(run.provenance.buildSha ?? run.provenance.headSha)} ·{" "}
-                      {date(run.startedAt)}
+                      {date(run.startedAt)} · {durationText(run.startedAt, run.finishedAt)}
                     </p>
                   </div>
                   <span className="text-sm font-semibold text-[#087d50]">Review →</span>
@@ -615,6 +616,7 @@ export function TestRunView({
             ["Release", run.release],
             ["Started", date(run.startedAt)],
             ["Finished", date(run.finishedAt)],
+            ["Duration", runDuration(run.startedAt, run.finishedAt) ?? "Not available from the recorded times"],
             ...Object.entries(run.provenance).filter(([key]) => key !== "producerUrl"),
           ]
             .filter(([, value]) => value)
@@ -733,6 +735,10 @@ function date(value: string) {
   return Number.isNaN(parsed.getTime())
     ? "Not recorded"
     : parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+function durationText(startedAt: string, finishedAt: string) {
+  const duration = runDuration(startedAt, finishedAt);
+  return duration ? `Took ${duration}` : "Duration not available";
 }
 function short(value?: string) {
   return value ? value.slice(0, 12) : "Build not recorded";
