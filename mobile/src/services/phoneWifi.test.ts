@@ -75,13 +75,13 @@ test("enabled Wi-Fi skips the prompt and settings", async () => {
 test("cancel keeps settings closed", async () => {
   const pending = requestPhoneWifiEnable("Calling needs Wi-Fi")
   await jest.advanceTimersByTimeAsync(0)
-  expect(getPhoneWifiPrompt()?.message).toContain("Calling needs Wi-Fi")
+  expect(getPhoneWifiPrompt()?.message).toBe("phoneWifi:videoReason")
   completePhoneWifiPrompt(false)
   await expect(pending).resolves.toEqual({enabled: false, cancelled: true})
   expect(Linking.sendIntent).not.toHaveBeenCalled()
 })
 
-test("panel focus sees Wi-Fi on, shows it, then finishes", async () => {
+test("panel focus sees Wi-Fi on and finishes without a confirmation popup", async () => {
   const pending = requestPhoneWifiEnable()
   await acceptPrompt()
   expect(Linking.sendIntent).toHaveBeenCalledWith("android.settings.panel.action.WIFI")
@@ -89,8 +89,7 @@ test("panel focus sees Wi-Fi on, shows it, then finishes", async () => {
   ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("focus")!()
   await jest.advanceTimersByTimeAsync(500)
-  expect(getPhoneWifiPrompt()?.tone).toBe("on")
-  await jest.advanceTimersByTimeAsync(900)
+  expect(getPhoneWifiPrompt()).toBeNull()
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
   expect(removed).toHaveBeenCalledTimes(3)
   expect(jest.getTimerCount()).toBe(0)
@@ -120,7 +119,6 @@ test("missing panel falls back to Wi-Fi settings; background/active also resumes
   events.get("change")!("background")
   events.get("change")!("active")
   await jest.advanceTimersByTimeAsync(500)
-  await jest.advanceTimersByTimeAsync(900)
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
@@ -151,7 +149,6 @@ test("a fast panel return waits for Settings launch confirmation", async () => {
   ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   confirmLaunch()
   await jest.advanceTimersByTimeAsync(500)
-  await jest.advanceTimersByTimeAsync(900)
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
@@ -167,7 +164,6 @@ test("losing focus during the debounce waits for the next stable return", async 
   ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("focus")!()
   await jest.advanceTimersByTimeAsync(500)
-  await jest.advanceTimersByTimeAsync(900)
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
@@ -188,7 +184,6 @@ test("a radio read from an interrupted return cannot settle the request", async 
   ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("change")!("active")
   await jest.advanceTimersByTimeAsync(500)
-  await jest.advanceTimersByTimeAsync(900)
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 

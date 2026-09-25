@@ -92,6 +92,24 @@ describe("ManagedWebRtcRelay", () => {
     expect(h.failure).not.toHaveBeenCalled()
     await h.relay.stop()
   })
+  test("reconnection waits for the new native publisher, not the glasses start ACK", async () => {
+    const h = harness()
+    await h.relay.start()
+    h.emit(1, "connected", "Phone publisher connected")
+    h.emit(1)
+    expect(h.status).toHaveBeenLastCalledWith("reconnecting", "lost network")
+    await tick()
+    expect(h.native.prepare).toHaveBeenCalledTimes(2)
+    expect(h.status.mock.calls.filter(([state]) => state === "reconnected")).toHaveLength(0)
+    h.emit(1, "connected", "late old connection")
+    expect(h.status.mock.calls.filter(([state]) => state === "reconnected")).toHaveLength(0)
+    h.emit(2, "connected", "Phone publisher connected")
+    expect(h.status).toHaveBeenLastCalledWith("reconnected", "Phone publisher connected")
+    h.emit(2, "connected", "duplicate ICE completed")
+    expect(h.status.mock.calls.filter(([state]) => state === "reconnected")).toHaveLength(1)
+    await h.relay.stop()
+  })
+
   test("BLE LC3 feeds the phone publisher while glasses capture video only", async () => {
     const mic = microphone()
     const h = harness({microphone: mic})
@@ -391,6 +409,7 @@ describe("ManagedWebRtcRelay", () => {
     const h = harness({now: () => now})
     await h.relay.start()
     for (let attempt = 1; attempt <= 5; attempt++) {
+      h.emit(attempt, "connected", "Phone publisher connected")
       now += 60_000
       h.emit(attempt)
       await tick()

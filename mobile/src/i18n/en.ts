@@ -1179,7 +1179,9 @@ const en = {
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
   phoneWifi: {
-    title: "Wi-Fi required",
+    videoReason: "Your phone needs Wi-Fi to receive video from your glasses.",
+    openWifiSettings: "Open Wi-Fi settings",
+    title: "Turn on Wi-Fi",
     reason: "Mentra uses your phone’s Wi-Fi to connect to your glasses.",
     instructionsAndroid:
       "When you tap Turn on Wi-Fi, a system Wi-Fi panel will open. Turn the Wi-Fi switch on, tap Done, and return to Mentra to continue.",

@@ -50,6 +50,36 @@ class InternetHoldLifecycleTest {
     }
 
     @Test
+    fun `publisher selection skips validated IMS and DUN networks before internet`() {
+        val f = Fixture()
+        val ims = mock(Network::class.java)
+        val dun = mock(Network::class.java)
+        for (network in listOf(ims, dun)) {
+            val caps = mock(NetworkCapabilities::class.java)
+            `when`(caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)).thenReturn(true)
+            `when`(caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)).thenReturn(true)
+            `when`(f.manager.getNetworkCapabilities(network)).thenReturn(caps)
+        }
+        `when`(f.manager.allNetworks).thenReturn(arrayOf(ims, dun, f.network))
+        assertSame(f.network, InternetHold.findValidatedCellular(f.manager))
+        assertTrue(f.hold.bindProcessToCellular())
+        verify(f.manager).bindProcessToNetwork(f.network)
+        `when`(f.manager.allNetworks).thenReturn(arrayOf(ims, dun))
+        assertNull(InternetHold.findValidatedCellular(f.manager))
+        assertFalse(f.hold.bindProcessToCellular())
+    }
+
+    @Test
+    fun `publisher selection rejects unvalidated cellular and validated wifi`() {
+        val f = Fixture()
+        `when`(f.capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)).thenReturn(false)
+        assertNull(InternetHold.findValidatedCellular(f.manager))
+        `when`(f.capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)).thenReturn(true)
+        `when`(f.capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)).thenReturn(false)
+        assertNull(InternetHold.findValidatedCellular(f.manager))
+    }
+
+    @Test
     fun `destroy with no default network drops pin and invalidates old callbacks`() {
         val f = Fixture()
         assertTrue(f.awaitCellular(0).validated)

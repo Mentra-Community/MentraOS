@@ -4138,7 +4138,9 @@ class MentraLive : SGCManager() {
                     "controllerId" to json.opt("controllerId"), "streamId" to json.opt("streamId"),
                     "probeId" to json.opt("probeId"))
                 com.mentra.bluetoothsdk.streaming.StreamControllerProbe.response(values)?.let {
-                    sendJson(JSONObject(it))
+                    // BES drops non-waking commands when the glasses screen is off,
+                    // even while the streaming CPU wake lock is held.
+                    sendJson(JSONObject(it), true)
                 }
             }
             "pong" ->
