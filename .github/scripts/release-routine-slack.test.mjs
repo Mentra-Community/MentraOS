@@ -66,6 +66,32 @@ test("passing requires every dimension and an actually published matching result
   assert.throws(() => terminalRow({...terminal(), resultRunId: "another-run"}, worker, request), /contradicts/)
   assert.throws(() => terminalRow({...terminal(), resultRunId: undefined}, worker, request), /contradicts/)
 })
+test("skipped nightly Call retains its published intake result without weakening normal result identity", async () => {
+  const call = structuredClone(request)
+  call.routine.id = "mentra-call"
+  call.requestId = "routine-500-1-dev-mentra-call"
+  call.sequence = {kind: "nightly-ota-call", runId: 800, runAttempt: 1, member: "mentra-call"}
+  const skipped = terminal()
+  skipped.request.routineId = "mentra-call"
+  skipped.status = "blocked"
+  skipped.testOutcome = "not-run"
+  skipped.resultRunId = `${call.requestId}-intake`
+  for (const key of ["test", "teardown", "returnVerification", "evidence", "fixture"]) skipped.checks[key] = false
+  const [resolved] = await resolveRoutineNotifications(resolver({request: call, terminal: skipped}))
+  assert.equal(resolved.row.resultRunId, skipped.resultRunId)
+  assert.equal(resolved.row.status, "blocked")
+  const message = applyRoutineResult(resolved.notification, resolved.row)
+  assert.match(JSON.stringify(message.payload), /testRun=routine-500-1-dev-mentra-call-intake/)
+  for (const corrupt of [
+    (t, r) => { r.sequence = undefined }, (t, r) => { r.sequence.member = "day1-ota" },
+    (t, r) => { r.schemaVersion = 1 }, t => { t.testOutcome = "unknown" }, t => { t.status = "failed" },
+    t => { t.checks.publication = false }, t => { t.resultRunId = "routine-499-1-dev-mentra-call-intake" },
+    t => { t.status = "passed"; t.testOutcome = "passed"; for (const key of Object.keys(t.checks)) t.checks[key] = true },
+  ]) {
+    const changed = structuredClone(skipped), source = structuredClone(call); corrupt(changed, source)
+    assert.throws(() => terminalRow(changed, worker, source), /contradicts/)
+  }
+})
 test("webhook-era posts with no editable receipt are left alone", async () => {
   const options = resolver(); options.github.paginate = async () => []
   assert.deepEqual(await resolveRoutineNotifications(options), [])

@@ -59,11 +59,17 @@ export function terminalRow(terminal, run, request) {
     routines.includes(request.routine.id) && ["passed", "failed", "blocked", "aborted", "upload-incomplete"].includes(terminal.status),
     "Terminal result does not match its private workflow and source request")
   const checks = ["test", "teardown", "returnVerification", "evidence", "fixture", "publication", "settlement"]
+  // A skipped nightly Call publishes the existing intake export, not a device
+  // lifecycle. Accept only its exact request-derived ID and explicit not-run verdict.
+  const nightlyIntake = request.schemaVersion === 2 && request.routine.id === "mentra-call" &&
+    request.sequence?.kind === "nightly-ota-call" && request.sequence.member === "mentra-call" &&
+    terminal.status === "blocked" && terminal.testOutcome === "not-run" && terminal.checks?.test === false &&
+    terminal.resultRunId === `${request.requestId}-intake`
   requireThat(terminal.checks && checks.every(key => typeof terminal.checks[key] === "boolean") &&
     (terminal.testOutcome === undefined || ["passed", "failed", "not-run", "cancelled", "unknown"].includes(terminal.testOutcome)) &&
     (terminal.testOutcome === undefined || (terminal.testOutcome === "passed") === terminal.checks.test) &&
     (terminal.status !== "passed" || checks.every(key => terminal.checks[key]) && terminal.resultRunId === request.requestId) &&
-    (!terminal.resultRunId || terminal.checks.publication === true && terminal.resultRunId === request.requestId),
+    (!terminal.resultRunId || terminal.checks.publication === true && (terminal.resultRunId === request.requestId || nightlyIntake)),
     "Terminal outcome contradicts verification or publication")
   return {routineId: request.routine.id, requestRunId: request.trigger.runId, requestAttempt: request.trigger.runAttempt,
     privateRunId: run.id, privateAttempt: run.run_attempt, status: terminal.status,
