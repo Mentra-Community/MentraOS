@@ -590,6 +590,9 @@ test("coordinated docs publish only after finalization to the matching channel",
   // the sequence, for the app plan and the ASG client alike.
   assert.match(plan, /allocate-family-build-sequence\.mjs allocate/)
   assert.match(plan, /--owner "coordinated-run:\$\{GITHUB_RUN_ID\}"/)
+  assert.match(plan, /mkdir -p family-build-number-markers/)
+  assert.match(plan, /release-assets\.mjs fetch \\\n[\s\S]{0,180}--asset-id "\$asset_id"/)
+  assert.match(plan, /--markers-dir family-build-number-markers/)
   assert.match(plan, /--native-build-number "\$\{\{ steps\.family-number\.outputs\.build_number \}\}"/)
   assert.match(plan, /Record the family build number in the release container/)
   assert.doesNotMatch(coordinator, /310000000|--native-build-sequence/)

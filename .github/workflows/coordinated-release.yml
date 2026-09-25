@@ -145,6 +145,19 @@ jobs:
             assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id")
           fi
           printf '%s\n' "$assets" > family-only-assets.json
+          # GitHub can remove attempt-scoped artifacts when a workflow is
+          # rerun. Recover this run's durable number reservation from the
+          # family container before allocating, so any already-published
+          # native artifacts keep the same build number on retry.
+          mkdir -p family-build-number-markers
+          while IFS=$'\t' read -r asset_id name; do
+            [[ -z "$asset_id" ]] && continue
+            node .github/scripts/release-assets.mjs fetch \
+              --repository "$GITHUB_REPOSITORY" --asset-id "$asset_id" \
+              > "family-build-number-markers/$name"
+          done < <(jq -r \
+            '.[] | select(.name | test("^mentra-build-number-[0-9]+\\.json$")) | [.id, .name] | @tsv' \
+            family-only-assets.json)
           # ASG pairs numbered before markers existed live in the shared ASG
           # release; their numbers are taken too. Inventories are merged through
           # files: a family inventory runs to hundreds of kilobytes, past the
@@ -158,6 +171,7 @@ jobs:
             --assets family-container-assets.json \
             --base-version "$base_version" \
             --owner "coordinated-run:${GITHUB_RUN_ID}" \
+            --markers-dir family-build-number-markers \
             --output family-build-number.json
           echo "build_number=$(jq -er .buildNumber family-build-number.json)" >> "$GITHUB_OUTPUT"
 
