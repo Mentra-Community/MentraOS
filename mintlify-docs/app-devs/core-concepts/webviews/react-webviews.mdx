@@ -89,6 +89,7 @@ Each hook is a thin read over host-injected state or the `mentra` bridge. The ho
 | `useCapsuleHeaderStyle` | `useCapsuleHeaderStyle(options?): CSSProperties` | Ready-to-spread CSS that vertically aligns a header row with the floating capsule menu. |
 | `useCapabilities` | `useCapabilities(): GlassesCapabilities \| null` | Always `null` in the UI. The glasses profile is background-only; relay it over a channel instead (read `session.capabilities`, `session.ui.send` it, then `mentra.on` it). |
 | `useRpc` | `useRpc<Channels, C>(channel): RpcCallable` | A stable callable around `mentra.request(channel, …)` for one RPC channel, plus `.abort()`. |
+| `useHistoryState` | `useHistoryState<T>(key, initialValue): [T, SetHistoryState<T>]` | `useState` backed by browser history, so the phone's back gesture undoes each change. Use it for tabs, dialogs, and screens that are not routes. See [Back navigation](/app-devs/core-concepts/webviews/back-navigation). |
 
 `useRpc` recreates its `AbortController` per call: calling it again aborts the previous in-flight request (good for per-keystroke autocomplete), and unmount aborts everything pending. A caller-provided `options.signal` is merged with the internal one.
 
@@ -140,6 +141,9 @@ Use `useCapsuleHeaderStyle` directly when you want full control over header mark
   </Card>
   <Card title="Safe areas & layout" icon="border-outer" href="/app-devs/core-concepts/webviews/safe-areas">
     Keep content clear of the capsule menu.
+  </Card>
+  <Card title="Back navigation" icon="arrow-left" href="/app-devs/core-concepts/webviews/back-navigation">
+    Make the back gesture step through your screens and dialogs.
   </Card>
   <Card title="The session" icon="plug" href="/app-devs/core-concepts/session">
     The background-side `session` your UI sends to.
