@@ -4,6 +4,7 @@ import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { testDispatchInputSchema, type TestDispatchReceipt, type TestDispatchView } from "../types/test-dispatch.types";
 import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
+import type { TestContinuationBinding } from "../types/test-continuation.types";
 import { TestRunService } from "./test-run.service";
 
 interface StoredDispatch { inputSha256: string; receipt: TestDispatchReceipt }
@@ -63,11 +64,12 @@ export class TestDispatchService {
   constructor(private readonly repository: TestDispatchRepository = new MongoTestDispatchRepository(),
     private readonly github: TestBuildGateway = new GithubTestBuildGateway()) {}
 
-  async create(input: unknown, requestedBy: string): Promise<TestDispatchView> {
+  async create(input: unknown, requestedBy: string, continuation?: TestContinuationBinding,
+    adopt?: { requestRunId: number; requestUrl: string }, admit?: () => Promise<void>): Promise<TestDispatchView> {
     const parsed = testDispatchInputSchema.safeParse(input);
     if (!parsed.success || !requestedBy) throw new TestDispatchError(400, "Invalid routine dispatch request");
     const data = parsed.data;
-    const inputSha256 = createHash("sha256").update(JSON.stringify({ input: data, requestedBy })).digest("hex");
+    const inputSha256 = createHash("sha256").update(JSON.stringify({ input: data, requestedBy, ...(continuation ? { continuation } : {}) })).digest("hex");
     const dispatchId = data.idempotencyKey;
     const replay = (stored: StoredDispatch) => {
       if (stored.inputSha256 !== inputSha256) throw new TestDispatchError(409, "Submission ID already belongs to a different request");
@@ -80,13 +82,17 @@ export class TestDispatchService {
       const build = await this.github.resolve(data.source, data.routineId);
       if (build.availability !== "available" || build.archive?.sha256 !== data.archiveSha256)
         throw new TestDispatchError(409, build.reason ?? "Selected build changed or is unavailable; refresh the build list");
+      if (continuation && build.headSha !== continuation.expectedHeadSha)
+        throw new TestDispatchError(409, "Candidate head differs from the published build");
       const routine = build.routines.find(item => item.id === data.routineId);
       if (!routine?.available) throw new TestDispatchError(409, routine?.reason ?? "This routine is not compatible with the selected build");
     } catch (error) {
       if (!(error instanceof TestDispatchError) || ![400, 404, 409].includes(error.status)) throw error;
       rejectionReason = error.message;
     }
+    if (admit && rejectionReason === undefined) await admit();
     const value: TestDispatchReceipt = { dispatchId, input: data, requestedBy, createdAt: new Date().toISOString(),
+      ...(continuation ? { continuation } : {}), ...(adopt ? { adopted: true } : {}),
       sendState: rejectionReason === undefined ? "sending" : "rejected", ...(rejectionReason === undefined ? {} : { rejectionReason }) };
     // Rejection must own the same unique ID as sending. A concurrent validator
     // may already have sent; only the stored winner can authorize a new request.
@@ -94,13 +100,14 @@ export class TestDispatchService {
     if (!inserted.created) return replay(inserted.stored);
     if (value.sendState === "rejected") return this.present(value);
     let response;
-    try { response = await this.github.dispatch(data); }
+    try { response = adopt ?? await this.github.dispatch(data); }
     catch {
       return this.present(await this.repository.acknowledge(dispatchId, null));
     }
     // A failed database acknowledgement cannot authorize a second external send.
     return this.present(await this.repository.acknowledge(dispatchId, response));
   }
+  async receipt(id: string) { return (await this.repository.get(id))?.receipt ?? null; }
   async list() { return { dispatches: await this.repository.recent() }; }
   async detail(id: string) {
     if (!z.string().uuid().safeParse(id).success) throw new TestDispatchError(400, "Invalid dispatch ID");

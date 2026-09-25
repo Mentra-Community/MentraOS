@@ -406,3 +406,17 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} Android uses
     expect(build.availability).toBe("unavailable");
   }
 });
+
+test("request adoption refuses truncated/ambiguous history and ignores a known pre-publication failure", async () => {
+  const f = fixture(), since = "2026-09-25T08:00:00Z";
+  const path = `${API}/actions/workflows/request-e2e-routine.yml/runs?event=workflow_dispatch&branch=dev&created=${encodeURIComponent(">=" + since)}&per_page=100`;
+  f.rows.set(path, { total_count: 101, workflow_runs: [] });
+  await expect(f.gateway.findExisting(input, since)).rejects.toThrow("incomplete");
+  const failed = run({ id: 70, head_branch: "dev", path: ".github/workflows/request-e2e-routine.yml", event: "workflow_dispatch", conclusion: "failure" });
+  f.rows.set(path, { total_count: 1, workflow_runs: [failed] });
+  f.rows.set(`${API}/actions/runs/70/attempts/1`, failed);
+  f.rows.set(`${API}/actions/runs/70/artifacts?per_page=100`, { artifacts: [] });
+  expect(await f.gateway.findExisting(input, since)).toBeNull();
+  f.rows.set(path, { total_count: 1, workflow_runs: [{ ...failed, status: "in_progress" }] });
+  await expect(f.gateway.findExisting(input, since)).rejects.toThrow("unresolved");
+});
