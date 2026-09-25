@@ -46,18 +46,26 @@ function fixture(incidents?: IncidentReportStore) {
     findExisting: async (_, value) => { since = value; return existing; },
   };
   let ids: string[] = [], extraResults: typeof result[] = [];
-  const runs = { failureDetail: async (id: string) => id === occurrenceId ? packet : { ...packet, occurrenceId: id },
+  // Core acknowledges each linked occurrence to its stable branch anchor.
+  const anchors = new Map<string, string>();
+  const runs = { failureDetail: async (id: string) => id === occurrenceId ? packet : { ...packet, occurrenceId: id,
+      ...(anchors.has(id) ? { delivery: { state: "acknowledged", agentRunId: anchors.get(id) } } : {}) },
     detail: async (id: string) => extraResults.find(item => item.runId === id) ?? result, failureMedia: async () => new Response("assigned") } as unknown as TestRunService;
   const dispatch = new TestDispatchService(repository, builds);
   let leaseValid = true;
-  const service = new TestContinuationService(runs, dispatch, builds, { target: async () => target }, {
-    list: async () => [...rows.values()].map(row => row.receipt), results: async () => ids,
+  const leaseChecks: ContinuationGrant[] = [], targets: ContinuationGrant[] = [];
+  const service = new TestContinuationService(runs, dispatch, builds, { target: async (_, value) => { targets.push(value); return target; } }, {
+    // Mirrors the Mongo query: occurrence, anchor and exact candidate.
+    list: async value => [...rows.values()].map(row => row.receipt).filter(receipt => receipt.continuation?.occurrenceId === value.occurrenceId
+      && receipt.continuation.agentRunId === value.agentRunId && JSON.stringify(receipt.continuation.candidate) === JSON.stringify(value.candidate)),
+    results: async () => ids,
     claim: async () => claim ? ({ requestId: result.requestId, requestSha256: "9".repeat(64), fixtureId: result.fixture.alias,
       workerId: "mini", executionId: "execution", claimedAt: "2026-09-25T08:00:00Z", settledAt: "2026-09-25T08:00:00Z",
       state: claim.state, settlement: claim.resultRunId ? { state: "terminal", resultRunId: claim.resultRunId }
         : { state: "recovery-required", reason: "Retained for recovery" } } as TestRunClaim) : null,
-  }, async () => { if (!leaseValid) throw new Error("Stale lease"); }, incidents ? new TestFailureIncidentService(runs, incidents) : undefined);
-  return { packet, rows, builds, runs, service, result, loseLease: () => { leaseValid = false; }, sends: () => sends, since: () => since,
+  }, async value => { leaseChecks.push(value); if (!leaseValid) throw new Error("Stale lease"); }, incidents ? new TestFailureIncidentService(runs, incidents) : undefined);
+  return { packet, rows, builds, runs, service, result, leaseChecks, targets, anchor: (id: string, agentRunId: string) => { anchors.set(id, agentRunId); },
+    loseLease: () => { leaseValid = false; }, sends: () => sends, since: () => since,
     target: (value: Partial<ContinuationTarget>) => { target = { ...target, ...value }; },
     claim: (value: typeof claim) => { claim = value; }, results: (additional: typeof result[] = []) => { extraResults = additional; ids = [result.runId, ...additional.map(item => item.runId)]; },
     existing: () => { existing = { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; } };
@@ -244,6 +252,81 @@ test("registered failure asset links are followable with the same narrow continu
   expect(path).toBe(`/api/agent/test-failures/${occurrenceId}/reruns/${id}/failures/${failureId}/assets/asset`);
   const asset = await app.request(path.replace("/api/agent/test-failures", ""), { headers });
   expect(asset.status).toBe(200); expect(await asset.text()).toBe("assigned");
+});
+
+const HARNESS = "Mentra-Community/Mentra-Automated-Testing" as const;
+const caseId = "mfc_" + "5".repeat(64), devOccurrence = "tfo_" + "1".repeat(64), stagingOccurrence = "tfo_" + "2".repeat(64);
+const shared = { repository: HARNESS, pullRequest: 7, headSha: "7".repeat(40) };
+const adopted = (occurrence: string, agentRunId: string, owner = "run_owner"): ContinuationGrant => ({ ...grant, occurrenceId: occurrence, agentRunId,
+  candidate: shared, caseBinding: { caseId, candidateOwnerRunId: owner } });
+
+test("same-case branches adopting one shared harness head keep separate operations, receipts and verdicts", async () => {
+  const f = fixture(); f.anchor(devOccurrence, "run_dev"); f.anchor(stagingOccurrence, "run_staging");
+  f.target({ expectedHarnessSha: "e".repeat(40), requestNotBefore: "2026-09-25T09:00:00Z" });
+  const dev = adopted(devOccurrence, "run_dev"), staging = adopted(stagingOccurrence, "run_staging");
+  const stagingInput = { ...input, source: { channel: "staging" as const, buildRunId: 81, publicationAttempt: 1 } };
+  const one = await f.service.request(dev, input);
+  // Each branch selects its own recorded original app build (Core resolves it from that occurrence's source).
+  f.target({ query: { channel: "staging" } });
+  const two = await f.service.request(staging, stagingInput);
+  expect(f.rows.get(two.dispatchId)!.receipt.input.source).toEqual(stagingInput.source);
+  expect(f.rows.get(one.dispatchId)!.receipt.input.source).toEqual(input.source);
+  expect(one.dispatchId).toBe(continuationOperationId(dev, "no-glasses"));
+  expect(two.dispatchId).not.toBe(one.dispatchId); expect(f.sends()).toBe(2);
+  // The signed binding reaches the lease callback before the owner-branch lookup and again at the send fence.
+  expect(f.leaseChecks.map(item => item.caseBinding)).toEqual([dev.caseBinding, dev.caseBinding, staging.caseBinding, staging.caseBinding]);
+  expect(f.targets.every(item => item.caseBinding?.candidateOwnerRunId === "run_owner")).toBe(true);
+  expect(f.rows.get(one.dispatchId)!.receipt.continuation).toMatchObject({ occurrenceId: devOccurrence, agentRunId: "run_dev",
+    candidate: shared, caseBinding: dev.caseBinding, expectedHarnessSha: "e".repeat(40) });
+  expect(f.rows.get(two.dispatchId)!.receipt.continuation).toMatchObject({ occurrenceId: stagingOccurrence, agentRunId: "run_staging" });
+  // Neither branch can read, list or replay the other's operation, so a pass is never borrowed.
+  await expect(f.service.detail(staging, one.dispatchId)).rejects.toThrow("not found");
+  await expect(f.service.detail(dev, two.dispatchId)).rejects.toThrow("not found");
+  expect((await f.service.list(staging)).reruns.map(item => [item.dispatchId, item.recordedResults.length])).toEqual([[two.dispatchId, 0]]);
+  f.results();
+  // The dev result must carry the exact merged worker revision; otherwise it is refused, never adopted.
+  await expect(f.service.detail(dev, one.dispatchId)).rejects.toThrow("worker revision");
+  f.result.provenance.harnessSha = "e".repeat(40);
+  const devView = await f.service.list(dev);
+  expect(devView.reruns.map(item => [item.dispatchId, item.recordedResults[0]?.outcome])).toEqual([[one.dispatchId, "failed"]]);
+});
+
+test("historical reads and replays refuse a missing, different-owner or different-case binding", async () => {
+  const f = fixture(); f.anchor(devOccurrence, "run_dev");
+  const dev = adopted(devOccurrence, "run_dev"), id = (await f.service.request(dev, input)).dispatchId; f.results();
+  const { caseBinding: _, ...unbound } = dev;
+  for (const other of [unbound, adopted(devOccurrence, "run_dev", "run_intruder"), { ...dev, caseBinding: { ...dev.caseBinding!, caseId: "mfc_" + "6".repeat(64) } }]) {
+    await expect(f.service.detail(other, id)).rejects.toThrow("not found");
+    await expect(f.service.request(other, input)).rejects.toThrow("not found");
+    expect((await f.service.list(other)).reruns).toEqual([]);
+  }
+  expect(f.sends()).toBe(1);
+  expect((await f.service.detail(dev, id)).recordedResults).toHaveLength(1);
+});
+
+test("a same-head recurrence needs its own occurrence-bound operation; the old one stays readable", async () => {
+  const f = fixture(), recurrence = "tfo_" + "3".repeat(64); f.anchor(recurrence, grant.agentRunId);
+  const first = await f.service.request(grant, input); f.results(); f.claim({ state: "terminal", resultRunId: f.result.runId });
+  const later = { ...grant, occurrenceId: recurrence }, second = await f.service.request(later, input);
+  expect(second.dispatchId).not.toBe(first.dispatchId); expect(f.sends()).toBe(2);
+  expect(second.dispatchId).toBe(continuationOperationId(later, "no-glasses"));
+  await expect(f.service.detail(later, first.dispatchId)).rejects.toThrow("not found");
+  expect((await f.service.detail(grant, first.dispatchId)).recordedResults[0]?.outcome).toBe("failed");
+  // Duplicate delivery of the recurrence request reuses its receipt; no extra send.
+  await f.service.request(later, input); expect(f.sends()).toBe(2);
+});
+
+test("an adopted binding cannot dispatch after its lease is lost", async () => {
+  const f = fixture(); f.anchor(devOccurrence, "run_dev"); f.loseLease();
+  await expect(f.service.request(adopted(devOccurrence, "run_dev"), input)).rejects.toThrow("Stale lease");
+  expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+});
+
+test("signed grants carry the optional case binding and reject malformed ones", () => {
+  const value = adopted(devOccurrence, "run_dev"), token = signTestContinuationGrant(value, secret);
+  expect(verifyTestContinuationGrant(token, devOccurrence, secret, "dev")).toEqual(value);
+  expect(() => signTestContinuationGrant({ ...value, caseBinding: { caseId: "case", candidateOwnerRunId: "run_owner" } }, secret)).toThrow();
+  expect(() => signTestContinuationGrant({ ...value, caseBinding: { ...value.caseBinding!, extra: true } as never }, secret)).toThrow();
 });
 
 test("registered rerun incidents require the exact result binding before the incident membership guard", async () => {

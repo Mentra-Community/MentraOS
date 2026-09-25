@@ -102,7 +102,7 @@ export class TestContinuationService {
     if (build.headSha !== target.expectedHeadSha || build.archive?.sha256 !== data.archiveSha256 || build.availability !== "available")
       fail("Published build does not match the candidate");
     const binding: TestContinuationBinding = { occurrenceId: grant.occurrenceId, agentRunId: grant.agentRunId,
-      candidate: grant.candidate, executionAttempt, ...(retryReason ? { retryReason } : {}), expectedHeadSha: target.expectedHeadSha,
+      candidate: grant.candidate, ...(grant.caseBinding ? { caseBinding: grant.caseBinding } : {}), executionAttempt, ...(retryReason ? { retryReason } : {}), expectedHeadSha: target.expectedHeadSha,
       ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
     const request: TestDispatchInput = { ...data, idempotencyKey };
     if (!this.builds.findExisting) throw new TestDispatchError(503, "Trusted request reconciliation is unavailable");
@@ -124,17 +124,21 @@ export class TestContinuationService {
       ...(receipt.requestUrl ? { requestUrl: receipt.requestUrl } : {}),
       ...(receipt.adopted ? { adopted: true } : {}) };
   }
+  /** Historical reads stay bound to the original occurrence, anchor, candidate and
+   * (for an adopted shared candidate) the recorded case owner, not the current lease. */
   private bound(grant: ContinuationGrant, receipt: TestDispatchReceipt) {
     const binding = receipt.continuation;
     if (!binding || binding.occurrenceId !== grant.occurrenceId || binding.agentRunId !== grant.agentRunId
-      || !same(binding.candidate, grant.candidate) || !grant.routineIds.includes(receipt.input.routineId))
+      || !same(binding.candidate, grant.candidate) || !same(binding.caseBinding ?? null, grant.caseBinding ?? null)
+      || !grant.routineIds.includes(receipt.input.routineId))
       throw new TestDispatchError(404, "Registered routine request not found");
     return binding;
   }
   async list(grant: ContinuationGrant) {
     await this.case(grant);
     const receipts = await this.repository.list(grant);
-    return { reruns: await Promise.all(receipts.filter(receipt => grant.routineIds.includes(receipt.input.routineId))
+    return { reruns: await Promise.all(receipts.filter(receipt => grant.routineIds.includes(receipt.input.routineId)
+      && same(receipt.continuation?.caseBinding ?? null, grant.caseBinding ?? null))
       .map(receipt => this.detail(grant, receipt.dispatchId))) };
   }
   async detail(grant: ContinuationGrant, operationId: string) {

@@ -43,9 +43,14 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     const candidate = grant.candidate, harness = candidate.repository === HARNESS;
     const tested = harness ? packet.build.hashes.harnessSha ?? packet.build.hashes.harnessRevision : source!.headSha;
     ensure(typeof tested === "string" && /^[a-f0-9]{40}$/.test(tested), "The tested component revision is missing");
+    // Only a shared harness candidate may name another same-case anchor as its owner;
+    // app fixes always follow the consuming branch. Dispatch verifies the binding
+    // through the lease callback before this lookup.
+    const owner = grant.caseBinding?.candidateOwnerRunId;
+    ensure(!owner || (harness && owner !== grant.agentRunId), "A case candidate binding applies only to an adopted shared harness candidate");
     const pr = prSchema.parse(await this.api(candidate.repository, `pulls/${candidate.pullRequest}`));
     const base = harness ? "main" : source!.pullRequest?.baseBranch ?? source!.branch;
-    const branch = !harness && source!.pullRequest ? source!.branch : `fix/routine-${grant.agentRunId}`;
+    const branch = !harness && source!.pullRequest ? source!.branch : `fix/routine-${owner ?? grant.agentRunId}`;
     ensure(pr.number === candidate.pullRequest && pr.head.repo?.full_name === candidate.repository
       && pr.base.repo.full_name === candidate.repository && pr.head.sha === candidate.headSha
       && pr.head.ref === branch && pr.base.ref === base, "Candidate repository, branch, base or current head differs");

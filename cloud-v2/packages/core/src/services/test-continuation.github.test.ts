@@ -54,3 +54,16 @@ test("harness route requires recorded tested revision and the merged current pri
   f.packet.build.hashes.harnessSha = tested; f.moveMain();
   await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("Private main changed");
 });
+test("an adopted harness candidate uses only the recorded same-case owner's branch", async () => {
+  const f = fixture(true); f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
+  f.pr.head.ref = "fix/routine-run_owner";
+  const bound = { ...f.grant, agentRunId: "run_sibling", caseBinding: { caseId: "mfc_" + "5".repeat(64), candidateOwnerRunId: "run_owner" } };
+  expect(await f.gateway.target(f.packet, bound, "no-glasses")).toMatchObject({ expectedHeadSha: tested, expectedHarnessSha: merged });
+  // Without the binding a sibling cannot address the owner's branch, and a wrong owner fails closed.
+  await expect(f.gateway.target(f.packet, { ...bound, caseBinding: undefined }, "no-glasses")).rejects.toThrow("branch");
+  await expect(f.gateway.target(f.packet, { ...bound, caseBinding: { ...bound.caseBinding, candidateOwnerRunId: "run_other" } }, "no-glasses")).rejects.toThrow("branch");
+  await expect(f.gateway.target(f.packet, { ...bound, agentRunId: "run_owner" }, "no-glasses")).rejects.toThrow("adopted shared harness");
+  const app = fixture();
+  await expect(app.gateway.target(app.packet, { ...app.grant, caseBinding: bound.caseBinding }, "no-glasses")).rejects.toThrow("adopted shared harness");
+  expect(app.calls).toEqual([]);
+});
