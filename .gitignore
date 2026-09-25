@@ -27,6 +27,10 @@ k900_android_sdk/*
 K900ServerPlus/*
 K900_server/*
 .claude/*
+!.claude/skills
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/routine-fixer.md
 aar_extract/*
 aar-extract/*
 temp_extract/*
