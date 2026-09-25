@@ -81,8 +81,9 @@ product behavior.
   limits. Current device readiness is checked by the worker at admission; an
   authorized queued request need not wait for an idle device, and an unavailable
   fixture must be reported as pending/not-run rather than passed.
-- No matching routine: state the gap and propose an extension/new routine with
-  English steps, assertions, setup, teardown, recovery and evidence. An absent
-  routine must be registered and reviewed before its label becomes a valid request.
+- No matching routine: state the gap. When asked to add coverage, follow
+  [create-routine](../create-routine/SKILL.md) for steps, assertions, setup,
+  teardown and evidence. An absent routine must be registered and reviewed
+  before its label becomes a valid request.
 - Public PRs contain coverage/status and approved result links, not credentials,
   account details, private logs, firmware assets or raw recordings.
