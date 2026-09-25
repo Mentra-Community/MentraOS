@@ -5,7 +5,7 @@
 #
 # usage: codex-review.sh <repo-dir> <repo-name> <output-file> <prompt-file>
 #
-# Progress is read from the child's own `--json` event stream, written to
+# Progress is read from the child's own JSON event stream, written to
 # <output-file's directory>/events-<attempt>.jsonl, so other Codex sessions on
 # the machine (Codex Desktop, another review) cannot be mistaken for this one.
 #
@@ -28,27 +28,38 @@ EFFORT="${CODEX_REVIEW_EFFORT:-medium}"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 out_dir=$(dirname "$output")
 
-# A saved desktop project can group review sessions while the PR checkout stays
-# isolated. This host preference is data, never sourced as shell configuration.
+# Project reviews use app-server's ordinary interactive session source; exec
+# sessions have a distinct source that the desktop history may filter out.
+# Host preferences are data, never sourced as shell configuration.
 project_file="${CODEX_REVIEW_HOME:-$HOME/.codex-reviews}/project-directory"
 project_dir="${CODEX_REVIEW_PROJECT_DIR-}"
 if [[ -z "${CODEX_REVIEW_PROJECT_DIR+x}" && -f "$project_file" ]]; then
   project_dir=$(cat "$project_file")
 fi
-workspace_args=(-C "$repo_dir")
+project_id="${CODEX_REVIEW_PROJECT_ID-}"
 if [[ -n "$project_dir" ]]; then
   if [[ "$project_dir" != /* || ! -d "$project_dir" ]]; then
     echo "codex-review: invalid project directory: $project_dir (use an existing absolute directory)" >&2
     exit 1
   fi
   project_dir=$(cd "$project_dir" && pwd -P)
-  workspace_args=(-C "$project_dir" --skip-git-repo-check --add-dir "$repo_dir")
+  if [[ -z "${CODEX_REVIEW_PROJECT_ID+x}" && -z "${CODEX_REVIEW_PROJECT_DIR+x}" && -f "${CODEX_REVIEW_HOME:-$HOME/.codex-reviews}/project-id" ]]; then
+    project_id=$(cat "${CODEX_REVIEW_HOME:-$HOME/.codex-reviews}/project-id")
+  fi
 fi
 printf -v quoted_repo '%q' "$repo_dir"
 review_prompt="Review checkout: $repo_dir
 Run repository commands and tests in this checkout (cd $quoted_repo), and read its AGENTS.md / CLAUDE.md instructions. The session's starting folder may only be the desktop Review project; it is not the code being reviewed.
 
 $(cat "$prompt_file")"
+if [[ -n "$project_dir" ]]; then
+  printf '%s\n' "$review_prompt" > "$out_dir/review-prompt.txt"
+  review_command=(node "$script_dir/review-app-server.mjs" "$CODEX" "$project_dir" "$repo_dir" "$output"
+    "$out_dir/review-prompt.txt" "$MODEL" "$EFFORT" "$repo_name #${REVIEW_PR:-local} · review" "$project_id")
+else
+  review_command=("$CODEX" exec -C "$repo_dir" -m "$MODEL" -c model_reasoning_effort="$EFFORT"
+    --dangerously-bypass-approvals-and-sandbox --json -o "$output" "$review_prompt")
+fi
 
 # shellcheck source=common.sh
 source "$script_dir/common.sh"
@@ -139,8 +150,8 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
   : > "$events"
   marker="$$-${attempt}-$(date +%s)-$RANDOM"
   seen_pids=""
-  env ${token_env[@]+"${token_env[@]}"} CODEX_REVIEW_ATTEMPT="$marker" "$CODEX" exec "${workspace_args[@]}" -m "$MODEL" -c model_reasoning_effort="$EFFORT" \
-    --dangerously-bypass-approvals-and-sandbox --json -o "$output" "$review_prompt" < /dev/null > "$events" 2>>"$out_dir/codex-stderr.log" &
+  env ${token_env[@]+"${token_env[@]}"} CODEX_REVIEW_ATTEMPT="$marker" "${review_command[@]}" \
+    < /dev/null > "$events" 2>>"$out_dir/codex-stderr.log" &
   pid=$!
   started=$(date +%s)
   while kill -0 "$pid" 2>/dev/null; do

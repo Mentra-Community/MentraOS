@@ -46,6 +46,7 @@ esac
 const FAKE_CODEX = `#!/usr/bin/env bash
 # Fake codex exec: honours -o <file>, streams JSON events, and behaves per FAKE_CODEX_MODE.
 printf '%s\\0' "$@" > "$FAKE_STATE/codex-args"
+if [[ "$1" == "app-server" ]]; then exec node "$FAKE_APP_SERVER"; fi
 out=""
 while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
 echo $(( $(cat "$FAKE_STATE/codex-calls" 2>/dev/null || echo 0) + 1 )) > "$FAKE_STATE/codex-calls"
@@ -125,6 +126,7 @@ function env(f, extraEnv = {}) {
     CODEX_BIN: join(f.bin, "codex"),
     FAKE_ORIGIN: f.origin,
     FAKE_STATE: f.state,
+    FAKE_APP_SERVER: join(here, "fixtures/fake-app-server.mjs"),
     CODEX_REVIEW_HOME: f.reviews,
     STALL_SECONDS: "2",
     POLL_SECONDS: "1",
@@ -153,20 +155,24 @@ const codexCalls = (f) =>
   existsSync(join(f.state, "codex-calls")) ? Number(readFileSync(join(f.state, "codex-calls"), "utf8").trim()) : 0
 
 describe("codex-pr-review.sh lifecycle", () => {
-  test("groups a saved session under the project while reviewing the isolated PR checkout", () => {
+  test("starts an interactive project session while reviewing the isolated PR checkout", () => {
     const f = makeFixture()
     const project = join(f.root, "Review project with spaces")
     mkdirSync(project)
     mkdirSync(f.reviews)
     writeFileSync(join(f.reviews, "project-directory"), `${project}\n`)
+    writeFileSync(join(f.reviews, "project-id"), "project-1\n")
     const r = run(f, [f.repo, "1"])
     expect(r.code).toBe(0)
     const args = readFileSync(join(f.state, "codex-args"), "utf8").split("\0")
-    expect(args[args.indexOf("-C") + 1]).toBe(sh(project, "pwd -P"))
-    expect(args[args.indexOf("--add-dir") + 1]).toBe(f.worktree)
-    expect(args).toContain("--skip-git-repo-check")
+    expect(args.slice(0, -1)).toEqual(["app-server", "--stdio"])
     expect(args).not.toContain("--ephemeral")
-    expect(args.at(-2)).toContain(`Review checkout: ${f.worktree}`)
+    const messages = readFileSync(join(f.state, "requests.jsonl"), "utf8").trim().split("\n").map(JSON.parse)
+    const start = messages.find((message) => message.method === "thread/start").params
+    expect(start.cwd).toBe(sh(project, "pwd -P"))
+    expect(start.projectId).toBe("project-1")
+    expect(start.runtimeWorkspaceRoots).toEqual([sh(project, "pwd -P"), f.worktree])
+    expect(messages.find((message) => message.method === "turn/start").params.input[0].text).toContain(`Review checkout: ${f.worktree}`)
     expect(sh(f.worktree, "git rev-parse HEAD")).toBe(sh(f.origin, "git rev-parse refs/pull/1/head"))
     expect(existsSync(join(project, ".git"))).toBe(false)
     expect(codexCalls(f)).toBe(1)
@@ -181,6 +187,16 @@ describe("codex-pr-review.sh lifecycle", () => {
     const args = readFileSync(join(f.state, "codex-args"), "utf8").split("\0")
     expect(args[args.indexOf("-C") + 1]).toBe(f.worktree)
     expect(args).not.toContain("--add-dir")
+  }, 90_000)
+
+  test("a project directory override does not inherit another folder's saved project ID", () => {
+    const f = makeFixture()
+    mkdirSync(f.reviews)
+    writeFileSync(join(f.reviews, "project-id"), "another-project\n")
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: f.root})
+    expect(r.code).toBe(0)
+    const sent = readFileSync(join(f.state, "requests.jsonl"), "utf8").trim().split("\n").map(JSON.parse)
+    expect(sent.find((message) => message.method === "thread/start").params).not.toHaveProperty("projectId")
   }, 90_000)
 
   test("a missing configured project fails before launching a reviewer and releases the lock", () => {
@@ -402,6 +418,37 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(runner).toContain("posted its review before exiting")
   }, 90_000)
 
+  test("a project transport crash after posting uses the same receipt fence", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: f.root, FAKE_CODEX_MODE: "post-then-crash"})
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("codex-pr-review: done")
+    expect(codexCalls(f)).toBe(1)
+  }, 90_000)
+
+  test("project transport stalls are retried once after detached descendants are drained", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: f.root, FAKE_CODEX_MODE: "hang"})
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain("codex-pr-review: FAILED")
+    expect(codexCalls(f)).toBe(2)
+    const pids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    expect(pids).toHaveLength(2)
+    for (const pid of pids) expect(isAlive(pid)).toBe(false)
+  }, 90_000)
+
+  test("a completed project review drains detached tools that keep server pipes open", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: f.root, FAKE_CODEX_MODE: "success-with-child"})
+    expect(r.code).toBe(0)
+    expect(codexCalls(f)).toBe(1)
+    const runner = readFileSync(join(f.reviews, sh(f.reviews, "ls"), "runner.log"), "utf8")
+    expect(runner).toContain("attempt 1 finished")
+    expect(runner).not.toContain("stalled")
+    const pids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    for (const pid of pids) expect(isAlive(pid)).toBe(false)
+  }, 90_000)
+
   test("a stalled attempt is killed, retried once, then reported as FAILED", () => {
     const f = makeFixture()
     const started = Date.now()
@@ -487,9 +534,9 @@ function isAlive(pid) {
   }
 }
 
-function startHung(f) {
+function startHung(f, extraEnv = {}) {
   const child = spawn("bash", [wrapper, f.repo, "1"], {
-    env: env(f, {FAKE_CODEX_MODE: "hang", ATTEMPTS: "1", STALL_SECONDS: "60"}),
+    env: env(f, {FAKE_CODEX_MODE: "hang", ATTEMPTS: "1", STALL_SECONDS: "60", ...extraEnv}),
   })
   let out = ""
   child.stdout.on("data", (d) => (out += d))
@@ -499,6 +546,19 @@ function startHung(f) {
 }
 
 describe("cancellation", () => {
+  test("cancelling a project review drains the adapter, server and detached tools before unlocking", async () => {
+    const f = makeFixture()
+    const h = startHung(f, {CODEX_REVIEW_PROJECT_DIR: f.root})
+    await until(() => existsSync(`${f.worktree}.lock/runner-pid`) && existsSync(join(f.state, "grandchildren")))
+    const runnerPid = Number(readFileSync(`${f.worktree}.lock/runner-pid`, "utf8").trim())
+    const kids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    h.child.kill("SIGTERM")
+    await h.closed
+    expect(h.out()).toContain("codex-pr-review: FAILED")
+    expect(existsSync(`${f.worktree}.lock`)).toBe(false)
+    await until(() => !isAlive(runnerPid) && kids.every((k) => !isAlive(k)), 10_000)
+  }, 90_000)
+
   test("cancelling the wrapper stops the runner and its processes before the lock is released", async () => {
     const f = makeFixture()
     const h = startHung(f)
