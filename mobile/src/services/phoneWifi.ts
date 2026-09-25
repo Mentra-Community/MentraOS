@@ -132,12 +132,15 @@ export async function requestPhoneWifiEnable(_reason?: string): Promise<PhoneWif
   try {
     const enabled = await isPhoneWifiEnabled()
     if (enabled === true) return {enabled, cancelled: false}
-    const actionLabel = translate("phoneWifi:openWifiSettings")
+    const actionLabel = translate(Platform.OS === "ios" ? "phoneWifi:openSettings" : "phoneWifi:openWifiSettings")
     let stillOff = false
     for (;;) {
       const confirmed = await requestPhoneWifiPrompt({
         title: translate(stillOff ? "phoneWifi:stillOffTitle" : "phoneWifi:title"),
-        message: translate("phoneWifi:videoReason"),
+        message:
+          Platform.OS === "ios"
+            ? `${translate("phoneWifi:videoReason")}\n\n${translate("phoneWifi:instructionsIos")}`
+            : translate("phoneWifi:videoReason"),
         actionLabel,
         tone: stillOff ? "still-off" : "ask",
       })

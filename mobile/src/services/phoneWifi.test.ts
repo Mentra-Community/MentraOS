@@ -122,9 +122,15 @@ test("missing panel falls back to Wi-Fi settings; background/active also resumes
   await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
-test("iOS opens public app settings and preserves unknown on return", async () => {
+test("iOS explains app Settings navigation and preserves unknown on return", async () => {
   Object.defineProperty(Platform, "OS", {value: "ios"})
   const pending = requestPhoneWifiEnable()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(getPhoneWifiPrompt()).toMatchObject({
+    actionLabel: "phoneWifi:openSettings",
+    message: "phoneWifi:videoReason\n\nphoneWifi:instructionsIos",
+  })
   await acceptPrompt()
   expect(Linking.openSettings).toHaveBeenCalledTimes(1)
   events.get("change")!("inactive")
