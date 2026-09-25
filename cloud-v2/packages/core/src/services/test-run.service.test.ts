@@ -4,10 +4,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
+import { createTestFailureAgentApi } from "../api/agent/test-failures.api";
 import { createTestRunAdminApi } from "../api/admin/test-runs.api";
 import { createTestRunIngestApi } from "../api/internal/test-runs.api";
 import { adminAuth } from "../api/middleware/admin-auth.middleware";
 import { TestRunModel } from "../models/test-run.model";
+import { signTestFailureDelivery, signTestFailureReadGrant } from "./test-failure-auth";
+import { createTestFailureOccurrences } from "./test-failure-occurrence";
+import { TestFailureDeliveryService, startTestFailureDelivery } from "./test-failure-delivery.service";
 import { testRunQuerySchema, testRunSchema, type TestRun, type TestRunQuery } from "../types/test-run.types";
 import { StorageService } from "./storage/storage.service";
 import { LocalStorageProvider } from "./storage/providers/local-storage.provider";
@@ -22,12 +26,14 @@ class MemoryRepository implements TestRunRepository {
   async insert(run: TestRun, payloadSha256: string) {
     const stored = this.runs.get(run.runId);
     if (stored) return { stored, created: false };
-    const value = structuredClone({ run, payloadSha256 });
+    const value = structuredClone({ run, payloadSha256, failureOccurrences: createTestFailureOccurrences(run) });
     this.runs.set(run.runId, value);
     this.outcomes.set(run.runId, run.outcome === "passed" && run.assets.length ? "blocked" : run.outcome);
     return { stored: value, created: true };
   }
-  async list(query: TestRunQuery) { return [...this.runs.values()].filter(row => !query.outcome || this.outcomes.get(row.run.runId) === query.outcome); }
+  async list(query: TestRunQuery) { return [...this.runs.values()].filter(row =>
+    (!query.outcome || this.outcomes.get(row.run.runId) === query.outcome)
+    && (!query.occurrenceId || row.failureOccurrences?.some(item => item.occurrenceId === query.occurrenceId))); }
   async assets(runId: string) { return [...this.objects.values()].filter(asset => asset.runId === runId); }
   async insertAsset(asset: StoredTestAsset) {
     const key = `${asset.runId}/${asset.assetId}`;
@@ -35,6 +41,24 @@ class MemoryRepository implements TestRunRepository {
     return this.objects.get(key)!;
   }
   async markUploadsComplete(run: TestRun) { this.outcomes.set(run.runId, run.outcome); }
+  async reconcileFailures(stored: StoredTestRun) {
+    stored.failureOccurrences ??= createTestFailureOccurrences(stored.run);
+    return stored;
+  }
+  async failure(id: string) { return [...this.runs.values()].find(row => row.failureOccurrences?.some(item => item.occurrenceId === id)) ?? null; }
+  async pendingFailures(limit: number) {
+    return [...this.runs.values()].flatMap(row => (row.failureOccurrences ?? []).filter(item => item.delivery.state === "pending")
+      .map(item => ({ ...row, failureOccurrences: [item] }))).slice(0, limit);
+  }
+  async noteFailureDeliveryAttempt(id: string) {
+    const delivery = (await this.failure(id))?.failureOccurrences?.find(item => item.occurrenceId === id)?.delivery;
+    if (delivery?.state === "pending") delivery.lastAttemptAt = new Date().toISOString();
+  }
+  async acknowledgeFailure(id: string, agentRunId: string) {
+    const occurrence = (await this.failure(id))?.failureOccurrences?.find(item => item.occurrenceId === id);
+    if (!occurrence || (occurrence.delivery.state === "acknowledged" && occurrence.delivery.agentRunId !== agentRunId)) throw new Error("different delivery receipt");
+    if (occurrence.delivery.state === "pending") occurrence.delivery = { state: "acknowledged", agentRunId, acknowledgedAt: new Date().toISOString() };
+  }
 }
 
 const TOKEN = "test-worker-token-" + "x".repeat(32);
@@ -414,4 +438,182 @@ test("S3 provider issues a real ranged HTTP GET and streams only the requested b
     expect(Buffer.from(await new Response(stream).arrayBuffer()).toString()).toBe("ftyp");
     expect(requests).toEqual([{ method: "HEAD", range: null }, { method: "GET", range: "bytes=4-7" }]);
   } finally { server.stop(true); }
+});
+
+const failureFixture = (): TestRun => ({
+  ...fixture(), outcome: "failed", outcomes: { test: "failed", teardown: "passed", fixture: "ready", evidence: "complete" },
+  source: { schemaVersion: 1, trigger: "pr", repository: "Mentra-Community/MentraOS", channel: "pr",
+    headSha: "a".repeat(40), branch: "fix/unpair", pullRequest: { number: 123, headRepository: "Mentra-Community/MentraOS",
+      baseBranch: "dev", baseSha: "b".repeat(40) } },
+  failures: [{ phase: "test", step: { id: "unpair:confirm", label: "Unpair the glasses" }, code: "app_crash",
+    message: "The Mentra App closed after confirming Unpair.", expected: "Return to the unpaired Home screen.",
+    stack: "SurfaceMountingManager.addViewAt: child already has a parent", assetIds: ["video-1"], incidentIds: [],
+    redactionPolicy: "qualification-redaction-v1", missingEvidence: [] }],
+});
+
+describe("canonical failure occurrences and existing agent queue delivery", () => {
+  const secret = "fixture-action-signing-key-" + "x".repeat(32);
+  const environmentKeys = ["CLOUD_REPORT_AGENT_SIGNING_SECRET", "CLOUD_CORE_ENVIRONMENT", "CLOUD_REPORT_AGENT_URL", "CLOUD_TEST_FAILURE_DELIVERY_ENABLED"] as const;
+  let previous: Record<string, string | undefined>;
+  beforeEach(() => {
+    previous = Object.fromEntries(environmentKeys.map(key => [key, process.env[key]]));
+    process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = secret;
+    process.env.CLOUD_CORE_ENVIRONMENT = "dev";
+    process.env.CLOUD_REPORT_AGENT_URL = "https://agent.invalid";
+    delete process.env.CLOUD_TEST_FAILURE_DELIVERY_ENABLED;
+  });
+  afterEach(() => {
+    for (const key of environmentKeys) if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key];
+  });
+  const grant = (id: string, expires = Math.floor(Date.now() / 1000) + 300) =>
+    ({ authorization: `Bearer ${signTestFailureReadGrant(id, "dev", expires, secret)}` });
+
+  test("acceptance persists occurrence and pending delivery before uploads or any AI", async () => {
+    const run = failureFixture();
+    const first = await service.ingest(run);
+    expect((await service.ingest(run)).occurrenceIds).toEqual(first.occurrenceIds);
+    expect(first.occurrenceIds).toHaveLength(1);
+    expect(repository.runs.size).toBe(1);
+    const id = first.occurrenceIds[0]!;
+    expect((await service.failureDetail(id)).delivery.state).toBe("pending");
+    expect((await service.failureDetail(id)).evidence).toMatchObject({ complete: false, assets: [{ state: "upload-pending" }] });
+    expect((await service.detail(run.runId)).outcomes).toMatchObject({ test: "failed", fixture: "ready" });
+    expect((await service.list(testRunQuerySchema.parse({ occurrenceId: id }))).runs[0]?.runId).toBe(run.runId);
+    expect((await service.list(testRunQuerySchema.parse({ occurrenceId: id }))).runs[0]).not.toHaveProperty("failures");
+    const flush = spyOn(TestFailureDeliveryService.prototype, "flush");
+    try { await startTestFailureDelivery()(); expect(flush).not.toHaveBeenCalled(); }
+    finally { flush.mockRestore(); }
+    await put();
+    expect((await service.failureDetail(id)).evidence.complete).toBe(true);
+    expect((await service.failureDetail(id)).originalOutcome).toBe("failed");
+  });
+
+  test("one Mongo insert accepts immutable result and delivery intent together", async () => {
+    const run = failureFixture();
+    const create = spyOn(TestRunModel, "create").mockResolvedValue({} as never);
+    try {
+      const result = await new MongoTestRunRepository().insert(run, "c".repeat(64));
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create.mock.calls[0]?.[0]).toMatchObject([{ payload: run, payloadSha256: "c".repeat(64),
+        failureOccurrences: [{ occurrenceId: result.stored.failureOccurrences?.[0]?.occurrenceId, delivery: { state: "pending" } }] }]);
+      expect(create.mock.calls[0]?.[1]).toEqual({ writeConcern: { w: "majority", j: true, wtimeout: 10_000 } });
+    } finally { create.mockRestore(); }
+  });
+
+  test("exact replay reconciles an old accepted row and never resets an acknowledgment", async () => {
+    const run = failureFixture();
+    const result = await service.ingest(run);
+    delete repository.runs.get(run.runId)!.failureOccurrences;
+    expect((await service.ingest(run)).occurrenceIds).toEqual(result.occurrenceIds);
+    const id = result.occurrenceIds[0]!;
+    await service.acknowledgeFailure(id, "agent_123");
+    const receipt = structuredClone((await service.failureDetail(id)).delivery);
+    await service.ingest(run);
+    await service.acknowledgeFailure(id, "agent_123");
+    expect((await service.failureDetail(id)).delivery).toEqual(receipt);
+    await expect(service.acknowledgeFailure(id, "different_agent")).rejects.toThrow();
+    const changed = structuredClone(run); changed.failures![0]!.message = "different failure";
+    await expect(service.ingest(changed)).rejects.toMatchObject({ status: 409 });
+    expect((await service.failureDetail(id)).delivery).toEqual(receipt);
+  });
+
+  test("legacy failures expose unknown source and details, without granting raw logs", async () => {
+    const run = failureFixture(); delete run.source; delete run.failures;
+    run.notes = "private runtime note";
+    run.provenance.unrestrictedDiagnostic = "private runtime data";
+    const id = (await service.ingest(run)).occurrenceIds[0]!;
+    const detail = await service.failureDetail(id);
+    expect(detail.source).toBeNull();
+    expect(detail.failure.phase).toBe("unknown");
+    expect(detail.failure.missingEvidence.map(item => item.kind)).toEqual(["failure-details", "source"]);
+    expect(detail.evidence).toEqual({ complete: false, assets: [] });
+    expect(JSON.stringify(detail)).not.toContain("private runtime");
+    expect((await service.pendingFailureDeliveries())[0]?.source).toBeNull();
+  });
+
+  test("all triggers preserve selected branches rather than defaulting to dev", async () => {
+    const scenarios = [
+      { trigger: "dev", channel: "dev", branch: "dev" }, { trigger: "staging", channel: "staging", branch: "staging" },
+      { trigger: "nightly", channel: "staging", branch: "staging" }, { trigger: "admin", channel: "dev", branch: "dev" },
+      { trigger: "pr", channel: "pr", branch: "fix/unpair" }, { trigger: "admin", channel: "pr", branch: "fix/historical" },
+      { trigger: "local", channel: "local", branch: "operator/diagnosis" },
+    ] as const;
+    for (const [index, scenario] of scenarios.entries()) {
+      const run = failureFixture(); run.runId += index; run.channel = scenario.channel;
+      run.source = { ...run.source!, ...scenario };
+      if (scenario.channel !== "pr") { delete run.prNumber; delete run.source.pullRequest; }
+      else run.source.pullRequest!.baseBranch = "staging";
+      const id = (await service.ingest(run)).occurrenceIds[0]!;
+      expect((await service.failureDetail(id)).source).toEqual(run.source);
+    }
+    expect(repository.runs.size).toBe(scenarios.length);
+  });
+
+  test("rejects contradictory, duplicate or unbound metadata before acceptance", async () => {
+    const run = failureFixture();
+    const variants = [
+      { ...run, source: { ...run.source, channel: "staging" } },
+      { ...run, source: { ...run.source, repository: "Other/Repo" } },
+      { ...run, provenance: { ...run.provenance, headSha: "f".repeat(40) } },
+      { ...run, failures: [run.failures![0], run.failures![0]] },
+      { ...run, failures: [{ ...run.failures![0], assetIds: ["missing"] }] },
+      ...["../dev", "refs//dev", "-dev", "bad ref", "bad@{ref", "branch.lock"].map(branch => ({ ...run, source: { ...run.source, branch } })),
+    ];
+    for (const value of variants) expect((await post(value)).status).toBe(400);
+    expect(repository.runs.size).toBe(0);
+  });
+
+  test("scoped read cannot list, write, cross occurrences or retrieve unassigned assets", async () => {
+    const run = failureFixture();
+    run.assets.push({ assetId: "private-log", kind: "log", contentType: "text/plain", filename: "private.log", sizeBytes: 1, sha256: "c".repeat(64) });
+    const id = (await service.ingest(run)).occurrenceIds[0]!;
+    await put();
+    const app = new Hono(); app.route("/api/agent/test-failures", createTestFailureAgentApi(service));
+    const path = `/api/agent/test-failures/${id}`;
+    expect((await app.request(path, { headers: grant(id) })).status).toBe(200);
+    expect((await app.request(`${path}/assets/video-1`, { headers: { ...grant(id), range: "bytes=4-7" } })).status).toBe(206);
+    expect((await app.request(`${path}/assets/private-log`, { headers: grant(id) })).status).toBe(404);
+    expect((await app.request(path, { method: "POST", headers: grant(id) })).status).toBe(401);
+    expect((await app.request("/api/agent/test-failures", { headers: grant(id) })).status).toBe(401);
+    expect((await app.request(path, { headers: grant("tfo_" + "0".repeat(64)) })).status).toBe(401);
+    expect((await app.request(path, { headers: grant(id, 1) })).status).toBe(401);
+    expect((await app.request(path, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(401);
+    process.env.CLOUD_CORE_ENVIRONMENT = "staging";
+    expect((await app.request(path, { headers: grant(id) })).status).toBe(401);
+  });
+
+  test("lost acknowledgment retries one queue item and restart skips acknowledged delivery", async () => {
+    const id = (await service.ingest(failureFixture())).occurrenceIds[0]!;
+    const queue = new Map<string, string>(); let calls = 0;
+    const send = (async (url: unknown, options: RequestInit) => {
+      calls++;
+      expect(String(url)).toBe("https://agent.invalid/internal/routine-failures");
+      const headers = new Headers(options.headers); const body = String(options.body);
+      expect(headers.get("content-type")).toBe("application/vnd.mentra.routine-failure+json");
+      expect(headers.get("x-mentra-action-signature")).toBe(signTestFailureDelivery(body, Number(headers.get("x-mentra-action-expires")), secret));
+      const input = JSON.parse(body);
+      expect(input).toMatchObject({ schemaVersion: 1, occurrenceId: id, revision: 1, environment: "dev" });
+      expect(input).not.toHaveProperty("failure");
+      const key = `${input.environment}/${input.occurrenceId}`;
+      if (!queue.has(key)) queue.set(key, "agent_123");
+      if (calls === 1) throw new Error("connection closed after durable remote insert");
+      return Response.json({ schemaVersion: 1, occurrenceId: id, revision: 1, status: "accepted", agentRunId: queue.get(key) });
+    }) as typeof fetch;
+    expect(await new TestFailureDeliveryService(service, send).flush()).toMatchObject({ acknowledged: 0, pending: 1 });
+    expect((await service.failureDetail(id)).delivery.state).toBe("pending");
+    expect(await new TestFailureDeliveryService(service, send).flush()).toMatchObject({ acknowledged: 1, pending: 0 });
+    expect(await new TestFailureDeliveryService(service, send).flush()).toMatchObject({ acknowledged: 0, pending: 0 });
+    expect(queue.size).toBe(1); expect(calls).toBe(2);
+    expect((await service.failureDetail(id)).delivery).toMatchObject({ state: "acknowledged", agentRunId: "agent_123" });
+    expect((await service.detail("run-example-1")).outcome).toBe("failed");
+  });
+
+  test("invalid or oversized acknowledgment never clears pending delivery", async () => {
+    const id = (await service.ingest(failureFixture())).occurrenceIds[0]!;
+    for (const response of [Response.json({ schemaVersion: 1, occurrenceId: "tfo_" + "0".repeat(64), revision: 1, agentRunId: "agent_123", status: "accepted" }),
+      new Response("x".repeat(5000)), new Response("unavailable", { status: 503 })]) {
+      expect((await new TestFailureDeliveryService(service, (async () => response) as unknown as typeof fetch).flush()).acknowledged).toBe(0);
+      expect((await service.failureDetail(id)).delivery.state).toBe("pending");
+    }
+  });
 });

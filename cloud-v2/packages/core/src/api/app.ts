@@ -28,6 +28,7 @@ import { AccountError } from "../services/account/account-error";
 import { requestContext } from "./middleware/context.middleware";
 import adminPreinstalled from "./admin/preinstalled.api";
 import reportAgent from "./agent/reports.api";
+import testFailureAgent from "./agent/test-failures.api";
 import testRunIngest from "./internal/test-runs.api";
 import testRunClaims from "./internal/test-run-claims.api";
 import clientAuth from "./client/auth.api";
@@ -85,6 +86,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/agent/reports", reportAgent);
+  app.route("/api/agent/test-failures", testFailureAgent);
   app.route("/api/internal/test-runs", testRunIngest);
   app.route("/api/internal/test-run-claims", testRunClaims);
   app.route("/api/client/miniapps", clientMiniapps);
