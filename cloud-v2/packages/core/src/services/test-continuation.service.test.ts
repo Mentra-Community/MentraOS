@@ -8,6 +8,7 @@ import { signTestContinuationGrant, signTestFailureReadGrant, verifyTestContinua
 import type { TestBuildGateway } from "./test-builds.service";
 import type { TestRunService } from "./test-run.service";
 import type { ContinuationTarget } from "./test-continuation.github";
+import type { TestRunClaim } from "../types/test-run-claim.types";
 const occurrenceId = "tfo_" + "a".repeat(64), headSha = "b".repeat(40), archiveSha256 = "c".repeat(64);
 const secret = "continuation-test-only-".repeat(3);
 const grant: ContinuationGrant = { purpose: "mentra-routine-fixer-continuation-v1", environment: "dev", occurrenceId,
@@ -22,7 +23,10 @@ function fixture() {
   let claim: { state: string; resultRunId?: string } | null = null;
   const result = { runId: "result1", requestId: "routine-90-1-44-no-glasses", routineId: "no-glasses", source: { headSha },
     outcome: "failed", outcomes: { test: "failed", teardown: "passed", fixture: "ready", evidence: "complete" },
-    provenance: { archiveSha256 }, failureOccurrences: [{ occurrenceId: "tfo_" + "d".repeat(64) }] };
+    fixture: { alias: "glasses-03be" },
+    provenance: { archiveSha256, requestSha256: "9".repeat(64), executionMode: "ci-registered", requestRelationship: "consumed",
+      resultGeneration: "1", terminalSnapshotSha256: "8".repeat(64) } as Record<string, string>,
+    failureOccurrences: [{ occurrenceId: "tfo_" + "d".repeat(64) }] };
   const rows = new Map<string, { inputSha256: string; receipt: TestDispatchReceipt }>();
   const repository: TestDispatchRepository = {
     get: async id => rows.get(id) ?? null, recent: async () => [...rows.values()].map(value => value.receipt),
@@ -39,17 +43,21 @@ function fixture() {
     progress: async () => ({ state: "running", requestId: "routine-90-1-44-no-glasses", message: "Running" }),
     findExisting: async (_, value) => { since = value; return existing; },
   };
-  let ids: string[] = [];
+  let ids: string[] = [], extraResults: typeof result[] = [];
   const runs = { failureDetail: async (id: string) => id === occurrenceId ? packet : { ...packet, occurrenceId: id },
-    detail: async () => result, failureMedia: async () => new Response("assigned") } as unknown as TestRunService;
+    detail: async (id: string) => extraResults.find(item => item.runId === id) ?? result, failureMedia: async () => new Response("assigned") } as unknown as TestRunService;
   const dispatch = new TestDispatchService(repository, builds);
   let leaseValid = true;
   const service = new TestContinuationService(runs, dispatch, builds, { target: async () => target }, {
     list: async () => [...rows.values()].map(row => row.receipt), results: async () => ids,
+    claim: async () => claim ? ({ requestId: result.requestId, requestSha256: "9".repeat(64), fixtureId: result.fixture.alias,
+      workerId: "mini", executionId: "execution", claimedAt: "2026-09-25T08:00:00Z", settledAt: "2026-09-25T08:00:00Z",
+      state: claim.state, settlement: claim.resultRunId ? { state: "terminal", resultRunId: claim.resultRunId }
+        : { state: "recovery-required", reason: "Retained for recovery" } } as TestRunClaim) : null,
   }, async () => { if (!leaseValid) throw new Error("Stale lease"); });
   return { packet, rows, builds, runs, service, result, loseLease: () => { leaseValid = false; }, sends: () => sends, since: () => since,
     target: (value: Partial<ContinuationTarget>) => { target = { ...target, ...value }; },
-    claim: (value: typeof claim) => { claim = value; }, results: () => { ids = [result.runId]; },
+    claim: (value: typeof claim) => { claim = value; }, results: (additional: typeof result[] = []) => { extraResults = additional; ids = [result.runId, ...additional.map(item => item.runId)]; },
     existing: () => { existing = { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; } };
 }
 test("capability signature, expiry, environment, purpose and occurrence are bound", () => {
@@ -167,6 +175,39 @@ test("known cleaned-up attempt permits one budgeted same-head retry with its own
   const second = await f.service.request(retryGrant, request);
   expect(second.dispatchId).not.toBe(continuationOperationId(grant, input.routineId)); expect(f.sends()).toBe(2);
   await f.service.request(retryGrant, request); expect(f.sends()).toBe(2); expect(f.rows.size).toBe(2);
+});
+
+test("verified linked recovery permits a deliberate retry while retaining the original failure and hold", async () => {
+  for (const mismatch of ["valid", "fixture", "snapshot", "evidence", "newer-failure"]) {
+    const f = fixture(); await f.service.request(grant, input);
+    f.result.outcomes.fixture = "unknown"; f.result.outcomes.teardown = "failed";
+    f.claim({ state: "recovery-required" });
+    const recovery = structuredClone(f.result); recovery.runId = "recovery-2";
+    recovery.outcomes = { ...recovery.outcomes, fixture: "ready", teardown: "passed" };
+    recovery.provenance = { ...recovery.provenance, resultGeneration: "2", originalRunId: f.result.runId,
+      originalTerminalSnapshotSha256: f.result.provenance.terminalSnapshotSha256!, terminalSnapshotSha256: "7".repeat(64), returnVerification: "passed" };
+    if (mismatch === "fixture") recovery.fixture.alias = "different-glasses";
+    if (mismatch === "snapshot") recovery.provenance.originalTerminalSnapshotSha256 = "6".repeat(64);
+    if (mismatch === "evidence") recovery.outcomes.evidence = "incomplete";
+    const newer = structuredClone(recovery); newer.runId = "recovery-3"; newer.provenance.resultGeneration = "3";
+    newer.outcomes.fixture = "unknown"; newer.outcomes.teardown = "failed";
+    f.results(mismatch === "newer-failure" ? [recovery, newer] : [recovery]);
+    const id = continuationOperationId(grant, input.routineId), previous = await f.service.detail(grant, id);
+    expect(previous.state).toBe("recovery-required"); expect(previous.recordedResults[0]?.outcome).toBe("failed");
+    const request = { ...input, executionAttempt: 2, retryReason: "Verified retained fixture recovery" };
+    const retryGrant = { ...grant, executionAttempt: 2 };
+    if (mismatch === "valid") {
+      expect(previous.verifiedRecovery?.recoveryRunId).toBe(recovery.runId);
+      await f.service.request(retryGrant, request); await f.service.request(retryGrant, request);
+      expect(f.sends()).toBe(2); expect(f.rows.size).toBe(2);
+    } else {
+      expect(previous.verifiedRecovery).toBeNull();
+      await expect(f.service.request(retryGrant, request)).rejects.toThrow("verified fixture cleanup");
+      expect(f.sends()).toBe(1);
+    }
+    expect((await f.service.detail(grant, id)).state).toBe("recovery-required");
+    expect(f.result.outcome).toBe("failed"); expect(f.result.outcomes.teardown).toBe("failed");
+  }
 });
 
 test("registered failure asset links are followable with the same narrow continuation grant", async () => {

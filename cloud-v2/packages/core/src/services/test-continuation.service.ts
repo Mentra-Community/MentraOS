@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { TestRunModel } from "../models/test-run.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
+import { TestRunClaimModel } from "../models/test-run-claim.model";
+import type { TestRunClaim } from "../types/test-run-claim.types";
 import { continuationRequestSchema, type ContinuationGrant, type TestContinuationBinding } from "../types/test-continuation.types";
 import { testRoutineIdSchema, type TestDispatchReceipt, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
 import { TestDispatchService } from "./test-dispatch.service";
@@ -9,13 +11,19 @@ import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from
 import { GithubContinuationSource, type ContinuationSourceGateway } from "./test-continuation.github";
 import { requireContinuationLease } from "./test-continuation-lease";
 import { TestRunService } from "./test-run.service";
+import { recoveredClaim } from "./test-run-overview.service";
 
 type Runs = Pick<TestRunService, "failureDetail" | "detail" | "failureMedia">;
 export interface ContinuationRepository {
   list(grant: ContinuationGrant): Promise<TestDispatchReceipt[]>;
   results(requestId: string): Promise<string[]>;
+  claim(requestId: string): Promise<TestRunClaim | null>;
 }
 class MongoContinuationRepository implements ContinuationRepository {
+  async claim(requestId: string) {
+    const row = await TestRunClaimModel.findOne({ requestId }).select({ claim: 1 }).lean();
+    return row ? row.claim as TestRunClaim : null;
+  }
   async results(requestId: string) {
     const rows = await TestRunModel.find({ requestId }).sort({ startedAt: 1, runId: 1 }).limit(21).select({ runId: 1 }).lean();
     if (rows.length > 20) throw new TestDispatchError(409, "Recorded result history exceeds the continuation bound");
@@ -80,8 +88,9 @@ export class TestContinuationService {
     if (executionAttempt > 1) {
       const previousId = continuationOperationId({ ...grant, executionAttempt: executionAttempt - 1 }, routineId);
       const previous = await this.detail(grant, previousId);
-      if (previous.state !== "finished" || !previous.result || previous.result.outcomes.fixture !== "ready"
-        || previous.result.outcomes.teardown !== "passed" || previous.result.outcomes.evidence !== "complete") fail("Additional execution requires a completed request with verified fixture cleanup");
+      const completed = previous.state === "finished" && previous.result?.outcomes.fixture === "ready"
+        && previous.result.outcomes.teardown === "passed" && previous.result.outcomes.evidence === "complete";
+      if (!completed && !previous.verifiedRecovery) fail("Additional execution requires a completed request with verified fixture cleanup");
       if (previous.requestRunId) excludeRequestRunIds.push(previous.requestRunId);
     }
     await this.checkLease(grant, routineId);
@@ -136,22 +145,27 @@ export class TestContinuationService {
     const view = await this.dispatch.detail(operationId);
     const ids = view.requestId ? await this.repository.results(view.requestId) : [];
     if (view.result && !ids.includes(view.result.runId)) ids.push(view.result.runId);
-    const recordedResults = await Promise.all(ids.map(async id => {
+    const results = await Promise.all(ids.map(async id => {
       const result = await this.runs.detail(id);
       if (result.requestId !== view.requestId || result.routineId !== receipt.input.routineId
         || result.provenance.archiveSha256 !== receipt.input.archiveSha256
         || (result.source?.headSha ?? result.provenance.headSha) !== binding.expectedHeadSha
         || (binding.expectedHarnessSha && (result.provenance.harnessSha ?? result.provenance.harnessRevision) !== binding.expectedHarnessSha))
         fail("Recorded result differs from the registered candidate, archive, routine or worker revision");
-      return { runId: result.runId, outcome: result.outcome, outcomes: result.outcomes,
+      return result;
+    }));
+    const claim = view.requestId ? await this.repository.claim(view.requestId) : null;
+    const resolution = claim && claim.state !== "claimed" ? recoveredClaim(claim, results) : null;
+    const verifiedRecovery = resolution && results.find(result => result.runId === resolution.recoveryRunId)?.outcomes.evidence === "complete"
+      ? resolution : null;
+    const recordedResults = results.map(result => ({ runId: result.runId, outcome: result.outcome, outcomes: result.outcomes,
         reportPath: `/?testRun=${result.runId}`, source: result.source ?? null, provenance: {
           headSha: binding.expectedHeadSha, archiveSha256: receipt.input.archiveSha256,
           ...(binding.expectedHarnessSha ? { harnessSha: binding.expectedHarnessSha } : {}) },
-        failureOccurrenceIds: (result.failureOccurrences ?? []).map(item => item.occurrenceId) };
-    }));
+        failureOccurrenceIds: (result.failureOccurrences ?? []).map(item => item.occurrenceId) }));
     // A retained fixture can publish useful failed evidence. Preserve its
     // recovery-required state while returning every authenticated recorded result.
-    return { ...view, recordedResults };
+    return { ...view, recordedResults, verifiedRecovery };
   }
   async failure(grant: ContinuationGrant, operationId: string, occurrenceId: string) {
     const view = await this.detail(grant, operationId);
