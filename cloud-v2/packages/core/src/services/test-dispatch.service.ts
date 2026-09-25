@@ -90,6 +90,14 @@ export class TestDispatchService {
       if (!(error instanceof TestDispatchError) || ![400, 404, 409].includes(error.status)) throw error;
       rejectionReason = error.message;
     }
+    if (continuation && rejectionReason !== undefined) {
+      // A continuation reserves its execution identity across artifact selection.
+      // Failed admission is not an execution and cannot burn that permanent ID.
+      // Preserve a concurrent successful/uncertain send if it already won.
+      const winner = await this.repository.get(dispatchId);
+      if (winner) return replay(winner);
+      throw new TestDispatchError(409, rejectionReason);
+    }
     if (admit && rejectionReason === undefined) await admit();
     const value: TestDispatchReceipt = { dispatchId, input: data, requestedBy, createdAt: new Date().toISOString(),
       ...(continuation ? { continuation } : {}), ...(adopt ? { adopted: true } : {}),
