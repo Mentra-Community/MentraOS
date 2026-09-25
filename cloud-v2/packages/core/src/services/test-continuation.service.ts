@@ -11,9 +11,11 @@ import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from
 import { GithubContinuationSource, type ContinuationSourceGateway } from "./test-continuation.github";
 import { requireContinuationLease } from "./test-continuation-lease";
 import { TestRunService } from "./test-run.service";
+import { TestFailureIncidentService } from "./test-failure-incident.service";
 import { recoveredClaim } from "./test-run-overview.service";
 
 type Runs = Pick<TestRunService, "failureDetail" | "detail" | "failureMedia">;
+type Incidents = Pick<TestFailureIncidentService, "metadata" | "artifact">;
 export interface ContinuationRepository {
   list(grant: ContinuationGrant): Promise<TestDispatchReceipt[]>;
   results(requestId: string): Promise<string[]>;
@@ -53,7 +55,8 @@ export class TestContinuationService {
     private readonly builds: TestBuildGateway = new GithubTestBuildGateway(),
     private readonly source: ContinuationSourceGateway = new GithubContinuationSource(),
     private readonly repository: ContinuationRepository = new MongoContinuationRepository(),
-    private readonly checkLease = requireContinuationLease) {}
+    private readonly checkLease = requireContinuationLease,
+    private readonly incidents: Incidents = new TestFailureIncidentService(runs)) {}
   private async case(grant: ContinuationGrant) {
     const packet = await this.runs.failureDetail(grant.occurrenceId);
     if (packet.occurrenceId !== grant.occurrenceId || packet.sourceStatus !== "recorded" || !packet.source
@@ -176,5 +179,15 @@ export class TestContinuationService {
   async media(grant: ContinuationGrant, operationId: string, occurrenceId: string, assetId: string, request: Request) {
     await this.failure(grant, operationId, occurrenceId);
     return this.runs.failureMedia(occurrenceId, assetId, request);
+  }
+  /** Registered result binding first; the incident service then checks exact incident membership. */
+  async incident(grant: ContinuationGrant, operationId: string, occurrenceId: string, reportId: string) {
+    await this.failure(grant, operationId, occurrenceId);
+    return this.incidents.metadata(occurrenceId, reportId,
+      `/api/agent/test-failures/${grant.occurrenceId}/reruns/${operationId}/failures/${occurrenceId}/incidents/${reportId}`);
+  }
+  async incidentArtifact(grant: ContinuationGrant, operationId: string, occurrenceId: string, reportId: string, artifactId: string, request: Request) {
+    await this.failure(grant, operationId, occurrenceId);
+    return this.incidents.artifact(occurrenceId, reportId, artifactId, request);
   }
 }

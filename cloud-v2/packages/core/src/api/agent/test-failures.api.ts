@@ -2,13 +2,18 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { testFailureEnvironment, verifyTestFailureReadGrant, verifyTestContinuationGrant } from "../../services/test-failure-auth";
 import { TestRunError, TestRunService } from "../../services/test-run.service";
 import { TestContinuationService } from "../../services/test-continuation.service";
+import { TestFailureIncidentService } from "../../services/test-failure-incident.service";
 import { TestDispatchError } from "../../services/test-builds.service";
 import { ZodError } from "zod";
 import type { ContinuationGrant } from "../../types/test-continuation.types";
 import type { AppEnv } from "../../types/hono.types";
 
-/** A capability grants one occurrence and its assigned redacted assets, never inventory or writes. */
-export function createTestFailureAgentApi(service = new TestRunService(), continuation = new TestContinuationService()) {
+/**
+ * A capability grants one occurrence and its assigned redacted assets, never inventory or writes.
+ * Incident routes expose only the occurrence's recorded incident IDs, as reviewed diagnostics.
+ */
+export function createTestFailureAgentApi(service = new TestRunService(), continuation = new TestContinuationService(),
+  incidents: Pick<TestFailureIncidentService, "metadata" | "artifact"> = new TestFailureIncidentService(service)) {
   type Env = AppEnv & { Variables: AppEnv["Variables"] & { continuationGrant: ContinuationGrant } };
   const app = new Hono<Env>();
   const capability = (action: "request-routine" | "read-results"): MiddlewareHandler<Env> => async (c, next) => {
@@ -50,9 +55,24 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
     continuation.failure(c.get("continuationGrant"), c.req.param("operationId"), c.req.param("failureId")).then(value => c.json(value)));
   app.on(["GET", "HEAD"], "/:occurrenceId/reruns/:operationId/failures/:failureId/assets/:assetId", capability("read-results"), c =>
     continuation.media(c.get("continuationGrant"), c.req.param("operationId"), c.req.param("failureId"), c.req.param("assetId"), c.req.raw));
+  app.get("/:occurrenceId/reruns/:operationId/failures/:failureId/incidents/:reportId", capability("read-results"), c => {
+    c.header("X-Content-Type-Options", "nosniff");
+    return continuation.incident(c.get("continuationGrant"), c.req.param("operationId"), c.req.param("failureId"), c.req.param("reportId"))
+      .then(value => c.json(value));
+  });
+  app.on(["GET", "HEAD"], "/:occurrenceId/reruns/:operationId/failures/:failureId/incidents/:reportId/artifacts/:artifactId", capability("read-results"), c =>
+    continuation.incidentArtifact(c.get("continuationGrant"), c.req.param("operationId"), c.req.param("failureId"),
+      c.req.param("reportId"), c.req.param("artifactId"), c.req.raw));
   app.get("/:occurrenceId", authorize, c => service.failureDetail(c.req.param("occurrenceId")).then(value => c.json(value)));
   app.on(["GET", "HEAD"], "/:occurrenceId/assets/:assetId", authorize, c =>
     service.failureMedia(c.req.param("occurrenceId"), c.req.param("assetId"), c.req.raw));
+  app.get("/:occurrenceId/incidents/:reportId", authorize, c => {
+    c.header("X-Content-Type-Options", "nosniff");
+    const occurrenceId = c.req.param("occurrenceId"), reportId = c.req.param("reportId");
+    return incidents.metadata(occurrenceId, reportId, `/api/agent/test-failures/${occurrenceId}/incidents/${reportId}`).then(value => c.json(value));
+  });
+  app.on(["GET", "HEAD"], "/:occurrenceId/incidents/:reportId/artifacts/:artifactId", authorize, c =>
+    incidents.artifact(c.req.param("occurrenceId"), c.req.param("reportId"), c.req.param("artifactId"), c.req.raw));
   app.all("*", c => c.json({ error: "unauthorized", error_description: "occurrence-scoped read grant required" }, 401));
   return app;
 }
