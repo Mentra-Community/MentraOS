@@ -12,6 +12,10 @@
 #   codex-review.sh, which adds the stall/total watchdog and one retry.
 # - Prints Codex's final message; artifacts land in $CODEX_REVIEW_HOME (default ~/.codex-reviews).
 set -euo pipefail
+if [[ "${1:-}" == "--capabilities" ]]; then
+  printf '%s\n' '{"schemaVersion":1,"explicitPostingAccount":true,"installationCredentials":true}'
+  exit 0
+fi
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=common.sh
 source "$script_dir/common.sh"
@@ -76,9 +80,14 @@ if [[ -n "$branch_sha" && "$branch_sha" != "$head_sha" ]]; then
   [[ "$head_sha" == "$branch_sha" ]] || echo "codex-pr-review: warning: pull ref ${head_sha:0:8} still differs from branch ${branch_sha:0:8}; reviewing the pull ref" >&2
 fi
 [[ -n "$head_sha" ]] || head_sha=$(gh pr view "$pr" -R "$slug" --json headRefOid -q .headRefOid)
-me=$(gh api user -q .login)
 if [[ -z "${GH_ACCOUNT:-}" ]]; then
+  me=$(gh api user -q .login) || fail "cannot identify the GitHub user; select GH_ACCOUNT=own to use configured installation credentials"
   if [[ "$author" == "$me" ]]; then GH_ACCOUNT=app; else GH_ACCOUNT=own; fi
+else
+  [[ "$GH_ACCOUNT" == "app" || "$GH_ACCOUNT" == "own" ]] || fail "GH_ACCOUNT must be app or own"
+  # Installation credentials can read PR metadata but cannot call /user. An
+  # explicit account already selects the credential path; do not infer identity.
+  me="explicit ${GH_ACCOUNT} credentials"
 fi
 export GH_ACCOUNT
 

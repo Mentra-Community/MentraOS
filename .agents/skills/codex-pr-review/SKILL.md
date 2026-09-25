@@ -76,6 +76,12 @@ total, and retries once unless the verdict was already posted. Never launch a ba
 The App must be installed on the target repository or the mint fails with HTTP 422 and the run
 falls back to a comment review from the logged-in account.
 
+With an already configured GitHub App installation credential, set `GH_ACCOUNT=own`
+to retain that credential. An explicit account skips the user-only `/user` lookup;
+it does not grant additional access or change the review receipt requirements.
+The usual self-review comment fallback still applies. Controllers can inspect
+`scripts/codex-review/codex-pr-review.sh --capabilities` before admitting this mode.
+
 ## Tests
 
 `bun test scripts/codex-review` runs the lifecycle suite with fake `gh` and `codex` binaries:
