@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { testFailureOccurrenceIdSchema, testFailureSchema, testFailureSourceSchema } from "./test-failure.types";
 
 export const testRunIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/);
 // Routine step names are labels, not run or asset path segments.
@@ -39,6 +40,8 @@ export const testRunSchema = z.object({
     evidence: z.enum(["complete", "incomplete"]),
   }).strict(),
   provenance: z.object({ repository: text }).catchall(z.string().max(2000)),
+  source: testFailureSourceSchema.optional(),
+  failures: z.array(testFailureSchema).min(1).max(30).optional(),
   fixture: z.object({ alias: text }).strict(),
   firmwareAssertions: z.array(z.object({
     component: text, expected: text, actual: text, status: verdict,
@@ -56,12 +59,28 @@ export const testRunSchema = z.object({
   const problem = (message: string) => ctx.addIssue({ code: "custom", message });
   if (Date.parse(run.finishedAt) < Date.parse(run.startedAt)) problem("finishedAt precedes startedAt");
   if (run.channel === "pr" && !run.prNumber) problem("PR run requires prNumber");
+  if (run.failures && run.outcome === "passed") problem("passed result cannot contain failures");
+  if (run.source) {
+    if (run.source.channel !== run.channel || run.source.repository !== run.provenance.repository
+      || (run.provenance.headSha && run.source.headSha !== run.provenance.headSha)
+      || (run.source.pullRequest && run.source.pullRequest.number !== run.prNumber)) problem("source contradicts immutable run provenance");
+    if (run.source.pullRequest && run.provenance.baseSha && run.source.pullRequest.baseSha !== run.provenance.baseSha)
+      problem("source base contradicts immutable run provenance");
+  }
   if (run.outcome === "passed" && (run.outcomes.test !== "passed" || run.outcomes.fixture !== "ready"
       || run.outcomes.teardown !== "passed" || run.outcomes.evidence !== "complete"
       || run.firmwareAssertions.some(assertion => assertion.status !== "passed")
       || run.chapters.some(chapter => chapter.status !== "passed"))) problem("passed contradicts required verification/evidence");
   const assets = new Map(run.assets.map(asset => [asset.assetId, asset]));
   if (assets.size !== run.assets.length) problem("duplicate assetId");
+  const failureKeys = new Set<string>();
+  for (const failure of run.failures ?? []) {
+    const key = JSON.stringify([failure.phase, failure.step?.id ?? null]);
+    if (failureKeys.has(key)) problem("duplicate failure phase/step");
+    failureKeys.add(key);
+    if (new Set(failure.assetIds).size !== failure.assetIds.length) problem("duplicate failure assetId");
+    for (const assetId of failure.assetIds) if (!assets.has(assetId)) problem("failure asset does not exist");
+  }
   if (new Set(run.chapters.map(chapter => chapter.id)).size !== run.chapters.length) problem("duplicate chapter id");
   for (const chapter of run.chapters) {
     if (chapter.videoAssetId && assets.get(chapter.videoAssetId)?.kind !== "video") problem("chapter video does not exist");
@@ -72,6 +91,7 @@ export const testRunSchema = z.object({
 });
 
 export const testRunQuerySchema = z.object({
+  occurrenceId: testFailureOccurrenceIdSchema.optional(),
   pr: z.coerce.number().int().positive().optional(),
   repository: z.string().max(200).regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/).optional(),
   headSha: z.string().regex(/^[a-f0-9]{40}$/).optional(),
