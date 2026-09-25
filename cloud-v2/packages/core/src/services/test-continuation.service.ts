@@ -88,9 +88,7 @@ export class TestContinuationService {
     if (executionAttempt > 1) {
       const previousId = continuationOperationId({ ...grant, executionAttempt: executionAttempt - 1 }, routineId);
       const previous = await this.detail(grant, previousId);
-      const completed = previous.state === "finished" && previous.result?.outcomes.fixture === "ready"
-        && previous.result.outcomes.teardown === "passed" && previous.result.outcomes.evidence === "complete";
-      if (!completed && !previous.verifiedRecovery) fail("Additional execution requires a completed request with verified fixture cleanup");
+      if (!previous.verifiedRecovery) fail("Additional execution requires a completed request with verified fixture cleanup");
       if (previous.requestRunId) excludeRequestRunIds.push(previous.requestRunId);
     }
     await this.checkLease(grant, routineId);

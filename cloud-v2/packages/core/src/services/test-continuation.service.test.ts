@@ -21,11 +21,11 @@ function fixture() {
   let sends = 0, since = "", existing: { requestRunId: number; requestUrl: string } | null = null;
   let target: ContinuationTarget = { query: { channel: "pr", pr: 44 }, expectedHeadSha: headSha, automaticExpected: false };
   let claim: { state: string; resultRunId?: string } | null = null;
-  const result = { runId: "result1", requestId: "routine-90-1-44-no-glasses", routineId: "no-glasses", source: { headSha },
+  const result = { runId: "routine-90-1-44-no-glasses", requestId: "routine-90-1-44-no-glasses", routineId: "no-glasses", source: { headSha },
     outcome: "failed", outcomes: { test: "failed", teardown: "passed", fixture: "ready", evidence: "complete" },
     fixture: { alias: "glasses-03be" },
     provenance: { archiveSha256, requestSha256: "9".repeat(64), executionMode: "ci-registered", requestRelationship: "consumed",
-      resultGeneration: "1", terminalSnapshotSha256: "8".repeat(64) } as Record<string, string>,
+      resultGeneration: "1", terminalSnapshotSha256: "8".repeat(64), returnVerification: "passed" } as Record<string, string>,
     failureOccurrences: [{ occurrenceId: "tfo_" + "d".repeat(64) }] };
   const rows = new Map<string, { inputSha256: string; receipt: TestDispatchReceipt }>();
   const repository: TestDispatchRepository = {
@@ -149,7 +149,7 @@ test("POST replay only acknowledges dispatch even after results exist; reads req
   const first = await post(); expect(first.status).toBe(202);
   const acknowledgement = await first.json() as Record<string, unknown>;
   expect(Object.keys(acknowledgement).sort()).toEqual(["dispatchId", "requestRunId", "requestUrl", "sendState"]);
-  f.results(); f.claim({ state: "terminal", resultRunId: "result1" });
+  f.results(); f.claim({ state: "terminal", resultRunId: f.result.runId });
   const replay = await post(); expect(replay.status).toBe(202);
   expect(await replay.json()).toEqual(acknowledgement); expect(f.sends()).toBe(1);
   expect((await app.request(`${base}/${continuationOperationId(grant, input.routineId)}`, { headers })).status).toBe(401);
@@ -170,7 +170,7 @@ test("known cleaned-up attempt permits one budgeted same-head retry with its own
   const f = fixture(); await f.service.request(grant, input);
   const retryGrant = { ...grant, executionAttempt: 2 };
   await expect(f.service.request(retryGrant, { ...input, executionAttempt: 2, retryReason: "Recovered fixture infrastructure" })).rejects.toThrow("verified fixture cleanup");
-  f.claim({ state: "terminal", resultRunId: "result1" }); f.results();
+  f.claim({ state: "terminal", resultRunId: f.result.runId }); f.results();
   const request = { ...input, executionAttempt: 2, retryReason: "Recovered fixture infrastructure" };
   const second = await f.service.request(retryGrant, request);
   expect(second.dispatchId).not.toBe(continuationOperationId(grant, input.routineId)); expect(f.sends()).toBe(2);
@@ -207,6 +207,26 @@ test("verified linked recovery permits a deliberate retry while retaining the or
     }
     expect((await f.service.detail(grant, id)).state).toBe("recovery-required");
     expect(f.result.outcome).toBe("failed"); expect(f.result.outcomes.teardown).toBe("failed");
+  }
+});
+
+test("terminal claims cannot bypass failed verification, newer failed cleanup or ambiguous generations", async () => {
+  for (const condition of ["missing-verification", "failed-verification", "newer-failure", "duplicate-generation"]) {
+    const f = fixture(); await f.service.request(grant, input);
+    f.claim({ state: "terminal", resultRunId: f.result.runId });
+    const newer = structuredClone(f.result); newer.runId = "recovery-new";
+    newer.provenance = { ...newer.provenance, resultGeneration: "2", originalRunId: f.result.runId,
+      originalTerminalSnapshotSha256: f.result.provenance.terminalSnapshotSha256!, terminalSnapshotSha256: "7".repeat(64) };
+    newer.outcomes.fixture = "unknown"; newer.outcomes.teardown = "failed";
+    if (condition === "missing-verification") delete f.result.provenance.returnVerification;
+    if (condition === "failed-verification") f.result.provenance.returnVerification = "failed";
+    if (condition === "duplicate-generation") newer.provenance.resultGeneration = "1";
+    f.results(condition === "newer-failure" || condition === "duplicate-generation" ? [newer] : []);
+    const view = await f.service.detail(grant, continuationOperationId(grant, input.routineId));
+    expect(view.state).toBe("finished"); expect(view.verifiedRecovery).toBeNull();
+    await expect(f.service.request({ ...grant, executionAttempt: 2 }, { ...input, executionAttempt: 2,
+      retryReason: "Infrastructure retry" })).rejects.toThrow("verified fixture cleanup");
+    expect(f.sends()).toBe(1);
   }
 });
 
