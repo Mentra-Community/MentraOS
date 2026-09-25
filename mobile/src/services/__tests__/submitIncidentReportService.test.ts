@@ -1,4 +1,5 @@
 import {waitFor} from "@testing-library/react-native"
+import {Platform} from "react-native"
 
 import {
   startSubmitIncidentReportService,
@@ -6,7 +7,7 @@ import {
   submitIncidentReport,
 } from "../../../modules/engine/src/services/SubmitIncidentReportService"
 import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
-import {emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
+import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 
 jest.mock("@mentra/crust", () => {
   const {crustModuleMock} = require("@/test-utils/mockCrustModule")
@@ -150,6 +151,90 @@ describe("SubmitIncidentReportService", () => {
   it.each([null, [], "not-an-object"])("rejects malformed requests without submitting: %j", async (request) => {
     expect(await submitIncidentReport(request)).toMatchObject({status: "failed"})
     expect(submitAutomaticReport).not.toHaveBeenCalled()
+  })
+
+  it("does not receive or replay a request emitted before the service subscribes", async () => {
+    stopSubmitIncidentReportService()
+    logSpy.mockClear()
+
+    // Crust exists natively, but engine.start() has not subscribed yet.
+    emitCrustEvent("submit_incident_report", {alert_id: "early-1", test_run_id: "run-1"})
+    startSubmitIncidentReportService()
+    await Promise.resolve()
+
+    expect(submitAutomaticReport).not.toHaveBeenCalled()
+    expect(logSpy.mock.calls.some(([message]) => String(message).startsWith("INCIDENT_REPORT_RESULT "))).toBe(false)
+  })
+
+  describe("Android native readiness", () => {
+    beforeEach(() => {
+      stopSubmitIncidentReportService()
+      crustModuleMock.setIncidentReportServiceReady.mockClear()
+      jest.replaceProperty(Platform, "OS", "android")
+    })
+
+    it("reports ready only after subscribing, and not ready before unsubscribing", () => {
+      startSubmitIncidentReportService()
+      expect(crustModuleMock.setIncidentReportServiceReady).toHaveBeenCalledWith(true)
+      expect(crustModuleMock.addListener.mock.invocationCallOrder[0]).toBeLessThan(
+        crustModuleMock.setIncidentReportServiceReady.mock.invocationCallOrder[0],
+      )
+
+      emitCrustEvent("submit_incident_report", {failure_code: "update_failed", test_run_id: "run-1"})
+      stopSubmitIncidentReportService()
+      expect(crustModuleMock.setIncidentReportServiceReady).toHaveBeenLastCalledWith(false)
+      expect(submitAutomaticReport).toHaveBeenCalledTimes(1)
+    })
+
+    it("re-reports readiness once per stop/restart and ignores duplicate calls", () => {
+      startSubmitIncidentReportService()
+      startSubmitIncidentReportService()
+      stopSubmitIncidentReportService()
+      stopSubmitIncidentReportService()
+      startSubmitIncidentReportService()
+      expect(crustModuleMock.setIncidentReportServiceReady.mock.calls).toEqual([[true], [false], [true]])
+    })
+
+    it("keeps the listener when native readiness cannot be updated", async () => {
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {})
+      crustModuleMock.setIncidentReportServiceReady.mockImplementationOnce(() => {
+        throw new Error("native unavailable")
+      })
+      expect(() => startSubmitIncidentReportService()).not.toThrow()
+      expect(warnSpy).toHaveBeenCalledWith(
+        "SubmitIncidentReport: could not update native readiness:",
+        "native unavailable",
+      )
+      emitCrustEvent("submit_incident_report", {alert_id: "request-1"})
+      await waitFor(() => expect(submitAutomaticReport).toHaveBeenCalledTimes(1))
+    })
+  })
+
+  it("does not report native readiness outside Android", () => {
+    stopSubmitIncidentReportService()
+    crustModuleMock.setIncidentReportServiceReady.mockClear()
+    jest.replaceProperty(Platform, "OS", "ios")
+    startSubmitIncidentReportService()
+    stopSubmitIncidentReportService()
+    expect(crustModuleMock.setIncidentReportServiceReady).not.toHaveBeenCalled()
+  })
+
+  it("sends a same-ID retransmit through the existing throttle with a correlated receipt", async () => {
+    ;(submitAutomaticReport as jest.Mock)
+      .mockResolvedValueOnce({status: "submitted", reportId: "report-1", reportStatus: "ready"})
+      .mockResolvedValueOnce({status: "skipped", reason: "throttled_within_window"})
+    const request = {alert_id: "request-1", test_run_id: "run-1", failure_code: "update_failed"}
+    const first = await submitIncidentReport(request)
+    const retransmit = await submitIncidentReport(request)
+
+    const keys = (submitAutomaticReport as jest.Mock).mock.calls.map(([input]) => input.throttleKey)
+    expect(keys).toEqual([
+      "external_trigger|update_failed|unknown|request-1",
+      "external_trigger|update_failed|unknown|request-1",
+    ])
+    expect(first).toMatchObject({alert_id: "request-1", test_run_id: "run-1", status: "filed", report_id: "report-1"})
+    expect(retransmit).toMatchObject({alert_id: "request-1", test_run_id: "run-1", status: "skipped"})
+    expect(retransmit.report_id).toBeUndefined()
   })
 
   it("removes the Crust listener when stopped", async () => {

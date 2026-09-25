@@ -20,6 +20,7 @@ export const crustModuleMock = {
   hello: jest.fn(() => "Hello world!"),
   setValueAsync: jest.fn(() => Promise.resolve()),
   showAVRoutePicker: jest.fn(),
+  setIncidentReportServiceReady: jest.fn(),
   setNotificationConfig: jest.fn(() => Promise.resolve()),
   getInstalledApps: jest.fn(() => Promise.resolve([])),
   getInstalledAppsForNotifications: jest.fn(() => Promise.resolve([])),
