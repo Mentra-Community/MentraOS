@@ -191,3 +191,41 @@ test("a result lookup outage cannot make an unsafe terminal candidate disappear"
   expect(view.jobs).toHaveLength(1); expect(view.jobs[0]?.state).toBe("unknown");
   expect(view.warnings.join(" ")).toContain("could not be checked"); expect(JSON.stringify(view)).not.toContain("Private DB context");
 });
+test("terminal and cancelled claims retain their blocker when ready recovery lineage is rejected", async () => {
+  const badBinding = { ...recovery(), provenance: { ...recovery().provenance, originalTerminalSnapshotSha256: "f".repeat(64) } };
+  for (const cancelled of [false, true]) for (const state of ["terminal", "recovery-required"] as const) {
+    const repository = new Repository(); repository.rows = [{ claim: { ...claim(), state, settledAt: stamp,
+      settlement: state === "terminal" ? { state: "terminal", resultRunId: "original" } : claim().settlement! },
+      ...(cancelled ? { followUpCancellation: { cancelledAt: stamp, cancelledBy: "admin" } } : {}) }];
+    repository.resultRows = [original(), badBinding];
+    const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+    const rows = cancelled ? view.fixtureAttention! : view.jobs;
+    expect(rows).toHaveLength(1); expect(rows[0]?.state).toBe("blocked"); expect(view.resolvedRecoveries).toHaveLength(0);
+    expect(rows[0]?.attention?.reason).toContain("could not be verified against this request's result history");
+    expect(rows[0]?.attention?.reason).not.toContain("return verification did not pass");
+    expect(rows[0]?.attention?.nextAction).toContain("Check the result's request and recovery links");
+  }
+});
+test("both duplicate-generation orders block terminal/cancelled claims and active jobs identically", async () => {
+  const unsafeDuplicate = { ...recovery(), runId: "unsafe-recovery-2", outcomes: original().outcomes };
+  for (const ordered of [[recovery(), unsafeDuplicate], [unsafeDuplicate, recovery()]])
+    for (const location of ["inactive", "cancelled", "active"] as const) {
+      const repository = new Repository(); repository.rows = [{ claim: { ...claim(), state: "terminal", settledAt: stamp,
+        settlement: { state: "terminal", resultRunId: "original" } },
+        ...(location === "cancelled" ? { followUpCancellation: { cancelledAt: stamp, cancelledBy: "admin" } } : {}) }];
+      repository.resultRows = [original(), ...ordered];
+      const view = await new TestRunOverviewService(repository, { activity: async () => ({
+        jobs: location === "active" ? [{ ...queued(), state: "running" }] : [], warnings: [] }) }).overview();
+      const rows = location === "cancelled" ? view.fixtureAttention! : view.jobs;
+      expect(rows).toHaveLength(1); expect(rows[0]?.state).toBe("blocked"); expect(view.resolvedRecoveries).toHaveLength(0);
+      expect(rows[0]?.attention?.reason).toContain("Conflicting results");
+    }
+});
+test("Cancel is not offered when unrelated GitHub request metadata is incomplete", async () => {
+  for (const missing of [{ ...queued(), requests: [] }, { ...queued(), kind: "nightly" as const }]) {
+    const repository = new Repository(); repository.rows = [{ claim: claim("routine-999-1-dev-day1-ota") }];
+    const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [missing], warnings: [] }) }).overview();
+    const row = view.jobs.find(job => job.kind === "claim")!;
+    expect(row.attention?.cancelRequestId).toBeUndefined(); expect(row.attention?.responsible).toBe("Test runner / operator");
+  }
+});

@@ -4,7 +4,7 @@ import { TestRunModel } from "../models/test-run.model";
 import type { TestRunClaim, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
 import type { TestRun } from "../types/test-run.types";
 import type { OverviewClaim, OverviewJob, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
-import { GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
+import { completeGithubActivity, GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
 
 export interface OverviewClaimRecord { claim: TestRunClaim; progress?: TestRunProgressCheckpoint; followUpCancellation?: TestRunFollowUpCancellation }
 export interface TestRunOverviewRepository {
@@ -65,7 +65,7 @@ function generation(run: TestRun) {
   return Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
 function sameResults(claim: TestRunClaim, results: TestRun[]) {
-  return results.filter(run => correlated(run, claim)).sort((a, b) => generation(b) - generation(a));
+  return results.filter(run => correlated(run, claim)).sort((a, b) => generation(b) - generation(a) || a.runId.localeCompare(b.runId));
 }
 const digest = (value?: string) => /^[a-f0-9]{64}$/.test(value ?? "");
 const ready = (run: TestRun) => run.outcomes.fixture === "ready" && run.outcomes.teardown === "passed"
@@ -97,6 +97,26 @@ export function recoveredClaim(claim: TestRunClaim, results: TestRun[]): Overvie
   }
   return { requestId: claim.requestId, originalRunId: latest.provenance.originalRunId!, recoveryRunId: latest.runId,
     fixtureId: claim.fixtureId, kind: "recovery", originalAvailable: Boolean(original) };
+}
+/** One evidence decision controls reconciliation, active blocking and inactive visibility. */
+function classifyEvidence(claim: TestRunClaim, results: TestRun[], available: boolean) {
+  const same = sameResults(claim, results), latest = same[0];
+  const resolution = recoveredClaim(claim, results);
+  if (resolution) return { resolution, latest, needsAttention: false, blocked: false, reason: "Verified return evidence is published.", nextAction: "No recovery follow-up needed." };
+  const ambiguous = latest && same.some(run => run.runId !== latest.runId && generation(run) === generation(latest));
+  const reason = !available ? "Published return evidence could not be checked."
+    : ambiguous ? "Conflicting results report the same generation; physical return is unverified."
+    : latest && ready(latest) ? "The reported ready state could not be verified against this request's result history."
+    : latest ? latest.outcomes.fixture === "unavailable" ? "The recorded run left the fixture unavailable."
+      : latest.outcomes.teardown !== "passed" ? "Cleanup did not pass; physical return is unverified."
+      : "The recorded return verification did not pass."
+    : "No published result proves the fixture's return state.";
+  const nextAction = !available ? "Refresh the evidence lookup before deciding whether recovery is needed."
+    : ambiguous || latest && ready(latest) ? "Check the result's request and recovery links, then publish verified return evidence."
+    : latest ? "Complete recovery for this request and publish its verified return evidence."
+    : "Locate and publish this request's retained result or complete its verified recovery.";
+  return { resolution: null, latest, reason, nextAction, needsAttention: Boolean(latest) || !available || claim.state !== "terminal",
+    blocked: Boolean(latest) || claim.state === "recovery-required" };
 }
 function requestFromClaim(claim: TestRunClaim, results: TestRun[]): OverviewRequest[] {
   const match = /^routine-([1-9]\d*)-([1-9]\d*)-(dev|staging|[1-9]\d*)-([a-z0-9-]+)$/.exec(claim.requestId);
@@ -130,32 +150,33 @@ export class TestRunOverviewService {
     let resultsAvailable = true;
     try { results = await this.repository.results(claims.map(row => row.claim.requestId)); }
     catch { resultsAvailable = false; warnings.push("Recovery results could not be checked; saved recovery blockers are retained."); }
-    const resolvedRecoveries = claims.flatMap(row => { const result = recoveredClaim(row.claim, results); return result ? [result] : []; });
-    const resolved = new Set(resolvedRecoveries.map(value => value.requestId));
+    const evidence = new Map(claims.map(row => [row.claim.requestId, classifyEvidence(row.claim, results, resultsAvailable)]));
+    const resolvedRecoveries = [...evidence.values()].flatMap(value => value.resolution ? [value.resolution] : []);
+    const canCancel = githubResult.status === "fulfilled" && completeGithubActivity(githubResult.value);
     const jobs = githubResult.status === "fulfilled" ? structuredClone(githubResult.value.jobs) : [];
     const fixtureAttention: OverviewJob[] = [];
     const assigned = new Set<string>();
     for (const job of jobs) {
       for (const row of claims) if (job.requests.some(request => request.requestId === row.claim.requestId)) {
         job.claims.push(project(row)); assigned.add(row.claim.requestId);
-        const latest = sameResults(row.claim, results)[0];
-        if (!resolved.has(row.claim.requestId) && (row.claim.state === "recovery-required" || latest && !ready(latest))) {
+        const state = evidence.get(row.claim.requestId)!;
+        if (state.needsAttention && state.blocked) {
           job.state = "blocked";
-          job.attention = attention(row, latest, false);
-          if (latest) job.resultRunId = latest.runId;
+          job.attention = attention(row, state, false);
+          if (state.latest) job.resultRunId = state.latest.runId;
         }
       }
     }
-    for (const row of claims) if (!assigned.has(row.claim.requestId) && !resolved.has(row.claim.requestId)) {
-      const latest = sameResults(row.claim, results)[0];
-      if (row.claim.state === "terminal" && resultsAvailable && (!latest || ready(latest))) continue;
-      const blocked = row.claim.state === "recovery-required" || Boolean(latest && !ready(latest));
+    for (const row of claims) if (!assigned.has(row.claim.requestId)) {
+      const state = evidence.get(row.claim.requestId)!;
+      if (!state.needsAttention) continue;
+      const blocked = state.blocked;
       const cancelled = row.followUpCancellation;
       const job: OverviewJob = { id: "claim-" + row.claim.requestId, kind: cancelled ? "fixture" : "claim", state: blocked ? "blocked" : "unknown",
         title: blocked ? "Fixture recovery required" : "Unsettled routine claim", createdAt: row.claim.claimedAt,
         startedAt: row.claim.claimedAt, claims: [project(row)], requests: requestFromClaim(row.claim, results),
-        attention: attention(row, latest, githubResult.status === "fulfilled" && githubResult.value.warnings.length === 0),
-        ...(latest ? { resultRunId: latest.runId } : {}) };
+        attention: attention(row, state, canCancel),
+        ...(state.latest ? { resultRunId: state.latest.runId } : {}) };
       (cancelled ? fixtureAttention : jobs).push(job);
     }
     for (const job of jobs) if (["queued", "waiting"].includes(job.state) && !job.attention) job.attention = {
@@ -175,15 +196,10 @@ export class TestRunOverviewService {
   }
 }
 
-function attention(row: OverviewClaimRecord, latest: TestRun | undefined, canCancel: boolean): NonNullable<OverviewJob["attention"]> {
+function attention(row: OverviewClaimRecord, state: ReturnType<typeof classifyEvidence>, canCancel: boolean): NonNullable<OverviewJob["attention"]> {
   const cancellation = row.followUpCancellation;
-  const reason = latest ? latest.outcomes.fixture === "unavailable" ? "The recorded run left the fixture unavailable."
-    : latest.outcomes.teardown !== "passed" ? "Cleanup did not pass; physical return is unverified."
-    : "The recorded return verification did not pass."
-    : "No published result proves the fixture's return state.";
-  return { reason, responsible: "Test runner / operator",
-    nextAction: latest ? "Complete recovery for this request and publish its verified return evidence."
-      : "Locate and publish this request's retained result or complete its verified recovery.",
+  return { reason: state.reason, responsible: "Test runner / operator",
+    nextAction: state.nextAction,
     ...(cancellation ? { cancelledAt: cancellation.cancelledAt }
       : canCancel ? { cancelRequestId: row.claim.requestId } : {}),
   };

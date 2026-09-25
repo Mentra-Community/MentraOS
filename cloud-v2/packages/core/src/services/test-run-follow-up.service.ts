@@ -2,7 +2,7 @@ import { TestRunClaimModel } from "../models/test-run-claim.model";
 import type { TestRunClaim, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
 import type { TestRunFollowUpCancellation } from "../types/test-run-overview.types";
 import { testRunIdSchema } from "../types/test-run.types";
-import { GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
+import { completeGithubActivity, GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
 
 export class TestRunFollowUpError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409 | 503, message: string) { super(message); }
@@ -44,8 +44,7 @@ export class TestRunFollowUpService {
     let activity;
     try { activity = await this.github.activity({ fresh: true }); }
     catch { throw new TestRunFollowUpError(503, "GitHub activity could not be verified; follow-up remains open"); }
-    if (activity.warnings.length || activity.jobs.some(job => job.kind === "routine" && job.requests.length !== 1
-      || job.kind === "nightly" && job.requests.length !== 2))
+    if (!completeGithubActivity(activity))
       throw new TestRunFollowUpError(503, "GitHub activity is incomplete; follow-up remains open");
     if (activity.jobs.some(job => job.requests.some(request => request.requestId === id)))
       throw new TestRunFollowUpError(409, "This request still has an active or queued GitHub job. Let it finish before cancelling follow-up.");

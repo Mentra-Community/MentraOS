@@ -39,6 +39,11 @@ const requestFields = z.object({ kind: z.literal("mentra-routine-request"), requ
 
 export interface GithubOverview { jobs: OverviewJob[]; warnings: string[]; recentMaintenance?: OverviewJob[] }
 export interface TestRunOverviewGateway { activity(options?: { fresh?: boolean }): Promise<GithubOverview> }
+/** Both the UI offer and the administrative action require the same complete view. */
+export function completeGithubActivity(activity: GithubOverview) {
+  return activity.warnings.length === 0 && activity.jobs.every(job => job.kind === "routine" ? job.requests.length === 1
+    : job.kind === "nightly" ? job.requests.length === 2 : true);
+}
 
 /** Read-only view of GitHub's actual queue. It does not dispatch or choose a worker. */
 export class GithubTestRunOverview implements TestRunOverviewGateway {
