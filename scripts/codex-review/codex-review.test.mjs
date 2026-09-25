@@ -30,7 +30,9 @@ case "$1 $2" in
   "pr view")
     if [[ "$*" == *headRefOid* ]]; then git -C "$FAKE_ORIGIN" rev-parse refs/pull/1/head
     else echo "alice main feature OPEN Fixture title"; fi ;;
-  "api user") echo "bob" ;;
+  "api user")
+    if [[ "\${FAKE_GH_INSTALLATION:-}" == "1" ]]; then echo "Resource not accessible by integration" >&2; exit 1; fi
+    echo "bob" ;;
   "api repos/Mentra-Community/fixture/pulls/1/reviews")
     case "\${FAKE_GH_REVIEWS:-ok}" in
       fail) echo "gh: HTTP 502 from GitHub" >&2; exit 1 ;;
@@ -150,6 +152,26 @@ const codexCalls = (f) =>
   existsSync(join(f.state, "codex-calls")) ? Number(readFileSync(join(f.state, "codex-calls"), "utf8").trim()) : 0
 
 describe("codex-pr-review.sh lifecycle", () => {
+  test("explicit credentials support installation auth without the user endpoint", () => {
+    const f = makeFixture()
+    const automatic = run(f, [f.repo, "1"], {FAKE_GH_INSTALLATION: "1"})
+    expect(automatic.code).not.toBe(0)
+    expect(automatic.out).toContain("select GH_ACCOUNT=own")
+    expect(codexCalls(f)).toBe(0)
+    const explicit = run(f, [f.repo, "1"], {FAKE_GH_INSTALLATION: "1", GH_ACCOUNT: "own"})
+    expect(explicit.code).toBe(0)
+    expect(explicit.out).toContain("codex-pr-review: done")
+    expect(codexCalls(f)).toBe(1)
+  }, 90_000)
+
+  test("reports supported credential mode without repository or account access", () => {
+    const f = makeFixture()
+    const result = run(f, ["--capabilities"], {FAKE_GH_INSTALLATION: "1"})
+    expect(result.code).toBe(0)
+    expect(JSON.parse(result.out)).toEqual({schemaVersion: 1, explicitPostingAccount: true, installationCredentials: true})
+    expect(codexCalls(f)).toBe(0)
+  })
+
   test("posts, verifies the receipt, prints the done marker and releases the lock", () => {
     const f = makeFixture()
     const r = run(f, [f.repo, "1"])
