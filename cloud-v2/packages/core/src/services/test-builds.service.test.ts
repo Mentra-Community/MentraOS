@@ -407,6 +407,43 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} Android uses
   }
 });
 
+test("Android release inventory admits only a Play-valid version code recorded above the family number", async () => {
+  const source = { channel: "staging" as const, buildRunId: 50, publicationAttempt: 1 };
+  // A family number below Play's beta floor, as finalization records it; every change re-pins the plan.
+  const floored = (change: (f: ReturnType<typeof androidReleaseFixture>) => void) => {
+    const f = androidReleaseFixture("staging");
+    f.plan.native = { ...f.plan.native, playTrack: "beta", testflight: { audience: "external", group: "Mentra Staging Public" } };
+    f.receipt.native = { ...structuredClone(f.plan.native), androidBuildNumber: 310000224 };
+    change(f);
+    f.receipt.releasePlanSha256 = createHash("sha256").update(JSON.stringify(f.plan)).digest("hex");
+    return f;
+  };
+  for (const code of [undefined, 303000325, 310000224, 2_100_000_000]) {
+    const f = floored(f => { f.receipt.native.androidBuildNumber = code; });
+    for (const build of [await f.gateway.resolve(source, "no-glasses-android"),
+      ...(await f.gateway.inventory({ channel: "staging", routineId: "no-glasses-android" }))]) {
+      expect(build.availability).toBe("available");
+      expect(build.archive?.name).toBe(f.asset.coordinate);
+    }
+  }
+  const invalid: ((f: ReturnType<typeof androidReleaseFixture>) => void)[] = [
+    ...[null, "310000224", 310000224.5, 303000324, 0, -1, 2_100_000_001, true, [310000224]]
+      .map(code => (f: ReturnType<typeof androidReleaseFixture>) => { f.receipt.native.androidBuildNumber = code; }),
+    f => { f.receipt.native.marketingVersion = "3.3.1"; }, f => { f.receipt.native.buildNumber = 310000224; },
+    f => { f.receipt.native.playTrack = "internal"; }, f => { delete f.receipt.native.testflight; },
+    f => { f.receipt.native.iosBuildNumber = 310000224; }, f => { f.plan.native.androidBuildNumber = 310000224; },
+    f => { f.plan.native.buildNumber = f.receipt.native.buildNumber = 2_100_000_001; delete f.receipt.native.androidBuildNumber; },
+  ];
+  for (const change of invalid) {
+    const f = floored(change);
+    for (const build of [await f.gateway.resolve(source, "no-glasses-android"),
+      ...(await f.gateway.inventory({ channel: "staging", routineId: "no-glasses-android" }))]) {
+      expect(build.availability).toBe("unavailable");
+      expect(build.reason).toBe("Android receipt does not match the selected coordinated release");
+    }
+  }
+});
+
 test("request adoption refuses truncated/ambiguous history and ignores a known pre-publication failure", async () => {
   const f = fixture(), since = "2026-09-25T08:00:00Z";
   const path = `${API}/actions/workflows/request-e2e-routine.yml/runs?event=workflow_dispatch&branch=dev&created=${encodeURIComponent(">=" + since)}&per_page=100`;

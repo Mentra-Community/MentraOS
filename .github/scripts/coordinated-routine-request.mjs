@@ -3,6 +3,7 @@ import {downloadNames, validateDownloads} from "./coordinated-install-downloads.
 import {deviceRoutine} from "./device-routines.mjs"
 import {jsonArtifact, REQUEST_WORKFLOW, sourcePublication} from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
+import {ANDROID_MAX_VERSION_CODE, androidBuildNumberOf} from "./release-family.mjs"
 
 export const COORDINATED_WORKFLOW = ".github/workflows/coordinated-release.yml"
 export const COORDINATED_FINALIZE_JOB = "Finalize immutable release bill of materials"
@@ -77,15 +78,19 @@ export async function publishedCoordinatedBuild({identity, channel, sourceCommit
       /^\d+\.\d+\.\d+$/.test(value.native.marketingVersion ?? ""), "Release plan has no Android publication")
     receipt = await jsonArtifact(artifactUrl(REPOSITORY, tag, value.artifactNames.releaseManifest), fetchImpl)
     const record = receipt.value
+    // Finalization copies the plan's native identity and may add only the Android version code it built.
+    const {androidBuildNumber: _, ...planNative} = record.native ?? {}
     requireThat(record.schemaVersion === 1 && record.releaseIdentity === identity && record.releaseSetId === value.releaseSetId &&
       record.sourceCommit === sourceCommit && record.channel === releaseChannel && record.releasePlanSha256 === plan.sha256 &&
-      isDeepStrictEqual(record.native, value.native) && Array.isArray(record.artifacts), "Android release manifest differs from its plan")
+      isDeepStrictEqual(planNative, value.native) && Array.isArray(record.artifacts), "Android release manifest differs from its plan")
+    const versionCode = androidBuildNumberOf(value, record)
+    requireThat(versionCode <= ANDROID_MAX_VERSION_CODE, "Android version code exceeds Google Play's limit")
     const assets = record.artifacts.filter(asset => asset.coordinate === value.artifactNames.androidApp)
     const url = artifactUrl(REPOSITORY, tag, value.artifactNames.androidApp)
     requireThat(assets.length === 1 && assets[0].url === url && HASH.test(assets[0].sha256 ?? "") &&
       positive(assets[0].size) && ["built", "published", "reused"].includes(assets[0].status), "Missing or ambiguous published Android APK")
     archive = {name: value.artifactNames.androidApp, url, sha256: assets[0].sha256, size: assets[0].size}
-    app = {packageId: "com.mentra.mentra", version: value.native.marketingVersion, build: String(value.native.buildNumber),
+    app = {packageId: "com.mentra.mentra", version: value.native.marketingVersion, build: String(versionCode),
       headSha: sourceCommit, buildSha: sourceCommit, backend: channel, otaManifestUrl: otaUrl, releaseIdentity: identity}
   } else {
     receipt = await jsonArtifact(artifactUrl(REPOSITORY, tag, names.receipt), fetchImpl)
