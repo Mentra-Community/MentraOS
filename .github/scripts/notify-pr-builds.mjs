@@ -176,8 +176,7 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
   return url.href
 }
 
-async function requestedRoutineLinks({github, context, pr, sha, ios, android, core}) {
-  const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
+async function requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested}) {
   if (!requested.length) return []
   const repository = `${context.repo.owner}/${context.repo.repo}`
   const workflow = "request-e2e-routine.yml"
@@ -440,7 +439,11 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const publicationIdentity = builds
     .map((build) => `${build.run.id}-${build.attempt}`)
     .join(":")
-  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}`
+  // Selected routines are part of the delivered post, so a label added to the same
+  // publications posts their requested tests and result links once.
+  const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}${
+    requested.length ? `:routines-${requested.join(",")}` : ""}`
   if (android.receiptUnavailable) {
     const previous = comment?.body.split("\n").map(line =>
       new RegExp(`^<!-- ${buildIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
@@ -460,7 +463,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     core.info("This PR revision's notification was already delivered.")
     return
   }
-  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core})
+  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested})
   if (!(await current())) {
     core.info("PR superseded or retargeted before notification.")
     return

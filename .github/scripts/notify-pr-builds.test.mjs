@@ -749,6 +749,29 @@ test("Android opt-in links the APK receipt hash and Android result platform, ind
   assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
 })
 
+test("an Android routine label added to already delivered publications posts its exact results link once", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: []}})
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.doesNotMatch(JSON.stringify(h.posts[0]), /Requested tests/)
+  // Same source and publications; only the routine selection changes.
+  h.state.currentPr = {...pr, labels: [{name: "routine:no-glasses-android"}]}
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.equal(h.written.length, 2)
+  const text = h.posts[1].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+  assert.match(text, /Requested tests:\* Android no-glasses UI · Android/)
+  const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(result.searchParams.get("archiveSha256"), "e".repeat(64))
+  assert.equal(result.searchParams.get("platform"), "android")
+  assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
+  assert.match(h.written[1].body, /Android no-glasses UI/)
+  assert.ok(h.written[1].body.includes(`archiveSha256=${"e".repeat(64)}`))
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.equal(h.written.length, 2)
+})
+
 
 test("a last-callback Android receipt miss publishes all downloads and later enriches results once", async () => {
   const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
