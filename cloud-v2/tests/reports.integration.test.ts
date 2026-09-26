@@ -489,6 +489,10 @@ describe("report Slack notifications", () => {
   const SLACK_WEBHOOK = "https://hooks.slack.test/services/T0/B0/reports";
   const realFetch = globalThis.fetch;
   let slackCalls: Array<{ url: string; payload: { text: string; blocks: unknown[] } }>;
+  // Resolves when the mocked webhook receives its first POST. The service
+  // notifies fire-and-forget after an async account-email lookup, so the
+  // response can return before the webhook call starts.
+  let delivered: Promise<void>;
 
   // The in-process app is invoked via coreApp.fetch (a plain handler call),
   // so replacing globalThis.fetch intercepts only the notifier's outbound
@@ -496,11 +500,16 @@ describe("report Slack notifications", () => {
   beforeEach(() => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = SLACK_WEBHOOK;
     slackCalls = [];
+    let markDelivered!: () => void;
+    delivered = new Promise((resolve) => {
+      markDelivered = resolve;
+    });
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       slackCalls.push({
         url: String(input),
         payload: JSON.parse(String(init?.body)) as { text: string; blocks: unknown[] },
       });
+      markDelivered();
       return new Response("ok", { status: 200 });
     }) as typeof fetch;
   });
@@ -526,8 +535,8 @@ describe("report Slack notifications", () => {
     const body = (await res.json()) as { reportId: string; status: string };
     expect(body.status).toBe("ready");
 
-    // The notifier fires before the response resolves (fire-and-forget, but
-    // the webhook call starts synchronously), so no waiting is needed.
+    // Wait for the webhook POST itself, before afterEach clears the webhook env.
+    await delivered;
     expect(slackCalls).toHaveLength(1);
     expect(slackCalls[0].url).toBe(SLACK_WEBHOOK);
     expect(slackCalls[0].payload.text).toContain("feedback");
@@ -550,6 +559,7 @@ describe("report Slack notifications", () => {
 
     const complete = await completeReport(reportId);
     expect(complete.status).toBe(200);
+    await delivered;
     expect(slackCalls).toHaveLength(1);
     expect(slackCalls[0].payload.text).toContain("bug");
     expect(slackCalls[0].payload.text).toContain(reportId);

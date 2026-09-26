@@ -66,7 +66,7 @@ whole upload before anything is stored.
 
 The admin artifact route serves the MP4 inline as one full `200` response with
 its exact `Content-Length`, and the admin console plays it in a native `<video>`
-at the same authenticated URL. Byte ranges are not served. Browser playback and
+at the same authenticated URL, next to the usual download link. Byte ranges are not served. Browser playback and
 seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
 artifacts with an `.mp4` extension.
 

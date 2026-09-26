@@ -21,7 +21,7 @@ const render = (overrides: Overrides) =>
   );
 
 describe("incident report artifact view", () => {
-  test("plays an MP4 video natively from its authenticated same-origin artifact URL", () => {
+  test("plays an MP4 video natively from its authenticated same-origin artifact URL, with a download link", () => {
     const html = render({ type: "video", contentType: "video/mp4" });
     expect(html).toContain(`<video src="${url}"`);
     expect(html).toMatch(/<video[^>]* controls=""/);
@@ -30,8 +30,10 @@ describe("incident report artifact view", () => {
     // The header keeps the declared source and filename.
     expect(html).toContain("· host");
     expect(html).toContain("· recording.mp4");
+    // The same artifact URL stays downloadable; no Blob or object URL.
+    expect(html).toMatch(new RegExp(`<a [^>]*href="${url}" download=""`));
+    expect(html).toContain("Download payload");
     expect(html).not.toContain("blob:");
-    expect(html).not.toContain("Download payload");
   });
 
   test("a video without a playable MP4 type stays a download, like other opaque payloads", () => {

@@ -1144,6 +1144,9 @@ export function ReportArtifactView({ reportId, artifact }: { reportId: string; a
           preload="metadata"
           className="mt-2 max-h-96 w-full rounded-[10px] border border-[#e0e4de] bg-black"
         />
+        <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-[#087d50]" href={url} download>
+          <FileText className="size-4" /> Download payload
+        </a>
       </div>
     );
   }
