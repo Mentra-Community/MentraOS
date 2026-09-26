@@ -87,8 +87,15 @@ async function activate(event: Activation, showAllApps = false) {
   const target = screen.getByTestId(`${showAllApps ? "allApps" : "home"}.miniapp.com.mentra.settings`)
   await act(async () => {
     if (event === "press") fireEvent.press(target)
-    else if (event === "accessibilityTap") fireEvent(target, event)
-    else fireEvent(target, event, {nativeEvent: {actionName: "activate"}})
+    else if (event === "accessibilityTap") {
+      // fireEvent walks composite parents and can hide a wrapper that drops
+      // this prop. Fabric activation needs the handler on the host view.
+      expect(target.props.onAccessibilityTap).toEqual(expect.any(Function))
+      target.props.onAccessibilityTap()
+    } else {
+      expect(target.props.onAccessibilityAction).toEqual(expect.any(Function))
+      target.props.onAccessibilityAction({nativeEvent: {actionName: "activate"}})
+    }
   })
 }
 
@@ -133,7 +140,7 @@ test.each(["accessibilityTap", "accessibilityAction"] as const)(
 test("unrecognized accessibility actions do not launch a miniapp", async () => {
   render(<AppsGrid />)
   await act(async () => {})
-  fireEvent(screen.getByRole("button", {name: "Settings"}), "accessibilityAction", {
+  screen.getByRole("button", {name: "Settings"}).props.onAccessibilityAction({
     nativeEvent: {actionName: "escape"},
   })
   expect(mockStart).not.toHaveBeenCalled()
