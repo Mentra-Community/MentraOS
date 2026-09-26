@@ -1,6 +1,6 @@
 ---
 name: create-routine
-description: Create or extend a Mentra automated testing routine, from English steps and assertions through local development, shared lifecycle integration, registration and CI qualification. Use when adding test coverage or authoring routines in parallel. To request an existing routine on a PR, use select-pr-routines instead.
+description: Create or extend a Mentra automated testing routine through AI-guided exploration, editable actions and assertions, deterministic replay and CI qualification. Use when adding test coverage or authoring routines in parallel. To request an existing routine on a PR, use select-pr-routines instead.
 ---
 
 # Add a testing routine
@@ -10,13 +10,23 @@ description: Create or extend a Mentra automated testing routine, from English s
 This skill is the entry point from MentraOS. Keep harness implementation, device
 configuration and recordings in the private testing system.
 
-| Stage | Deliverable |
-| --- | --- |
-| Define | User behavior, required state, steps and observable checks |
-| Implement | A flow using the existing lifecycle, driver and evidence helpers |
-| Develop | Recorded local run tied to the exact harness source and app build |
-| Register | Reviewed worker support and matching MentraOS catalog entry |
-| Qualify | CI result with playback, assertions and verified return state |
+## Authoring workflow
+
+1. **Explore.** Use AI to navigate the Mentra App's pages, click controls and try
+   miniapps as a person would, observing and recording what happens. When a real
+   product bug appears, attempt an incident with the available evidence through
+   the shared reporting path; retain its ID or submission failure. Keep the
+   affected path failed or blocked and continue independent exploration whose
+   prerequisites still hold. Bug fixing proceeds separately; it does not gate
+   all discovery or turn the failed check into a pass.
+2. **Capture and edit.** Turn the exploration into a readable routine of stable
+   English actions and observable assertions using the existing flow helpers.
+   Keep steps editable so coverage can change and grow with the product.
+3. **Replay and qualify.** Replay the captured flow deterministically for faster
+   repeated coverage without AI rediscovery. Iterate from usable live state as
+   described below, then qualify the complete flow with one clean recording
+   against the exact source and build. Partial exploration remains development
+   evidence, not a full routine pass.
 
 ## 1. Find the closest routine
 
