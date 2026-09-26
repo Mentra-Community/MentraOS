@@ -14,7 +14,7 @@
 //   queue        run created -> job started
 //   xcodebuild   first attempt + clean retry step durations
 //   cacheRestore steps named "Cache ..."
-//   cacheSave    steps named "Post Cache ..."
+//   cacheSave    historical "Post Cache ..." steps and explicit DerivedData saves
 //   other        total - xcodebuild - cacheRestore - cacheSave
 import {execFileSync} from "node:child_process"
 
@@ -91,7 +91,7 @@ export function summarizeJob(run, job) {
   const steps = Array.isArray(job?.steps) ? job.steps : []
   const isXcodebuild = (name) => XCODEBUILD_STEP_PREFIXES.some((prefix) => name.startsWith(prefix))
   const isCacheRestore = (name) => name.startsWith("Cache ")
-  const isCacheSave = (name) => name.startsWith("Post Cache ")
+  const isCacheSave = (name) => name.startsWith("Post Cache ") || name.startsWith("Save Xcode DerivedData")
 
   let xcodebuild = 0
   let cacheRestore = 0

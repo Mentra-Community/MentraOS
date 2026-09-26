@@ -61,6 +61,15 @@ test("summarizeJob tolerates a missing job", () => {
   assert.equal(row.conclusion, "success")
 })
 
+test("explicit DerivedData saves and historical cache post-steps share the cache-save bucket", () => {
+  const row = summarizeJob(run, {...job, steps: [
+    step("Save Xcode DerivedData (best effort)", "20:00", "22:00"),
+    step("Post Cache installed CocoaPods", "22:00", "22:30"),
+  ]})
+  assert.equal(row.cacheSave, 150)
+  assert.equal(row.other, row.total - 150)
+})
+
 test("aggregate reports median/min/max over successful rows only", () => {
   const rows = [
     {conclusion: "success", total: 600, queue: 5, xcodebuild: 300, cacheRestore: 0, cacheSave: 0, other: 300},
