@@ -1,6 +1,6 @@
 import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
-import {successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
+import {admittedPrBase, currentBaseSha, successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
 import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
 import {validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
@@ -99,7 +99,7 @@ async function completedRun(github, context) {
 async function currentPr(github, context, number, headSha, routine, labelRequired = true) {
   if (!positive(number)) return null
   const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: number})
-  return pr.number === number && pr.state === "open" && pr.base?.ref === "dev" &&
+  return pr.number === number && pr.state === "open" && admittedPrBase(pr.base?.ref) &&
     pr.head?.repo?.full_name === REPOSITORY && pr.head.sha === headSha &&
     (!labelRequired || hasRoutineLabel(pr, routine)) ? pr : null
 }
@@ -250,11 +250,13 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
     requireThat(request.status === "ready" && request.selection?.platform === deviceRoutine(request.routine.id).platform &&
       request.selection.build?.headSha === request.pullRequest.headSha &&
       request.selection.build?.baseSha === request.pullRequest.baseSha, "Invalid ready selection")
+    // Every schema 1 request records its PR base and selected app backend; they must agree.
+    const baseRef = request.pullRequest.baseRef
+    requireThat(admittedPrBase(baseRef) && request.selection.app?.backend === baseRef, "Ready selection destination is not admitted")
     const pr = await currentPr(github, context, request.pullRequest.number, request.pullRequest.headSha,
       request.routine.id, request.routine.authorization !== "workflow-dispatch")
-    const {data: base} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})
-    if (!pr || base.object?.sha !== request.pullRequest.baseSha)
-      return {status: "not-dispatched", reason: "Request was superseded or PR opt-in was removed"}
+    if (!pr || pr.base.ref !== baseRef || await currentBaseSha(github, context, baseRef) !== request.pullRequest.baseSha)
+      return {status: "not-dispatched", reason: "Request was superseded, retargeted or PR opt-in was removed"}
   }
   requireThat(privateGithub, "Missing short-lived GitHub App dispatch token")
   await privateGithub.rest.actions.createWorkflowDispatch({owner: context.repo.owner, repo: PRIVATE_REPOSITORY,

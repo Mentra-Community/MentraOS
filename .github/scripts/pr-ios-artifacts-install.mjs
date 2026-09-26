@@ -66,7 +66,8 @@ export function iosInstallationFiles(receipt, repository, release = undefined) {
   const prUrl = release?.url ?? `https://github.com/${repository}/pull/${receipt.pr}`
   const title = release?.identity ?? `PR #${receipt.pr}`
   const badge = release ? "MENTRA · TEST RELEASE" : "MENTRA · PR TEST BUILD"
-  const backend = release?.backend ?? "dev"
+  // Display only: the receipt's backend is bound to the PR base by its producer and consumers.
+  const backend = release?.backend ?? (app.backend === "staging" ? "staging" : "dev")
   const retention = release ? "" : " PR downloads may be removed after 7 days."
   const macEnabled = !release && app.macPackageVersion === 2
   if (

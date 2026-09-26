@@ -114,6 +114,8 @@ function fixture() {
     baseRef: {ref: "refs/heads/dev", object: {type: "commit", sha: base}},
     baseReads: 0,
     changeBaseOnReread: false,
+    retargetOnReread: false,
+    refReads: [],
   }
   const github = {
     rest: {
@@ -123,13 +125,15 @@ function fixture() {
           if (state.prReads++ > 0) {
             if (state.changeOnReread) data.head.sha = "f".repeat(40)
             if (state.removeLabelOnReread) data.labels = []
+            if (state.retargetOnReread) data.base.ref = data.base.ref === "dev" ? "staging" : "dev"
           }
           return {data}
         },
       },
       git: {
         getRef: async ({ref}) => {
-          assert.equal(ref, "heads/dev")
+          state.refReads.push(ref)
+          assert.equal(ref, `heads/${pr.base.ref}`)
           const data = structuredClone(state.baseRef)
           if (state.changeBaseOnReread && state.baseReads > 0) data.object.sha = "e".repeat(40)
           state.baseReads++
@@ -190,29 +194,104 @@ function fixture() {
     source.ref = "refs/heads/dev"
     source.workflowRef = `${repository}/${REQUEST_WORKFLOW}@refs/heads/dev`
   }
-  return {state, context, source, github, resolve, manual}
+  // A staging-targeted PR still resolves on the trusted dev issuer.
+  const staging = () => {
+    for (const target of [pr, context.payload.pull_request]) target.base.ref = "staging"
+    state.baseRef.ref = "refs/heads/staging"
+    receipt.app.backend = "staging"
+  }
+  return {state, context, source, github, resolve, manual, staging}
 }
 
 const originalPublication = {sourceBuildRunId: "100", sourcePublicationAttempt: "2", requestOrigin: "pr-label"}
 
 test("the shared private/public PR wire fixture is the actual producer output", async () => {
   // The private harness projects each request's authenticated failure source from these exact bytes.
-  const label = fixture(), manual = fixture()
+  const label = fixture(), manual = fixture(), stagingLabel = fixture()
   label.manual()
   manual.manual()
   manual.state.pr.labels = []
+  stagingLabel.staging()
+  stagingLabel.manual()
   const produced = JSON.parse(JSON.stringify({
     bootstrap: await fixture().resolve(),
     labelCallback: await label.resolve(originalPublication),
     manual: await manual.resolve({routine: "no-glasses", requestOrigin: "workflow-dispatch"}),
+    stagingLabelCallback: await stagingLabel.resolve(originalPublication),
   }))
   for (const [name, kind, authorization] of [["bootstrap", "pull_request", "pr-label"],
-    ["labelCallback", "workflow_dispatch", "pr-label"], ["manual", "workflow_dispatch", "workflow-dispatch"]]) {
+    ["labelCallback", "workflow_dispatch", "pr-label"], ["manual", "workflow_dispatch", "workflow-dispatch"],
+    ["stagingLabelCallback", "workflow_dispatch", "pr-label"]]) {
     assert.equal(produced[name].status, "ready")
     assert.equal(produced[name].trigger.kind, kind)
     assert.equal(produced[name].routine.authorization, authorization)
   }
   assert.deepEqual(JSON.parse(await readFile(new URL("./fixtures/pr-routine-requests.json", import.meta.url))), produced)
+})
+
+test("dev and staging PRs share the trusted dev issuer and bind their exact current base and backend", async () => {
+  for (const destination of ["dev", "staging"]) {
+    for (const options of [{}, originalPublication, {routine: "no-glasses", requestOrigin: "workflow-dispatch"}]) {
+      const f = fixture()
+      if (destination === "staging") f.staging()
+      f.manual()
+      if (options.requestOrigin === "workflow-dispatch") f.state.pr.labels = []
+      const request = await f.resolve(options)
+      assert.equal(request.status, "ready", request.reason)
+      assert.equal(request.schemaVersion, 1)
+      assert.equal(request.trigger.ref, "refs/heads/dev")
+      assert.equal(request.trigger.workflowRef, `${repository}/${REQUEST_WORKFLOW}@refs/heads/dev`)
+      assert.equal(request.pullRequest.baseRef, destination)
+      assert.equal(request.pullRequest.baseSha, base)
+      assert.equal(request.selection.app.backend, destination)
+      assert.deepEqual(request.selection.build, {headSha: head, baseSha: base, buildSha: merge})
+      assert.deepEqual(f.state.refReads, [`heads/${destination}`, `heads/${destination}`])
+    }
+  }
+})
+
+test("a staging PR bootstrap label uses its PR merge checkout and exact staging tip", async () => {
+  const f = fixture()
+  f.staging()
+  const request = await f.resolve()
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.trigger.ref, "refs/pull/4136/merge")
+  assert.equal(request.pullRequest.baseRef, "staging")
+})
+
+test("backend mismatches, retargets, stale bases and other destinations never become ready", async () => {
+  for (const [setup, reason] of [
+    [f => { f.staging(); f.state.receipt.app.backend = "dev" }, /backend differs/],
+    [f => { f.state.receipt.app.backend = "staging" }, /backend differs/],
+    [f => { f.staging(); f.state.receipt.app.backend = "prod" }, /disagrees/],
+    [f => { f.staging(); f.state.retargetOnReread = true }, /changed while resolving/],
+    [f => { f.state.retargetOnReread = true }, /changed while resolving/],
+    [f => { f.staging(); f.state.changeBaseOnReread = true }, /changed while resolving/],
+    [f => { f.staging(); f.state.baseRef.object.sha = "e".repeat(40) }, /current base/],
+    [f => { f.staging(); f.context.payload.pull_request.base.ref = "dev" }, /superseded/],
+  ]) {
+    for (const trusted of [false, true]) {
+      const f = fixture()
+      setup(f)
+      if (trusted) f.manual()
+      if (trusted && reason.source === "superseded") continue
+      const request = await f.resolve(trusted ? originalPublication : {})
+      assert.equal(request.status, "no-artifact")
+      assert.equal(request.selection, null)
+      assert.match(request.reason, reason)
+    }
+  }
+  for (const other of ["main", "feature"]) {
+    const f = fixture()
+    f.manual()
+    f.state.pr.base.ref = other
+    const request = await f.resolve(originalPublication)
+    assert.equal(request.status, "no-artifact")
+    assert.match(request.reason, /targeting dev or staging/)
+    assert.equal(request.pullRequest.baseRef, other)
+    assert.deepEqual(f.state.refReads, [])
+    assert.equal(f.state.apiCalls.length, 0)
+  }
 })
 
 test("delayed automatic requests keep the original run while manual requests select the newer build", async () => {
@@ -529,6 +608,23 @@ test("Android requests select the exact APK receipt, version and merge without a
   assert.equal(request.selection.archive.name, f.android.artifacts.android.name)
   f.manual()
   assert.equal((await f.resolveAndroid({...originalPublication})).status, "ready")
+})
+
+test("staging Android requests select only a staging APK for the current staging tip", async () => {
+  const f = androidFixture()
+  f.staging()
+  f.android.app.backend = "staging"
+  const request = await f.resolveAndroid()
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.pullRequest.baseRef, "staging")
+  assert.equal(request.selection.app.backend, "staging")
+  for (const change of [g => { g.android.app.backend = "dev" }, g => { g.android.baseSha = head }]) {
+    const g = androidFixture()
+    g.staging()
+    g.android.app.backend = "staging"
+    change(g)
+    assert.equal((await g.resolveAndroid()).status, "no-artifact")
+  }
 })
 
 test("Android rejects missing publication steps, mismatching APK identity and stale bases", async () => {

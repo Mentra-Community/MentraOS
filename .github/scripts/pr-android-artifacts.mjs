@@ -3,6 +3,7 @@ import {execFileSync} from "node:child_process"
 import {readFile, readdir, writeFile} from "node:fs/promises"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
+import {prBackend} from "./pr-mobile-build.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 export const ANDROID_WORKFLOW = "mentra-app-android-build.yml"
@@ -26,7 +27,7 @@ export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt}) {
   const app = receipt.app
   const ota = artifactUrl("Mentra-Community/MentraOS", "pr-builds", `ota-pr-${pr}-${sha}.json`)
   requireThat(app?.packageId === "com.mentra.mentra" && app.headSha === sha && app.buildSha === receipt.buildSha &&
-    app.backend === "dev" && app.otaManifestUrl === ota && typeof app.version === "string" && !!app.version &&
+    ["dev", "staging"].includes(app.backend) && app.otaManifestUrl === ota && typeof app.version === "string" && !!app.version &&
     typeof app.build === "string" && /^[1-9]\d*$/.test(app.build) && Number(app.build) <= 2100000000 &&
     (app.mobileFingerprint === undefined || HASH.test(app.mobileFingerprint)) &&
     (app.mobileSourceCommit === undefined || SHA.test(app.mobileSourceCommit)), "Invalid Android app identity or OTA pin")
@@ -38,7 +39,7 @@ export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt}) {
 }
 
 /** Read the packaged configuration and the binary manifest, not source defaults. */
-export function androidAppIdentity({config, badging, pr, headSha, buildSha, backend}) {
+export function androidAppIdentity({config, badging, pr, headSha, buildSha, backend, baseRef}) {
   const native = /^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'/m.exec(badging)
   const build = config?.extra?.mentraPrBuild
   requireThat(native?.[1] === "com.mentra.mentra" && config.android?.package === native[1] &&
@@ -46,7 +47,7 @@ export function androidAppIdentity({config, badging, pr, headSha, buildSha, back
     build?.schemaVersion === 1 && build.prHeadSha === headSha && String(build.buildNumber) === native[2] &&
     HASH.test(build.mobileFingerprint ?? "") && SHA.test(build.mobileSourceCommit ?? "") &&
     build.otaManifestUrl === artifactUrl("Mentra-Community/MentraOS", "pr-builds", `ota-pr-${pr}-${headSha}.json`) &&
-    backend === "dev", "Packaged Android identity differs from its native manifest or PR inputs")
+    backend === prBackend(baseRef), "Packaged Android identity differs from its native manifest or PR inputs")
   return {packageId: native[1], version: native[3], build: native[2], headSha, buildSha, backend,
     otaManifestUrl: build.otaManifestUrl, mobileFingerprint: build.mobileFingerprint,
     mobileSourceCommit: build.mobileSourceCommit}
@@ -68,7 +69,8 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   const versions = (await readdir(path.join(env.ANDROID_HOME, "build-tools"))).sort((a, b) => b.localeCompare(a, undefined, {numeric: true}))
   requireThat(versions.length > 0, "Android build tools are unavailable")
   const badging = exec(path.join(env.ANDROID_HOME, "build-tools", versions[0], "aapt"), ["dump", "badging", apk], {encoding: "utf8"})
-  const app = androidAppIdentity({config, badging, pr, headSha, buildSha, backend: env.EXPO_PUBLIC_BUILD_ENV})
+  const app = androidAppIdentity({config, badging, pr, headSha, buildSha, backend: env.EXPO_PUBLIC_BUILD_ENV,
+    baseRef: env.GITHUB_BASE_REF})
   requireThat(app.mobileFingerprint === env.MENTRA_PR_MOBILE_FINGERPRINT, "APK compilation fingerprint differs from the selected build")
   const bytes = await readFile(apk)
   const receipt = {schemaVersion: 1, pr, headSha, baseSha, buildSha, runId, runAttempt, app,

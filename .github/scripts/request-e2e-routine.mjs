@@ -15,6 +15,19 @@ const HASH = /^[a-f0-9]{64}$/
 const positive = (value) => Number.isSafeInteger(value) && value > 0
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex")
 
+/** PR destinations with exact PR-head artifacts. Each is built against its own backend. */
+export const PR_ROUTINE_BASES = Object.freeze(["dev", "staging"])
+export const admittedPrBase = (ref) => PR_ROUTINE_BASES.includes(ref)
+
+/** The actual tip of an admitted PR base. pulls.get().base.sha may lag it. */
+export async function currentBaseSha(github, context, baseRef) {
+  if (!admittedPrBase(baseRef)) throw new Error("PR base is not an admitted routine destination")
+  const {data} = await github.rest.git.getRef({...context.repo, ref: `heads/${baseRef}`})
+  if (data.ref !== `refs/heads/${baseRef}` || data.object?.type !== "commit" || !SHA.test(data.object.sha ?? ""))
+    throw new Error(`GitHub returned an invalid ${baseRef} branch ref`)
+  return data.object.sha
+}
+
 export function sourcePublication(runId, publicationAttempt) {
   const absent = (value) => value === undefined || value === ""
   if (absent(runId) && absent(publicationAttempt)) return null
@@ -126,7 +139,7 @@ function verifiedApp(receipt, pr, attempts, otaManifestUrl) {
     (receipt.buildAttempt ?? receipt.runAttempt) !== attempts.buildAttempt ||
     app.bundleId !== "com.mentra.mentra" ||
     app.teamId !== "T5XXXL6N36" ||
-    app.backend !== "dev" ||
+    !admittedPrBase(app.backend) ||
     app.otaManifestUrl !== otaManifestUrl ||
     !HASH.test(app.executableSha256 ?? "") ||
     !HASH.test(app.javascriptSha256 ?? "") ||
@@ -217,15 +230,10 @@ export async function createRoutineRequest({
   )
     throw new Error("Bootstrap request does not match its PR merge checkout")
   const getPr = async () => (await github.rest.pulls.get({...context.repo, pull_number: number})).data
-  // pulls.get().base.sha may lag the branch tip even when GitHub has rebuilt the merge ref.
-  const getBaseSha = async () => {
-    const {data} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})
-    if (data.ref !== "refs/heads/dev" || data.object?.type !== "commit" || !SHA.test(data.object.sha ?? ""))
-      throw new Error("GitHub returned an invalid dev branch ref")
-    return data.object.sha
-  }
   const pr = await getPr()
-  const baseSha = await getBaseSha()
+  // The issuer stays on trusted dev; only the authenticated PR's admitted base
+  // selects which branch tip its merge must contain.
+  const baseSha = admittedPrBase(pr.base?.ref) ? await currentBaseSha(github, context, pr.base.ref) : pr.base?.sha
   const request = {
     schemaVersion: 1,
     kind: "mentra-routine-request",
@@ -247,8 +255,8 @@ export async function createRoutineRequest({
     selection: null,
     attempts: [],
   }
-  if (pr.state !== "open" || pr.head.repo?.full_name !== repository || pr.base.ref !== "dev") {
-    request.reason = "Only open same-repository PRs targeting dev are eligible"
+  if (pr.state !== "open" || pr.head.repo?.full_name !== repository || !admittedPrBase(pr.base.ref)) {
+    request.reason = "Only open same-repository PRs targeting dev or staging are eligible"
     return request
   }
   if (
@@ -327,6 +335,7 @@ export async function createRoutineRequest({
       })
       const otaUrl = artifactUrl(repository, "pr-builds", `ota-pr-${number}-${pr.head.sha}.json`)
       const app = android ? receipt.value.app : verifiedApp(receipt.value, pr, attempts, otaUrl)
+      if (app.backend !== pr.base.ref) throw new Error(`${platformName} app backend differs from its PR base`)
       if (android && receipt.value.baseSha !== baseSha) throw new Error("Android receipt base is no longer current")
       const commit = (await github.rest.repos.getCommit({...context.repo, ref: receipt.value.buildSha})).data
       if (
@@ -363,13 +372,13 @@ export async function createRoutineRequest({
     }
   }
   const current = await getPr()
-  const currentBaseSha = await getBaseSha()
+  const baseAfter = await currentBaseSha(github, context, pr.base.ref)
   if (
     current.state !== "open" ||
     current.head.sha !== pr.head.sha ||
     current.head.repo?.full_name !== repository ||
-    current.base.ref !== "dev" ||
-    currentBaseSha !== baseSha ||
+    current.base.ref !== pr.base.ref ||
+    baseAfter !== baseSha ||
     (labelRequired && !hasRoutineLabel(current, routine))
   ) {
     request.selection = null

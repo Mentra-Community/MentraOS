@@ -1,5 +1,5 @@
 import {deviceRoutine} from "./device-routines.mjs"
-import {routineProducer} from "./request-e2e-routine.mjs"
+import {admittedPrBase, routineProducer} from "./request-e2e-routine.mjs"
 import {resolveRoutineResults} from "./release-routine-slack.mjs"
 import {hash, positive, REPOSITORY, requireThat, sha} from "./release-slack-message.mjs"
 
@@ -17,7 +17,7 @@ function assertPrRequest(request) {
     trigger.kind === "workflow_dispatch" && trigger.ref === "refs/heads/dev" &&
     trigger.workflowRef === `${REPOSITORY}/${trigger.workflow}@refs/heads/dev` &&
     request.routine.harnessRevision === trigger.workflowSha &&
-    positive(pr?.number) && pr.url === `${PUBLIC}/pull/${pr.number}` && pr.headRepository === REPOSITORY && pr.baseRef === "dev" &&
+    positive(pr?.number) && pr.url === `${PUBLIC}/pull/${pr.number}` && pr.headRepository === REPOSITORY && admittedPrBase(pr.baseRef) &&
     sha(pr.headSha) && sha(pr.baseSha) && request.requestId === `routine-${trigger.runId}-${trigger.runAttempt}-${pr.number}-${request.routine.id}` &&
     selection?.platform === routine.platform && selection.build?.headSha === pr.headSha && selection.build.baseSha === pr.baseSha &&
     sha(selection.build.buildSha) && selection.producer?.workflow === `.github/workflows/${routineProducer(request.routine.id)}` &&
@@ -46,7 +46,8 @@ export function renderPrRoutineResult({request, terminal, row}) {
     "", `[Request ${row.requestRunId}/${row.requestAttempt}](${source}) · [Worker ${row.privateRunId}/${row.privateAttempt}](${worker}) · [Build ${selection.producer.runId}/${selection.producer.publicationAttempt}](${build})`,
     "", "<details>", "<summary>Exact candidate and evidence identifiers</summary>", "",
     `- Platform: \`${selection.platform}\`; routine: \`${row.routineId}\`.`,
-    `- PR base: \`${pr.baseSha}\`.`, `- Built merge: \`${selection.build.buildSha}\`.`,
+    // Dev bodies stay byte-identical so retained historical comments are not rewritten.
+    `- PR base: ${pr.baseRef === "dev" ? "" : `\`${pr.baseRef}\` at `}\`${pr.baseSha}\`.`, `- Built merge: \`${selection.build.buildSha}\`.`,
     `- Archive: \`${selection.archive.name}\`, SHA256 \`${selection.archive.sha256}\`.`,
     `- Build receipt SHA256: \`${selection.receipt.sha256}\`.`,
     `- OTA manifest SHA256: \`${selection.otaManifest.sha256}\`.`,

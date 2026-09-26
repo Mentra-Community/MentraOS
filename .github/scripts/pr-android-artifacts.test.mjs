@@ -24,6 +24,13 @@ test("the receipt reflects native APK metadata and preserves reused compilation 
   assert.throws(() => androidAppIdentity({...identity, backend: "prod", config: config(), badging}))
 })
 
+test("staging-targeted PRs package staging and never relabel another backend", () => {
+  const staging = androidAppIdentity({...identity, backend: "staging", baseRef: "staging", config: config(), badging})
+  assert.equal(staging.backend, "staging")
+  for (const [backend, baseRef] of [["dev", "staging"], ["staging", "dev"], ["staging", "main"], ["staging", undefined], ["prod", "staging"]])
+    assert.throws(() => androidAppIdentity({...identity, backend, baseRef, config: config(), badging}), /PR inputs/)
+})
+
 async function publishing(run, failApk = false) {
   const dir = await mkdtemp(path.join(tmpdir(), "android-receipt-"))
   try {
@@ -61,6 +68,23 @@ test("immutable signed APK publication precedes the per-attempt receipt, with no
       const value = structuredClone(receipt); mutate(value)
       assert.throws(() => validateAndroidReceipt(value, {pr: 42, sha: head, runId: 100, attempt: 2}))
     }
+  })
+})
+
+test("a staging receipt records its staging backend, and a mismatched build publishes nothing", async () => {
+  await publishing(async ({apk, env, exec, calls}) => {
+    const staging = {...env, GITHUB_BASE_REF: "staging", EXPO_PUBLIC_BUILD_ENV: "staging"}
+    const receipt = await publishAndroidArtifacts(apk, staging, {exec})
+    assert.equal(receipt.app.backend, "staging")
+    assert.equal(validateAndroidReceipt(receipt, {pr: 42, sha: head, runId: 100, attempt: 2}), receipt.artifacts)
+    for (const backend of ["prod", "", undefined]) {
+      const value = structuredClone(receipt); value.app.backend = backend
+      assert.throws(() => validateAndroidReceipt(value, {pr: 42, sha: head, runId: 100, attempt: 2}), /app identity/)
+    }
+    calls.length = 0
+    await assert.rejects(publishAndroidArtifacts(apk, {...staging, EXPO_PUBLIC_BUILD_ENV: "dev"}, {exec}), /PR inputs/)
+    await assert.rejects(publishAndroidArtifacts(apk, {...env, EXPO_PUBLIC_BUILD_ENV: "staging"}, {exec}), /PR inputs/)
+    assert.deepEqual(calls, [])
   })
 })
 
