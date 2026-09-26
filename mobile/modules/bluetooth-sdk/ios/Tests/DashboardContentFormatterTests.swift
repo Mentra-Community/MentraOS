@@ -9,10 +9,17 @@ final class DashboardContentFormatterTests: XCTestCase {
         )
     }
 
-    func testNonEmptyContentIsAppendedExactlyAfterBlankLine() {
+    func testNonEmptyContentIsAppendedExactlyOnNextLine() {
         XCTAssertEqual(
             DashboardContentFormatter.template(for: "  Next meeting\nRoom 2  "),
-            "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$\n\n  Next meeting\nRoom 2  "
+            "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$\n  Next meeting\nRoom 2  "
+        )
+    }
+
+    func testLeadingNewlineKeepsOptionalBlankRow() {
+        XCTAssertEqual(
+            DashboardContentFormatter.template(for: "\nNext meeting"),
+            "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$\n\nNext meeting"
         )
     }
 }
