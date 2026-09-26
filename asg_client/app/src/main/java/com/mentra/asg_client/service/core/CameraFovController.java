@@ -16,6 +16,11 @@ public final class CameraFovController {
     private static final CameraFovPolicy sPolicy = new CameraFovPolicy();
     private CameraFovController() {}
 
+    /** Whether a WHIP session should preserve the bottom of the full-width sensor view. */
+    public static boolean isFullFovBottomAligned() {
+        return sPolicy.isFullFovBottomAligned();
+    }
+
     /** Call on the main lifecycle thread, serialized with capture start commands. */
     public static CameraFovPolicy.Result apply(
             Context context, int fov, int roi, BooleanSupplier streamBusy) {

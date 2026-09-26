@@ -3,6 +3,7 @@ package com.mentra.asg_client.io.streaming.services;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Matrix;
+import android.graphics.Rect;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -22,6 +23,7 @@ import androidx.annotation.NonNull;
 import com.mentra.asg_client.camera.policy.EisController;
 import com.mentra.asg_client.io.streaming.LivestreamEisPolicy;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
+import com.mentra.asg_client.service.core.CameraFovController;
 import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import java.util.Collections;
@@ -60,6 +62,7 @@ public class WhipCameraCapturer implements VideoCapturer {
     private Context mContext;
     private CapturerObserver mObserver;
     private CameraFpsListener mCameraFpsListener;
+    private Rect mBottomAlignedCrop;
 
     private HandlerThread mCameraThread;
     private Handler mCameraHandler;
@@ -149,15 +152,28 @@ public class WhipCameraCapturer implements VideoCapturer {
             Integer facing = chars.get(CameraCharacteristics.LENS_FACING);
             mIsFrontCamera = facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT;
             mCameraFps = resolveCameraFps(chars, mOutputFps);
+            // The vendor's full-FOV ROI has no movable margin. For an opted-in 16:9 WHIP stream,
+            // position the aspect crop before the HAL outputs its camera surface. This mapping was
+            // verified on Mentra Live's back camera; do not apply it to arbitrary device rotations.
+            initializeDeviceRotationState();
+            boolean bottomAligned = DeviceProfile.detect(mContext).isK900()
+                    && !mIsFrontCamera && mSensorOrientation == 90 && getFrameOrientation() == 0
+                    && (long) width * 9 == (long) height * 16
+                    && CameraFovController.isFullFovBottomAligned();
+            mBottomAlignedCrop = bottomAligned
+                    ? WhipCameraFormatSelector.getBottomAlignedCrop(
+                            chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE), width, height)
+                    : null;
             WhipCameraFormatSelector.SelectionResult selection =
-                    WhipCameraFormatSelector.selectCaptureSize(chars, width, height);
+                    bottomAligned
+                            ? WhipCameraFormatSelector.selectBottomAlignedCaptureSize(chars, width, height)
+                            : WhipCameraFormatSelector.selectCaptureSize(chars, width, height);
             Size captureSize = selection.getRawCaptureSize();
             mCameraSurfaceWidth = captureSize.getWidth();
             mCameraSurfaceHeight = captureSize.getHeight();
             Size normalizedCaptureSize = selection.getNormalizedCaptureSize();
             mCaptureWidth = normalizedCaptureSize.getWidth();
             mCaptureHeight = normalizedCaptureSize.getHeight();
-            initializeDeviceRotationState();
             updateOutputCrop();
             mSurfaceTextureHelper.setTextureSize(mCameraSurfaceWidth, mCameraSurfaceHeight);
             initialFrameRotation = getFrameOrientation();
@@ -370,6 +386,18 @@ public class WhipCameraCapturer implements VideoCapturer {
                     cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             builder.addTarget(surface);
 
+            if (mBottomAlignedCrop != null) {
+                // This BSP advertises CENTER_ONLY but preserves this full-width P1 crop in frames.
+                // Keep zoom at unity: narrowing width here would discard horizontal field of view.
+                builder.set(CaptureRequest.SCALER_CROP_REGION, mBottomAlignedCrop);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, 1.0f);
+                }
+                Log.i(TAG, "WHIP bottom alignment: sensorCrop=" + mBottomAlignedCrop
+                        + " camera=" + mCameraSurfaceWidth + "x" + mCameraSurfaceHeight
+                        + " output=" + mWidth + "x" + mHeight);
+            }
+
             // Fixed FPS range. On K900, values inside the advertised [5,30] range are honored
             // even when they are not listed as standalone fixed ranges.
             builder.set(
@@ -383,7 +411,11 @@ public class WhipCameraCapturer implements VideoCapturer {
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF);
             boolean eis = LivestreamEisPolicy.logDecision(TAG, "whip-capture-request", mWidth, mHeight);
-            if (eis) {
+            if (mBottomAlignedCrop != null) {
+                // EIS reserves a horizontal margin, which conflicts with full-width framing.
+                EisController.configure(builder, false);
+                Log.i(TAG, "EIS disabled for full-width bottom alignment");
+            } else if (eis) {
                 EisController.configure(builder, true);
                 Log.i(TAG, "EIS stage=whip-capture-request applied=true vendorKey=com.pixsmart.eisfeature.eisEnable");
             } else {
