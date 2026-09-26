@@ -24,6 +24,29 @@ import {useApps} from "@mentra/engine"
 import {engine} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
+import type {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
+
+/**
+ * The account profile as the current auth providers report it
+ * (`MentraAuthUser`). Optional fields a provider does not supply are null;
+ * nothing is inferred beyond what the provider returned.
+ */
+export interface ExportedAuthUser {
+  id: string
+  email: string | null
+  name: string
+  avatarUrl: string | null
+  createdAt: string | null
+  provider: string | null
+}
+
+/**
+ * Non-secret facts about the current `MentraAuthSession`. The token itself is
+ * never exported, and its presence does not mean the server still accepts it.
+ */
+export interface ExportedSessionInfo {
+  hasAccessToken: boolean
+}
 
 export interface UserDataExport {
   metadata: {
@@ -33,25 +56,9 @@ export interface UserDataExport {
     appVersion: string | null
   }
   authentication: {
-    user: {
-      id: string
-      email: string
-      created_at: string
-      last_sign_in_at: string
-      email_confirmed_at: string
-      provider: string
-      user_metadata: {
-        full_name?: string
-        avatar_url?: string
-        email_verified?: boolean
-        // Remove sensitive provider tokens and IDs
-      }
-    }
-    sessionInfo: {
-      expires_at: number
-      token_type: string
-      // Tokens removed for security
-    }
+    /** The signed-in account's profile, or null when the app has no account user. */
+    user: ExportedAuthUser | null
+    sessionInfo: ExportedSessionInfo
   }
   augmentosStatus: any // Full status from AugmentOSStatusProvider
   installedApps: any[] // Full app list from AppStatusProvider
@@ -61,12 +68,20 @@ export interface UserDataExport {
 }
 
 class DataExportService {
-  private static readonly EXPORT_VERSION = "1.0.0"
+  // 2.0.0: authentication follows the current MentraAuthUser/MentraAuthSession
+  // types. The 1.0.0 user/sessionInfo fields read a former provider's shape
+  // that current sessions no longer carry, so they exported as empty objects.
+  private static readonly EXPORT_VERSION = "2.0.0"
 
   /**
    * Collect all user data from various sources
    */
-  public static async collectUserData(user: any, session: any, status: any, appStatus: any[]): Promise<UserDataExport> {
+  public static async collectUserData(
+    user: MentraAuthUser | null,
+    session: MentraAuthSession | null,
+    status: any,
+    appStatus: any[],
+  ): Promise<UserDataExport> {
     console.log("DataExportService: Starting user data collection...")
 
     const exportData: UserDataExport = {
@@ -75,7 +90,7 @@ class DataExportService {
         exportVersion: this.EXPORT_VERSION,
         appVersion: this.installedAppVersion(),
       },
-      authentication: await this.collectAuthData(user, session),
+      authentication: this.collectAuthData(user, session),
       augmentosStatus: this.sanitizeStatusData(status),
       installedApps: this.sanitizeAppData(appStatus),
       userSettings: await this.collectSettingsData(),
@@ -94,64 +109,60 @@ class DataExportService {
   }
 
   /**
-   * Collect and sanitize authentication data
+   * Project the auth context into its exportable, non-secret form. Fields are
+   * picked explicitly so a credential added to the auth types is never exported
+   * by accident.
    */
-  private static async collectAuthData(user: any, session: any): Promise<any> {
+  private static collectAuthData(
+    user: MentraAuthUser | null,
+    session: MentraAuthSession | null,
+  ): UserDataExport["authentication"] {
     console.log("DataExportService: Collecting auth data...")
 
-    if (!user) {
-      return {
-        user: null,
-        sessionInfo: null,
-      }
-    }
-
-    // Sanitize user data - remove sensitive information
-    const sanitizedUser = {
-      id: user.id,
-      email: user.email,
-      created_at: user.created_at,
-      last_sign_in_at: user.last_sign_in_at,
-      email_confirmed_at: user.email_confirmed_at,
-      provider: user.app_metadata?.provider,
-      user_metadata: {
-        full_name: user.user_metadata?.full_name || user.user_metadata?.name,
-        avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture,
-        email_verified: user.user_metadata?.email_verified,
-        phone_verified: user.user_metadata?.phone_verified,
-        // Remove provider_id, sub, iss, and other sensitive data
-      },
-    }
-
-    // Sanitize session data - remove tokens
-    const sanitizedSession = session
-      ? {
-          expires_at: session.expires_at,
-          token_type: session.token_type,
-          // Remove access_token, refresh_token, provider_token
-        }
-      : null
-
     return {
-      user: sanitizedUser,
-      sessionInfo: sanitizedSession,
+      user: user
+        ? {
+            id: user.id,
+            email: user.email ?? null,
+            name: user.name,
+            // Authing reports a missing photo as "".
+            avatarUrl: user.avatarUrl || null,
+            createdAt: user.createdAt ?? null,
+            provider: user.provider ?? null,
+          }
+        : null,
+      sessionInfo: {hasAccessToken: Boolean(session?.token)},
     }
   }
 
   /**
-   * Sanitize status data - remove sensitive tokens
+   * Copy `value`, replacing every non-empty value whose key the settings
+   * registry marks as a credential with "[REDACTED]", at any depth. The source
+   * is never modified.
+   *
+   * The same rule covers settings and status: native Bluetooth status mirrors
+   * the settings synced to it, and iOS returns its whole "bluetooth" store,
+   * including `core_token`, at the status root.
    */
+  private static redactCredentials(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((entry) => this.redactCredentials(entry))
+    if (!value || typeof value !== "object") return value
+    return this.redactCredentialEntries(value)
+  }
+
+  /** `redactCredentials` for one object's own entries. */
+  private static redactCredentialEntries(record: object): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(record).map(([key, entry]: [string, unknown]) => [
+        key,
+        engine.settings.descriptor(key)?.credential && entry ? "[REDACTED]" : this.redactCredentials(entry),
+      ]),
+    )
+  }
+
   private static sanitizeStatusData(status: any): any {
     if (!status) return null
-
-    const sanitized = JSON.parse(JSON.stringify(status)) // Deep clone
-
-    // Remove or mask sensitive data
-    if (sanitized.core_info?.core_token) {
-      sanitized.core_info.core_token = "[REDACTED]"
-    }
-
-    return sanitized
+    return this.redactCredentials(status)
   }
 
   /**
@@ -176,11 +187,12 @@ class DataExportService {
   }
 
   /**
-   * Collect settings from AsyncStorage
+   * Collect the user's settings with credentials (such as the Cloud bearer in
+   * `core_token`) redacted.
    */
   private static async collectSettingsData(): Promise<{[key: string]: any}> {
     console.log("DataExportService: Collecting settings data...")
-    const settings: Record<string, any> = engine.settings.getAll()
+    const settings = this.redactCredentialEntries(engine.settings.getAll())
     console.log(`DataExportService: Collected ${Object.keys(settings).length} settings`)
     return settings
   }

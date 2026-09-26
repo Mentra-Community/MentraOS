@@ -1,16 +1,22 @@
+import {engine, SETTINGS, useApps, type ClientApp} from "@mentra/engine"
 import {act, fireEvent, render, screen} from "@testing-library/react-native"
+import * as Clipboard from "expo-clipboard"
 import {Share} from "react-native"
 
 import DataExportPage from "@/app/miniapps/settings/data-export"
+import type {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
 
 let mockNativeApplicationVersion: string | null = null
+let mockAuth: {user: MentraAuthUser | null; session: MentraAuthSession | null} = {user: null, session: null}
 
 jest.mock("expo-application", () => ({
   get nativeApplicationVersion() {
     return mockNativeApplicationVersion
   },
 }))
-jest.mock("@/contexts/AuthContext", () => ({useAuth: () => ({user: null, session: null})}))
+jest.mock("expo-clipboard", () => ({setStringAsync: jest.fn(() => Promise.resolve(true))}))
+jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
+jest.mock("@/contexts/AuthContext", () => ({useAuth: () => mockAuth}))
 jest.mock("@/contexts/ThemeContext", () => ({
   useAppTheme: () => ({theme: {spacing: {s3: 12, s4: 16, s6: 24}, colors: {}}, themed: () => ({})}),
 }))
@@ -36,19 +42,94 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
-async function sharedExportMetadata() {
+const defaultBluetoothStatus = jest.mocked(engine.dev.bluetoothStatus).getMockImplementation()
+const defaultUseApps = jest.mocked(useApps).getMockImplementation()
+
+async function sharedExport(): Promise<string> {
   const share = jest.spyOn(Share, "share").mockResolvedValue({action: Share.sharedAction})
   render(<DataExportPage />)
   await act(async () => {})
   await act(async () => fireEvent.press(screen.getByRole("button", {name: "profileSettings:dataExportShare"})))
 
   expect(share).toHaveBeenCalledTimes(1)
-  const message = share.mock.calls[0][0].message ?? ""
+  return share.mock.calls[0][0].message ?? ""
+}
+
+async function sharedExportMetadata() {
+  const message = await sharedExport()
   return JSON.parse(message.slice(message.indexOf("{"))).metadata
+}
+
+async function copiedExport(): Promise<string> {
+  render(<DataExportPage />)
+  await act(async () => {})
+  await act(async () => fireEvent.press(screen.getByRole("button", {name: "profileSettings:dataExportCopy"})))
+
+  expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1)
+  return jest.mocked(Clipboard.setStringAsync).mock.calls[0][0]
 }
 
 afterEach(() => {
   jest.restoreAllMocks()
+  jest.clearAllMocks()
+  engine.settings.resetAllLocal()
+  mockAuth = {user: null, session: null}
+  jest.mocked(engine.dev.bluetoothStatus).mockImplementation(defaultBluetoothStatus)
+  jest.mocked(useApps).mockImplementation(defaultUseApps)
+})
+
+describe("copied export redacts the Cloud bearer held in settings", () => {
+  // Synthetic sentinel only; never a real credential.
+  const CORE_TOKEN_SENTINEL = "synthetic-core-token-sentinel-7f3a"
+
+  beforeEach(async () => {
+    mockNativeApplicationVersion = "3.3.0"
+    // The same writes CloudClientService and the settings screens perform.
+    await engine.settings.set(SETTINGS.core_token.key, CORE_TOKEN_SENTINEL, false)
+    await engine.settings.set(SETTINGS.auth_email.key, "export-user@example.test", false)
+    await engine.settings.set(SETTINGS.theme_preference.key, "dark", false)
+    await engine.settings.set(SETTINGS.metric_system.key, true, false)
+    await engine.settings.set(SETTINGS.head_up_angle.key, 27, false)
+  })
+
+  test("no credential value appears anywhere in the copied payload", async () => {
+    const payload = await copiedExport()
+
+    expect(payload).not.toContain(CORE_TOKEN_SENTINEL)
+    expect(JSON.parse(payload).userSettings[SETTINGS.core_token.key]).toBe("[REDACTED]")
+  })
+
+  test("legitimate user settings are exported unchanged", async () => {
+    const {userSettings} = JSON.parse(await copiedExport())
+
+    expect(userSettings).toMatchObject({
+      auth_email: "export-user@example.test",
+      theme_preference: "dark",
+      metric_system: true,
+      head_up_angle: 27,
+    })
+    // Only the credential differs from what the engine reports.
+    const {core_token: _exportedToken, ...exported} = userSettings
+    const {core_token: _engineToken, ...engineSettings} = engine.settings.getAll()
+    expect(exported).toEqual(JSON.parse(JSON.stringify(engineSettings)))
+  })
+
+  test("export does not mutate engine settings", async () => {
+    const before = engine.settings.getAll()
+
+    await copiedExport()
+
+    expect(engine.settings.get(SETTINGS.core_token.key)).toBe(CORE_TOKEN_SENTINEL)
+    expect(engine.settings.getAll()).toEqual(before)
+  })
+
+  test("an unset bearer stays empty rather than implying a credential", async () => {
+    await engine.settings.set(SETTINGS.core_token.key, "", false)
+
+    const {userSettings} = JSON.parse(await copiedExport())
+
+    expect(userSettings[SETTINGS.core_token.key]).toBe("")
+  })
 })
 
 test.each(["3.3.0", "4.0.1", "3.2.0-beta.4"])(
@@ -59,7 +140,7 @@ test.each(["3.3.0", "4.0.1", "3.2.0-beta.4"])(
     const metadata = await sharedExportMetadata()
 
     expect(metadata.appVersion).toBe(version)
-    expect(metadata.exportVersion).toBe("1.0.0")
+    expect(metadata.exportVersion).toBe("2.0.0")
   },
 )
 
@@ -73,3 +154,179 @@ test.each([null, "", "  "])(
     expect(metadata).toHaveProperty("appVersion", null)
   },
 )
+
+describe("authentication export follows the current auth session", () => {
+  // Synthetic sentinel only; never a real credential.
+  const ACCESS_TOKEN_SENTINEL = "synthetic-access-token-sentinel-4c1e"
+
+  test.each([
+    ["Copy", copiedExport],
+    ["Share", sharedExport],
+  ])("%s exports the signed-in profile without the access token", async (_path, exportPayload) => {
+    // Shape produced by AuthContext.toMentraSession for a workspace account.
+    const user: MentraAuthUser = {
+      id: "workspace:synthetic-deployment:https%3A%2F%2Fissuer.example.test:subject-1",
+      email: "export-user@example.test",
+      name: "Export User",
+      provider: "microsoft-entra",
+    }
+    mockAuth = {user, session: {token: ACCESS_TOKEN_SENTINEL, user}}
+
+    const payload = await exportPayload()
+    const data = JSON.parse(payload.slice(payload.indexOf("{")))
+
+    expect(payload).not.toContain(ACCESS_TOKEN_SENTINEL)
+    expect(data.authentication).toEqual({
+      user: {
+        id: user.id,
+        email: "export-user@example.test",
+        name: "Export User",
+        avatarUrl: null,
+        createdAt: null,
+        provider: "microsoft-entra",
+      },
+      sessionInfo: {hasAccessToken: true},
+    })
+  })
+
+  test("profile fields a provider reports are exported as-is", async () => {
+    // Shape produced by the Authing (China) provider, which fills every field.
+    const user: MentraAuthUser = {
+      id: "authing-user-1",
+      email: "export-user@example.test",
+      name: "Export User",
+      avatarUrl: "https://avatars.example.test/export-user.png",
+      createdAt: "2025-02-03T04:05:06.000Z",
+      provider: "wechat",
+    }
+    mockAuth = {user, session: {token: ACCESS_TOKEN_SENTINEL, user}}
+
+    const {authentication} = JSON.parse(await copiedExport())
+
+    expect(authentication.user).toEqual(user)
+  })
+
+  test("a token without a restored profile does not invent a user", async () => {
+    // AccountAuthProvider.getSession offline with no cached profile.
+    mockAuth = {user: null, session: {token: ACCESS_TOKEN_SENTINEL, user: undefined}}
+
+    const payload = await copiedExport()
+
+    expect(payload).not.toContain(ACCESS_TOKEN_SENTINEL)
+    expect(JSON.parse(payload).authentication).toEqual({user: null, sessionInfo: {hasAccessToken: true}})
+  })
+
+  test.each<[string, MentraAuthSession | null]>([
+    ["no session", null],
+    // AccountAuthProvider.getSession and SIGNED_OUT report a signed-out user this way.
+    ["signed-out session", {token: undefined}],
+  ])("%s exports no user and no access token", async (_state, session) => {
+    mockAuth = {user: null, session}
+
+    const {authentication} = JSON.parse(await copiedExport())
+
+    expect(authentication).toEqual({user: null, sessionInfo: {hasAccessToken: false}})
+  })
+})
+
+describe("full export payload carries no credential from any source", () => {
+  // Synthetic sentinels only; never real credentials.
+  const SETTINGS_TOKEN = "synthetic-settings-core-token-sentinel"
+  const STATUS_TOKEN = "synthetic-status-core-token-sentinel"
+  const SESSION_TOKEN = "synthetic-session-access-token-sentinel"
+  const APP_API_KEY = "synthetic-app-hashed-api-key-sentinel"
+  const APP_ENDPOINT_SECRET = "synthetic-app-endpoint-secret-sentinel"
+  const SENTINELS = [SETTINGS_TOKEN, STATUS_TOKEN, SESSION_TOKEN, APP_API_KEY, APP_ENDPOINT_SECRET]
+
+  const user: MentraAuthUser = {id: "user-1", email: "export-user@example.test", name: "Export User"}
+  const app: ClientApp = {
+    packageName: "com.example.synthetic",
+    name: "Synthetic Miniapp",
+    webviewUrl: "",
+    logoUrl: "https://apps.example.test/synthetic.png",
+    type: "standard",
+    permissions: [],
+    running: false,
+    healthy: true,
+    hardwareRequirements: [],
+    offline: false,
+    offlineRoute: "",
+    loading: false,
+    local: true,
+    hidden: false,
+  }
+  // ClientApp does not declare these server-side fields; the export redacts
+  // them whenever they are present at runtime.
+  const apps: Array<ClientApp & {hashedApiKey: string; hashedEndpointSecret: string}> = [
+    {...app, hashedApiKey: APP_API_KEY, hashedEndpointSecret: APP_ENDPOINT_SECRET},
+  ]
+  // iOS getBluetoothStatus/bluetooth_status forward the whole native "bluetooth"
+  // store, so synced settings such as core_token sit at the status root beside
+  // the declared status fields.
+  const flatNativeStatus = {
+    searching: false,
+    micRanking: ["glasses", "phone"],
+    otherBtConnected: false,
+    lastLog: ["synthetic log line"],
+    default_wearable: "Mentra Live",
+    device_name: "MENTRA_LIVE_SYNTHETIC",
+    auth_email: "export-user@example.test",
+    brightness: 50,
+    core_token: STATUS_TOKEN,
+  }
+
+  beforeEach(async () => {
+    mockNativeApplicationVersion = "3.3.0"
+    mockAuth = {user, session: {token: SESSION_TOKEN, user}}
+    jest.mocked(useApps).mockImplementation(() => apps)
+    jest.mocked(engine.dev.bluetoothStatus).mockImplementation(() => flatNativeStatus)
+    await engine.settings.set(SETTINGS.core_token.key, SETTINGS_TOKEN, false)
+    await engine.settings.set(SETTINGS.theme_preference.key, "dark", false)
+  })
+
+  test.each([
+    ["Copy", copiedExport],
+    ["Share", sharedExport],
+  ])("%s payload redacts the flat native status token and keeps real data", async (_path, exportPayload) => {
+    const payload = await exportPayload()
+    const data = JSON.parse(payload.slice(payload.indexOf("{")))
+
+    for (const sentinel of SENTINELS) expect(payload).not.toContain(sentinel)
+
+    const {core_token: exportedStatusToken, ...exportedStatus} = data.augmentosStatus
+    const {core_token: _sourceToken, ...legitimateStatus} = flatNativeStatus
+    expect(exportedStatusToken).toBe("[REDACTED]")
+    expect(exportedStatus).toMatchObject(legitimateStatus)
+    expect(data.userSettings).toMatchObject({core_token: "[REDACTED]", theme_preference: "dark"})
+    expect(data.installedApps).toEqual([{...app, hashedApiKey: "[REDACTED]", hashedEndpointSecret: "[REDACTED]"}])
+    expect(data.authentication).toEqual({
+      user: {...user, avatarUrl: null, createdAt: null, provider: null},
+      sessionInfo: {hasAccessToken: true},
+    })
+    expect(data.metadata).toMatchObject({exportVersion: "2.0.0", appVersion: "3.3.0"})
+  })
+
+  test("export leaves the engine status, settings and app inputs untouched", async () => {
+    const statusBefore = structuredClone(flatNativeStatus)
+
+    await copiedExport()
+
+    expect(flatNativeStatus).toEqual(statusBefore)
+    expect(engine.settings.get(SETTINGS.core_token.key)).toBe(SETTINGS_TOKEN)
+    expect(apps[0].hashedApiKey).toBe(APP_API_KEY)
+  })
+
+  test("the legacy nested core_info token is still redacted", async () => {
+    jest
+      .mocked(engine.dev.bluetoothStatus)
+      .mockImplementation(() => ({core_info: {core_token: STATUS_TOKEN, protobuf_schema_version: "1"}}))
+
+    const payload = await copiedExport()
+
+    expect(payload).not.toContain(STATUS_TOKEN)
+    expect(JSON.parse(payload).augmentosStatus.core_info).toEqual({
+      core_token: "[REDACTED]",
+      protobuf_schema_version: "1",
+    })
+  })
+})
