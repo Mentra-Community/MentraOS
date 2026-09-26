@@ -4,8 +4,10 @@ import * as Clipboard from "expo-clipboard"
 import {Share} from "react-native"
 
 import DataExportPage from "@/app/miniapps/settings/data-export"
+import type {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
 
 let mockNativeApplicationVersion: string | null = null
+let mockAuth: {user: MentraAuthUser | null; session: MentraAuthSession | null} = {user: null, session: null}
 
 jest.mock("expo-application", () => ({
   get nativeApplicationVersion() {
@@ -14,7 +16,7 @@ jest.mock("expo-application", () => ({
 }))
 jest.mock("expo-clipboard", () => ({setStringAsync: jest.fn(() => Promise.resolve(true))}))
 jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
-jest.mock("@/contexts/AuthContext", () => ({useAuth: () => ({user: null, session: null})}))
+jest.mock("@/contexts/AuthContext", () => ({useAuth: () => mockAuth}))
 jest.mock("@/contexts/ThemeContext", () => ({
   useAppTheme: () => ({theme: {spacing: {s3: 12, s4: 16, s6: 24}, colors: {}}, themed: () => ({})}),
 }))
@@ -40,14 +42,18 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
-async function sharedExportMetadata() {
+async function sharedExport(): Promise<string> {
   const share = jest.spyOn(Share, "share").mockResolvedValue({action: Share.sharedAction})
   render(<DataExportPage />)
   await act(async () => {})
   await act(async () => fireEvent.press(screen.getByRole("button", {name: "profileSettings:dataExportShare"})))
 
   expect(share).toHaveBeenCalledTimes(1)
-  const message = share.mock.calls[0][0].message ?? ""
+  return share.mock.calls[0][0].message ?? ""
+}
+
+async function sharedExportMetadata() {
+  const message = await sharedExport()
   return JSON.parse(message.slice(message.indexOf("{"))).metadata
 }
 
@@ -64,6 +70,7 @@ afterEach(() => {
   jest.restoreAllMocks()
   jest.clearAllMocks()
   engine.settings.resetAllLocal()
+  mockAuth = {user: null, session: null}
 })
 
 describe("copied export redacts the Cloud bearer held in settings", () => {
@@ -128,7 +135,7 @@ test.each(["3.3.0", "4.0.1", "3.2.0-beta.4"])(
     const metadata = await sharedExportMetadata()
 
     expect(metadata.appVersion).toBe(version)
-    expect(metadata.exportVersion).toBe("1.0.0")
+    expect(metadata.exportVersion).toBe("2.0.0")
   },
 )
 
@@ -142,3 +149,77 @@ test.each([null, "", "  "])(
     expect(metadata).toHaveProperty("appVersion", null)
   },
 )
+
+describe("authentication export follows the current auth session", () => {
+  // Synthetic sentinel only; never a real credential.
+  const ACCESS_TOKEN_SENTINEL = "synthetic-access-token-sentinel-4c1e"
+
+  test.each([
+    ["Copy", copiedExport],
+    ["Share", sharedExport],
+  ])("%s exports the signed-in profile without the access token", async (_path, exportPayload) => {
+    // Shape produced by AuthContext.toMentraSession for a workspace account.
+    const user: MentraAuthUser = {
+      id: "workspace:synthetic-deployment:https%3A%2F%2Fissuer.example.test:subject-1",
+      email: "export-user@example.test",
+      name: "Export User",
+      provider: "microsoft-entra",
+    }
+    mockAuth = {user, session: {token: ACCESS_TOKEN_SENTINEL, user}}
+
+    const payload = await exportPayload()
+    const data = JSON.parse(payload.slice(payload.indexOf("{")))
+
+    expect(payload).not.toContain(ACCESS_TOKEN_SENTINEL)
+    expect(data.authentication).toEqual({
+      user: {
+        id: user.id,
+        email: "export-user@example.test",
+        name: "Export User",
+        avatarUrl: null,
+        createdAt: null,
+        provider: "microsoft-entra",
+      },
+      sessionInfo: {hasAccessToken: true},
+    })
+  })
+
+  test("profile fields a provider reports are exported as-is", async () => {
+    // Shape produced by the Authing (China) provider, which fills every field.
+    const user: MentraAuthUser = {
+      id: "authing-user-1",
+      email: "export-user@example.test",
+      name: "Export User",
+      avatarUrl: "https://avatars.example.test/export-user.png",
+      createdAt: "2025-02-03T04:05:06.000Z",
+      provider: "wechat",
+    }
+    mockAuth = {user, session: {token: ACCESS_TOKEN_SENTINEL, user}}
+
+    const {authentication} = JSON.parse(await copiedExport())
+
+    expect(authentication.user).toEqual(user)
+  })
+
+  test("a token without a restored profile does not invent a user", async () => {
+    // AccountAuthProvider.getSession offline with no cached profile.
+    mockAuth = {user: null, session: {token: ACCESS_TOKEN_SENTINEL, user: undefined}}
+
+    const payload = await copiedExport()
+
+    expect(payload).not.toContain(ACCESS_TOKEN_SENTINEL)
+    expect(JSON.parse(payload).authentication).toEqual({user: null, sessionInfo: {hasAccessToken: true}})
+  })
+
+  test.each<[string, MentraAuthSession | null]>([
+    ["no session", null],
+    // AccountAuthProvider.getSession and SIGNED_OUT report a signed-out user this way.
+    ["signed-out session", {token: undefined}],
+  ])("%s exports no user and no access token", async (_state, session) => {
+    mockAuth = {user: null, session}
+
+    const {authentication} = JSON.parse(await copiedExport())
+
+    expect(authentication).toEqual({user: null, sessionInfo: {hasAccessToken: false}})
+  })
+})
