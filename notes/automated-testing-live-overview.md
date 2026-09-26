@@ -17,10 +17,14 @@ these hold: the claim is still active (not closed, cancelled, terminal or
 recovery-required), no result is published for the request, and its latest
 checkpoint is unfinished and was received within two minutes (Core time, the same
 bound as below). Elapsed time then counts from the worker's claim, and the
-"GitHub has not started this job" guidance is not shown. Blockers and closures
-still take precedence. The Admin view keeps aging the checkpoint between refreshes:
-once it is older than two minutes the job counts as unknown and its activity is
-unconfirmed. This is a display projection only. It never extends, grants or
+"GitHub has not started this job" guidance is not shown. Once that checkpoint is
+older than two minutes the job is **unknown** with its activity unconfirmed, both
+in Core's refreshed response and in the Admin view, which keeps aging the
+checkpoint between refreshes. It still shows the GitHub status and the worker
+claim time, and it never falls back to the "GitHub has not started" guidance.
+A queued job whose claim never reported keeps that guidance. Blockers, closures,
+cancellations, published results and terminal claims still take precedence.
+This is a display projection only. It never extends, grants or
 proves a lease, and it does not change any claim, result or GitHub state.
 
 Queued rows are displayed oldest first. This is waiting order, **not a guarantee of execution order**. Compatible workers and resource ownership still determine when GitHub can execute a job. There is no second scheduler, queue mutation, rank, ETA or calculated completion percentage.

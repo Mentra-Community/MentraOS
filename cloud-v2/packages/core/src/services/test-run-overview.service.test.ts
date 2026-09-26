@@ -709,13 +709,17 @@ describe("fresh worker-reported progress on a GitHub-queued job", () => {
     expect(job.workflow?.status).toBe("waiting");
   });
 
-  test("progress at the freshness bound counts; one millisecond older is unconfirmed and keeps the GitHub state", async () => {
+  test("progress at the freshness bound counts; one millisecond older is unconfirmed worker activity, not a never-started job", async () => {
     const received = "2026-09-26T22:00:29.084Z";
     expect((await view([{ claim: activeClaim(), progress: checkpoint(received) }], "2026-09-26T22:02:29.084Z")).state).toBe("running");
-    const stale = await view([{ claim: activeClaim(), progress: checkpoint(received) }], "2026-09-26T22:02:29.085Z");
-    expect(stale.state).toBe("queued");
-    expect(stale.reportedActivity).toBeUndefined();
-    expect(stale.attention?.reason).toBe(waitingGuidance);
+    for (const status of ["queued", "waiting"] as const) {
+      const stale = await view([{ claim: activeClaim(), progress: checkpoint(received) }], "2026-09-26T22:02:29.085Z", [githubJob(status)]);
+      expect(stale.state).toBe("unknown");
+      expect(stale.reportedActivity).toEqual({ requestId, claimedAt: "2026-09-26T21:57:58.897Z", receivedAt: received });
+      expect(stale.workflow?.status).toBe(status);
+      expect(stale.attention).toBeUndefined();
+      expect(stale.claims[0]?.progress?.sequence).toBe(44);
+    }
   });
 
   test("no checkpoint or a completed checkpoint is not current activity", async () => {

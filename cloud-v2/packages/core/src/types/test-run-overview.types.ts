@@ -69,10 +69,11 @@ export interface OverviewJob {
   attention?: OverviewAttention;
   /**
    * Set when GitHub still reports the run queued or waiting, but an active claim on
-   * one of its requests has an unfinished checkpoint received within
-   * CHECKPOINT_FRESH_MS. The job is then shown as running from worker-reported
-   * progress, while `workflow.status` keeps GitHub's own state. A display
-   * projection only: not a lease, liveness proof, result or readiness verdict.
+   * one of its requests (not closed, cancelled or with a published result) has an
+   * unfinished checkpoint. The job is shown as running while that checkpoint was
+   * received within CHECKPOINT_FRESH_MS, and as unknown (activity unconfirmed)
+   * after that. `workflow.status` keeps GitHub's own state. A display projection
+   * only: not a lease, liveness proof, result or readiness verdict.
    */
   reportedActivity?: { requestId: string; claimedAt: string; receivedAt: string };
 }

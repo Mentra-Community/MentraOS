@@ -273,9 +273,15 @@ export class TestRunOverviewService {
       }
       // GitHub can still report a dispatched run as queued after its worker has
       // claimed the request and started reporting. Blockers above take precedence.
+      // A fresh checkpoint shows the job running; once it ages past the bound the
+      // activity is unconfirmed (unknown), never "GitHub has not started".
       if (job.state === "queued" || job.state === "waiting") {
-        const activity = reportedActivity(rows, evidence, checkedAt);
-        if (activity) { job.state = "running"; job.reportedActivity = activity; }
+        const activity = reportedActivity(rows, evidence);
+        if (activity) {
+          const age = checkedAt - Date.parse(activity.receivedAt);
+          job.state = Number.isFinite(age) && age <= CHECKPOINT_FRESH_MS ? "running" : "unknown";
+          job.reportedActivity = activity;
+        }
       }
     }
     for (const row of claims) if (!assigned.has(row.claim.requestId)) {
@@ -390,24 +396,23 @@ export class TestRunOverviewService {
 }
 
 /**
- * The freshest worker-reported activity among a job's claims, or undefined.
- * Only an active claim ("claimed", not closed or cancelled) with no published
- * result counts, and only an unfinished checkpoint received within
- * CHECKPOINT_FRESH_MS of `now`. A stale checkpoint leaves the GitHub state as is.
- * Read-only: this never extends, grants or proves a lease.
+ * The newest worker-reported activity among a job's claims, or undefined. Only
+ * an active claim ("claimed", not closed or cancelled) with no published result
+ * counts, and only an unfinished checkpoint. The caller decides fresh or stale
+ * from its receipt time. Read-only: this never extends, grants or proves a lease.
  */
-function reportedActivity(rows: OverviewClaimRecord[], evidence: Map<string, ReturnType<typeof classifyEvidence>>, now: number) {
-  let freshest: NonNullable<OverviewJob["reportedActivity"]> | undefined;
+function reportedActivity(rows: OverviewClaimRecord[], evidence: Map<string, ReturnType<typeof classifyEvidence>>) {
+  let newest: NonNullable<OverviewJob["reportedActivity"]> | undefined;
   for (const row of rows) {
     const progress = row.progress, state = evidence.get(row.claim.requestId);
     if (row.claim.state !== "claimed" || row.closure || row.followUpCancellation || !progress || progress.mode === "complete"
       || !state || state.latest || state.resolution) continue;
-    const age = now - Date.parse(progress.receivedAt);
-    if (!Number.isFinite(age) || age > CHECKPOINT_FRESH_MS) continue;
-    if (!freshest || Date.parse(progress.receivedAt) > Date.parse(freshest.receivedAt))
-      freshest = { requestId: row.claim.requestId, claimedAt: row.claim.claimedAt, receivedAt: progress.receivedAt };
+    const received = Date.parse(progress.receivedAt);
+    if (!Number.isFinite(received)) continue;
+    if (!newest || received > Date.parse(newest.receivedAt))
+      newest = { requestId: row.claim.requestId, claimedAt: row.claim.claimedAt, receivedAt: progress.receivedAt };
   }
-  return freshest;
+  return newest;
 }
 
 /** Why the original owner could close the claim; never a pass or a ready fixture. */
