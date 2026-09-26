@@ -116,8 +116,8 @@ const androidReceipt = (backend = "dev", digest = "e".repeat(64)) => ({schemaVer
   baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
   app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40), backend,
     otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
-  artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 1234}}})
-const job =(name, conclusion = "success", attempt = 1, id = attempt) => ({
+  artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 10}}})
+const job = (name, conclusion = "success", attempt = 1, id = attempt) => ({
   name,
   conclusion,
   run_attempt: attempt,
@@ -139,6 +139,8 @@ function harness(options = {}) {
     artifactStatus: 200,
     missingMac: false,
     missingInstall: false,
+    missingUrls: [],
+    lengths: {},
     wrongInstallType: false,
     corruptInstall: false,
     textArtifacts: {},
@@ -221,11 +223,12 @@ function harness(options = {}) {
             : url.includes("mentra-android-pr-") ? state.androidReceipt : manifest),
       {
         status:
-          (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html"))
+          (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html")) ||
+          state.missingUrls.includes(url)
             ? 404
             : state.artifactStatus,
         headers: {
-          ...(isInstallFile ? {"content-encoding": "br"} : {"content-length": "10"}),
+          ...(isInstallFile ? {"content-encoding": "br"} : {"content-length": state.lengths[url] ?? "10"}),
           "content-type": state.wrongInstallType
             ? "application/octet-stream"
             : url.endsWith(".html")
@@ -712,13 +715,77 @@ test("Mentra Call opt-in adds its exact results link without posting again on re
 const slack = (post) => post.blocks.flatMap(block => block.text?.text ?? []).join("\n")
 const links = (post) => JSON.stringify(post.blocks[3])
 
-test("existing dev posts keep their identity and name the receipt-verified Dev backend", async () => {
-  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
+const cdn = "https://artifactscdn.mentraglass.com/o/r/releases/pr-builds"
+const aliasApk = `${cdn}/mobile-pr-123-${sha.slice(0, 7)}.apk`
+const immutableApk = `${cdn}/mentra-android-pr-123-${sha}-2-1.apk`
+const bothLinks = (h, index) => `${links(h.posts[index])}\n${h.written[index].body}`
+
+test("a verified post links the receipt's immutable APK, not a replaced alias, and binds its hash", async () => {
+  // The mutable alias was overwritten by another attempt; its bytes no longer match.
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], lengths: {[aliasApk]: "999"}})
   await notifyPrBuilds(h.args)
   assert.match(slack(h.posts[0]), /Backend: \*Dev\* · Android ARM64/)
-  assert.match(h.written[0].body, new RegExp(`^<!-- ${sha}:ready:2-1:1-1:3-1 -->$`, "m"))
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.ok(bothLinks(h, 0).includes(immutableApk))
+  assert.ok(!bothLinks(h, 0).includes(aliasApk))
+  assert.ok(!h.requests.includes(aliasApk))
+  assert.match(h.written[0].body, new RegExp(`^<!-- ${sha}:ready:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 1)
+})
+
+test("a valid immutable APK is ready even when the legacy alias is missing", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], missingUrls: [aliasApk]})
+  await notifyPrBuilds(h.args)
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  assert.ok(bothLinks(h, 0).includes(immutableApk))
+})
+
+test("a missing or wrong immutable APK after a verified receipt is incomplete without an alias fallback", async () => {
+  for (const failure of [{missingUrls: [immutableApk]}, {lengths: {[immutableApk]: "11"}}]) {
+    const h = harness({files: [{filename: "mobile/app.config.ts"}], ...failure})
+    await notifyPrBuilds(h.args)
+    assert.match(h.posts[0].text, /incomplete/)
+    assert.doesNotMatch(links(h.posts[0]), /Download APK/)
+    assert.doesNotMatch(h.written[0].body, /Download Android APK/)
+    assert.ok(!bothLinks(h, 0).includes(aliasApk))
+    assert.doesNotMatch(h.written[0].body, /:android-/)
+  }
+})
+
+test("a transient receipt miss never downgrades an already verified post", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
+  await notifyPrBuilds(h.args)
+  h.state.androidReceipt = {unavailable: true}
+  await notifyPrBuilds(h.args)
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.equal(h.written.length, 1)
+  // Readiness may still advance during the miss, without claiming a verified Android backend.
+  h.state.androidReceipt = {unavailable: true}
+  h.state.missingMac = true
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.match(h.posts[1].text, /incomplete/)
+  assert.match(slack(h.posts[1]), /Backend: not verified/)
+  assert.ok(bothLinks(h, 1).includes(aliasApk) && !bothLinks(h, 1).includes(immutableApk))
+})
+
+test("an initially missing receipt enriches the post once with the verified immutable APK", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true}})
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.ok(bothLinks(h, 0).includes(aliasApk) && !bothLinks(h, 0).includes(immutableApk))
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.equal(h.written.length, 2)
+  assert.match(slack(h.posts[1]), /Backend: \*Dev\* · Android ARM64/)
+  assert.ok(bothLinks(h, 1).includes(immutableApk) && !bothLinks(h, 1).includes(aliasApk))
 })
 
 test("a same-head retarget never relabels retained builds for the new destination", async () => {
