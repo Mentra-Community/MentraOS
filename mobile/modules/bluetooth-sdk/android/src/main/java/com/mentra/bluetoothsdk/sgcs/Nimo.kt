@@ -2117,6 +2117,10 @@ class Nimo : SGCManager() {
         canvasEncoder.invalidate()
         canvas.disconnected()
         audioClient.stop()
+        // Nimo's decoder/stream belongs to this GATT session. Consumer demand
+        // remains in bluetooth.should_send_*; readiness must start a fresh stream
+        // even when reconnecting with this same adapter instance.
+        DeviceStore.apply("glasses", "micEnabled", false)
         receiveAssembler.reset()
         writes.reset()
         negotiatedMtu = 23

@@ -1543,7 +1543,7 @@ class Nimo: NSObject, SGCManager {
         guard let opusDecoder else { return }
         for opusFrame in packet.opusFrames {
             if let pcm = opusDecoder.decode(opusFrame), !pcm.isEmpty {
-                DeviceManager.shared.handlePcm(pcm)
+                DeviceManager.shared.handleGlassesPcm(pcm)
             }
         }
     }

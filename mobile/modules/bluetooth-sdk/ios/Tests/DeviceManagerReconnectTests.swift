@@ -11,7 +11,12 @@ final class DeviceManagerReconnectTests: XCTestCase {
         let saved = ["bluetooth", "glasses"].map { ($0, store.store.getCategory($0)) }
         let previousDevice = manager.sgc
         let previousController = manager.controller
+        let previousClock = manager.micWatchdogNow
+        manager.micWatchdogNow = { 0 }
         defer {
+            store.set("bluetooth", "micEnabled", false)
+            manager.updateMicState()
+            manager.micWatchdogNow = previousClock
             manager.sgc = previousDevice
             manager.controller = previousController
             for (category, values) in saved {
@@ -102,6 +107,156 @@ final class DeviceManagerReconnectTests: XCTestCase {
             XCTAssertTrue(reconnected.micChanges.isEmpty)
         }
     }
+
+    func testWatchdogRetriesWhenFirstPacketNeverArrivesAndLimitsRetries() {
+        withRecordingDevice { manager, store in
+            var now: TimeInterval = 0
+            manager.micWatchdogNow = { now }
+            store.apply("glasses", "fullyBooted", true)
+            store.apply("bluetooth", "should_send_pcm", true)
+            let device = manager.sgc as! ReconnectRecordingDevice
+            now = 4
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true])
+            now = 5
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true, true])
+            now = 5.1
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true, true])
+            now = 10
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true, true, true])
+        }
+    }
+
+    func testDecodedGlassesAudioKeepsWatchdogHealthyAndMissingPacketsAfterwardRetry() {
+        withRecordingDevice { manager, store in
+            var now: TimeInterval = 0
+            manager.micWatchdogNow = { now }
+            store.apply("glasses", "fullyBooted", true)
+            store.apply("bluetooth", "should_send_pcm", true)
+            let device = manager.sgc as! ReconnectRecordingDevice
+            // This is the decoded-audio entry point used by Nimo and AR99.
+            for tick in 1 ... 10 {
+                now = TimeInterval(tick * 10)
+                manager.handleGlassesPcm(Data([0, 0]))
+                manager.checkAndReinitGlassesMic()
+            }
+            XCTAssertEqual(device.micChanges, [true])
+            now = 104
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true])
+            now = 105
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true, true])
+        }
+    }
+
+    func testLc3GlassesAudioKeepsWatchdogHealthy() {
+        withRecordingDevice { manager, store in
+            var now: TimeInterval = 0
+            manager.micWatchdogNow = { now }
+            store.apply("glasses", "fullyBooted", true)
+            store.apply("bluetooth", "should_send_pcm", true)
+            let device = manager.sgc as! ReconnectRecordingDevice
+            let lc3 = manager.lc3Converter!.encode(Data(repeating: 0, count: 320), frameSize: 40) as Data
+            XCTAssertEqual(lc3.count, 40)
+            // G2 and Live deliver LC3 through this entry point, not decoded PCM.
+            for tick in 1 ... 10 {
+                now = TimeInterval(tick * 10)
+                manager.handleGlassesMicData(lc3, 40)
+                manager.checkAndReinitGlassesMic()
+            }
+            XCTAssertEqual(device.micChanges, [true])
+        }
+    }
+
+    func testPhonePcmAndEmptyGlassesPcmCannotHideAMissingGlassesStream() {
+        withRecordingDevice { manager, store in
+            var now: TimeInterval = 0
+            manager.micWatchdogNow = { now }
+            store.apply("glasses", "fullyBooted", true)
+            store.apply("bluetooth", "should_send_pcm", true)
+            let device = manager.sgc as! ReconnectRecordingDevice
+            now = 5
+            manager.handlePcm(Data([0, 0]))
+            manager.handleGlassesPcm(Data())
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true, true])
+        }
+    }
+
+    func testWatchdogRespectsSuspensionAndGivesResumeAFreshDeadline() {
+        withRecordingDevice { manager, store in
+            var now: TimeInterval = 0
+            manager.micWatchdogNow = { now }
+            store.apply("glasses", "fullyBooted", true)
+            store.apply("bluetooth", "should_send_pcm", true)
+            let device = manager.sgc as! ReconnectRecordingDevice
+            device.isMicSuspendedForAudio = true
+            now = 100
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true])
+            device.isMicSuspendedForAudio = false
+            now = 200
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true])
+            now = 205
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true, true])
+
+            store.apply("bluetooth", "should_send_pcm", false)
+            // A late firmware ACK can leave the shared cache true after demand ends.
+            store.set("glasses", "micEnabled", true)
+            now = 300
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true, true, false])
+        }
+    }
+
+    func testWatchdogRespectsOwnAppPlaybackAndPhoneRoute() {
+        withRecordingDevice { manager, store in
+            var now: TimeInterval = 0
+            manager.micWatchdogNow = { now }
+            let monitor = PhoneAudioMonitor.getInstance()
+            let wasPlaying = monitor.isOwnAppAudioPlaying()
+            defer { monitor.setOwnAppAudioPlaying(wasPlaying) }
+            monitor.setOwnAppAudioPlaying(false)
+            store.apply("glasses", "fullyBooted", true)
+            store.apply("bluetooth", "should_send_pcm", true)
+            let device = manager.sgc as! ReconnectRecordingDevice
+            monitor.setOwnAppAudioPlaying(true)
+            now = 100
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true])
+            monitor.setOwnAppAudioPlaying(false)
+            store.set("bluetooth", "currentMic", MicTypes.PHONE_INTERNAL)
+            now = 200
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true])
+        }
+    }
+
+    func testWatchdogDeadlineBelongsToTheCurrentConnection() {
+        withRecordingDevice { manager, store in
+            var now: TimeInterval = 0
+            manager.micWatchdogNow = { now }
+            store.apply("glasses", "fullyBooted", true)
+            store.apply("bluetooth", "should_send_pcm", true)
+            let device = manager.sgc as! ReconnectRecordingDevice
+            store.apply("glasses", "fullyBooted", false)
+            now = 100
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true])
+            store.apply("glasses", "fullyBooted", true)
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true])
+            now = 105
+            manager.checkAndReinitGlassesMic()
+            XCTAssertEqual(device.micChanges, [true, true])
+        }
+    }
 }
 
 @MainActor
@@ -110,6 +265,7 @@ private final class ReconnectRecordingDevice: SGCManager {
     let hasMic = true
     let showConnectionConfirmation = false
     var micChanges: [Bool] = []
+    var isMicSuspendedForAudio = false
 
     func clearSceneElements(_: [String]) async {}
     func sendTextWall(_: String) async {}
