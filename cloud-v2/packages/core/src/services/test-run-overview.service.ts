@@ -3,7 +3,7 @@ import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { TestRunModel } from "../models/test-run.model";
 import type { TestRunClaim, TestRunClaimClosureRecord, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
 import type { TestRun } from "../types/test-run.types";
-import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
+import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
 import { completeGithubActivity, GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
 
 export interface OverviewClaimRecord {
@@ -14,6 +14,8 @@ export interface OverviewClaimRecord {
 export interface FixtureIdentity { workerId: string; fixtureId: string }
 /** Fixture summaries check at most this many worker/fixture identities per overview. */
 export const FIXTURE_SUMMARY_LIMIT = 100;
+/** Display bounds for recorded failure text, in code points. */
+const RECORDED_TEXT = 240, RECORDED_LABEL = 160;
 export interface TestRunOverviewRepository {
   claims(activeRequestIds: string[]): Promise<{ claims: OverviewClaimRecord[]; truncated: boolean }>;
   /** The newest stored claim, in any state, for each exact worker + fixture identity. */
@@ -61,11 +63,29 @@ export class MongoTestRunOverviewRepository implements TestRunOverviewRepository
   async results(requestIds: string[]) {
     if (!requestIds.length) return [];
     // Metadata only. The service returns explicit display fields, never notes, logs or asset paths.
-    const rows = await TestRunModel.find({ requestId: { $in: requestIds } }).select({ "payload.runId": 1,
-      "payload.requestId": 1, "payload.channel": 1, "payload.release": 1, "payload.provenance": 1,
-      "payload.fixture": 1, "payload.outcomes": 1, "payload.platform": 1 }).limit(5001).lean();
+    // Failure detail is bounded here: the first failure and at most two same-phase chapter
+    // candidates, clipped text, and no stacks, reasons, asset or incident references.
+    const clip = (path: string, max: number) => ({ $cond: [{ $eq: [{ $type: path }, "string"] }, { $substrCP: [path, 0, max + 1] }, "$$REMOVE"] });
+    const phase = { $arrayElemAt: [{ $ifNull: ["$payload.failures.phase", []] }, 0] };
+    const firstChapter = (status: "failed" | "blocked") => ({ $slice: [{ $filter: { input: { $ifNull: ["$payload.chapters", []] }, as: "c",
+      cond: { $and: [{ $eq: ["$$c.status", status] }, { $eq: ["$$c.phase", phase] }] } } }, 1] });
+    const rows = await TestRunModel.aggregate<{ payload: TestRun }>([
+      { $match: { requestId: { $in: requestIds } } }, { $limit: 5001 },
+      { $project: { _id: 0, payload: { runId: 1, requestId: 1, channel: 1, release: 1, provenance: 1, fixture: 1, outcomes: 1, platform: 1, outcome: 1,
+        failures: { $map: { input: { $slice: [{ $ifNull: ["$payload.failures", []] }, 1] }, as: "f", in: {
+          phase: "$$f.phase", message: clip("$$f.message", RECORDED_TEXT), expected: clip("$$f.expected", RECORDED_TEXT),
+          step: { $cond: [{ $eq: [{ $type: "$$f.step" }, "object"] },
+            { id: clip("$$f.step.id", RECORDED_LABEL), label: clip("$$f.step.label", RECORDED_LABEL) }, null] },
+          missingEvidence: { $map: { input: { $slice: [{ $filter: { input: { $ifNull: ["$$f.missingEvidence", []] }, as: "m",
+            cond: { $eq: ["$$m.kind", "failure-details"] } } }, 1] }, as: "m", in: { kind: "$$m.kind" } } },
+        } } },
+        chapters: { $map: { input: { $concatArrays: [firstChapter("failed"), firstChapter("blocked")] }, as: "c", in: {
+          id: clip("$$c.id", RECORDED_LABEL), phase: "$$c.phase", status: "$$c.status",
+          instruction: clip("$$c.instruction", RECORDED_TEXT), expected: clip("$$c.expected", RECORDED_TEXT) } } },
+      } } },
+    ]);
     if (rows.length > 5000) throw new Error("Recovery metadata exceeds overview limit");
-    return rows.map(row => row.payload as TestRun);
+    return rows.map(row => row.payload);
   }
   async adminRequests(requestRunIds: number[]) {
     if (!requestRunIds.length) return [];
@@ -120,12 +140,39 @@ export function recoveredClaim(claim: TestRunClaim, results: TestRun[]): Overvie
   return { requestId: claim.requestId, originalRunId: latest.provenance.originalRunId!, recoveryRunId: latest.runId,
     fixtureId: claim.fixtureId, kind: "recovery", originalAvailable: Boolean(original) };
 }
+const clipText = (value: string, max: number) => {
+  const points = Array.from(value);
+  return points.length > max ? points.slice(0, max - 1).join("") + "…" : value;
+};
+/** Failure phases whose authored chapters use the same phase name. */
+const chapterPhases = new Set<string>(["setup", "test", "teardown"]);
+/**
+ * The first failure one result lists, plus the first failed (else blocked) authored
+ * chapter in that exact phase. Only reviewed fields are read; nothing is inferred
+ * about who must act or which comparison failed.
+ */
+export function recordedFailure(run: Pick<TestRun, "runId" | "outcome" | "failures" | "chapters">): OverviewRecordedFailure | undefined {
+  if (run.outcome === "passed") return undefined;
+  const failure = run.failures?.[0];
+  if (!failure) return { resultRunId: run.runId, failure: null, detailUnpublished: true };
+  const step = failure.step ? { id: clipText(failure.step.id, RECORDED_LABEL), label: clipText(failure.step.label, RECORDED_LABEL) } : undefined;
+  const candidates = chapterPhases.has(failure.phase) ? (run.chapters ?? []).filter(chapter => chapter.phase === failure.phase) : [];
+  const chapter = candidates.find(item => item.status === "failed") ?? candidates.find(item => item.status === "blocked");
+  return { resultRunId: run.runId,
+    failure: { phase: failure.phase, ...(step ? { step } : {}), message: clipText(failure.message, RECORDED_TEXT),
+      ...(failure.expected ? { expected: clipText(failure.expected, RECORDED_TEXT) } : {}) },
+    ...(chapter ? { chapter: { id: clipText(chapter.id, RECORDED_LABEL), status: chapter.status as "failed" | "blocked",
+      instruction: clipText(chapter.instruction, RECORDED_TEXT), ...(chapter.expected ? { expected: clipText(chapter.expected, RECORDED_TEXT) } : {}) } } : {}),
+    detailUnpublished: (failure.missingEvidence ?? []).some(item => item.kind === "failure-details") };
+}
 /** One evidence decision controls reconciliation, active blocking and inactive visibility. */
 function classifyEvidence(claim: TestRunClaim, results: TestRun[], available: boolean) {
   const same = sameResults(claim, results), latest = same[0];
   const resolution = recoveredClaim(claim, results);
-  if (resolution) return { resolution, latest, needsAttention: false, blocked: false, reason: "Verified return evidence is published.", nextAction: "No recovery follow-up needed." };
+  if (resolution) return { resolution, latest, recorded: undefined, needsAttention: false, blocked: false, reason: "Verified return evidence is published.", nextAction: "No recovery follow-up needed." };
   const ambiguous = latest && same.some(run => run.runId !== latest.runId && generation(run) === generation(latest));
+  // Only the newest generation, and only when no other result claims that generation.
+  const recorded = latest && !ambiguous ? recordedFailure(latest) : undefined;
   const reason = !available ? "Published return evidence could not be checked."
     : ambiguous ? "Conflicting results report the same generation; physical return is unverified."
     : latest && ready(latest) ? "The reported ready state could not be verified against this request's result history."
@@ -137,7 +184,7 @@ function classifyEvidence(claim: TestRunClaim, results: TestRun[], available: bo
     : ambiguous || latest && ready(latest) ? "Check the result's request and recovery links, then publish verified return evidence."
     : latest ? "Complete recovery for this request and publish its verified return evidence."
     : "Locate and publish this request's retained result or complete its verified recovery.";
-  return { resolution: null, latest, reason, nextAction, needsAttention: Boolean(latest) || !available || claim.state !== "terminal",
+  return { resolution: null, latest, recorded, reason, nextAction, needsAttention: Boolean(latest) || !available || claim.state !== "terminal",
     blocked: Boolean(latest) || claim.state === "recovery-required" };
 }
 function requestFromClaim(claim: TestRunClaim, results: TestRun[]): OverviewRequest[] {
@@ -279,10 +326,13 @@ function attention(row: OverviewClaimRecord, state: ReturnType<typeof classifyEv
     responsible: "Test runner / operator", closedAt: row.closure.closedAt,
     nextAction: "Commission this fixture before another request. It was left uncommissioned; the failed result is unchanged and is not a pass." };
   const cancellation = row.followUpCancellation;
+  const recorded = state.recorded;
   return { reason: state.reason, responsible: "Test runner / operator",
     nextAction: state.nextAction,
     ...(cancellation ? { cancelledAt: cancellation.cancelledAt }
       : canCancel ? { cancelRequestId: row.claim.requestId } : {}),
+    // Live rows only; resolved history keeps its result link. Responsibility is unchanged.
+    ...(!cancellation && recorded ? { recordedFailure: recorded } : {}),
   };
 }
 
