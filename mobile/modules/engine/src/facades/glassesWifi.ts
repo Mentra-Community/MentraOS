@@ -15,9 +15,6 @@
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import type {WifiSearchResult, WifiStatus} from "@mentra/bluetooth-sdk"
-
-/** Per-chunk metadata; `eventId` is an opaque diagnostic id (Android Mentra Live only). */
-export type WifiScanChunkMeta = {eventId?: string}
 import {useGlassesStore} from "../stores/glasses"
 
 export type {WifiSearchResult, WifiStatus}
@@ -33,9 +30,9 @@ export const glassesWifi = {
    * while a scan runs, so callers can render them as they arrive instead of
    * waiting for the final `scan()` result. Returns an unsubscribe.
    */
-  onScanResult(cb: (networks: WifiSearchResult[], meta: WifiScanChunkMeta) => void): () => void {
+  onScanResult(cb: (networks: WifiSearchResult[]) => void): () => void {
     const sub = BluetoothSdk.addListener("wifi_scan_result", (event) => {
-      cb(event.networks, {eventId: event.eventId})
+      cb(event.networks)
     })
     return () => sub.remove()
   },

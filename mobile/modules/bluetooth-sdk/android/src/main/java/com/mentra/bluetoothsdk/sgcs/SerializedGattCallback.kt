@@ -18,17 +18,6 @@ internal abstract class SerializedGattCallback(
         enqueue { if (isCurrent(gatt)) work() }
     }
 
-    private fun dispatchNotification(
-        gatt: BluetoothGatt,
-        characteristic: BluetoothGattCharacteristic,
-        work: () -> Unit,
-    ) {
-        enqueue { if (isCurrent(gatt)) work() else onStaleNotification(gatt, characteristic) }
-    }
-
-    /** A notification from a GATT that is no longer current was dropped on the owner queue. */
-    protected open fun onStaleNotification(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {}
-
     final override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) =
         dispatch(gatt) { handleConnectionStateChange(gatt, status, newState) }
 
@@ -57,14 +46,14 @@ internal abstract class SerializedGattCallback(
         gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
     ) {
         val value = characteristic.value?.copyOf() ?: return
-        dispatchNotification(gatt, characteristic) { handleCharacteristicChanged(gatt, characteristic, value) }
+        dispatch(gatt) { handleCharacteristicChanged(gatt, characteristic, value) }
     }
 
     final override fun onCharacteristicChanged(
         gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray,
     ) {
         val snapshot = value.copyOf()
-        dispatchNotification(gatt, characteristic) { handleCharacteristicChanged(gatt, characteristic, snapshot) }
+        dispatch(gatt) { handleCharacteristicChanged(gatt, characteristic, snapshot) }
     }
 
     final override fun onDescriptorWrite(

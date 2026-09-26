@@ -9,18 +9,13 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.LocationManager
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.DeviceStore
-import com.mentra.bluetoothsdk.debug.BleEvidenceLog
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
-import java.io.FileDescriptor
-import java.io.PrintWriter
 
 class ForegroundService : Service() {
     companion object {
@@ -341,20 +336,4 @@ class ForegroundService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    /**
-     * Read-only BLE provenance snapshot for device tests:
-     * `adb shell dumpsys activity service <package>/com.mentra.bluetoothsdk.services.ForegroundService
-     * mentra-ble-evidence afterSeq=<n> [targetSha256=<hex>]`. Android only lets callers holding
-     * DUMP (shell/system) reach this. Every other dump request keeps the default behavior.
-     */
-    override fun dump(fd: FileDescriptor?, writer: PrintWriter?, args: Array<out String>?) {
-        val line = BleEvidenceLog.dump(args, Handler(Looper.getMainLooper()))
-        if (line == null) {
-            super.dump(fd, writer, args)
-            return
-        }
-        writer?.println(line)
-        writer?.flush()
-    }
 }

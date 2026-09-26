@@ -8,7 +8,6 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import com.mentra.bluetoothsdk.debug.BleEvidenceLog
 import com.mentra.bluetoothsdk.streaming.StreamSessionState
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
@@ -886,8 +885,6 @@ class MentraBluetoothSdk private constructor(
         if (existing != null) {
             // Join the in-flight scan instead of failing with request_in_flight;
             // the scan screen auto-starts a scan on mount and can be pushed twice.
-            // A joined caller did not start a scan; its results belong to the older request.
-            BleEvidenceLog.scanRequest(existing.scanId, fresh = false)
             try {
                 return existing.pending.await(WIFI_SCAN_TIMEOUT_MS)
             } finally {
@@ -899,7 +896,6 @@ class MentraBluetoothSdk private constructor(
             // out, so a delayed chunk from an older, abandoned scan can no longer
             // mutate it.
             Bridge.claimWifiScanResults(request.scanId)
-            BleEvidenceLog.scanRequest(request.scanId, fresh = true)
             deviceManager.requestWifiScan(request.scanId)
             // The glasses wait up to 15s for scan-results broadcasts before sending
             // scan_complete, so give them longer than that before falling back.
@@ -914,14 +910,9 @@ class MentraBluetoothSdk private constructor(
                 val fallbackResults = synchronized(oneShotLock) { request.latestResults }
                 if (fallbackResults.isNotEmpty()) {
                     // Resolve so callers joined on the same scan get the fallback too.
-                    // Partial results never count as a completed scan.
-                    BleEvidenceLog.scanTerminal(request.scanId, "timeout_partial", fallbackResults.size)
                     pending.resolve(fallbackResults)
                     return fallbackResults
                 }
-                BleEvidenceLog.scanTerminal(request.scanId, "timeout_empty", 0)
-            } else {
-                BleEvidenceLog.scanTerminal(request.scanId, "error", 0)
             }
             // Fail joined callers immediately instead of letting them run out their
             // own timeout.
@@ -2308,7 +2299,6 @@ class MentraBluetoothSdk private constructor(
                 pendingWifiScan = null
             }
         }
-        BleEvidenceLog.scanTerminal(request.scanId, "legacy_uncorrelated", results.size)
         request.pending.resolve(results)
     }
 
@@ -2338,7 +2328,6 @@ class MentraBluetoothSdk private constructor(
                 pendingWifiScan = null
             }
         }
-        BleEvidenceLog.scanTerminal(scanId, "complete", accumulated.size)
         request.pending.resolve(accumulated)
     }
 
