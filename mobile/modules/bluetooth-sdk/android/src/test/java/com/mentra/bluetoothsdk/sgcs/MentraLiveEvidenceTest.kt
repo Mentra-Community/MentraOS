@@ -550,6 +550,46 @@ class MentraLiveEvidenceTest {
     }
 
     @Test
+    fun `only an exact 0 or 1 PMU charg bit is charging provenance`() {
+        val gatt = connect(manager(), peerA)
+        val chargValues = listOf("1", "0", "0.5", "1.5", "1.0", "0.0", "\"1\"")
+        for (charg in chargValues) {
+            notifyK900(gatt, """{"C":"sr_hrt","B":{"pt":60,"ready":1,"charg":$charg}}""")
+        }
+        // A non-numeric charg keeps the existing behavior of skipping the update entirely.
+        notifyK900(gatt, """{"C":"sr_hrt","B":{"pt":60,"ready":1,"charg":true}}""")
+
+        val batteries = kind("battery")
+        // Each percentage is measured; only a value exactly equal to 0 or 1 is PMU evidence.
+        assertEquals(List(chargValues.size) { 60 }, batteries.map { it.getInt("percent") })
+        assertEquals(
+            listOf<Boolean?>(true, false, null, null, true, false, null),
+            batteries.map { if (it.has("pmuCharging")) it.getBoolean("pmuCharging") else null },
+        )
+        // Display/charging semantics are unchanged: optInt truncation still drives isCharging.
+        assertEquals(
+            listOf(true, false, false, true, true, false, true),
+            batteryEvents().map { it["charging"] },
+        )
+    }
+
+    @Test
+    fun `sr_hrt without a measured pt issues no fresh battery id`() {
+        val gatt = connect(manager(), peerA)
+        notifyK900(gatt, """{"C":"sr_hrt","B":{"pt":64,"ready":1,"charg":1}}""")
+        for (pt in listOf(null, "\"x\"", "\"57\"", "57.5", "150", "-3")) {
+            val field = pt?.let { ",\"pt\":$it" } ?: ""
+            notifyK900(gatt, """{"C":"sr_hrt","B":{"ready":1,"charg":1$field}}""")
+        }
+        // Missing/non-numeric pt keeps the previous no-update behavior; numeric fallbacks are
+        // displayed as before, but none of them carries a fresh id or record.
+        val events = batteryEvents()
+        assertEquals(listOf(64, 57, 57, 150), events.map { it["level"] })
+        assertEquals(listOf(true, false, false, false), events.map { it.containsKey("eventId") })
+        assertEquals(listOf(64), kind("battery").map { it.getInt("percent") })
+    }
+
+    @Test
     fun `events without native provenance carry no id`() {
         // e.g. another glasses model or a synthesized status: nothing to adopt.
         Bridge.sendBatteryStatus(80, false)

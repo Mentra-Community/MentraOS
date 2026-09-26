@@ -5602,11 +5602,7 @@ class MentraLive : SGCManager() {
                                             BatteryProvenance(
                                                     "k900_sr_hrt",
                                                     origin,
-                                                    // Only an actual PMU bit (0/1) is charging evidence.
-                                                    (bodyObj.opt("charg") as? Number)
-                                                            ?.toInt()
-                                                            ?.takeIf { it == 0 || it == 1 }
-                                                            ?.let { it == 1 }
+                                                    pmuChargingBit(bodyObj)
                                             )
                                         }
                                 )
@@ -6010,6 +6006,17 @@ class MentraLive : SGCManager() {
             val origin: BleEvidenceLog.Origin?,
             val pmuCharging: Boolean?
     )
+
+    /**
+     * The sr_hrt PMU charging bit, only when `charg` is a number exactly equal to 0 or 1. The
+     * original value is compared without truncation, so 0.5 or 1.5 is not a bit.
+     */
+    private fun pmuChargingBit(body: JSONObject): Boolean? =
+            when ((body.opt("charg") as? Number)?.toDouble()) {
+                1.0 -> true
+                0.0 -> false
+                else -> null
+            }
 
     /** The field's value when it is an actual integer percentage, else null (missing/invalid). */
     private fun measuredPercent(obj: JSONObject, key: String): Int? {
