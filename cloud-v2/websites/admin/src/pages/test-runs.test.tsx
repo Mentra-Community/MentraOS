@@ -129,6 +129,17 @@ const coreRecovery: TestRunDetail = {
   },
 };
 
+/** A source reference keeps its safe ID as text and never navigates to it. */
+function expectSourceReference(markup: string, source: string) {
+  const aside = markup.match(/<aside aria-label="Source reference"[^>]*>([\s\S]*?)<\/aside>/)?.[1];
+  expect(aside).toBeDefined();
+  expect(aside).toContain(`<code class="break-all font-mono text-xs">${source}</code>`);
+  expect(aside).toContain("It may not be a published result.");
+  expect(aside).not.toMatch(/<(a|button)[\s>]/);
+  expect(markup).not.toContain("/?testRun=");
+  expect(markup).not.toContain("View original run");
+}
+
 describe("authenticated result navigation", () => {
   const buildQuery = new URLSearchParams({
     testRuns: "1",
@@ -465,7 +476,7 @@ describe("recording and chapter integrity", () => {
       expect(markup).toContain('aria-label="Recovery result"');
       expect(markup).toContain('href="/?testRun=original_run-01"');
       expect(markup).toContain("The original test outcome is preserved.");
-      expect(markup).not.toContain('aria-label="Source run"');
+      expect(markup).not.toContain('aria-label="Source reference"');
       expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
       expect(markup).toMatch(/>fixture<\/p>[\s\S]*?>ready<\/span>/);
     }
@@ -485,7 +496,7 @@ describe("recording and chapter integrity", () => {
       expect(relatedRun(recovery)).toEqual({ kind: "recovery", runId: "original" });
       expect(markup).toContain('aria-label="Recovery result"');
       expect(markup).toContain('href="/?testRun=original"');
-      expect(markup).not.toContain('aria-label="Source run"');
+      expect(markup).not.toContain('aria-label="Source reference"');
       expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
       for (const [label, value] of outcomes)
         expect(markup).toMatch(new RegExp(`>${label}</p>[\\s\\S]*?>${value}</span>`));
@@ -499,7 +510,7 @@ describe("recording and chapter integrity", () => {
       expect(markup.match(/href="\/\?testRun=[^"]*"/g)).toEqual(['href="/?testRun=original_run-01"']);
     }
   });
-  test("development and legacy original run IDs keep a neutral source link, not a recovery label", () => {
+  test("development and unknown source IDs are shown as text without navigation or a recovery label", () => {
     const development = {
       ...run,
       runId: "local-account-miniapps-fixed-export-20260926-28c679bd",
@@ -518,16 +529,14 @@ describe("recording and chapter integrity", () => {
     ] as const) {
       const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
       expect(relatedRun(linked)).toEqual({ kind: "source", runId: source });
-      expect(markup).toContain('aria-label="Source run"');
-      expect(markup).toContain(`href="/?testRun=${source}"`);
-      expect(markup).toContain("View source run");
+      expectSourceReference(markup, source);
       expect(markup).not.toContain("Recovery result");
       expect(markup).not.toContain("original test outcome");
       expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
       expect(markup).toMatch(/>teardown<\/p>[\s\S]*?>passed<\/span>/);
     }
   });
-  test("incomplete or malformed CI lineage is a source link, never a recovery", () => {
+  test("incomplete or malformed CI lineage is an unlinked source reference, never a recovery", () => {
     for (const provenance of [
       { ...ciRecovery.provenance, executionMode: undefined },
       { ...ciRecovery.provenance, executionMode: "development-exploration" },
@@ -543,8 +552,7 @@ describe("recording and chapter integrity", () => {
       const linked = { ...ciRecovery, provenance };
       expect(relatedRun(linked)).toEqual({ kind: "source", runId: "original_run-01" });
       const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
-      expect(markup).toContain('aria-label="Source run"');
-      expect(markup).toContain('href="/?testRun=original_run-01"');
+      expectSourceReference(markup, "original_run-01");
       expect(markup).not.toContain("Recovery result");
     }
   });
@@ -563,9 +571,9 @@ describe("recording and chapter integrity", () => {
         const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
         expect(relatedRun(linked)).toBeNull();
         expect(markup).not.toContain('aria-label="Recovery result"');
-        expect(markup).not.toContain('aria-label="Source run"');
+        expect(markup).not.toContain('aria-label="Source reference"');
         expect(markup).not.toContain("View original run");
-        expect(markup).not.toContain("View source run");
+        expect(markup).not.toContain("/?testRun=");
       }
     }
   });
