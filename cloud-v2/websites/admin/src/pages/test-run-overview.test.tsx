@@ -319,3 +319,57 @@ describe("local resource observations", () => {
     expect(resourceStatus(item("mini-1", unreadable), Date.parse(later(3_600_000)) + 86_400_000).priority).toBe(1);
   });
 });
+
+describe("worker-reported activity on a GitHub-queued job", () => {
+  // Sanitized DEV424 observation as Core now projects it.
+  const observedAt = "2026-09-26T22:00:32.755Z";
+  const receivedAt = "2026-09-26T22:00:29.084Z";
+  const view = (reported: boolean): TestRunOverview => ({ observedAt, warnings: [], resolvedRecoveries: [], recentMaintenance: [], fixtureSummary: [], jobs: [{
+    id: "github-36271748180", kind: "routine", state: reported ? "running" : "queued", title: "Device routine request 36271681505 / attempt 1",
+    createdAt: "2026-09-26T21:05:41Z",
+    requests: [{ requestId: "routine-36271681505-1-dev-no-glasses-android", requestRunId: 36271681505, requestAttempt: 1, routineId: "no-glasses-android",
+      trigger: "successful-build", platform: "android", channel: "dev", release: "3.3.0-dev.424" }],
+    claims: [{ requestId: "routine-36271681505-1-dev-no-glasses-android", workerId: "mentra-device-mini-1-android", fixtureId: "mini-samsung-a54",
+      claimedAt: "2026-09-26T21:57:58.897Z", progress: { sequence: 44, mode: "running", phase: "test", receivedAt,
+        step: { id: "walkthrough", label: "Replay the shared walkthrough" }, completedSteps: 0, totalSteps: 1,
+        action: { id: "HOME-05-close", label: "Press Android Back once to close the all-miniapps sheet.", completedActions: 6, totalActions: 38 } } }],
+    workflow: { runId: 36271748180, url: "https://github.com/Mentra-Community/Mentra-Automated-Testing/actions/runs/36271748180",
+      status: "queued", updatedAt: "2026-09-26T21:05:41Z" },
+    ...(reported ? { reportedActivity: { requestId: "routine-36271681505-1-dev-no-glasses-android", claimedAt: "2026-09-26T21:57:58.897Z", receivedAt } }
+      : { attention: { reason: "GitHub has not started this job; runner availability has not been verified.", responsible: "GitHub / runner operator" as const,
+        nextAction: "Check the GitHub job's required labels and the runner's status." } }),
+  }] });
+  const render = (value: TestRunOverview, now: number) => renderToStaticMarkup(<TestRunOverviewView data={value} now={now} onResult={() => {}} />);
+
+  test("fresh worker progress is the primary running state, counted and timed from the worker claim; GitHub queued stays visible", () => {
+    const html = render(view(true), Date.parse(observedAt));
+    expect(html).toContain(">running</span>");
+    expect(html).toContain("<strong>1</strong> running");
+    expect(html).toContain("<strong>0</strong> queued");
+    expect(html).toContain("Reported by the worker · GitHub status: queued");
+    expect(html).toContain("6 of 38 actions completed");
+    expect(html).toContain("2m 33s"); expect(html).toContain("Since worker claim");
+    expect(html).not.toContain("GitHub has not started this job");
+    expect(html).not.toContain(">Waiting<");
+  });
+
+  test("once the checkpoint ages past the bound between refreshes, the activity is unconfirmed rather than running", () => {
+    const html = render(view(true), Date.parse(receivedAt) + 120_001);
+    expect(html).toContain(">unknown</span>");
+    expect(html).toContain("<strong>0</strong> running");
+    expect(html).toContain("<strong>1</strong> unknown");
+    expect(html).toContain("Worker checkpoint no longer recent; activity is unconfirmed · GitHub status: queued");
+    expect(html).toContain("No recent checkpoint; activity is unconfirmed");
+    // At the bound itself it is still running.
+    expect(render(view(true), Date.parse(receivedAt) + 120_000)).toContain("<strong>1</strong> running");
+  });
+
+  test("a queued job without worker-reported activity keeps the waiting state and GitHub guidance", () => {
+    const html = render(view(false), Date.parse(observedAt));
+    expect(html).toContain(">queued</span>");
+    expect(html).toContain("<strong>1</strong> queued");
+    expect(html).toContain("GitHub has not started this job; runner availability has not been verified.");
+    expect(html).toContain("Waiting");
+    expect(html).not.toContain("Reported by the worker");
+  });
+});
