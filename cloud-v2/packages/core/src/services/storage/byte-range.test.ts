@@ -34,7 +34,7 @@ describe("buffered range responses over a real HTTP socket", () => {
     "cache-control": "private, max-age=300",
   };
 
-  async function withServer(run: (url: string, bytes: Uint8Array) => Promise<void>) {
+  async function withServer(run: (url: string, bytes: Uint8Array<ArrayBuffer>) => Promise<void>) {
     const bytes = new Uint8Array(Buffer.concat([await fixture, Buffer.alloc(1024 * 1024, 0x6d)]));
     const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
       fetch: request => bufferedRangeResponse(request, bytes, new Headers({ ...security, etag })) });
@@ -107,6 +107,33 @@ describe("buffered range responses over a real HTTP socket", () => {
         expect(new Uint8Array(await changed.arrayBuffer())).toEqual(bytes);
       }
     });
+  });
+
+  test("payload views keep their own offset and length, including shared-buffer input", async () => {
+    // Stored payloads can be views into a larger buffer (e.g. pooled Node
+    // Buffers) or, generically, not backed by an ArrayBuffer at all.
+    const payload = Uint8Array.from({ length: 4096 }, (_, index) => index % 253);
+    const pooled = new Uint8Array(new ArrayBuffer(payload.length + 300));
+    pooled.fill(0xee);
+    pooled.set(payload, 100);
+    const shared = new Uint8Array(new SharedArrayBuffer(payload.length));
+    shared.set(payload);
+    for (const input of [pooled.subarray(100, 100 + payload.length), shared]) {
+      const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
+        fetch: request => bufferedRangeResponse(request, input, new Headers({ "content-type": "video/mp4", etag })) });
+      try {
+        const url = new URL("/artifact", server.url);
+        const full = await fetch(url);
+        expect(full.headers.get("content-length")).toBe(String(payload.length));
+        expect(new Uint8Array(await full.arrayBuffer())).toEqual(payload);
+        const tail = await fetch(url, { headers: { range: "bytes=-10" } });
+        expect(tail.headers.get("content-range")).toBe(`bytes ${payload.length - 10}-${payload.length - 1}/${payload.length}`);
+        expect(new Uint8Array(await tail.arrayBuffer())).toEqual(payload.subarray(-10));
+        const middle = await fetch(url, { headers: { range: "bytes=1000-1999" } });
+        expect(middle.headers.get("content-length")).toBe("1000");
+        expect(new Uint8Array(await middle.arrayBuffer())).toEqual(payload.subarray(1000, 2000));
+      } finally { await server.stop(true); }
+    }
   });
 
   test("invalid, multiple and out-of-bounds ranges get 416 with the payload size and the same security headers", async () => {

@@ -51,8 +51,23 @@ export function bufferedRangeResponse(request: Request, bytes: Uint8Array, heade
     out.set("content-range", `bytes */${size}`);
     return new Response(null, { status: 416, headers: out });
   }
-  const body = range ? bytes.subarray(range.start, range.end + 1) : bytes;
-  out.set("content-length", String(body.byteLength));
+  const start = range?.start ?? 0;
+  const length = range ? range.end - range.start + 1 : size;
+  out.set("content-length", String(length));
   if (range) out.set("content-range", `bytes ${range.start}-${range.end}/${size}`);
-  return new Response(request.method === "HEAD" ? null : body, { status: range ? 206 : 200, headers: out });
+  return new Response(request.method === "HEAD" ? null : bodyView(bytes, start, length), { status: range ? 206 : 200, headers: out });
+}
+
+/**
+ * The requested bytes as a view over a plain ArrayBuffer, which a Response
+ * body accepts. A view over an ArrayBuffer is reused at its own offset
+ * without copying; any other backing store (e.g. SharedArrayBuffer) is
+ * copied into a new ArrayBuffer.
+ */
+function bodyView(bytes: Uint8Array, start: number, length: number): Uint8Array<ArrayBuffer> {
+  const { buffer } = bytes;
+  if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer, bytes.byteOffset + start, length);
+  const copy = new Uint8Array(length);
+  copy.set(bytes.subarray(start, start + length));
+  return copy;
 }

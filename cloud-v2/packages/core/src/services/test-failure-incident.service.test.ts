@@ -135,7 +135,9 @@ function memoryStore() {
       const item = reports.get(reportId)?.artifacts.find(value => value.artifactId === artifactId);
       if (!item || item.assetMissing) return null;
       if (!item.bytes) throw new Error("blob unavailable");
-      return { bytes: item.bytes, contentType: item.contentType ?? "application/json", fileName: "synthetic-private-name.json" };
+      // Same digest as this artifact's asset row above, like the real service.
+      return { bytes: item.bytes, contentType: item.contentType ?? "application/json", fileName: "synthetic-private-name.json",
+        sha256: item.recordedSha256 ?? sha256(item.bytes) };
     },
   };
   return { store, calls, reports, add: (id: string, report: Record<string, unknown>, artifacts: ArtifactFixture[]) => reports.set(id, { report, artifacts }) };

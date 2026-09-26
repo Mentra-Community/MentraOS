@@ -333,16 +333,17 @@ test("registered rerun incidents require the exact result binding before the inc
   process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = secret; process.env.CLOUD_CORE_ENVIRONMENT = "dev";
   // Synthetic reports: the rerun failure owns rep_01RERUN; the original occurrence owns rep_01ORIGINAL.
   const bytes = Buffer.from(JSON.stringify({ entries: [{ timestamp: 1, level: "info", message: "synthetic rerun frame" }] }));
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
   const calls: string[] = [];
   const report = (reportId: string) => ({ report: { reportId, kind: "automatic", status: "ready", mentraUserId: "mu_synthetic", trigger: null,
     report: null, feedback: null, context: {}, createdAt: null, updatedAt: null, artifacts: [{ artifactId: `art_${reportId.slice(4)}`,
       type: "logs", source: "phone", filename: null, contentType: "application/json", sizeBytes: bytes.byteLength, createdAt: null }] },
   assets: [{ artifactId: `art_${reportId.slice(4)}`, storageKey: `reports/${reportId}`, fileName: null, contentType: "application/json",
-    sizeBytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex"), createdAt: null }] }) as never;
+    sizeBytes: bytes.byteLength, sha256, createdAt: null }] }) as never;
   const store: IncidentReportStore = {
     getReport: async id => { calls.push(id); return report(id); },
     readReportArtifactPayload: async (id, artifactId) => { calls.push(`${id}/${artifactId}`);
-      return artifactId === `art_${id.slice(4)}` ? { bytes, contentType: "application/json", fileName: null } : null; },
+      return artifactId === `art_${id.slice(4)}` ? { bytes, contentType: "application/json", fileName: null, sha256 } : null; },
   };
   const f = fixture(store), failureId = f.result.failureOccurrences[0]!.occurrenceId;
   const byOccurrence: Record<string, string[]> = { [occurrenceId]: ["rep_01ORIGINAL"], [failureId]: ["rep_01RERUN"] };
