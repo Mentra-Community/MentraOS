@@ -7,6 +7,7 @@ import {GalleryCameraRollSetting} from "@/components/glasses/Gallery/GalleryCame
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {engine, SETTINGS, useSetting} from "@mentra/engine"
@@ -21,8 +22,13 @@ export default function GallerySettingsScreen() {
 
   const [localPhotoCount, setLocalPhotoCount] = useState(0)
   const [localVideoCount, setLocalVideoCount] = useState(0)
-  const [glassesPhotoCount, setGlassesPhotoCount] = useState(0)
-  const [glassesVideoCount, setGlassesVideoCount] = useState(0)
+  const glassesConnected =
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
+  const {glassesGallery} = useEngineSnapshot(engine.gallery.status, (onChange) => engine.gallery.onStatus(onChange))
+
+  useEffect(() => {
+    if (glassesConnected) void engine.gallery.refreshStatus()
+  }, [glassesConnected])
   const [totalStorageSize, setTotalStorageSize] = useState(0)
   const [isLoadingStats, setIsLoadingStats] = useState(true)
 
@@ -54,13 +60,6 @@ export default function GallerySettingsScreen() {
       setLocalPhotoCount(photos)
       setLocalVideoCount(videos)
       setTotalStorageSize(size)
-
-      // Try to get glasses status from global event if available
-      // Note: This won't be real-time, just shows last known status
-      // We don't have direct access to gallery status here, so we'll show 0
-      // The real implementation would need to query this via BLE
-      setGlassesPhotoCount(0)
-      setGlassesVideoCount(0)
     } catch (error) {
       console.error("[GallerySettings] Error loading stats:", error)
     } finally {
@@ -157,13 +156,13 @@ export default function GallerySettingsScreen() {
                 label: translate("glasses:photosOnGlasses", {
                   glassesName: defaultWearable || translate("glasses:title"),
                 }),
-                value: glassesPhotoCount > 0 ? glassesPhotoCount.toString() : "—",
+                value: glassesConnected ? glassesGallery.photos.toString() : "—",
               },
               {
                 label: translate("glasses:videosOnGlasses", {
                   glassesName: defaultWearable || translate("glasses:title"),
                 }),
-                value: glassesVideoCount > 0 ? glassesVideoCount.toString() : "—",
+                value: glassesConnected ? glassesGallery.videos.toString() : "—",
               },
               {
                 label: translate("glasses:storageUsed"),
