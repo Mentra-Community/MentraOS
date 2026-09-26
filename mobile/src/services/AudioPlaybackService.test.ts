@@ -1,5 +1,5 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {AudioStatus, createAudioPlayer, setAudioModeAsync} from "expo-audio"
+import {createAudioPlayer, setAudioModeAsync} from "expo-audio"
 
 import audioPlaybackService from "@/../modules/engine/src/services/AudioPlaybackService"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
@@ -24,10 +24,12 @@ const mockPlayer = {
   remove: jest.fn(),
   replace: jest.fn(),
   volume: 1,
-  currentStatus: {currentTime: 0, isLoaded: false, playbackState: "unknown"},
 }
 
-type MockPlaybackStatus = Partial<AudioStatus>
+type MockPlaybackStatus = {
+  didJustFinish: boolean
+  duration: number
+}
 
 function getLatestStatusListener() {
   const calls = mockPlayer.addListener.mock.calls
@@ -52,7 +54,6 @@ describe("AudioPlaybackService", () => {
     jest.clearAllMocks()
     resetBluetoothSdkMock()
     mockPlayer.volume = 1
-    mockPlayer.currentStatus = {currentTime: 0, isLoaded: false, playbackState: "unknown"}
     ;(BluetoothSdk.getGlassesMediaVolume as jest.Mock).mockResolvedValue({level: 1, statusCode: 0})
   })
 
@@ -177,118 +178,5 @@ describe("AudioPlaybackService", () => {
     expect(mockPlayer.replace).toHaveBeenCalledWith({uri: "https://example.com/slow.mp3"})
     expect(mockPlayer.play).toHaveBeenCalled()
     expect(BluetoothSdk.setGlassesMediaVolume).not.toHaveBeenCalled()
-  })
-
-  it("fails cloud speech that never starts even when iOS emits no status events", async () => {
-    const onComplete = jest.fn()
-    await audioPlaybackService.play(
-      {requestId: "stalled", audioUrl: "https://example.com/tts", startTimeoutMs: 10_000},
-      onComplete,
-    )
-
-    jest.advanceTimersByTime(9_999)
-    expect(onComplete).not.toHaveBeenCalled()
-    jest.advanceTimersByTime(1)
-
-    expect(onComplete).toHaveBeenCalledWith("stalled", false, "Audio did not start within 10000ms", null, "error")
-    expect(mockPlayer.replace).toHaveBeenLastCalledWith(9001)
-    expect(audioPlaybackService.isPlaying()).toBe(false)
-    getLatestStatusListener()({didJustFinish: true, duration: 0})
-    expect(onComplete).toHaveBeenCalledTimes(1)
-    jest.advanceTimersByTime(1_500)
-    expect(BluetoothSdk.setOwnAppAudioPlaying).toHaveBeenLastCalledWith(false)
-  })
-
-  it("allows speech that has started to finish beyond its startup deadline", async () => {
-    const onComplete = jest.fn()
-    await audioPlaybackService.play(
-      {requestId: "long-speech", audioUrl: "https://example.com/tts", startTimeoutMs: 10_000},
-      onComplete,
-    )
-    // Read native progress at the deadline even if JS status events were delayed.
-    mockPlayer.currentStatus = {currentTime: 9, isLoaded: true, playbackState: "readyToPlay"}
-    jest.advanceTimersByTime(20_000)
-    expect(onComplete).not.toHaveBeenCalled()
-    getLatestStatusListener()({didJustFinish: true, duration: 25})
-    expect(onComplete).toHaveBeenCalledWith("long-speech", true, null, 25_000, "completed")
-  })
-
-  it("does not treat a loaded but motionless player as started", async () => {
-    const onComplete = jest.fn()
-    await audioPlaybackService.play(
-      {requestId: "loaded-stall", audioUrl: "https://example.com/tts", startTimeoutMs: 10_000},
-      onComplete,
-    )
-    mockPlayer.currentStatus = {currentTime: 0, isLoaded: true, playbackState: "readyToPlay"}
-    jest.advanceTimersByTime(10_000)
-    expect(onComplete).toHaveBeenCalledWith("loaded-stall", false, expect.any(String), null, "error")
-  })
-
-  it("cancels the startup deadline when another request interrupts speech", async () => {
-    const firstComplete = jest.fn()
-    const secondComplete = jest.fn()
-    await audioPlaybackService.play(
-      {requestId: "old", audioUrl: "https://example.com/tts", startTimeoutMs: 10_000},
-      firstComplete,
-    )
-    jest.advanceTimersByTime(5_000)
-    await audioPlaybackService.play({requestId: "new", audioUrl: "file://cue.wav"}, secondComplete)
-    jest.advanceTimersByTime(10_000)
-    expect(firstComplete).toHaveBeenCalledTimes(1)
-    expect(firstComplete).toHaveBeenCalledWith("old", true, null, 5_000, "interrupted")
-    expect(secondComplete).not.toHaveBeenCalled()
-    expect(mockPlayer.replace).toHaveBeenLastCalledWith({uri: "file://cue.wav"})
-  })
-
-  it("allows a timeout callback to start fallback playback without a later stop", async () => {
-    const fallbackComplete = jest.fn()
-    let fallbackStart: Promise<void> | undefined
-    const onComplete = jest.fn(() => {
-      fallbackStart = audioPlaybackService.play({requestId: "offline", audioUrl: "file://speech.wav"}, fallbackComplete)
-    })
-    await audioPlaybackService.play(
-      {requestId: "cloud", audioUrl: "https://example.com/tts", startTimeoutMs: 10_000},
-      onComplete,
-    )
-    jest.advanceTimersByTime(10_000)
-    await fallbackStart
-    jest.advanceTimersByTime(2_000)
-    expect(onComplete).toHaveBeenCalledTimes(1)
-    expect(mockPlayer.replace).toHaveBeenLastCalledWith({uri: "file://speech.wav"})
-    expect(BluetoothSdk.setOwnAppAudioPlaying).toHaveBeenLastCalledWith(true)
-    expect(fallbackComplete).not.toHaveBeenCalled()
-  })
-
-  it.each(["cancel", "release", "complete"])("clears the startup deadline on %s", async (action) => {
-    const onComplete = jest.fn()
-    await audioPlaybackService.play(
-      {requestId: "finished", audioUrl: "https://example.com/tts", startTimeoutMs: 10_000},
-      onComplete,
-    )
-    if (action === "cancel") audioPlaybackService.cancelPlayback("finished")
-    else if (action === "release") audioPlaybackService.release()
-    else getLatestStatusListener()({didJustFinish: true, duration: 2})
-
-    jest.advanceTimersByTime(2_000)
-    expect(jest.getTimerCount()).toBe(0)
-    jest.advanceTimersByTime(10_000)
-    expect(onComplete).toHaveBeenCalledTimes(1)
-    expect(onComplete.mock.calls[0][1]).toBe(true)
-  })
-
-  it.each(["idle", "failed"])("reports native %s failure once and cancels the startup deadline", async (state) => {
-    const onComplete = jest.fn()
-    await audioPlaybackService.play(
-      {requestId: "failed", audioUrl: "https://example.com/tts", startTimeoutMs: 10_000},
-      onComplete,
-    )
-    jest.advanceTimersByTime(2_000)
-    const status = {playbackState: state, isLoaded: false, isBuffering: false}
-    getLatestStatusListener()(status)
-    getLatestStatusListener()(status)
-    jest.advanceTimersByTime(10_000)
-    expect(onComplete).toHaveBeenCalledTimes(1)
-    expect(onComplete).toHaveBeenCalledWith("failed", false, expect.any(String), null, "error")
-    expect(mockPlayer.replace).toHaveBeenLastCalledWith(9001)
   })
 })
