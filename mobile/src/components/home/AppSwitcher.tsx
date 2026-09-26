@@ -332,17 +332,21 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const directAppsRef = useRef(directApps)
   directAppsRef.current = directApps
 
+  // A stop acknowledgment must clear its dismissal even while selection freezes
+  // the visible order. Otherwise a relaunch can inherit the old hidden marker.
+  useEffect(() => {
+    setDismissingPackages((pending) => {
+      const remaining = new Set([...pending].filter((pkg) => directApps.some((app) => app.packageName === pkg)))
+      return remaining.size === pending.size ? pending : remaining
+    })
+  }, [directApps])
+
   useEffect(() => {
     if (selectionInFlight.current) return
     let cancelled = false
     sortAppsByLastOpenTime(directApps).then((sorted) => {
       if (cancelled || selectionInFlight.current) return
       setApps(sorted)
-      // Keep dismissed cards hidden until the sorted store snapshot catches up.
-      setDismissingPackages((pending) => {
-        const remaining = new Set([...pending].filter((pkg) => sorted.some((app) => app.packageName === pkg)))
-        return remaining.size === pending.size ? pending : remaining
-      })
     })
     return () => {
       cancelled = true

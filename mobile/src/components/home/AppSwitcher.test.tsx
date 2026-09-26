@@ -8,12 +8,13 @@ import AppSwitcher from "./AppSwitcher"
 import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 
 let mockApps: ClientApp[] = []
+let mockForegroundApp: ClientApp | null = null
 const mockStop = jest.fn()
 jest.mock("@mentra/engine", () => ({
   SETTINGS: {android_blur: {key: "android_blur"}},
   useSetting: () => [false],
   useActiveApps: () => mockApps,
-  useForegroundApp: () => null,
+  useForegroundApp: () => mockForegroundApp,
   useSetForeground: () => jest.fn(),
   sortAppsByLastOpenTime: async (apps: ClientApp[]) => apps,
   engine: {miniapps: {stop: (...args: unknown[]) => mockStop(...args)}},
@@ -49,7 +50,8 @@ const cardId = (pkg: string) => `runningApps.miniapp.${pkg}`
 const tray = () => <AppSwitcher swipeProgress={{value: 1} as SharedValue<number>} blurTargetRef={{current: null}} />
 
 beforeEach(() => {
-  useMiniappPresentationStore.setState({closingPackageName: null})
+  useMiniappPresentationStore.setState({closingPackageName: null, revealedPackageName: null})
+  mockForegroundApp = null
   // The shared animation mock does not run the reaction that exposes the tray.
   configure({defaultIncludeHiddenElements: true})
   mockApps = ["one", "two"].map((packageName) => ({packageName, name: packageName} as ClientApp))
@@ -190,4 +192,44 @@ test("removes a dismissed card before shutdown and keeps it hidden through stale
   view.rerender(tray())
   await act(async () => {})
   expect(screen.getByTestId(cardId("one"))).toBeTruthy()
+})
+
+test("shows a relaunched app whose stop completed while another app was being selected", async () => {
+  const stoppedApp = mockApps[0]
+  const selectedApp = {...mockApps[1], local: true} as ClientApp
+  mockApps = [stoppedApp, selectedApp]
+  let finishStop!: () => void
+  mockStop.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finishStop = resolve
+      }),
+  )
+  const view = render(tray())
+  await act(async () => {})
+
+  fireEvent(screen.getByTestId(cardId("one")), "accessibilityAction", {nativeEvent: {actionName: "dismiss"}})
+  mockForegroundApp = selectedApp
+  fireEvent(screen.getByTestId(cardId("two")), "accessibilityAction", {nativeEvent: {actionName: "activate"}})
+
+  // The store acknowledges the stop while the selected miniapp is still loading.
+  mockApps = [selectedApp]
+  await act(async () => {
+    finishStop()
+    view.rerender(tray())
+  })
+  expect(screen.queryByTestId(cardId("one"))).toBeNull()
+  await act(async () => {
+    useMiniappPresentationStore.getState().setRevealedPackageName("two")
+  })
+
+  // Relaunch before any further inactive snapshot can reconcile dismissal state.
+  mockApps = [selectedApp, stoppedApp]
+  view.rerender(tray())
+  await act(async () => {})
+  expect(screen.getByTestId(cardId("one"))).toBeTruthy()
+
+  mockStop.mockResolvedValue(undefined)
+  fireEvent(screen.getByTestId(cardId("one")), "accessibilityAction", {nativeEvent: {actionName: "dismiss"}})
+  expect(mockStop.mock.calls).toEqual([["one"], ["one"]])
 })
