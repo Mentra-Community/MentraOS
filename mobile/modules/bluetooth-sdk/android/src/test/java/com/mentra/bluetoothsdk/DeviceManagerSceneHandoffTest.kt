@@ -36,23 +36,63 @@ class DeviceManagerSceneHandoffTest {
                 original.hasMic = true
                 manager.setMicState()
                 assertEquals(true, DeviceStore.get("bluetooth", "micEnabled"))
+                assertEquals(true, DeviceStore.get("glasses", "micEnabled"))
 
-                manager.disconnect()
-                assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
-                assertEquals(true, DeviceStore.get("bluetooth", request))
-                val replacement = NimoRecordingSGC().apply { hasMic = true }
-                manager.sgc = replacement
-                DeviceStore.set("glasses", "micEnabled", false)
+                repeat(3) {
+                    manager.disconnect()
+                    assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
+                    assertEquals(false, DeviceStore.get("glasses", "micEnabled"))
+                    assertEquals(true, DeviceStore.get("bluetooth", request))
+                    val replacement = NimoRecordingSGC().apply { hasMic = true }
+                    manager.sgc = replacement
 
-                // The same request is deduplicated, exactly as on the phone.
-                DeviceStore.apply("bluetooth", request, true)
-                assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
-                DeviceStore.apply("glasses", "fullyBooted", true)
+                    // No test reset of glasses.micEnabled: production teardown must
+                    // clear it. Replaying the same consumer request is deduplicated.
+                    DeviceStore.apply("bluetooth", request, true)
+                    assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
+                    DeviceStore.apply("glasses", "fullyBooted", true)
 
-                assertEquals("Reconnect must restore $request", true, DeviceStore.get("bluetooth", "micEnabled"))
-                assertEquals(listOf(true), replacement.micChanges)
-                assertEquals("glasses", manager.activeMicSource())
+                    assertEquals("Reconnect must restore $request", true, DeviceStore.get("bluetooth", "micEnabled"))
+                    assertEquals(listOf(true), replacement.micChanges)
+                    assertEquals("glasses", manager.activeMicSource())
+                }
             }
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun linkDisconnectRetainsIntentForTheSameCommunicator() {
+        withReadyRecordingDevice { manager, original, _ ->
+            original.hasMic = true
+            DeviceStore.set("bluetooth", "micRanking", listOf("glasses"))
+            DeviceStore.set("glasses", "micEnabled", false)
+            DeviceStore.set("bluetooth", "should_send_lc3", true)
+            manager.setMicState()
+            assertEquals(listOf(true), original.micChanges)
+            DeviceStore.set("glasses", "fullyBooted", true)
+            DeviceStore.apply("glasses", "fullyBooted", false)
+            assertSame(original, manager.sgc)
+            assertEquals(true, DeviceStore.get("bluetooth", "should_send_lc3"))
+            assertEquals(true, DeviceStore.get("glasses", "micEnabled"))
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun discardingCommunicatorInvalidatesMicCache() {
+        withReadyRecordingDevice { manager, original, _ ->
+            original.hasMic = true
+            DeviceStore.set("bluetooth", "micRanking", listOf("glasses"))
+            DeviceStore.set("glasses", "micEnabled", false)
+            DeviceStore.set("bluetooth", "should_send_lc3", true)
+            manager.setMicState()
+            manager.initSGC(original.type)
+            assertEquals(true, DeviceStore.get("glasses", "micEnabled"))
+
+            // An unsupported model exercises disposal without starting real BLE.
+            manager.initSGC("Unavailable test glasses")
+            assertNull(manager.sgc)
+            assertEquals(false, DeviceStore.get("glasses", "micEnabled"))
+            assertEquals(true, DeviceStore.get("bluetooth", "should_send_lc3"))
         }
     }
 
@@ -62,10 +102,11 @@ class DeviceManagerSceneHandoffTest {
             for (key in listOf("should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active")) {
                 DeviceStore.set("bluetooth", key, false)
             }
+            DeviceStore.set("glasses", "micEnabled", true)
             manager.disconnect()
+            assertEquals(false, DeviceStore.get("glasses", "micEnabled"))
             val replacement = NimoRecordingSGC().apply { hasMic = true }
             manager.sgc = replacement
-            DeviceStore.set("glasses", "micEnabled", false)
             DeviceStore.apply("glasses", "fullyBooted", true)
             assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
             assertEquals("", manager.activeMicSource())

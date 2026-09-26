@@ -40,28 +40,60 @@ final class DeviceManagerReconnectTests: XCTestCase {
             withRecordingDevice { manager, store in
                 store.apply("bluetooth", request, true)
                 XCTAssertEqual(store.get("bluetooth", "micEnabled") as? Bool, true)
-                manager.disconnect()
-                XCTAssertEqual(store.get("bluetooth", request) as? Bool, true)
-                XCTAssertEqual(store.get("bluetooth", "micEnabled") as? Bool, false)
-                let reconnected = ReconnectRecordingDevice()
-                manager.sgc = reconnected
-                store.set("glasses", "micEnabled", false)
+                XCTAssertEqual(store.get("glasses", "micEnabled") as? Bool, true)
+                for _ in 0 ..< 3 {
+                    manager.disconnect()
+                    XCTAssertEqual(store.get("bluetooth", request) as? Bool, true)
+                    XCTAssertEqual(store.get("bluetooth", "micEnabled") as? Bool, false)
+                    XCTAssertEqual(store.get("glasses", "micEnabled") as? Bool, false)
+                    let reconnected = ReconnectRecordingDevice()
+                    manager.sgc = reconnected
 
-                // Replaying the same consumer request is deduplicated.
-                store.apply("bluetooth", request, true)
-                XCTAssertEqual(store.get("bluetooth", "micEnabled") as? Bool, false)
-                store.apply("glasses", "fullyBooted", true)
+                    // Replaying the same consumer request is deduplicated. No test
+                    // reset of glasses.micEnabled: production teardown must clear it.
+                    store.apply("bluetooth", request, true)
+                    XCTAssertEqual(store.get("bluetooth", "micEnabled") as? Bool, false)
+                    store.apply("glasses", "fullyBooted", true)
 
-                XCTAssertEqual(store.get("bluetooth", "micEnabled") as? Bool, true, request)
-                XCTAssertEqual(reconnected.micChanges, [true], request)
-                XCTAssertEqual(store.get("bluetooth", "currentMic") as? String, MicTypes.GLASSES_CUSTOM, request)
+                    XCTAssertEqual(store.get("bluetooth", "micEnabled") as? Bool, true, request)
+                    XCTAssertEqual(reconnected.micChanges, [true], request)
+                    XCTAssertEqual(store.get("bluetooth", "currentMic") as? String, MicTypes.GLASSES_CUSTOM, request)
+                }
             }
+        }
+    }
+
+    func testLinkDisconnectRetainsIntentForTheSameCommunicator() {
+        withRecordingDevice { manager, store in
+            store.apply("glasses", "fullyBooted", true)
+            store.apply("bluetooth", "should_send_lc3", true)
+            let original = manager.sgc as! ReconnectRecordingDevice
+            store.apply("glasses", "fullyBooted", false)
+            XCTAssertTrue((manager.sgc as? ReconnectRecordingDevice) === original)
+            XCTAssertEqual(store.get("bluetooth", "should_send_lc3") as? Bool, true)
+            XCTAssertEqual(store.get("glasses", "micEnabled") as? Bool, true)
+        }
+    }
+
+    func testDiscardingCommunicatorInvalidatesMicCache() {
+        withRecordingDevice { manager, store in
+            store.apply("bluetooth", "should_send_lc3", true)
+            manager.initSGC(manager.sgc!.type)
+            XCTAssertEqual(store.get("glasses", "micEnabled") as? Bool, true)
+
+            // An unsupported model exercises disposal without starting real BLE.
+            manager.initSGC("Unavailable test glasses")
+            XCTAssertNil(manager.sgc)
+            XCTAssertEqual(store.get("glasses", "micEnabled") as? Bool, false)
+            XCTAssertEqual(store.get("bluetooth", "should_send_lc3") as? Bool, true)
         }
     }
 
     func testReconnectWithoutAudioRequestsLeavesMicOff() {
         withRecordingDevice { manager, store in
+            store.set("glasses", "micEnabled", true)
             manager.disconnect()
+            XCTAssertEqual(store.get("glasses", "micEnabled") as? Bool, false)
             let reconnected = ReconnectRecordingDevice()
             manager.sgc = reconnected
             store.apply("glasses", "fullyBooted", true)

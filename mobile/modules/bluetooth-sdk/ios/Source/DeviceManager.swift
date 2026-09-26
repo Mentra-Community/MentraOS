@@ -723,6 +723,7 @@ struct ViewState {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
             sgc?.cleanup()
             sgc = nil
+            DeviceStore.shared.apply("glasses", "micEnabled", false)
             resetSystemTimeSync()
         }
 
@@ -1961,6 +1962,9 @@ struct ViewState {
         sgc?.clearDisplay() // clear the screen
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect
+        // This cache belongs to the discarded connection. Keep consumer demand,
+        // but require a new mic-enable command when replacement glasses are ready.
+        DeviceStore.shared.apply("glasses", "micEnabled", false)
         resetSystemTimeSync()
         resetMicHealth()
         searching = false
