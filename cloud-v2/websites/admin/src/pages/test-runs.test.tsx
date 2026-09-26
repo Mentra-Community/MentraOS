@@ -108,6 +108,26 @@ const amendedCiRecovery: TestRunDetail = {
     recoveryHistorySha256: "4".repeat(64),
   },
 };
+// Mirrors Core's supported recovery() fixture in test-run-overview.service.test.ts,
+// which carries no previousResultRunId.
+const coreRecovery: TestRunDetail = {
+  ...run,
+  runId: "recovery-2",
+  channel: "dev",
+  outcomes: { test: "failed", teardown: "passed", fixture: "ready", evidence: "incomplete" },
+  provenance: {
+    repository: "Mentra-Community/MentraOS",
+    requestSha256: "a".repeat(64),
+    executionMode: "ci-registered",
+    requestRelationship: "consumed",
+    resultGeneration: "2",
+    archiveSha256: "c".repeat(64),
+    originalRunId: "original",
+    originalTerminalSnapshotSha256: "b".repeat(64),
+    terminalSnapshotSha256: "d".repeat(64),
+    returnVerification: "passed",
+  },
+};
 
 describe("authenticated result navigation", () => {
   const buildQuery = new URLSearchParams({
@@ -450,6 +470,35 @@ describe("recording and chapter integrity", () => {
       expect(markup).toMatch(/>fixture<\/p>[\s\S]*?>ready<\/span>/);
     }
   });
+  test("Core-shaped and failed recoveries stay recoveries without previous-result metadata", () => {
+    expect(coreRecovery.provenance.previousResultRunId).toBeUndefined();
+    const failedAttempt: TestRunDetail = {
+      ...coreRecovery,
+      outcomes: { test: "failed", teardown: "failed", fixture: "unavailable", evidence: "incomplete" },
+      provenance: { ...coreRecovery.provenance, returnVerification: "failed" },
+    };
+    for (const [recovery, outcomes] of [
+      [coreRecovery, [["teardown", "passed"], ["fixture", "ready"]]],
+      [failedAttempt, [["teardown", "failed"], ["fixture", "unavailable"]]],
+    ] as const) {
+      const markup = renderToStaticMarkup(<TestRunView run={recovery} onStep={() => {}} />);
+      expect(relatedRun(recovery)).toEqual({ kind: "recovery", runId: "original" });
+      expect(markup).toContain('aria-label="Recovery result"');
+      expect(markup).toContain('href="/?testRun=original"');
+      expect(markup).not.toContain('aria-label="Source run"');
+      expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
+      for (const [label, value] of outcomes)
+        expect(markup).toMatch(new RegExp(`>${label}</p>[\\s\\S]*?>${value}</span>`));
+    }
+    // The optional previous result is not the displayed link and cannot decide the label.
+    for (const previousResultRunId of [undefined, ciRecovery.runId, "../other", "\ud800"]) {
+      const linked = { ...ciRecovery, provenance: { ...ciRecovery.provenance, previousResultRunId } };
+      expect(relatedRun(linked)).toEqual({ kind: "recovery", runId: "original_run-01" });
+      const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
+      expect(markup).toContain('aria-label="Recovery result"');
+      expect(markup.match(/href="\/\?testRun=[^"]*"/g)).toEqual(['href="/?testRun=original_run-01"']);
+    }
+  });
   test("development and legacy original run IDs keep a neutral source link, not a recovery label", () => {
     const development = {
       ...run,
@@ -487,9 +536,6 @@ describe("recording and chapter integrity", () => {
       { ...ciRecovery.provenance, resultGeneration: "02" },
       { ...ciRecovery.provenance, resultGeneration: "2.5" },
       { ...ciRecovery.provenance, resultGeneration: "9".repeat(20) },
-      { ...ciRecovery.provenance, previousResultRunId: undefined },
-      { ...ciRecovery.provenance, previousResultRunId: ciRecovery.runId },
-      { ...ciRecovery.provenance, previousResultRunId: "../other" },
       { ...amendedCiRecovery.provenance, originalTerminalSnapshotSha256: "E".repeat(64) },
       { ...ciRecovery.provenance, originalTerminalSnapshotSha256: "" },
       { ...ciRecovery.provenance, terminalSnapshotSha256: "not-a-digest" },
@@ -503,7 +549,7 @@ describe("recording and chapter integrity", () => {
     }
   });
   test("only valid distinct original run IDs produce a linked run", () => {
-    for (const base of [run, ciRecovery, amendedCiRecovery]) {
+    for (const base of [run, ciRecovery, amendedCiRecovery, coreRecovery]) {
       for (const originalRunId of [
         undefined,
         base.runId,
