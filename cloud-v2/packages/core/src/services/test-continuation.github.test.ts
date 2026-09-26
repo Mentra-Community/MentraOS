@@ -80,3 +80,73 @@ test("an adopted harness candidate uses only the recorded same-case owner's bran
   await expect(app.gateway.target(app.packet, { ...app.grant, caseBinding: bound.caseBinding }, "no-glasses")).rejects.toThrow("adopted shared harness");
   expect(app.calls).toEqual([]);
 });
+const collisions = (anchor: string) => [`codex/routine-${anchor}x`, `codex/routine-${anchor.slice(0, -1)}`, `codex/routine-${anchor}-2`,
+  `codex/routine-${anchor}/x`, `fix/codex/routine-${anchor}`, `codex/fix/routine-${anchor}`, `routine-${anchor}`, `refs/heads/codex/routine-${anchor}`,
+  `Codex/routine-${anchor}`, ` codex/routine-${anchor}`, `codex/routine-${anchor} `, "codex/routine-", "codex/routine-run_other", "fix/routine-run_other"];
+test("new case fixes admit exactly the codex or legacy fix branch of their anchor", async () => {
+  for (const channel of ["dev", "staging"] as const) {
+    const setup = (ref: string) => { const f = fixture(); f.packet.source = { schemaVersion: 1, trigger: channel, channel, repository: PUB, branch: channel, headSha: tested };
+      f.pr.base.ref = channel; f.pr.head.ref = ref; return f; };
+    for (const ref of ["codex/routine-run_123", "fix/routine-run_123"]) {
+      const f = setup(ref);
+      expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toEqual({ query: { channel: "pr", pr: 12 }, expectedHeadSha: head, automaticExpected: false });
+      f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
+      expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ query: { channel }, expectedHeadSha: merged });
+      // Repository, current head, base and tested ancestry still bind the new name.
+      for (const breakCandidate of [(g: ReturnType<typeof fixture>) => { g.pr.head.repo.full_name = "other/repo" as typeof PUB; },
+        (g: ReturnType<typeof fixture>) => { g.pr.head.sha = merged; }, (g: ReturnType<typeof fixture>) => { g.pr.base.ref = channel === "dev" ? "staging" : "dev"; },
+        (g: ReturnType<typeof fixture>) => { g.diverged(); }, (g: ReturnType<typeof fixture>) => { g.pr.state = "closed"; }]) {
+        const g = setup(ref); breakCandidate(g);
+        await expect(g.gateway.target(g.packet, g.grant, "no-glasses")).rejects.toThrow();
+      }
+    }
+    for (const ref of collisions("run_123")) {
+      const f = setup(ref);
+      await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("branch");
+    }
+    // A different run's grant cannot address this case's branch.
+    const other = setup("codex/routine-run_123");
+    await expect(other.gateway.target(other.packet, { ...other.grant, agentRunId: "run_1234" }, "no-glasses")).rejects.toThrow("branch");
+  }
+});
+test("an originating PR never substitutes an anchor-derived branch", async () => {
+  for (const ref of ["codex/routine-run_123", "fix/routine-run_123"]) {
+    const f = fixture(); f.pr.head.ref = ref;
+    await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("branch");
+    // Even when its recorded branch has that name, the PR number stays bound.
+    f.packet.source!.branch = ref;
+    expect((await f.gateway.target(f.packet, f.grant, "no-glasses")).query).toEqual({ channel: "pr", pr: 12 });
+    f.packet.source!.pullRequest!.number = 13;
+    await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("originating PR");
+  }
+});
+test("harness candidates and adopted owners admit the exact codex or legacy owner branch", async () => {
+  const mergedHarness = (ref: string) => { const f = fixture(true); f.pr.head.ref = ref;
+    f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z"; return f; };
+  for (const ref of ["codex/routine-run_123", "fix/routine-run_123"]) {
+    const f = mergedHarness(ref);
+    expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ expectedHeadSha: tested, expectedHarnessSha: merged });
+    const open = fixture(true); open.pr.head.ref = ref;
+    await expect(open.gateway.target(open.packet, open.grant, "no-glasses")).rejects.toThrow("review and merge");
+    const moved = mergedHarness(ref); moved.moveMain();
+    await expect(moved.gateway.target(moved.packet, moved.grant, "no-glasses")).rejects.toThrow("Private main changed");
+    const diverged = mergedHarness(ref); diverged.diverged();
+    await expect(diverged.gateway.target(diverged.packet, diverged.grant, "no-glasses")).rejects.toThrow("descend");
+  }
+  for (const ref of collisions("run_123")) {
+    const f = mergedHarness(ref);
+    await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("branch");
+  }
+  const caseBinding = { caseId: "mfc_" + "5".repeat(64), candidateOwnerRunId: "run_owner" };
+  for (const ref of ["codex/routine-run_owner", "fix/routine-run_owner"]) {
+    const f = mergedHarness(ref), bound = { ...f.grant, agentRunId: "run_sibling", caseBinding };
+    expect(await f.gateway.target(f.packet, bound, "no-glasses")).toMatchObject({ expectedHeadSha: tested, expectedHarnessSha: merged });
+    await expect(f.gateway.target(f.packet, { ...bound, caseBinding: undefined }, "no-glasses")).rejects.toThrow("branch");
+    await expect(f.gateway.target(f.packet, { ...bound, caseBinding: { ...caseBinding, candidateOwnerRunId: "run_other" } }, "no-glasses")).rejects.toThrow("branch");
+  }
+  // The binding makes the owner, not the consuming sibling, the only anchor.
+  for (const ref of ["codex/routine-run_sibling", "fix/routine-run_sibling", ...collisions("run_owner")]) {
+    const f = mergedHarness(ref);
+    await expect(f.gateway.target(f.packet, { ...f.grant, agentRunId: "run_sibling", caseBinding }, "no-glasses")).rejects.toThrow("branch");
+  }
+});
