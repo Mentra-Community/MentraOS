@@ -53,7 +53,11 @@ export function readOtaTargets(manifest, number, sha) {
   return {asg, bes: bes.version, mtk: mtk.end_firmware}
 }
 
-export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios, routines = []}) {
+const backendName = (backend) => (backend === "staging" ? "Staging" : "Dev")
+
+/** `backend` is shown only when a published receipt verified it for this PR's destination. */
+export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios, routines = [],
+  backend, unverifiedBackend = []}) {
   const ready = !error && !ios?.error
   const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
   const lines = [
@@ -105,7 +109,8 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   if (ios?.error) lines.push(`*iOS / macOS:* ${escape(ios.error)}`)
   if (!error || ios?.assets)
     lines.push(
-      `Backend: *${prBackend(pr.base.ref) === "staging" ? "Staging" : "Dev"}*${!error ? " · Android ARM64" : ""}${
+      `Backend: ${backend ? `*${backendName(backend)}*` : "not verified"}${
+        backend && unverifiedBackend.length ? ` (${unverifiedBackend.join(", ")} not verified)` : ""}${!error ? " · Android ARM64" : ""}${
         ios?.assets
           ? ` · Apple devices must be registered · ${link(ios.instructionsUrl, "Installation instructions")}`
           : ""
@@ -300,14 +305,21 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const repo = context.repo
   let pr = context.payload.pull_request
   const sha = pr.head.sha
+  // Snapshot the live destination. Artifacts are validated against it and a
+  // retarget before sending suppresses the post instead of relabelling builds.
+  let destination
   const current = async () => {
     pr = (await github.rest.pulls.get({...repo, pull_number: pr.number})).data
-    return pr.state === "open" && pr.head.sha === sha
+    destination ??= pr.base.ref
+    return pr.state === "open" && pr.head.sha === sha && pr.base.ref === destination
   }
   if (!(await current())) {
     core.info("PR closed or superseded; no notification.")
     return
   }
+  const backend = prBackend(destination)
+  const mismatch = (platform, actual) =>
+    `${platform} was built for ${["dev", "staging"].includes(actual) ? `the ${backendName(actual)}` : "an unrecorded"} backend, but this PR now targets ${destination}; rebuild it for this destination.`
   const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100})
   const ios = {required: iosBuildRequired(files)}
   const [androidBuild, asgBuild, iosBuild] = await Promise.all([
@@ -368,6 +380,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       )
       const receipt = await (await request(receiptUrl)).json()
       const assets = validateIosReceipt(receipt, coordinates)
+      if (receipt.app?.backend !== backend) throw new Error(mismatch("iOS / macOS", receipt.app?.backend))
       const urls = {}
       let macHandoff = false
       for (const [kind, asset] of Object.entries(assets)) {
@@ -379,6 +392,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
           throw new Error(`Published ${kind} download size disagrees with its receipt`)
       }
       ios.assets = urls
+      ios.backend = backend
       ios.archiveSha256 = assets.mac.sha256
       if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.runAttempt)
       ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/mobile/ci/pr-ios/README.md`
@@ -387,15 +401,23 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     }
   }
   const android = {}
-  if (hasRoutineLabel(pr, "no-glasses-android") && !error) {
+  if (!error) {
+    // The selected publication's receipt is the only evidence of the APK's backend.
+    let receipt, archiveSha256
     try {
       const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
-      const receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
+      receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
         androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
-      android.archiveSha256 = validateAndroidReceipt(receipt, coordinates).android.sha256
+      archiveSha256 = validateAndroidReceipt(receipt, coordinates).android.sha256
     } catch (failure) {
-      core.warning(`Android routine receipt unavailable: ${failure.message}; publish available downloads and keep receipt enrichment retryable.`)
+      receipt = undefined
+      core.warning(`Android receipt unavailable: ${failure.message}; publish available downloads and keep receipt verification retryable.`)
       android.receiptUnavailable = true
+    }
+    if (receipt && receipt.app.backend !== backend) error = mismatch("Android", receipt.app.backend)
+    else if (receipt) {
+      android.backend = backend
+      if (hasRoutineLabel(pr, "no-glasses-android")) android.archiveSha256 = archiveSha256
     }
   }
   const comments = await github.paginate(github.rest.issues.listComments, {
@@ -414,7 +436,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       new RegExp(`^<!-- ${sha}:(?:incomplete|ready):${publicationIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
     if (previous) {
       // Reuse only the hash already verified for these exact publications. Readiness
-      // can still advance so a newly available Apple download is not suppressed.
+      // can still advance so a newly available Apple download is not suppressed. The
+      // identity does not record a destination, so the Android backend stays unverified.
       android.archiveSha256 = previous[1]
       android.receiptUnavailable = false
     }
@@ -426,7 +449,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   }
   let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core})
   if (!(await current())) {
-    core.info("PR superseded before notification.")
+    core.info("PR superseded or retargeted before notification.")
     return
   }
   routines = routines.filter(routine => hasRoutineLabel(pr, routine.id))
@@ -441,6 +464,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     error,
     ios,
     routines,
+    backend: android.backend ?? ios.backend,
+    unverifiedBackend: !error && !android.backend ? ["Android"] : [],
   })
   // No automatic POST retry: an ambiguous network failure must not duplicate a post.
   const response = await fetchImpl(webhook, {
