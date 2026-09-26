@@ -1,4 +1,5 @@
 import type { TestRunProgressCheckpoint } from "./test-run-claim.types";
+import type { TestResourceObservation, TestResourceProgressCheckpoint } from "./test-resource-observation.types";
 
 export interface OverviewRequest {
   requestId: string;
@@ -79,6 +80,7 @@ export interface OverviewResolution {
  * One row per exact worker + fixture identity with cancelled, unverified attempts.
  * Decided only by the newest stored claim on that exact identity and that claim's
  * own results. It never changes an attempt's verdict, claim or cancellation.
+ * Historical CI return evidence: it does not observe local ownership after that claim.
  */
 export interface OverviewFixtureSummary {
   workerId: string;
@@ -105,6 +107,30 @@ export interface TestRunOverview {
   resolvedRecoveries: OverviewResolution[];
   /** Every cancelled attempt whose own return is unverified. Historical; not running jobs. */
   fixtureAttention?: OverviewJob[];
-  /** One readiness summary per worker/fixture in `fixtureAttention`. */
+  /** Latest CI return evidence per worker/fixture in `fixtureAttention`; history, not current ownership. */
   fixtureSummary: OverviewFixtureSummary[];
+  /** Latest reported local host resource observations, separate from CI jobs and results. Absent from older Cores. */
+  resourceObservations?: OverviewResourceObservations;
+}
+/**
+ * The latest observation one host reported for one guard. Reporting only: not a
+ * CI job, claim, result or readiness verdict. `receivedAt` is Core time.
+ */
+export interface OverviewResourceObservation {
+  hostId: string;
+  resourceKey: string;
+  revision: number;
+  receivedAt: string;
+  observation: TestResourceObservation;
+  /** The latest lifecycle checkpoint of the observed owner's run, when reported. */
+  progress?: TestResourceProgressCheckpoint;
+  /** Reported run IDs for which Core found a published result; others are shown as text. */
+  publishedRunIds: string[];
+}
+export interface OverviewResourceObservations {
+  /** False when the observation store could not be read; nothing is inferred. */
+  available: boolean;
+  /** More rows exist than the view bound. */
+  truncated: boolean;
+  items: OverviewResourceObservation[];
 }

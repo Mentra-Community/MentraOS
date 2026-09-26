@@ -1,9 +1,13 @@
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
+import { TestResourceObservationModel } from "../models/test-resource-observation.model";
 import { TestRunModel } from "../models/test-run.model";
 import type { TestRunClaim, TestRunClaimClosureRecord, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
-import type { TestRun } from "../types/test-run.types";
-import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest, OverviewResolution, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
+import { testResourceHostIdSchema, testResourceKeySchema, testResourceObservationSchema } from "../types/test-resource-observation.types";
+import { testRunIdSchema, type TestRun } from "../types/test-run.types";
+import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest, OverviewResolution, OverviewResourceObservation,
+  OverviewResourceObservations, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
+import { storedObservation, type StoredTestResourceObservation } from "./test-resource-observation.service";
 import { completeGithubActivity, GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
 
 export interface OverviewClaimRecord {
@@ -14,6 +18,8 @@ export interface OverviewClaimRecord {
 export interface FixtureIdentity { workerId: string; fixtureId: string }
 /** Fixture summaries check at most this many worker/fixture identities per overview. */
 export const FIXTURE_SUMMARY_LIMIT = 100;
+/** Resource observations shown per overview: the newest, plus the newest with an observed guard owner. */
+export const RESOURCE_OBSERVATION_LIMIT = 100;
 /** Display bounds for recorded failure text, in code points. */
 const RECORDED_TEXT = 240, RECORDED_LABEL = 160;
 export interface TestRunOverviewRepository {
@@ -22,6 +28,13 @@ export interface TestRunOverviewRepository {
   latestFixtureClaims(identities: FixtureIdentity[]): Promise<TestRunClaim[]>;
   results(requestIds: string[]): Promise<TestRun[]>;
   adminRequests(requestRunIds: number[]): Promise<number[]>;
+  /**
+   * The newest `limit` observations plus the newest `limit` that observed a guard owner,
+   * so a retained hold is never displaced by newer idle reports or by age.
+   */
+  resourceObservations(limit: number): Promise<{ rows: StoredTestResourceObservation[]; truncated: boolean }>;
+  /** The subset of these exact run IDs that have a published result. */
+  publishedRunIds(runIds: string[]): Promise<string[]>;
 }
 export class MongoTestRunOverviewRepository implements TestRunOverviewRepository {
   async claims(activeRequestIds: string[]) {
@@ -92,6 +105,26 @@ export class MongoTestRunOverviewRepository implements TestRunOverviewRepository
     const rows = await TestDispatchModel.find({ "receipt.requestRunId": { $in: requestRunIds } })
       .select({ "receipt.requestRunId": 1 }).lean();
     return rows.map(row => (row.receipt as { requestRunId: number }).requestRunId);
+  }
+  async resourceObservations(limit: number) {
+    const select = { _id: 0, hostId: 1, resourceKey: 1, revision: 1, receivedAt: 1, observation: 1, progress: 1, requestSha256: 1 };
+    const newest = (filter: Record<string, unknown>) => TestResourceObservationModel.find(filter).select(select)
+      .sort({ receivedAt: -1, hostId: 1, resourceKey: 1 }).limit(limit + 1).lean();
+    const [owned, recent] = await Promise.all([newest({ "observation.owner": { $exists: true } }), newest({})]);
+    // The two reads are separate snapshots: a row can change between them. Keep the
+    // highest server revision per resource so an older report never hides a newer one.
+    const rows = new Map<string, StoredTestResourceObservation>();
+    for (const row of [...owned.slice(0, limit), ...recent.slice(0, limit)] as Parameters<typeof storedObservation>[0][]) {
+      const key = JSON.stringify([row.hostId, row.resourceKey]);
+      if ((rows.get(key)?.revision ?? 0) < row.revision) rows.set(key, storedObservation(row));
+    }
+    return { rows: [...rows.values()], truncated: owned.length > limit || recent.length > limit };
+  }
+  async publishedRunIds(runIds: string[]) {
+    if (!runIds.length) return [];
+    if (runIds.length > RESOURCE_OBSERVATION_LIMIT * 4) throw new Error("Published run lookup exceeds overview limit");
+    const rows = await TestRunModel.find({ runId: { $in: runIds } }).select({ _id: 0, runId: 1 }).limit(runIds.length).lean();
+    return rows.map(row => row.runId);
   }
 }
 const project = (row: OverviewClaimRecord): OverviewClaim => ({ requestId: row.claim.requestId,
@@ -265,8 +298,39 @@ export class TestRunOverviewService {
     // `assigned` holds claims inside GitHub jobs; claim-only blocker rows report their own result instead.
     const fixtureSummary = await this.summarizeFixtures(fixtureAttention, assigned,
       resultsAvailable ? { results, requestIds: new Set(claims.map(row => row.claim.requestId)) } : null, warnings);
-    return { observedAt: this.now().toISOString(), jobs, warnings, resolvedRecoveries, fixtureAttention, fixtureSummary,
+    const resourceObservations = await this.resourceObservations(warnings);
+    return { observedAt: this.now().toISOString(), jobs, warnings, resolvedRecoveries, fixtureAttention, fixtureSummary, resourceObservations,
       recentMaintenance: githubResult.status === "fulfilled" ? githubResult.value.recentMaintenance ?? [] : [] };
+  }
+
+  /**
+   * Latest reported host resource observations, kept apart from CI jobs, claims and
+   * results. They are never correlated by fixture alias and never decide readiness.
+   * A run ID is linkable only when Core has a published result with that exact ID.
+   */
+  private async resourceObservations(warnings: string[]): Promise<OverviewResourceObservations> {
+    let loaded;
+    try { loaded = await this.repository.resourceObservations(RESOURCE_OBSERVATION_LIMIT); }
+    catch {
+      warnings.push("Local resource observations could not be loaded; local ownership is not shown.");
+      return { available: false, truncated: false, items: [] };
+    }
+    if (loaded.truncated) warnings.push(`More local resource observations exist than shown: the newest ${RESOURCE_OBSERVATION_LIMIT}, plus the newest ${RESOURCE_OBSERVATION_LIMIT} with an observed guard owner, are listed.`);
+    const items = loaded.rows.flatMap(row => testResourceHostIdSchema.safeParse(row.hostId).success && testResourceKeySchema.safeParse(row.resourceKey).success
+      && testResourceObservationSchema.safeParse(row.observation).success ? [row] : []);
+    if (items.length !== loaded.rows.length) warnings.push("Some stored local resource observations are unreadable and are not shown.");
+    const ids = (row: StoredTestResourceObservation) => {
+      const { owner, fixture } = row.observation;
+      return [...new Set([owner?.valid ? owner.reservation?.runID : undefined, fixture.checked && fixture.record === "valid" ? fixture.lastRunID : undefined])]
+        .filter((id): id is string => testRunIdSchema.safeParse(id).success);
+    };
+    let published = new Set<string>();
+    try { published = new Set(await this.repository.publishedRunIds([...new Set(items.flatMap(ids))])); }
+    catch { warnings.push("Published results for locally observed runs could not be checked; their run IDs are shown as text."); }
+    return { available: true, truncated: loaded.truncated, items: items.map((row): OverviewResourceObservation => ({
+      hostId: row.hostId, resourceKey: row.resourceKey, revision: row.revision, receivedAt: row.receivedAt, observation: row.observation,
+      ...(row.progress ? { progress: row.progress } : {}), publishedRunIds: ids(row).filter(id => published.has(id)),
+    })).sort((a, b) => a.hostId.localeCompare(b.hostId) || a.resourceKey.localeCompare(b.resourceKey)) };
   }
 
   /**

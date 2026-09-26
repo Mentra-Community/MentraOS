@@ -1,7 +1,9 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { OverviewJob, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
-import { elapsed, TestRunOverviewView } from "./test-run-overview";
+import { aliveObservation, noOwnerObservation, resourceProgress, retainedObservation } from "../../../../packages/core/src/types/test-resource-observation.examples";
+import type { TestResourceObservation } from "../../../../packages/core/src/types/test-resource-observation.types";
+import type { OverviewJob, OverviewResourceObservation, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import { elapsed, resourceStatus, TestRunOverviewView } from "./test-run-overview";
 
 const stamp = "2026-09-24T20:00:00.000Z";
 const data = (): TestRunOverview => ({ observedAt: stamp, warnings: [], resolvedRecoveries: [], recentMaintenance: [], fixtureSummary: [], jobs: [{
@@ -82,12 +84,12 @@ test("cancelled work is absent from live job counts while physical readiness has
     reason: "Physical return remains unverified.", responsible: "Test runner / operator", nextAction: "Recover the fixture.", cancelledAt: stamp } }];
   value.jobs = [];
   const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} onCancel={async () => {}} />);
-  expect(html).toContain("<strong>0</strong> blocked"); expect(html).toContain("Fixture readiness after resolved follow-up");
+  expect(html).toContain("<strong>0</strong> blocked"); expect(html).toContain("Latest CI return evidence after resolved follow-up");
   expect(html).toContain("Resolved follow-up history (1)"); expect(html).toContain("keep their original results");
   // Without a Core summary, nothing is presented as ready.
-  expect(html).toContain("Fixture readiness was not reported by Core. Treat these fixtures as unverified.");
+  expect(html).toContain("CI return evidence was not reported by Core. Treat these fixtures as unverified.");
   expect(html).not.toContain("Cancel further work"); expect(html).not.toContain(">returned<");
-  expect(html).toContain("No active jobs. Some fixture readiness below is not verified.");
+  expect(html).toContain("No active jobs. Some CI return evidence below is not verified.");
   expect(html).not.toContain("No active jobs or unresolved claims");
 });
 test("a closed claim is history with its failed result and uncommissioned fixture, not a live block or pass", () => {
@@ -99,7 +101,7 @@ test("a closed claim is history with its failed result and uncommissioned fixtur
   const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} onCancel={async () => {}} />);
   expect(html).toContain("<strong>0</strong> blocked"); expect(html).toContain("Closed by its original worker 0s ago; no test ran and the fixture was left uncommissioned");
   expect(html).toContain("Recorded result"); expect(html).toContain(">unverified<"); expect(html).not.toContain(">returned<");
-  expect(html).not.toContain("Cancel further work"); expect(html).toContain("No active jobs. Some fixture readiness below is not verified.");
+  expect(html).not.toContain("Cancel further work"); expect(html).toContain("No active jobs. Some CI return evidence below is not verified.");
 });
 test("shared history names cancelled and owner-closed requests neutrally while each entry keeps its own resolution", () => {
   const value = data(); const base = value.jobs[0]!;
@@ -116,9 +118,9 @@ test("shared history names cancelled and owner-closed requests neutrally while e
   value.jobs = [];
   const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} />);
   expect(html).not.toMatch(/cancelled attempt/i);
-  expect(html).toContain("Fixture readiness after resolved follow-up"); expect(html).toContain("Cancelled and closed requests keep their original results.");
+  expect(html).toContain("Latest CI return evidence after resolved follow-up"); expect(html).toContain("Cancelled and closed requests keep their original results.");
   expect(html).toContain("2 resolved requests before it"); expect(html).toContain("No newer claim on this worker and fixture since the newest resolved request.");
-  expect(html).toContain("No active jobs. Some fixture readiness below is not verified.");
+  expect(html).toContain("No active jobs. Some CI return evidence below is not verified.");
   const history = html.slice(html.indexOf("Resolved follow-up history (2)"));
   const [cancelled, closed] = history.split("no-glasses-closed");
   expect(cancelled).toContain("no-glasses-cancelled"); expect(cancelled).toContain("Follow-up cancelled 0s ago"); expect(cancelled).not.toContain("Closed by its original worker");
@@ -160,7 +162,7 @@ test("one readiness row per worker/fixture shows its newest claim; every cancell
         resultRunId: "routine-36080522386-1-dev-no-glasses" } },
   ];
   const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(later) + 60_000} onResult={() => {}} />);
-  const section = html.slice(html.indexOf("Fixture readiness after resolved follow-up"));
+  const section = html.slice(html.indexOf("Latest CI return evidence after resolved follow-up"));
   const [summary, history] = section.split("Resolved follow-up history");
   // One compact row per worker/fixture; no per-attempt blocked wall or per-request recovery instruction.
   expect(summary!.match(/<tr class="border-t/g)).toHaveLength(5);
@@ -169,7 +171,7 @@ test("one readiness row per worker/fixture shows its newest claim; every cancell
     expect(summary).toContain("<strong>" + count + "</strong> " + badge + "</span>");
   expect(summary).toContain("Latest claim routine-36080522386-1-dev-no-glasses, 1m 0s ago: cleanup and return were verified.");
   expect(summary).toContain("3 resolved requests before it");
-  expect(summary).toContain("No recovery is needed for the resolved requests. Use outside routine claims is not observed.");
+  expect(summary).toContain("No recovery is needed for the resolved requests. Use outside routine claims is not observed here; see Local resource observations.");
   expect(summary).toContain("Latest claim glasses-failure, 1m 0s ago: The recorded run left the fixture unavailable.");
   expect(summary).toContain("Latest claim phone-active, 1m 0s ago: This newer claim still owns the fixture");
   expect(summary).toContain("Newer claims on this worker and fixture could not be checked.");
@@ -216,4 +218,104 @@ test("a recorded failure is shown apart from the current recovery status, as pla
   expect(html).toContain("Step not reported"); expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
   expect(html).toContain("&lt;script&gt;x&lt;/script&gt;");
   expect(html).not.toContain("<img"); expect(html).not.toContain("<script>");
+});
+
+describe("local resource observations", () => {
+  const discovery = "discovery-46e1b113-108e-4769-8678-3bd2b8d10777";
+  const later = (ms: number) => new Date(Date.parse(stamp) + ms).toISOString();
+  const item = (hostId: string, observation: TestResourceObservation, extra: Partial<OverviewResourceObservation> = {}): OverviewResourceObservation =>
+    ({ hostId, resourceKey: "shared", revision: 4, receivedAt: later(3_600_000), observation, publishedRunIds: [], ...extra });
+  const view = (items: OverviewResourceObservation[] | undefined, now: number, change: (value: TestRunOverview) => void = () => {}) => {
+    const value = data(); value.jobs = [];
+    if (items) value.resourceObservations = { available: true, truncated: false, items };
+    change(value);
+    const html = renderToStaticMarkup(<TestRunOverviewView data={value} now={now} onResult={() => {}} />);
+    const start = html.indexOf('aria-label="Local resource observations"');
+    return { html, section: html.slice(start, html.indexOf("</section>", start)) };
+  };
+
+  test("an older verified CI return and a newer retained local hold are shown separately; age and a dead PID never clear the hold", () => {
+    const retained = item("mini-03be", retainedObservation(discovery), { progress: { ...resourceProgress(discovery, 41), mode: "complete", receivedAt: later(3_500_000) } });
+    const { html, section } = view([retained], Date.parse(stamp) + 7 * 24 * 3_600_000, value => {
+      value.fixtureAttention = [{ ...data().jobs[0]!, id: "claim-old", kind: "fixture", state: "blocked", claims: [{ requestId: "old", workerId: "mini-03be", fixtureId: "03BE", claimedAt: stamp }],
+        attention: { reason: "Physical return remains unverified.", responsible: "Test runner / operator", nextAction: "Recover the fixture.", cancelledAt: stamp } }];
+      value.fixtureSummary = [{ workerId: "mini-03be", fixtureId: "03BE", status: "latest-return-verified", cancelledRequestIds: ["old"], latestCancelledClaimAt: stamp,
+        latest: { requestId: "routine-2-1-dev-day1-ota", claimedAt: stamp, reason: "Verified return evidence is published.", resultRunId: "routine-2-1-dev-day1-ota" } }];
+    });
+    // The historical CI row keeps its outcome under an explicitly historical heading.
+    const ci = html.slice(html.indexOf("Latest CI return evidence after resolved follow-up"));
+    expect(ci).toContain(">returned<"); expect(ci).toContain("does not observe local ownership since then");
+    expect(html.indexOf("Local resource observations")).toBeLessThan(html.indexOf("Latest CI return evidence"));
+    expect(html).not.toContain(">Readiness<"); expect(html).not.toContain("Fixture readiness");
+    // The newer local observation stays a retained hold a week later.
+    expect(section).toContain(">retained hold<"); expect(section).toContain("PID 4242 · not running when observed");
+    expect(section).toContain("Retains the guard for its run on exit"); expect(section).toContain("Completed checkpoint · teardown");
+    expect(section).toContain("Pending step: teardown / stop-recording"); expect(section).toContain("Journal checkpoint 41");
+    expect(section).toContain("A dead PID or completed checkpoint does not release this hold.");
+    expect(section).toContain("Kept until this host reports a newer observation");
+    expect(section).toContain("Responsible: Test runner / operator");
+    expect(section).toContain("Next: Resume this run&#x27;s recovery through its original owner and publish verified return evidence.");
+    expect(section).toContain("Shared guard: Mac UI, Mac audio and all glasses pairs");
+    // No published result: the run ID is plain text, not a link.
+    expect(section).toContain("Run: <span class=\"break-all\">" + discovery + "</span>"); expect(section).not.toContain("<button");
+  });
+
+  test("missing, failed and empty feeds are explicit and never imply coverage", () => {
+    expect(view(undefined, Date.parse(stamp)).section).toContain("Local resource observations were not reported by Core. Local ownership is not shown; do not treat any host or fixture as free.");
+    expect(view([], Date.parse(stamp)).section).toContain("No host has reported a local resource observation. Local ownership is not covered by this view.");
+    const failed = view([], Date.parse(stamp), value => { value.resourceObservations = { available: false, truncated: false, items: [] }; }).section;
+    expect(failed).toContain("Local resource observations could not be loaded. Local ownership is unknown.");
+    const truncated = view([item("mini-1", noOwnerObservation())], Date.parse(stamp), value => { value.resourceObservations!.truncated = true; }).section;
+    expect(truncated).toContain("More observations exist than shown.");
+  });
+
+  test("a fresh no-owner snapshot is No owner observed, never ready; a stale one is not current", () => {
+    const fresh = view([item("mini-1", noOwnerObservation())], Date.parse(later(3_600_000)) + 30_000).section;
+    expect(fresh).toContain(">no owner observed<"); expect(fresh).toContain("No owner observed.");
+    expect(fresh).toContain("Fixture 03BE: recorded ready"); expect(fresh).toContain("Context only, not admission.");
+    expect(fresh).toContain("Next: Nothing to recover from this observation. Recorded fixture state is context; a routine still needs the normal acquisition and prerequisite checks.");
+    expect(fresh).not.toMatch(/>ready<|available to|free to use|firmware/i);
+    const stale = view([item("mini-1", noOwnerObservation())], Date.parse(later(3_600_000)) + 600_000).section;
+    expect(stale).toContain(">not current<"); expect(stale).toContain("No owner was observed at that time; the current state is unconfirmed.");
+    expect(stale).toContain("Next: Refresh this observation from the host before relying on it.");
+    expect(stale).not.toContain(">no owner observed<");
+  });
+
+  test("a fresh live owner names the owning runner; a stale one is unconfirmed rather than a running job", () => {
+    const alive = item("mini-1", aliveObservation("run-live"), { progress: { ...resourceProgress("run-live", 3), receivedAt: later(3_590_000) } });
+    const fresh = view([alive], Date.parse(later(3_600_000)) + 10_000).section;
+    expect(fresh).toContain(">owner alive<"); expect(fresh).toContain("Responsible: Owning test runner");
+    expect(fresh).toContain("A live PID is an observation, not proof of the owner&#x27;s identity.");
+    const stale = view([alive], Date.parse(later(3_600_000)) + 900_000).section;
+    expect(stale).toContain(">unconfirmed<"); expect(stale).toContain("A stale live PID is not proof of a running job.");
+    expect(stale).not.toContain(">owner alive<");
+  });
+
+  test("hosts and Android phones are separate rows; a shared fixture alias does not merge them; only published runs link", () => {
+    const { section } = view([
+      item("mini-2", noOwnerObservation("routine-9-1-dev-no-glasses"), { publishedRunIds: ["routine-9-1-dev-no-glasses"] }),
+      item("mini-1", retainedObservation("run-a")),
+      item("mini-1", aliveObservation("phone-run"), { resourceKey: "android-0123456789ab" }),
+    ], Date.parse(later(3_600_000)) + 10_000);
+    expect(section.match(/<tr class="border-t/g)).toHaveLength(3);
+    // Attention first: the retained hold, then the live owner, then the no-owner snapshot.
+    expect(section.indexOf("mini-1</p><p class=\"mt-1 text-[11px] text-[#68746d]\">Shared")).toBeLessThan(section.indexOf("Android phone 0123456789ab only"));
+    expect(section.indexOf("Android phone 0123456789ab only; independent of the shared guard")).toBeLessThan(section.indexOf("mini-2"));
+    expect(section.match(/Fixture 03BE:|Reserved fixture: 03BE/g)!.length).toBeGreaterThanOrEqual(3);
+    expect(section.match(/<button/g)).toHaveLength(1);
+    expect(section).toContain(">routine-9-1-dev-no-glasses</button>");
+    expect(section).toContain("<strong>1</strong> retained hold"); expect(section).toContain("<strong>1</strong> owner alive");
+  });
+
+  test("unavailable guard states use fixed wording and operator next actions", () => {
+    const unreadable = { state: "unknown", reason: "owner-unverifiable", guard: { lock: "unreadable", reclaimMarker: "absent" }, fixture: { checked: false } } as TestResourceObservation;
+    const malformed = { state: "idle-prerequisite-unknown", reason: "fixture-record-malformed", guard: { lock: "absent", reclaimMarker: "absent" },
+      fixture: { checked: true, record: "malformed" } } as TestResourceObservation;
+    const { section } = view([item("mini-1", unreadable), item("mini-2", malformed)], Date.parse(later(3_600_000)));
+    expect(section).toContain("Guard unreadable"); expect(section).toContain(">unknown<");
+    expect(section).toContain("Only the owner&#x27;s recovery or the normal acquisition may change it.");
+    expect(section).toContain("Fixture record malformed."); expect(section).toContain("Responsible: Operator");
+    expect(section).toContain("Next: Recommission this fixture before routines use it.");
+    expect(resourceStatus(item("mini-1", unreadable), Date.parse(later(3_600_000)) + 86_400_000).priority).toBe(1);
+  });
 });

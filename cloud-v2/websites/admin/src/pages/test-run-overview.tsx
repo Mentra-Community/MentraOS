@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest, OverviewResourceObservation,
+  TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import type { TestResourceReason } from "../../../../packages/core/src/types/test-resource-observation.types";
 import { api } from "../lib/api";
 
 const triggerNames: Record<OverviewRequest["trigger"], string> = {
@@ -114,7 +116,7 @@ const summaryText: Record<OverviewFixtureSummary["status"], { badge: string; col
   unverified: { badge: "unverified", colors: "bg-[#fff5df] text-[#805619]",
     next: "Confirm this fixture's state. If it is not ready, recover it once and publish verified return evidence." },
   "latest-return-verified": { badge: "returned", colors: "bg-[#e6f5ed] text-[#087d50]",
-    next: "No recovery is needed for the resolved requests. Use outside routine claims is not observed." },
+    next: "No recovery is needed for the resolved requests. Use outside routine claims is not observed here; see Local resource observations." },
 };
 const statusOrder = ["current-work", "not-checked", "unverified", "latest-return-verified"] as const;
 const unverifiedFixtures = (data: TestRunOverview) => (data.fixtureSummary ?? []).filter(item => item.status !== "latest-return-verified");
@@ -129,14 +131,14 @@ function LatestClaim({ item, now, onResult }: { item: OverviewFixtureSummary; no
 function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: number; onResult: (id: string) => void }) {
   const items = data.fixtureSummary ?? [], attempts = data.fixtureAttention ?? [];
   const count = (status: OverviewFixtureSummary["status"]) => items.filter(item => item.status === status).length;
-  return <section className="mt-5" aria-label="Fixture readiness after resolved follow-up">
-    <h4 className="text-sm font-semibold">Fixture readiness after resolved follow-up</h4>
-    <p className="mt-1 text-xs text-[#68746d]">One row per worker and fixture, judged only by its newest routine claim. Cancelled and closed requests keep their original results.</p>
+  return <section className="mt-5" aria-label="Latest CI return evidence after resolved follow-up">
+    <h4 className="text-sm font-semibold">Latest CI return evidence after resolved follow-up</h4>
+    <p className="mt-1 text-xs text-[#68746d]">History: one row per worker and fixture, judged only by its newest CI routine claim and that claim's published results. It does not observe local ownership since then. Cancelled and closed requests keep their original results.</p>
     {items.length ? <>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">{statusOrder.filter(status => count(status)).map(status =>
         <span key={status} className="rounded-md bg-[#f1f4ef] px-2 py-1"><strong>{count(status)}</strong> {summaryText[status].badge}</span>)}</div>
       <div className="mt-2 overflow-x-auto rounded-xl border border-[#e0e4de]"><table className="w-full text-left text-xs">
-        <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Readiness", "Worker / fixture", "Latest evidence", "Next action"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
+        <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["CI return evidence", "Worker / fixture", "Latest evidence", "Next action"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
         <tbody>{items.map(item => <tr key={item.workerId + "/" + item.fixtureId} className="border-t border-[#eceeeb] align-top">
           <td className="px-4 py-3"><span className={"inline-block rounded-md px-2 py-1 text-[11px] font-medium " + summaryText[item.status].colors}>{summaryText[item.status].badge}</span></td>
           <td className="max-w-[190px] break-words px-4 py-3"><p>{item.workerId}</p><p className="mt-1 text-[11px] text-[#68746d]">Fixture: {item.fixtureId}</p></td>
@@ -145,7 +147,7 @@ function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: n
           <td className="min-w-[220px] max-w-[300px] px-4 py-3 text-[11px]"><p>{summaryText[item.status].next}</p>
             {item.status !== "latest-return-verified" ? <p className="mt-1">Responsible: Test runner / operator</p> : null}</td>
         </tr>)}</tbody>
-      </table></div></> : <p className="mt-2 text-xs text-[#805619]">Fixture readiness was not reported by Core. Treat these fixtures as unverified.</p>}
+      </table></div></> : <p className="mt-2 text-xs text-[#805619]">CI return evidence was not reported by Core. Treat these fixtures as unverified.</p>}
     <details className="mt-2 text-xs"><summary className="cursor-pointer text-[#68746d]">Resolved follow-up history ({attempts.length})</summary>
       <ul className="mt-2 space-y-2">{attempts.map(job => <li key={job.id}>
         {job.requests.length ? job.requests.map(request => <RequestLabel key={request.requestId} request={request} />) : <p className="font-medium">{job.claims[0]?.requestId ?? job.title}</p>}
@@ -155,6 +157,136 @@ function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: n
         {job.attention ? <p className="text-[11px]">{job.attention.reason}</p> : null}
         {job.resultRunId ? <button className="text-[11px] text-[#087d50] underline" onClick={() => onResult(job.resultRunId!)}>Recorded result</button> : null}
       </li>)}</ul></details>
+  </section>;
+}
+
+/** Server receipt age after which a reported observation is no longer treated as current. */
+const RESOURCE_FRESH_MS = 120_000;
+type ResourceGuidance = { summary: string; responsible: "Owning test runner" | "Test runner / operator" | "Operator"; next: string };
+/** Fixed wording per reported reason. Observations carry no free text; only progress has bounded step/action labels. */
+const resourceGuidance: Record<TestResourceReason, ResourceGuidance> = {
+  "owner-process-alive": { summary: "The guard owner's PID answered a liveness probe.", responsible: "Owning test runner",
+    next: "Follow the owning run. A live PID is an observation, not proof of the owner's identity." },
+  "owner-liveness-unknown": { summary: "The guard owner's liveness could not be determined.", responsible: "Test runner / operator",
+    next: "Refresh this observation from the host. Do not assume the owner stopped." },
+  "owner-unverifiable": { summary: "A guard exists, but its owner record could not be read or validated.", responsible: "Test runner / operator",
+    next: "Inspect the guard with the host's read-only lane status. Only the owner's recovery or the normal acquisition may change it." },
+  "dead-retained-reservation": { summary: "The owner process is gone and the guard is retained for its run.", responsible: "Test runner / operator",
+    next: "Resume this run's recovery through its original owner and publish verified return evidence. A dead PID or completed checkpoint does not release this hold." },
+  "dead-retained-unclassified-installation": { summary: "The owner process is gone and the guard is retained without a lifecycle reservation.", responsible: "Test runner / operator",
+    next: "Identify the retained installation and recover it through its original owner. This view cannot release it." },
+  "dead-unretained-owner": { summary: "The owner process is gone and did not retain the guard.", responsible: "Test runner / operator",
+    next: "Only the next normal acquisition may reclaim this guard. Nothing here removes it." },
+  "reclaim-marker-present": { summary: "A reclaim was in progress during observation.", responsible: "Test runner / operator",
+    next: "Refresh this observation after the reclaim settles." },
+  "guard-changed-during-observation": { summary: "The guard changed while it was being observed.", responsible: "Test runner / operator",
+    next: "Refresh this observation." },
+  "reclaim-marker-unreadable": { summary: "The reclaim marker could not be read.", responsible: "Operator",
+    next: "Check the host's guard folder permissions with the read-only lane status, then refresh." },
+  "no-guard-fixture-not-supplied": { summary: "No owner observed. The fixture record was not checked.", responsible: "Test runner / operator",
+    next: "Nothing to recover from this observation. It checks no prerequisites and admits no routine." },
+  "no-guard-recorded-fixture-ready": { summary: "No owner observed.", responsible: "Test runner / operator",
+    next: "Nothing to recover from this observation. Recorded fixture state is context; a routine still needs the normal acquisition and prerequisite checks." },
+  "recorded-fixture-busy": { summary: "No owner observed, but the fixture record says busy.", responsible: "Test runner / operator",
+    next: "Reconcile the fixture record through its last run's recovery before routines use it." },
+  "recorded-fixture-recovery-required": { summary: "No owner observed; the fixture record requires recovery.", responsible: "Test runner / operator",
+    next: "Recover the fixture and publish verified return evidence before routines use it." },
+  "recorded-fixture-uncommissioned": { summary: "No owner observed; the fixture is recorded as uncommissioned.", responsible: "Operator",
+    next: "Commission this fixture before routines use it." },
+  "fixture-record-absent": { summary: "No owner observed; no fixture record exists.", responsible: "Operator",
+    next: "Commission this fixture before routines use it." },
+  "fixture-record-malformed": { summary: "No owner observed; the fixture record is malformed.", responsible: "Operator",
+    next: "Recommission this fixture before routines use it." },
+  "fixture-record-unreadable": { summary: "No owner observed; the fixture record could not be read.", responsible: "Operator",
+    next: "Check the fixture record's permissions on the host, then refresh." },
+};
+const noOwnerStates = new Set(["available-to-attempt", "idle-prerequisites-unchecked", "idle-prerequisite-blocked", "idle-prerequisite-unknown"]);
+const amber = "bg-[#fff5df] text-[#805619]", red = "bg-[#fff0e9] text-[#a64235]", neutral = "bg-[#f0f2ef] text-[#59655e]";
+/** Display state only. Age never clears a retained hold and never confirms a live owner. */
+export function resourceStatus(item: OverviewResourceObservation, now: number) {
+  const fresh = now - Date.parse(item.receivedAt) <= RESOURCE_FRESH_MS;
+  const { state } = item.observation;
+  if (state === "retained-recovery-required") return { badge: "retained hold", colors: red, fresh, priority: 0 };
+  if (state === "busy") return fresh ? { badge: "owner alive", colors: neutral, fresh, priority: 2 } : { badge: "unconfirmed", colors: amber, fresh, priority: 1 };
+  if (noOwnerStates.has(state)) return { badge: fresh ? "no owner observed" : "not current", colors: fresh ? neutral : amber, fresh, priority: 3 };
+  return { badge: state === "ownership-changing" ? "changing" : state === "stale-unretained-owner" ? "stale owner" : "unknown", colors: amber, fresh, priority: 1 };
+}
+function resourceAttention(item: OverviewResourceObservation, fresh: boolean): ResourceGuidance {
+  const guidance = resourceGuidance[item.observation.reason];
+  if (fresh || item.observation.state === "retained-recovery-required") return guidance;
+  if (item.observation.state === "busy") return { summary: "An owner PID was alive when last observed; current activity is unconfirmed.",
+    responsible: "Test runner / operator", next: "Refresh this observation from the host. A stale live PID is not proof of a running job." };
+  if (noOwnerStates.has(item.observation.state)) return { summary: "No owner was observed at that time; the current state is unconfirmed.",
+    responsible: "Test runner / operator", next: "Refresh this observation from the host before relying on it." };
+  return { ...guidance, next: "Refresh this observation from the host. " + guidance.next };
+}
+function RunReference({ id, item, onResult }: { id: string; item: OverviewResourceObservation; onResult: (id: string) => void }) {
+  return item.publishedRunIds.includes(id) ? <button className="text-[#087d50] underline" onClick={() => onResult(id)}>{id}</button>
+    : <span className="break-all">{id}</span>;
+}
+const fixtureStatusNames = { ready: "recorded ready", busy: "recorded busy", "recovery-required": "recorded recovery required", uncommissioned: "recorded uncommissioned" } as const;
+function ResourceRow({ item, now, onResult }: { item: OverviewResourceObservation; now: number; onResult: (id: string) => void }) {
+  const { observation: value, progress } = item;
+  const status = resourceStatus(item, now), attention = resourceAttention(item, status.fresh);
+  const owner = value.owner?.valid ? value.owner : undefined, checkpoint = value.lastCheckpoint?.available ? value.lastCheckpoint : undefined;
+  const fixture = value.fixture;
+  return <tr className="border-t border-[#eceeeb] align-top">
+    <td className="px-4 py-3"><span className={"inline-block rounded-md px-2 py-1 text-[11px] font-medium " + status.colors}>{status.badge}</span></td>
+    <td className="max-w-[210px] break-words px-4 py-3"><p>{item.hostId}</p>
+      <p className="mt-1 text-[11px] text-[#68746d]">{item.resourceKey === "shared" ? "Shared guard: Mac UI, Mac audio and all glasses pairs"
+        : "Android phone " + item.resourceKey.slice("android-".length) + " only; independent of the shared guard"}</p></td>
+    <td className="max-w-[240px] break-words px-4 py-3 text-[11px]">
+      {!value.owner ? <p>{value.guard.lock === "unreadable" ? "Guard unreadable" : "No guard owner"}</p>
+        : !owner ? <p>Owner record invalid</p>
+        : <><p>PID {owner.pid} · {owner.liveness === "alive" ? "alive" : owner.liveness === "dead" ? "not running" : "liveness unknown"} when observed</p>
+          {owner.retainOnExit ? <p className="mt-1">{owner.reservation ? "Retains the guard for its run on exit" : "Retains the guard without a lifecycle reservation"}</p> : null}
+          {owner.reservation ? <><p className="mt-1">Run: <RunReference id={owner.reservation.runID} item={item} onResult={onResult} /></p>
+            <p className="mt-1 text-[#68746d]">Reserved fixture: {owner.reservation.fixtureID}</p></> : null}</>}
+      {value.guard.reclaimMarker !== "absent" ? <p className="mt-1 text-[#805619]">Reclaim marker {value.guard.reclaimMarker}</p> : null}</td>
+    <td className="min-w-[230px] max-w-[320px] px-4 py-3 text-[11px]">
+      {checkpoint ? <><p>{checkpoint.mode === "complete" ? "Completed checkpoint" : checkpoint.mode === "recovering" ? "Recovery checkpoint" : "Running checkpoint"} · {checkpoint.phase}</p>
+        {checkpoint.pendingOperation ? <p className="mt-1">Pending step: {checkpoint.pendingOperation.phase} / {checkpoint.pendingOperation.stepID}</p> : null}
+        {checkpoint.pendingReconciliation ? <p className="mt-1">Pending reconciliation: {checkpoint.pendingReconciliation.phase} / {checkpoint.pendingReconciliation.stepID}</p> : null}</>
+        : value.lastCheckpoint ? <p>Lifecycle checkpoint unavailable</p> : <p className="text-[#68746d]">No lifecycle checkpoint for this owner</p>}
+      {progress ? <div className="mt-2">
+        <p className="font-medium">{progress.action?.label ?? progress.step?.label ?? "No step reported"}</p>
+        <p className="mt-0.5 text-[#68746d]">{progress.mode === "recovering" ? "Recovery · " : progress.mode === "complete" ? "Completed checkpoint · " : ""}{phaseNames[progress.phase]}
+          {" · "}{progress.action ? progress.action.totalActions === null ? progress.action.completedActions + " actions completed; total unknown"
+            : progress.action.completedActions + " of " + progress.action.totalActions + " actions completed" : "Lifecycle steps " + progress.completedSteps + "/" + progress.totalSteps + " in this phase"}</p>
+        <p className="text-[#68746d]">Journal checkpoint {progress.sequence}, received {elapsed(progress.receivedAt, now)} ago</p></div> : null}
+      {value.state === "retained-recovery-required" && (owner?.liveness === "dead" || checkpoint?.mode === "complete" || progress?.mode === "complete")
+        ? <p className="mt-2 text-[#a64235]">A dead PID or completed checkpoint does not release this hold.</p> : null}
+      <p className="mt-2 text-[#68746d]">{!fixture.checked ? "Fixture record not checked."
+        : fixture.record !== "valid" ? "Fixture record " + fixture.record + "."
+        : <>Fixture {fixture.fixtureID}: {fixtureStatusNames[fixture.status]} · last run <RunReference id={fixture.lastRunID} item={item} onResult={onResult} />. Context only, not admission.</>}</p></td>
+    <td className="min-w-[230px] max-w-[320px] px-4 py-3 text-[11px]"><p className="font-medium">{attention.summary}</p>
+      <p className="mt-1">Responsible: {attention.responsible}</p><p className="mt-1">Next: {attention.next}</p></td>
+    <td className="whitespace-nowrap px-4 py-3 text-[11px]"><p>{elapsed(item.receivedAt, now)} ago</p>
+      <p className="mt-0.5 text-[#68746d]">Revision {item.revision}</p>
+      {!status.fresh ? <p className="mt-1 text-[#805619]">{value.state === "retained-recovery-required" ? "Kept until this host reports a newer observation" : "Not current"}</p> : null}</td>
+  </tr>;
+}
+/** Latest reported host guards: never a CI job, readiness verdict, lock release or recovery control. */
+function ResourceObservations({ data, now, onResult }: { data: TestRunOverview; now: number; onResult: (id: string) => void }) {
+  const feed = data.resourceObservations;
+  const items = [...feed?.items ?? []].map(item => ({ item, status: resourceStatus(item, now) }))
+    .sort((a, b) => a.status.priority - b.status.priority || a.item.hostId.localeCompare(b.item.hostId) || a.item.resourceKey.localeCompare(b.item.resourceKey));
+  const counts = new Map<string, number>();
+  for (const { status } of items) counts.set(status.badge, (counts.get(status.badge) ?? 0) + 1);
+  return <section className="mt-5" aria-label="Local resource observations">
+    <h4 className="text-sm font-semibold">Local resource observations</h4>
+    <p className="mt-1 text-xs text-[#68746d]">The latest guard observation each reporting host sent to Core. Reporting only: nothing here admits a routine, releases a guard or recovers a resource. Hosts and phones that do not report are not listed.</p>
+    {!feed ? <p className="mt-2 text-xs text-[#805619]">Local resource observations were not reported by Core. Local ownership is not shown; do not treat any host or fixture as free.</p>
+      : !feed.available ? <p className="mt-2 text-xs text-[#805619]">Local resource observations could not be loaded. Local ownership is unknown.</p>
+      : !items.length ? <p className="mt-2 text-xs text-[#805619]">No host has reported a local resource observation. Local ownership is not covered by this view.</p>
+      : <><div className="mt-2 flex flex-wrap gap-2 text-xs">{[...counts].map(([badge, count]) =>
+          <span key={badge} className="rounded-md bg-[#f1f4ef] px-2 py-1"><strong>{count}</strong> {badge}</span>)}</div>
+        <div className="mt-2 overflow-x-auto rounded-xl border border-[#e0e4de]"><table className="w-full text-left text-xs">
+          <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Observed", "Host / resource", "Owner", "Checkpoint / fixture record", "Attention", "Received"].map(title =>
+            <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
+          <tbody>{items.map(({ item }) => <ResourceRow key={item.hostId + "/" + item.resourceKey} item={item} now={now} onResult={onResult} />)}</tbody>
+        </table></div>
+        {feed.truncated ? <p className="mt-2 text-xs text-[#805619]">More observations exist than shown. Only the newest observations and the newest with an observed owner are listed.</p> : null}</>}
   </section>;
 }
 
@@ -169,8 +301,9 @@ export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: T
       <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Status", "Build / routine", "Worker / fixture", "Last recorded progress", "Elapsed / update"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
       <tbody>{data.jobs.map(job => <JobRow key={job.id} job={job} now={now} onResult={onResult} onCancel={onCancel} />)}</tbody>
     </table></div> : <p className="mt-3 text-sm text-[#68746d]">{data.warnings.length ? "No activity could be confirmed from the available sources."
-      : data.fixtureAttention?.length ? unverifiedFixtures(data).length || !data.fixtureSummary?.length ? "No active jobs. Some fixture readiness below is not verified."
+      : data.fixtureAttention?.length ? unverifiedFixtures(data).length || !data.fixtureSummary?.length ? "No active jobs. Some CI return evidence below is not verified."
         : "No active jobs. Resolved follow-up history is below." : "No active jobs or unresolved claims were observed."}</p>}
+    <ResourceObservations data={data} now={now} onResult={onResult} />
     {data.fixtureAttention?.length ? <FixtureHistory data={data} now={now} onResult={onResult} /> : null}
     {data.resolvedRecoveries.length ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-[#68746d]">Verified return evidence ({data.resolvedRecoveries.length})</summary>
       <ul className="mt-2 space-y-1">{data.resolvedRecoveries.map(item => <li key={item.requestId}>{item.fixtureId} · {item.kind === "late-result"

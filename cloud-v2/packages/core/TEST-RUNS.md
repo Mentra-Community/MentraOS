@@ -4,6 +4,8 @@ This is an immutable result index and media service, not an execution queue.
 The separate [shared claim API](TEST-RUN-CLAIMS.md) reserves requests across workers;
 the Mac worker retains its local claim, sequential fixture access and recovery.
 No schedules, credentials, remote storage or deployments are enabled by this code.
+Latest host guard reports are separate [local resource observations](TEST-RESOURCE-OBSERVATIONS.md);
+they never change results, claims or CI return evidence.
 
 The exact version-one payload is `src/types/test-run.types.ts`. It retains separate
 test, teardown, fixture and evidence outcomes, selected-build provenance, firmware
