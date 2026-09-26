@@ -20,8 +20,9 @@ async function proxyCoreRequest(req: Request, upstreamCoreUrl: string) {
 
   // Core's Bun server also drops Content-Length on streaming S3 responses.
   // Restore only the exact length already described by a valid identity range
-  // on the authenticated evidence endpoint; keep the body streaming.
-  if (/^\/api\/admin\/test-runs\/[^/]+\/assets\/[^/]+$/.test(sourceUrl.pathname)
+  // on the authenticated media endpoints (test-run assets, incident report
+  // artifacts); keep the body streaming.
+  if (/^\/api\/admin\/(?:test-runs\/[^/]+\/assets|reports\/[^/]+\/artifacts)\/[^/]+$/.test(sourceUrl.pathname)
     && response.status === 206 && !response.headers.has("content-length")
     && [null, "identity"].includes(response.headers.get("content-encoding"))) {
     const match = response.headers.get("content-range")?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);

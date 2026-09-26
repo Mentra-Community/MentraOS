@@ -8,6 +8,7 @@ import { testFailureOccurrenceIdSchema, type TestFailureOccurrence } from "../ty
 import { testRunIdSchema, testRunSchema, type TestAsset, type TestRun, type TestRunQuery } from "../types/test-run.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
 import { createStorageService, type StorageService } from "./storage/storage.service";
+import { ByteRangeError, parseSingleByteRange } from "./storage/byte-range";
 
 export class TestRunError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 413 | 416, message: string) { super(message); }
@@ -146,17 +147,12 @@ export class MongoTestRunRepository implements TestRunRepository {
 
 /** Single HTTP byte range, inclusive. Invalid or multipart ranges are deliberately rejected. */
 export function parseTestAssetRange(header: string | null, size: number): { start: number; end: number } | undefined {
-  if (!header) return undefined;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header);
-  if (!match || (!match[1] && !match[2])) throw new TestRunError(416, "invalid byte range");
-  const suffix = match[1] === "";
-  const a = Number(match[1] || match[2]);
-  const b = match[2] ? Number(match[2]) : size - 1;
-  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || (suffix && a === 0)) throw new TestRunError(416, "invalid byte range");
-  const start = suffix ? Math.max(0, size - a) : a;
-  const end = suffix ? size - 1 : Math.min(b, size - 1);
-  if (start >= size || start > end) throw new TestRunError(416, "unsatisfiable byte range");
-  return { start, end };
+  try {
+    return parseSingleByteRange(header, size);
+  } catch (error) {
+    if (error instanceof ByteRangeError) throw new TestRunError(416, error.message);
+    throw error;
+  }
 }
 
 function mediaSignatureMatches(type: string, bytes: Buffer): boolean {

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
+import { bufferedRangeResponse } from "../../../packages/core/src/services/storage/byte-range";
 import { S3StorageProvider } from "../../../packages/core/src/services/storage/providers/s3-storage.provider";
 import { startAdminServer } from "./index";
 
@@ -36,6 +37,51 @@ test("the real admin proxy preserves authenticated media range lengths and exact
     expect(head.headers.get("content-length")).toBe("2");
     expect((await head.arrayBuffer()).byteLength).toBe(0);
     const full = await fetch(url, { headers: { cookie: "test-session=allowed" } });
+    expect(full.headers.get("content-length")).toBe(String(bytes.length));
+    expect(new Uint8Array(await full.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close(error => error ? reject(error) : resolve());
+      if ("closeAllConnections" in server) server.closeAllConnections();
+    });
+    upstream.stop(true);
+  }
+});
+
+test("the real admin proxy relays authenticated incident artifact ranges with exact lengths", async () => {
+  // Upstream uses Core's real buffered range responder behind a session check.
+  const bytes = Uint8Array.from({ length: 256 * 1024 }, (_, index) => index % 251);
+  const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+    if (req.headers.get("cookie") !== "test-session=allowed") return new Response(null, { status: 401 });
+    return bufferedRangeResponse(req, bytes, new Headers({ "content-type": "video/mp4", etag: '"synthetic"',
+      "x-content-type-options": "nosniff", "cache-control": "private, max-age=300" }));
+  } });
+  const server = startAdminServer({ hostname: "127.0.0.1", port: 0, coreUrl: upstream.url.href });
+  await once(server, "listening");
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/admin/reports/rep_example/artifacts/art_example`;
+  const cookie = "test-session=allowed";
+  try {
+    expect((await fetch(url, { headers: { range: "bytes=0-1" } })).status).toBe(401);
+    for (const [range, start, end] of [["bytes=0-1", 0, 1], ["bytes=-4096", bytes.length - 4096, bytes.length - 1],
+      ["bytes=1000-", 1000, bytes.length - 1]] as const) {
+      const response = await fetch(url, { headers: { cookie, range } });
+      expect(response.status).toBe(206);
+      expect(response.headers.get("content-length")).toBe(String(end - start + 1));
+      expect(response.headers.get("content-range")).toBe(`bytes ${start}-${end}/${bytes.length}`);
+      expect(response.headers.get("transfer-encoding")).toBeNull();
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(response.headers.get("cache-control")).toBe("private, max-age=300");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes.subarray(start, end + 1));
+    }
+    const head = await fetch(url, { method: "HEAD", headers: { cookie, range: "bytes=0-1" } });
+    expect(head.status).toBe(206);
+    expect(head.headers.get("content-length")).toBe("2");
+    expect((await head.arrayBuffer()).byteLength).toBe(0);
+    const unsatisfiable = await fetch(url, { headers: { cookie, range: `bytes=${bytes.length}-` } });
+    expect(unsatisfiable.status).toBe(416);
+    expect(unsatisfiable.headers.get("content-range")).toBe(`bytes */${bytes.length}`);
+    await unsatisfiable.arrayBuffer();
+    const full = await fetch(url, { headers: { cookie } });
     expect(full.headers.get("content-length")).toBe(String(bytes.length));
     expect(new Uint8Array(await full.arrayBuffer())).toEqual(bytes);
   } finally {
@@ -126,6 +172,9 @@ test("range length restoration rejects malformed, encoded and unrelated response
     { range: "bytes 0-1/*" }, { range: "bytes 0-1/9007199254740992" }, { range: "bytes 0-1/2,3-4/5" },
     { range: "bytes 0-1/2", encoding: "x-test-encoding" },
     { range: "bytes 0-1/2", path: "/api/other/video" },
+    { range: "bytes 0-1/2", path: "/api/admin/reports/rep_example/artifacts/art_example", expected: "2" },
+    { range: "bytes 0-1/2", path: "/api/admin/reports/rep_example" },
+    { range: "bytes 0-1/2", path: "/api/admin/reports/rep_example/artifacts/art_example/extra" },
     { range: "bytes 0-1/2", status: 200 },
   ];
   for (const entry of cases) {

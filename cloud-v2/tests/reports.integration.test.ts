@@ -17,7 +17,7 @@
  */
 
 import crypto from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -67,10 +67,16 @@ import { getReport } from "../packages/core/src/services/report.service";
 import {
   createStorageService,
   sha256Hex,
+  StorageService,
 } from "../packages/core/src/services/storage/storage.service";
 
 // Mirrors the limits in api/client/reports.api.ts.
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+// Genuine synthetic silent H264 MP4 (64x64, 10 frames, no audio), written by
+// AVFoundation. It exercises a real encoded file end to end; browser playback
+// is still qualified separately.
+const H264_FIXTURE = new URL("./fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url);
 const MAX_ATTACHMENT_FILES = 5;
 const MAX_REQUEST_BODY_BYTES =
   MAX_ATTACHMENT_BYTES * MAX_ATTACHMENT_FILES + 1024 * 1024;
@@ -297,10 +303,196 @@ describe("reports upload limits", () => {
   });
 });
 
+describe("report MP4 video artifacts", () => {
+  test("appends a genuine H264 MP4 to an existing ready report as a host video, preserving the report", async () => {
+    const reportId = await submitBugReport();
+    const logs = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "logs",
+          source: "glasses",
+          entries: [{ timestamp: 1700000000001, level: "info", message: "before video" }],
+        }),
+      }),
+    );
+    expect(logs.status).toBe(200);
+    expect((await completeReport(reportId)).status).toBe(200);
+    const before = await ReportModel.collection.findOne({ reportId });
+    expect(before?.status).toBe("ready");
+
+    const video = await readFile(H264_FIXTURE);
+    const res = await postArtifacts(
+      reportId,
+      videoForm("host", new File([video], "recording.mp4", { type: "video/mp4" })),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ stored: 1 });
+
+    // The report narrative, context, status and original logs are untouched.
+    const after = await ReportModel.collection.findOne({ reportId });
+    expect(after?.status).toBe("ready");
+    expect(after?.context).toEqual(before?.context);
+    expect(after?.report).toEqual(before?.report);
+    const artifacts = (after?.artifacts ?? []) as Array<Record<string, unknown>>;
+    expect(artifacts).toHaveLength(2);
+    expect(artifacts[0]).toEqual((before?.artifacts as Array<Record<string, unknown>>)[0]);
+    expect(artifacts[1]).toMatchObject({
+      type: "video",
+      source: "host",
+      filename: "recording.mp4",
+      contentType: "video/mp4",
+      sizeBytes: video.byteLength,
+    });
+
+    const asset = await ReportAssetModel.findOne({ artifactId: artifacts[1].artifactId }).lean();
+    expect(asset?.contentType).toBe("video/mp4");
+    expect(asset?.sizeBytes).toBe(video.byteLength);
+    expect(asset?.sha256).toBe(sha256Hex(video));
+    const stored = await createStorageService().getObject(asset!.storageKey);
+    expect(Buffer.from(stored).equals(video)).toBe(true);
+
+    const detail = await getReport(reportId);
+    expect(detail?.report.artifacts[1]).toMatchObject({ type: "video", source: "host", contentType: "video/mp4" });
+  });
+
+  test("admits a transport-sized video body above the screenshot limit", async () => {
+    const reportId = await submitBugReport();
+    // Size boundary only: these bytes are not decodable video.
+    const body = isoHeaderedBytes(16_638_399);
+    const res = await postArtifacts(reportId, videoForm("host", new File([body], "large.mp4", { type: "video/mp4" })));
+    expect(res.status).toBe(200);
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    const artifact = ((doc?.artifacts ?? []) as Array<Record<string, unknown>>)[0];
+    expect(artifact).toMatchObject({ type: "video", sizeBytes: body.byteLength });
+    const asset = await ReportAssetModel.findOne({ artifactId: artifact.artifactId }).lean();
+    expect(asset?.sha256).toBe(sha256Hex(body));
+  });
+
+  test("requires the report owner's authentication and an existing report", async () => {
+    const reportId = await submitBugReport();
+    const upload = async () =>
+      videoForm("host", new File([await readFile(H264_FIXTURE)], "clip.mp4", { type: "video/mp4" }));
+
+    // The user auth middleware reports missing or invalid credentials as
+    // OAuth 400s, before the upload is read.
+    const anonymous = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, { method: "POST", body: await upload() }),
+    );
+    expect(anonymous.status).toBe(400);
+    expect(((await anonymous.json()) as { error: string }).error).toBe("invalid_request");
+    const forged = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: "Bearer not-a-real-token" },
+        body: await upload(),
+      }),
+    );
+    expect(forged.status).toBe(400);
+    expect(((await forged.json()) as { error: string }).error).toBe("invalid_grant");
+
+    const other = await exchange(mintSupabaseJwt("reports-user-2"));
+    expect(other.status).toBe(200);
+    const otherToken = ((await other.json()) as { access_token: string }).access_token;
+    const foreign = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${otherToken}` },
+        body: await upload(),
+      }),
+    );
+    expect(foreign.status).toBe(404);
+
+    expect((await postArtifacts("rep_does_not_exist", await upload())).status).toBe(404);
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    expect(doc?.artifacts ?? []).toHaveLength(0);
+    expect(await ReportAssetModel.countDocuments({})).toBe(0);
+  });
+
+  test("rejects unsupported video declarations and sizes before storing anything", async () => {
+    const reportId = await submitBugReport();
+    const fixture = await readFile(H264_FIXTURE);
+    const mp4 = (bytes: Uint8Array | string, name = "clip.mp4") => new File([bytes], name, { type: "video/mp4" });
+    const typed = (type: string, file: File) => {
+      const form = new FormData();
+      form.append("type", type);
+      form.append("files", file);
+      return form;
+    };
+    const cases: Array<[FormData, string]> = [
+      [videoForm("host", new File([fixture], "clip.png", { type: "image/png" })), "must be declared video/mp4"],
+      [videoForm("host", new File([fixture], "clip.mov", { type: "video/quicktime" })), "must be declared video/mp4"],
+      [videoForm(null, mp4(fixture)), "source label"],
+      [videoForm("../host", mp4(fixture)), "source label"],
+      [videoForm("host", mp4(isoHeaderedBytes(MAX_VIDEO_ATTACHMENT_BYTES + 1))), "exceeds"],
+      [videoForm("host", mp4("<script>alert(1)</script>")), "no MP4 file header"],
+      [videoForm("host", mp4(new Uint8Array(0))), "no MP4 file header"],
+      // A video never falls back to the screenshot contract.
+      [typed("screenshot", mp4(fixture)), "upload it with type=video"],
+      [(() => { const form = new FormData(); form.append("files", mp4(fixture)); return form; })(), "upload it with type=video"],
+      // Screenshots keep their own 10 MiB limit whatever the bytes are.
+      [typed("screenshot", new File([isoHeaderedBytes(MAX_ATTACHMENT_BYTES + 1)], "big.png", { type: "image/png" })), "exceeds"],
+      [typed("recording", mp4(fixture)), "unsupported multipart artifact type"],
+    ];
+    for (const [form, message] of cases) {
+      const res = await postArtifacts(reportId, form);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; error_description: string };
+      expect(body.error).toBe("invalid_request");
+      expect(body.error_description).toContain(message);
+    }
+    const doc = await ReportModel.collection.findOne({ reportId });
+    expect(doc?.artifacts ?? []).toHaveLength(0);
+    expect(await ReportAssetModel.countDocuments({})).toBe(0);
+  });
+
+  test("rejects a whole multipart video batch before storing any of it", async () => {
+    const reportId = await submitBugReport();
+    const prior = await uploadScreenshot(reportId);
+
+    const res = await postArtifacts(reportId, videoForm(
+      "host",
+      new File([await readFile(H264_FIXTURE)], "ok.mp4", { type: "video/mp4" }),
+      new File([crypto.randomBytes(64)], "fake.mp4", { type: "video/mp4" }),
+    ));
+    expect(res.status).toBe(400);
+
+    await expectOnlyArtifact(reportId, prior);
+  });
+
+  for (const [stage, inject] of [
+    ["blob storage", failSecondPutObject],
+    ["report metadata append", failNextArtifactAppend],
+  ] as const) {
+    test(`a failed ${stage} rolls back the videos and preserves prior artifacts`, async () => {
+      const reportId = await submitBugReport();
+      const prior = await uploadScreenshot(reportId);
+
+      const form = videoForm(
+        "host",
+        new File([await readFile(H264_FIXTURE)], "one.mp4", { type: "video/mp4" }),
+        new File([isoHeaderedBytes(8192)], "two.mp4", { type: "video/mp4" }),
+      );
+      const restore = inject();
+      const res = await postArtifacts(reportId, form).finally(restore);
+      expect(res.status).toBe(500);
+
+      await expectOnlyArtifact(reportId, prior);
+    });
+  }
+});
+
 describe("report Slack notifications", () => {
   const SLACK_WEBHOOK = "https://hooks.slack.test/services/T0/B0/reports";
   const realFetch = globalThis.fetch;
   let slackCalls: Array<{ url: string; payload: { text: string; blocks: unknown[] } }>;
+  // Resolves when the mocked webhook receives its first POST. The service
+  // notifies fire-and-forget after an async account-email lookup, so the
+  // response can return before the webhook call starts.
+  let delivered: Promise<void>;
 
   // The in-process app is invoked via coreApp.fetch (a plain handler call),
   // so replacing globalThis.fetch intercepts only the notifier's outbound
@@ -308,11 +500,16 @@ describe("report Slack notifications", () => {
   beforeEach(() => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = SLACK_WEBHOOK;
     slackCalls = [];
+    let markDelivered!: () => void;
+    delivered = new Promise((resolve) => {
+      markDelivered = resolve;
+    });
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       slackCalls.push({
         url: String(input),
         payload: JSON.parse(String(init?.body)) as { text: string; blocks: unknown[] },
       });
+      markDelivered();
       return new Response("ok", { status: 200 });
     }) as typeof fetch;
   });
@@ -338,8 +535,8 @@ describe("report Slack notifications", () => {
     const body = (await res.json()) as { reportId: string; status: string };
     expect(body.status).toBe("ready");
 
-    // The notifier fires before the response resolves (fire-and-forget, but
-    // the webhook call starts synchronously), so no waiting is needed.
+    // Wait for the webhook POST itself, before afterEach clears the webhook env.
+    await delivered;
     expect(slackCalls).toHaveLength(1);
     expect(slackCalls[0].url).toBe(SLACK_WEBHOOK);
     expect(slackCalls[0].payload.text).toContain("feedback");
@@ -362,6 +559,7 @@ describe("report Slack notifications", () => {
 
     const complete = await completeReport(reportId);
     expect(complete.status).toBe(200);
+    await delivered;
     expect(slackCalls).toHaveLength(1);
     expect(slackCalls[0].payload.text).toContain("bug");
     expect(slackCalls[0].payload.text).toContain(reportId);
@@ -426,6 +624,84 @@ function postArtifacts(reportId: string, form: FormData): Promise<Response> {
       body: form,
     }),
   );
+}
+
+/** A `type=video` multipart upload with an optional declared capture source. */
+function videoForm(source: string | null, ...files: File[]): FormData {
+  const form = new FormData();
+  form.append("type", "video");
+  if (source !== null) form.append("source", source);
+  for (const file of files) form.append("files", file);
+  return form;
+}
+
+/**
+ * Transport-sized bytes behind an ISO `ftyp` header: an `mdat` box of random
+ * data. They pass the upload's header check and exercise size limits and
+ * storage only. They are NOT decodable video; use H264_FIXTURE for that.
+ */
+function isoHeaderedBytes(size: number): Buffer {
+  const ftyp = Buffer.concat([
+    Buffer.from([0, 0, 0, 24]),
+    Buffer.from("ftypisom"),
+    Buffer.from([0, 0, 2, 0]),
+    Buffer.from("isommp41"),
+  ]);
+  const mdatSize = size - ftyp.byteLength;
+  const mdatHeader = Buffer.alloc(8);
+  mdatHeader.writeUInt32BE(mdatSize, 0);
+  mdatHeader.write("mdat", 4, "latin1");
+  return Buffer.concat([ftyp, mdatHeader, crypto.randomBytes(mdatSize - 8)]);
+}
+
+async function uploadScreenshot(reportId: string): Promise<string> {
+  const form = new FormData();
+  form.append("files", new File([crypto.randomBytes(256)], "prior.jpg", { type: "image/jpeg" }));
+  expect((await postArtifacts(reportId, form)).status).toBe(200);
+  const doc = await ReportModel.collection.findOne({ reportId });
+  return ((doc?.artifacts ?? []) as Array<{ artifactId: string }>)[0].artifactId;
+}
+
+/** The report keeps exactly its earlier artifact: no new metadata, asset rows or blobs. */
+async function expectOnlyArtifact(reportId: string, artifactId: string): Promise<void> {
+  const doc = await ReportModel.collection.findOne({ reportId });
+  expect(((doc?.artifacts ?? []) as Array<{ artifactId: string }>).map((a) => a.artifactId)).toEqual([artifactId]);
+  const assets = await ReportAssetModel.find({ reportId }).lean();
+  expect(assets.map((asset) => asset.artifactId)).toEqual([artifactId]);
+  const blobs = await readdir(join(STORAGE_DIR, "reports", reportId));
+  expect(blobs).toEqual([artifactId]);
+}
+
+/** Let the first blob write succeed and fail the second one. */
+function failSecondPutObject(): () => void {
+  const original = StorageService.prototype.putObject;
+  let calls = 0;
+  StorageService.prototype.putObject = function (this: StorageService, input) {
+    calls += 1;
+    if (calls === 2) return Promise.reject(new Error("injected storage failure"));
+    return original.call(this, input);
+  };
+  return () => {
+    StorageService.prototype.putObject = original;
+  };
+}
+
+/** Fail the metadata push after every blob and asset row was written. */
+function failNextArtifactAppend(): () => void {
+  const original = ReportModel.updateOne;
+  let failed = false;
+  const patched = function (this: unknown, ...args: unknown[]) {
+    const update = args[1];
+    if (!failed && update && typeof update === "object" && "$push" in update) {
+      failed = true;
+      throw new Error("injected metadata append failure");
+    }
+    return (original as (...params: unknown[]) => unknown).apply(this, args);
+  };
+  ReportModel.updateOne = patched as unknown as typeof original;
+  return () => {
+    ReportModel.updateOne = original;
+  };
 }
 
 function completeReport(reportId: string): Promise<Response> {

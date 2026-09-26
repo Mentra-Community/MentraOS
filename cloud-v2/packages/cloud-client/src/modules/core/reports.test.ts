@@ -118,6 +118,41 @@ describe("Core reports client", () => {
     expect(calls[0].body).toBeInstanceOf(FormData);
   });
 
+  test("adds MP4 videos with their declared capture source through the existing artifact route", async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const reports = new Reports({ http: fakeHttp(calls) });
+    const bytes = new Uint8Array([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]);
+
+    const result = await reports.addVideos("rep_123", "host", [
+      { blob: new Blob([bytes]), fileName: "recording.mp4" },
+      { blob: new Blob([bytes], { type: "video/mp4" }) },
+    ]);
+
+    expect(result).toEqual({ stored: 1 });
+    // One artifact call on the existing report; no submit or complete.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("POST_FORM");
+    expect(calls[0].path).toBe("/api/client/reports/rep_123/artifacts");
+    const form = calls[0].body as FormData;
+    expect(form.get("type")).toBe("video");
+    expect(form.get("source")).toBe("host");
+    const files = form.getAll("files") as File[];
+    expect(files.map((file) => file.type)).toEqual(["video/mp4", "video/mp4"]);
+    expect(files[0].name).toBe("recording.mp4");
+    expect(files[1].name).toMatch(/^video-\d+\.mp4$/);
+    expect(new Uint8Array(await files[0].arrayBuffer())).toEqual(bytes);
+  });
+
+  test("rejects a video without a blob or uri before sending anything", () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const reports = new Reports({ http: fakeHttp(calls) });
+
+    expect(() => reports.addVideos("rep_123", "host", [{ fileName: "missing.mp4" }])).toThrow(
+      "report video requires either blob or uri",
+    );
+    expect(calls).toHaveLength(0);
+  });
+
   test("marks reports ready after artifact collection", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const reports = new Reports({ http: fakeHttp(calls) });
