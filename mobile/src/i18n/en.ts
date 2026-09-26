@@ -294,6 +294,11 @@ const en = {
   },
   privacySettings: {
     title: "Privacy Settings",
+    telemetryLabel: "Usage Telemetry",
+    telemetrySubtitle:
+      "Share detailed app usage, such as screens viewed and features used, to help improve the Mentra App.",
+    basicUsageNotice:
+      "Basic usage reporting is always on. It uses an app installation ID to count app use and record which glasses are connected, even when Usage Telemetry is off.",
   },
   mirror: {
     title: "Glasses Mirror",
