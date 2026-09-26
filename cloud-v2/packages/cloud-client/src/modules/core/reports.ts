@@ -144,6 +144,44 @@ export class Reports {
     );
   }
 
+  /**
+   * Attach MP4 recordings to an existing report through the same artifact
+   * route. `source` is the capture source the caller declares (for example
+   * `phone` or `host`); the server stores it as given.
+   */
+  addVideos(
+    reportId: string,
+    source: string,
+    videos: ReportAttachmentInput[],
+  ): Promise<AddReportArtifactsResult> {
+    const form = new FormData();
+    form.append("type", "video");
+    form.append("source", source);
+    for (const video of videos) {
+      const filename = video.fileName || `video-${Date.now()}.mp4`;
+      const mimeType = video.mimeType || "video/mp4";
+      if (video.blob) {
+        // The part's declared type comes from the Blob, so make it the MP4 type.
+        const blob = video.blob.type === mimeType ? video.blob : new Blob([video.blob], { type: mimeType });
+        form.append("files", blob, filename);
+        continue;
+      }
+      if (!video.uri) {
+        throw new Error("report video requires either blob or uri");
+      }
+      form.append("files", {
+        uri: video.uri,
+        name: filename,
+        type: mimeType,
+      } as unknown as Blob);
+    }
+
+    return this.http.postForm<AddReportArtifactsResult>(
+      `${REPORTS_PATH}/${encodeURIComponent(reportId)}/artifacts`,
+      form,
+    );
+  }
+
   complete(reportId: string): Promise<{ status: ReportStatus }> {
     return this.http.post<{ status: ReportStatus }>(
       `${REPORTS_PATH}/${encodeURIComponent(reportId)}/complete`,

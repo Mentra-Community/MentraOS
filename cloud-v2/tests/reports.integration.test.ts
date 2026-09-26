@@ -17,7 +17,7 @@
  */
 
 import crypto from "node:crypto";
-import { readdir, rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -72,7 +72,11 @@ import {
 
 // Mirrors the limits in api/client/reports.api.ts.
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const MAX_VIDEO_ATTACHMENT_BYTES = 32 * 1024 * 1024;
+const MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+// Genuine synthetic silent H264 MP4 (64x64, 10 frames, no audio), written by
+// AVFoundation. It exercises a real encoded file end to end; browser playback
+// is still qualified separately.
+const H264_FIXTURE = new URL("./fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url);
 const MAX_ATTACHMENT_FILES = 5;
 const MAX_REQUEST_BODY_BYTES =
   MAX_ATTACHMENT_BYTES * MAX_ATTACHMENT_FILES + 1024 * 1024;
@@ -300,29 +304,49 @@ describe("reports upload limits", () => {
 });
 
 describe("report MP4 video artifacts", () => {
-  test("stores a verified MP4 above the screenshot limit as a video with its exact type and length", async () => {
+  test("appends a genuine H264 MP4 to an existing ready report as a host video, preserving the report", async () => {
     const reportId = await submitBugReport();
-    // Synthetic ISO media bytes sized like a short phone recording.
-    const video = syntheticMp4(16_638_399);
+    const logs = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "logs",
+          source: "glasses",
+          entries: [{ timestamp: 1700000000001, level: "info", message: "before video" }],
+        }),
+      }),
+    );
+    expect(logs.status).toBe(200);
+    expect((await completeReport(reportId)).status).toBe(200);
+    const before = await ReportModel.collection.findOne({ reportId });
+    expect(before?.status).toBe("ready");
 
-    const form = new FormData();
-    form.append("files", new File([video], "recording.mp4", { type: "video/mp4" }));
-    const res = await postArtifacts(reportId, form);
+    const video = await readFile(H264_FIXTURE);
+    const res = await postArtifacts(
+      reportId,
+      videoForm("host", new File([video], "recording.mp4", { type: "video/mp4" })),
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ stored: 1 });
 
-    const doc = await ReportModel.collection.findOne({ reportId });
-    const artifacts = (doc?.artifacts ?? []) as Array<Record<string, unknown>>;
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0]).toMatchObject({
+    // The report narrative, context, status and original logs are untouched.
+    const after = await ReportModel.collection.findOne({ reportId });
+    expect(after?.status).toBe("ready");
+    expect(after?.context).toEqual(before?.context);
+    expect(after?.report).toEqual(before?.report);
+    const artifacts = (after?.artifacts ?? []) as Array<Record<string, unknown>>;
+    expect(artifacts).toHaveLength(2);
+    expect(artifacts[0]).toEqual((before?.artifacts as Array<Record<string, unknown>>)[0]);
+    expect(artifacts[1]).toMatchObject({
       type: "video",
-      source: "phone",
+      source: "host",
       filename: "recording.mp4",
       contentType: "video/mp4",
       sizeBytes: video.byteLength,
     });
 
-    const asset = await ReportAssetModel.findOne({ artifactId: artifacts[0].artifactId }).lean();
+    const asset = await ReportAssetModel.findOne({ artifactId: artifacts[1].artifactId }).lean();
     expect(asset?.contentType).toBe("video/mp4");
     expect(asset?.sizeBytes).toBe(video.byteLength);
     expect(asset?.sha256).toBe(sha256Hex(video));
@@ -330,21 +354,32 @@ describe("report MP4 video artifacts", () => {
     expect(Buffer.from(stored).equals(video)).toBe(true);
 
     const detail = await getReport(reportId);
-    expect(detail?.report.artifacts[0]).toMatchObject({ type: "video", contentType: "video/mp4" });
+    expect(detail?.report.artifacts[1]).toMatchObject({ type: "video", source: "host", contentType: "video/mp4" });
   });
 
-  test("requires the report owner's authentication", async () => {
+  test("admits a transport-sized video body above the screenshot limit", async () => {
     const reportId = await submitBugReport();
-    const upload = () => {
-      const form = new FormData();
-      form.append("files", new File([syntheticMp4(4096)], "clip.mp4", { type: "video/mp4" }));
-      return form;
-    };
+    // Size boundary only: these bytes are not decodable video.
+    const body = isoHeaderedBytes(16_638_399);
+    const res = await postArtifacts(reportId, videoForm("host", new File([body], "large.mp4", { type: "video/mp4" })));
+    expect(res.status).toBe(200);
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    const artifact = ((doc?.artifacts ?? []) as Array<Record<string, unknown>>)[0];
+    expect(artifact).toMatchObject({ type: "video", sizeBytes: body.byteLength });
+    const asset = await ReportAssetModel.findOne({ artifactId: artifact.artifactId }).lean();
+    expect(asset?.sha256).toBe(sha256Hex(body));
+  });
+
+  test("requires the report owner's authentication and an existing report", async () => {
+    const reportId = await submitBugReport();
+    const upload = async () =>
+      videoForm("host", new File([await readFile(H264_FIXTURE)], "clip.mp4", { type: "video/mp4" }));
 
     // The user auth middleware reports missing or invalid credentials as
     // OAuth 400s, before the upload is read.
     const anonymous = await coreApp.fetch(
-      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, { method: "POST", body: upload() }),
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, { method: "POST", body: await upload() }),
     );
     expect(anonymous.status).toBe(400);
     expect(((await anonymous.json()) as { error: string }).error).toBe("invalid_request");
@@ -352,7 +387,7 @@ describe("report MP4 video artifacts", () => {
       new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
         method: "POST",
         headers: { authorization: "Bearer not-a-real-token" },
-        body: upload(),
+        body: await upload(),
       }),
     );
     expect(forged.status).toBe(400);
@@ -365,28 +400,44 @@ describe("report MP4 video artifacts", () => {
       new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
         method: "POST",
         headers: { authorization: `Bearer ${otherToken}` },
-        body: upload(),
+        body: await upload(),
       }),
     );
     expect(foreign.status).toBe(404);
+
+    expect((await postArtifacts("rep_does_not_exist", await upload())).status).toBe(404);
 
     const doc = await ReportModel.collection.findOne({ reportId });
     expect(doc?.artifacts ?? []).toHaveLength(0);
     expect(await ReportAssetModel.countDocuments({})).toBe(0);
   });
 
-  test("keeps separate video and image limits and rejects a declared MP4 without an MP4 header", async () => {
+  test("rejects unsupported video declarations and sizes before storing anything", async () => {
     const reportId = await submitBugReport();
-    const cases: Array<[File, string]> = [
-      [new File([syntheticMp4(MAX_VIDEO_ATTACHMENT_BYTES + 1)], "long.mp4", { type: "video/mp4" }), "exceeds"],
-      // MP4 bytes do not earn the video allowance unless declared as MP4.
-      [new File([syntheticMp4(MAX_ATTACHMENT_BYTES + 1)], "renamed.png", { type: "image/png" }), "exceeds"],
-      [new File(["<script>alert(1)</script>"], "fake.mp4", { type: "video/mp4" }), "not an MP4"],
-      [new File([], "empty.mp4", { type: "video/mp4" }), "not an MP4"],
-    ];
-    for (const [file, message] of cases) {
+    const fixture = await readFile(H264_FIXTURE);
+    const mp4 = (bytes: Uint8Array | string, name = "clip.mp4") => new File([bytes], name, { type: "video/mp4" });
+    const typed = (type: string, file: File) => {
       const form = new FormData();
+      form.append("type", type);
       form.append("files", file);
+      return form;
+    };
+    const cases: Array<[FormData, string]> = [
+      [videoForm("host", new File([fixture], "clip.png", { type: "image/png" })), "must be declared video/mp4"],
+      [videoForm("host", new File([fixture], "clip.mov", { type: "video/quicktime" })), "must be declared video/mp4"],
+      [videoForm(null, mp4(fixture)), "source label"],
+      [videoForm("../host", mp4(fixture)), "source label"],
+      [videoForm("host", mp4(isoHeaderedBytes(MAX_VIDEO_ATTACHMENT_BYTES + 1))), "exceeds"],
+      [videoForm("host", mp4("<script>alert(1)</script>")), "no MP4 file header"],
+      [videoForm("host", mp4(new Uint8Array(0))), "no MP4 file header"],
+      // A video never falls back to the screenshot contract.
+      [typed("screenshot", mp4(fixture)), "upload it with type=video"],
+      [(() => { const form = new FormData(); form.append("files", mp4(fixture)); return form; })(), "upload it with type=video"],
+      // Screenshots keep their own 10 MiB limit whatever the bytes are.
+      [typed("screenshot", new File([isoHeaderedBytes(MAX_ATTACHMENT_BYTES + 1)], "big.png", { type: "image/png" })), "exceeds"],
+      [typed("recording", mp4(fixture)), "unsupported multipart artifact type"],
+    ];
+    for (const [form, message] of cases) {
       const res = await postArtifacts(reportId, form);
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string; error_description: string };
@@ -398,14 +449,15 @@ describe("report MP4 video artifacts", () => {
     expect(await ReportAssetModel.countDocuments({})).toBe(0);
   });
 
-  test("rejects a whole multipart batch before storing any of it", async () => {
+  test("rejects a whole multipart video batch before storing any of it", async () => {
     const reportId = await submitBugReport();
     const prior = await uploadScreenshot(reportId);
 
-    const form = new FormData();
-    form.append("files", new File([syntheticMp4(2048)], "ok.mp4", { type: "video/mp4" }));
-    form.append("files", new File([crypto.randomBytes(64)], "fake.mp4", { type: "video/mp4" }));
-    const res = await postArtifacts(reportId, form);
+    const res = await postArtifacts(reportId, videoForm(
+      "host",
+      new File([await readFile(H264_FIXTURE)], "ok.mp4", { type: "video/mp4" }),
+      new File([crypto.randomBytes(64)], "fake.mp4", { type: "video/mp4" }),
+    ));
     expect(res.status).toBe(400);
 
     await expectOnlyArtifact(reportId, prior);
@@ -415,13 +467,15 @@ describe("report MP4 video artifacts", () => {
     ["blob storage", failSecondPutObject],
     ["report metadata append", failNextArtifactAppend],
   ] as const) {
-    test(`a failed ${stage} rolls back the video and preserves prior artifacts`, async () => {
+    test(`a failed ${stage} rolls back the videos and preserves prior artifacts`, async () => {
       const reportId = await submitBugReport();
       const prior = await uploadScreenshot(reportId);
 
-      const form = new FormData();
-      form.append("files", new File([crypto.randomBytes(128)], "new.jpg", { type: "image/jpeg" }));
-      form.append("files", new File([syntheticMp4(8192)], "clip.mp4", { type: "video/mp4" }));
+      const form = videoForm(
+        "host",
+        new File([await readFile(H264_FIXTURE)], "one.mp4", { type: "video/mp4" }),
+        new File([isoHeaderedBytes(8192)], "two.mp4", { type: "video/mp4" }),
+      );
       const restore = inject();
       const res = await postArtifacts(reportId, form).finally(restore);
       expect(res.status).toBe(500);
@@ -562,11 +616,21 @@ function postArtifacts(reportId: string, form: FormData): Promise<Response> {
   );
 }
 
+/** A `type=video` multipart upload with an optional declared capture source. */
+function videoForm(source: string | null, ...files: File[]): FormData {
+  const form = new FormData();
+  form.append("type", "video");
+  if (source !== null) form.append("source", source);
+  for (const file of files) form.append("files", file);
+  return form;
+}
+
 /**
- * Synthetic ISO base media bytes: an `ftyp` box, then an `mdat` box filling the
- * requested size with random data. Test fixture only, not a playable recording.
+ * Transport-sized bytes behind an ISO `ftyp` header: an `mdat` box of random
+ * data. They pass the upload's header check and exercise size limits and
+ * storage only. They are NOT decodable video; use H264_FIXTURE for that.
  */
-function syntheticMp4(size: number): Buffer {
+function isoHeaderedBytes(size: number): Buffer {
   const ftyp = Buffer.concat([
     Buffer.from([0, 0, 0, 24]),
     Buffer.from("ftypisom"),

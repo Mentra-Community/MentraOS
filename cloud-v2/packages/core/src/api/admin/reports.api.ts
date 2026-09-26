@@ -94,7 +94,8 @@ const INLINE_CONTENT_TYPES = new Set([
   "image/png",
   "image/webp",
   "image/gif",
-  // Stored only for uploads whose MP4 signature was checked.
+  // Stored only by explicit type=video uploads declared video/mp4 with an
+  // ISO media header; not a proof that the stream is decodable.
   "video/mp4",
   "application/json",
 ]);

@@ -89,7 +89,6 @@ export interface ReportLogEntry {
 export type ReportArtifactType = "logs" | "screenshot" | "state_snapshot" | "video";
 
 export interface ReportAttachmentInput {
-  type: Extract<ReportArtifactType, "screenshot" | "video">;
   filename: string;
   contentType: string;
   bytes: Uint8Array;
@@ -201,18 +200,23 @@ export async function addLogArtifact(input: {
   });
 }
 
-/** Phone-attached files (screenshots and MP4 videos), classified by the upload route. */
+/**
+ * Multipart file attachments: screenshots, or MP4 videos with the capture
+ * source the uploader declared. The upload route validates type, MIME and size.
+ */
 export async function addAttachmentArtifacts(input: {
   mentraUserId: string;
   reportId: string;
+  type: Extract<ReportArtifactType, "screenshot" | "video">;
+  source: string;
   files: ReportAttachmentInput[];
 }): Promise<AddReportArtifactsResult | null> {
   return await addArtifacts({
     reportId: input.reportId,
     mentraUserId: input.mentraUserId,
     payloads: input.files.map((file) => ({
-      type: file.type,
-      source: "phone",
+      type: input.type,
+      source: input.source,
       filename: file.filename,
       contentType: file.contentType,
       bytes: file.bytes,

@@ -19,7 +19,7 @@
  */
 
 import crypto from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -208,17 +208,14 @@ describe("admin reports read surface", () => {
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 
-  test("plays a reporter's verified MP4 inline for admins only, with its exact length", async () => {
+  test("lists a host video and plays it inline for admins only, with its exact type and length", async () => {
     const reportId = await seedReport("video attached");
-    // Synthetic ISO media bytes (ftyp + mdat), larger than the screenshot limit.
-    const ftyp = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom"),
-      Buffer.from([0, 0, 2, 0]), Buffer.from("isommp41")]);
-    const media = crypto.randomBytes(12 * 1024 * 1024);
-    const mdat = Buffer.alloc(8);
-    mdat.writeUInt32BE(media.byteLength + 8, 0);
-    mdat.write("mdat", 4, "latin1");
-    const video = Buffer.concat([ftyp, mdat, media]);
+    // Genuine synthetic silent H264 MP4 (see tests/fixtures); playback itself is
+    // qualified in a browser, not here.
+    const video = await readFile(new URL("./fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url));
     const form = new FormData();
+    form.append("type", "video");
+    form.append("source", "host");
     form.append("files", new File([video], "recording.mp4", { type: "video/mp4" }));
     const upload = await coreApp.fetch(
       new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
@@ -229,12 +226,21 @@ describe("admin reports read surface", () => {
     );
     expect(upload.status).toBe(200);
 
+    const list = await adminGet(ADMIN_REPORTS_PATH);
+    const listed = ((await list.json()) as { reports: Array<{ reportId: string; artifacts: Array<{ type: string }> }> })
+      .reports.find(r => r.reportId === reportId)!;
+    expect(listed.artifacts.map(a => a.type).sort()).toEqual(["logs", "screenshot", "video"]);
+
     const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
-    const { report } = (await detail.json()) as {
-      report: { artifacts: Array<{ artifactId: string; type: string; contentType: string; sizeBytes: number }> };
+    const { report, assets } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; type: string; source: string; filename: string; contentType: string; sizeBytes: number }> };
+      assets: Array<{ artifactId: string; contentType: string; sizeBytes: number; sha256: string }>;
     };
     const clip = report.artifacts.find(a => a.type === "video")!;
-    expect(clip).toMatchObject({ contentType: "video/mp4", sizeBytes: video.byteLength });
+    expect(clip).toMatchObject({ source: "host", filename: "recording.mp4", contentType: "video/mp4", sizeBytes: video.byteLength });
+    const asset = assets.find(a => a.artifactId === clip.artifactId)!;
+    expect(asset).toMatchObject({ contentType: "video/mp4", sizeBytes: video.byteLength });
+    expect(asset.sha256).toBe(crypto.createHash("sha256").update(video).digest("hex"));
     const url = `${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${clip.artifactId}`;
 
     const res = await adminGet(url);
@@ -243,7 +249,8 @@ describe("admin reports read surface", () => {
     expect(res.headers.get("content-length")).toBe(String(video.byteLength));
     expect(res.headers.get("content-disposition")).toBe('inline; filename="recording.mp4"');
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=300");
     expect(Buffer.from(await res.arrayBuffer()).equals(video)).toBe(true);
 
     expect((await coreApp.fetch(new Request(url))).status).toBe(401);

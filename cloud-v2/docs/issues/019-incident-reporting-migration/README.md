@@ -51,14 +51,24 @@ There is deliberately no `/api/incidents` compatibility mount in Cloud V2.
 Glasses logs are report artifacts and use the same artifact endpoint as phone
 logs and screenshots.
 
-The report owner can also attach an MP4 recording as a multipart file declared
-`video/mp4`. It is stored as a `video` artifact only when the file starts with
-an ISO `ftyp` box. A video may be up to 32 MiB; other files keep the 10 MiB
-screenshot limit. The 5-file and 51 MiB request limits are unchanged. One
-invalid file rejects the whole upload before anything is stored. The admin
-artifact route serves the MP4 inline as one full `200` response with its exact
-`Content-Length`, and the admin console plays it in a native `<video>`. Byte
-ranges are not served.
+The report owner can also attach MP4 recordings to an existing report, whatever
+its status, with multipart `type=video`, a declared capture `source` label (for
+example `phone` or `host`) and `video/mp4` files. Cloud Client exposes this as
+`core.reports.addVideos(reportId, source, videos)`. The source is stored as
+declared; the server cannot verify where a recording was captured. Each video
+may be up to 20 MiB and must start with an ISO `ftyp` box. That header check is
+structural only and does not prove the stream is H264 or decodable. Uploads
+without `type`, or with `type=screenshot`, keep the screenshot contract (phone
+source, 10 MiB); a `video/*` file there is rejected rather than stored as a
+screenshot. Unknown types, non-MP4 videos and a missing source are rejected.
+The 5-file and 51 MiB request limits are unchanged. One invalid file rejects the
+whole upload before anything is stored.
+
+The admin artifact route serves the MP4 inline as one full `200` response with
+its exact `Content-Length`, and the admin console plays it in a native `<video>`
+at the same authenticated URL. Byte ranges are not served. Browser playback and
+seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
+artifacts with an `.mp4` extension.
 
 ## Mobile Flow
 
