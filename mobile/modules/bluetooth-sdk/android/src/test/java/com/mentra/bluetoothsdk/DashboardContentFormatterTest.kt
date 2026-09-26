@@ -7,7 +7,7 @@ class DashboardContentFormatterTest {
     @Test
     fun emptyContentReturnsStatusHeaderOnly() {
         assertEquals(
-            "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+            "\$TIME12$ \$DATE$ \$GBATT$",
             DashboardContentFormatter.template(""),
         )
     }
@@ -15,7 +15,7 @@ class DashboardContentFormatterTest {
     @Test
     fun nonEmptyContentIsAppendedExactlyAfterBlankLine() {
         assertEquals(
-            "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$\n\n  Next meeting\nRoom 2  ",
+            "\$TIME12$ \$DATE$ \$GBATT$\n\n  Next meeting\nRoom 2  ",
             DashboardContentFormatter.template("  Next meeting\nRoom 2  "),
         )
     }
