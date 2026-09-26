@@ -1,7 +1,26 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ReportArtifactView } from "./App";
+
+let ReportArtifactView: typeof import("./App").ReportArtifactView;
+
+// App.tsx reads window.location (hostname, search) while the module
+// evaluates. Provide a plain localhost location only for that import, then
+// restore whatever `window` was before (absent under plain Bun).
+beforeAll(async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    writable: true,
+    value: { location: new URL("http://localhost/") },
+  });
+  try {
+    ({ ReportArtifactView } = await import("./App"));
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else delete (globalThis as { window?: unknown }).window;
+  }
+});
 
 // Synthetic artifact metadata only; no report or media is fetched.
 const base = {
