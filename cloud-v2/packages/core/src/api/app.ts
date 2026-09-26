@@ -31,6 +31,7 @@ import reportAgent from "./agent/reports.api";
 import testFailureAgent from "./agent/test-failures.api";
 import testRunIngest from "./internal/test-runs.api";
 import testRunClaims from "./internal/test-run-claims.api";
+import testResourceObservations from "./internal/test-resource-observations.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
@@ -89,6 +90,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/agent/test-failures", testFailureAgent);
   app.route("/api/internal/test-runs", testRunIngest);
   app.route("/api/internal/test-run-claims", testRunClaims);
+  app.route("/api/internal/test-resource-observations", testResourceObservations);
   app.route("/api/client/miniapps", clientMiniapps);
   app.route("/api/account", accountApi);
   app.route("/api/account/oauth", accountOauth);

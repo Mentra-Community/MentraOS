@@ -82,8 +82,11 @@ export type TestRunClaimCloseRequest = z.infer<typeof testRunClaimCloseRequestSc
 export type TestRunClaimClosureRecord = TestRunClaimClosure & { closedAt: string };
 export interface TestRunClaimCloseResponse { executionGranted: false; claim: TestRunClaim; closure: TestRunClaimClosureRecord }
 
-/** A display checkpoint, never an execution grant, lease heartbeat or settlement. */
-const progressFields = z.object({
+/**
+ * A display checkpoint, never an execution grant, lease heartbeat or settlement.
+ * Exported unrefined so other reporting projections reuse the exact fields.
+ */
+export const testRunProgressFieldsSchema = z.object({
   sequence: z.number().int().positive().safe(),
   mode: z.enum(["running", "recovering", "complete"]),
   phase: z.enum(["preflight", "setup", "test", "final-assertions", "teardown", "return-verification", "evidence"]),
@@ -101,9 +104,9 @@ const progressFields = z.object({
   }).strict().refine(value => value.totalActions === null || value.completedActions <= value.totalActions,
     "completed actions exceed total").nullable().optional(),
 }).strict();
-const validCounts = (value: { completedSteps: number; totalSteps: number }) => value.completedSteps <= value.totalSteps;
-export const testRunProgressSchema = progressFields.refine(validCounts, "completed steps exceed phase total");
-export const testRunProgressRequestSchema = progressFields.extend({ executionToken: sha256 }).refine(validCounts, "completed steps exceed phase total");
+export const validTestRunProgressCounts = (value: { completedSteps: number; totalSteps: number }) => value.completedSteps <= value.totalSteps;
+export const testRunProgressSchema = testRunProgressFieldsSchema.refine(validTestRunProgressCounts, "completed steps exceed phase total");
+export const testRunProgressRequestSchema = testRunProgressFieldsSchema.extend({ executionToken: sha256 }).refine(validTestRunProgressCounts, "completed steps exceed phase total");
 export type TestRunProgress = z.infer<typeof testRunProgressSchema>;
 export type TestRunProgressCheckpoint = TestRunProgress & { receivedAt: string };
 export interface TestRunProgressResponse { accepted: boolean; sequence: number; receivedAt: string }

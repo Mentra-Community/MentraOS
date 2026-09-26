@@ -7,6 +7,10 @@ import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { TestRunModel } from "../models/test-run.model";
 import { recoveredClaim, recordedFailure, MongoTestRunOverviewRepository, TestRunOverviewService, type FixtureIdentity, type OverviewClaimRecord,
   type TestRunOverviewRepository } from "./test-run-overview.service";
+import type { StoredTestResourceObservation } from "./test-resource-observation.service";
+import { TestResourceObservationModel } from "../models/test-resource-observation.model";
+import { aliveObservation, noOwnerObservation, resourceProgress, retainedObservation } from "../types/test-resource-observation.examples";
+import type { TestResourceObservation } from "../types/test-resource-observation.types";
 
 const stamp = "2026-09-24T20:00:00.000Z";
 const claim = (id = "routine-500-1-dev-day1-ota"): TestRunClaim => ({ requestId: id, requestSha256: "a".repeat(64),
@@ -44,6 +48,11 @@ class Repository implements TestRunOverviewRepository {
     return this.resultRows.filter(run => requestIds.includes(run.requestId));
   }
   async adminRequests() { return this.admin; }
+  observations: StoredTestResourceObservation[] = [];
+  published: string[] = [];
+  publishedLookups: string[][] = [];
+  async resourceObservations(_limit: number) { return { rows: this.observations, truncated: false }; }
+  async publishedRunIds(runIds: string[]) { this.publishedLookups.push(runIds); return runIds.filter(id => this.published.includes(id)); }
 }
 test("all GitHub triggers remain visible; only matched send receipts get Admin origin", async () => {
   const repository = new Repository(); repository.admin = [500];
@@ -399,6 +408,78 @@ describe("fixture summaries follow the newest claim on each exact worker and fix
     // Only mini-2 is unverified: its newest claim is its own cancelled attempt.
     expect(statuses(view)).toEqual(new Set(["current-work", "not-checked", "unverified"]));
     expect(view.fixtureSummary.filter(item => item.status === "unverified").map(item => item.workerId)).toEqual(["mini-2"]);
+  });
+  const observed = (hostId: string, observation: TestResourceObservation, extra: Partial<StoredTestResourceObservation> = {}): StoredTestResourceObservation =>
+    ({ hostId, resourceKey: "shared", revision: 3, receivedAt: at(30), observation, requestSha256: "e".repeat(64), ...extra });
+  test("a newer local retained hold is a separate feed: CI return evidence is unchanged and aliases never correlate hosts", async () => {
+    const { repository, dev362 } = scenario();
+    const discovery = "discovery-46e1b113-108e-4769-8678-3bd2b8d10777";
+    repository.observations = [
+      // The same fixture alias (03BE) on two hosts, plus an independent Android phone on the first host.
+      observed("mini-1", retainedObservation(discovery), { progress: { ...resourceProgress(discovery, 12), mode: "complete", receivedAt: at(29) } }),
+      observed("mini-2", noOwnerObservation(dev362.requestId)),
+      observed("mini-1", aliveObservation("phone-run"), { resourceKey: "android-0123456789ab" }),
+    ];
+    repository.published = [dev362.requestId];
+    const baseline = await new TestRunOverviewService(scenario().repository, idle).overview();
+    const view = await new TestRunOverviewService(repository, idle).overview();
+    // Jobs, CI return evidence and history are identical with or without local observations.
+    expect(view.jobs).toEqual(baseline.jobs); expect(view.fixtureSummary).toEqual(baseline.fixtureSummary);
+    expect(view.fixtureAttention).toEqual(baseline.fixtureAttention); expect(view.resolvedRecoveries).toEqual(baseline.resolvedRecoveries);
+    expect(summary(view, "mini-1", "mini-ui-unpaired")?.status).toBe("latest-return-verified");
+    expect(baseline.resourceObservations).toEqual({ available: true, truncated: false, items: [] });
+    const items = view.resourceObservations!.items;
+    expect(items.map(item => [item.hostId, item.resourceKey, item.observation.state])).toEqual([
+      ["mini-1", "android-0123456789ab", "busy"], ["mini-1", "shared", "retained-recovery-required"], ["mini-2", "shared", "available-to-attempt"]]);
+    // A dead PID and a complete checkpoint are reported as-is; nothing converts them into a release.
+    expect(items[1]).toMatchObject({ receivedAt: at(30), progress: { mode: "complete", sequence: 12 },
+      observation: { owner: { liveness: "dead", retainOnExit: true }, lastCheckpoint: { pendingOperation: { stepID: "stop-recording" } } } });
+    // Only exact reported run IDs are looked up; an unpublished run stays text.
+    expect(repository.publishedLookups).toEqual([expect.arrayContaining([discovery, dev362.requestId, "phone-run"])]);
+    expect(items.map(item => item.publishedRunIds)).toEqual([[], [], [dev362.requestId]]);
+    expect(JSON.stringify(view.resourceObservations)).not.toContain("requestSha256");
+  });
+  test("resource observation outages are explicit and never hide CI evidence or invent links", async () => {
+    let { repository } = scenario();
+    repository.resourceObservations = async () => { throw Error("Private DB context"); };
+    let view = await new TestRunOverviewService(repository, idle).overview();
+    expect(view.resourceObservations).toEqual({ available: false, truncated: false, items: [] });
+    expect(view.warnings.join(" ")).toContain("Local resource observations could not be loaded");
+    expect(summary(view, "mini-1", "mini-ui-unpaired")?.status).toBe("latest-return-verified");
+    expect(JSON.stringify(view)).not.toContain("Private DB context");
+    ({ repository } = scenario());
+    repository.observations = [observed("mini-1", retainedObservation("run-a")),
+      observed("mini-2", { ...noOwnerObservation(), reason: "operator free text" } as unknown as TestResourceObservation)];
+    repository.publishedRunIds = async () => { throw Error("offline"); };
+    repository.resourceObservations = async () => ({ rows: repository.observations, truncated: true });
+    view = await new TestRunOverviewService(repository, idle).overview();
+    expect(view.resourceObservations?.items.map(item => [item.hostId, item.publishedRunIds])).toEqual([["mini-1", []]]);
+    expect(view.resourceObservations?.truncated).toBe(true);
+    expect(view.warnings.join(" ")).toContain("their run IDs are shown as text");
+    expect(view.warnings.join(" ")).toContain("unreadable and are not shown");
+    expect(view.warnings.join(" ")).toContain("More local resource observations exist than shown");
+  });
+  test("the Mongo reader keeps owned observations beyond the recency bound and checks exact published run IDs", async () => {
+    const row = (hostId: string, observation: TestResourceObservation) =>
+      ({ hostId, resourceKey: "shared", revision: 1, receivedAt: new Date(at(1)), observation, requestSha256: "e".repeat(64) });
+    const owned = [row("held", retainedObservation("run-a"))], recent = [row("idle-1", noOwnerObservation()), row("idle-2", noOwnerObservation()), row("idle-3", noOwnerObservation())];
+    const limits: number[] = [];
+    const query = (rows: unknown[]) => { const chain = { select: () => chain, sort: () => chain,
+      limit: (value: number) => { limits.push(value); return chain; }, lean: async () => rows }; return chain; };
+    const find = spyOn(TestResourceObservationModel, "find").mockImplementation(((filter: Record<string, unknown>) =>
+      query(filter["observation.owner"] ? owned : recent)) as unknown as typeof TestResourceObservationModel.find);
+    const runs = spyOn(TestRunModel, "find").mockImplementation((() => query([{ runId: "run-a" }])) as unknown as typeof TestRunModel.find);
+    try {
+      const mongo = new MongoTestRunOverviewRepository();
+      const loaded = await mongo.resourceObservations(2);
+      expect(limits).toEqual([3, 3]); expect(loaded.truncated).toBe(true);
+      expect(loaded.rows.map(item => item.hostId)).toEqual(["held", "idle-1", "idle-2"]);
+      expect(loaded.rows[0]!.receivedAt).toBe(at(1));
+      expect((find.mock.calls as unknown[][]).map(call => call[0])).toEqual([{ "observation.owner": { $exists: true } }, {}]);
+      expect(await mongo.publishedRunIds(["run-a", "run-b"])).toEqual(["run-a"]);
+      expect((runs.mock.calls as unknown[][])[0]?.[0]).toEqual({ runId: { $in: ["run-a", "run-b"] } });
+      expect(await mongo.publishedRunIds([])).toEqual([]); expect(runs).toHaveBeenCalledTimes(1);
+    } finally { find.mockRestore(); runs.mockRestore(); }
   });
   test("identities beyond the bound are not-checked; the Mongo query matches exact worker and fixture pairs", async () => {
     const repository = new Repository();
