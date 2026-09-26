@@ -18,13 +18,20 @@ export const publicationJobName = (runId, attempt, routine = "day1-ota", channel
   : `Request publication ${runId} / attempt ${attempt} / routine ${routine}`
 export const PUBLICATION_SEND_STEP = "Send trusted publication request"
 const callbackUrl = (id) => `https://github.com/${REPOSITORY}/actions/runs/${id}`
+// The jobs API can briefly lag the step that is running this code. Bounded re-reads
+// of this run's own jobs only; the send stays refused if its record never appears.
+const OWN_SEND_REREAD_MS = [1000, 2000, 4000, 8000]
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * The send step in a named, authenticated callback job is the pre-send fence.
  * Never delete its history to authorize replay. An unknown send or missing
  * history requires manual reconciliation, even if no child request is visible.
+ * The current send must be observable under the exact job name that later
+ * callbacks search, and is observed before other callbacks are read, so two
+ * unserialized callbacks cannot both miss each other and send.
  */
-async function automaticGenerationFence(github, context, plan) {
+async function automaticGenerationFence(github, context, plan, wait) {
   const {callbackAttempt, sourceCreatedAt} = plan
   requireThat(positive(context.runId) && positive(callbackAttempt) && SHA.test(context.sha ?? ""), "Missing callback identity")
   if (callbackAttempt !== 1) return {mode: "reconcile", callbackUrl: callbackUrl(context.runId),
@@ -57,11 +64,21 @@ async function automaticGenerationFence(github, context, plan) {
   const enteredSend = (job) => job.name === name && job.steps?.some((step) =>
     step.name === PUBLICATION_SEND_STEP && ["in_progress", "completed"].includes(step.status) &&
     step.conclusion !== "skipped" && typeof step.started_at === "string" && Number.isFinite(Date.parse(step.started_at)))
+  const readJobs = (runId) => github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo, run_id: runId, filter: "all", per_page: 100,
+  })
+  const ownSend = (jobs) => jobs.some((job) => enteredSend(job) &&
+    job.run_attempt === callbackAttempt && job.status === "in_progress")
+  let ownJobs = await readJobs(current.id)
+  for (const delay of OWN_SEND_REREAD_MS) {
+    if (ownSend(ownJobs)) break
+    await wait(delay)
+    ownJobs = await readJobs(current.id)
+  }
+  requireThat(ownSend(ownJobs), "Current publication send is absent from callback history")
   const matching = []
   for (const item of history) {
-    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-      ...context.repo, run_id: item.id, filter: "all", per_page: 100,
-    })
+    const jobs = item.id === current.id ? ownJobs : await readJobs(item.id)
     // Earlier callback versions sent in their single "dispatch" job. Their
     // outcome cannot be reconstructed safely, so retain that legacy fence too.
     const legacy = !plan.channel && plan.routine === "day1-ota" &&
@@ -71,8 +88,6 @@ async function automaticGenerationFence(github, context, plan) {
         job.steps?.some((step) => step.name === PUBLICATION_SEND_STEP &&
           ["in_progress", "completed"].includes(step.status) && step.conclusion !== "skipped")))
     if (legacy || jobs.some(enteredSend)) matching.push(item)
-    if (item.id === current.id) requireThat(jobs.some((job) => enteredSend(job) &&
-      job.run_attempt === callbackAttempt && job.status === "in_progress"), "Current publication send is absent from callback history")
   }
   // Queued jobs cancelled by concurrency, or setup failures before this step,
   // have not sent anything. Once the send step starts, unknown sends stay fenced.
@@ -192,12 +207,12 @@ export async function planDeviceDispatches(options) {
   return plans
 }
 
-export async function requestAfterPublication({github, context, plan}) {
+export async function requestAfterPublication({github, context, plan, wait = sleep}) {
   deviceRoutine(plan.routine)
   const coordinated = ["dev", "staging"].includes(plan.channel)
   requireThat(plan.mode === "request" && (coordinated ? !plan.pr && ["no-glasses", "no-glasses-android"].includes(plan.routine) : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
     && plan.callbackRunId === context.runId && plan.callbackAttempt === 1, "Invalid request dispatch")
-  const prior = await automaticGenerationFence(github, context, plan)
+  const prior = await automaticGenerationFence(github, context, plan, wait)
   if (prior) return {status: "request-reconcile", ...prior}
   try {
     // The workflow disables SDK retry. The callback record already fences this send.
