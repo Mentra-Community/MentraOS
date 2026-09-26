@@ -73,7 +73,7 @@ def parse_timeline(path: str):
 
 
 def parse_memory(path: str):
-    """Return (min_free_pct, max_pageouts_delta, samples)."""
+    """Return (min_free_pct, pageouts_delta_or_none, samples)."""
     free = []
     pageouts = []
     try:
@@ -82,14 +82,16 @@ def parse_memory(path: str):
                 m = re.search(r"free percentage:\s*(\d+)%", line)
                 if m:
                     free.append(int(m.group(1)))
-                p = re.search(r"Pageouts=(\d+)", line)
+                p = re.search(r"(?:^|\s)Pageouts=(\d+)", line)
                 if p:
                     pageouts.append(int(p.group(1)))
     except OSError:
         return None
     if not free:
         return None
-    delta = (pageouts[-1] - pageouts[0]) if len(pageouts) >= 2 else 0
+    delta = None
+    if len(pageouts) == len(free) and len(pageouts) >= 2 and all(b >= a for a, b in zip(pageouts, pageouts[1:])):
+        delta = pageouts[-1] - pageouts[0]
     return min(free), delta, len(free)
 
 
@@ -139,6 +141,7 @@ def render(timeline_path: str, memory_path: str | None, top: int) -> str:
         mem = parse_memory(memory_path)
         if mem:
             min_free, pageouts, n = mem
+            pageouts = pageouts if pageouts is not None else "unavailable"
             out.append("")
             out.append(
                 f"Memory during the build ({n} samples, 10 s apart): minimum free **{min_free}%**, pageouts during build **{pageouts}**."

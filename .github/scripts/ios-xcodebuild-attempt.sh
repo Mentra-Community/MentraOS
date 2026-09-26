@@ -55,7 +55,11 @@ if command -v memory_pressure >/dev/null 2>&1; then
     while :; do
       printf '%s ' "$(date +%s)"
       memory_pressure -Q 2>/dev/null | tr '\n' ' '
-      vm_stat 2>/dev/null | awk '/Pages free|Pages active|Pages inactive|Pageouts|Swapouts/ { gsub(/[.:]/, ""); printf "%s=%s ", $1$2, $NF }'
+      vm_stat 2>/dev/null | awk '/Pages free|Pages active|Pages inactive|Pageouts|Swapouts/ {
+        key=$0; sub(/:.*/, "", key); gsub(/[[:space:]]/, "", key)
+        value=$NF; sub(/\.$/, "", value)
+        printf "%s=%s ", key, value
+      }'
       echo
       sleep 10
     done

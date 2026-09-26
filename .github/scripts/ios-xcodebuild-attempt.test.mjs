@@ -57,3 +57,35 @@ test("serial recovery uses one job even if retired experimental flags are inheri
   assert.ok(!args.includes("-resultBundlePath"))
   assert.ok(args.includes("CODE_SIGNING_ALLOWED=NO"))
 })
+
+test("real vm_stat rows survive sampling and missing pageout counters stay unavailable", (t) => {
+  const {root, fake, env} = fixture(t)
+  fake("memory_pressure", "#!/bin/sh\necho 'System-wide memory free percentage: 20%'\n")
+  fake("vm_stat", `#!/bin/sh
+if [ -f "$COUNTER_FILE" ]; then count=142; else count=42; fi
+touch "$COUNTER_FILE"
+printf 'Pages free: 123.\nPages active: 234.\nPages inactive: 345.\nPageouts: %s.\nSwapouts: 5.\n' "$count"
+`)
+  fake("sleep", '#!/bin/sh\nif [ "$1" = 10 ]; then exec /bin/sleep 0.05; else exec /bin/sleep "$@"; fi\n')
+  const memory = path.join(env.IOS_BUILD_LOG_DIR, "xcodebuild-attempt-1.memory")
+  const result = spawnSync("bash", [wrapper, "attempt-1", "--", "sh", "-c",
+    'while [ ! -f "$MEMORY_FILE" ] || [ "$(wc -l < "$MEMORY_FILE")" -lt 2 ]; do /bin/sleep 0.05; done',
+  ], {env: {...env, MEMORY_FILE: memory, COUNTER_FILE: path.join(root, "counter")}, encoding: "utf8", timeout: 15_000})
+  assert.equal(result.status, 0, result.stderr)
+  const samples = readFileSync(memory, "utf8")
+  assert.match(samples, /Pagesfree=123 Pagesactive=234 Pagesinactive=345 Pageouts=42 Swapouts=5/)
+  assert.match(samples, /Pageouts=142/)
+  const parser = fileURLToPath(new URL("ios-build-timeline.py", import.meta.url))
+  const parse = () => {
+    const parsed = spawnSync("python3", ["-c",
+      "import json,runpy,sys; print(json.dumps(runpy.run_path(sys.argv[1])['parse_memory'](sys.argv[2])))", parser, memory,
+    ], {encoding: "utf8"})
+    assert.equal(parsed.status, 0, parsed.stderr)
+    return JSON.parse(parsed.stdout)
+  }
+  assert.deepEqual(parse().slice(0, 2), [20, 100])
+  writeFileSync(memory, samples.replace(/Pageouts=\d+/g, ""))
+  assert.deepEqual(parse().slice(0, 2), [20, null])
+  writeFileSync(memory, "0 free percentage: 20% Pageouts=42\n")
+  assert.deepEqual(parse(), [20, null, 1])
+})

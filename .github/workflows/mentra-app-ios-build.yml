@@ -169,7 +169,7 @@ jobs:
           python3 mobile/ci/pr-ios/test_repackage.py
           python3 mobile/ci/pr-ios/test_keychain_search.py
           node --test mobile/ci/pr-ios/xcode-attempt.test.mjs
-          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/ios-build-timings.test.mjs .github/scripts/ios-xcodebuild-attempt.test.mjs
+          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/ios-build-timings.test.mjs .github/scripts/ios-xcodebuild-attempt.test.mjs .github/scripts/ios-cache-cleanup.test.mjs
 
       - name: Setup environment
         working-directory: ./mobile
