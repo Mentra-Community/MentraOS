@@ -9493,7 +9493,11 @@ class MentraLive : SGCManager() {
                 }
             } else {
                 // Normal single message transmission
-                transportLog("LIVE: Sending data to glasses: " + wireData, bridgeLogging)
+                transportLog(
+                        "LIVE: Sending data to glasses: " +
+                                loggableOutgoingPayload(wireData, commandTraceInfo.commandType),
+                        bridgeLogging
+                )
 
                 // Pack the data using the centralized utility with the negotiated endianness
                 val packedData =
@@ -9794,6 +9798,18 @@ class MentraLive : SGCManager() {
             else -> null
         }
     }
+
+    /**
+     * Wi-Fi credentials are sent unchanged but never logged; the BLE trace records the command
+     * with the password redacted.
+     */
+    private fun loggableOutgoingPayload(payload: String, commandType: String): String =
+            try {
+                if (JSONObject(payload).has("password")) "<$commandType with credentials omitted>"
+                else payload
+            } catch (_: JSONException) {
+                payload
+            }
 
     private fun summarizeOutgoingMessage(payload: String?): String {
         if (payload == null || payload.isEmpty()) {
