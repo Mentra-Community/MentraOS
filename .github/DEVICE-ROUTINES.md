@@ -49,7 +49,8 @@ permissions, artifact preparation and fixture qualification are separate gates.
 A registered runner or an accepted dispatch is not a completed test. Successful
 coordinated dev/staging builds request the no-glasses walkthrough automatically.
 The optional [nightly scheduler](workflows/nightly-device-routines.yml) requests
-day-one OTA and Mentra Call; see its [activation runbook](NIGHTLY-DEVICE-ROUTINES.md).
+day-one OTA, Mentra Call and the two combined Mac/Android suites. Missing combined
+worker registrations stay unavailable; see its [activation runbook](NIGHTLY-DEVICE-ROUTINES.md).
 
 ## Results and Slack
 

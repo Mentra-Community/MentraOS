@@ -158,7 +158,7 @@ export async function resolveCoordinatedSelection({github, context, source, plat
 }
 
 export async function createCoordinatedRoutineRequest({github, context, number, channel, routine = "no-glasses",
-  requestOrigin = "workflow-dispatch", source, sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, fetchImpl = fetch, now = () => new Date()}) {
+  requestOrigin = "workflow-dispatch", source, sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode = "ordered", fetchImpl = fetch, now = () => new Date()}) {
   const registered = deviceRoutine(routine)
   const selected = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
   requireThat(!number && selected && ["dev", "staging"].includes(channel), "Coordinated requests require an exact run/attempt and no PR number")
@@ -177,8 +177,9 @@ export async function createCoordinatedRoutineRequest({github, context, number, 
       ? "Automatic no-glasses test after successful coordinated publication" : "Explicit workflow_dispatch opt-in", harnessRevision: source.sha},
     selection: null, attempts: []}
   const nightly = sourcePublication(nightlyRunId, nightlyRunAttempt)
+  requireThat(["ordered", "independent"].includes(nightlyMode) && (nightly || nightlyMode === "ordered"), "Invalid nightly dispatch mode")
   if (nightly) {
-    request.sequence = {kind: "nightly-ota-call", runId: nightly.runId, runAttempt: nightly.publicationAttempt, member: routine}
+    request.sequence = {kind: nightlyMode === "independent" ? "nightly-routine" : "nightly-ota-call", runId: nightly.runId, runAttempt: nightly.publicationAttempt, member: routine}
     const {authenticateNightlyMarker} = await import("./nightly-device-routines.mjs")
     await authenticateNightlyMarker({github, context, request})
   }

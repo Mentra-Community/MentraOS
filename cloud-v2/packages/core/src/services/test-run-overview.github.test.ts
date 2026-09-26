@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { strToU8, zipSync } from "fflate";
-import { GithubTestRunOverview } from "./test-run-overview.github";
+import { completeGithubActivity, GithubTestRunOverview } from "./test-run-overview.github";
 
 const SOURCE = "Mentra-Community/MentraOS", PRIVATE = "Mentra-Community/Mentra-Automated-Testing";
 const sha = "a".repeat(40), stamp = "2026-09-24T20:00:00.000Z";
@@ -133,4 +133,21 @@ test("administrative closure bypasses the display queue cache", async () => {
   state.runs = [run(10, "Device routine request 500 / attempt 1")];
   expect((await gateway.activity()).jobs).toHaveLength(0);
   expect((await gateway.activity({ fresh: true })).jobs).toHaveLength(1);
+});
+
+
+test("an independent nightly request retains its trigger on the ordinary one-request job", async () => {
+  const { state, gateway } = harness();
+  const selected = request(500, "nightly");
+  selected.sequence = { kind: "nightly-routine" };
+  selected.routine = { id: "mentra-call", authorization: "workflow-dispatch" };
+  selected.requestId = selected.requestId.replace(/no-glasses$/, "mentra-call");
+  state.requests.set(500, selected);
+  const result = await gateway.activity();
+  expect(result.warnings).toEqual([]);
+  expect(result.jobs).toHaveLength(1);
+  expect(result.jobs[0]).toMatchObject({ kind: "routine", state: "queued" });
+  expect(result.jobs[0]?.requests).toHaveLength(1);
+  expect(result.jobs[0]?.requests[0]).toMatchObject({ trigger: "nightly", routineId: "mentra-call", channel: "dev", buildRunId: 100 });
+  expect(completeGithubActivity(result)).toBe(true);
 });
