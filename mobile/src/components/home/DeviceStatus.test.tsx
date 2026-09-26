@@ -106,10 +106,33 @@ describe("glasses battery reading", () => {
     expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:8"], 57)
   })
 
-  it("reports nothing for a value without native provenance", () => {
+  it("reports a value without native provenance as an empty marker", () => {
     const screen = render(<GlassesBatteryReading level={64} charging={true} />)
     expect(screen.getByText("64%")).toBeTruthy()
-    expect(report).not.toHaveBeenCalled()
+    expect(report).toHaveBeenCalledTimes(1)
+    expect(report).toHaveBeenCalledWith("glasses_battery", [], 64)
+  })
+
+  it("invalidates the earlier marker when the id disappears at the same level", () => {
+    const screen = render(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
+    expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:5"], 57)
+
+    // The same 57% is now a cached/fallback value: it must not stay attributed to stream:5.
+    screen.rerender(<GlassesBatteryReading level={57} charging={false} />)
+    expect(screen.getByText("57%")).toBeTruthy()
+    expect(report).toHaveBeenLastCalledWith("glasses_battery", [], 57)
+
+    // A later measured packet restores provenance with its own id.
+    screen.rerender(<GlassesBatteryReading level={57} charging={false} eventId="stream:9" />)
+    expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:9"], 57)
+    expect(report).toHaveBeenCalledTimes(3)
+  })
+
+  it("invalidates the marker when the reading is removed from the screen", () => {
+    const screen = render(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
+    screen.unmount()
+    expect(report).toHaveBeenLastCalledWith("glasses_battery", [])
+    expect(report).toHaveBeenCalledTimes(2)
   })
 
   it("reports only when the connected card actually renders the reading", () => {

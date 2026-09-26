@@ -164,8 +164,9 @@ export const glasses = {
   },
   /**
    * Diagnostic only: records that committed UI state for `surface` was derived from these
-   * opaque native event ids (Android device-test provenance). Never shown to users; a no-op
-   * that returns false on iOS or when no ids are known.
+   * opaque native event ids (Android device-test provenance). An empty list invalidates the
+   * surface's earlier marker; omit `value` when nothing is shown. Never shown to users; a no-op
+   * that returns false on iOS.
    */
   reportDiagnosticRender: (
     surface: "glasses_battery" | "wifi_scan",

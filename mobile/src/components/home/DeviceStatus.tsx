@@ -27,8 +27,10 @@ import MicIcon from "assets/icons/component/MicIcon"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 
 /**
- * The glasses battery percentage. After this exact value is committed on screen it reports the
- * opaque native event id behind it (Android device-test provenance; nothing is displayed).
+ * The glasses battery percentage. After each committed value it reports the opaque native event
+ * id behind it, or an empty id list when the value has no provenance (cached or fallback), and an
+ * empty marker when it leaves the screen, so an earlier id never stays attributed to what is shown.
+ * Android device-test provenance only; nothing is displayed.
  */
 export function GlassesBatteryReading({
   level,
@@ -41,8 +43,14 @@ export function GlassesBatteryReading({
 }) {
   const {theme} = useAppTheme()
   useEffect(() => {
-    if (eventId) engine.glasses.reportDiagnosticRender("glasses_battery", [eventId], level)
+    engine.glasses.reportDiagnosticRender("glasses_battery", eventId ? [eventId] : [], level)
   }, [level, eventId])
+  useEffect(
+    () => () => {
+      engine.glasses.reportDiagnosticRender("glasses_battery", [])
+    },
+    [],
+  )
   return (
     <View className="flex-row items-center gap-1">
       <Icon
