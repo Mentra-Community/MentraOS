@@ -6,9 +6,13 @@ type MiniappOpeningAnimation = "slide" | "expand"
 export const useMiniappPresentationStore = create<{
   revealedPackageName: string | null
   setRevealedPackageName: (packageName: string | null) => void
+  closingPackageName: string | null
+  setClosingPackageName: (packageName: string | null) => void
 }>((set) => ({
   revealedPackageName: null,
   setRevealedPackageName: (revealedPackageName) => set({revealedPackageName}),
+  closingPackageName: null,
+  setClosingPackageName: (closingPackageName) => set({closingPackageName}),
 }))
 
 let pending: {packageName: string; animation: MiniappOpeningAnimation} | null = null

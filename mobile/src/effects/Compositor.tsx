@@ -182,9 +182,15 @@ export default function Compositor() {
       engine.miniapps.clearForeground()
     }
     if (request.stop) {
-      void engine.miniapps.stop(packageName).catch((error) => {
-        console.warn(`Compositor: failed to stop ${packageName}`, error)
-      })
+      void engine.miniapps
+        .stop(packageName)
+        .catch((error) => {
+          console.warn(`Compositor: failed to stop ${packageName}`, error)
+        })
+        .finally(() => {
+          const presentation = useMiniappPresentationStore.getState()
+          if (presentation.closingPackageName === packageName) presentation.setClosingPackageName(null)
+        })
     } else {
       void request.persistScreenshot?.()
     }
@@ -194,6 +200,9 @@ export default function Compositor() {
     const packageName = renderedApp?.packageName
     if (!packageName || closingRequestRef.current) return
     closingRequestRef.current = {packageName, stop: true}
+    // Remove both tray representations before the exit animation reveals Home.
+    // Keep the runtime alive until the surface has finished sliding out.
+    useMiniappPresentationStore.getState().setClosingPackageName(packageName)
     setIsClosing(true)
   }, [renderedApp?.packageName])
 
