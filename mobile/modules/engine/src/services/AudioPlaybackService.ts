@@ -545,17 +545,15 @@ class AudioPlaybackService {
       return
     }
 
-    // iOS reports "failed"; Android falls idle after a load/play error. Keep
-    // the initial grace period for status updates from source replacement.
+    // iOS "failed" is terminal even during startup. Android's unloaded idle
+    // status can also occur during source replacement, so retain its grace period.
     const wentIdle = status.playbackState === "idle" && !status.isBuffering && !status.isLoaded
-    if (status.playbackState === "failed" || wentIdle) {
-      const elapsedMs = Date.now() - playback.startTime
-      if (elapsedMs > 1500) {
-        this.failPlayback(
-          playback,
-          wentIdle ? "Playback failed (player went idle)" : "Playback failed (native player failed)",
-        )
-      }
+    const elapsedMs = Date.now() - playback.startTime
+    if (status.playbackState === "failed" || (wentIdle && elapsedMs > 1500)) {
+      this.failPlayback(
+        playback,
+        wentIdle ? "Playback failed (player went idle)" : "Playback failed (native player failed)",
+      )
     }
   }
 

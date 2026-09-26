@@ -209,10 +209,24 @@ describe("AudioPlaybackService", () => {
     },
   )
 
-  it.each(["idle", "failed"])("reports native %s failure once and unloads the source", async (state) => {
+  it("ignores ambiguous idle during source replacement without scheduling a retry", async () => {
+    const onComplete = jest.fn()
+    await audioPlaybackService.play({requestId: "loading", audioUrl: "https://example.com/tts"}, onComplete)
+    getLatestStatusListener()({playbackState: "idle", isLoaded: false, isBuffering: false})
+    jest.advanceTimersByTime(20_000)
+    expect(onComplete).not.toHaveBeenCalled()
+    getLatestStatusListener()({didJustFinish: true, duration: 2})
+    expect(onComplete).toHaveBeenCalledWith("loading", true, null, 2000, "completed")
+  })
+
+  it.each([
+    ["idle", 2_000],
+    ["failed", 0],
+    ["failed", 2_000],
+  ] as const)("reports native %s failure at %d ms once and unloads the source", async (state, delayMs) => {
     const onComplete = jest.fn()
     await audioPlaybackService.play({requestId: "failed", audioUrl: "https://example.com/tts"}, onComplete)
-    jest.advanceTimersByTime(2_000)
+    jest.advanceTimersByTime(delayMs)
     const status = {playbackState: state, isLoaded: false, isBuffering: false}
     getLatestStatusListener()(status)
     getLatestStatusListener()(status)
