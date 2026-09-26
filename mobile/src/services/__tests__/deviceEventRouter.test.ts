@@ -136,6 +136,36 @@ describe("DeviceEventRouter", () => {
     expect(useGlassesStore.getState().batteryEventId).toBeUndefined()
   })
 
+  it("drops the battery event id when a status sync changes the value or the glasses disconnect", () => {
+    const store = useGlassesStore.getState()
+    store.setGlassesInfo({connection: {state: "connected"} as never})
+    emitBluetoothSdkEvent("battery_status", {
+      type: "battery_status",
+      level: 57,
+      charging: false,
+      timestamp: 1,
+      eventId: "stream:5",
+    })
+    // The same value from the native status sync is still the event's value.
+    store.setGlassesInfo({batteryLevel: 57})
+    expect(useGlassesStore.getState().batteryEventId).toBe("stream:5")
+
+    // A different synced value has no provenance: the old id must not describe it.
+    store.setGlassesInfo({batteryLevel: 58})
+    expect(useGlassesStore.getState()).toEqual(expect.objectContaining({batteryLevel: 58, batteryEventId: undefined}))
+
+    emitBluetoothSdkEvent("battery_status", {
+      type: "battery_status",
+      level: 58,
+      charging: false,
+      timestamp: 2,
+      eventId: "stream:9",
+    })
+    // A cached value kept across a disconnect is not current evidence.
+    store.setGlassesInfo({connection: {state: "disconnected"} as never})
+    expect(useGlassesStore.getState()).toEqual(expect.objectContaining({batteryLevel: 58, batteryEventId: undefined}))
+  })
+
   it("bridges gallery_status onto the event bus", () => {
     const emitSpy = jest.spyOn(GlobalEventEmitter, "emit")
     emitBluetoothSdkEvent("gallery_status", {

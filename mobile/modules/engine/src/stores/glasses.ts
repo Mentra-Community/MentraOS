@@ -211,7 +211,16 @@ export const useGlassesStore = create<GlassesState>()(
           ...(hotspotUpdate ? {hotspot: hotspotUpdate} : {}),
           ...(hasWifiInfoUpdate ? {wifiStatusKnown: true} : {}),
         }
+        // batteryEventId names the notification behind batteryLevel. A status-sync value that
+        // differs, or a disconnect, leaves no provenance for what is now shown.
+        if (
+          Object.prototype.hasOwnProperty.call(sdkInfo, "batteryLevel") &&
+          sdkInfo.batteryLevel !== state.batteryLevel
+        ) {
+          next.batteryEventId = undefined
+        }
         if (!isGlassesConnected(next.connection)) {
+          next.batteryEventId = undefined
           next.wifiStatusKnown = false
           next.hotspotOtaVersion = 0
           // packageName is deliberately NOT cleared here. It is only ever safe to clear together
