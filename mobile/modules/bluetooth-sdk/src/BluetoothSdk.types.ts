@@ -54,11 +54,6 @@ export type BatteryStatusEvent = {
   level: number
   charging: boolean
   timestamp: number
-  /**
-   * Opaque diagnostic id of the glasses notification this value was decoded from. Android
-   * Mentra Live only; absent on iOS, other glasses and older builds. Do not parse or display it.
-   */
-  eventId?: string
 }
 
 export type GlassesConnectionStatus =
@@ -255,11 +250,6 @@ export type WifiScanResultEvent = {
   type: "wifi_scan_result"
   networks: WifiSearchResult[]
   scanComplete?: boolean
-  /**
-   * Opaque diagnostic id of the glasses notification that carried this chunk. Android Mentra
-   * Live only; absent on iOS, other glasses and older builds. Do not parse or display it.
-   */
-  eventId?: string
 }
 
 export type PhotoResponseEvent =

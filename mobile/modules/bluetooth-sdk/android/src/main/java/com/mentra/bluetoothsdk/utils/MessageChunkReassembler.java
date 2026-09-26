@@ -3,7 +3,6 @@ package com.mentra.bluetoothsdk.utils;
 import com.mentra.bluetoothsdk.utils.NativeLog;
 
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -18,22 +17,7 @@ public class MessageChunkReassembler {
 
     private final Map<Integer, BinarySession> activeBinarySessions = new ConcurrentHashMap<>();
 
-    /**
-     * Sessions whose fragments came from different receive origins (connection or wire epoch).
-     * Such a session is discarded rather than reassembled across the boundary.
-     */
-    private long mixedOriginDrops = 0;
-
-    public long getMixedOriginDrops() {
-        return mixedOriginDrops;
-    }
-
     public byte[] addBinaryFragment(int msgId, int fragIdx, int fragCount, byte[] data) {
-        return addBinaryFragment(msgId, fragIdx, fragCount, data, null);
-    }
-
-    /** Like {@link #addBinaryFragment(int, int, int, byte[])}; fragments of one message must share {@code origin}. */
-    public byte[] addBinaryFragment(int msgId, int fragIdx, int fragCount, byte[] data, Object origin) {
         cleanupTimedOutSessions();
 
         if (msgId < 0 || fragCount <= 0 || fragIdx < 0 || fragIdx >= fragCount || data == null) {
@@ -49,16 +33,11 @@ public class MessageChunkReassembler {
 
         BinarySession session = activeBinarySessions.compute(msgId, (ignored, existingSession) -> {
             if (existingSession == null) {
-                return new BinarySession(msgId, fragCount, origin);
-            }
-            if (!Objects.equals(existingSession.origin, origin)) {
-                NativeLog.w(TAG, "Receive origin changed for msgId " + msgId + ", discarding session");
-                mixedOriginDrops++;
-                return new BinarySession(msgId, fragCount, origin);
+                return new BinarySession(msgId, fragCount);
             }
             if (existingSession.fragCount != fragCount) {
                 NativeLog.w(TAG, "fragCount mismatch for msgId " + msgId + ", resetting session");
-                return new BinarySession(msgId, fragCount, origin);
+                return new BinarySession(msgId, fragCount);
             }
             return existingSession;
         });
@@ -79,11 +58,6 @@ public class MessageChunkReassembler {
     }
 
     public String addChunk(String chunkId, int chunkIndex, int totalChunks, String data) {
-        return addChunk(chunkId, chunkIndex, totalChunks, data, null);
-    }
-
-    /** Like {@link #addChunk(String, int, int, String)}; chunks of one message must share {@code origin}. */
-    public String addChunk(String chunkId, int chunkIndex, int totalChunks, String data, Object origin) {
         cleanupTimedOutSessions();
 
         if (chunkId == null || chunkId.isEmpty() || totalChunks <= 0 || chunkIndex < 0
@@ -100,17 +74,12 @@ public class MessageChunkReassembler {
 
         ChunkSession session = activeSessions.compute(chunkId, (ignored, existingSession) -> {
             if (existingSession == null) {
-                return new ChunkSession(chunkId, totalChunks, origin);
-            }
-            if (!Objects.equals(existingSession.origin, origin)) {
-                NativeLog.w(TAG, "Receive origin changed for " + chunkId + ", discarding session");
-                mixedOriginDrops++;
-                return new ChunkSession(chunkId, totalChunks, origin);
+                return new ChunkSession(chunkId, totalChunks);
             }
             if (existingSession.totalChunks != totalChunks) {
                 NativeLog.w(TAG, "totalChunks mismatch for " + chunkId + " (expected "
                         + existingSession.totalChunks + ", got " + totalChunks + "), resetting session");
-                return new ChunkSession(chunkId, totalChunks, origin);
+                return new ChunkSession(chunkId, totalChunks);
             }
             return existingSession;
         });
@@ -177,10 +146,8 @@ public class MessageChunkReassembler {
         final int totalChunks;
         final long createdAt;
         final Map<Integer, String> chunks;
-        final Object origin;
 
-        ChunkSession(String chunkId, int totalChunks, Object origin) {
-            this.origin = origin;
+        ChunkSession(String chunkId, int totalChunks) {
             this.chunkId = chunkId;
             this.totalChunks = totalChunks;
             this.createdAt = System.currentTimeMillis();
@@ -217,10 +184,8 @@ public class MessageChunkReassembler {
         final int fragCount;
         final long createdAt;
         final Map<Integer, byte[]> fragments;
-        final Object origin;
 
-        BinarySession(int msgId, int fragCount, Object origin) {
-            this.origin = origin;
+        BinarySession(int msgId, int fragCount) {
             this.msgId = msgId;
             this.fragCount = fragCount;
             this.createdAt = System.currentTimeMillis();

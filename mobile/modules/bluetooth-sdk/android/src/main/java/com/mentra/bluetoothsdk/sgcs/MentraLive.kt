@@ -43,7 +43,6 @@ import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.incomingGlassesMessageAckId
 import com.mentra.bluetoothsdk.wifiResponseEnvelopeIsValid
-import com.mentra.bluetoothsdk.debug.BleEvidenceLog
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService
 import com.mentra.bluetoothsdk.utils.ConnTypes
@@ -598,12 +597,6 @@ class MentraLive : SGCManager() {
     private val gattLifecycleHandler = Handler(Looper.getMainLooper())
     // Owned exclusively by the main looper, including callback validation and mutation.
     private var gattEpoch = 0L
-    // Provenance of the current accepted connection and wire epoch. Copied into each accepted
-    // notification before decoding; never re-read to label an already received message.
-    private var evidenceOrigin: BleEvidenceLog.Origin? = null
-    // Evidence boundary of the current bleSessionGeneration (seq of its ble_generation record).
-    @Volatile private var evidenceWriteGeneration = 0L
-    @Volatile private var evidenceWriteGenerationValue = -1L
     private var connectionRequestEpoch = 0L
     @Volatile private var gattTeardownToken: Long? = null
     @Volatile private var gattTeardownTimeoutRunnable: Runnable? = null
@@ -657,9 +650,7 @@ class MentraLive : SGCManager() {
             val commandType: String,
             val requestId: String?,
             val appId: String?,
-            val messageId: Long?,
-            // Wi-Fi scan request id; every native write of that command is recorded against it.
-            val scanId: String? = null
+            val messageId: Long?
     )
 
     private data class BleWriteTrace(
@@ -675,11 +666,7 @@ class MentraLive : SGCManager() {
             val packedBytes: Int,
             val wakeup: Boolean,
             val chunked: Boolean,
-            val queuedAtMs: Long,
-            val scanId: String? = null,
-            // Provenance captured when the write is queued; later outcomes never re-read state.
-            val evidenceConnection: Long = 0L,
-            val evidenceWriteGeneration: Long? = null
+            val queuedAtMs: Long
     )
 
     private data class QueuedBleWrite(
@@ -1037,7 +1024,6 @@ class MentraLive : SGCManager() {
         this.type = DeviceTypes.LIVE
         this.hasMic = true
         this.context = Bridge.getContext()
-        recordWriteGeneration(bleSessionGeneration.get())
 
         // Initialize bluetooth adapter
         val bluetoothManager =
@@ -1192,9 +1178,6 @@ class MentraLive : SGCManager() {
     private fun updateConnectionState(state: String) {
         if (state == ConnTypes.DISCONNECTED) {
             DeviceStore.apply("glasses", "hotspotOtaVersion", 0)
-        }
-        if (state == ConnTypes.DISCONNECTED) {
-            closeEvidenceConnection("disconnected")
         }
         val isEqual = state == connectionState
         if (isEqual) {
@@ -1709,7 +1692,6 @@ class MentraLive : SGCManager() {
         }
         val token = gattTeardownBarrier.beginTeardown()
         gattTeardownToken = token
-        closeEvidenceConnection("teardown")
         // Teardown owns session invalidation, including the timeout/replacement paths that do
         // not receive the normal remote-disconnect cleanup callback.
         cancelMtuWatchdog()
@@ -1781,34 +1763,6 @@ class MentraLive : SGCManager() {
         mtuWatchdogRunnable = null
         mtuSetupToken = null
         mtuSetupGate.cancel()
-    }
-
-    private fun closeEvidenceConnection(reason: String) {
-        evidenceOrigin?.let { BleEvidenceLog.connectionClosed(it.connection, reason) }
-        evidenceOrigin = null
-    }
-
-    /** RX/TX carry every JSON/K900 message; audio and file characteristics are never evidence. */
-    private fun isCommandCharacteristic(characteristic: BluetoothGattCharacteristic): Boolean =
-            characteristic.uuid == RX_CHAR_UUID || characteristic.uuid == TX_CHAR_UUID
-
-    private fun recordScanSend(trace: BleWriteTrace?, outcome: String) {
-        val scanId = trace?.scanId ?: return
-        BleEvidenceLog.scanSend(
-                scanId,
-                outcome,
-                trace.chunkIndex ?: 0,
-                trace.totalChunks ?: 1,
-                trace.evidenceConnection,
-                trace.evidenceWriteGeneration
-        )
-    }
-
-    /** Records the send-queue generation boundary that queued writes will reference. */
-    private fun recordWriteGeneration(generation: Long) {
-        evidenceWriteGeneration =
-                BleEvidenceLog.bleGeneration(evidenceOrigin?.connection ?: 0L, generation)
-        evidenceWriteGenerationValue = generation
     }
 
     /**
@@ -2322,15 +2276,6 @@ class MentraLive : SGCManager() {
                 // This lets connectGatt return and install the identity before validation.
                 gattLifecycleHandler.post { work() }
             }, { gatt -> epoch == gattEpoch && isCurrentGattCallback(gatt) }) {
-                override fun onStaleNotification(
-                        gatt: BluetoothGatt,
-                        characteristic: BluetoothGattCharacteristic
-                ) {
-                    if (isCommandCharacteristic(characteristic)) {
-                        BleEvidenceLog.receiveRejected("stale_gatt", null)
-                    }
-                }
-
                 override fun handleConnectionStateChange(
                         gatt: BluetoothGatt,
                         status: Int,
@@ -2368,8 +2313,6 @@ class MentraLive : SGCManager() {
                             isConnecting = false
                             isConnected = true
                             connectedDevice = gatt.device
-                            closeEvidenceConnection("replaced")
-                            evidenceOrigin = BleEvidenceLog.connectionAccepted(gatt.device.address)
                             classicAudioConnectionTracker.setTarget(gatt.device.address)
                             refreshClassicAudioConnectionState(gatt.device)
                             emitConnectedPendingDeviceForPairingScan()
@@ -2441,7 +2384,6 @@ class MentraLive : SGCManager() {
                             )
                             isConnected = false
                             isConnecting = false
-                            closeEvidenceConnection("remote_disconnect")
 
                             connectedDevice = null
                             glassesReady = false // Reset ready state on disconnect
@@ -2758,10 +2700,6 @@ class MentraLive : SGCManager() {
                             else null
                     inFlightBleWriteTrace = null
                     inFlightBleWriteStartedAtMs = 0L
-                    recordScanSend(
-                            trace,
-                            if (status == BluetoothGatt.GATT_SUCCESS) "write_ok" else "write_failed"
-                    )
 
                     if (status == BluetoothGatt.GATT_SUCCESS) {
                         // Bridge.log("LIVE: Characteristic write successful");
@@ -2821,13 +2759,8 @@ class MentraLive : SGCManager() {
                         data: ByteArray
                 ) {
                     if (!isActiveGattCallback(gatt)) {
-                        if (isCommandCharacteristic(characteristic)) {
-                            BleEvidenceLog.receiveRejected("teardown", null)
-                        }
                         return
                     }
-                    // Immutable origin of this notification, captured before any decoding.
-                    val origin = evidenceOrigin
 
                     // Get thread ID for tracking thread issues
                     val threadId = Thread.currentThread().id
@@ -2874,7 +2807,7 @@ class MentraLive : SGCManager() {
                     }
 
                     // Process command/JSON data on RX/TX characteristics
-                    processReceivedData(data, data.size, origin)
+                    processReceivedData(data, data.size)
                 }
 
                 override fun handleDescriptorWrite(
@@ -3290,7 +3223,6 @@ class MentraLive : SGCManager() {
         var queuedWrite = sendQueue.poll()
         val currentGeneration = bleSessionGeneration.get()
         while (queuedWrite != null && queuedWrite.sessionGeneration != currentGeneration) {
-            recordScanSend(queuedWrite.trace, "stale_dropped")
             Bridge.log(
                     "LIVE: Dropping stale queued write from BLE session " +
                             queuedWrite.sessionGeneration +
@@ -3326,15 +3258,10 @@ class MentraLive : SGCManager() {
 
     /** Send data through BLE */
     private fun sendDataInternal(write: QueuedBleWrite?) {
-        if (write == null) {
-            return
-        }
-        if (!isConnected) {
-            recordScanSend(write.trace, "gatt_refused")
+        if (!isConnected || write == null) {
             return
         }
         if (write.sessionGeneration != bleSessionGeneration.get()) {
-            recordScanSend(write.trace, "stale_dropped")
             Bridge.log("LIVE: Dropping stale BLE write before GATT transmission")
             return
         }
@@ -3342,7 +3269,6 @@ class MentraLive : SGCManager() {
         val gatt = bluetoothGatt
         val characteristic = txCharacteristic
         if (gatt == null || characteristic == null) {
-            recordScanSend(write.trace, "gatt_refused")
             return
         }
 
@@ -3352,7 +3278,6 @@ class MentraLive : SGCManager() {
             inFlightBleWriteTrace = write.trace
             inFlightBleWriteStartedAtMs = writeStartedAtMs
             val writeAccepted = gatt.writeCharacteristic(characteristic)
-            recordScanSend(write.trace, if (writeAccepted) "gatt_accepted" else "gatt_refused")
             logBleWriteTrace(
                     "write_call",
                     write.trace,
@@ -3369,7 +3294,6 @@ class MentraLive : SGCManager() {
                 inFlightBleWriteStartedAtMs = 0L
             }
         } catch (e: Exception) {
-            recordScanSend(write.trace, "gatt_refused")
             Log.e(TAG, "Error sending data via BLE", e)
             logBleWriteTrace(
                     "write_exception",
@@ -3396,16 +3320,9 @@ class MentraLive : SGCManager() {
                             queuedAtMs =
                                     if (trace.queuedAtMs > 0L)
                                             trace.queuedAtMs
-                                    else System.currentTimeMillis(),
-                            evidenceConnection = evidenceOrigin?.connection ?: 0L,
-                            // A write carrying an older generation is already stale: no boundary.
-                            evidenceWriteGeneration =
-                                    if (sessionGeneration == evidenceWriteGenerationValue)
-                                            evidenceWriteGeneration
-                                    else null
+                                    else System.currentTimeMillis()
                     )
             sendQueue.add(QueuedBleWrite(data, queuedTrace, sessionGeneration))
-            recordScanSend(queuedTrace, "queued")
             logBleChunkTrace(
                     "queued",
                     queuedTrace,
@@ -3626,7 +3543,6 @@ class MentraLive : SGCManager() {
      */
     private fun resetPendingAckState() {
         val nextGeneration = bleSessionGeneration.incrementAndGet()
-        recordWriteGeneration(nextGeneration)
         val pendingCount = pendingMessages.size
         pendingMessages.clear()
         if (pendingCount > 0) {
@@ -3955,7 +3871,7 @@ class MentraLive : SGCManager() {
     }
 
     /** Process data received from the glasses */
-    private fun processReceivedData(data: ByteArray?, size: Int, origin: BleEvidenceLog.Origin?) {
+    private fun processReceivedData(data: ByteArray?, size: Int) {
         // Bridge.log("LIVE: Processing received data: " + bytesToHex(data));
 
         // Check if we have enough data
@@ -4022,7 +3938,7 @@ class MentraLive : SGCManager() {
             }
 
             if (cmdType == K900ProtocolUtils.CMD_TYPE_BINARY_MSG) {
-                processBinaryWireFrame(data, origin)
+                processBinaryWireFrame(data)
                 return
             }
 
@@ -4040,7 +3956,7 @@ class MentraLive : SGCManager() {
                     Log.w(TAG, "Thread-$threadId: Rejected unsupported compact wire form")
                     return
                 }
-                processJsonMessage(expanded, origin)
+                processJsonMessage(expanded)
             } else {
                 Log.w(TAG, "Thread-" + threadId + ": Failed to parse K900 protocol data")
             }
@@ -4065,7 +3981,7 @@ class MentraLive : SGCManager() {
                     val jsonStr = String(data, 0, size, StandardCharsets.UTF_8)
                     if (jsonStr.startsWith("{") && jsonStr.endsWith("}")) {
                         val json = JSONObject(jsonStr)
-                        processJsonMessage(json, origin)
+                        processJsonMessage(json)
                     } else {
                         Log.w(TAG, "Received data that starts with '{' but is not valid JSON")
                     }
@@ -4088,7 +4004,7 @@ class MentraLive : SGCManager() {
     }
 
     /** Process a JSON message */
-    private fun processJsonMessage(json: JSONObject, origin: BleEvidenceLog.Origin?) {
+    private fun processJsonMessage(json: JSONObject) {
         // Demoted from INFO (Bridge.log) to DEBUG: per-type handlers below already log
         // the messages that matter, and full payloads can leak PII (wifi SSID, bt_mac,
         // OTA URLs) into the persisted file logger when they arrive every ~50ms during OTA.
@@ -4100,7 +4016,7 @@ class MentraLive : SGCManager() {
         GlassesLinkDiagnostics.recordInbound()
 
         if (MessageChunker.isChunkedMessage(json)) {
-            processChunkedJsonMessage(json, origin)
+            processChunkedJsonMessage(json)
             return
         }
 
@@ -4119,7 +4035,7 @@ class MentraLive : SGCManager() {
 
         // Check if this is a K900 command format (has "C" field instead of "type")
         if (json.has("C")) {
-            processK900JsonMessage(json, origin)
+            processK900JsonMessage(json)
             return
         }
 
@@ -4215,15 +4131,7 @@ class MentraLive : SGCManager() {
                 // that reads "charging" for most of a discharging pack's range. Charging
                 // state comes exclusively from the PMU charg bit in the sr_hrt heartbeat.
                 val percent = json.optInt("percent", batteryLevel)
-                // A missing or invalid field keeps the previous fallback display value, but only a
-                // measured percentage carries provenance.
-                updateBatteryStatus(
-                        percent,
-                        isCharging,
-                        measuredPercent(json, "percent")?.let {
-                            BatteryProvenance("battery_status", origin, null)
-                        }
-                )
+                updateBatteryStatus(percent, isCharging)
             }
             "stream_controller_probe" -> {
                 val values = mapOf("protocolVersion" to json.opt("protocolVersion"),
@@ -4398,8 +4306,6 @@ class MentraLive : SGCManager() {
             "wifi_scan_result" -> {
                 // Process WiFi scan results
                 val networks: MutableList<Map<String, Any>> = ArrayList()
-                // Evidence only: false when the network list is missing or not fully parsed.
-                var networksParsed = false
 
                 if (json.has("networks_neo")) {
                     try {
@@ -4417,7 +4323,6 @@ class MentraLive : SGCManager() {
                             }
                             networks.add(networkMap)
                         }
-                        networksParsed = true
 
                         Bridge.log(
                                 "Received enhanced WiFi scan results: " +
@@ -4432,9 +4337,7 @@ class MentraLive : SGCManager() {
                 val scanComplete =
                         json.optBoolean("scan_complete", json.optBoolean("scanComplete", false))
                 val scanId = json.optString("scanId", "").ifEmpty { null }
-                val eventId =
-                        BleEvidenceLog.scanChunk(origin, scanId, networks, scanComplete, networksParsed)
-                Bridge.updateWifiScanResults(networks, scanComplete, scanId, eventId)
+                Bridge.updateWifiScanResults(networks, scanComplete, scanId)
             }
             "token_status" -> {
                 // Process coreToken acknowledgment
@@ -5308,7 +5211,7 @@ class MentraLive : SGCManager() {
         return value
     }
 
-    private fun processChunkedJsonMessage(json: JSONObject, origin: BleEvidenceLog.Origin?) {
+    private fun processChunkedJsonMessage(json: JSONObject) {
         try {
             val chunkInfo = MessageChunker.getChunkInfo(json)
             if (chunkInfo == null) {
@@ -5326,24 +5229,19 @@ class MentraLive : SGCManager() {
                 return
             }
 
-            val mixedBefore = incomingChunkReassembler.mixedOriginDrops
             val reassembled =
                     incomingChunkReassembler.addChunk(
                             chunkInfo.chunkId,
                             chunkInfo.chunkIndex,
                             chunkInfo.totalChunks,
-                            chunkInfo.data,
-                            origin
+                            chunkInfo.data
                     )
-            if (incomingChunkReassembler.mixedOriginDrops != mixedBefore) {
-                BleEvidenceLog.receiveRejected("mixed_origin", origin)
-            }
             if (reassembled == null) {
                 return
             }
 
             val reassembledJson = JSONObject(reassembled)
-            processJsonMessage(reassembledJson, origin)
+            processJsonMessage(reassembledJson)
         } catch (e: Exception) {
             Log.e(TAG, "Error processing chunked JSON message", e)
         }
@@ -5551,7 +5449,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    private fun processK900JsonMessage(json: JSONObject, origin: BleEvidenceLog.Origin?) {
+    private fun processK900JsonMessage(json: JSONObject) {
         val command = json.optString("C", "")
         // Bridge.log("LIVE: Processing K900 command: " + command);
 
@@ -5595,17 +5493,7 @@ class MentraLive : SGCManager() {
                         }
                         val charg = bodyObj.optInt("charg", -1)
                         if (batteryPercentage != -1 && charg != -1)
-                                updateBatteryStatus(
-                                        batteryPercentage,
-                                        charg == 1,
-                                        measuredPercent(bodyObj, "pt")?.let {
-                                            BatteryProvenance(
-                                                    "k900_sr_hrt",
-                                                    origin,
-                                                    pmuChargingBit(bodyObj)
-                                            )
-                                        }
-                                )
+                                updateBatteryStatus(batteryPercentage, charg == 1)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_hrt response", e)
@@ -5636,13 +5524,7 @@ class MentraLive : SGCManager() {
                         // charging from voltage (>4.0V) reads "not charging" for most of a
                         // genuinely-charging pack's range. Charging state comes exclusively
                         // from the PMU charg bit in the sr_hrt heartbeat.
-                        updateBatteryStatus(
-                                batteryPercentage,
-                                isCharging,
-                                measuredPercent(bodyObj, "pt")?.let {
-                                    BatteryProvenance("k900_sr_batv", origin, null)
-                                }
-                        )
+                        updateBatteryStatus(batteryPercentage, isCharging)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_batv response", e)
@@ -5879,7 +5761,7 @@ class MentraLive : SGCManager() {
                         Log.d(TAG, "🔓 Unwrapping and processing through standard message handler")
 
                         // Process through the standard message handler
-                        processJsonMessage(innerJson, origin)
+                        processJsonMessage(innerJson)
                         return // Exit after processing
                     }
                 } catch (e: JSONException) {
@@ -5993,44 +5875,7 @@ class MentraLive : SGCManager() {
      * Update battery status and notify listeners Matches iOS MentraLive.swift updateBatteryStatus
      * pattern
      */
-    /**
-     * [source] names the decoded message. [pmuCharging] is set only when the PMU charg bit of
-     * this very message supplied [isCharging]; percent-only sources re-pass the inherited value.
-     */
-    /**
-     * Provenance of a battery update decoded from one notification. [pmuCharging] is set only
-     * when the PMU charg bit of that message supplied the charging state.
-     */
-    private data class BatteryProvenance(
-            val source: String,
-            val origin: BleEvidenceLog.Origin?,
-            val pmuCharging: Boolean?
-    )
-
-    /**
-     * The sr_hrt PMU charging bit, only when `charg` is a number exactly equal to 0 or 1. The
-     * original value is compared without truncation, so 0.5 or 1.5 is not a bit.
-     */
-    private fun pmuChargingBit(body: JSONObject): Boolean? =
-            when ((body.opt("charg") as? Number)?.toDouble()) {
-                1.0 -> true
-                0.0 -> false
-                else -> null
-            }
-
-    /** The field's value when it is an actual integer percentage, else null (missing/invalid). */
-    private fun measuredPercent(obj: JSONObject, key: String): Int? {
-        val value = obj.opt(key) as? Number ?: return null
-        val asDouble = value.toDouble()
-        if (asDouble != Math.floor(asDouble) || asDouble < 0 || asDouble > 100) return null
-        return asDouble.toInt()
-    }
-
-    /**
-     * [provenance] is null for fallback or cached values: they are still displayed as before but
-     * carry no event id, so they can never count as a fresh measurement.
-     */
-    private fun updateBatteryStatus(level: Int, isCharging: Boolean, provenance: BatteryProvenance?) {
+    private fun updateBatteryStatus(level: Int, isCharging: Boolean) {
         // Keep the field in sync: percent-only messages (battery_status/sr_batv) re-pass
         // it as the last-known charging state, so a stale field would clobber the value
         // the sr_hrt PMU charg bit established.
@@ -6041,11 +5886,7 @@ class MentraLive : SGCManager() {
         DeviceStore.apply("glasses", "charging", isCharging)
 
         if (level >= 0) {
-            val eventId =
-                    provenance?.let {
-                        BleEvidenceLog.battery(it.origin, level, it.source, it.pmuCharging)
-                    }
-            Bridge.sendBatteryStatus(level, isCharging, eventId)
+            Bridge.sendBatteryStatus(level, isCharging)
         }
     }
 
@@ -6222,17 +6063,7 @@ class MentraLive : SGCManager() {
             if (!scanId.isNullOrEmpty()) {
                 json.put("scanId", scanId)
             }
-            val queued = sendJson(json, true, true)
-            if (!queued && !scanId.isNullOrEmpty()) {
-                BleEvidenceLog.scanSend(
-                        scanId,
-                        "not_queued",
-                        0,
-                        0,
-                        evidenceOrigin?.connection ?: 0L,
-                        evidenceWriteGeneration
-                )
-            }
+            sendJson(json, true)
             Bridge.log("LIVE: Sending WiFi scan request to glasses")
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating WiFi scan request", e)
@@ -9178,9 +9009,6 @@ class MentraLive : SGCManager() {
      * the per-session handshake attempt cap) instead of trusting stale v2-active state.
      */
     private fun resetWireNegotiationState() {
-        evidenceOrigin?.let {
-            evidenceOrigin = it.copy(wire = BleEvidenceLog.wireReset(it.connection))
-        }
         incomingChunkReassembler.clear()
         peerWireProtocolVersion = 0
         useBinaryWireProtocol = false
@@ -9416,7 +9244,7 @@ class MentraLive : SGCManager() {
         activateBinaryWireV2Session("LIVE: Peer confirmed BLE wire protocol v2")
     }
 
-    private fun processBinaryWireFrame(data: ByteArray, origin: BleEvidenceLog.Origin?) {
+    private fun processBinaryWireFrame(data: ByteArray) {
         val info = K900ProtocolUtils.extractBinaryFragmentInfo(data) ?: run {
             Log.w(TAG, "Failed to parse binary wire frame")
             return
@@ -9433,19 +9261,14 @@ class MentraLive : SGCManager() {
             )
         }
 
-        val mixedBefore = incomingChunkReassembler.mixedOriginDrops
         val reassembled =
                 incomingChunkReassembler.addBinaryFragment(
                         info.msgId,
                         info.fragIdx,
                         info.fragCount,
-                        info.payload,
-                        origin
+                        info.payload
                 )
-        if (incomingChunkReassembler.mixedOriginDrops != mixedBefore) {
-            BleEvidenceLog.receiveRejected("mixed_origin", origin)
-        }
-        if (reassembled == null) return
+                ?: return
 
         try {
             val jsonStr = String(reassembled, StandardCharsets.UTF_8)
@@ -9461,7 +9284,7 @@ class MentraLive : SGCManager() {
                     BleWireProtocol.PROTOCOL_V2,
                     "glasses_to_phone"
             )
-            processJsonMessage(json, origin)
+            processJsonMessage(json)
         } catch (e: JSONException) {
             Log.e(TAG, "Failed to parse reassembled binary wire JSON", e)
         }
@@ -9806,15 +9629,11 @@ class MentraLive : SGCManager() {
     private fun parseOutgoingBleCommandTraceInfo(payload: String): OutgoingBleCommandTraceInfo {
         return try {
             val obj = JSONObject(payload)
-            val commandType = obj.optString("type", "unknown")
             OutgoingBleCommandTraceInfo(
-                    commandType = commandType,
+                    commandType = obj.optString("type", "unknown"),
                     requestId = optNonBlankString(obj, "requestId"),
                     appId = optNonBlankString(obj, "appId"),
-                    messageId = if (obj.has("mId")) obj.optLong("mId") else null,
-                    scanId =
-                            if (commandType == "request_wifi_scan") optNonBlankString(obj, "scanId")
-                            else null
+                    messageId = if (obj.has("mId")) obj.optLong("mId") else null
             )
         } catch (_: Exception) {
             OutgoingBleCommandTraceInfo(
@@ -9849,8 +9668,7 @@ class MentraLive : SGCManager() {
                 packedBytes = packedBytes,
                 wakeup = wakeup,
                 chunked = chunked,
-                queuedAtMs = System.currentTimeMillis(),
-                scanId = commandInfo.scanId
+                queuedAtMs = System.currentTimeMillis()
         )
     }
 

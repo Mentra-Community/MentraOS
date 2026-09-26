@@ -12,7 +12,6 @@ import {Badge} from "@/components/ui/Badge"
 import {Group} from "@/components/ui"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useDiagnosticRenderMarker} from "@/hooks/useDiagnosticRenderMarker"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
@@ -28,10 +27,6 @@ export default function WifiScanScreen() {
   const [networks, setNetworks] = useState<WifiSearchResult[]>([])
   const networksRef = useRef(networks)
   networksRef.current = networks
-  // Opaque native ids of every nonempty chunk merged since this scan started (diagnostic only),
-  // and whether any merged chunk had no id (then the list as a whole has no provenance).
-  const scanEventIdsRef = useRef<string[]>([])
-  const scanHasUnprovenancedChunkRef = useRef(false)
   const [savedNetworks, setSavedNetworks] = useState<string[]>([])
   const [isScanning, setIsScanning] = useState(true)
   const wifiStatus = useEngineSnapshot(engine.glasses.wifi.status, (onChange) => engine.glasses.wifi.onStatus(onChange))
@@ -95,10 +90,8 @@ export default function WifiScanScreen() {
     // The glasses stream networks one by one while the scan runs; show them as
     // they arrive instead of waiting for the final requestWifiScan() result.
     // Each correlated event is one chunk, so merge it into the visible list.
-    const unsubscribe = engine.glasses.wifi.onScanResult((scanned, meta) => {
+    const unsubscribe = engine.glasses.wifi.onScanResult((scanned) => {
       if (scanned.length > 0) {
-        if (meta.eventId) scanEventIdsRef.current.push(meta.eventId)
-        else scanHasUnprovenancedChunkRef.current = true
         setNetworks((current) => mergeWifiScanResults(current, mapNetworks(scanned)))
       }
     })
@@ -114,22 +107,9 @@ export default function WifiScanScreen() {
       frequency: network.frequency,
     }))
 
-  // While this screen is focused, report which native chunks the committed list came from. The
-  // refs are updated before each setNetworks, so this render sees the ids behind this list. An
-  // empty id list marks a list without provenance (cleared, or containing an id-less chunk); any
-  // chunk from another scan makes the list unqualified. A pushed route (password, connecting) or
-  // leaving the screen withdraws the marker. The list itself is unchanged.
-  useDiagnosticRenderMarker(
-    "wifi_scan",
-    scanHasUnprovenancedChunkRef.current ? [] : scanEventIdsRef.current,
-    networks.length,
-  )
-
   const startScan = async () => {
     console.log("WIFI_SCAN: ========= STARTING NEW WIFI SCAN =========")
     setIsScanning(true)
-    scanEventIdsRef.current = []
-    scanHasUnprovenancedChunkRef.current = false
     setNetworks([])
 
     try {
