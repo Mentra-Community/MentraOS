@@ -1220,6 +1220,7 @@ const en = {
     settings: "Settings",
     openWebView: "Open Web View",
     version: "MentraOS v{{number}}",
+    starRatingValue: "{{rating}} out of {{max}} stars",
     reset: "Reset",
     learnMore: "Learn more",
     noResults: "No results found",
