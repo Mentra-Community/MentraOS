@@ -32,29 +32,47 @@ export type TestRunClaim = TestRunClaimIdentity & { claimedAt: string } & (
 export interface TestRunClaimResponse { executionGranted: boolean; claim: TestRunClaim }
 
 const sequence = z.number().int().positive().safe();
-/**
- * Evidence pins for the one supported closure: the original owner's completed
- * in-place install refusal, released by the reviewed `setup-abandoned-after-refusal`
- * event appended directly after the original (first-generation) terminal. It is
- * not a recovery terminal, a result or a readiness verdict: no candidate test ran
- * and the fixture was left uncommissioned.
- */
-export const testRunClaimClosureSchema = z.object({
-  kind: z.literal("android-refused-install-released"),
-  originalTerminal: z.object({ sequence, sha256 }).strict(),
-  journalPrefix: z.object({ bytes: sequence, sha256 }).strict(),
-  release: z.object({
-    type: z.literal("setup-abandoned-after-refusal"),
-    sequence,
-    eventSha256: sha256,
-    revision: z.string().regex(/^[a-f0-9]{40}$/),
-    implementationSha256: sha256,
-  }).strict(),
+const originalTerminal = z.object({ sequence, sha256 }).strict();
+const journalPrefix = z.object({ bytes: sequence, sha256 }).strict();
+const release = <T extends string>(type: T) => z.object({
+  type: z.literal(type),
+  sequence,
+  eventSha256: sha256,
+  revision: z.string().regex(/^[a-f0-9]{40}$/),
+  implementationSha256: sha256,
+}).strict();
+const released = {
   fixture: z.literal("uncommissioned"),
   selectedCandidateInstalled: z.literal(false),
   candidateTestRun: z.literal(false),
   recordingStarted: z.literal(false),
-}).strict().refine(value => value.release.sequence === value.originalTerminal.sequence + 1,
+};
+/**
+ * Evidence pins for an original owner's release of a failed first terminal: the
+ * reviewed release event was appended directly after the original
+ * (first-generation) terminal. It is not a recovery terminal, a result or a
+ * readiness verdict: no candidate test ran and the fixture was left uncommissioned.
+ *
+ * - `android-refused-install-released`: Android completed an in-place install
+ *   refusal, released by `setup-abandoned-after-refusal`.
+ * - `preflight-abandoned-released`: preflight failed before setup with zero
+ *   mutation operations, released by `preflight-abandoned`.
+ */
+export const testRunClaimClosureSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("android-refused-install-released"),
+    originalTerminal, journalPrefix,
+    release: release("setup-abandoned-after-refusal"),
+    ...released,
+  }).strict(),
+  z.object({
+    kind: z.literal("preflight-abandoned-released"),
+    originalTerminal, journalPrefix,
+    release: release("preflight-abandoned"),
+    operations: z.literal(0),
+    ...released,
+  }).strict(),
+]).refine(value => value.release.sequence === value.originalTerminal.sequence + 1,
   "release must directly follow the original terminal");
 /** The original owner's frozen identity and execution token, plus one closure. */
 export const testRunClaimCloseRequestSchema = testRunClaimRequestSchema.extend({ closure: testRunClaimClosureSchema }).strict();

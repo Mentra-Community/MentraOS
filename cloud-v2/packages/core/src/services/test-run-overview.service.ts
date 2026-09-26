@@ -269,8 +269,13 @@ export class TestRunOverviewService {
   }
 }
 
+/** Why the original owner could close the claim; never a pass or a ready fixture. */
+const closureReason: Record<TestRunClaimClosureRecord["kind"], string> = {
+  "android-refused-install-released": "Android refused the selected app update. The original worker released the phone without installing it, testing or recording.",
+  "preflight-abandoned-released": "Preflight failed before setup. The original worker released the fixture without installing the selected build, testing or recording.",
+};
 function attention(row: OverviewClaimRecord, state: ReturnType<typeof classifyEvidence>, canCancel: boolean): NonNullable<OverviewJob["attention"]> {
-  if (row.closure) return { reason: "Android refused the selected app update. The original worker released the phone without installing it, testing or recording.",
+  if (row.closure) return { reason: closureReason[row.closure.kind] ?? "The original worker closed this request without a test.",
     responsible: "Test runner / operator", closedAt: row.closure.closedAt,
     nextAction: "Commission this fixture before another request. It was left uncommissioned; the failed result is unchanged and is not a pass." };
   const cancellation = row.followUpCancellation;

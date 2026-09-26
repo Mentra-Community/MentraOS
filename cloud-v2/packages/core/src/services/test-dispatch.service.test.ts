@@ -211,16 +211,20 @@ describe("durable dispatch ownership", () => {
     f.repository.state = { state: "recovery-required" };
     expect((await f.service.detail(input.idempotencyKey)).state).toBe("recovery-required");
   });
-  test("an original-owner closure resolves the request as failed, never finished, and sends nothing", async () => {
-    const f = fixture(); await f.service.create(input, "admin@example.test");
-    f.repository.state = { state: "recovery-required", closed: true };
-    const result = await f.service.detail(input.idempotencyKey);
-    expect(result).toMatchObject({ state: "failed", requestId: "routine-70-1-12-no-glasses" });
-    expect(result.message).toContain("not a pass"); expect(result.message).toContain("uncommissioned");
-    expect(result.result).toBeUndefined();
-    expect(await f.service.create(input, "admin@example.test")).toEqual(result);
-    expect(f.sends()).toBe(1);
-  });
+  test.each([["android-refused-install-released", "Android refused the app update"],
+    ["preflight-abandoned-released", "preflight failed before setup"]] as const)(
+    "an original-owner %s closure resolves the request as failed, never finished, and sends nothing", async (kind, cause) => {
+      const f = fixture(); await f.service.create(input, "admin@example.test");
+      f.repository.state = { state: "recovery-required", closure: kind };
+      const result = await f.service.detail(input.idempotencyKey);
+      expect(result).toMatchObject({ state: "failed", requestId: "routine-70-1-12-no-glasses" });
+      expect(result.message).toContain(cause);
+      expect(result.message).toContain("not a pass"); expect(result.message).toContain("uncommissioned");
+      expect(result.message).not.toContain(kind === "preflight-abandoned-released" ? "Android" : "preflight");
+      expect(result.result).toBeUndefined();
+      expect(await f.service.create(input, "admin@example.test")).toEqual(result);
+      expect(f.sends()).toBe(1);
+    });
   test("recovery retains the worker evidence link without adopting the workflow verdict or resending", async () => {
     for (const state of ["running", "failed"] as const) {
       const f = fixture(); await f.service.create(input, "admin@example.test");

@@ -5,10 +5,16 @@ import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { testDispatchInputSchema, type TestDispatchReceipt, type TestDispatchView } from "../types/test-dispatch.types";
 import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
 import type { TestContinuationBinding } from "../types/test-continuation.types";
+import type { TestRunClaimClosure } from "../types/test-run-claim.types";
 import { TestRunService } from "./test-run.service";
 
 interface StoredDispatch { inputSha256: string; receipt: TestDispatchReceipt }
-interface ClaimState { state: string; resultRunId?: string; closed?: boolean }
+/** `closure` is the kind of the original owner's recorded closure, if any. */
+interface ClaimState { state: string; resultRunId?: string; closure?: TestRunClaimClosure["kind"] }
+const closedWithoutTest: Record<TestRunClaimClosure["kind"], string> = {
+  "android-refused-install-released": "Android refused the app update and no recording started.",
+  "preflight-abandoned-released": "preflight failed before setup, so nothing was installed, tested or recorded.",
+};
 interface ResultState { runId: string; requestId: string; outcome: string; outcomes: Record<string, string>; provenance: Record<string, string> }
 export interface TestDispatchRepository {
   get(id: string): Promise<StoredDispatch | null>;
@@ -54,7 +60,8 @@ export class MongoTestDispatchRepository implements TestDispatchRepository {
     const row = await TestRunClaimModel.findOne({ requestId }).lean();
     if (!row) return null;
     const value = row.claim as { state: string; settlement?: { resultRunId?: string } };
-    return { state: value.state, resultRunId: value.settlement?.resultRunId, ...(row.closure ? { closed: true } : {}) };
+    return { state: value.state, resultRunId: value.settlement?.resultRunId,
+      ...(row.closure ? { closure: (row.closure as { kind: TestRunClaimClosure["kind"] }).kind } : {}) };
   }
   async result(runId: string) { return new TestRunService().detail(runId); }
 }
@@ -136,8 +143,8 @@ export class TestDispatchService {
       try { workerUrl = (await this.github.progress(value.requestRunId, value.input)).workerUrl; }
       catch { /* Recovery ownership remains authoritative when GitHub status is unavailable. */ }
       // The original owner closed the request: resolved, but neither a pass nor a ready fixture.
-      if (claim.closed) return { ...value, requestId, state: "failed", ...(workerUrl ? { workerUrl } : {}),
-        message: "Closed by its original worker without a test: Android refused the app update and no recording started. The failed result is unchanged and is not a pass. The fixture was left uncommissioned." };
+      if (claim.closure) return { ...value, requestId, state: "failed", ...(workerUrl ? { workerUrl } : {}),
+        message: `Closed by its original worker without a test: ${closedWithoutTest[claim.closure] ?? "no candidate test ran."} The failed result is unchanged and is not a pass. The fixture was left uncommissioned.` };
       return { ...value, requestId, state: "recovery-required", ...(workerUrl ? { workerUrl } : {}),
         message: "The worker retained this fixture for recovery. Review the worker evidence before reuse." };
     }
