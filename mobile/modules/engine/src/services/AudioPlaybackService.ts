@@ -12,8 +12,6 @@ interface AudioPlayRequest {
   appId?: string
   volume?: number
   stopOtherAudio?: boolean
-  /** Fail if native playback has made no progress by this deadline. Opt-in for cloud TTS. */
-  startTimeoutMs?: number
   /**
    * Suppress microphone audio sent to cloud STT while this audio is audible.
    * Opt-in and off by default: the suppression is global to the uplink, so a
@@ -40,7 +38,6 @@ interface PlaybackState {
   appId?: string
   startTime: number
   completed: boolean // Guard against double callbacks
-  startTimer?: number
   suppressCloudUplink: boolean
   onComplete: AudioPlaybackCompletion
 }
@@ -278,7 +275,6 @@ class AudioPlaybackService {
   }
 
   private unloadPlaybackSource(playback: PlaybackState, reason: string): void {
-    this.clearStartTimer(playback)
     if (this.loadedPlayback !== playback) return
     const player = this.player
     if (!player) {
@@ -307,7 +303,6 @@ class AudioPlaybackService {
   }
 
   private clearFinishedPlayerAfterTail(playback: PlaybackState): void {
-    this.clearStartTimer(playback)
     if (playback.suppressCloudUplink) {
       this.tailUplinkSuppressions.add(playback.uplinkSuppressionId)
     }
@@ -327,32 +322,6 @@ class AudioPlaybackService {
       setAudioCloudUplinkSuppressed(sourceId, false)
     }
     this.tailUplinkSuppressions.clear()
-  }
-
-  private clearStartTimer(playback: PlaybackState): void {
-    if (playback.startTimer !== undefined) {
-      BgTimer.clearTimeout(playback.startTimer)
-      playback.startTimer = undefined
-    }
-  }
-
-  private watchPlaybackStart(playback: PlaybackState, timeoutMs: number): void {
-    playback.startTimer = BgTimer.setTimeout(() => {
-      playback.startTimer = undefined
-      if (this.currentPlayback !== playback || playback.completed) return
-
-      // AVPlayer can remain unknown/buffering without emitting another status
-      // event. Read native progress directly: "loaded" or play() returning does
-      // not establish that speech started. Do not impose a duration limit once
-      // the playhead has advanced, including when JS events arrived late.
-      const status = this.player?.currentStatus
-      if (status && status.currentTime > 0) return
-      console.warn(
-        `AUDIO: No startup progress for ${playback.requestId}: state=${status?.playbackState}, ` +
-          `loaded=${status?.isLoaded}, buffering=${status?.isBuffering}`,
-      )
-      this.failPlayback(playback, `Audio did not start within ${timeoutMs}ms`)
-    }, timeoutMs)
   }
 
   private failPlayback(playback: PlaybackState, message: string): void {
@@ -458,13 +427,6 @@ class AudioPlaybackService {
       player.replace({uri: audioUrl})
       this.loadedPlayback = playback
       player.play()
-      if (
-        request.startTimeoutMs !== undefined &&
-        Number.isFinite(request.startTimeoutMs) &&
-        request.startTimeoutMs > 0
-      ) {
-        this.watchPlaybackStart(playback, request.startTimeoutMs)
-      }
 
       // Mentra Live volume reads can block up to 5s when the glasses don't
       // answer. Do not put that in front of playback; guard it against late
@@ -583,18 +545,15 @@ class AudioPlaybackService {
       return
     }
 
-    // iOS reports "failed"; Android falls idle after a load/play error. Keep
-    // the initial grace period for status updates from source replacement.
-    // The cloud TTS startup deadline also covers failures with no new events.
+    // iOS "failed" is terminal even during startup. Android's unloaded idle
+    // status can also occur during source replacement, so retain its grace period.
     const wentIdle = status.playbackState === "idle" && !status.isBuffering && !status.isLoaded
-    if (status.playbackState === "failed" || wentIdle) {
-      const elapsedMs = Date.now() - playback.startTime
-      if (elapsedMs > 1500) {
-        this.failPlayback(
-          playback,
-          wentIdle ? "Playback failed (player went idle)" : "Playback failed (native player failed)",
-        )
-      }
+    const elapsedMs = Date.now() - playback.startTime
+    if (status.playbackState === "failed" || (wentIdle && elapsedMs > 1500)) {
+      this.failPlayback(
+        playback,
+        wentIdle ? "Playback failed (player went idle)" : "Playback failed (native player failed)",
+      )
     }
   }
 
