@@ -459,6 +459,30 @@ describe("GallerySyncService", () => {
     expect(gallerySyncNotifications.showSyncError).toHaveBeenCalledWith("Glasses disconnected")
   })
 
+  it.each([false, true])("keeps post-sync counts known unless glasses disconnect (disconnect=%s)", async (disconnect) => {
+    gallerySyncService.initialize()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    useGallerySyncStore.getState().setGlassesGalleryStatus(2, 1, 3, true)
+    useGallerySyncStore.getState().setSyncComplete()
+    if (disconnect) {
+      ;(gallerySyncNotifications.showSyncComplete as jest.Mock).mockImplementationOnce(async () => {
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+      })
+    }
+
+    await (
+      gallerySyncService as unknown as {onSyncComplete: (downloaded: number, failed: number) => Promise<void>}
+    ).onSyncComplete(3, 0)
+
+    expect(useGallerySyncStore.getState()).toMatchObject({
+      glassesGalleryStatusKnown: !disconnect,
+      glassesPhotoCount: 0,
+      glassesVideoCount: 0,
+      glassesTotalCount: 0,
+      glassesHasContent: false,
+    })
+  })
+
   it("requests hotspot and records ownership when starting sync", async () => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
 
