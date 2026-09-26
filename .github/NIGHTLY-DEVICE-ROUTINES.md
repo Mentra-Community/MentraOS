@@ -1,6 +1,6 @@
 # Nightly device routine runbook
 
-The [nightly workflow](workflows/nightly-device-routines.yml) targets four routines
+The [nightly workflow](workflows/nightly-device-routines.yml) targets five routines
 on each latest verified coordinated **dev** and **staging** publication:
 
 | Required routine | Platform | Current integration |
@@ -9,9 +9,13 @@ on each latest verified coordinated **dev** and **staging** publication:
 | `mentra-call` | iOS on Mac | Registered; needs independent Call media/audio/network qualification |
 | `account-miniapps` | iOS on Mac | Author-owned combined routine; unavailable until its real worker is registered and qualified |
 | `connected-glasses` | Android | Author-owned combined routine; unavailable until its real worker is registered and qualified |
+| `livestreamer` | iOS on Mac | Planned author-owned routine covering Livestreamer's WebRTC **Stream here** and local RTMP; unavailable until its real worker is registered and qualified |
 
-Registration is not a passing device result. No-glasses tests requested after each
-coordinated build remain unchanged. The scheduler creates no commits or builds.
+Planning, registration and qualification are separate steps. A planned target only
+reserves a routine ID and platform. The planner reports it as unavailable and never
+requests it until the worker is registered. Registration is not a passing device
+result either. No-glasses tests requested after each coordinated build remain
+unchanged. The scheduler creates no commits or builds.
 
 ## Schedule and exact selection
 
@@ -79,18 +83,20 @@ change does not enable it. Before enabling:
    containing it. Dispatcher and enrolled runtime revisions can differ; a newer
    dispatcher does not make an older runtime understand the new marker.
 2. Merge the public producer/callback/scheduler and Core overview projection to
-   `dev`, the default branch. Complete the two author-owned routine registrations
-   across public selectors, private parsers/workers and runner capabilities.
+   `dev`, the default branch. Complete the three author-owned routine registrations
+   (`account-miniapps`, `connected-glasses` and `livestreamer`) across public
+   selectors, private parsers/workers and runner capabilities.
 3. Qualify **each** full recorded routine, its setup/verified return, resource
    transitions and actual queue-to-admin publication. Call qualification includes
    the browser-peer recording, two-way audio, background operation and independent
-   internet route. A partial development recording is not full qualification.
+   internet route. Livestreamer qualification covers both WebRTC **Stream here**
+   and local RTMP. A partial development recording is not full qualification.
 4. Confirm existing scoped GitHub App dispatch/read configuration and separate
    Core claim/upload capabilities. The scheduler mints a MentraOS-only Actions-write
    App token so its request emits the downstream callback. That callback separately
    mints the private dispatch token; the scheduler needs no private-repository credential.
 5. Enable the variable only after those gates. Verify the next applicable run's
-   eight member requests/results. Verify integration on dev; do not create staging
+   ten member requests/results (five routines on each of two channels). Verify integration on dev; do not create staging
    verification commits or manual staging qualification runs.
 
 Authorized operator commands, after qualification:
