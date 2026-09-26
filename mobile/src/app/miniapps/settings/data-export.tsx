@@ -1,3 +1,4 @@
+import * as Application from "expo-application"
 import * as Clipboard from "expo-clipboard"
 import {useEffect, useState} from "react"
 import {
@@ -28,7 +29,8 @@ export interface UserDataExport {
   metadata: {
     exportDate: string
     exportVersion: string
-    appVersion: string
+    /** Installed native Mentra App version, or null when the platform cannot report it. */
+    appVersion: string | null
   }
   authentication: {
     user: {
@@ -71,7 +73,7 @@ class DataExportService {
       metadata: {
         exportDate: new Date().toISOString(),
         exportVersion: this.EXPORT_VERSION,
-        appVersion: "2.0.0", // Could be dynamic
+        appVersion: this.installedAppVersion(),
       },
       authentication: await this.collectAuthData(user, session),
       augmentosStatus: this.sanitizeStatusData(status),
@@ -81,6 +83,14 @@ class DataExportService {
 
     console.log("DataExportService: Data collection completed")
     return exportData
+  }
+
+  /**
+   * The installed binary's marketing version (iOS CFBundleShortVersionString,
+   * Android versionName). Build labels and package versions are not substitutes.
+   */
+  private static installedAppVersion(): string | null {
+    return Application.nativeApplicationVersion?.trim() || null
   }
 
   /**
