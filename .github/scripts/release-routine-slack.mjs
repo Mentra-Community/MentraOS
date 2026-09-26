@@ -3,6 +3,8 @@ import {execFileSync} from "node:child_process"
 import {writeFile} from "node:fs/promises"
 import {isDeepStrictEqual} from "node:util"
 import {publishedCoordinatedBuild, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
+import {deviceRoutine} from "./device-routines.mjs"
+import {callbackRunName} from "./dispatch-device-routine.mjs"
 import {applyRoutineResult, assertNotification, positive, receiptName, REPOSITORY, requireThat, sha} from "./release-slack-message.mjs"
 
 export const WORKFLOW = ".github/workflows/notify-release-routine.yml"
@@ -76,27 +78,138 @@ export function terminalRow(terminal, run, request) {
     ...(terminal.resultRunId ? {resultRunId: terminal.resultRunId} : {})}
 }
 
+async function trustedRequest(github, context, selector, read) {
+  requireThat(selector?.repository === REPOSITORY && positive(selector.runId) && positive(selector.runAttempt), "Invalid source selector")
+  const {data: source} = await github.rest.actions.getWorkflowRunAttempt({...context.repo, run_id: selector.runId, attempt_number: selector.runAttempt})
+  assertRun(source, context.repo, [REQUEST], "dev")
+  requireThat(source.id === selector.runId && source.run_attempt === selector.runAttempt && source.conclusion === "success", "Source request attempt did not succeed")
+  const request = (await read(github, context.repo, source, `mentra-routine-request-${source.id}-${source.run_attempt}`, ["request.json"]))["request.json"]
+  requireThat(request.trigger?.runId === source.id && request.trigger?.runAttempt === source.run_attempt &&
+    request.trigger.sha === source.head_sha && request.trigger.workflowSha === source.head_sha && request.trigger.workflow === REQUEST &&
+    request.trigger.repository === REPOSITORY && request.status === "ready", "Request differs from its trusted producer")
+  return {source, request}
+}
+
+const WORKER = ".github/workflows/device-routine.yml"
+const CALLBACK = ".github/workflows/dispatch-device-routine.yml"
+const WORKER_JOB = "prepared-mac-routine"
+const CALLBACK_JOB = "Dispatch trusted request"
+const PRIVATE_SEND_STEP = "Queue the ready request in the private repository"
+export const DISPATCHER = {workflow: CALLBACK, job: CALLBACK_JOB, step: PRIVATE_SEND_STEP}
+// The trusted dispatcher queues private workers with the TEST_RUN GitHub App token
+// (dispatch-device-routine.yml). GitHub records that App's bot as the worker run's
+// creator; the numeric account ID is immutable. Actual receipt: worker 36218299907
+// was created by this bot during callback 36218261570's private send.
+const DISPATCHER_APP = Object.freeze({login: "mentra-release-coordinator[bot]", id: 321969383, type: "Bot"})
+const createdByDispatcherApp = actor => actor?.id === DISPATCHER_APP.id && actor.login === DISPATCHER_APP.login &&
+  actor.type === DISPATCHER_APP.type
+// GitHub records run creation and step times on different services, in whole seconds.
+const CLOCK_SKEW_MS = 5_000
+const NOT_PROVEN = "No terminal receipt; only a cancelled attempt that never reached a runner can be reported without one"
+const workerTitle = /^Device routine request ([1-9]\d{0,15}) \/ attempt ([1-9]\d{0,5})$/
+const searchTime = ms => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z")
+
+async function completeRuns(github, repo, query, message) {
+  const runs = []
+  let total
+  for (let page = 1; ; page++) {
+    const {data} = await github.rest.actions.listWorkflowRuns({...repo, ...query, per_page: 100, page})
+    requireThat(Number.isSafeInteger(data.total_count) && data.total_count >= 0 && data.total_count < 1000 &&
+      Array.isArray(data.workflow_runs) && (total ?? data.total_count) === data.total_count, message)
+    total = data.total_count
+    runs.push(...data.workflow_runs)
+    if (runs.length >= total) break
+    requireThat(data.workflow_runs.length === 100, message)
+  }
+  requireThat(runs.length === total && new Set(runs.map(item => item.id)).size === total, message)
+  return runs
+}
+
+/**
+ * GitHub metadata, not worker code, is the only witness when an attempt is
+ * cancelled before a runner accepts it. Private main's device-routine.yml (the
+ * same trust root that writes ordinary terminal receipts) makes GitHub derive the
+ * run name from the request_run_id/request_attempt inputs and the job labels from
+ * routine_id; the digits-only title parse is unambiguous. Those inputs still only
+ * name a candidate: the request must be the trusted dev producer, the run must be
+ * created by the dispatcher App, the job must show no runner or step, and the
+ * trusted dev callback for that request must be the single sender of exactly this
+ * run. Private dispatch returns no run ID, so there is no stronger binding for
+ * historical runs; anything ambiguous is refused.
+ */
+async function unexecutedCancellation({github, privateGithub, context, run, read}) {
+  const title = workerTitle.exec(run.display_title ?? "")
+  requireThat(run.path === WORKER && run.conclusion === "cancelled" && title, NOT_PROVEN)
+  requireThat(createdByDispatcherApp(run.actor) && createdByDispatcherApp(run.triggering_actor),
+    "Private run was not created by the trusted dispatcher App")
+  // The dispatcher only ever creates first attempts. Any rerun, even by the same App,
+  // may follow an attempt that executed without a receipt; that keeps its recovery path.
+  // The latest run metadata must show that this first attempt is still the only one.
+  const {data: latest} = await privateGithub.rest.actions.getWorkflowRun({...PRIVATE, run_id: run.id})
+  requireThat(run.run_attempt === 1 && latest?.id === run.id && latest.run_attempt === 1 &&
+    ["path", "head_branch", "head_sha", "event", "status", "conclusion", "display_title", "created_at"]
+      .every(key => latest[key] === run[key]) && latest.repository?.full_name === run.repository.full_name &&
+    createdByDispatcherApp(latest.actor) && createdByDispatcherApp(latest.triggering_actor),
+  "Only an unrerun first dispatched attempt can be reported as cancelled before execution")
+  const jobs = await privateGithub.paginate(privateGithub.rest.actions.listJobsForWorkflowRunAttempt,
+    {...PRIVATE, run_id: run.id, attempt_number: run.run_attempt, per_page: 100})
+  requireThat(jobs.length === 1, "Cancelled attempt jobs are ambiguous")
+  const [job] = jobs
+  const {source, request} = await trustedRequest(github, context,
+    {repository: REPOSITORY, runId: Number(title[1]), runAttempt: Number(title[2])}, read)
+  const routine = request.routine?.id
+  requireThat(routines.includes(routine) && request.selection?.platform === deviceRoutine(routine).platform,
+    "Request routine is not a device worker routine")
+  requireThat(job.name === WORKER_JOB && job.run_id === run.id && job.run_attempt === run.run_attempt && job.head_sha === run.head_sha &&
+    isDeepStrictEqual(job.labels, ["mentra-device-worker", request.selection.platform, `mentra-routine-${routine}`]),
+  "Cancelled job differs from its requested routine")
+  // A started, interrupted or crashed job keeps its own recovery/evidence contract.
+  requireThat(job.status === "completed" && job.conclusion === "cancelled" && Array.isArray(job.steps) && job.steps.length === 0 &&
+    !job.runner_id && !job.runner_name && !job.runner_group_id, "Cancelled attempt may have reached a runner; use its recovery evidence")
+  const requested = Date.parse(source.created_at), created = Date.parse(run.created_at)
+  requireThat(Number.isFinite(requested) && Number.isFinite(created) && requested < created, "Worker predates its request")
+  const callbacks = (await completeRuns(github, context.repo, {workflow_id: CALLBACK, event: "workflow_run", branch: "dev",
+    created: `${searchTime(requested)}..${searchTime(created)}`}, "Dispatcher history is unavailable or incomplete"))
+    .filter(item => item.display_title === callbackRunName(source.id, source.run_attempt))
+  requireThat(callbacks.length === 1 && callbacks[0].path === CALLBACK && callbacks[0].event === "workflow_run" &&
+    callbacks[0].head_branch === "dev" && sha(callbacks[0].head_sha) && callbacks[0].repository?.full_name === REPOSITORY &&
+    callbacks[0].head_repository?.full_name === REPOSITORY, "Trusted dispatcher for this request is absent or ambiguous")
+  const sends = new Map()
+  for (const item of await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+    {...context.repo, run_id: callbacks[0].id, filter: "all", per_page: 100})) {
+    if (item.name !== CALLBACK_JOB) continue
+    const step = item.steps?.find(value => value.name === PRIVATE_SEND_STEP)
+    // Retries clone completed jobs with their original timestamps; that is one send.
+    if (step && step.conclusion !== "skipped") sends.set(`${step.started_at}/${step.completed_at}`, step)
+  }
+  const [send] = sends.values(), start = Date.parse(send?.started_at), end = Date.parse(send?.completed_at)
+  requireThat(sends.size === 1 && send.status === "completed" && send.conclusion === "success" &&
+    Number.isFinite(start) && Number.isFinite(end) && start - CLOCK_SKEW_MS <= created && created <= end + CLOCK_SKEW_MS,
+  "Trusted dispatcher did not send exactly this private run")
+  const siblings = (await completeRuns(privateGithub, PRIVATE, {workflow_id: WORKER, event: "workflow_dispatch", branch: "main",
+    created: `${searchTime(start - CLOCK_SKEW_MS)}..${searchTime(end + CLOCK_SKEW_MS)}`}, "Private dispatch history is unavailable or incomplete"))
+    .filter(item => item.display_title === run.display_title)
+  requireThat(siblings.length === 1 && siblings[0].id === run.id, "Private dispatch for this request is ambiguous")
+  return {request, terminal: null, row: {routineId: routine, requestRunId: source.id, requestAttempt: source.run_attempt,
+    privateRunId: run.id, privateAttempt: run.run_attempt, status: "cancelled"}}
+}
+
 /** Both destinations use the same exact private attempt and trusted dev request. */
 export async function resolveRoutineResults({github, privateGithub, context, workerRunId, workerAttempt, read = readActionsJson}) {
   requireThat(context.eventName === "workflow_dispatch" && context.ref === "refs/heads/dev" &&
     `${context.repo.owner}/${context.repo.repo}` === REPOSITORY && positive(workerRunId) && positive(workerAttempt), "Unsupported result callback")
   const {data: run} = await privateGithub.rest.actions.getWorkflowRunAttempt({...PRIVATE, run_id: workerRunId, attempt_number: workerAttempt})
-  assertRun(run, PRIVATE, [".github/workflows/device-routine.yml", ".github/workflows/nightly-device-routines.yml"], "main")
+  assertRun(run, PRIVATE, [WORKER, ".github/workflows/nightly-device-routines.yml"], "main")
   requireThat(run.id === workerRunId && run.run_attempt === workerAttempt, "Private attempt changed")
-  const terminals = await read(privateGithub, PRIVATE, run, `routine-terminal-${run.id}-${run.run_attempt}`,
-    routines.map(id => `routine-terminal-${id}.json`))
+  const receipt = `routine-terminal-${run.id}-${run.run_attempt}`
+  // Any retained (even expired) receipt keeps the ordinary worker-attested path.
+  if (run.conclusion === "cancelled" && !(await artifacts(privateGithub, PRIVATE, run.id)).some(item => item.name === receipt))
+    return [await unexecutedCancellation({github, privateGithub, context, run, read})]
+  const terminals = await read(privateGithub, PRIVATE, run, receipt, routines.map(id => `routine-terminal-${id}.json`))
   const results = []
   for (const [file, terminal] of Object.entries(terminals)) {
     requireThat(file === `routine-terminal-${terminal.request?.routineId}.json`, "Terminal filename differs from routine")
-    const selector = terminal.request
-    requireThat(selector?.repository === REPOSITORY && positive(selector.runId) && positive(selector.runAttempt), "Invalid source selector")
-    const {data: source} = await github.rest.actions.getWorkflowRunAttempt({...context.repo, run_id: selector.runId, attempt_number: selector.runAttempt})
-    assertRun(source, context.repo, [REQUEST], "dev")
-    requireThat(source.id === selector.runId && source.run_attempt === selector.runAttempt && source.conclusion === "success", "Source request attempt did not succeed")
-    const request = (await read(github, context.repo, source, `mentra-routine-request-${source.id}-${source.run_attempt}`, ["request.json"]))["request.json"]
-    requireThat(request.trigger?.runId === source.id && request.trigger?.runAttempt === source.run_attempt &&
-      request.trigger.sha === source.head_sha && request.trigger.workflowSha === source.head_sha && request.trigger.workflow === REQUEST &&
-      request.trigger.repository === REPOSITORY && request.status === "ready", "Request differs from its trusted producer")
+    const {request} = await trustedRequest(github, context, terminal.request, read)
     results.push({request, terminal, row: terminalRow(terminal, run, request)})
   }
   return results

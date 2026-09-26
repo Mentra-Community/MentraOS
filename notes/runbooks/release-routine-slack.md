@@ -64,6 +64,43 @@ source. PR requests use this same authenticated callback to post one comment
 per worker run/attempt/routine on the originating PR; they do not need Slack
 configuration. See [PR result history](../../.github/DEVICE-ROUTINES.md#results-and-slack).
 
+One exception has no receipt by construction: a request cancelled while queued.
+The private callback forwards a cancelled `device-routine.yml` attempt only when
+its single job has no runner and no steps. The public resolver then re-proves it
+from GitHub metadata:
+
+- the exact private `main` attempt completed as cancelled with no terminal
+  artifact; its only job has no runner or step;
+- private `main` makes GitHub derive the run name from the `request_run_id` and
+  `request_attempt` inputs and the job labels from `routine_id`. These name the
+  candidate request, which must be the trusted successful dev request with its
+  authenticated artifact and pinned build/archive;
+- the run was created by the dispatcher GitHub App's bot account (fixed numeric
+  ID), and both the selected attempt and the run's latest metadata show that it
+  is the first and only attempt. A rerun, even by the same App, may follow an
+  attempt that executed without a receipt, so it is refused;
+- the trusted dev `dispatch-device-routine.yml` callback for that exact request
+  completed exactly one private send, and this is the only private run of that
+  name created during the send.
+
+Private dispatch does not return the created run ID, so historical runs have no
+stronger binding than this. A same-input run created by another holder of the
+App key during the send makes the history ambiguous and is refused. The only
+unexcluded case is such a run appearing while the trusted send itself created
+none. Even then the run did receive that request as input and never ran, so the
+status stays true. Manual redispatches outside the send, and reruns, are refused.
+
+The post then shows **Cancelled before execution; no test result** for that
+routine. It is not a test result, result link, recording or qualification. It
+only fills a pending row or replaces an older cancellation; any worker-attested
+result for the routine outranks it. Build status and other routine rows are
+unchanged. A started, interrupted or crashed attempt without a receipt is still
+refused and keeps its recovery/evidence path. PR comments are unchanged.
+
+To backfill one proven cancellation after this is deployed, dispatch this
+workflow on `dev` with that worker run ID and attempt, exactly as the callback
+does.
+
 ## Concurrent routines and retries
 
 Updates to one post use GitHub's `concurrency.queue: max`, so a pending Call
