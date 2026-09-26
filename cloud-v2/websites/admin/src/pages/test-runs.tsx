@@ -7,12 +7,13 @@ import { api } from "../lib/api";
 import { TestDispatchPanel } from "./test-dispatches";
 import { TestRunOverviewPanel } from "./test-run-overview";
 import { readRecordingTimeline, TestRunRecordings } from "./test-run-recordings";
-import { readTestRunLink, testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
+import { testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
 import {
   chapterSeekTime,
   EMPTY_FILTERS,
   FIRMWARE_PHASE_LABELS,
   initialChapter,
+  relatedRun,
   runDuration,
   safeProducerUrl,
   testRunListPath,
@@ -376,10 +377,7 @@ export function TestRunView({
     `${chapter.id} ${chapter.instruction}`.toLowerCase().includes(search.toLowerCase()),
   );
   const producer = safeProducerUrl(run.provenance.producerUrl);
-  const originalRunId =
-    typeof run.provenance.originalRunId === "string" && run.provenance.originalRunId !== run.runId
-      ? readTestRunLink(new URLSearchParams({ testRun: run.provenance.originalRunId }).toString())?.runID
-      : null;
+  const related = relatedRun(run);
   return (
     <>
       <section className={`${PANEL} p-5`}>
@@ -404,13 +402,23 @@ export function TestRunView({
             </a>
           ) : null}
         </div>
-        {originalRunId ? (
-          <aside aria-label="Recovery result" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
-            <span className="font-semibold">Recovery result.</span> The original test outcome is preserved.{" "}
+        {related ? (
+          <aside
+            aria-label={related.kind === "recovery" ? "Recovery result" : "Source run"}
+            className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
+            {related.kind === "recovery" ? (
+              <>
+                <span className="font-semibold">Recovery result.</span> The original test outcome is preserved.{" "}
+              </>
+            ) : (
+              <>
+                <span className="font-semibold">Source run.</span> This result records a link to another run.{" "}
+              </>
+            )}
             <a
-              href={`/?testRun=${encodeURIComponent(originalRunId)}`}
+              href={`/?testRun=${encodeURIComponent(related.runId)}`}
               className="font-semibold text-[#087d50] underline">
-              View original run
+              {related.kind === "recovery" ? "View original run" : "View source run"}
             </a>
           </aside>
         ) : null}

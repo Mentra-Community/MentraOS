@@ -1,4 +1,4 @@
-import type { TestRunListScope } from "../lib/test-run-links";
+import { readTestRunLink, type TestRunListScope } from "../lib/test-run-links";
 
 export type RunOutcome = "passed" | "failed" | "blocked" | "aborted";
 export type CheckOutcome = "passed" | "failed" | "blocked" | "not-run";
@@ -174,6 +174,44 @@ export function safeProducerUrl(value: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+export interface RelatedRun {
+  kind: "recovery" | "source";
+  runId: string;
+}
+
+const DIGEST = /^[a-f0-9]{64}$/;
+
+function safeRelatedRunId(value: string | undefined, runId: string) {
+  return typeof value === "string" && value !== runId
+    ? readTestRunLink(new URLSearchParams({ testRun: value }).toString())?.runID ?? null
+    : null;
+}
+
+/**
+ * The run this result links back to. It is a recovery only when a registered,
+ * consumed CI result declares an appended lifecycle generation with its original
+ * and current terminal snapshot digests, the lineage Core accepts for recovery.
+ * Optional previous-result and amendment metadata, and the recovery's own
+ * outcome, do not decide the label. Any other safe, distinct original run ID
+ * (development exports, legacy results) stays a neutral source link. Run ID
+ * prefixes are never used as evidence.
+ */
+export function relatedRun(run: Pick<TestRunDetail, "runId" | "provenance">): RelatedRun | null {
+  const provenance = run.provenance;
+  const runId = safeRelatedRunId(provenance.originalRunId, run.runId);
+  if (!runId) return null;
+  const generation = Number(provenance.resultGeneration);
+  const recovery =
+    provenance.executionMode === "ci-registered" &&
+    provenance.requestRelationship === "consumed" &&
+    /^[1-9]\d*$/.test(provenance.resultGeneration ?? "") &&
+    Number.isSafeInteger(generation) &&
+    generation > 1 &&
+    DIGEST.test(provenance.terminalSnapshotSha256 ?? "") &&
+    DIGEST.test(provenance.originalTerminalSnapshotSha256 ?? "");
+  return { kind: recovery ? "recovery" : "source", runId };
 }
 
 /**
