@@ -5223,7 +5223,11 @@ class MentraLive: NSObject, SGCManager {
                             bridgeLogging: bridgeLogging
                         )
                     }
-                    transportLog("LIVE: Sending data to glasses: \(jsonString)", bridgeLogging: bridgeLogging)
+                    // Wi-Fi credentials are sent unchanged but never logged; the BLE trace
+                    // above records this command with the password redacted.
+                    let loggedPayload = json["password"] == nil
+                        ? jsonString : "<\(commandInfo.commandType) with credentials omitted>"
+                    transportLog("LIVE: Sending data to glasses: \(loggedPayload)", bridgeLogging: bridgeLogging)
                     let packedData =
                         packJson(
                             jsonString,

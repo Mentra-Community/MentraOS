@@ -91,10 +91,8 @@ class WifiCredentialsService {
    * Remove credentials for a specific SSID
    */
   static removeCredentials(ssid: string): boolean {
-    console.log("343243243$%^&*21321 removeCredentials", ssid)
     const data = this.loadCredentialsData()
     data.credentials = data.credentials.filter((cred) => cred.ssid !== ssid)
-    console.log("321321 removed credentials", data)
     const res = storage.save(this.STORAGE_KEY, data)
     if (res.is_error()) {
       console.error("Error removing WiFi credentials:", res.error)

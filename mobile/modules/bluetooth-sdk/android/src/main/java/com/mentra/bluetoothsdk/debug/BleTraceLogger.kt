@@ -108,6 +108,9 @@ object BleTraceLogger {
     }
 
     private fun sanitizeValue(key: String?, value: Any?): Any? {
+        // Scan security metadata is a boolean, not a credential. Keep the exact
+        // typed field while still redacting string/unknown values under this key.
+        if (key == "requiresPassword" && value is Boolean) return value
         if (key != null && sensitiveKeyParts.any { key.contains(it, ignoreCase = true) }) {
             return "<redacted>"
         }
