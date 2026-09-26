@@ -72,12 +72,15 @@ export async function getReportArtifact(c: AppContext) {
   // script are served inline (SVG stays out — it can run script); everything
   // else downloads as an opaque attachment. nosniff plus a deny-all sandbox
   // CSP keeps even a mislabeled body inert when opened as a document.
+  // The full payload is sent as one 200 with its exact length; byte ranges
+  // are not served.
   const contentType = (payload.contentType || "").split(";")[0].trim().toLowerCase();
   const inline = INLINE_CONTENT_TYPES.has(contentType);
   return new Response(payload.bytes, {
     status: 200,
     headers: {
       "content-type": inline ? contentType : "application/octet-stream",
+      "content-length": String(payload.bytes.byteLength),
       "content-disposition": `${inline ? "inline" : "attachment"}; filename="${safeFilename(payload.fileName, artifactId)}"`,
       "x-content-type-options": "nosniff",
       "content-security-policy": "default-src 'none'; sandbox",
@@ -91,6 +94,8 @@ const INLINE_CONTENT_TYPES = new Set([
   "image/png",
   "image/webp",
   "image/gif",
+  // Stored only for uploads whose MP4 signature was checked.
+  "video/mp4",
   "application/json",
 ]);
 

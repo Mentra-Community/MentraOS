@@ -1,7 +1,7 @@
 /**
  * @fileoverview Report service for Cloud V2 core.
  *
- * Artifact payloads (screenshot bytes, serialized log bundles) never live in
+ * Artifact payloads (screenshot/video bytes, serialized log bundles) never live in
  * the report document: each one is written to blob storage and described by a
  * `report_assets` row (same pattern as miniapp assets), while the report
  * embeds only artifact metadata. A report therefore stays a few KB no matter
@@ -86,7 +86,10 @@ export interface ReportLogEntry {
   source?: string;
 }
 
+export type ReportArtifactType = "logs" | "screenshot" | "state_snapshot" | "video";
+
 export interface ReportAttachmentInput {
+  type: Extract<ReportArtifactType, "screenshot" | "video">;
   filename: string;
   contentType: string;
   bytes: Uint8Array;
@@ -198,7 +201,8 @@ export async function addLogArtifact(input: {
   });
 }
 
-export async function addScreenshotArtifacts(input: {
+/** Phone-attached files (screenshots and MP4 videos), classified by the upload route. */
+export async function addAttachmentArtifacts(input: {
   mentraUserId: string;
   reportId: string;
   files: ReportAttachmentInput[];
@@ -207,7 +211,7 @@ export async function addScreenshotArtifacts(input: {
     reportId: input.reportId,
     mentraUserId: input.mentraUserId,
     payloads: input.files.map((file) => ({
-      type: "screenshot" as const,
+      type: file.type,
       source: "phone",
       filename: file.filename,
       contentType: file.contentType,
@@ -250,7 +254,7 @@ export async function markReportReady(input: {
 }
 
 interface ReportArtifactPayload {
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: ReportArtifactType;
   source: string;
   filename: string | null;
   contentType: string;
@@ -363,7 +367,7 @@ async function addArtifacts(input: {
 
 export interface AdminReportArtifact {
   artifactId: string;
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: ReportArtifactType;
   source: string;
   filename: string | null;
   contentType: string | null;

@@ -208,6 +208,51 @@ describe("admin reports read surface", () => {
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 
+  test("plays a reporter's verified MP4 inline for admins only, with its exact length", async () => {
+    const reportId = await seedReport("video attached");
+    // Synthetic ISO media bytes (ftyp + mdat), larger than the screenshot limit.
+    const ftyp = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom"),
+      Buffer.from([0, 0, 2, 0]), Buffer.from("isommp41")]);
+    const media = crypto.randomBytes(12 * 1024 * 1024);
+    const mdat = Buffer.alloc(8);
+    mdat.writeUInt32BE(media.byteLength + 8, 0);
+    mdat.write("mdat", 4, "latin1");
+    const video = Buffer.concat([ftyp, mdat, media]);
+    const form = new FormData();
+    form.append("files", new File([video], "recording.mp4", { type: "video/mp4" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+
+    const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
+    const { report } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; type: string; contentType: string; sizeBytes: number }> };
+    };
+    const clip = report.artifacts.find(a => a.type === "video")!;
+    expect(clip).toMatchObject({ contentType: "video/mp4", sizeBytes: video.byteLength });
+    const url = `${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${clip.artifactId}`;
+
+    const res = await adminGet(url);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("video/mp4");
+    expect(res.headers.get("content-length")).toBe(String(video.byteLength));
+    expect(res.headers.get("content-disposition")).toBe('inline; filename="recording.mp4"');
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(Buffer.from(await res.arrayBuffer()).equals(video)).toBe(true);
+
+    expect((await coreApp.fetch(new Request(url))).status).toBe(401);
+    const forbidden = await coreApp.fetch(
+      new Request(url, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
   test("never renders a spoofed screenshot content type inline", async () => {
     const reportId = await seedReport("hostile upload");
 

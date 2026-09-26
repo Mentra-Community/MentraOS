@@ -12,8 +12,8 @@ import { userAuth } from "../middleware/user-auth.middleware";
 import { InvalidRequest } from "../../types/oauth.types";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import {
+  addAttachmentArtifacts,
   addLogArtifact,
-  addScreenshotArtifacts,
   markReportReady,
   submitReport,
   type ReportAttachmentInput,
@@ -87,11 +87,16 @@ const logsArtifactSchema = z.object({
 });
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+// A verified MP4 recording may be larger than a screenshot. 32 MiB allows a
+// short screen recording, while the unchanged router ceiling below still
+// bounds each request (one video plus one screenshot fits under it).
+const MAX_VIDEO_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 // The feedback UI attaches at most 5 screenshots, and the cloud-client sends
 // them in a single multipart call.
 const MAX_ATTACHMENT_FILES = 5;
 // Router-wide request-body ceiling: the full attachment budget plus slack for
-// multipart framing. Also bounds the JSON routes (submit, logs).
+// multipart framing. Also bounds the JSON routes (submit, logs). Video uploads
+// share this ceiling; it is not raised for them.
 const MAX_REQUEST_BODY_BYTES =
   MAX_ATTACHMENT_BYTES * MAX_ATTACHMENT_FILES + 1024 * 1024;
 
@@ -143,7 +148,7 @@ async function postReportArtifacts(c: AppContext) {
     if (files.length === 0) {
       throw new InvalidRequest("at least one artifact file is required");
     }
-    const result = await addScreenshotArtifacts({
+    const result = await addAttachmentArtifacts({
       mentraUserId: user.mentraUserId,
       reportId,
       files,
@@ -201,9 +206,24 @@ const SCREENSHOT_CONTENT_TYPES = new Set([
   "image/heif",
 ]);
 
+const MP4_CONTENT_TYPE = "video/mp4";
+
+function mediaType(raw: string | undefined): string {
+  return (raw ?? "").split(";")[0].trim().toLowerCase();
+}
+
 function screenshotContentType(raw: string | undefined): string {
-  const cleaned = (raw ?? "").split(";")[0].trim().toLowerCase();
+  const cleaned = mediaType(raw);
   return SCREENSHOT_CONTENT_TYPES.has(cleaned) ? cleaned : "application/octet-stream";
+}
+
+// A declared MP4 must be an ISO base media file: its first box is `ftyp`
+// (4-byte size, then the box type). Only the header is read here.
+async function hasMp4Signature(file: File): Promise<boolean> {
+  const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  if (head.byteLength !== 8) return false;
+  const boxSize = new DataView(head.buffer, head.byteOffset, 8).getUint32(0);
+  return boxSize >= 8 && new TextDecoder().decode(head.subarray(4, 8)) === "ftyp";
 }
 
 async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
@@ -232,18 +252,28 @@ async function readAttachmentFiles(c: AppContext): Promise<ReportAttachmentInput
     if (files.length >= MAX_ATTACHMENT_FILES) {
       throw new InvalidRequest(`too many artifact files (max ${MAX_ATTACHMENT_FILES})`);
     }
-    // Enforce the per-file limit on the parsed size BEFORE buffering the file
-    // into its own array, so an oversized upload is rejected without copies.
-    if (value.size > MAX_ATTACHMENT_BYTES) {
-      throw new InvalidRequest(`artifact ${value.name || "file"} exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+    // Only a declared MP4 gets the video allowance; every other file keeps the
+    // screenshot contract. Enforce the per-file limit on the parsed size BEFORE
+    // buffering the file into its own array, so an oversized upload is
+    // rejected without copies.
+    const video = mediaType(value.type) === MP4_CONTENT_TYPE;
+    const maxBytes = video ? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
+    if (value.size > maxBytes) {
+      throw new InvalidRequest(`artifact ${value.name || "file"} exceeds ${maxBytes} bytes`);
+    }
+    if (video && !(await hasMp4Signature(value))) {
+      throw new InvalidRequest(`artifact ${value.name || "file"} is not an MP4 file`);
     }
     files.push({
+      type: video ? "video" : "screenshot",
       filename: value.name || `artifact-${Date.now()}`,
-      contentType: screenshotContentType(value.type),
+      contentType: video ? MP4_CONTENT_TYPE : screenshotContentType(value.type),
       bytes: new Uint8Array(await value.arrayBuffer()),
     });
   }
 
+  // Every file is validated before anything is stored, so one rejected file
+  // leaves the report and its existing artifacts untouched.
   return files;
 }
 

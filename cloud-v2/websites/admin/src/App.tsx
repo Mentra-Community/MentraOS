@@ -68,7 +68,7 @@ type ReportStatus = "collecting" | "ready" | "closed";
 
 interface ReportArtifact {
   artifactId: string;
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: "logs" | "screenshot" | "state_snapshot" | "video";
   source: string;
   filename: string | null;
   contentType: string | null;
@@ -1064,7 +1064,7 @@ function ReportDetailDrawer(props: { reportId: string; onClose: () => void }) {
                   Artifacts ({report.artifacts.length})
                 </div>
                 {report.artifacts.length === 0 ? (
-                  <p className="mt-2 text-sm text-[#68746d]">No screenshots or logs were attached.</p>
+                  <p className="mt-2 text-sm text-[#68746d]">No screenshots, videos or logs were attached.</p>
                 ) : (
                   <div className="mt-3 space-y-4">
                     {report.artifacts.map(artifact => (
@@ -1101,7 +1101,11 @@ function isPreviewableImage(contentType: string | null | undefined): boolean {
   return PREVIEWABLE_IMAGE_TYPES.has(contentType.split(";")[0].trim().toLowerCase());
 }
 
-function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact: ReportArtifact }) {
+function isPlayableVideo(contentType: string | null | undefined): boolean {
+  return contentType?.split(";")[0].trim().toLowerCase() === "video/mp4";
+}
+
+export function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact: ReportArtifact }) {
   const url = `/api/admin/reports/${reportId}/artifacts/${artifact.artifactId}`;
   const header = (
     <div className="flex flex-wrap items-center gap-2 text-xs text-[#68746d]">
@@ -1124,6 +1128,22 @@ function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact
             className="mt-2 max-h-72 rounded-[10px] border border-[#e0e4de] bg-white"
           />
         </a>
+      </div>
+    );
+  }
+  if (artifact.type === "video" && isPlayableVideo(artifact.contentType)) {
+    // Same-origin artifact URL, like screenshots: the browser sends the admin
+    // session cookie and the API serves the MP4 inline.
+    return (
+      <div className="rounded-[14px] bg-[#f5f7f4] p-3">
+        {header}
+        <video
+          src={url}
+          controls
+          playsInline
+          preload="metadata"
+          className="mt-2 max-h-96 w-full rounded-[10px] border border-[#e0e4de] bg-black"
+        />
       </div>
     );
   }
