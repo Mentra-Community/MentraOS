@@ -60,7 +60,8 @@ must serialize through their existing ownership checks.
 
 Each date/channel/routine has its own entered-send fence. Partial history, an
 ambiguous response, a prior entered send or an attempt rerun refuses another send.
-A cancellation before the send step does not consume the member. Legacy whole-pair
+The generated request workflow must also remain attempt 1; rerunning it cannot
+bypass this fence. A cancellation before the send step does not consume the member. Legacy whole-pair
 sends fence both OTA and Call during migration. Other independent members remain
 eligible. Never delete scheduler history or rerun it to repeat hardware actions;
 reconcile the existing request/claim before a deliberate new request.
@@ -85,8 +86,9 @@ change does not enable it. Before enabling:
    the browser-peer recording, two-way audio, background operation and independent
    internet route. A partial development recording is not full qualification.
 4. Confirm existing scoped GitHub App dispatch/read configuration and separate
-   Core claim/upload capabilities. The ordinary callback mints the private
-   dispatch token; the scheduler needs no private-repository credential.
+   Core claim/upload capabilities. The scheduler mints a MentraOS-only Actions-write
+   App token so its request emits the downstream callback. That callback separately
+   mints the private dispatch token; the scheduler needs no private-repository credential.
 5. Enable the variable only after those gates. Verify the next applicable run's
    eight member requests/results. Verify integration on dev; do not create staging
    verification commits or manual staging qualification runs.

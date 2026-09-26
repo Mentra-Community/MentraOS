@@ -191,6 +191,7 @@ export function validateNightlyMarker(request) {
     ["dev", "staging"].includes(request.source.channel) && request.routine?.authorization === "workflow-dispatch" &&
     marker && Object.keys(marker).sort().join(",") === "kind,member,runAttempt,runId" &&
     ["nightly-ota-call", "nightly-routine"].includes(marker.kind) && positive(marker.runId) && marker.runAttempt === 1 &&
+    (marker.kind === "nightly-ota-call" || request.trigger?.runAttempt === 1) &&
     (marker.kind === "nightly-ota-call" ? LEGACY_ROUTINES : NIGHTLY_ROUTINES).includes(marker.member) && marker.member === request.routine.id,
   "Invalid nightly sequence marker")
   return marker

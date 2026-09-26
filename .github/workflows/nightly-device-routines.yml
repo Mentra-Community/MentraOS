@@ -77,6 +77,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      # App-created requests emit the workflow_run callback that queues the worker.
+      - name: Create scoped public request token
+        id: request-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.TEST_RUN_GITHUB_APP_ID }}
+          private-key: ${{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: MentraOS
+          permission-actions: write
       # The entered send step fences this member. Other members proceed through
       # their own request, worker lease, cleanup and result; a test failure is not a dependency.
       - name: Send the nightly routine request
@@ -85,6 +95,7 @@ jobs:
         env:
           NIGHTLY_PLAN: ${{ toJSON(matrix) }}
         with:
+          github-token: ${{ steps.request-token.outputs.token }}
           retries: 0
           script: |
             const {sendNightlyRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);

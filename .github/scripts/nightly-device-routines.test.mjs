@@ -283,7 +283,7 @@ test("workflow keeps nightly opt-in, ordinary callbacks and independent matrix m
   assert.match(workflow, /group: nightly-device-\$\{\{ matrix.date \}\}-\$\{\{ matrix.channel \}\}-\$\{\{ matrix.routine \}\}/)
   assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
   assert.equal((workflow.match(/retries: 0/g) ?? []).length, 2)
-  assert.doesNotMatch(workflow, /workflow_dispatch:|self-hosted|mentra-device-worker|create-github-app-token|download-artifact|Wait for both|OTA then Call/)
+  assert.doesNotMatch(workflow, /workflow_dispatch:|self-hosted|mentra-device-worker|download-artifact|Wait for both|OTA then Call/)
 })
 
 async function markerFixture(kind = "nightly-routine", routine = "day1-ota") {
@@ -409,4 +409,35 @@ test("nightly cannot fall back past a newer failed, skipped or ambiguous finaliz
     assert.equal(result.requests.some(row => row.channel === "dev"), false)
     assert.deepEqual(result.unavailable.filter(row => !/registered worker/.test(row.reason)).map(row => row.channel), ["dev", "dev"])
   }
+})
+
+
+test("nightly sends use the scoped public App token so the ordinary callback can run", async () => {
+  const workflow = await readFile(new URL("../workflows/nightly-device-routines.yml", import.meta.url), "utf8")
+  const step = name => workflow.split(`      - name: ${name}\n`)[1]?.split("      - name: ")[0]
+  const token = step("Create scoped public request token"), send = step("Send the nightly routine request")
+  assert.ok(token && send)
+  assert.match(token, /uses: actions\/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3/)
+  assert.match(token, /app-id: \$\{\{ vars.TEST_RUN_GITHUB_APP_ID \}\}/)
+  assert.match(token, /private-key: \$\{\{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY \}\}/)
+  assert.match(token, /owner: Mentra-Community\n          repositories: MentraOS\n/)
+  assert.deepEqual(token.match(/permission-[a-z-]+: [a-z]+/g), ["permission-actions: write"])
+  assert.doesNotMatch(token, /skip-token-revoke/)
+  assert.match(send, /github-token: \$\{\{ steps.request-token.outputs.token \}\}/)
+  assert.match(send, /retries: 0/)
+  assert.doesNotMatch(send, /github\.token|GITHUB_TOKEN|PRIVATE_KEY/)
+  assert.ok(workflow.indexOf("Create scoped public request token") < workflow.indexOf("Send the nightly routine request"))
+})
+
+test("rerunning an independent request cannot create a second generation outside the nightly send fence", async () => {
+  const f = await markerFixture()
+  const rerun = structuredClone(f.request)
+  rerun.trigger.runAttempt = 2; rerun.requestId = rerun.requestId.replace("routine-9000-1-", "routine-9000-2-")
+  assert.throws(() => validateNightlyMarker(rerun), /Invalid nightly/)
+  await assert.rejects(dispatchReadyRequest({...f.callback, plan: {...f.callback.plan, runAttempt: 2},
+    bytes: Buffer.from(JSON.stringify(rerun))}), /Invalid nightly/)
+  await assert.rejects(createRoutineRequest({...f.dev.options, github: f.options.github,
+    routine: "day1-ota", nightlyRunId: current.id, nightlyRunAttempt: 1, nightlyMode: "independent",
+    source: {...f.dev.options.source, runAttempt: 2}}), /Invalid nightly/)
+  assert.equal(f.privateCalls.length, 0)
 })
