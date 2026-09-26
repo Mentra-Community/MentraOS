@@ -403,6 +403,63 @@ class MentraLiveEvidenceTest {
     }
 
     @Test
+    fun `a decoded scan with more networks than retained digests never certifies target absence`() {
+        val gatt = connect(manager(), peerA)
+        val networks = JSONArray()
+        (1..70).forEach { networks.put(JSONObject().put("ssid", "Net$it").put("requiresPassword", it == 70)) }
+        notifyJson(
+            gatt,
+            JSONObject().put("type", "wifi_scan_result").put("scanId", "scan-many").put("scan_complete", true)
+                .put("networks_neo", networks).toString(),
+        )
+
+        // The normal consumer still receives every network unchanged.
+        @Suppress("UNCHECKED_CAST")
+        val delivered = events.single { it.first == "wifi_scan_result" }.second["networks"] as List<Map<String, Any>>
+        assertEquals(70, delivered.size)
+        assertEquals(true, delivered.last()["requiresPassword"])
+
+        val beyond = kind("scan_chunk", BleEvidenceLog.sha256Hex("Net70")).single()
+        assertTrue("target beyond retained digests must not be reported absent", beyond.isNull("targetSeen"))
+        assertEquals("incomplete", beyond.getString("targetCoverage"))
+        val covered = kind("scan_chunk", BleEvidenceLog.sha256Hex("Net1")).single()
+        assertTrue(covered.getBoolean("targetSeen"))
+        assertFalse(covered.getBoolean("targetRequiresPassword"))
+    }
+
+    @Test
+    fun `a scan write queued before a send-queue reset keeps its generation and is never sent`() {
+        FakeGattWrites.accept = true
+        val live = manager()
+        val gatt = connect(live, peerA)
+        val tx = BluetoothGattCharacteristic(txUuid, BluetoothGattCharacteristic.PROPERTY_WRITE, 0)
+        live.requestWifiScan("scan-first")
+        drainSends()
+        callback(gatt).onCharacteristicWrite(gatt, tx, BluetoothGatt.GATT_SUCCESS)
+        // Without real time passing, the rate limiter keeps the next write queued.
+        live.requestWifiScan("scan-pending")
+        idle()
+        callback(gatt).onConnectionStateChange(gatt, BluetoothGatt.GATT_SUCCESS, BluetoothProfile.STATE_DISCONNECTED)
+        idle()
+        drainSends()
+
+        val generations = kind("ble_generation")
+        assertEquals(listOf(0L, 1L), generations.map { it.getLong("generation") })
+        val before = generations[0].getLong("seq")
+        val after = generations[1].getLong("seq")
+        assertTrue(kind("connection_accepted").single().getLong("seq") > before)
+        val first = kind("scan_send").filter { it.getString("scanId") == "scan-first" }
+        assertEquals(listOf("queued", "gatt_accepted", "write_ok"), first.map { it.getString("outcome") })
+        assertTrue(first.all { it.getLong("writeGeneration") == before })
+        val pending = kind("scan_send").filter { it.getString("scanId") == "scan-pending" }
+        assertEquals(listOf("queued"), pending.map { it.getString("outcome") })
+        assertEquals(before, pending.single().getLong("writeGeneration"))
+        assertTrue(after > pending.single().getLong("seq"))
+        assertEquals(after, BleEvidenceLog.snapshot(0, null).getJSONObject("current").getLong("writeGeneration"))
+        assertFalse(FakeGattWrites.written.any { it.contains("scan-pending") })
+    }
+
+    @Test
     fun `events without native provenance carry no id`() {
         // e.g. another glasses model or a synthesized status: nothing to adopt.
         Bridge.sendBatteryStatus(80, false)

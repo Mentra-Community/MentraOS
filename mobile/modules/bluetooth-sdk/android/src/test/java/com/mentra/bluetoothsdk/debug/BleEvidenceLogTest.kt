@@ -102,6 +102,84 @@ class BleEvidenceLogTest {
         assertFalse(records(BleEvidenceLog.snapshot(0, null)).last().has("targetSeen"))
     }
 
+    private fun chunkRecord(target: String) =
+        records(BleEvidenceLog.snapshot(0, BleEvidenceLog.sha256Hex(target))).last { it.getString("kind") == "scan_chunk" }
+
+    @Test
+    fun `a target beyond retained digests is unknown, never absent`() {
+        val origin = BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01")
+        // 70 unique networks: only the first 64 digests are retained.
+        val networks = (1..70).map { mapOf("ssid" to "Net$it", "requiresPassword" to (it % 2 == 0)) }
+        BleEvidenceLog.scanChunk(origin, "scan-many", networks, complete = true)
+
+        val beyond = chunkRecord("Net70")
+        assertTrue("target at index 70 must not be reported absent", beyond.isNull("targetSeen"))
+        assertEquals("incomplete", beyond.getString("targetCoverage"))
+        assertFalse(beyond.has("targetRequiresPassword"))
+        assertEquals(70, beyond.getInt("networks"))
+
+        // A retained target is still exact even when the chunk is truncated.
+        val covered = chunkRecord("Net2")
+        assertTrue(covered.getBoolean("targetSeen"))
+        assertTrue(covered.getBoolean("targetRequiresPassword"))
+        assertEquals("incomplete", covered.getString("targetCoverage"))
+
+        // Neither SSIDs nor unrelated digests are serialized.
+        val serialized = BleEvidenceLog.snapshot(0, BleEvidenceLog.sha256Hex("Net70")).toString()
+        assertFalse(serialized.contains("Net"))
+        assertFalse(serialized.contains(BleEvidenceLog.sha256Hex("Net1")))
+    }
+
+    @Test
+    fun `absence is reported only with complete coverage`() {
+        val origin = BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01")
+        val networks = (1..64).map { mapOf("ssid" to "Net$it", "requiresPassword" to true) }
+        BleEvidenceLog.scanChunk(origin, "scan-full", networks, complete = true)
+
+        val absent = chunkRecord("LabAP")
+        assertEquals("complete", absent.getString("targetCoverage"))
+        assertFalse(absent.getBoolean("targetSeen"))
+        val present = chunkRecord("Net64")
+        assertTrue(present.getBoolean("targetSeen"))
+        assertEquals("complete", present.getString("targetCoverage"))
+    }
+
+    @Test
+    fun `entries without an SSID or with conflicting duplicates are not certified`() {
+        val origin = BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01")
+        BleEvidenceLog.scanChunk(
+            origin,
+            "scan-odd",
+            listOf(
+                mapOf("requiresPassword" to true),
+                mapOf("ssid" to "Dup", "requiresPassword" to true),
+                mapOf("ssid" to "Dup", "requiresPassword" to false),
+            ),
+            complete = true,
+        )
+        val missing = chunkRecord("LabAP")
+        assertEquals("incomplete", missing.getString("targetCoverage"))
+        assertTrue(missing.isNull("targetSeen"))
+        val duplicate = chunkRecord("Dup")
+        assertTrue(duplicate.getBoolean("targetSeen"))
+        assertTrue(duplicate.isNull("targetRequiresPassword"))
+    }
+
+    @Test
+    fun `send-queue generations are ordered boundaries`() {
+        val first = BleEvidenceLog.bleGeneration(0, 0)
+        val origin = BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01")
+        BleEvidenceLog.scanSend("scan-1", "queued", 0, 1, origin.connection, first)
+        BleEvidenceLog.connectionClosed(origin.connection, "remote_disconnect")
+        val second = BleEvidenceLog.bleGeneration(0, 1)
+
+        val snapshot = BleEvidenceLog.snapshot(0, null)
+        assertEquals(second, snapshot.getJSONObject("current").getLong("writeGeneration"))
+        val send = records(snapshot).single { it.getString("kind") == "scan_send" }
+        assertEquals(first, send.getLong("writeGeneration"))
+        assertEquals(listOf(0L, 1L), records(snapshot).filter { it.getString("kind") == "ble_generation" }.map { it.getLong("generation") })
+    }
+
     @Test
     fun `render markers accept only allowlisted surfaces, bounded values and ids of this stream`() {
         val id = BleEvidenceLog.battery(BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01"), 57, "battery_status", null)

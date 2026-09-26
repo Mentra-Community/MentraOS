@@ -26,10 +26,14 @@ import org.json.JSONObject
  * - a connection is the seq of its `connection_accepted` record (nonreused within the stream,
  *   and a manager recreated in the same process still gets a new seq);
  * - a wire epoch is the seq of the latest `wire_reset` (or the connection record itself);
+ * - a BLE write generation is the seq of the `ble_generation` record naming the send-queue
+ *   generation that each queued write captured when it was queued;
  * - a logical event id is `"<streamId>:<seq>"` of its `battery`/`scan_chunk` record.
  *
- * SSIDs are never stored or serialized. A scan chunk keeps SHA-256 digests of its SSIDs in
- * memory so a snapshot can report only whether a caller-supplied target digest was present.
+ * SSIDs are never stored or serialized. A scan chunk keeps SHA-256 digests of up to
+ * [MAX_SCAN_SSIDS] of its SSIDs in memory so a snapshot can report only whether a
+ * caller-supplied target digest was present. A target that is not among the retained digests
+ * is reported as absent only when every network of the chunk was retained; otherwise unknown.
  *
  * Read access is [dump], reached through `dumpsys` on the non-exported foreground service
  * (DUMP permission, shell/system only). It is read-only and runs on the owner looper so its
@@ -57,6 +61,8 @@ object BleEvidenceLog {
         val fields: Map<String, Any?>,
         /** SSID digest -> exact requiresPassword boolean (null when not a boolean). Never serialized. */
         val ssidSecurity: Map<String, Boolean?>? = null,
+        /** False when some network of the chunk was not retained in [ssidSecurity]. */
+        val ssidCoverageComplete: Boolean = true,
     )
 
     private val lock = Any()
@@ -68,6 +74,7 @@ object BleEvidenceLog {
     private var currentConnection = 0L
     private var currentPeerMac: String? = null
     private var currentWire = 0L
+    private var currentWriteGeneration = 0L
     internal var clock: () -> Long = { SystemClock.elapsedRealtime() }
 
     /** Starts a new stream as a fresh process would. Tests only. */
@@ -80,6 +87,7 @@ object BleEvidenceLog {
             currentConnection = 0L
             currentPeerMac = null
             currentWire = 0L
+            currentWriteGeneration = 0L
         }
     }
 
@@ -115,6 +123,22 @@ object BleEvidenceLog {
             seq
         }
 
+    /**
+     * The BLE send queue moved to [generation] (manager creation or disconnect reset). Writes
+     * queued under an older generation are never transmitted. Returns the boundary seq that
+     * queued writes of this generation reference as `writeGeneration`.
+     */
+    fun bleGeneration(connection: Long, generation: Long): Long =
+        synchronized(lock) {
+            val seq =
+                append(
+                    "ble_generation",
+                    mapOf("connection" to (if (connection == 0L) null else connection), "generation" to generation),
+                )
+            currentWriteGeneration = seq
+            seq
+        }
+
     fun receiveRejected(reason: String, origin: Origin?) {
         synchronized(lock) {
             append("receive_rejected", mapOf("reason" to reason, "origin" to originJson(origin)))
@@ -142,8 +166,19 @@ object BleEvidenceLog {
         }
     }
 
-    /** One native write of a scan command. Outcomes: queued, not_queued, gatt_accepted, gatt_refused, write_ok, write_failed, stale_dropped. */
-    fun scanSend(scanId: String, outcome: String, fragment: Int, fragments: Int, connection: Long) {
+    /**
+     * One native write of a scan command. Outcomes: queued, not_queued, gatt_accepted,
+     * gatt_refused, write_ok, write_failed, stale_dropped. [connection] and [writeGeneration]
+     * are the values captured when the write was queued, never re-read later.
+     */
+    fun scanSend(
+        scanId: String,
+        outcome: String,
+        fragment: Int,
+        fragments: Int,
+        connection: Long,
+        writeGeneration: Long?,
+    ) {
         synchronized(lock) {
             append(
                 "scan_send",
@@ -152,7 +187,8 @@ object BleEvidenceLog {
                     "outcome" to outcome,
                     "fragment" to fragment,
                     "fragments" to fragments,
-                    "connection" to connection,
+                    "connection" to (if (connection == 0L) null else connection),
+                    "writeGeneration" to writeGeneration,
                 ),
             )
         }
@@ -160,10 +196,26 @@ object BleEvidenceLog {
 
     fun scanChunk(origin: Origin?, scanId: String?, networks: List<Map<String, Any>>, complete: Boolean): String {
         val security = LinkedHashMap<String, Boolean?>()
+        var coverageComplete = true
         for (network in networks) {
-            if (security.size >= MAX_SCAN_SSIDS) break
-            val ssid = network["ssid"] as? String ?: continue
-            security[sha256Hex(ssid)] = network["requiresPassword"] as? Boolean
+            // An entry without a string SSID could be anything: coverage is no longer complete.
+            val ssid = network["ssid"] as? String
+            if (ssid == null) {
+                coverageComplete = false
+                continue
+            }
+            val digest = sha256Hex(ssid)
+            val requiresPassword = network["requiresPassword"] as? Boolean
+            if (security.containsKey(digest)) {
+                // Conflicting duplicates make the security value unknown.
+                if (security[digest] != requiresPassword) security[digest] = null
+                continue
+            }
+            if (security.size >= MAX_SCAN_SSIDS) {
+                coverageComplete = false
+                continue
+            }
+            security[digest] = requiresPassword
         }
         return synchronized(lock) {
             val seq =
@@ -176,6 +228,7 @@ object BleEvidenceLog {
                         "complete" to complete,
                     ),
                     security,
+                    coverageComplete,
                 )
             eventId(seq)
         }
@@ -259,6 +312,7 @@ object BleEvidenceLog {
                     put("connection", if (currentConnection == 0L) JSONObject.NULL else currentConnection)
                     put("peerMac", currentPeerMac ?: JSONObject.NULL)
                     put("wire", if (currentWire == 0L) JSONObject.NULL else currentWire)
+                    put("writeGeneration", if (currentWriteGeneration == 0L) JSONObject.NULL else currentWriteGeneration)
                 },
             )
             val list = JSONArray()
@@ -317,9 +371,14 @@ object BleEvidenceLog {
             .digest(value.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
-    private fun append(kind: String, fields: Map<String, Any?>, ssidSecurity: Map<String, Boolean?>? = null): Long {
+    private fun append(
+        kind: String,
+        fields: Map<String, Any?>,
+        ssidSecurity: Map<String, Boolean?>? = null,
+        ssidCoverageComplete: Boolean = true,
+    ): Long {
         val seq = ++lastSeq
-        records.addLast(Record(seq, clock(), kind, fields, ssidSecurity))
+        records.addLast(Record(seq, clock(), kind, fields, ssidSecurity, ssidCoverageComplete))
         while (records.size > CAPACITY) {
             records.removeFirst()
             droppedCount++
@@ -339,8 +398,16 @@ object BleEvidenceLog {
         val security = record.ssidSecurity
         if (security != null && target != null) {
             val seen = security.containsKey(target)
-            json.put("targetSeen", seen)
-            if (seen) json.put("targetRequiresPassword", security[target] ?: JSONObject.NULL)
+            json.put("targetCoverage", if (record.ssidCoverageComplete) "complete" else "incomplete")
+            when {
+                seen -> {
+                    json.put("targetSeen", true)
+                    json.put("targetRequiresPassword", security[target] ?: JSONObject.NULL)
+                }
+                // Absence is only known when every network of the chunk was retained.
+                record.ssidCoverageComplete -> json.put("targetSeen", false)
+                else -> json.put("targetSeen", JSONObject.NULL)
+            }
         }
         return json
     }

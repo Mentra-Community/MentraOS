@@ -601,6 +601,9 @@ class MentraLive : SGCManager() {
     // Provenance of the current accepted connection and wire epoch. Copied into each accepted
     // notification before decoding; never re-read to label an already received message.
     private var evidenceOrigin: BleEvidenceLog.Origin? = null
+    // Evidence boundary of the current bleSessionGeneration (seq of its ble_generation record).
+    @Volatile private var evidenceWriteGeneration = 0L
+    @Volatile private var evidenceWriteGenerationValue = -1L
     private var connectionRequestEpoch = 0L
     @Volatile private var gattTeardownToken: Long? = null
     @Volatile private var gattTeardownTimeoutRunnable: Runnable? = null
@@ -673,7 +676,10 @@ class MentraLive : SGCManager() {
             val wakeup: Boolean,
             val chunked: Boolean,
             val queuedAtMs: Long,
-            val scanId: String? = null
+            val scanId: String? = null,
+            // Provenance captured when the write is queued; later outcomes never re-read state.
+            val evidenceConnection: Long = 0L,
+            val evidenceWriteGeneration: Long? = null
     )
 
     private data class QueuedBleWrite(
@@ -1031,6 +1037,7 @@ class MentraLive : SGCManager() {
         this.type = DeviceTypes.LIVE
         this.hasMic = true
         this.context = Bridge.getContext()
+        recordWriteGeneration(bleSessionGeneration.get())
 
         // Initialize bluetooth adapter
         val bluetoothManager =
@@ -1792,8 +1799,16 @@ class MentraLive : SGCManager() {
                 outcome,
                 trace.chunkIndex ?: 0,
                 trace.totalChunks ?: 1,
-                evidenceOrigin?.connection ?: 0L
+                trace.evidenceConnection,
+                trace.evidenceWriteGeneration
         )
+    }
+
+    /** Records the send-queue generation boundary that queued writes will reference. */
+    private fun recordWriteGeneration(generation: Long) {
+        evidenceWriteGeneration =
+                BleEvidenceLog.bleGeneration(evidenceOrigin?.connection ?: 0L, generation)
+        evidenceWriteGenerationValue = generation
     }
 
     /**
@@ -3381,7 +3396,13 @@ class MentraLive : SGCManager() {
                             queuedAtMs =
                                     if (trace.queuedAtMs > 0L)
                                             trace.queuedAtMs
-                                    else System.currentTimeMillis()
+                                    else System.currentTimeMillis(),
+                            evidenceConnection = evidenceOrigin?.connection ?: 0L,
+                            // A write carrying an older generation is already stale: no boundary.
+                            evidenceWriteGeneration =
+                                    if (sessionGeneration == evidenceWriteGenerationValue)
+                                            evidenceWriteGeneration
+                                    else null
                     )
             sendQueue.add(QueuedBleWrite(data, queuedTrace, sessionGeneration))
             recordScanSend(queuedTrace, "queued")
@@ -3605,6 +3626,7 @@ class MentraLive : SGCManager() {
      */
     private fun resetPendingAckState() {
         val nextGeneration = bleSessionGeneration.incrementAndGet()
+        recordWriteGeneration(nextGeneration)
         val pendingCount = pendingMessages.size
         pendingMessages.clear()
         if (pendingCount > 0) {
@@ -6150,7 +6172,14 @@ class MentraLive : SGCManager() {
             }
             val queued = sendJson(json, true, true)
             if (!queued && !scanId.isNullOrEmpty()) {
-                BleEvidenceLog.scanSend(scanId, "not_queued", 0, 0, evidenceOrigin?.connection ?: 0L)
+                BleEvidenceLog.scanSend(
+                        scanId,
+                        "not_queued",
+                        0,
+                        0,
+                        evidenceOrigin?.connection ?: 0L,
+                        evidenceWriteGeneration
+                )
             }
             Bridge.log("LIVE: Sending WiFi scan request to glasses")
         } catch (e: JSONException) {
