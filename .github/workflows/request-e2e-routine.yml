@@ -41,6 +41,12 @@ on:
         description: Optional authenticated nightly sequence attempt (internal)
         type: string
         required: false
+      nightly_mode:
+        description: Internal nightly dispatch mode; legacy sequences retain their original route
+        type: choice
+        options: [ordered, independent]
+        default: ordered
+        required: false
   # Bootstrap before this workflow reaches dev. The private worker must allowlist
   # this exact workflow/checkout SHA; a PR label alone never authorizes hardware.
   pull_request:
@@ -84,6 +90,7 @@ jobs:
           SOURCE_PUBLICATION_ATTEMPT: ${{ inputs.source_publication_attempt }}
           NIGHTLY_RUN_ID: ${{ inputs.nightly_run_id }}
           NIGHTLY_RUN_ATTEMPT: ${{ inputs.nightly_run_attempt }}
+          NIGHTLY_MODE: ${{ inputs.nightly_mode || 'ordered' }}
         with:
           script: |
             const {createRoutineRequest, writeRoutineRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
@@ -92,7 +99,7 @@ jobs:
               requestOrigin: process.env.REQUEST_ORIGIN,
               sourceBuildRunId: process.env.SOURCE_BUILD_RUN_ID,
               sourcePublicationAttempt: process.env.SOURCE_PUBLICATION_ATTEMPT,
-              nightlyRunId: process.env.NIGHTLY_RUN_ID, nightlyRunAttempt: process.env.NIGHTLY_RUN_ATTEMPT,
+              nightlyRunId: process.env.NIGHTLY_RUN_ID, nightlyRunAttempt: process.env.NIGHTLY_RUN_ATTEMPT, nightlyMode: process.env.NIGHTLY_MODE,
               source: {
                 runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
                 ref: process.env.GITHUB_REF,

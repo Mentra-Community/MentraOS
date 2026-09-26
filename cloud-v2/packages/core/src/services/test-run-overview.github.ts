@@ -32,7 +32,7 @@ const requestFields = z.object({ kind: z.literal("mentra-routine-request"), requ
   routine: z.object({ id: z.string().regex(/^[a-z0-9-]{1,120}$/), authorization: z.enum(["pr-label", "successful-build", "workflow-dispatch"]) }),
   pullRequest: z.object({ number: positive, headSha: sha }).optional(),
   source: z.object({ channel: z.enum(["dev", "staging"]), buildRunId: positive, publicationAttempt: positive }).optional(),
-  sequence: z.object({ kind: z.literal("nightly-ota-call") }).optional(),
+  sequence: z.object({ kind: z.enum(["nightly-ota-call", "nightly-routine"]) }).optional(),
   selection: z.object({ platform: z.enum(["ios-on-mac", "ios", "android"]).optional(), producer: z.object({ runId: positive, publicationAttempt: positive }),
     build: z.object({ headSha: sha.optional(), sourceCommit: sha.optional(), releaseIdentity: shortText.optional() }) }),
 });

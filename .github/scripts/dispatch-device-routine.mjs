@@ -2,7 +2,7 @@ import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
 import {successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
 import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
-import {validateNightlyMarker} from "./nightly-device-routines.mjs"
+import {validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 
 const REPOSITORY = "Mentra-Community/MentraOS"
@@ -238,8 +238,10 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
       : positive(request.pullRequest?.number) &&
         request.requestId === `routine-${plan.runId}-${plan.runAttempt}-${request.pullRequest.number}-${request.routine.id}`),
   "Request does not match its trusted producer")
-  if (validateNightlyMarker(request)) return {status: "not-dispatched", requestId: request.requestId,
+  const nightly = validateNightlyMarker(request)
+  if (nightly?.kind === "nightly-ota-call") return {status: "not-dispatched", requestId: request.requestId,
     reason: "Nightly sequence member; only the scheduled source may dispatch the paired OTA then Call job"}
+  if (nightly) await authenticateNightlyMarker({github, context, request})
   if (request.status === "no-artifact") return {status: "not-dispatched", reason: "No eligible artifact"}
   if (coordinated) {
     requireThat(request.status === "ready" && request.selection?.platform === deviceRoutine(request.routine.id).platform, "Invalid ready coordinated selection")
