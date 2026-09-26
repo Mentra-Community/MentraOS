@@ -43,7 +43,9 @@ contradictions that `readLaneStatus` cannot produce, such as an owner without a 
 a reason that doesn't fit its liveness or fixture record.
 
 These are rejected: `scopeCovers`, checkpoint `note`, `caveats`, any extra key, paths,
-tokens, environment, errors, free text and device timestamps. Admin supplies fixed wording.
+tokens, environment, raw logs, errors, free text and device timestamps. Admin supplies fixed
+wording for every observation field. The only labels anywhere in the body are the existing
+bounded, control-character-free step and action labels in optional `progress`.
 
 `progress` is optional. It is the existing claim progress projection plus `runId`, which
 must equal the observed owner's reservation run ID.

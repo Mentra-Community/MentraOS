@@ -481,6 +481,37 @@ describe("fixture summaries follow the newest claim on each exact worker and fix
       expect(await mongo.publishedRunIds([])).toEqual([]); expect(runs).toHaveBeenCalledTimes(1);
     } finally { find.mockRestore(); runs.mockRestore(); }
   });
+  test("merging the owned and recent snapshots keeps the highest server revision per resource in either interleaving", async () => {
+    const row = (hostId: string, revision: number, observation: TestResourceObservation) =>
+      ({ hostId, resourceKey: "shared", revision, receivedAt: new Date(at(revision)), observation, requestSha256: "e".repeat(64) });
+    const load = async (owned: unknown[], recent: unknown[], limit = 2) => {
+      const limits: number[] = [];
+      const query = (rows: unknown[]) => { const chain = { select: () => chain, sort: () => chain,
+        limit: (value: number) => { limits.push(value); return chain; }, lean: async () => rows }; return chain; };
+      const find = spyOn(TestResourceObservationModel, "find").mockImplementation(((filter: Record<string, unknown>) =>
+        query(filter["observation.owner"] ? owned : recent)) as unknown as typeof TestResourceObservationModel.find);
+      try {
+        const loaded = await new MongoTestRunOverviewRepository().resourceObservations(limit);
+        expect(find).toHaveBeenCalledTimes(2); expect(limits).toEqual([limit + 1, limit + 1]);
+        return loaded;
+      } finally { find.mockRestore(); }
+    };
+    const byHost = (rows: StoredTestResourceObservation[]) => Object.fromEntries(rows.map(item => [item.hostId, [item.revision, item.observation.state]]));
+    // Newer owned / older recent: the recent read saw mini-03be before its retained report.
+    let loaded = await load([row("mini-03be", 5, retainedObservation("run-a"))],
+      [row("mini-03be", 4, noOwnerObservation()), row("idle-1", 2, noOwnerObservation())]);
+    expect(byHost(loaded.rows)).toEqual({ "mini-03be": [5, "retained-recovery-required"], "idle-1": [2, "available-to-attempt"] });
+    expect(loaded.rows).toHaveLength(2); expect(loaded.truncated).toBe(false);
+    // Older owned / newer recent: the host reported no owner after the owned read.
+    loaded = await load([row("mini-03be", 4, retainedObservation("run-a"))],
+      [row("mini-03be", 5, noOwnerObservation()), row("idle-1", 2, noOwnerObservation())]);
+    expect(byHost(loaded.rows)).toEqual({ "mini-03be": [5, "available-to-attempt"], "idle-1": [2, "available-to-attempt"] });
+    expect(loaded.rows).toHaveLength(2); expect(loaded.truncated).toBe(false);
+    // Rows beyond each bound are still dropped and reported, whatever their revision.
+    loaded = await load([row("mini-03be", 4, retainedObservation("run-a")), row("held-2", 9, retainedObservation("run-b"))],
+      [row("mini-03be", 5, noOwnerObservation()), row("idle-1", 2, noOwnerObservation()), row("idle-2", 8, noOwnerObservation())], 1);
+    expect(byHost(loaded.rows)).toEqual({ "mini-03be": [5, "available-to-attempt"] }); expect(loaded.truncated).toBe(true);
+  });
   test("identities beyond the bound are not-checked; the Mongo query matches exact worker and fixture pairs", async () => {
     const repository = new Repository();
     repository.rows = Array.from({ length: 101 }, (_, index) => cancelled(index, "fixture-" + index));

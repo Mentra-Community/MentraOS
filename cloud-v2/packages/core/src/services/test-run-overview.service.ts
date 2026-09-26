@@ -111,9 +111,13 @@ export class MongoTestRunOverviewRepository implements TestRunOverviewRepository
     const newest = (filter: Record<string, unknown>) => TestResourceObservationModel.find(filter).select(select)
       .sort({ receivedAt: -1, hostId: 1, resourceKey: 1 }).limit(limit + 1).lean();
     const [owned, recent] = await Promise.all([newest({ "observation.owner": { $exists: true } }), newest({})]);
+    // The two reads are separate snapshots: a row can change between them. Keep the
+    // highest server revision per resource so an older report never hides a newer one.
     const rows = new Map<string, StoredTestResourceObservation>();
-    for (const row of [...owned.slice(0, limit), ...recent.slice(0, limit)] as Parameters<typeof storedObservation>[0][])
-      rows.set(JSON.stringify([row.hostId, row.resourceKey]), storedObservation(row));
+    for (const row of [...owned.slice(0, limit), ...recent.slice(0, limit)] as Parameters<typeof storedObservation>[0][]) {
+      const key = JSON.stringify([row.hostId, row.resourceKey]);
+      if ((rows.get(key)?.revision ?? 0) < row.revision) rows.set(key, storedObservation(row));
+    }
     return { rows: [...rows.values()], truncated: owned.length > limit || recent.length > limit };
   }
   async publishedRunIds(runIds: string[]) {

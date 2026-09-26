@@ -9,7 +9,9 @@ import { testRunProgressFieldsSchema, validTestRunProgressCounts, type TestRunPr
  *
  * Deliberately excluded: `scopeCovers`, checkpoint `note`, `caveats`, guard
  * paths, owner tokens, run directories, command lines, environment, errors,
- * free-form messages and device timestamps. The Admin UI supplies fixed wording.
+ * free-form messages, raw logs and device timestamps. The Admin UI supplies fixed
+ * wording for the observation. Optional progress reuses the existing reviewed
+ * projection, whose step/action labels are bounded and control-character-free.
  */
 
 /** Same rule as the harness lane-status reader and app-ownership reservations. */

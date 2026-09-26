@@ -163,7 +163,7 @@ function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: n
 /** Server receipt age after which a reported observation is no longer treated as current. */
 const RESOURCE_FRESH_MS = 120_000;
 type ResourceGuidance = { summary: string; responsible: "Owning test runner" | "Test runner / operator" | "Operator"; next: string };
-/** Fixed wording per reported reason. Observations carry no free text. */
+/** Fixed wording per reported reason. Observations carry no free text; only progress has bounded step/action labels. */
 const resourceGuidance: Record<TestResourceReason, ResourceGuidance> = {
   "owner-process-alive": { summary: "The guard owner's PID answered a liveness probe.", responsible: "Owning test runner",
     next: "Follow the owning run. A live PID is an observation, not proof of the owner's identity." },
