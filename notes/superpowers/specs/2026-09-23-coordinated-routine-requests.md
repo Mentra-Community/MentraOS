@@ -41,7 +41,10 @@ One coordinated source run retains one automatic generation per routine across
 all its rerun attempts because the existing release plan/identity is reused.
 The authenticated callback send-step history is the durable fence. Concurrency
 serializes only callbacks for that source/routine. An entered send with an unknown
-acknowledgement requires manual reconciliation; there is no SDK retry. Deleting
+acknowledgement requires manual reconciliation; there is no SDK retry. Before
+reading other callbacks, a send must observe its own entered step under that exact
+job name. The jobs API can briefly lag the running step, so only these reads repeat
+for about 15 seconds. The send is then refused if the step is still absent. Deleting
 history never authorizes another automatic generation. Explicit manual requests
 remain separate generations and require deliberate operator action.
 

@@ -42,8 +42,11 @@ function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, j
   history = [callback], historyResponse, builds = [build], callbackJobs = {[callback.id]: [publicationJob]},
   dispatch = async () => dispatchResponse} = {}) {
   const calls = []
+  // A function entry returns the next jobs API observation of that callback run.
+  const jobsFor = (runId) => typeof callbackJobs[runId] === "function" ? callbackJobs[runId]()
+    : callbackJobs[runId] ?? (runId === build.id ? jobs : [])
   const listJobsForWorkflowRun = async input => {
-    const rows = callbackJobs[input.run_id] ?? (input.run_id === build.id ? jobs : [])
+    const rows = jobsFor(input.run_id)
     return {data: {total_count: rows.length, jobs: rows}}
   }
   const github = {rest: {
@@ -56,11 +59,10 @@ function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, j
     pulls: {get: async () => ({data: pull})},
     git: {getRef: async ({ref}) => {calls.push(["read-base", ref]); return {data: {ref: `refs/${ref}`, object: {type: "commit", sha: baseSha}}}}},
   }, paginate: async (method, input) => {
-    if (method === listJobsForWorkflowRun) return callbackJobs[input.run_id] ??
-      (input.run_id === build.id ? jobs : [])
+    if (method === listJobsForWorkflowRun) return jobsFor(input.run_id)
     calls.push(["read-artifacts", input]); return artifacts
   }}
-  return {github, calls, callbackAttempt: 1}
+  return {github, calls, callbackAttempt: 1, wait: async (ms) => {calls.push(["wait", ms])}}
 }
 const bytes = (value) => Buffer.from(JSON.stringify(value))
 
@@ -276,12 +278,64 @@ test("absent, truncated, duplicated or untrusted callback history cannot authori
     {historyResponse: {total_count: 1000, workflow_runs: [callback]}},
     {historyResponse: {total_count: 2, workflow_runs: [callback]}}, {callbackJobs: {}},
     {callbackJobs: {[callback.id]: [{...publicationJob, steps: []}]}},
-    {callbackJobs: {[callback.id]: [{...publicationJob, run_attempt: 2}]}}]) {
+    {callbackJobs: {[callback.id]: [{...publicationJob, run_attempt: 2}]}},
+    // A rerun whose run attempt is not yet visible still cannot reuse attempt 1's send.
+    {callbackJobs: {[callback.id]: [{...publicationJob, status: "completed", conclusion: "failure"},
+      {...publicationJob, run_attempt: 2}]}}]) {
     const f = fake(setup)
     const plan = await planDeviceDispatch({...f, context})
     await assert.rejects(() => requestAfterPublication({...f, context, plan}))
     assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
   }
+})
+
+// Observed 2026-09-26: callback 36265660530 read its jobs about 0.7s after its
+// Android send step started. The retained job later showed that exact step, name
+// and attempt, but the read failed the fence before any request was sent.
+const coordinatedRun = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: "dev", pull_requests: []}
+const androidSend = {...publicationJob, name: publicationJobName(123, 2, "no-glasses-android", "dev")}
+const laggingSends = [[], [{...androidSend, status: "queued", steps: []}],
+  [{...androidSend, steps: [{name: "Create scoped public request token", status: "in_progress", conclusion: null, started_at: "2026-09-22T01:00:00Z"}]}],
+  [{...androidSend, steps: [{name: PUBLICATION_SEND_STEP, status: "queued", conclusion: null, started_at: null}]}]]
+const observations = (...rows) => () => rows.length > 1 ? rows.shift() : rows[0]
+
+test("a running send not yet visible through the jobs API is observed again, then requested once", async () => {
+  for (const lagging of laggingSends) {
+    const f = fake({run: coordinatedRun, jobs: [coordinatedJob()],
+      callbackJobs: {[callback.id]: observations(lagging, lagging, [androidSend])}})
+    const plan = await planDeviceDispatch({...f, context, routine: "no-glasses-android"})
+    const result = await requestAfterPublication({...f, context, plan})
+    assert.equal(result.status, "request-dispatched")
+    assert.equal(f.calls.filter(([kind]) => kind === "wait").length, 2)
+    assert.equal(f.calls.filter(([kind]) => kind === "dispatch").length, 1)
+    assert.equal(f.calls.at(-1)[1].inputs.routine, "no-glasses-android")
+  }
+})
+
+test("a current send that never becomes visible is refused after a bounded wait, before any dispatch", async () => {
+  for (const lagging of laggingSends) {
+    const f = fake({run: coordinatedRun, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: lagging}})
+    const plan = await planDeviceDispatch({...f, context, routine: "no-glasses-android"})
+    await assert.rejects(() => requestAfterPublication({...f, context, plan}), /Current publication send is absent/)
+    const waits = f.calls.filter(([kind]) => kind === "wait").map(([, ms]) => ms)
+    assert.ok(waits.length > 0 && waits.every((ms) => ms > 0) && waits.reduce((a, b) => a + b) <= 15000)
+    assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
+  }
+})
+
+test("an earlier callback whose send appears while this one waits for its own record still owns the generation", async () => {
+  let f
+  const waited = () => f.calls.some(([kind]) => kind === "wait")
+  const callbackJobs = {
+    [callback.id]: () => waited() ? [publicationJob] : [{...publicationJob, status: "queued", steps: []}],
+    [wakeCallback.id]: observations([], [publicationJob]),
+  }
+  f = fake({run: wake, ...wakeHistory, callbackJobs})
+  const plan = await planDeviceDispatch({...f, context: wakeContext})
+  const result = await requestAfterPublication({...f, context: wakeContext, plan})
+  assert.equal(result.status, "request-reconcile")
+  assert.equal(result.callbackUrl, `https://github.com/${repo}/actions/runs/${callback.id}`)
+  assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
 })
 
 test("the complete callback history is paginated and changing history fails closed", async () => {
