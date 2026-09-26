@@ -332,6 +332,54 @@ describe("original-owner claim closure", () => {
     expect((await replay.json() as { closure: unknown }).closure).toEqual(committed);
   });
 
+  // Day1 preflight failure released by the generic original-owner abandonment: zero operations.
+  const preflight = (): TestRunClaimClosure => ({ kind: "preflight-abandoned-released",
+    originalTerminal: { sequence: 20, sha256: "8a0305b246077c9b93162ebc7a653b8041e2e46ed1b9db9f6b3c3ac5a753bbb8" },
+    journalPrefix: { bytes: 61_440, sha256: "c".repeat(64) },
+    release: { type: "preflight-abandoned", sequence: 21, eventSha256: "d".repeat(64),
+      revision: "34ccd211fbe8b094471c5cd1c4ca4c4ebefd3eff", implementationSha256: "e".repeat(64) },
+    operations: 0, fixture: "uncommissioned", selectedCandidateInstalled: false, candidateTestRun: false, recordingStarted: false });
+
+  test("records one zero-operation preflight closure without changing the claim, settlement or execution grant", async () => {
+    await settled();
+    const before = await body(await send("GET", "/request-1"));
+    const first = await close(request({ closure: preflight() }));
+    expect(first.status).toBe(200);
+    const saved = await first.json() as { executionGranted: boolean; claim: unknown; closure: TestRunClaimClosureRecord };
+    expect(saved).toEqual({ executionGranted: false, claim: before.claim, closure: { ...preflight(), closedAt: expect.any(String) } });
+    expect(await (await close(request({ closure: preflight() }))).json()).toEqual(saved);
+    // One immutable closure: neither the Android kind nor changed preflight pins replace it.
+    expect((await close(request())).status).toBe(409);
+    expect((await close(request({ closure: { ...preflight(), journalPrefix: { bytes: 61_440, sha256: "f".repeat(64) } } }))).status).toBe(409);
+    expect((await close(request({ closure: preflight(), executionToken: "c".repeat(64) }))).status).toBe(403);
+    expect(await body(await send("GET", "/request-1"))).toEqual(before);
+    expect((await settle({ state: "terminal", resultRunId: "request-1" })).status).toBe(409);
+    expect((await body(await send("POST", "/", fixture()))).executionGranted).toBe(false);
+    expect(repository.claims.get("request-1")!.closure).toMatchObject(preflight());
+  });
+
+  test("rejects contradictory or mixed preflight closure evidence; the Android closure is still accepted", async () => {
+    await settled();
+    const value = preflight() as Extract<TestRunClaimClosure, { kind: "preflight-abandoned-released" }>;
+    const { operations: _, ...withoutOperations } = value;
+    const unsupported: unknown[] = [
+      { ...value, release: { ...value.release, type: "setup-abandoned-after-refusal" } },
+      { ...value, release: { ...value.release, type: "setup-abandoned-before-mutation" } },
+      { ...value, kind: "preflight-abandoned" }, withoutOperations, { ...value, operations: 1 },
+      { ...closure(), operations: 0 }, { ...value, release: { ...value.release, sequence: 22 } },
+      { ...value, fixture: "ready" }, { ...value, candidateTestRun: true }, { ...value, recordingStarted: true },
+      { ...value, selectedCandidateInstalled: true }, { ...value, release: { ...value.release, revision: "34ccd21" } },
+      { ...value, sourceObservation: { passed: true } }, { ...value, result: "passed" },
+    ];
+    for (const entry of unsupported) expect((await close(request({ closure: entry }))).status).toBe(400);
+    for (const patch of [{ workerId: "mini-2" }, { fixtureId: "glasses-2" }, { requestSha256: "c".repeat(64) }])
+      expect((await close(request({ ...patch, closure: preflight() }))).status).toBe(409);
+    expect(repository.claims.get("request-1")!.closure).toBeUndefined();
+    expect((await close(request())).status).toBe(200);
+    expect(repository.claims.get("request-1")!.closure).toMatchObject(closure());
+    expect((await close(request({ closure: preflight() }))).status).toBe(409);
+  });
+
   test("Mongo closure is atomic on owner, recovery state and absence of an earlier closure", async () => {
     const repository = new MongoTestRunClaimRepository();
     const update = spyOn(TestRunClaimModel, "findOneAndUpdate").mockImplementation((() => ({ lean: async () => null })) as never);

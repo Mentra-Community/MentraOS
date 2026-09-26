@@ -205,6 +205,28 @@ test("an original-owner closure leaves active/blocked work but keeps its failed 
   const open = new Repository(); open.rows = [{ claim: claim() }]; open.resultRows = [failed];
   expect((await new TestRunOverviewService(open, { activity: async () => ({ jobs: [], warnings: [] }) }).overview()).jobs[0]?.state).toBe("blocked");
 });
+test("a released preflight closure is closed failed history with an uncommissioned fixture, not active, blocked, passed or ready", async () => {
+  const closure = { kind: "preflight-abandoned-released" as const, originalTerminal: { sequence: 20, sha256: "b".repeat(64) },
+    journalPrefix: { bytes: 4096, sha256: "c".repeat(64) }, release: { type: "preflight-abandoned" as const, sequence: 21,
+      eventSha256: "d".repeat(64), revision: "3".repeat(40), implementationSha256: "e".repeat(64) }, operations: 0 as const,
+    fixture: "uncommissioned" as const, selectedCandidateInstalled: false as const, candidateTestRun: false as const,
+    recordingStarted: false as const, closedAt: stamp };
+  const failed: TestRun = { ...original(), runId: claim().requestId, outcomes: { ...original().outcomes, test: "not-run", fixture: "unknown" } };
+  const repository = new Repository(); repository.rows = [{ claim: claim(), closure }]; repository.resultRows = [failed];
+  const view = await new TestRunOverviewService(repository, { activity: async () => ({ jobs: [], warnings: [] }) }).overview();
+  expect(view.jobs).toHaveLength(0);
+  expect(view.resolvedRecoveries).toHaveLength(0);
+  expect(view.fixtureAttention).toEqual([expect.objectContaining({ kind: "fixture", state: "finished", title: "Closed without a test",
+    resultRunId: claim().requestId, attention: expect.objectContaining({ closedAt: stamp }) })]);
+  const attention = view.fixtureAttention?.[0]?.attention;
+  expect(attention?.reason).toContain("Preflight failed before setup");
+  expect(attention?.reason).not.toContain("Android");
+  expect(attention?.nextAction).toContain("uncommissioned"); expect(attention?.nextAction).toContain("not a pass");
+  expect(attention?.cancelRequestId).toBeUndefined();
+  expect(view.fixtureSummary).toEqual([expect.objectContaining({ fixtureId: claim().fixtureId, status: "unverified" })]);
+  expect(repository.rows[0]?.claim.settlement).toEqual(claim().settlement);
+  expect(repository.resultRows[0]?.outcome).toBe("failed");
+});
 test("another request on the same fixture and duplicate generation cannot certify this claim", () => {
   const readyRun = { ...original(), runId: claim().requestId, outcomes: recovery().outcomes,
     provenance: { ...original().provenance, returnVerification: "passed" } };
