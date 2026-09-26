@@ -1,4 +1,4 @@
-import {engine, SETTINGS} from "@mentra/engine"
+import {engine, SETTINGS, useApps} from "@mentra/engine"
 import {act, fireEvent, render, screen} from "@testing-library/react-native"
 import * as Clipboard from "expo-clipboard"
 import {Share} from "react-native"
@@ -42,6 +42,9 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
+const defaultBluetoothStatus = jest.mocked(engine.dev.bluetoothStatus).getMockImplementation()
+const defaultUseApps = jest.mocked(useApps).getMockImplementation()
+
 async function sharedExport(): Promise<string> {
   const share = jest.spyOn(Share, "share").mockResolvedValue({action: Share.sharedAction})
   render(<DataExportPage />)
@@ -71,6 +74,8 @@ afterEach(() => {
   jest.clearAllMocks()
   engine.settings.resetAllLocal()
   mockAuth = {user: null, session: null}
+  jest.mocked(engine.dev.bluetoothStatus).mockImplementation(defaultBluetoothStatus)
+  jest.mocked(useApps).mockImplementation(defaultUseApps)
 })
 
 describe("copied export redacts the Cloud bearer held in settings", () => {
@@ -221,5 +226,101 @@ describe("authentication export follows the current auth session", () => {
     const {authentication} = JSON.parse(await copiedExport())
 
     expect(authentication).toEqual({user: null, sessionInfo: {hasAccessToken: false}})
+  })
+})
+
+describe("full export payload carries no credential from any source", () => {
+  // Synthetic sentinels only; never real credentials.
+  const SETTINGS_TOKEN = "synthetic-settings-core-token-sentinel"
+  const STATUS_TOKEN = "synthetic-status-core-token-sentinel"
+  const SESSION_TOKEN = "synthetic-session-access-token-sentinel"
+  const APP_API_KEY = "synthetic-app-hashed-api-key-sentinel"
+  const APP_ENDPOINT_SECRET = "synthetic-app-endpoint-secret-sentinel"
+  const SENTINELS = [SETTINGS_TOKEN, STATUS_TOKEN, SESSION_TOKEN, APP_API_KEY, APP_ENDPOINT_SECRET]
+
+  const user: MentraAuthUser = {id: "user-1", email: "export-user@example.test", name: "Export User"}
+  const apps = [
+    {
+      packageName: "com.example.synthetic",
+      name: "Synthetic Miniapp",
+      hashedApiKey: APP_API_KEY,
+      hashedEndpointSecret: APP_ENDPOINT_SECRET,
+    },
+  ]
+  // iOS getBluetoothStatus/bluetooth_status forward the whole native "bluetooth"
+  // store, so synced settings such as core_token sit at the status root beside
+  // the declared status fields.
+  const flatNativeStatus = {
+    searching: false,
+    micRanking: ["glasses", "phone"],
+    otherBtConnected: false,
+    lastLog: ["synthetic log line"],
+    default_wearable: "Mentra Live",
+    device_name: "MENTRA_LIVE_SYNTHETIC",
+    auth_email: "export-user@example.test",
+    brightness: 50,
+    core_token: STATUS_TOKEN,
+  }
+
+  beforeEach(async () => {
+    mockNativeApplicationVersion = "3.3.0"
+    mockAuth = {user, session: {token: SESSION_TOKEN, user}}
+    jest.mocked(useApps).mockImplementation(() => apps as any)
+    jest.mocked(engine.dev.bluetoothStatus).mockImplementation(() => flatNativeStatus)
+    await engine.settings.set(SETTINGS.core_token.key, SETTINGS_TOKEN, false)
+    await engine.settings.set(SETTINGS.theme_preference.key, "dark", false)
+  })
+
+  test.each([
+    ["Copy", copiedExport],
+    ["Share", sharedExport],
+  ])("%s payload redacts the flat native status token and keeps real data", async (_path, exportPayload) => {
+    const payload = await exportPayload()
+    const data = JSON.parse(payload.slice(payload.indexOf("{")))
+
+    for (const sentinel of SENTINELS) expect(payload).not.toContain(sentinel)
+
+    const {core_token: exportedStatusToken, ...exportedStatus} = data.augmentosStatus
+    const {core_token: _sourceToken, ...legitimateStatus} = flatNativeStatus
+    expect(exportedStatusToken).toBe("[REDACTED]")
+    expect(exportedStatus).toMatchObject(legitimateStatus)
+    expect(data.userSettings).toMatchObject({core_token: "[REDACTED]", theme_preference: "dark"})
+    expect(data.installedApps).toEqual([
+      {
+        packageName: "com.example.synthetic",
+        name: "Synthetic Miniapp",
+        hashedApiKey: "[REDACTED]",
+        hashedEndpointSecret: "[REDACTED]",
+      },
+    ])
+    expect(data.authentication).toEqual({
+      user: {...user, avatarUrl: null, createdAt: null, provider: null},
+      sessionInfo: {hasAccessToken: true},
+    })
+    expect(data.metadata).toMatchObject({exportVersion: "2.0.0", appVersion: "3.3.0"})
+  })
+
+  test("export leaves the engine status, settings and app inputs untouched", async () => {
+    const statusBefore = structuredClone(flatNativeStatus)
+
+    await copiedExport()
+
+    expect(flatNativeStatus).toEqual(statusBefore)
+    expect(engine.settings.get(SETTINGS.core_token.key)).toBe(SETTINGS_TOKEN)
+    expect(apps[0].hashedApiKey).toBe(APP_API_KEY)
+  })
+
+  test("the legacy nested core_info token is still redacted", async () => {
+    jest
+      .mocked(engine.dev.bluetoothStatus)
+      .mockImplementation(() => ({core_info: {core_token: STATUS_TOKEN, protobuf_schema_version: "1"}}))
+
+    const payload = await copiedExport()
+
+    expect(payload).not.toContain(STATUS_TOKEN)
+    expect(JSON.parse(payload).augmentosStatus.core_info).toEqual({
+      core_token: "[REDACTED]",
+      protobuf_schema_version: "1",
+    })
   })
 })

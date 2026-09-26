@@ -136,19 +136,28 @@ class DataExportService {
   }
 
   /**
-   * Sanitize status data - remove sensitive tokens
+   * Copy `value`, replacing every non-empty value whose key the settings
+   * registry marks as a credential with "[REDACTED]", at any depth. The source
+   * is never modified.
+   *
+   * The same rule covers settings and status: native Bluetooth status mirrors
+   * the settings synced to it, and iOS returns its whole "bluetooth" store,
+   * including `core_token`, at the status root.
    */
+  private static redactCredentials(value: unknown): any {
+    if (Array.isArray(value)) return value.map((entry) => this.redactCredentials(entry))
+    if (!value || typeof value !== "object") return value
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        engine.settings.descriptor(key)?.credential && entry ? "[REDACTED]" : this.redactCredentials(entry),
+      ]),
+    )
+  }
+
   private static sanitizeStatusData(status: any): any {
     if (!status) return null
-
-    const sanitized = JSON.parse(JSON.stringify(status)) // Deep clone
-
-    // Remove or mask sensitive data
-    if (sanitized.core_info?.core_token) {
-      sanitized.core_info.core_token = "[REDACTED]"
-    }
-
-    return sanitized
+    return this.redactCredentials(status)
   }
 
   /**
@@ -173,17 +182,12 @@ class DataExportService {
   }
 
   /**
-   * Collect the user's settings, redacting values the settings registry marks
-   * as credentials (such as the Cloud bearer in `core_token`).
+   * Collect the user's settings with credentials (such as the Cloud bearer in
+   * `core_token`) redacted.
    */
   private static async collectSettingsData(): Promise<{[key: string]: any}> {
     console.log("DataExportService: Collecting settings data...")
-    const settings: Record<string, any> = Object.fromEntries(
-      Object.entries(engine.settings.getAll()).map(([key, value]) => [
-        key,
-        engine.settings.descriptor(key)?.credential && value ? "[REDACTED]" : value,
-      ]),
-    )
+    const settings: Record<string, any> = this.redactCredentials(engine.settings.getAll())
     console.log(`DataExportService: Collected ${Object.keys(settings).length} settings`)
     return settings
   }
