@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/react-native"
-import {FC, createContext, useContext, useEffect, useMemo, useState} from "react"
+import {FC, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from "react"
 
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {
   createDeploymentAuthProvider,
   type DeploymentAuthProvider,
@@ -67,6 +67,17 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
   const [session, setSession] = useState<MentraAuthSession | null>(null)
   const [user, setUser] = useState<MentraAuthUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const sessionSubject = useRef<string | null>(null)
+  const updateSession = useCallback((next: MentraAuthSession | null) => {
+    const subject = next?.user?.id ?? null
+    // Revocation/account replacement can happen without logout() or engine.stop().
+    // Stop optional work before React removes the authenticated host; recovery stays alive.
+    if (sessionSubject.current && sessionSubject.current !== subject) engine.firmwareUpdates.suspendNewWork()
+    if (subject && sessionSubject.current !== subject) engine.firmwareUpdates.resumeDiscovery()
+    sessionSubject.current = subject
+    setSession(next)
+    setUser(next?.user ?? null)
+  }, [])
   const [_authEmail, setAuthEmail] = useSetting(SETTINGS.auth_email.key)
   const {activeDeployment, selectionResolved, store} = useDeployment()
   const workspaceAuth = useMemo<DeploymentAuthProvider | null>(
@@ -76,13 +87,13 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
   useEffect(() => {
     let cancelled = false
+    let sessionEventSeen = false
     let unsubscribe: (() => void) | undefined
     setLoading(true)
 
     const applySession = (next: MentraAuthSession | null, allowTelemetry: boolean) => {
       if (cancelled) return
-      setSession(next)
-      setUser(next?.user ?? null)
+      updateSession(next)
       Sentry.setUser(allowTelemetry && next?.user ? {id: next.user.id, email: next.user.email} : null)
       if (allowTelemetry && next?.user?.email) {
         setAuthEmail(next.user.email)
@@ -108,18 +119,25 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       }
     } else if (workspaceAuth && activeDeployment.kind === "workspace") {
       const allowTelemetry = activeDeployment.manifest.telemetry
-      unsubscribe = workspaceAuth.onStateChange((next) => applySession(toMentraSession(next), allowTelemetry))
+      unsubscribe = workspaceAuth.onStateChange((next) => {
+        sessionEventSeen = true
+        applySession(toMentraSession(next), allowTelemetry)
+      })
       void workspaceAuth
         .getSession()
-        .then((next) => applySession(toMentraSession(next), allowTelemetry))
+        .then((next) => {
+          if (!sessionEventSeen) applySession(toMentraSession(next), allowTelemetry)
+        })
         .catch((error) => {
           console.warn("AuthContext: failed to restore workspace session", error)
-          applySession(null, allowTelemetry)
+          if (!sessionEventSeen) applySession(null, allowTelemetry)
         })
     } else {
       let authSubscription: {unsubscribe: () => void} | undefined
 
       void mentraAuth.getSession().then((res) => {
+        // A live auth event is newer than this initial asynchronous snapshot.
+        if (sessionEventSeen) return
         if (res.is_error()) {
           console.error("AuthContext: Error getting initial session:", res.error)
           applySession(null, true)
@@ -130,6 +148,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
       void (async () => {
         const res = await mentraAuth.onAuthStateChange((event, next: MentraAuthSession) => {
+          sessionEventSeen = true
           console.log(`AuthContext: auth state ${event}, session ${next ? "present" : "absent"}`)
           applySession(next, true)
         })
@@ -151,7 +170,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       cancelled = true
       unsubscribe?.()
     }
-  }, [activeDeployment, selectionResolved, setAuthEmail, store, workspaceAuth])
+  }, [activeDeployment, selectionResolved, setAuthEmail, store, workspaceAuth, updateSession])
 
   const signInWorkspace = async () => {
     if (!workspaceAuth) throw new Error("No organization workspace is active")
@@ -159,8 +178,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     try {
       await pendingProviderCleanup
       const next = toMentraSession(await workspaceAuth.signIn())
-      setSession(next)
-      setUser(next?.user ?? null)
+      updateSession(next)
       if (activeDeployment.kind === "consumer" && next?.user?.email) setAuthEmail(next.user.email)
     } finally {
       setLoading(false)
@@ -168,6 +186,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
   }
 
   const logout = async () => {
+    engine.firmwareUpdates.assertSafeToRelease()
     console.log("AuthContext: Starting logout process")
     try {
       if (workspaceAuth && activeDeployment.kind === "workspace") {
@@ -191,8 +210,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       try {
         await clearDeploymentDebugOverrides()
       } finally {
-        setSession(null)
-        setUser(null)
+        updateSession(null)
       }
     }
   }
@@ -208,8 +226,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     // user inside a workspace they have not signed in to.
     if (destination === "consumer") await store.returnToMentra()
     else await store.clearSelection()
-    setSession(null)
-    setUser(null)
+    updateSession(null)
     Sentry.setUser(null)
 
     if (workspaceAuthToClear) void queueProviderCleanup(workspaceAuthToClear)

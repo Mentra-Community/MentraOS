@@ -1,0 +1,13 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Manual hardware gate. Obtain the device owner's permission first.
+# Preconditions: signed in, intended glasses paired, Settings open, and no update running.
+# Set OTA_EXPECTED_TITLE to the expected terminal check/offer title for that device.
+# This exercises registry routing and a real version check. It NEVER presses Update/Upgrade.
+- assertTrue: ${OTA_EXPECTED_TITLE.length > 0}
+- assertVisible: "Check for firmware updates"
+- tapOn: "Check for firmware updates"
+- extendedWaitUntil:
+    visible: ${OTA_EXPECTED_TITLE}
+    timeout: 60000
+- takeScreenshot: "device-firmware-check"

@@ -997,6 +997,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.isConnecting = false
             self.connectingPeripheral = nil
             self.connectedPeripheral = peripheral
+            self.bindLiveFirmwareUpdater(peripheral)
             self.emitConnectedPendingDeviceForPairingScan()
 
             // Save device name and address for future reconnection
@@ -1047,6 +1048,7 @@ extension MentraLive: CBCentralManagerDelegate {
                 Bridge.log("LIVE: Ignoring stale disconnect for \(peripheral.identifier)")
                 return
             }
+            self.liveFirmwareUpdater?.connectionChanged(generation: self.firmwareConnectionGeneration, disconnected: true)
             self.connectingPeripheral = nil
             Bridge.log("LIVE: Disconnected from GATT server")
 
@@ -1280,13 +1282,16 @@ extension MentraLive: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(
-        _: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
+        _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
     ) {
         let uuid = characteristic.uuid
         let data = characteristic.value
         let errorDescription = error?.localizedDescription
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, peripheral === self.connectedPeripheral,
+                  characteristic.service?.peripheral === peripheral,
+                  characteristic === self.rxCharacteristic || characteristic === self.fileReadCharacteristic || characteristic === self.lc3ReadCharacteristic
+            else { return }
             // Bridge.log("LIVE: DEBUG: didUpdateValueFor CALLED - characteristic: \(uuid), dataSize: \(data?.count ?? 0)")
             // Log raw hex for debugging glasses_ready issue
             if let data {
@@ -1658,6 +1663,27 @@ class MentraLive: NSObject, SGCManager {
     /// BLE Properties
     private var centralManager: CBCentralManager?
 
+    private(set) var liveFirmwareUpdater: LiveFirmwareUpdater?
+    private var firmwareConnectionGeneration = 0
+    var firmwareUpdater: FirmwareUpdater? { liveFirmwareUpdater }
+    var firmwareUpdateOwnsDevice: Bool { liveFirmwareUpdater?.ownsDevice == true }
+    var otaSourceContext: [String: Any] {
+        guard let updater = liveFirmwareUpdater else { return [:] }
+        return ["source_device_id": updater.snapshot.deviceId,
+                "source_connection_generation": updater.snapshot.connectionGeneration]
+    }
+
+    private func bindLiveFirmwareUpdater(_ peripheral: CBPeripheral) {
+        let id = peripheral.identifier.uuidString
+        firmwareConnectionGeneration = FirmwareConnectionGeneration.next()
+        if liveFirmwareUpdater?.snapshot.deviceId != id {
+            liveFirmwareUpdater = LiveFirmwareUpdater(deviceId: id, generation: firmwareConnectionGeneration,
+                connected: { [weak self] in self?.connectedPeripheral?.identifier.uuidString == id },
+                query: { [weak self] in self?.sendOtaQueryStatus() })
+        }
+        liveFirmwareUpdater?.connectionChanged(generation: firmwareConnectionGeneration)
+    }
+
     private var connectedPeripheral: CBPeripheral?
     /// Peripheral for the in-flight connect; used to ignore stale disconnect/fail callbacks.
     private var connectingPeripheral: CBPeripheral?
@@ -1929,6 +1955,13 @@ class MentraLive: NSObject, SGCManager {
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")
         Bridge.sendTypedMessage("owner_replaced", body: ["reason": reason])
+    }
+
+    func reconnectFirmwareOwner() {
+        guard firmwareUpdateOwnsDevice, !connected else { return }
+        if let name = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME), !name.isEmpty {
+            connectById(name)
+        }
     }
 
     func connectById(_ deviceName: String) {
@@ -2482,6 +2515,10 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Connection Management
 
     private func connectToDevice(_ peripheral: CBPeripheral) {
+        if firmwareUpdateOwnsDevice, liveFirmwareUpdater?.snapshot.deviceId != peripheral.identifier.uuidString {
+            Bridge.log("LIVE: Firmware recovery is bound to another peripheral")
+            return
+        }
         if pairingYieldActive {
             Bridge.log("LIVE: connectToDevice blocked — pairing yield active")
             isConnecting = false
@@ -2639,7 +2676,8 @@ class MentraLive: NSObject, SGCManager {
                 // The reader thread keeps draining the stream (and returning CoC credits)
                 // while the existing transfer state remains serialized on the main actor.
                 DispatchQueue.main.async {
-                    self?.processReceivedData(frame)
+                    guard let self, self.l2capFileChannelId == channelId else { return }
+                    self.processReceivedData(frame)
                 }
             },
             onClose: { [weak self] in
@@ -3077,12 +3115,12 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("🔄 MTK Update Message: \(updateMessage)")
 
             // Send to React Native via Bridge
-            Bridge.sendMtkUpdateComplete(message: updateMessage, timestamp: timestamp)
+            Bridge.sendMtkUpdateComplete(message: updateMessage, timestamp: timestamp, sourceContext: otaSourceContext)
 
         case "ota_start_ack":
             // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
             Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
-            Bridge.sendOtaStartAck()
+            Bridge.sendOtaStartAck(sourceContext: otaSourceContext)
 
         case "ota_status":
             // Short keys (sid/ts/cs/st/sq/sp/op/err) are used by new firmware to keep BLE payload small.
@@ -3116,7 +3154,7 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: 📱 OTA status - step \(osCurrentStep)/\(osTotalSteps) \(osPhase) \(osStatus) \(osOverallPercent)%")
 
             let glassesTimeMs = (json["glasses_time_ms"] as? NSNumber)?.int64Value ?? 0
-            Bridge.sendOtaStatus(
+            sendLiveOtaStatus(
                 sessionId: osSessionId,
                 totalSteps: osTotalSteps,
                 currentStep: osCurrentStep,
@@ -3150,7 +3188,7 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log(
                 "LIVE: 📱 Legacy ota_progress → ota_status: \(legacyStage) \(legacyStatus) \(legacyProgress)%"
             )
-            Bridge.sendOtaStatus(
+            sendLiveOtaStatus(
                 sessionId: "",
                 totalSteps: 1,
                 currentStep: 1,
@@ -3550,7 +3588,7 @@ class MentraLive: NSObject, SGCManager {
                 let totalSteps = cachedOtaTotalSteps > 0 ? cachedOtaTotalSteps : 1
                 let currentStep = cachedOtaCurrentStep > 0 ? cachedOtaCurrentStep : 1
                 let besOverallPercent = computeBesOverallPercent(besProgress: besOtaProgressVal, stepSequence: cachedOtaStepSequence)
-                Bridge.sendOtaStatus(
+                sendLiveOtaStatus(
                     sessionId: sid,
                     totalSteps: totalSteps,
                     currentStep: currentStep,
@@ -3874,6 +3912,18 @@ class MentraLive: NSObject, SGCManager {
     /// Send OTA start command to glasses.
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.
+    private func sendLiveOtaStatus(sessionId: String, totalSteps: Int, currentStep: Int, stepType: String,
+                                   phase: String, stepPercent: Int, overallPercent: Int, status: String,
+                                   errorMessage: String?, glassesTimeMs: Int64? = nil, bytesDownloaded: Int64? = nil)
+    {
+        liveFirmwareUpdater?.status(sessionId: sessionId, phase: phase, status: status,
+                                    progress: overallPercent, generation: firmwareConnectionGeneration)
+        Bridge.sendOtaStatus(sessionId: sessionId, totalSteps: totalSteps, currentStep: currentStep,
+                             stepType: stepType, phase: phase, stepPercent: stepPercent, overallPercent: overallPercent,
+                             status: status, errorMessage: errorMessage, glassesTimeMs: glassesTimeMs,
+                             bytesDownloaded: bytesDownloaded, sourceContext: otaSourceContext)
+    }
+
     func sendOtaStart(otaVersionUrl: String?) {
         Bridge.log("LIVE: 📱 Sending ota_start command to glasses")
 
@@ -6187,7 +6237,7 @@ extension MentraLive {
         sendPhoneReady(reason: "glasses session changed")
         Bridge.sendTypedMessage(
             "glasses_session_changed",
-            body: ["previous_sid": previous ?? "", "sid": sid]
+            body: otaSourceContext.merging(["previous_sid": previous ?? "", "sid": sid]) { _, value in value }
         )
     }
 

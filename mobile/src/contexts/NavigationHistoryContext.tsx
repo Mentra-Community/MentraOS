@@ -1,8 +1,7 @@
 import {useFocusEffect, useNavigation} from "expo-router"
-import {useCallback} from "react"
+import {useCallback, useRef} from "react"
 import {Platform} from "react-native"
 import {CommonActions} from "@react-navigation/native"
-
 
 import {useNavigationStore} from "@/stores/navigation"
 
@@ -69,8 +68,9 @@ const noopBack = () => {}
  *    swipe for every screen. A per-screen option beats the navigator default
  *    and cannot be turned back on from elsewhere.
  */
-export const focusEffectLockScreen = () => {
+export const useScreenExitGuard = () => {
   const navigation = useNavigation()
+  const exitAllowed = useRef(false)
 
   focusEffectPreventBack(noopBack)
 
@@ -79,6 +79,7 @@ export const focusEffectLockScreen = () => {
       // expo-router types useNavigation() against the generic navigator, which
       // doesn't surface the native stack's gestureEnabled option.
       const setGesture = navigation.setOptions as (options: {gestureEnabled?: boolean}) => void
+      exitAllowed.current = false
       setGesture({gestureEnabled: false})
       return () => setGesture({gestureEnabled: undefined})
     }, [navigation]),
@@ -87,21 +88,28 @@ export const focusEffectLockScreen = () => {
   // Backstop for a back action dispatched in JS rather than by the gesture.
   // Only GO_BACK/POP are blocked: a locked screen still has to be able to leave
   // through its own controls, and those go out as REPLACE/POP_TO_TOP/POP_TO
-  // (goBack() is never one of the exits). Blocking removal outright would
+  // or an explicitly admitted completion callback. Blocking removal outright would
   // strand the user on the screen for good.
   useFocusEffect(
     useCallback(
       () =>
         navigation.addListener("beforeRemove", (event: any) => {
           const actionType = event?.data?.action?.type ?? ""
-          if (actionType === "GO_BACK" || actionType === "POP") {
+          if (!exitAllowed.current && (actionType === "GO_BACK" || actionType === "POP")) {
             event.preventDefault()
           }
         }),
       [navigation],
     ),
   )
+  // Only the screen's provider-authorized completion control calls this, immediately before navigation.
+  return useCallback(() => {
+    exitAllowed.current = true
+  }, [])
 }
+
+/** Compatibility name for existing one-way screens. */
+export const focusEffectLockScreen = useScreenExitGuard
 
 export function usePushUnder() {
   const navigation = useNavigation()

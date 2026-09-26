@@ -15,6 +15,7 @@ import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
 import {OTA_ERROR_ENGLISH_COPY} from "../services/OtaErrorMapping"
+import type {FirmwareSnapshot, FirmwareTarget, FirmwareEntryPoint, FirmwareFinishResult} from "../ota/types"
 import {
   MINIMUM_OTA_BATTERY_LEVEL,
   useMentraLiveOta,
@@ -39,6 +40,8 @@ export type MentraLiveOtaFlowTheme = {
 export type MentraLiveOtaFlowTranslate = (key: string, options?: Record<string, string>) => string
 
 export type MentraLiveOtaFlowProps = {
+  target?: FirmwareTarget
+  entryPoint?: FirmwareEntryPoint
   /** Display name used in update copy. */
   deviceName?: string
   /** Entry page. `progress` exists for recovery/deep-link compatibility. */
@@ -46,11 +49,12 @@ export type MentraLiveOtaFlowProps = {
   /** Start the OTA-only projections. Full Engine hosts should pass false. */
   initializeRuntime?: boolean
   /** Called after the final check or when the user leaves an optional update. */
-  onFinished: () => void
+  onFinished: (result?: FirmwareFinishResult) => void
   /** Host-owned Wi-Fi setup for glasses that do not support hotspot OTA. */
   onOpenWifiSetup: () => void
   /** Lets a host coordinate its global connection overlay with OTA progress and firmware restarts. */
   onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
+  onSnapshot?: (snapshot: FirmwareSnapshot) => void
   /** Enables the existing developer-only escape hatches. */
   allowDevSkip?: boolean
   /** Enables the existing super-mode interrupted-session escape hatch. */
@@ -125,6 +129,7 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:unofficialClientNoOtaNamed":
     "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
   "ota:noUpdatesAvailable": "Your glasses are running the latest version.",
+  "ota:completionVerificationFailed": "Couldn't confirm update completion. Keep the glasses connected and try again.",
   "ota:checkFailed": "Check Failed",
   "ota:checkFailedMessage": "Couldn't check for updates. Please check your connection and try again.",
   "ota:versionInfoFailedMessage":
@@ -174,12 +179,15 @@ function defaultTranslate(key: string, options?: Record<string, string>): string
 }
 
 export function MentraLiveOtaFlow({
+  target,
+  entryPoint,
   allowDevSkip = typeof __DEV__ !== "undefined" && __DEV__,
   deviceName = "Mentra Live",
   initialPage = "check",
   initializeRuntime = true,
   onFinished,
   onFirmwareRestartingChange,
+  onSnapshot,
   onOpenWifiSetup,
   style,
   superMode = false,
@@ -188,10 +196,14 @@ export function MentraLiveOtaFlow({
 }: MentraLiveOtaFlowProps) {
   const colors = useMemo(() => ({...DEFAULT_THEME, ...theme}), [theme])
   const controller = useMentraLiveOta({
+    target,
+    entryPoint,
+    allowDevelopmentSkip: allowDevSkip || superMode,
     initialPage,
     initializeRuntime,
     onFinished,
     onFirmwareRestartingChange,
+    onSnapshot,
     onOpenWifiSetup,
   })
 
@@ -445,7 +457,9 @@ function OtaFlowContent({
         actions={
           <>
             <FlowButton colors={colors} label="Retry" onPress={controller.retryCheck} />
-            {allowDevSkip ? (
+            {state.canDismiss ? (
+              <FlowButton colors={colors} label="Close" onPress={controller.finish} secondary />
+            ) : allowDevSkip ? (
               <FlowButton colors={colors} label="Skip (dev only)" onPress={controller.finish} secondary />
             ) : null}
           </>
@@ -453,7 +467,9 @@ function OtaFlowContent({
         colors={colors}
         icon="alert"
         title={translate("ota:checkFailed")}>
-        <BodyText colors={colors}>{failureMessage(state.error, translate)}</BodyText>
+        <BodyText colors={colors}>
+          {state.error ? failureMessage(state.error, translate) : translate("ota:checkFailedMessage")}
+        </BodyText>
       </FlowPage>
     )
   }
@@ -603,11 +619,13 @@ function OtaFlowContent({
       <FlowPage
         actions={
           <>
-            <FlowButton
-              colors={colors}
-              label={state.canRetry ? "Retry" : "Done"}
-              onPress={state.canRetry ? controller.retryInstall : controller.finish}
-            />
+            {state.canRetry || state.canFinish ? (
+              <FlowButton
+                colors={colors}
+                label={state.canRetry ? "Retry" : "Done"}
+                onPress={state.canRetry ? controller.retryInstall : controller.finish}
+              />
+            ) : null}
             {state.canOpenWifiSetup ? (
               <FlowButton colors={colors} label="Change Wi-Fi" onPress={controller.openWifiSetup} secondary />
             ) : null}
@@ -629,7 +647,7 @@ function OtaFlowContent({
   return (
     <FlowPage
       actions={
-        superMode ? (
+        superMode && state.canDiscard ? (
           <FlowButton colors={colors} label="Skip (super)" onPress={controller.discard} secondary />
         ) : undefined
       }

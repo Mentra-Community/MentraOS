@@ -1,0 +1,188 @@
+import CryptoKit
+import Foundation
+@testable import MentraBluetoothSDK
+import XCTest
+
+final class Ar99FirmwareUpdaterTests: XCTestCase {
+    @MainActor private final class Harness {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let file: URL
+        let request: FirmwareStartRequest
+        var callbacks: Ar99OtaCallbacks?
+        var starts = 0
+        var queries = 0
+        var onStart: (() -> Void)?
+        var startAccepted = true
+        lazy var updater = makeUpdater()
+        init() throws {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            file = directory.appendingPathComponent("image.bin")
+            let bytes = Data([1, 2, 3]); try bytes.write(to: file)
+            request = .init(deviceId: "ar99", connectionGeneration: 1, offerId: "offer", kind: "file",
+                            artifact: .init(path: file.path, targetVersion: "new", size: bytes.count,
+                                            sha256: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()))
+        }
+
+        func makeUpdater(journalDirectory: URL? = nil) -> Ar99FirmwareUpdater {
+            Ar99FirmwareUpdater(deviceId: "ar99", connectionGeneration: 1, ports: .init(
+                connected: { true }, start: { [unowned self] bytes, callback in
+                    XCTAssertEqual(bytes, Data([1, 2, 3])); starts += 1; callbacks = callback; onStart?(); return startAccepted
+                }, queryInventory: { [unowned self] in queries += 1 }
+            ), journalDirectory: journalDirectory ?? directory)
+        }
+
+        func cleanup() {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    func testAdmitsBeforeManagerPreparationAndDuplicateStartAdopts() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            h.onStart = {
+                XCTAssertFalse(h.updater.snapshot.safeToRelease)
+                do {
+                    let record = try FirmwareJournal(deviceId: "ar99", directory: h.directory).read()
+                    XCTAssertNotNil(record)
+                } catch { XCTFail("Admission was not journaled") }
+                do { try h.updater.beginLegacy(); XCTFail("Legacy start replaced managed ownership") } catch {}
+            }
+            let admitted = try h.updater.start(h.request)
+            XCTAssertEqual(try h.updater.start(h.request).sessionId, admitted.sessionId)
+            XCTAssertEqual(h.starts, 1)
+            XCTAssertThrowsError(try h.updater.cancel())
+            XCTAssertThrowsError(try h.updater.acknowledge())
+        }
+    }
+
+    func testLegacyOwnershipIsPublishedAndRetainedAcrossConnectionChanges() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            var observed: [FirmwareUpdateSnapshot] = []
+            let remove = h.updater.observe { observed.append($0) }; defer { remove() }
+            try h.updater.beginLegacy()
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
+            XCTAssertFalse(observed.last!.safeToRelease)
+            h.updater.connectionChanged(generation: 2)
+            XCTAssertFalse(observed.last!.safeToRelease)
+            try h.updater.assertLegacyControlAllowed() // Preserve explicit legacy retry/cancel.
+            try h.updater.beginLegacy()
+            XCTAssertThrowsError(try h.updater.start(h.request))
+            h.updater.endLegacy()
+            XCTAssertTrue(observed.last!.safeToRelease)
+            XCTAssertFalse(h.updater.ownsDevice)
+            XCTAssertGreaterThan(observed.last!.revision, observed.first!.revision)
+        }
+    }
+
+    func testLegacyPreparationCannotBeReplacedByManagedStart() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            try h.updater.beginLegacy()
+            XCTAssertThrowsError(try h.updater.start(h.request))
+            XCTAssertTrue(h.updater.ownsDevice); XCTAssertEqual(h.starts, 0)
+            h.updater.endLegacy()
+            _ = try h.updater.start(h.request)
+            XCTAssertEqual(h.starts, 1)
+        }
+    }
+
+    func testChangedFileFailsBeforeWireWork() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            try Data([4, 5, 6]).write(to: h.file)
+            let result = try h.updater.start(h.request)
+            XCTAssertEqual(h.starts, 0); XCTAssertEqual(result.phase, "failed"); XCTAssertTrue(result.safeToRelease)
+        }
+    }
+
+    func testRejectedChannelRetiresCallbacksBeforeAcknowledgement() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            h.startAccepted = false
+            XCTAssertEqual(try h.updater.start(h.request).phase, "failed")
+            let stale = h.callbacks!
+            stale.onError(255, "queued channel error")
+            XCTAssertTrue(h.updater.snapshot.safeToRelease)
+            XCTAssertTrue(h.makeUpdater().snapshot.safeToRelease)
+            _ = try h.updater.acknowledge()
+            h.startAccepted = true
+            _ = try h.updater.start(h.request)
+            stale.onCompleted(false)
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
+            XCTAssertEqual(h.queries, 0)
+        }
+    }
+
+    func testUnavailableNewJournalDoesNotOwnAnUnmodifiedDevice() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            let blocked = h.directory.appendingPathComponent("blocked")
+            try Data([1]).write(to: blocked)
+            let updater = h.makeUpdater(journalDirectory: blocked)
+            XCTAssertTrue(updater.snapshot.safeToRelease)
+            let failed = try updater.start(h.request)
+            XCTAssertEqual(failed.phase, "failed"); XCTAssertTrue(failed.safeToRelease)
+            XCTAssertEqual(h.starts, 0)
+            _ = try updater.acknowledge()
+            XCTAssertTrue(h.makeUpdater(journalDirectory: blocked).snapshot.safeToRelease)
+        }
+    }
+
+    func testImageValidationDoesNotPretendTheTargetIsRunning() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            h.updater.inventoryChanged(version: "old", serial: "serial", projectName: "AR99", generation: 1)
+            _ = try h.updater.start(h.request)
+            let stale = h.callbacks!
+            stale.onCompleted(false)
+            XCTAssertEqual(h.updater.snapshot.observedFirmware, "old")
+            XCTAssertEqual(h.updater.snapshot.inventory["activation"], "unverified")
+            XCTAssertTrue(h.updater.snapshot.safeToRelease)
+            _ = try h.updater.acknowledge()
+            stale.onProgress(3, 3, 100)
+            XCTAssertEqual(h.updater.snapshot.phase, "idle")
+        }
+    }
+
+    func testPausedTransferAndColdRecoveryNeverRestartOrGuessOffsets() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            _ = try h.updater.start(h.request)
+            h.callbacks?.onPausedWaitingReconnect()
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
+            _ = try h.updater.reconcile()
+            let restored = h.makeUpdater()
+            XCTAssertEqual(restored.snapshot.phase, "interrupted")
+            XCTAssertFalse(restored.snapshot.safeToRelease)
+            _ = try restored.reconcile()
+            XCTAssertEqual(h.starts, 1); XCTAssertEqual(h.queries, 2)
+            restored.connectionChanged(generation: 2)
+            restored.inventoryChanged(version: "new", serial: "serial", projectName: "AR99", generation: 1)
+            XCTAssertFalse(restored.snapshot.safeToRelease)
+            restored.inventoryChanged(version: "new", serial: "serial", projectName: "AR99", generation: 2)
+            XCTAssertTrue(restored.snapshot.safeToRelease)
+            XCTAssertEqual(restored.snapshot.inventory["activation"], "verified")
+        }
+    }
+
+    func testTimeoutDoesNotAuthorizeAnotherFlashOrDisconnect() async throws {
+        try await MainActor.run {
+            let h = try Harness(); defer { h.cleanup() }
+            _ = try h.updater.start(h.request)
+            h.callbacks?.onError(255, "OTA reconnect timed out")
+            XCTAssertFalse(h.updater.snapshot.safeToRelease)
+            XCTAssertThrowsError(try h.updater.acknowledge())
+            XCTAssertThrowsError(try h.updater.beginLegacy())
+            XCTAssertEqual(h.starts, 1)
+            h.updater.inventoryChanged(version: "old", serial: "serial", projectName: "AR99", generation: 1)
+            let restored = h.makeUpdater()
+            _ = try restored.reconcile()
+            restored.inventoryChanged(version: "old", serial: "serial", projectName: "AR99", generation: 1)
+            XCTAssertFalse(restored.snapshot.safeToRelease)
+            XCTAssertThrowsError(try restored.acknowledge())
+            XCTAssertThrowsError(try restored.cancel())
+            XCTAssertEqual(h.starts, 1) // Rollout stays gated; old inventory is not proof of a remote abort.
+        }
+    }
+}

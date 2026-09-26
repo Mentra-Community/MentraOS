@@ -23,6 +23,10 @@ import {translate} from "@/i18n"
 export default function WifiScanScreen() {
   const params = useLocalSearchParams()
   const returnToMiniapp = params.returnToMiniapp as string | undefined
+  const firmwareReturn = params.firmwareReturn as string | undefined
+  const firmwareEntryPoint = params.firmwareEntryPoint as string | undefined
+  const firmwareDeviceId = params.firmwareDeviceId as string | undefined
+  const firmwareIntegrationId = params.firmwareIntegrationId as string | undefined
   const {theme} = useAppTheme()
 
   const [networks, setNetworks] = useState<WifiSearchResult[]>([])
@@ -195,6 +199,10 @@ export default function WifiScanScreen() {
         ssid: selectedNetwork.ssid,
         password: "",
         returnToMiniapp,
+        firmwareReturn,
+        firmwareEntryPoint,
+        firmwareDeviceId,
+        firmwareIntegrationId,
       })
     } else {
       console.log(`WIFI_SCAN: Secured network selected: ${selectedNetwork.ssid} - going to password screen`)
@@ -202,6 +210,10 @@ export default function WifiScanScreen() {
         ssid: selectedNetwork.ssid,
         requiresPassword: selectedNetwork.requiresPassword.toString(),
         returnToMiniapp,
+        firmwareReturn,
+        firmwareEntryPoint,
+        firmwareDeviceId,
+        firmwareIntegrationId,
       })
     }
   }
@@ -210,6 +222,10 @@ export default function WifiScanScreen() {
     push("/wifi/password", {
       ssid: "",
       returnToMiniapp,
+      firmwareReturn,
+      firmwareEntryPoint,
+      firmwareDeviceId,
+      firmwareIntegrationId,
     })
   }
 

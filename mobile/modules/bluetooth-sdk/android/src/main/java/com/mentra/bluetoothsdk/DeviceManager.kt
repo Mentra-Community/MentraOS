@@ -89,6 +89,12 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // MARK: - Properties
     // Read by the welcome executor as well as device lifecycle handlers.
     @Volatile var sgc: SGCManager? = null
+    val firmwareReplacementAllowed: Boolean get() = sgc?.firmwareUpdateOwnsDevice != true
+    private val firmwareIdentityKeys = setOf("default_wearable", "device_name", "device_address", "project_name",
+        "pending_wearable", "pending_device_name", "pending_device_address", "pending_device_secure_pairing_capable")
+    /** Host hydration can lag native pairing. It must not replace an active update's identity. */
+    internal fun allowsHostSettingUpdate(category: String, key: String): Boolean =
+        category != ObservableStore.BLUETOOTH_CATEGORY || key !in firmwareIdentityKeys || firmwareReplacementAllowed
     var controller: ControllerManager? = null
 
     // settings:
@@ -1372,6 +1378,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // MARK: - Auxiliary Commands
 
     fun initSGC(wearable: String) {
+        if (!firmwareReplacementAllowed) return
         Bridge.log("Initializing manager for wearable: $wearable")
         if (sgc != null && sgc?.type != wearable) {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
@@ -2322,6 +2329,13 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDefault() {
+        if (!firmwareReplacementAllowed) {
+            val owner = sgc
+            if (owner?.firmwareUpdater?.snapshot?.deviceId == deviceAddress && hasBluetoothPermissions()) {
+                owner?.reconnectFirmwareOwner()
+            }
+            return
+        }
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -2373,6 +2387,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectByName(dName: String) {
+        if (!firmwareReplacementAllowed) return
         Bridge.log("MAN: Connecting to wearable: $dName")
 
         var name = dName
@@ -2411,6 +2426,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDevice(deviceModel: String, deviceName: String) {
+        if (!firmwareReplacementAllowed) return
         Bridge.log("MAN: Connecting to device: $deviceModel $deviceName")
         if (DeviceTypes.ALL.contains(deviceModel)) {
             pendingWearable = deviceModel
@@ -2428,6 +2444,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectSimulated() {
+        if (!firmwareReplacementAllowed) return
         defaultWearable = DeviceTypes.SIMULATED
         deviceName = DeviceTypes.SIMULATED
         initSGC(defaultWearable)
@@ -2435,6 +2452,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun disconnect(clearPendingIdentity: Boolean = true) {
+        if (!firmwareReplacementAllowed) return
         synchronized(recoveryLock) {
             recoverG2Connection = false
             connectionRecovery.clear()
@@ -2493,6 +2511,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun forget() {
+        if (!firmwareReplacementAllowed) return
         synchronized(recoveryLock) {
             recoverG2Connection = false
             connectionRecovery.clear()

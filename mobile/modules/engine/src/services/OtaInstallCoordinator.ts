@@ -17,8 +17,11 @@
  * state written mid-pass queues a follow-up pass — the same way a setState
  * during React effects scheduled a re-render after the current effect batch.
  */
+import {LiveNativeCompletion} from "../devices/mentra-live/nativeCompletion"
 import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
+import {hasLiveExecutionOwner, managedLiveDeviceId, validateManagedLiveTarget} from "../devices/mentra-live/ownership"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
+import {BgTimer} from "../utils/timers"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
@@ -57,6 +60,7 @@ import {
   selectOtaProtocolProfile,
   type OtaProtocolProfile,
 } from "./otaInstallPolicy"
+const {setTimeout, clearTimeout, setInterval, clearInterval} = BgTimer
 
 function isTerminalForWatchdog(d: DisplayState): boolean {
   return d === "complete" || d === "failed" || d === "restarting"
@@ -148,6 +152,8 @@ function hasRecoveringOtaReply(otaStatus: OtaStatus | null, otaProgress: OtaProg
 
 /** Read model the host progress screen renders from. */
 export interface OtaInstallSnapshot {
+  /** False while native/the coordinator still owns recovery; older hosts may omit this field. */
+  safeToRelease?: boolean
   displayState: DisplayState
   errorMsg: string
   continueButtonDisabled: boolean
@@ -187,6 +193,37 @@ interface OtaStartOwnership {
 }
 
 class OtaInstallCoordinator {
+  private nativeCompletion: LiveNativeCompletion | null = null
+  private nativeBinding: {pending: Promise<void> | null} | null = null
+  private observationOnly = false
+  private completionVerdict: DisplayState | null = null
+  private finishing: Promise<void> | null = null
+  private finishFailed = false
+  private cleanupCompleted = false
+
+  /** Cleanup belongs to the update attempt, independent of host mount/unmount. */
+  hasCompletedCleanup(): boolean {
+    return this.cleanupCompleted && !this.finishing && !this.finishFailed
+  }
+  /** Controller ownership only; native recovery also has its own service/SDK guard. */
+  isSafeToRelease(): boolean {
+    // After verified cleanup and detach, old BLE progress must not resurrect this
+    // controller's ownership (notably legacy BES step_complete after reboot proof).
+    if (!this.attached && !this.otaStartOwnership && !this.finishing && !this.finishFailed) return true
+    return this.snapshot().safeToRelease === true
+  }
+
+  private isLegacySafeToRelease(snapshot: OtaInstallSnapshot = this.snapshot()): boolean {
+    if (this.completionVerdict !== null) return true
+    if (this.otaStartOwnership?.outcome === "pending") return false
+    if (this.observationOnly && snapshot.otaStatus?.status === "idle") return true
+    if (this.isInVersionChangeDetour()) return false
+    if (snapshot.displayState === "complete") return true
+    if (snapshot.otaStatus?.status === "failed" || snapshot.otaProgress?.status === "FAILED") return true
+    if (snapshot.otaStatus && snapshot.otaStatus.status !== "idle") return false
+    if (snapshot.otaProgress) return false
+    return !this.hasFirstActivity && this.otaStartOwnership?.outcome !== "acknowledged"
+  }
   private attached = false
   private preparedCheckResult: OtaCheckCurrentGlassesResult | null = null
   private selectedTransport: "wifi" | "hotspot" = "wifi"
@@ -296,6 +333,7 @@ class OtaInstallCoordinator {
 
   /** Select the transport at the existing install entry point before the progress route attaches. */
   prepare(checkResult: OtaCheckCurrentGlassesResult): "wifi" | "hotspot" {
+    this.observationOnly = false
     const state = useGlassesStore.getState()
     if (!state.wifiStatusKnown) {
       throw new Error("Glasses Wi-Fi status is not available")
@@ -320,10 +358,15 @@ class OtaInstallCoordinator {
    * when connected with no session; otherwise ota_query_status + reply
    * fallback) and starts reacting to store changes + BLE OTA events.
    */
-  attach(): void {
+  attach(options: {observationOnly?: boolean} = {}): void {
     if (this.attached) return
+    this.observationOnly = options.observationOnly === true
     this.attached = true
     this.resetSessionState()
+    this.nativeBinding = hasLiveExecutionOwner() ? {pending: null} : null
+    const deviceId = managedLiveDeviceId()
+    if (deviceId) this.bindNativeCompletion(deviceId)
+    else if (this.nativeBinding) void this.ensureNativeCompletion().catch(() => {})
     const initialState = useGlassesStore.getState()
     this.protocolProfile = selectOtaProtocolProfile(
       initialState.otaStatus,
@@ -352,6 +395,51 @@ class OtaInstallCoordinator {
     }
   }
 
+  private bindNativeCompletion(deviceId: string): void {
+    this.nativeCompletion = new LiveNativeCompletion(
+      deviceId,
+      {
+        read: () => BluetoothSdk.getFirmwareUpdateSnapshot(deviceId),
+        listen: (listener) => {
+          const subscription = BluetoothSdk.addListener("firmware_update", listener)
+          return () => subscription.remove()
+        },
+        complete: (evidence) => BluetoothSdk.reconcileFirmwareUpdateCompletion(evidence),
+      },
+      () => this.emitInternalChange(),
+    )
+  }
+
+  /** Legacy attach stays synchronous, but Start/Finish wait for its pinned native identity. */
+  private ensureNativeCompletion(): Promise<void> {
+    const binding = this.nativeBinding
+    if (!binding || this.nativeCompletion) return Promise.resolve()
+    if (binding.pending) return binding.pending
+    binding.pending = Promise.resolve()
+      .then(async () => {
+        await validateManagedLiveTarget()
+        if (this.nativeBinding !== binding) return
+        const deviceId = managedLiveDeviceId()
+        if (!deviceId) throw new Error("The Live update has no native device identity")
+        this.bindNativeCompletion(deviceId)
+      })
+      .finally(() => {
+        binding.pending = null
+        if (this.nativeBinding === binding) this.emitInternalChange()
+      })
+    return binding.pending
+  }
+
+  /** Cancel phone-side identity lookup before this controller can reach native Start.
+   * This releases only the controller; any existing native journal still owns its guard.
+   */
+  cancelUnboundPreparation(): boolean {
+    if (!this.nativeBinding || this.nativeCompletion) return false
+    this.otaStartOwnership = null
+    this.detach()
+    return true
+  }
+
   /**
    * Unbind on screen unmount: clears ALL timers/subscriptions/listeners and
    * resets the session-local state (the old component state died with the
@@ -360,6 +448,9 @@ class OtaInstallCoordinator {
   detach(): void {
     if (!this.attached) return
     this.attached = false
+    this.nativeBinding = null
+    this.nativeCompletion?.dispose()
+    this.nativeCompletion = null
     if (this.storeUnsubscribe) {
       this.storeUnsubscribe()
       this.storeUnsubscribe = null
@@ -379,6 +470,15 @@ class OtaInstallCoordinator {
 
   /** Retry after a failure: clear state and re-send ota_start (if connected). */
   retry(): void {
+    if (this.finishing || this.finishFailed) return
+    this.completionVerdict = null
+    if (this.observationOnly) {
+      this.setErrorMsg("")
+      void BluetoothSdk.queryOtaStatus().catch(() => {
+        this.setErrorMsg("Reconnect your glasses and check update status again.")
+      })
+      return
+    }
     // While the recovery worker owns the detour (apk install latched, not yet
     // converged), the phone must not drive: an ota_start now would push the
     // factory/surviving build into a parallel download-install, and a second
@@ -461,7 +561,63 @@ class OtaInstallCoordinator {
    * stays in the screen): clear the selected update, and after an APK step
    * clear the stale build number so the next check re-reads version_info.
    */
-  async finish(): Promise<void> {
+  finish(): Promise<void> {
+    if (this.finishing) return this.finishing
+    const finishing = Promise.resolve()
+      .then(() => this.performFinish())
+      .then(
+        () => {
+          this.finishFailed = false
+          this.cleanupCompleted = true
+        },
+        (error) => {
+          this.finishFailed = true
+          this.cleanupCompleted = false
+          throw error
+        },
+      )
+      .finally(() => {
+        if (this.finishing === finishing) {
+          this.finishing = null
+          this.emitInternalChange()
+        }
+      })
+    this.finishing = finishing
+    return finishing
+  }
+
+  private async performFinish(): Promise<void> {
+    const binding = this.nativeBinding
+    if (binding && !this.nativeCompletion) await this.ensureNativeCompletion()
+    if (this.nativeBinding !== binding) return
+    // Keep the established legacy completion policy in one place. Native only fences and
+    // persists this verdict; it must not infer success from a generic reconnect/step_complete.
+    const finishSnapshot = this.snapshot()
+    const legacySafe = this.isLegacySafeToRelease(finishSnapshot)
+    const complete = finishSnapshot.displayState === "complete" && legacySafe
+    const proof = !complete
+      ? null
+      : this.versionChangeConverged
+        ? "live-apk-target-convergence"
+        : this.apkCompletedViaBuildIncrease
+          ? "live-apk-build-increase"
+          : this.besRestartRecovery === "complete"
+            ? "live-bes-reboot"
+            : null
+    const nativeCompletion = this.nativeCompletion
+    if (nativeCompletion) {
+      await nativeCompletion.finish(proof)
+      if (nativeCompletion !== this.nativeCompletion) return
+    }
+
+    if (legacySafe) {
+      // The existing legacy verdict plus native confirmation closes this attempt.
+      // Late BLE projections cannot revive it while asynchronous transport cleanup
+      // runs. Native observation remains live and can still withhold release.
+      this.completionVerdict = finishSnapshot.displayState
+      this.clearAllOtaTimers()
+      this.clearContinueLockoutTimer()
+    }
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
     }
@@ -492,19 +648,21 @@ class OtaInstallCoordinator {
     const connected = isGlassesConnected(state.connection)
     const otaStatus = state.otaStatus
     const otaProgress = state.otaProgress
-    return {
-      displayState: deriveDisplayState({
-        otaStatus,
-        otaProgress,
-        connected,
-        errorMsg: this.errorMsg,
-        sawReconnectEdge: this.sawReconnectEdge,
-        legacyApkSettleHold: this.legacyApkSettleHold,
-        apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
-        besRestartRecovery: this.besRestartRecovery,
-        versionChangeConverged: this.versionChangeConverged,
-        versionChangeSession: this.versionChangeSession,
-      }),
+    const snapshot: OtaInstallSnapshot = {
+      displayState:
+        this.completionVerdict ??
+        deriveDisplayState({
+          otaStatus,
+          otaProgress,
+          connected,
+          errorMsg: this.errorMsg,
+          sawReconnectEdge: this.sawReconnectEdge,
+          legacyApkSettleHold: this.legacyApkSettleHold,
+          apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+          besRestartRecovery: this.besRestartRecovery,
+          versionChangeConverged: this.versionChangeConverged,
+          versionChangeSession: this.versionChangeSession,
+        }),
       errorMsg: this.errorMsg,
       // Keep Continue disabled while the expected BES reboot is still in flight.
       continueButtonDisabled: this.continueButtonDisabled || this.besRestartRecovery === "awaiting",
@@ -521,6 +679,13 @@ class OtaInstallCoordinator {
       hotspotArtifact: this.hotspotArtifact ? {...this.hotspotArtifact} : null,
       transport: this.selectedTransport,
     }
+    snapshot.safeToRelease =
+      !this.finishing &&
+      !this.finishFailed &&
+      this.isLegacySafeToRelease(snapshot) &&
+      (!this.nativeBinding || this.nativeCompletion !== null) &&
+      (this.nativeCompletion?.isSafeToRelease() ?? true)
+    return snapshot
   }
 
   /**
@@ -566,6 +731,9 @@ class OtaInstallCoordinator {
   // --- internal state plumbing ---
 
   private resetSessionState(): void {
+    this.completionVerdict = null
+    this.finishFailed = false
+    this.cleanupCompleted = false
     this.errorMsg = ""
     this.sawReconnectEdge = false
     this.continueButtonDisabled = false
@@ -710,6 +878,7 @@ class OtaInstallCoordinator {
    * component, in the old declaration order.
    */
   private runPass(isMount: boolean): void {
+    if (this.completionVerdict !== null) return
     const state = useGlassesStore.getState()
     const connected = isGlassesConnected(state.connection)
     const otaStatus = state.otaStatus
@@ -1152,6 +1321,12 @@ class OtaInstallCoordinator {
     // still begins an explicit install.
     const isIdleStatus = !!storeState.otaStatus && storeState.otaStatus.sessionId === ""
     const noSessionYet = (!storeState.otaStatus && !storeState.otaProgress) || isIdleStatus
+    if (this.observationOnly) {
+      void BluetoothSdk.queryOtaStatus().catch(() => {
+        this.setErrorMsg("Reconnect your glasses and check update status again.")
+      })
+      return
+    }
     if (noSessionYet) {
       if (!isIdleStatus && this.otaStartOwnership?.outcome === "acknowledged") {
         console.log("[OTA_PROGRESS] initial mount, acknowledged session has no cached status — reconciling")
@@ -1353,6 +1528,7 @@ class OtaInstallCoordinator {
    * synchronously — used inside setTimeout callbacks.
    */
   private computeDisplayStateNow(): DisplayState {
+    if (this.completionVerdict !== null) return this.completionVerdict
     const state = useGlassesStore.getState()
     return deriveDisplayState({
       otaStatus: state.otaStatus,
@@ -1477,6 +1653,9 @@ class OtaInstallCoordinator {
   }
 
   private sendOtaStartWithWatchdogs(): Promise<void> {
+    if (this.finishFailed || this.completionVerdict !== null) return Promise.resolve()
+    // A cold journal carries evidence, never authorization to start another pass.
+    if (this.observationOnly) return Promise.resolve()
     // INVARIANT BACKSTOP — not normal control flow. Every entry point that can drive the
     // glasses (connect-edge, query fallback, retry, mount) carries its own detour gate with the
     // right behavior for that site; this final check only exists so that a FUTURE entry point
@@ -1512,14 +1691,20 @@ class OtaInstallCoordinator {
       outcome: "pending",
       promise: Promise.resolve(),
     }
-    ownership.promise = this.performOtaStart(ownership)
+    this.cleanupCompleted = false
     this.otaStartOwnership = ownership
+    ownership.promise = this.performOtaStart(ownership)
     return ownership.promise
   }
 
   private async performOtaStart(ownership: OtaStartOwnership): Promise<void> {
     let nativeStartAttempted = false
     try {
+      const validation = validateManagedLiveTarget()
+      if (validation) await validation
+      if (this.otaStartOwnership !== ownership) return
+      if (this.nativeBinding && !this.nativeCompletion) await this.ensureNativeCompletion()
+      if (this.otaStartOwnership !== ownership) return
       const state = useGlassesStore.getState()
       let otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
       if (this.selectedTransport === "hotspot") {
@@ -1542,6 +1727,11 @@ class OtaInstallCoordinator {
         throw new Error("OTA is disabled because this build has no immutable manifest pin")
       }
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
+      const finalValidation = validateManagedLiveTarget()
+      if (finalValidation) await finalValidation
+      if (this.otaStartOwnership !== ownership) return
+      if (this.nativeCompletion) await this.nativeCompletion.beforeStart()
+      if (this.otaStartOwnership !== ownership) return
       nativeStartAttempted = true
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
       if (this.otaStartOwnership !== ownership) return
@@ -1628,6 +1818,7 @@ class OtaInstallCoordinator {
    * cancel the fallback, so reconnects against a wiped/lost session still recover.
    */
   private armQueryReplyFallback(reason: "reconnect" | "initial-mount" | "retry"): void {
+    if (this.observationOnly) return
     this.clearQueryReplyTimeout()
     this.queryReplyTimeout = setTimeout(() => {
       this.queryReplyTimeout = null

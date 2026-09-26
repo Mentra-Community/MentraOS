@@ -25,6 +25,7 @@ import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.Validated
 import com.mentra.asg_client.utils.WakeLockManager;
 import java.io.File;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.concurrent.Semaphore;
 import org.json.JSONObject;
 import org.junit.After;
@@ -361,6 +362,7 @@ public class OtaHelperBesGuardTest {
                         argThat(
                                 status ->
                                         "failed".equals(status.optString("status"))
+                                                && status.optString("session_id").isEmpty()
                                                 && "battery_low".equals(
                                                         status.optString("error_message"))));
         assertThat(helper.getSessionManager().getStatus()).isEqualTo("in_progress");
@@ -370,6 +372,43 @@ public class OtaHelperBesGuardTest {
         assertThat(admissionPermit().availablePermits()).isEqualTo(1);
         assertThat(phoneInitiatedOta()).isFalse();
         assertThat(ShadowPowerManager.getLatestWakeLock()).isSameAs(previousWakeLock);
+    }
+
+    @Test
+    public void failureBeforeSessionIsDeliveredButNotReplayedByStatusQuery() throws Exception {
+        OtaHelper helper = newHelper(new StubRegistry());
+        OtaHelper.PhoneConnectionProvider provider = mock(OtaHelper.PhoneConnectionProvider.class);
+        when(provider.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(provider);
+        Method progress = OtaHelper.class.getDeclaredMethod("sendProgressToPhone",
+                String.class, int.class, long.class, long.class, String.class, String.class);
+        progress.setAccessible(true);
+        progress.invoke(helper, "download", 0, 0L, 0L, "FAILED", "download_failed");
+        verify(provider).sendOtaStatus(argThat(status ->
+                "failed".equals(status.optString("status"))
+                        && status.optString("session_id").isEmpty()
+                        && "download_failed".equals(status.optString("error_message"))));
+        assertThat(helper.getOtaSessionState().getString("status")).isEqualTo("idle");
+    }
+
+    @Test
+    public void manifestFailureAfterPreviousCompletionReusesPreviousSessionId() throws Exception {
+        OtaHelper helper = newHelper(new StubRegistry());
+        OtaHelper.PhoneConnectionProvider provider = mock(OtaHelper.PhoneConnectionProvider.class);
+        when(provider.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(provider);
+        helper.getSessionManager().createSession(new String[] {"apk"}, "https://updates.example.invalid/old.json");
+        String previousId = helper.getSessionManager().getSessionState().getString("sid");
+        helper.getSessionManager().setComplete();
+        clearInvocations(provider);
+        Method progress = OtaHelper.class.getDeclaredMethod("sendProgressToPhone",
+                String.class, int.class, long.class, long.class, String.class, String.class);
+        progress.setAccessible(true);
+        progress.invoke(helper, "download", 0, 0L, 0L, "FAILED", "clock_skew");
+        verify(provider).sendOtaStatus(argThat(status ->
+                "failed".equals(status.optString("status"))
+                        && previousId.equals(status.optString("sid"))
+                        && "clock_skew".equals(status.optString("err"))));
     }
 
     @Test

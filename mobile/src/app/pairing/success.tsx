@@ -3,7 +3,7 @@ import {useRoute} from "@react-navigation/native"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {Platform} from "react-native"
 
-import {ControllerTypes, DeviceTypes, getModelCapabilities} from "@mentra/engine"
+import {ControllerTypes, DeviceTypes} from "@mentra/engine"
 import {Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
@@ -15,7 +15,8 @@ export default function PairingSuccessScreen() {
   const {clearHistoryAndGoHome, push} = useNavigationStore.getState()
   const pushUnder = usePushUnder()
   const route = useRoute()
-  const {deviceModel: routeDeviceModel, ar99ProjectName} = (route.params as {deviceModel?: string; ar99ProjectName?: string}) || {}
+  const {deviceModel: routeDeviceModel, ar99ProjectName} =
+    (route.params as {deviceModel?: string; ar99ProjectName?: string}) || {}
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [onboardingOsCompleted] = useSetting<boolean>(SETTINGS.onboarding_os_completed.key)
   const [hasSetupRoutes, setHasSetupRoutes] = useState(false)
@@ -32,16 +33,15 @@ export default function PairingSuccessScreen() {
     console.log("PAIR_SUCCESS: Using deviceModel from route params:", routeDeviceModel)
   }
 
-  const glassesImage = deviceModel === DeviceTypes.AR99 ? getAr99ImageSource(ar99ProjectName) : getGlassesImage(deviceModel)
+  const glassesImage =
+    deviceModel === DeviceTypes.AR99 ? getAr99ImageSource(ar99ProjectName) : getGlassesImage(deviceModel)
 
   const buildSetupStack = useCallback(async (): Promise<string[]> => {
-    if (deviceModel === DeviceTypes.AR99) {
-      return []
+    const setup = engine.firmwareUpdates.pairingPolicy(deviceModel)
+    if (!setup.checkFirmware) {
+      return onboardingOsCompleted || !setup.includeOsOnboarding ? [] : ["/onboarding/os"]
     }
-    const features = getModelCapabilities(deviceModel as DeviceTypes)
-    if (!features.hasOta) {
-      return onboardingOsCompleted ? [] : ["/onboarding/os"]
-    }
+    if (!setup.requiresBluetoothClassic) return ["/ota/check-for-updates"]
     // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).
     let bluetoothClassicConnected = await engine.pairing.waitForBluetoothClassic({timeoutMs: 1000})
     // Android pairs Bluetooth Classic at the native stack level, so that screen is never needed there.
@@ -214,4 +214,3 @@ export default function PairingSuccessScreen() {
     </Screen>
   )
 }
-

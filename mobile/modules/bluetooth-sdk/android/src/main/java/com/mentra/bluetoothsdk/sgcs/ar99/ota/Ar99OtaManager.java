@@ -32,7 +32,7 @@ public class Ar99OtaManager {
   private int currentOffset = 0;
   private boolean otaNotifyEnabled = false;
 
-  private Ar99OtaManager() {}
+  Ar99OtaManager() {}
 
   public static Ar99OtaManager getInstance() {
     if (instance == null) {
@@ -55,8 +55,10 @@ public class Ar99OtaManager {
     return state;
   }
 
+  private volatile int operationGeneration = 0;
+
   public synchronized boolean isOTAInProgress() {
-    return state != OtaCommandConstants.OTA.State.IDLE
+    return (state != OtaCommandConstants.OTA.State.IDLE || firmwareData != null)
         && state != OtaCommandConstants.OTA.State.COMPLETED
         && state != OtaCommandConstants.OTA.State.FAILED;
   }
@@ -93,6 +95,7 @@ public class Ar99OtaManager {
       return false;
     }
 
+    operationGeneration++;
     state = OtaCommandConstants.OTA.State.IDLE;
     otaNotifyEnabled = false;
     cancelTimeout();
@@ -106,10 +109,12 @@ public class Ar99OtaManager {
     OtaGattTransport t = transport;
     if (t == null) {
       notifyError(OtaCommandConstants.OTA.ErrorCode.UNKNOWN_ERROR, "OTA transport is not initialized");
+      cleanupFirmware();
       return false;
     }
     if (!t.enableOtaNotification()) {
       notifyError(OtaCommandConstants.OTA.ErrorCode.UNKNOWN_ERROR, "OTA service was not found");
+      cleanupFirmware();
       return false;
     }
     return true;
@@ -135,6 +140,7 @@ public class Ar99OtaManager {
     synchronized (this) {
       if (!isOTAInProgress() || firmwareData == null || firmwareSize <= 0) return;
       if (state == OtaCommandConstants.OTA.State.PAUSED_DISCONNECTED) return;
+      operationGeneration++;
       state = OtaCommandConstants.OTA.State.PAUSED_DISCONNECTED;
       otaNotifyEnabled = false;
       cancelTimeout();
@@ -167,11 +173,12 @@ public class Ar99OtaManager {
         return;
       }
     }
+    final int generation = operationGeneration;
     mainHandler.postDelayed(
         () -> {
           synchronized (Ar99OtaManager.this) {
-            if (state != OtaCommandConstants.OTA.State.IDLE
-                && state != OtaCommandConstants.OTA.State.PAUSED_DISCONNECTED) {
+            if (generation != operationGeneration || (state != OtaCommandConstants.OTA.State.IDLE
+                && state != OtaCommandConstants.OTA.State.PAUSED_DISCONNECTED)) {
               return;
             }
           }
@@ -193,6 +200,7 @@ public class Ar99OtaManager {
   }
 
   public void handleOTAResponse(byte[] data) {
+    if (!isOTAInProgress() || getState() == OtaCommandConstants.OTA.State.IDLE || getState() == OtaCommandConstants.OTA.State.PAUSED_DISCONNECTED) return;
     if (data == null || data.length < 5) return;
     OtaProtocol.FrameHeader header = OtaProtocol.parseFrameHeader(data);
     if (header == null || header.svcId != OtaCommandConstants.OTA.SVC_ID) return;
@@ -252,10 +260,11 @@ public class Ar99OtaManager {
   }
 
   private void onMtuNegotiated() {
+    final int generation = operationGeneration;
     mainHandler.postDelayed(
         () -> {
           synchronized (Ar99OtaManager.this) {
-            if (state != OtaCommandConstants.OTA.State.REQUESTING) return;
+            if (generation != operationGeneration || state != OtaCommandConstants.OTA.State.REQUESTING) return;
           }
           sendOtaData(OtaProtocol.buildRequestUpgrade(firmwareSize, blockSize, firmwareCrc32));
         },
@@ -543,6 +552,7 @@ public class Ar99OtaManager {
   }
 
   private synchronized void cleanupFirmware() {
+    operationGeneration++;
     firmwareData = null;
     firmwareSize = 0;
     firmwareCrc32 = 0;

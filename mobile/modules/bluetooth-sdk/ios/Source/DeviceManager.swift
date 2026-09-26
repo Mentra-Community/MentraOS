@@ -122,6 +122,16 @@ struct ViewState {
     var coreTokenOwner: String = ""
     var userEmail: String = ""
     var sgc: SGCManager?
+
+    var firmwareReplacementAllowed: Bool { sgc?.firmwareUpdateOwnsDevice != true }
+    private static let firmwareIdentityKeys: Set<String> = [
+        "default_wearable", "device_name", "device_address", "project_name", "pending_wearable",
+        "pending_device_name", "pending_device_address", "pending_device_secure_pairing_capable",
+    ]
+    /// Host hydration can lag native pairing. It must not replace an active update's identity.
+    func allowsHostSettingUpdate(category: String, key: String) -> Bool {
+        category != ObservableStore.bluetoothCategory || !Self.firmwareIdentityKeys.contains(key) || firmwareReplacementAllowed
+    }
     var controller: ControllerManager?
 
     // state
@@ -718,6 +728,7 @@ struct ViewState {
     // MARK: - Auxiliary Commands
 
     func initSGC(_ wearable: String) {
+        guard firmwareReplacementAllowed else { return }
         Bridge.log("Initializing manager for wearable: \(wearable)")
         if sgc != nil && sgc?.type != wearable {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
@@ -1850,6 +1861,14 @@ struct ViewState {
     }
 
     func connectDefault(requiresAncs: Bool = true) {
+        // Automatic same-device reconnect must retain the native update owner.
+        // Public device replacement still passes the SDK admission check.
+        if !firmwareReplacementAllowed {
+            if sgc?.firmwareUpdater?.snapshot.deviceId == deviceAddress {
+                sgc?.reconnectFirmwareOwner()
+            }
+            return
+        }
         if defaultWearable.isEmpty {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -1890,6 +1909,7 @@ struct ViewState {
     }
 
     func connectByName(_ dName: String, requiresAncs: Bool = true) {
+        guard firmwareReplacementAllowed else { return }
         Bridge.log("MAN: Connecting to wearable: \(dName)")
         var name = dName
 
@@ -1916,8 +1936,10 @@ struct ViewState {
         }
 
         Task {
+            guard firmwareReplacementAllowed else { return }
             disconnect(clearPendingConnection: false)
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
+            guard firmwareReplacementAllowed else { return }
             self.searching = true
             self.pendingDeviceName = name
 
@@ -1928,6 +1950,7 @@ struct ViewState {
     }
 
     func connectDevice(_ deviceModel: String, _ deviceName: String) {
+        guard firmwareReplacementAllowed else { return }
         Bridge.log("MAN: Connecting to device: \(deviceModel) \(deviceName)")
         if DeviceTypes.ALL.contains(deviceModel) {
             pendingWearable = deviceModel
@@ -1945,6 +1968,7 @@ struct ViewState {
     }
 
     func connectSimulated() {
+        guard firmwareReplacementAllowed else { return }
         defaultWearable = DeviceTypes.SIMULATED
         deviceName = DeviceTypes.SIMULATED
         initSGC(defaultWearable)
@@ -1952,6 +1976,7 @@ struct ViewState {
     }
 
     func disconnect(clearPendingConnection: Bool = true) {
+        guard firmwareReplacementAllowed else { return }
         #if os(macOS)
         audioRouteObserver = nil
         glassesBluetoothClassicConnected = false
@@ -2005,6 +2030,7 @@ struct ViewState {
     }
 
     func forget() {
+        guard firmwareReplacementAllowed else { return }
         Bridge.log("MAN: Forgetting smart glasses")
         // Call forget first to stop timers/handlers/reconnect logic
         sgc?.forget()

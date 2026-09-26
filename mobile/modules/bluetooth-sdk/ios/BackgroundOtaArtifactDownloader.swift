@@ -26,7 +26,7 @@ final class BackgroundOtaArtifactDownloader: NSObject, URLSessionDownloadDelegat
     super.init()
   }
 
-  func download(from source: String, to destination: String) async throws -> [String: Any] {
+  func download(from source: String, to destination: String, headers: [String: String] = [:]) async throws -> [String: Any] {
     guard let sourceUrl = URL(string: source),
           sourceUrl.scheme == "https" || sourceUrl.scheme == "http"
     else {
@@ -44,7 +44,9 @@ final class BackgroundOtaArtifactDownloader: NSObject, URLSessionDownloadDelegat
     )
 
     return try await withCheckedThrowingContinuation { continuation in
-      let task = session.downloadTask(with: sourceUrl)
+      var request = URLRequest(url: sourceUrl)
+      for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+      let task = session.downloadTask(with: request)
       task.taskDescription = destination
       lock.lock()
       pending[task.taskIdentifier] = Pending(continuation: continuation)

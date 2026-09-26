@@ -117,6 +117,10 @@ export const bluetoothSdkMock = {
   clearDisplay: jest.fn(() => Promise.resolve()),
   requestStatus: jest.fn(() => Promise.resolve()),
   getDefaultDevice: jest.fn(() => null),
+  reconcileFirmwareUpdateCompletion: jest.fn(),
+  getFirmwareUpdateSnapshot: jest.fn(() =>
+    Promise.reject(Object.assign(new Error("No native updater"), {code: "unsupported"})),
+  ),
   setDefaultDevice: jest.fn(() => Promise.resolve()),
   clearDefaultDevice: jest.fn(() => Promise.resolve()),
   startScan: jest.fn(() => Promise.resolve()),

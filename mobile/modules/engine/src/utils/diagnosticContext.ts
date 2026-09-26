@@ -3,6 +3,7 @@ import Constants from "expo-constants"
 import * as Location from "expo-location"
 import {Platform} from "react-native"
 import type {ReportContext} from "@mentra/cloud-client"
+import {firmwareUpdates} from "../facades/firmwareUpdates"
 
 import appRegistry from "../services/AppRegistry"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
@@ -147,6 +148,7 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
       core: filteredCore,
       connection: connectionState,
       miniapps: miniappRuntime,
+      firmwareUpdates: firmwareUpdates.diagnosticSnapshot(),
     },
     apps: miniapps,
     settings: {

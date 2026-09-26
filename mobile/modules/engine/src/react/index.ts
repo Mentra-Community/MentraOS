@@ -20,3 +20,14 @@ export {
   type MentraLiveOtaTransport,
   type UseMentraLiveOtaOptions,
 } from "./useMentraLiveOta"
+export {BundledFirmwareUpdateFlow as FirmwareUpdateFlow} from "./BundledFirmwareUpdateFlow"
+export {useFirmwareUpdate, type UseFirmwareUpdateOptions} from "./useFirmwareUpdate"
+export type {FirmwareUpdateFlowProps, FirmwareUpdateTheme} from "./FirmwareUpdateFlow"
+export type {
+  FirmwareSnapshot,
+  FirmwareTarget,
+  FirmwareEntryPoint,
+  FirmwareOpenOptions,
+  FirmwareAction,
+  FirmwareFinishResult,
+} from "../ota/types"

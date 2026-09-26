@@ -1,3 +1,8 @@
+import type {
+  NativeFirmwareStartRequest,
+  NativeFirmwareUpdateSnapshot,
+  NativeFirmwareCompletionEvidence,
+} from "./firmware-updates"
 import type {PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 export type {PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 
@@ -1065,7 +1070,13 @@ export type KeepAliveAckEvent = {
   timestamp?: number
 }
 
-export type MtkUpdateCompleteEvent = {
+export type LiveOtaSourceContext = {
+  /** Native peripheral identity and transport generation captured by the originating SGC. */
+  source_device_id?: string
+  source_connection_generation?: number
+}
+
+export type MtkUpdateCompleteEvent = LiveOtaSourceContext & {
   type: "mtk_update_complete"
   message: string
   timestamp: number
@@ -1076,7 +1087,7 @@ export type MtkUpdateCompleteEvent = {
  * changed, or first appeared after an update from a pre-sid build). There is no
  * physical disconnect for this — treat it as the logical reconnect edge.
  */
-export type GlassesSessionChangedEvent = {
+export type GlassesSessionChangedEvent = LiveOtaSourceContext & {
   type: "glasses_session_changed"
   previous_sid: string
   sid: string
@@ -1094,11 +1105,11 @@ export type OtaProgressEvent = {
   error_message?: string
 }
 
-export type OtaStartAckEvent = {
+export type OtaStartAckEvent = LiveOtaSourceContext & {
   type: "ota_start_ack"
   timestamp: number
 }
-export type OtaStatusEvent = {
+export type OtaStatusEvent = LiveOtaSourceContext & {
   type: "ota_status"
   session_id: string
   total_steps: number
@@ -1131,6 +1142,7 @@ export type MiniappSelectedEvent = {
 export type BluetoothSdkInternalEvent = Parameters<BluetoothSdkModuleEvents[keyof BluetoothSdkModuleEvents]>[0]
 
 export type BluetoothSdkModuleEvents = {
+  firmware_update: (event: NativeFirmwareUpdateSnapshot) => void
   glasses_status: (changed: Partial<GlassesStatus>) => void
   bluetooth_status: (changed: Partial<BluetoothStatus>) => void
   log: (event: LogEvent) => void
@@ -1307,6 +1319,7 @@ export type BluetoothSdkEventMap = {
   log: LogEvent
   device_discovered: Device
   default_device_changed: {device?: Device}
+  firmware_update: NativeFirmwareUpdateSnapshot
   glasses_not_ready: GlassesNotReadyEvent
   button_press: ButtonPressEvent
   touch_event: TouchEvent
@@ -1373,6 +1386,17 @@ export type BluetoothSdkSubscription = {
 export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 
 export interface BluetoothSdkPublicModule {
+  /** Passive retained native snapshot. This never starts or cancels an update. */
+  getFirmwareUpdateSnapshot(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+  /** Apply device-defined policy from a trusted host/source. Does not start or retry firmware installation. */
+  configureFirmwareUpdater(deviceId: string, metadata: Record<string, string>): Promise<NativeFirmwareUpdateSnapshot>
+  startFirmwareUpdate(request: NativeFirmwareStartRequest): Promise<NativeFirmwareUpdateSnapshot>
+  /** Provider-defined inspection/adoption; never a generic fresh-start retry. */
+  reconcileFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+  reconcileFirmwareUpdateCompletion(evidence: NativeFirmwareCompletionEvidence): Promise<NativeFirmwareUpdateSnapshot>
+  cancelFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+  acknowledgeFirmwareUpdate(deviceId: string): Promise<NativeFirmwareUpdateSnapshot>
+
   configureNativeNotifications(config: NativeNotificationConfig): Promise<void>
   getNativeNotificationStatus(): Promise<NativeNotificationStatus>
   addListener<EventName extends BluetoothSdkEventName>(

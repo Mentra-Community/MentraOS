@@ -9,6 +9,9 @@ import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
+import com.mentra.bluetoothsdk.sgcs.firmware.LiveFirmwareUpdater
+import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdater
+import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareConnectionGeneration
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
@@ -594,6 +597,27 @@ class MentraLive : SGCManager() {
     // private PublishSubject<JSONObject> dataObservable;
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var bluetoothScanner: BluetoothLeScanner? = null
+    internal var liveFirmwareUpdater: LiveFirmwareUpdater? = null
+      private set
+    private var firmwareConnectionGeneration = 0
+    override val firmwareUpdater: FirmwareUpdater? get() = liveFirmwareUpdater
+    override val firmwareUpdateOwnsDevice: Boolean get() = liveFirmwareUpdater?.ownsDevice == true
+    internal val otaSourceContext: Map<String, Any> get() = liveFirmwareUpdater?.snapshot?.let {
+      mapOf("source_device_id" to it.deviceId, "source_connection_generation" to it.connectionGeneration)
+    } ?: emptyMap()
+
+    private fun bindLiveFirmwareUpdater(device: BluetoothDevice) {
+      val id = device.address
+      firmwareConnectionGeneration = FirmwareConnectionGeneration.next()
+      if (liveFirmwareUpdater?.snapshot?.deviceId != id) {
+        val ctx = requireNotNull(context ?: Bridge.getContext())
+        liveFirmwareUpdater = LiveFirmwareUpdater(id, firmwareConnectionGeneration,
+          { isConnected && bluetoothGatt?.device?.address == id }, { sendOtaQueryStatus() },
+          java.io.File(ctx.filesDir, "firmware-updates"))
+      }
+      liveFirmwareUpdater?.connectionChanged(firmwareConnectionGeneration)
+    }
+
     @Volatile private var bluetoothGatt: BluetoothGatt? = null
     private val gattLifecycleHandler = Handler(Looper.getMainLooper())
     // Owned exclusively by the main looper, including callback validation and mutation.
@@ -1868,6 +1892,10 @@ class MentraLive : SGCManager() {
         if (device == null) {
             return
         }
+        if (firmwareUpdateOwnsDevice && liveFirmwareUpdater?.snapshot?.deviceId != device.address) {
+            Bridge.log("LIVE: Firmware recovery is bound to another peripheral")
+            return
+        }
         if (isKilled || pairingYieldActive) {
             Bridge.log("LIVE: connectToDevice blocked — pairing yield active")
             isConnecting = false
@@ -2367,6 +2395,7 @@ class MentraLive : SGCManager() {
                             markPairingTiming("gatt_connected")
                             isConnecting = false
                             isConnected = true
+                            bindLiveFirmwareUpdater(gatt.device)
                             connectedDevice = gatt.device
                             closeEvidenceConnection("replaced")
                             evidenceOrigin = BleEvidenceLog.connectionAccepted(gatt.device.address)
@@ -2421,6 +2450,7 @@ class MentraLive : SGCManager() {
                             // preventing exponential backoff. Reset at ble_chars_ready instead.
                             isReconnecting = false
                         } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                            liveFirmwareUpdater?.connectionChanged(firmwareConnectionGeneration, disconnected = true)
                             Log.w(
                                     TAG,
                                     "🔌 ⚠️ DISCONNECTED from GATT server - Initiating reconnection sequence"
@@ -4447,7 +4477,7 @@ class MentraLive : SGCManager() {
             "ota_start_ack" -> {
                 // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
                 Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
-                Bridge.sendOtaStartAck()
+                Bridge.sendOtaStartAck(otaSourceContext)
             }
             "ota_status" -> {
                 val osSessionId = json.optString("sid", json.optString("session_id", ""))
@@ -4497,7 +4527,7 @@ class MentraLive : SGCManager() {
                 )
 
                 val glassesTimeMs = json.optLong("glasses_time_ms", 0)
-                Bridge.sendOtaStatus(
+                sendLiveOtaStatus(
                         osSessionId,
                         osTotalSteps,
                         osCurrentStep,
@@ -4542,7 +4572,7 @@ class MentraLive : SGCManager() {
                                     legacyProgress +
                                     "%"
                     )
-                    Bridge.sendOtaStatus(
+                    sendLiveOtaStatus(
                             "",
                             1,
                             1,
@@ -5091,7 +5121,10 @@ class MentraLive : SGCManager() {
                 Bridge.log("LIVE: 🔄 MTK Update Message: " + updateMessage)
 
                 // Send to React Native via Bridge on main thread
-                handler.post { Bridge.sendMtkUpdateComplete(updateMessage) }
+                val source = otaSourceContext
+                handler.post {
+                    if (otaSourceContext == source) Bridge.sendMtkUpdateComplete(updateMessage, source)
+                }
             }
             else -> {
                 // Flexible version_info parsing - handle any version_info* message
@@ -5812,7 +5845,7 @@ class MentraLive : SGCManager() {
                                         totalSteps,
                                         cachedOtaStepSequence
                                 )
-                        Bridge.sendOtaStatus(
+                        sendLiveOtaStatus(
                                 sid,
                                 totalSteps,
                                 currentStep,
@@ -6292,6 +6325,14 @@ class MentraLive : SGCManager() {
      * (it must be an http(s) URL). A null url omits the field, leaving the glasses to fall back to
      * their default version manifest.
      */
+    private fun sendLiveOtaStatus(sessionId: String, totalSteps: Int, currentStep: Int, stepType: String,
+      phase: String, stepPercent: Int, overallPercent: Int, status: String, errorMessage: String? = null,
+      glassesTimeMs: Long? = null, bytesDownloaded: Long? = null) {
+      liveFirmwareUpdater?.status(sessionId, phase, status, overallPercent, firmwareConnectionGeneration)
+      Bridge.sendOtaStatus(sessionId, totalSteps, currentStep, stepType, phase, stepPercent, overallPercent,
+        status, errorMessage, glassesTimeMs, bytesDownloaded, otaSourceContext)
+    }
+
     fun sendOtaStart(otaVersionUrl: String? = null) {
         try {
             val json = JSONObject()
@@ -6676,6 +6717,13 @@ class MentraLive : SGCManager() {
             )
             disconnectClassicProfiles(device)
         }
+    }
+
+    override fun reconnectFirmwareOwner() {
+        if (postGattLifecycle { reconnectFirmwareOwner() }) return
+        if (!firmwareUpdateOwnsDevice || isConnected) return
+        val name = DeviceStore.get("bluetooth", "device_name") as? String ?: return
+        if (name.isNotEmpty()) connectById(name)
     }
 
     override fun connectById(id: String) {
@@ -9248,6 +9296,7 @@ class MentraLive : SGCManager() {
             val payload = HashMap<String, Any>()
             payload["previous_sid"] = previous ?: ""
             payload["sid"] = sid
+            payload.putAll(otaSourceContext)
             Bridge.sendTypedMessage("glasses_session_changed", payload)
         } catch (e: Exception) {
             Log.e(TAG, "Error emitting glasses_session_changed", e)

@@ -67,7 +67,7 @@ private enum Ar99Protocol {
     static let bleWriteChunkSize = 180
     static let bleWriteChunkDelayMs = 10
     static let scanDurationMs = 15_000
-    static let initialBatteryRetryDelayMs = 1_000
+    static let initialBatteryRetryDelayMs = 1000
     static let maxInitialBatteryRetries = 5
     static let batteryPollIntervalMs = 60_000
     static let readyMinimalModeDelayMs = 40
@@ -511,6 +511,58 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     var type = DeviceTypes.AR99
     let hasMic = true
 
+    private var firmwareReconnectItem: DispatchWorkItem?
+    private var firmwareReconnectDeadline: TimeInterval = 0
+    private var legacyOtaGeneration = 0
+    private var firmwareConnectionGeneration = 0
+    private var ar99FirmwareUpdater: Ar99FirmwareUpdater?
+    var firmwareUpdateOwnsDevice: Bool {
+        ar99FirmwareUpdater?.ownsDevice == true
+    }
+
+    var firmwareUpdater: FirmwareUpdater? {
+        ar99FirmwareUpdater
+    }
+
+    private func bindFirmwareUpdater(_ peripheral: CBPeripheral) {
+        firmwareConnectionGeneration = FirmwareConnectionGeneration.next()
+        let id = peripheral.identifier.uuidString
+        if let previous = ar99FirmwareUpdater, previous.snapshot.deviceId != id {
+            guard !firmwareUpdateOwnsDevice else { return }
+            ar99FirmwareUpdater = nil
+        }
+        if ar99FirmwareUpdater == nil {
+            ar99FirmwareUpdater = Ar99FirmwareUpdater(deviceId: id, connectionGeneration: firmwareConnectionGeneration, ports: .init(
+                connected: { [weak self] in self?.isBleConnected() == true },
+                start: { [weak self] bytes, callbacks in self?.startManagedOta(bytes, callbacks: callbacks) ?? false },
+                queryInventory: { [weak self] in self?.requestDeviceInfo() },
+                reconnect: { [weak self] in self?.scheduleFirmwareReconnect(renew: true) }
+            ))
+        }
+        ar99FirmwareUpdater?.connectionChanged(generation: firmwareConnectionGeneration)
+    }
+
+    private func scheduleFirmwareReconnect(renew: Bool = false) {
+        guard firmwareUpdateOwnsDevice, peripheral == nil else { return }
+        if renew { firmwareReconnectDeadline = Date.timeIntervalSinceReferenceDate + 90 }
+        guard Date.timeIntervalSinceReferenceDate < firmwareReconnectDeadline else { return }
+        firmwareReconnectItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.firmwareUpdateOwnsDevice, self.peripheral == nil, !self.isScanning,
+                  let id = self.ar99FirmwareUpdater?.snapshot.deviceId else { return }
+            self.connectById(id)
+        }
+        firmwareReconnectItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: item)
+    }
+
+    private func startManagedOta(_ bytes: Data, callbacks: Ar99OtaCallbacks) -> Bool {
+        let manager = Ar99OtaManager.shared
+        guard !manager.isOTAInProgress() else { return false }
+        manager.setCallback(callbacks)
+        return manager.startOTA(data: bytes)
+    }
+
     private let supportedProjectNames = ["AR99"]
     private var centralManager: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -678,6 +730,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     func sendShutdown() {}
     func sendReboot() {}
     func sendFactoryReset() {
+        guard !firmwareUpdateOwnsDevice else { return }
         Bridge.log("AR99: sending factory reset")
         enqueueMessage(
             function: Ar99Protocol.funcCommDisplay,
@@ -706,7 +759,14 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         startScan(forConnection: false)
     }
 
+    func reconnectFirmwareOwner() {
+        guard firmwareUpdateOwnsDevice, peripheral == nil, !isScanning,
+              let id = ar99FirmwareUpdater?.snapshot.deviceId else { return }
+        connectById(id)
+    }
+
     func connectById(_ id: String) {
+        if firmwareUpdateOwnsDevice, id != ar99FirmwareUpdater?.snapshot.deviceId { return }
         Bridge.log("AR99: connectById(\(id))")
         targetIdentifier = id.trimmingCharacters(in: .whitespacesAndNewlines)
         discoveredNames.removeAll()
@@ -779,6 +839,10 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
             return false
         }
 
+        do { try ar99FirmwareUpdater?.beginLegacy() }
+        catch { Bridge.log("AR99: managed OTA owns this device"); return false }
+        legacyOtaGeneration += 1
+        let admitted = legacyOtaGeneration
         let manager = Ar99OtaManager.shared
         manager.setCallback(nil)
         if manager.isOTAInProgress() {
@@ -790,9 +854,10 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         manager.setCallback(
             Ar99OtaCallbacks(
                 onProgress: { [weak self] offset, total, progress in
+                    guard let self, self.legacyOtaGeneration == admitted else { return }
                     lastOffset = offset
                     lastTotal = total
-                    self?.sendAr99OtaStatus(
+                    self.sendAr99OtaStatus(
                         phase: "transferring",
                         progress: progress,
                         offset: offset,
@@ -801,7 +866,9 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
                     )
                 },
                 onCompleted: { [weak self, weak manager] _ in
-                    self?.sendAr99OtaStatus(
+                    guard let self, self.legacyOtaGeneration == admitted else { return }
+                    self.ar99FirmwareUpdater?.endLegacy()
+                    self.sendAr99OtaStatus(
                         phase: "success",
                         progress: 100,
                         offset: lastTotal,
@@ -811,7 +878,9 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
                     manager?.setCallback(nil)
                 },
                 onError: { [weak self, weak manager] _, message in
-                    self?.sendAr99OtaStatus(
+                    guard let self, self.legacyOtaGeneration == admitted else { return }
+                    self.ar99FirmwareUpdater?.endLegacy()
+                    self.sendAr99OtaStatus(
                         phase: "failed",
                         progress: manager?.getProgress() ?? 0,
                         offset: lastOffset,
@@ -821,7 +890,9 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
                     manager?.setCallback(nil)
                 },
                 onCancelled: { [weak self, weak manager] in
-                    self?.sendAr99OtaStatus(
+                    guard let self, self.legacyOtaGeneration == admitted else { return }
+                    self.ar99FirmwareUpdater?.endLegacy()
+                    self.sendAr99OtaStatus(
                         phase: "cancelled",
                         progress: manager?.getProgress() ?? 0,
                         offset: lastOffset,
@@ -831,7 +902,8 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
                     manager?.setCallback(nil)
                 },
                 onPausedWaitingReconnect: { [weak self, weak manager] in
-                    self?.sendAr99OtaStatus(
+                    guard let self, self.legacyOtaGeneration == admitted else { return }
+                    self.sendAr99OtaStatus(
                         phase: "paused",
                         progress: manager?.getProgress() ?? 0,
                         offset: lastOffset,
@@ -845,6 +917,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         sendAr99OtaStatus(phase: "preparing", progress: 0, offset: 0, total: 0, errorMessage: nil)
         let started = manager.startOTA(filePath: path)
         if !started {
+            ar99FirmwareUpdater?.endLegacy()
             sendAr99OtaStatus(phase: "failed", progress: 0, offset: 0, total: 0, errorMessage: "Unable to start AR99 OTA")
             manager.setCallback(nil)
         }
@@ -852,6 +925,8 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     }
 
     func cancelAr99Ota() {
+        do { try ar99FirmwareUpdater?.assertLegacyControlAllowed() }
+        catch { Bridge.log("AR99: managed OTA cannot be cancelled by a legacy caller"); return }
         Ar99OtaManager.shared.cancelOTA()
     }
 
@@ -935,6 +1010,8 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            guard self.peripheral === peripheral else { return }
+            self.bindFirmwareUpdater(peripheral)
             Bridge.log("AR99: connected to \(peripheral.name ?? "unknown")")
             peripheral.delegate = self
             peripheral.discoverServices([Ar99BLE.ctrlService, Ar99BLE.opusService, Ar99BLE.otaService])
@@ -948,8 +1025,10 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     ) {
         DispatchQueue.main.async { [weak self] in
             Bridge.log("AR99: failed to connect \(peripheral.name ?? "unknown"): \(error?.localizedDescription ?? "unknown")")
-            self?.cleanupGatt(cancelPeripheral: false)
-            self?.updateConnectionState(ConnTypes.DISCONNECTED)
+            guard let self, self.peripheral === peripheral else { return }
+            self.cleanupGatt(cancelPeripheral: false)
+            self.updateConnectionState(ConnTypes.DISCONNECTED)
+            self.scheduleFirmwareReconnect()
         }
     }
 
@@ -960,12 +1039,14 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            guard self.peripheral === peripheral else { return }
             Bridge.log("AR99: disconnected \(peripheral.name ?? "unknown"): \(error?.localizedDescription ?? "clean")")
             if Ar99OtaManager.shared.isOTAInProgress() {
                 Ar99OtaManager.shared.onBleDisconnected()
             }
             self.cleanupGatt(cancelPeripheral: false)
             self.updateConnectionState(ConnTypes.DISCONNECTED)
+            self.scheduleFirmwareReconnect(renew: true)
         }
     }
 
@@ -989,7 +1070,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     }
 
     nonisolated func peripheral(
-        _ peripheral: CBPeripheral,
+        _: CBPeripheral,
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
@@ -1020,12 +1101,12 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     }
 
     nonisolated func peripheral(
-        _: CBPeripheral,
+        callbackPeripheral: CBPeripheral,
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.peripheral === callbackPeripheral else { return }
             if let error {
                 Bridge.log("AR99: notify enable failed \(characteristic.uuid): \(error.localizedDescription)")
             }
@@ -1045,13 +1126,13 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     }
 
     nonisolated func peripheral(
-        _: CBPeripheral,
+        callbackPeripheral: CBPeripheral,
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         guard error == nil, let data = characteristic.value else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.peripheral === callbackPeripheral else { return }
             if characteristic.uuid == Ar99BLE.ctrlSlaveToHost {
                 self.handleControlNotifyChunk(data)
             } else if characteristic.uuid == Ar99BLE.opusSlaveToHost {
@@ -1063,12 +1144,12 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     }
 
     nonisolated func peripheral(
-        _: CBPeripheral,
+        callbackPeripheral: CBPeripheral,
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.peripheral === callbackPeripheral else { return }
             if let error {
                 Bridge.log("AR99: write failed \(characteristic.uuid): \(error.localizedDescription)")
             }
@@ -1120,6 +1201,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         scanTimeoutItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
             self?.stopScan()
+            self?.scheduleFirmwareReconnect()
         }
         scanTimeoutItem = item
         DispatchQueue.main.asyncAfter(
@@ -1905,6 +1987,8 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
             if let serialNumber = info.serialNumber {
                 DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
             }
+            ar99FirmwareUpdater?.inventoryChanged(version: info.firmwareVersion ?? "", serial: info.serialNumber ?? "",
+                                                  projectName: currentProjectName ?? "AR99", generation: firmwareConnectionGeneration)
             sendVersionInfo(info)
 
         case Ar99Protocol.cmdDisplayGetBright:

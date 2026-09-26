@@ -61,6 +61,16 @@ Tagged `hardware`; they need a meeting link and fail fast without one.
 - `helpers/stream-preview-join-call.yaml` - Open Mentra Call and join `MEETING_URL`
 - `helpers/stream-preview-show.yaml` - Turn the Mentra Call preview on and wait for frames
 
+### Manual firmware validation
+
+`manual/device-firmware-check.yaml` is excluded from the default suite. With the
+device owner's permission, open Settings with the intended glasses paired and
+run it with `OTA_EXPECTED_TITLE` set to the expected check result or offer title.
+It exercises the shared settings route and a real device version check without
+starting an update. Actual transfer, disconnect/resume, activation readback and
+pairing acceptance require the device-specific gates in
+`notes/superpowers/specs/2026-09-22-pluggable-device-ota-design.md`.
+
 ## Environment Variables
 
 - `MAESTRO_APP_ID` - App bundle ID (default: com.mentra.mentra)

@@ -22,6 +22,7 @@ import {recordSupportProfileConnectionFailure} from "../services/SupportProfileS
 import {getModelCapabilities, type DeviceTypes} from "../types"
 import {glassesWifi} from "./glassesWifi"
 import {glassesSettings} from "./glassesSettings"
+import {firmwareUpdates} from "./firmwareUpdates"
 
 function projectStatus() {
   const s = useGlassesStore.getState()
@@ -93,10 +94,17 @@ export const glasses = {
       throw error
     }
   },
-  disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
-  forget: (): Promise<void> => BluetoothSdk.forget(),
+  disconnect: async (): Promise<void> => {
+    firmwareUpdates.assertSafeToRelease()
+    await BluetoothSdk.disconnect()
+  },
+  forget: async (): Promise<void> => {
+    firmwareUpdates.assertSafeToRelease()
+    await BluetoothSdk.forget()
+  },
   /** Connect to a specific (discovered) device. */
   connect: async (device: Device, options?: ConnectOptions): Promise<void> => {
+    firmwareUpdates.assertSafeToRelease()
     try {
       await pushAllBluetoothSettings()
       await BluetoothSdk.connect(device, options)
@@ -108,7 +116,10 @@ export const glasses = {
   /** Connect the built-in simulated glasses (dev/testing). */
   connectSimulated: (): Promise<void> => BluetoothSdk.connectSimulated(),
   /** Set a device as the `connectDefault()` target. */
-  setDefault: (device: Device | null): Promise<void> => BluetoothSdk.setDefaultDevice(device),
+  setDefault: async (device: Device | null): Promise<void> => {
+    firmwareUpdates.assertSafeToRelease()
+    await BluetoothSdk.setDefaultDevice(device)
+  },
   /**
    * Reconnect to the saved default glasses. Resolves `false` when there's nothing to
    * reconnect to (no default paired) or the connect attempt fails (e.g. BLE powered

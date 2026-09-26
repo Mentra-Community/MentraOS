@@ -412,6 +412,17 @@ const mockIslandEntries = () => {
     // The namespaced (A) host API. Mirrors the real `engine` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     engine: {
+      firmwareUpdates: {
+        assertSafeToRelease: jest.fn(),
+        suspendNewWork: jest.fn(),
+        resumeDiscovery: jest.fn(),
+        pairingPolicy: jest.fn((model) =>
+          require("./modules/engine/src/facades/firmwareUpdates").firmwareUpdates.pairingPolicy(model),
+        ),
+        supports: jest.fn((model, entryPoint) =>
+          require("./modules/engine/src/facades/firmwareUpdates").firmwareUpdates.supports(model, entryPoint),
+        ),
+      },
       configure: jest.fn(),
       start: jest.fn(() => {
         realGlassesStatusProjection.startGlassesStatusProjection()
@@ -839,6 +850,9 @@ const mockIslandEntries = () => {
     checkBesUpdate: realOtaUpdateCheck.checkBesUpdate,
     checkForOtaUpdate: realOtaUpdateCheck.checkForOtaUpdate,
     checkCurrentGlassesForUpdate: realOtaUpdateCheck.checkCurrentGlassesForUpdate,
+    getPendingUpdatePromptAction: jest.requireActual("./modules/engine/src/devices/mentra-live/availability")
+      .getPendingUpdatePromptAction,
+    ...jest.requireActual("./modules/engine/src/devices/mentra-live/availabilityRuntime"),
     detectClockSkew: realGallerySyncClock.detectClockSkew,
     isSyncManifestEmpty: realGallerySyncClock.isSyncManifestEmpty,
     CLOCK_SKEW_TOLERANCE_MS: realGallerySyncClock.CLOCK_SKEW_TOLERANCE_MS,

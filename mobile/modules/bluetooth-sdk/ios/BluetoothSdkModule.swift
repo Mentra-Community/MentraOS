@@ -12,6 +12,14 @@ private func codedBridgeError(_ error: BluetoothSdkError) -> Exception {
     Exception(name: error.code, description: error.message, code: error.code)
 }
 
+@MainActor
+private func firmwareBridge<T>(_ operation: () throws -> T) throws -> T {
+    do { return try operation() }
+    catch let error as FirmwareUpdaterError {
+        throw Exception(name: error.code, description: error.message, code: error.code)
+    }
+}
+
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
 
@@ -25,6 +33,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "log",
             "device_discovered",
             "default_device_changed",
+            "firmware_update",
             // Individual event handlers
             "glasses_not_ready",
             "button_press",
@@ -111,6 +120,40 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("getFirmwareUpdateSnapshot") { (deviceId: String) in
+            try await MainActor.run { try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: deviceId).snapshot.dictionary() } }
+        }
+
+        AsyncFunction("configureFirmwareUpdater") { (deviceId: String, metadata: [String: String]) in
+            try await MainActor.run { try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: deviceId).configure(metadata).dictionary() } }
+        }
+
+        AsyncFunction("startFirmwareUpdate") { (values: [String: Any]) in
+            let request = try JSONDecoder().decode(FirmwareStartRequest.self, from: JSONSerialization.data(withJSONObject: values))
+            return try await MainActor.run {
+                try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: request.deviceId).start(request).dictionary() }
+            }
+        }
+
+        AsyncFunction("reconcileFirmwareUpdate") { (deviceId: String) in
+            try await MainActor.run { try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: deviceId).reconcile().dictionary() } }
+        }
+
+        AsyncFunction("reconcileFirmwareUpdateCompletion") { (values: [String: Any]) in
+            let evidence = try JSONDecoder().decode(FirmwareCompletionEvidence.self, from: JSONSerialization.data(withJSONObject: values))
+            return try await MainActor.run {
+                try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: evidence.deviceId).reconcileCompletion(evidence).dictionary() }
+            }
+        }
+
+        AsyncFunction("cancelFirmwareUpdate") { (deviceId: String) in
+            try await MainActor.run { try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: deviceId).cancel().dictionary() } }
+        }
+
+        AsyncFunction("acknowledgeFirmwareUpdate") { (deviceId: String) in
+            try await MainActor.run { try firmwareBridge { try self.bluetoothSdk().getFirmwareUpdater(deviceId: deviceId).acknowledge().dictionary() } }
+        }
+
         // MARK: - Observable Store Functions
 
         Function("getGlassesStatus") { () -> [String: Any] in
@@ -136,6 +179,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 let normalizedCategory = ObservableStore.normalizeCategory(category)
                 for (key, value) in values {
                     if value is NSNull { continue }
+                    guard DeviceManager.shared.allowsHostSettingUpdate(category: normalizedCategory, key: key) else { continue }
                     DeviceStore.shared.apply(normalizedCategory, key, value)
                 }
             }
@@ -173,13 +217,15 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("setDefaultDevice") { (device: [String: Any]?) in
-            await MainActor.run {
+            try await MainActor.run {
+                try firmwareBridge { try self.bluetoothSdk().assertFirmwareReplacementAllowed() }
                 self.bluetoothSdk().setDefaultDevice(Device(dictionary: device))
             }
         }
 
         AsyncFunction("clearDefaultDevice") {
-            await MainActor.run {
+            try await MainActor.run {
+                try firmwareBridge { try self.bluetoothSdk().assertFirmwareReplacementAllowed() }
                 self.bluetoothSdk().clearDefaultDevice()
             }
         }
@@ -203,13 +249,15 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("connectSimulated") {
-            await MainActor.run {
+            try await MainActor.run {
+                try firmwareBridge { try self.bluetoothSdk().assertFirmwareReplacementAllowed() }
                 self.bluetoothSdk().connectSimulated()
             }
         }
 
         AsyncFunction("disconnect") {
-            await MainActor.run {
+            try await MainActor.run {
+                try firmwareBridge { try self.bluetoothSdk().assertFirmwareReplacementAllowed() }
                 self.bluetoothSdk().disconnect()
             }
         }
@@ -221,7 +269,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("forget") {
-            await MainActor.run {
+            try await MainActor.run {
+                try firmwareBridge { try self.bluetoothSdk().assertFirmwareReplacementAllowed() }
                 self.bluetoothSdk().forget()
             }
         }
@@ -252,7 +301,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("cancelConnectionAttempt") {
-            await MainActor.run {
+            try await MainActor.run {
+                try firmwareBridge { try self.bluetoothSdk().assertFirmwareReplacementAllowed() }
                 self.bluetoothSdk().cancelConnectionAttempt()
             }
         }

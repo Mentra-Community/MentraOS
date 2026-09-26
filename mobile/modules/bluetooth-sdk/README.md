@@ -536,6 +536,10 @@ Android and iOS async APIs use `BluetoothSdkException` / `BluetoothSdkError` for
 
 ## OTA Updates
 
+`FirmwareUpdateFlow` and `useFirmwareUpdate` from `@mentra/engine/ota` select the
+registered Live, NIMO or AR99 provider using native device identity. Each provider
+owns its release policy and execution; view unsubscription never cancels work.
+
 React Native apps should use `MentraLiveOtaFlow` or `useMentraLiveOta` from
 `@mentra/engine/ota`. They provide the same tested Wi-Fi/hotspot,
 APK/MTK/BES, restart, retry, and verification flow as the Mentra App. See
@@ -571,6 +575,35 @@ Use these primitives directly only when implementing the documented native
 Android/iOS OTA contract or infrastructure beneath a coordinator. React Native
 application pages should render Mentra Engine's semantic controller state
 instead of sequencing raw events.
+
+The additive `@mentra/bluetooth-sdk/firmware-updates` entry exports native session
+types and the device firmware catalogue. Use `getFirmwareUpdateSnapshot`, the
+`firmware_update` event, `startFirmwareUpdate`, `reconcileFirmwareUpdate`,
+`cancelFirmwareUpdate` and `acknowledgeFirmwareUpdate` through the public SDK.
+Swift/Kotlin clients obtain the same optional SGC-owned object with
+`getFirmwareUpdater(deviceId)`. Subscribe before reading and order snapshots by
+updater ID, connection generation and revision. Reopening never implies Start.
+
+Requests are device-specific: Live accepts a manifest URL, NIMO/AR99 accept
+verified local files. Live's adapter shares the existing native pending-command
+guard and ACK semantics; it does not select releases or recreate Engine's
+multi-pass/reboot logic. Live status is forwarded under its established protocol:
+sessionless errors and fresh errors reusing a previous glasses SID remain valid.
+The SID is not a phone attempt ID. Native pending commands remain guarded, but
+Live's `safeToRelease` follows legacy status/completion policy; it does not prove
+cross-attempt wire correlation. Engine retains its separate execution policy.
+OTA events carry originating device/connection context.
+Only one execution owner should control a device. Direct low-level Live calls
+retain their explicit semantics and are not automatically enrolled in Engine.
+
+Recovery journals record identity and progress, without credentials or Live chain
+approval. A failed UI result is not proof that device-side writing stopped.
+`safeToRelease` and the device-specific allowed recovery commands govern cleanup.
+Neither NIMO nor the managed AR99 flow offers an unverified remote abort. AR99's
+in-memory offset negotiation can reconnect; a cold process cannot guess an offset.
+Its image-validation result remains activation-unverified until fresh version
+inventory confirms the target. Hardware acceptance is required before enabling
+an unvalidated firmware/recovery path in a production host.
 
 Each coordinated prerelease publishes a portable OTA bundle. Stable releases
 promote the exact beta-tested OTA bytes, so always resolve the bundle coordinate
@@ -799,3 +832,9 @@ unchanged. A supplied `null` or other invalid value is rejected. Stored presets
 containing removed values are invalid; replace their compression with one of the
 four supported values before replaying the complete preset. There is no automatic
 migration or substitution. Fresh valid preset updates remain available.
+
+Firmware recovery reconnects use `connectDefault()` with the same saved native
+identity. The retained SGC reconnects its owner without cancelling its current
+connection attempt or replacing the updater; a different device stays blocked.
+The shared firmware snapshot's `progress` is a fraction from 0 to 1 on every
+provider. Existing Live `ota_status` percent fields retain their original units.

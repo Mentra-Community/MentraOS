@@ -41,6 +41,11 @@
       "react-native": "./src/bluetooth-sdk/ota-transport.ts",
       "default": "./build/bluetooth-sdk/ota-transport.js"
     },
+    "./bluetooth-sdk/firmware-updates": {
+      "types": "./build/bluetooth-sdk/firmware-updates.d.ts",
+      "react-native": "./src/bluetooth-sdk/firmware-updates.ts",
+      "default": "./build/bluetooth-sdk/firmware-updates.js"
+    },
     "./bluetooth-sdk/debug": {
       "types": "./build/bluetooth-sdk/debug.d.ts",
       "react-native": "./src/bluetooth-sdk/debug.ts",

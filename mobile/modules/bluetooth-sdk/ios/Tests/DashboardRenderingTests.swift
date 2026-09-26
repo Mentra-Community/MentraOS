@@ -15,6 +15,35 @@ final class DashboardRenderingTests: XCTestCase {
         return (manager, display)
     }
 
+    func testFirmwareReconnectRetainsOwnerAndRejectsAnotherDefaultIdentity() {
+        let manager = DeviceManager()
+        let device = PausedDisplay()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let previousAddress = DeviceStore.shared.get("bluetooth", "device_address") as? String ?? ""
+        defer {
+            manager.sgc = nil
+            DeviceStore.shared.apply("bluetooth", "device_address", previousAddress)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let updater = LiveFirmwareUpdater(deviceId: "native-owner", generation: 1, connected: { false }, query: {}, directory: directory)
+        updater.status(sessionId: "active", phase: "install", status: "in_progress", progress: 40, generation: 1)
+        device.firmwareUpdater = updater
+        manager.sgc = device
+        DeviceStore.shared.apply("bluetooth", "device_address", "native-owner")
+        manager.connectDefault()
+        XCTAssertEqual(device.firmwareReconnects, 1)
+        XCTAssertTrue((manager.sgc as AnyObject?) === device)
+        XCTAssertFalse(manager.firmwareReplacementAllowed)
+        XCTAssertFalse(manager.allowsHostSettingUpdate(category: "bluetooth", key: "device_address"))
+        XCTAssertFalse(manager.allowsHostSettingUpdate(category: "bluetooth", key: "pending_wearable"))
+        XCTAssertTrue(manager.allowsHostSettingUpdate(category: "bluetooth", key: "brightness"))
+        XCTAssertTrue(manager.allowsHostSettingUpdate(category: "bluetooth", key: "core_token"))
+        DeviceStore.shared.apply("bluetooth", "device_address", "different-device")
+        manager.connectDefault()
+        XCTAssertEqual(device.firmwareReconnects, 1)
+        XCTAssertTrue((manager.sgc as AnyObject?) === device)
+    }
+
     func testFullFrameDashboardHandoffDoesNotClearActiveScene() async {
         let (manager, display) = setupDashboard()
         display.sceneHandoffRequiresClear = false
@@ -102,6 +131,16 @@ final class DashboardRenderingTests: XCTestCase {
 
 @MainActor
 private final class PausedDisplay: SGCManager {
+    var firmwareUpdater: FirmwareUpdater?
+    var firmwareUpdateOwnsDevice: Bool {
+        firmwareUpdater?.snapshot.safeToRelease == false
+    }
+
+    var firmwareReconnects = 0
+    func reconnectFirmwareOwner() {
+        firmwareReconnects += 1
+    }
+
     var type = "Test display"
     let hasMic = false
     var sceneHandoffRequiresClear = true
