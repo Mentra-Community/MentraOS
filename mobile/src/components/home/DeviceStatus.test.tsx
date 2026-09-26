@@ -3,7 +3,7 @@ import {engine, SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
 import type {ReactNode} from "react"
 
-import {GlassesStatus} from "./DeviceStatus"
+import {GlassesBatteryReading, GlassesStatus} from "./DeviceStatus"
 import {useNavigationStore} from "@/stores/navigation"
 import {showAlert} from "@/utils/AlertUtils"
 
@@ -82,5 +82,46 @@ describe("unfinished pairing on Home", () => {
       await useSettingsStore.getState().setSetting(SETTINGS.device_name.key, "Mentra_Live_ABCD", false)
     })
     expect(screen.queryByLabelText("pairing:cancelPairing")).toBeNull()
+  })
+})
+
+describe("glasses battery reading", () => {
+  const report = engine.glasses.reportDiagnosticRender as jest.Mock
+
+  beforeEach(() => report.mockClear())
+
+  it("shows the value and reports the committed value with its native event id", () => {
+    const screen = render(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
+    expect(screen.getByText("57%")).toBeTruthy()
+    expect(screen.queryByText(/stream:5/)).toBeNull()
+    expect(report).toHaveBeenCalledTimes(1)
+    expect(report).toHaveBeenCalledWith("glasses_battery", ["stream:5"], 57)
+
+    // Re-rendering the same state is not a new observation.
+    screen.rerender(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
+    expect(report).toHaveBeenCalledTimes(1)
+
+    // A fresh packet with an unchanged percentage is reported with its own id.
+    screen.rerender(<GlassesBatteryReading level={57} charging={false} eventId="stream:8" />)
+    expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:8"], 57)
+  })
+
+  it("reports nothing for a value without native provenance", () => {
+    const screen = render(<GlassesBatteryReading level={64} charging={true} />)
+    expect(screen.getByText("64%")).toBeTruthy()
+    expect(report).not.toHaveBeenCalled()
+  })
+
+  it("reports only when the connected card actually renders the reading", () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({
+      state: "disconnected",
+      fullyBooted: false,
+      battery: 57,
+      batteryEventId: "stream:5",
+      charging: false,
+      case: {removed: false, battery: 0, open: false},
+    })
+    render(<GlassesStatus />)
+    expect(report).not.toHaveBeenCalled()
   })
 })

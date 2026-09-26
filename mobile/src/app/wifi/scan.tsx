@@ -27,6 +27,8 @@ export default function WifiScanScreen() {
   const [networks, setNetworks] = useState<WifiSearchResult[]>([])
   const networksRef = useRef(networks)
   networksRef.current = networks
+  // Opaque native ids of every nonempty chunk merged since this scan started (diagnostic only).
+  const scanEventIdsRef = useRef<string[]>([])
   const [savedNetworks, setSavedNetworks] = useState<string[]>([])
   const [isScanning, setIsScanning] = useState(true)
   const wifiStatus = useEngineSnapshot(engine.glasses.wifi.status, (onChange) => engine.glasses.wifi.onStatus(onChange))
@@ -90,8 +92,9 @@ export default function WifiScanScreen() {
     // The glasses stream networks one by one while the scan runs; show them as
     // they arrive instead of waiting for the final requestWifiScan() result.
     // Each correlated event is one chunk, so merge it into the visible list.
-    const unsubscribe = engine.glasses.wifi.onScanResult((scanned) => {
+    const unsubscribe = engine.glasses.wifi.onScanResult((scanned, meta) => {
       if (scanned.length > 0) {
+        if (meta.eventId) scanEventIdsRef.current.push(meta.eventId)
         setNetworks((current) => mergeWifiScanResults(current, mapNetworks(scanned)))
       }
     })
@@ -107,9 +110,18 @@ export default function WifiScanScreen() {
       frequency: network.frequency,
     }))
 
+  // After a list is committed, report which native chunks it came from. Any chunk from another
+  // scan makes the list unqualified for provenance; the displayed list itself is unchanged.
+  useEffect(() => {
+    if (networks.length > 0 && scanEventIdsRef.current.length > 0) {
+      engine.glasses.reportDiagnosticRender("wifi_scan", scanEventIdsRef.current, networks.length)
+    }
+  }, [networks])
+
   const startScan = async () => {
     console.log("WIFI_SCAN: ========= STARTING NEW WIFI SCAN =========")
     setIsScanning(true)
+    scanEventIdsRef.current = []
     setNetworks([])
 
     try {

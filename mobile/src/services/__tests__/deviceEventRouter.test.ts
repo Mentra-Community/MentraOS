@@ -110,6 +110,32 @@ describe("DeviceEventRouter", () => {
     )
   })
 
+  it("keeps a battery value's native event id and never lets a later value inherit it", () => {
+    emitBluetoothSdkEvent("battery_status", {
+      type: "battery_status",
+      level: 57,
+      charging: false,
+      timestamp: 1,
+      eventId: "stream:5",
+    })
+    expect(useGlassesStore.getState()).toEqual(expect.objectContaining({batteryLevel: 57, batteryEventId: "stream:5"}))
+
+    // iOS, other glasses and older builds send no id: the new value has no provenance.
+    emitBluetoothSdkEvent("battery_status", {type: "battery_status", level: 58, charging: false, timestamp: 2})
+    expect(useGlassesStore.getState().batteryLevel).toBe(58)
+    expect(useGlassesStore.getState().batteryEventId).toBeUndefined()
+
+    emitBluetoothSdkEvent("battery_status", {
+      type: "battery_status",
+      level: 58,
+      charging: false,
+      timestamp: 3,
+      eventId: "stream:9",
+    })
+    useGlassesStore.getState().reset()
+    expect(useGlassesStore.getState().batteryEventId).toBeUndefined()
+  })
+
   it("bridges gallery_status onto the event bus", () => {
     const emitSpy = jest.spyOn(GlobalEventEmitter, "emit")
     emitBluetoothSdkEvent("gallery_status", {

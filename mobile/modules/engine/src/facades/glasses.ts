@@ -30,6 +30,8 @@ function projectStatus() {
     fullyBooted: isGlassesReady(s.connection),
     battery: s.batteryLevel,
     charging: s.charging,
+    /** Opaque diagnostic id behind `battery`; pass only to `reportDiagnosticRender`, never display. */
+    batteryEventId: s.batteryEventId,
     case: {battery: s.caseBatteryLevel, charging: s.caseCharging, open: s.caseOpen, removed: s.caseRemoved},
     signal: s.signalStrength,
     micEnabled: s.micEnabled,
@@ -160,6 +162,16 @@ export const glasses = {
       cb(snap)
     })
   },
+  /**
+   * Diagnostic only: records that committed UI state for `surface` was derived from these
+   * opaque native event ids (Android device-test provenance). Never shown to users; a no-op
+   * that returns false on iOS or when no ids are known.
+   */
+  reportDiagnosticRender: (
+    surface: "glasses_battery" | "wifi_scan",
+    eventIds: readonly string[],
+    value?: number,
+  ): boolean => BluetoothSdk.reportDiagnosticRender(surface, [...eventIds], value ?? null),
   info: (): GlassesInfoSnapshot => projectInfo(),
   onInfo: (cb: (info: GlassesInfoSnapshot) => void): (() => void) => {
     let last = JSON.stringify(projectInfo())

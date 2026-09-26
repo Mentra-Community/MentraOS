@@ -31,7 +31,15 @@ export interface GlassesState extends EngineGlassesStatus {
   systemTimeMs: number
   wifiStatusKnown: boolean
   setGlassesInfo: (info: GlassesInfoUpdate) => void
-  setBatteryInfo: (batteryLevel: number, charging: boolean, caseBatteryLevel: number, caseCharging: boolean) => void
+  /** Opaque native provenance id of the notification behind batteryLevel, when the SDK supplies one. */
+  batteryEventId?: string
+  setBatteryInfo: (
+    batteryLevel: number,
+    charging: boolean,
+    caseBatteryLevel: number,
+    caseCharging: boolean,
+    batteryEventId?: string,
+  ) => void
   setWifiInfo: (connected: boolean, ssid: string) => void
   setHotspotInfo: (enabled: boolean, ssid: string, password: string, ip: string) => void
   // OTA methods
@@ -106,6 +114,7 @@ export const getGlasesInfoPartial = (state: EngineGlassesStatus) => {
 }
 
 interface GlassesStore extends EngineGlassesStatus {
+  batteryEventId?: string
   systemTimeMs: number
   mtkUpdatedThisSession: boolean
   wifiStatusKnown: boolean
@@ -145,6 +154,7 @@ const initialState: GlassesStore = {
   wifiStatusKnown: false,
   // battery info
   batteryLevel: -1,
+  batteryEventId: undefined,
   charging: false,
   caseBatteryLevel: -1,
   caseCharging: false,
@@ -213,12 +223,14 @@ export const useGlassesStore = create<GlassesState>()(
         return next
       }),
 
-    setBatteryInfo: (batteryLevel, charging, caseBatteryLevel, caseCharging) =>
+    setBatteryInfo: (batteryLevel, charging, caseBatteryLevel, caseCharging, batteryEventId) =>
       set({
         batteryLevel,
         charging,
         caseBatteryLevel,
         caseCharging,
+        // Always replaced: a value without provenance must not inherit an older event's id.
+        batteryEventId,
       }),
 
     setWifiInfo: (connected, ssid) =>

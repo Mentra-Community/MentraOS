@@ -126,6 +126,13 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // Incident Reporting
   sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
 
+  /**
+   * Associates committed UI state with the opaque native `eventId`s it was derived from, for
+   * Android device-test provenance. Accepts only allowlisted surfaces and bounded integers.
+   * Returns false (and does nothing) on iOS, older native builds or rejected input.
+   */
+  reportDiagnosticRender(surface: DiagnosticRenderSurface, eventIds: string[], value?: number | null): boolean
+
   // WiFi Commands
   requestWifiScan(): Promise<WifiSearchResult[]>
   getSavedWifiNetworks(): Promise<SavedWifiNetworksResult>
@@ -343,6 +350,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 }
 
 export type BluetoothSdkInternalModule = BluetoothSdkNativeModule
+
+export type DiagnosticRenderSurface = "glasses_battery" | "wifi_scan"
 
 // This call loads the native module object from the JSI.
 // NativeModule<BluetoothSdkModuleEvents> already extends EventEmitter<BluetoothSdkModuleEvents>
@@ -746,6 +755,18 @@ NativeBluetoothSdkModule.requestWearTuning = bindNativeMethod<() => Promise<void
   "requestWearTuning",
 )
 NativeBluetoothSdkModule.resetWearTuning = bindNativeMethod<() => Promise<void>>(nativeWearModule, "resetWearTuning")
+
+const nativeReportDiagnosticRender = nativeWearModule.reportDiagnosticRender
+NativeBluetoothSdkModule.reportDiagnosticRender = (surface, eventIds, value) => {
+  if (Platform.OS !== "android" || typeof nativeReportDiagnosticRender !== "function" || eventIds.length === 0) {
+    return false
+  }
+  try {
+    return Boolean(nativeReportDiagnosticRender.call(NativeBluetoothSdkModule, surface, eventIds, value ?? null))
+  } catch {
+    return false
+  }
+}
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule
