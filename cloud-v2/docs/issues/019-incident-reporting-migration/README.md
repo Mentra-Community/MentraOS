@@ -64,10 +64,14 @@ screenshot. Unknown types, non-MP4 videos and a missing source are rejected.
 The 5-file and 51 MiB request limits are unchanged. One invalid file rejects the
 whole upload before anything is stored.
 
-The admin artifact route serves the MP4 inline as one full `200` response with
-its exact `Content-Length`, and the admin console plays it in a native `<video>`
-at the same authenticated URL, next to the usual download link. Byte ranges are not served. Browser playback and
-seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
+The admin artifact route (GET and HEAD) serves the MP4 inline with its exact
+`Content-Length`. It honors a single byte `Range` with `206` and
+`Content-Range`, returns `416` for multiple or unsatisfiable ranges, and applies
+`If-Range` against the artifact's SHA-256 `ETag`, like the test-run media route.
+The bounded payload is read into memory as before. The admin console plays it in
+a native `<video>` at the same authenticated URL, next to the usual download
+link, and the admin proxy keeps exact lengths on these ranged responses.
+Browser playback and seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
 artifacts with an `.mp4` extension.
 
 ## Mobile Flow

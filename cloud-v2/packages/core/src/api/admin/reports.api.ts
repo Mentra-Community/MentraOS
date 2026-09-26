@@ -4,7 +4,8 @@
  * Read-only surface behind the internal admin console's incident system:
  *   GET /            — newest-first report list (kind/status filters)
  *   GET /:reportId   — full report document plus its asset rows
- *   GET /:reportId/artifacts/:artifactId — raw artifact payload bytes
+ *   GET|HEAD /:reportId/artifacts/:artifactId — raw artifact payload bytes,
+ *     honoring a single byte Range
  *
  * Mounted behind the admin console auth gate. The private report-agent router
  * reuses only the exported detail and artifact handlers, never the list route.
@@ -17,6 +18,7 @@ import {
   listReports,
   readReportArtifactPayload,
 } from "../../services/report.service";
+import { bufferedRangeResponse } from "../../services/storage/byte-range";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
 
@@ -31,7 +33,7 @@ const listQuerySchema = z.object({
 
 app.get("/", getReportsList);
 app.get("/:reportId", getReportDetail);
-app.get("/:reportId/artifacts/:artifactId", getReportArtifact);
+app.on(["GET", "HEAD"], "/:reportId/artifacts/:artifactId", getReportArtifact);
 
 async function getReportsList(c: AppContext) {
   const parsed = listQuerySchema.safeParse({
@@ -72,21 +74,19 @@ export async function getReportArtifact(c: AppContext) {
   // script are served inline (SVG stays out — it can run script); everything
   // else downloads as an opaque attachment. nosniff plus a deny-all sandbox
   // CSP keeps even a mislabeled body inert when opened as a document.
-  // The full payload is sent as one 200 with its exact length; byte ranges
-  // are not served.
+  // Payloads are bounded and already in memory. A single Range gets a 206
+  // with exact lengths (media players probe the start and seek to the MP4
+  // index at the tail), and HEAD returns headers only.
   const contentType = (payload.contentType || "").split(";")[0].trim().toLowerCase();
   const inline = INLINE_CONTENT_TYPES.has(contentType);
-  return new Response(payload.bytes, {
-    status: 200,
-    headers: {
-      "content-type": inline ? contentType : "application/octet-stream",
-      "content-length": String(payload.bytes.byteLength),
-      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${safeFilename(payload.fileName, artifactId)}"`,
-      "x-content-type-options": "nosniff",
-      "content-security-policy": "default-src 'none'; sandbox",
-      "cache-control": "private, max-age=300",
-    },
-  });
+  return bufferedRangeResponse(c.req.raw, payload.bytes, new Headers({
+    "content-type": inline ? contentType : "application/octet-stream",
+    "content-disposition": `${inline ? "inline" : "attachment"}; filename="${safeFilename(payload.fileName, artifactId)}"`,
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; sandbox",
+    "cache-control": "private, max-age=300",
+    etag: `"${payload.sha256}"`,
+  }));
 }
 
 const INLINE_CONTENT_TYPES = new Set([

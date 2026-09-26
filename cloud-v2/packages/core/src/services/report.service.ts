@@ -459,11 +459,11 @@ export async function getReport(
 export async function readReportArtifactPayload(
   reportId: string,
   artifactId: string,
-): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null } | null> {
+): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null; sha256: string } | null> {
   const asset = await ReportAssetModel.findOne({ reportId, artifactId }).lean();
   if (!asset) return null;
   const bytes = await getStorage().getObject(asset.storageKey);
-  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null };
+  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256 };
 }
 
 function serializeReportSummary(row: {

@@ -260,6 +260,138 @@ describe("admin reports read surface", () => {
     expect(forbidden.status).toBe(403);
   });
 
+  test("serves incident video byte ranges over a real socket to admins only, with exact lengths and security headers", async () => {
+    const reportId = await seedReport("ranged video");
+    const video = await readFile(new URL("./fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url));
+    const size = video.byteLength;
+    const form = new FormData();
+    form.append("type", "video");
+    form.append("source", "host");
+    form.append("files", new File([video], "recording.mp4", { type: "video/mp4" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+    const detailBefore = await (await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`)).json() as {
+      report: { artifacts: Array<{ artifactId: string; type: string }> };
+      assets: Array<{ artifactId: string; sha256: string }>;
+    };
+    const clip = detailBefore.report.artifacts.find(a => a.type === "video")!;
+    const sha256 = detailBefore.assets.find(a => a.artifactId === clip.artifactId)!.sha256;
+
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => coreApp.fetch(request) });
+    try {
+      const url = new URL(`/api/admin/reports/${reportId}/artifacts/${clip.artifactId}`, server.url);
+      const admin = { authorization: `Bearer ${adminBearer}` };
+      const expectMediaHeaders = (res: Response) => {
+        expect(res.headers.get("content-type")).toBe("video/mp4");
+        expect(res.headers.get("content-disposition")).toBe('inline; filename="recording.mp4"');
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+        expect(res.headers.get("cache-control")).toBe("private, max-age=300");
+        expect(res.headers.get("accept-ranges")).toBe("bytes");
+        expect(res.headers.get("etag")).toBe(`"${sha256}"`);
+      };
+
+      // Media players probe the start, then read the tail and seek.
+      for (const [range, start, end] of [
+        ["bytes=0-1", 0, 1],
+        ["bytes=-1024", size - 1024, size - 1],
+        ["bytes=100-", 100, size - 1],
+        ["bytes=4-7", 4, 7],
+      ] as const) {
+        const res = await fetch(url, { headers: { ...admin, range } });
+        expect(res.status).toBe(206);
+        expect(res.headers.get("content-length")).toBe(String(end - start + 1));
+        expect(res.headers.get("content-range")).toBe(`bytes ${start}-${end}/${size}`);
+        expect(res.headers.get("transfer-encoding")).toBeNull();
+        expectMediaHeaders(res);
+        expect(Buffer.from(await res.arrayBuffer()).equals(video.subarray(start, end + 1))).toBe(true);
+      }
+
+      const full = await fetch(url, { headers: admin });
+      expect(full.status).toBe(200);
+      expect(full.headers.get("content-length")).toBe(String(size));
+      expectMediaHeaders(full);
+      expect(Buffer.from(await full.arrayBuffer()).equals(video)).toBe(true);
+
+      const headRange = await fetch(url, { method: "HEAD", headers: { ...admin, range: "bytes=0-1" } });
+      expect(headRange.status).toBe(206);
+      expect(headRange.headers.get("content-length")).toBe("2");
+      expect((await headRange.arrayBuffer()).byteLength).toBe(0);
+      const head = await fetch(url, { method: "HEAD", headers: admin });
+      expect(head.status).toBe(200);
+      expect(head.headers.get("content-length")).toBe(String(size));
+      expect((await head.arrayBuffer()).byteLength).toBe(0);
+
+      const current = await fetch(url, { headers: { ...admin, range: "bytes=0-1", "if-range": `"${sha256}"` } });
+      expect(current.status).toBe(206);
+      await current.arrayBuffer();
+      const changed = await fetch(url, { headers: { ...admin, range: "bytes=0-1", "if-range": '"old"' } });
+      expect(changed.status).toBe(200);
+      expect(Buffer.from(await changed.arrayBuffer()).equals(video)).toBe(true);
+
+      for (const range of ["bytes=0-1,4-5", `bytes=${size}-`, "bytes=9-3"]) {
+        const res = await fetch(url, { headers: { ...admin, range } });
+        expect(res.status).toBe(416);
+        expect(res.headers.get("content-range")).toBe(`bytes */${size}`);
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        await res.arrayBuffer();
+      }
+
+      // Ranges and HEAD do not bypass the admin gate.
+      for (const method of ["GET", "HEAD"]) {
+        const anonymous = await fetch(url, { method, headers: { range: "bytes=0-1" } });
+        expect(anonymous.status).toBe(401);
+        expect(anonymous.headers.get("content-range")).toBeNull();
+        await anonymous.arrayBuffer();
+        const forbidden = await fetch(url, { method, headers: { authorization: `Bearer ${nonAdminBearer}`, range: "bytes=0-1" } });
+        expect(forbidden.status).toBe(403);
+        expect(forbidden.headers.get("content-range")).toBeNull();
+        await forbidden.arrayBuffer();
+      }
+    } finally {
+      await server.stop(true);
+    }
+
+    // Range reads leave the report metadata untouched.
+    const detailAfter = await (await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`)).json();
+    expect(detailAfter).toEqual(detailBefore);
+  });
+
+  test("a ranged read of an opaque artifact stays a nosniff attachment", async () => {
+    const reportId = await seedReport("ranged opaque");
+    const form = new FormData();
+    form.append("files", new File(["<script>document.title='pwned'</script>"], "evil.html", { type: "text/html" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+    const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
+    const { report } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; filename: string | null }> };
+    };
+    const hostile = report.artifacts.find(a => a.filename === "evil.html")!;
+
+    const res = await coreApp.fetch(new Request(`${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${hostile.artifactId}`, {
+      headers: { authorization: `Bearer ${adminBearer}`, range: "bytes=0-7" },
+    }));
+    expect(res.status).toBe(206);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toStartWith("attachment;");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(await res.text()).toBe("<script>");
+  });
+
   test("never renders a spoofed screenshot content type inline", async () => {
     const reportId = await seedReport("hostile upload");
 
