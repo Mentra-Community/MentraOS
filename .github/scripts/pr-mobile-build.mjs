@@ -47,6 +47,10 @@ export const MOBILE_PR_PATHS = [
 ]
 
 const packagingKeys = new Set(["EXPO_PUBLIC_ASG_OTA_VERSION_URL"])
+
+/** A staging-targeted PR app uses staging services; every other PR keeps dev.
+ * The backend is compiled in and fingerprinted, so reuse never crosses backends. */
+export const prBackend = (baseRef) => (baseRef === "staging" ? "staging" : "dev")
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 const transientNetworkCodes = new Set(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ECONNRESET", "EAI_AGAIN"])
 

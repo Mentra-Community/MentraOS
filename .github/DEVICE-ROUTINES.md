@@ -17,7 +17,10 @@ MentraOS retains:
 ## Request and dispatch
 
 1. Add `routine:no-glasses`, `routine:no-glasses-android`, `routine:day1-ota` or `routine:mentra-call` to a
-   same-repository PR targeting `dev`. Multiple labels request separate routines.
+   same-repository PR targeting `dev` or `staging`. Multiple labels request separate
+   routines. A staging-targeted PR app is built against staging services, and its
+   request binds the current staging tip and that backend; the request itself still
+   runs from the trusted `dev` workflow.
 2. The [request workflow](workflows/request-e2e-routine.yml) records the current
    PR revisions, exact successful platform build/publication attempt, receipt, Mac
    archive or Android APK and OTA manifest in an immutable `request.json` artifact. If these

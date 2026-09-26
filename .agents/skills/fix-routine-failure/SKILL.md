@@ -81,13 +81,17 @@ independent approval and passing routine results for that same head, regardless
 of which finishes first. Never SSH into fixtures to bypass the routine worker.
 Wait for artifacts or a free fixture as a recorded waiting state.
 
-The current PR artifact requester and dispatcher accept PRs targeting `dev` only.
-A fix targeting `staging` cannot use that PR-head retest path yet. Record this
-coverage gap; do not retarget the fix or use a dev pass. Follow the existing merge
-authority and checks, then qualify the fix against its exact coordinated staging
-publication and OTA manifest. Keep the case open until those staging results
-pass. Missing artifacts or merge authority remain explicit waiting states; never
-create staging commits merely to verify the testing system.
+The PR artifact requester and dispatcher accept PRs targeting `dev` or `staging`.
+A staging-targeted PR app is built against staging services, and its request,
+still issued from the trusted `dev` workflow, binds the current staging tip and
+that backend. Source support is implemented; device qualification of this
+staging PR-head path is separate. Retest a staging fix through its own PR build
+like a dev fix. Never retarget it or accept a dev-targeted pass. If its PR build
+or request is unavailable, record the gap. After the existing merge authority
+and checks, qualify it against its exact coordinated staging publication and OTA
+manifest. Keep the case open until staging results pass. Missing artifacts or
+merge authority remain explicit waiting states; never create staging commits
+merely to verify the testing system.
 
 Consume every selected routine result as it arrives. Ensure each run's outcome
 and evidence are posted on the originating PR, preserving prior attempts. Check

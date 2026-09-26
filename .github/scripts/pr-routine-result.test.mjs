@@ -7,7 +7,7 @@ const repository = "Mentra-Community/MentraOS", privateRepository = "Mentra-Comm
 const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "workflow_dispatch", ref: "refs/heads/dev"}
 const requestWorkflow = ".github/workflows/request-e2e-routine.yml"
 const bot = {type: "Bot", login: "github-actions[bot]"}
-function fixture({outcome = "passed", status = "passed", published = true, workerId = 200, attempt = 1, requestAttempt = 1, android = false} = {}) {
+function fixture({outcome = "passed", status = "passed", published = true, workerId = 200, attempt = 1, requestAttempt = 1, android = false, baseRef = "dev"} = {}) {
   const routine = android ? "no-glasses-android" : "day1-ota"
   const source = {id: 100, run_attempt: requestAttempt, head_sha: "a".repeat(40), head_branch: "dev", event: "workflow_dispatch",
     status: "completed", conclusion: "success", path: requestWorkflow, repository: {full_name: repository}, head_repository: {full_name: repository}}
@@ -17,7 +17,7 @@ function fixture({outcome = "passed", status = "passed", published = true, worke
     trigger: {kind: "workflow_dispatch", repository, workflow: requestWorkflow, runId: 100, runAttempt: requestAttempt,
       ref: "refs/heads/dev", sha: source.head_sha, workflowSha: source.head_sha, workflowRef: `${repository}/${requestWorkflow}@refs/heads/dev`},
     pullRequest: {number: 4136, url: `https://github.com/${repository}/pull/4136`, headSha: "c".repeat(40), baseSha: "d".repeat(40),
-      headRepository: repository, baseRef: "dev"}, routine: {id: routine, harnessRevision: source.head_sha},
+      headRepository: repository, baseRef}, routine: {id: routine, harnessRevision: source.head_sha},
     selection: {platform: android ? "android" : "ios-on-mac",
       producer: {workflow: `.github/workflows/mentra-app-${android ? "android" : "ios"}-build.yml`, runId: 90, buildAttempt: 1, publicationAttempt: 2},
       build: {headSha: "c".repeat(40), baseSha: "d".repeat(40), buildSha: "e".repeat(40)},
@@ -85,6 +85,24 @@ test("Android results use the APK selection without depending on a Mac build", a
   assert.match(result.body, /Android no-glasses UI/)
   assert.match(result.body, /mentra-android-pr-4136.apk/)
   assert.match(result.body, /Platform: `android`/)
+})
+
+test("staging PR results name their base while keeping per-execution identity and the central result host", async () => {
+  const dev = await plan(), staging = await plan({baseRef: "staging"})
+  // Existing dev comments render byte-identically, so retained history is never rewritten.
+  assert.ok(dev.body.includes(`- PR base: \`${"d".repeat(40)}\`.`))
+  assert.ok(staging.body.includes(`- PR base: \`staging\` at \`${"d".repeat(40)}\`.`))
+  assert.equal(staging.marker, dev.marker)
+  assert.equal(staging.body.replace("`staging` at ", ""), dev.body)
+  assert.match(staging.body, /https:\/\/admin\.dev\.mentraglass\.com\/\?testRun=routine-100-1-4136-day1-ota/)
+  const value = writer()
+  assert.equal((await value.send(staging)).status, "created")
+  assert.equal((await value.send(staging)).status, "unchanged")
+  await value.send(await plan({baseRef: "staging", attempt: 2, outcome: "failed", status: "failed"}))
+  assert.equal(value.comments.length, 2)
+  assert.equal(value.comments[0].body, staging.body)
+  for (const baseRef of ["main", "prod", null])
+    await assert.rejects(resolvePrRoutineResults(fixture({baseRef}).options), /differ from the trusted request/)
 })
 
 test("historical results do not fetch or require the current PR head or open state", async () => {

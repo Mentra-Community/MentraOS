@@ -74,7 +74,8 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
       return { query: { channel: base as "dev" | "staging" }, expectedHeadSha: pr.merge_commit_sha!,
         automaticExpected: routineId === "no-glasses" || routineId === "no-glasses-android" };
     }
-    ensure(base === "dev", "Staging candidates require their exact merged coordinated artifact; PR artifacts target dev");
+    // Open dev and staging candidates use their exact PR build; the gateway binds
+    // its merge to the PR's current base tip and its app to that base's backend.
     return { query: { channel: "pr", pr: pr.number }, expectedHeadSha: candidate.headSha,
       automaticExpected: pr.labels.some(label => label.name === `routine:${routineId}`) };
   }

@@ -1,5 +1,5 @@
 import {androidReceiptName, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
-import {MOBILE_PR_PATHS} from "./pr-mobile-build.mjs"
+import {MOBILE_PR_PATHS, prBackend} from "./pr-mobile-build.mjs"
 import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
@@ -105,7 +105,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   if (ios?.error) lines.push(`*iOS / macOS:* ${escape(ios.error)}`)
   if (!error || ios?.assets)
     lines.push(
-      `Backend: *Dev*${!error ? " · Android ARM64" : ""}${
+      `Backend: *${prBackend(pr.base.ref) === "staging" ? "Staging" : "Dev"}*${!error ? " · Android ARM64" : ""}${
         ios?.assets
           ? ` · Apple devices must be registered · ${link(ios.instructionsUrl, "Installation instructions")}`
           : ""
@@ -156,8 +156,8 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
     !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !Object.hasOwn(DEVICE_ROUTINES, routineId)
   )
     return null
-  // PR applications use dev. This is the deployed admin origin documented in
-  // cloud-v2/docs/prds/admin-console.md, not the worker's private localhost UI.
+  // Results are stored centrally regardless of the app backend. This is the deployed
+  // admin origin documented in cloud-v2/docs/prds/admin-console.md, not the worker's UI.
   const url = new URL("https://admin.dev.mentraglass.com/")
   url.search = new URLSearchParams({
     testRuns: "1",

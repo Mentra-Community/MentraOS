@@ -107,6 +107,60 @@ describe("exact PR build inventory", () => {
   });
 });
 
+// A staging-targeted PR: its merge parent is the staging tip and its app uses staging.
+function targetStaging(f: ReturnType<typeof fixture>, receipt: { app: { backend: string } } = f.receipt) {
+  f.rows.set(`${API}/pulls/12`, { ...pr, base: { ref: "staging" } });
+  f.rows.delete(`${API}/git/ref/heads/dev`);
+  f.rows.set(`${API}/git/ref/heads/staging`, { ref: "refs/heads/staging", object: { type: "commit", sha: BASE } });
+  receipt.app.backend = "staging";
+}
+
+describe("exact staging PR build inventory", () => {
+  test("an open staging PR selects its exact Mac build merged with the current staging tip", async () => {
+    const f = fixture();
+    targetStaging(f);
+    f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, { workflow_runs: [run()] });
+    for (const build of [await f.gateway.resolve(input.source), ...(await f.gateway.inventory({ channel: "pr", pr: 12 }))]) {
+      expect(build.availability).toBe("available");
+      expect(build.source).toEqual(input.source);
+      expect(build.archive?.sha256).toBe(HASH);
+    }
+    expect(f.calls.some(call => call.url.endsWith("/git/ref/heads/dev"))).toBe(false);
+  });
+  test("backend mismatches, a stale staging merge, and non-admitted bases are refused", async () => {
+    for (const scenario of ["dev-app-on-staging", "staging-app-on-dev", "moved-staging-tip", "prod-app"]) {
+      const f = fixture();
+      if (scenario !== "staging-app-on-dev") targetStaging(f);
+      if (scenario === "dev-app-on-staging") f.receipt.app.backend = "dev";
+      if (scenario === "staging-app-on-dev") f.receipt.app.backend = "staging";
+      if (scenario === "moved-staging-tip") f.rows.set(`${API}/git/ref/heads/staging`, { ref: "refs/heads/staging", object: { type: "commit", sha: "e".repeat(40) } });
+      if (scenario === "prod-app") f.receipt.app.backend = "prod";
+      f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, { workflow_runs: [run()] });
+      const selected = (await f.gateway.inventory({ channel: "pr", pr: 12 }))[0]!;
+      expect(selected.availability).toBe("unavailable");
+      expect(selected.routines.every(routine => !routine.available)).toBe(true);
+      // Exact selection refuses the same candidate rather than dispatching it.
+      if (scenario !== "prod-app") expect((await f.gateway.resolve(input.source)).availability).toBe("unavailable");
+      else await expect(f.gateway.resolve(input.source)).rejects.toThrow();
+    }
+    for (const base of ["main", "feature"]) {
+      const f = fixture();
+      f.rows.set(`${API}/pulls/12`, { ...pr, base: { ref: base } });
+      await expect(f.gateway.resolve(input.source)).rejects.toThrow("targeting dev or staging");
+      expect(f.calls.some(call => call.url.includes("/git/ref/"))).toBe(false);
+    }
+  });
+  test("a staging Android PR validates its own staging APK receipt", async () => {
+    const f = androidPrFixture();
+    targetStaging(f, f.receipt);
+    const build = (await f.gateway.inventory({ channel: "pr", pr: 12, routineId: "no-glasses-android" }))[0]!;
+    expect(build.availability).toBe("available");
+    expect(build.routines.filter(routine => routine.available).map(routine => routine.id)).toEqual(["no-glasses-android"]);
+    f.receipt.app.backend = "dev";
+    expect((await f.gateway.inventory({ channel: "pr", pr: 12, routineId: "no-glasses-android" }))[0]!.availability).toBe("unavailable");
+  });
+});
+
 function releaseFixture(channel: "dev" | "staging", attempt = 1) {
   const f = fixture(), releaseChannel = channel === "dev" ? "dev" : "beta", identity = `3.3.0-${releaseChannel}.325`, tag = "mentra-builds-v3.3.0";
   const releaseRun = run({ run_attempt: attempt, event: "push", head_branch: channel, path: ".github/workflows/coordinated-release.yml" });

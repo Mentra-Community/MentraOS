@@ -76,6 +76,15 @@ test("Slack escapes PR text and includes all three firmware targets", () => {
   assert.match(body, /26\.9\.7\.0/)
   assert.match(body, /MentraLive_20260908\.0/)
   assert.doesNotMatch(body, /WRONG|TestFlight|Google Play/)
+  assert.match(body, /Backend: \*Dev\*/)
+  const staging = JSON.stringify(buildPost({pr: {...pr, base: {ref: "staging"}}, sha, androidUrl: "https://example.com/a.apk",
+    manifestUrl: "https://example.com/m.json", targets: readOtaTargets(manifest, 123, sha), androidRunUrl: run.html_url}).blocks)
+  assert.match(staging, /feature → staging/)
+  assert.match(staging, /Backend: \*Staging\*/)
+  // Other bases never inherit a staging label.
+  assert.match(JSON.stringify(buildPost({pr: {...pr, base: {ref: "main"}}, sha, androidUrl: "https://example.com/a.apk",
+    manifestUrl: "https://example.com/m.json", targets: readOtaTargets(manifest, 123, sha), androidRunUrl: run.html_url}).blocks),
+  /Backend: \*Dev\*/)
 })
 
 const iosRun = {...run, id: 3}

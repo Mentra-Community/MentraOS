@@ -39,8 +39,21 @@ test("dev fixes use the saved case branch; staging cannot silently test a dev ar
   await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("branch");
   f.pr.head.ref = "fix/routine-run_123";
   expect((await f.gateway.target(f.packet, f.grant, "no-glasses")).query.channel).toBe("pr");
-  f.packet.source = { ...f.packet.source, trigger: "staging", channel: "staging", branch: "staging" }; f.pr.base.ref = "staging";
-  await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("Staging candidates");
+  // A staging occurrence cannot be qualified by a dev-targeted candidate.
+  f.packet.source = { ...f.packet.source, trigger: "staging", channel: "staging", branch: "staging" };
+  await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("base");
+  // Its open staging fix uses that exact PR build; the build gateway binds the staging base and backend.
+  f.pr.base.ref = "staging";
+  expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toEqual({ query: { channel: "pr", pr: 12 }, expectedHeadSha: head, automaticExpected: false });
+  f.pr.labels = [{ name: "routine:no-glasses" }];
+  expect((await f.gateway.target(f.packet, f.grant, "no-glasses")).automaticExpected).toBe(true);
+  for (const breakCandidate of [(g: ReturnType<typeof fixture>) => { g.pr.head.ref = "other"; },
+    (g: ReturnType<typeof fixture>) => { g.diverged(); }]) {
+    const g = fixture(); g.packet.source = f.packet.source; g.pr.head.ref = "fix/routine-run_123"; g.pr.base.ref = "staging";
+    breakCandidate(g);
+    await expect(g.gateway.target(g.packet, g.grant, "no-glasses")).rejects.toThrow();
+  }
+  // After merge the candidate is qualified only by its exact coordinated staging publication.
   f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
   expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ query: { channel: "staging" }, expectedHeadSha: merged });
 });

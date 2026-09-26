@@ -31,6 +31,9 @@ const jobSchema = z.object({ id: positive, name: z.string(), run_attempt: positi
   conclusion: z.string().nullable(), started_at: z.string().nullable(), completed_at: z.string().nullable(),
   steps: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })).optional() });
 type Job = z.infer<typeof jobSchema>;
+// PR destinations whose exact PR-head artifacts are built against their own backend.
+const PR_BASES = ["dev", "staging"] as const;
+type PrBase = typeof PR_BASES[number];
 const prSchema = z.object({ number: positive, state: z.string(), title: z.string(),
   head: z.object({ sha, ref: z.string(), repo: repositorySchema }), base: z.object({ ref: z.string() }) });
 type PullRequest = z.infer<typeof prSchema>;
@@ -146,13 +149,15 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   private async pr(number: number) {
     const pr = prSchema.parse(await this.api(`${REPOSITORY}/pulls/${number}`));
-    requireThat(pr.number === number && pr.state === "open" && pr.base.ref === "dev" && pr.head.repo.full_name === REPOSITORY,
-      "Choose an open same-repository PR targeting dev");
+    requireThat(pr.number === number && pr.state === "open" && (PR_BASES as readonly string[]).includes(pr.base.ref)
+      && pr.head.repo.full_name === REPOSITORY, "Choose an open same-repository PR targeting dev or staging");
     return pr;
   }
-  private async baseSha() {
-    const ref = z.object({ ref: z.literal("refs/heads/dev"), object: z.object({ type: z.literal("commit"), sha }) })
-      .parse(await this.api(`${REPOSITORY}/git/ref/heads/dev`));
+  /** The actual tip of the PR's admitted base; the PR API's base SHA can lag it. */
+  private async baseSha(pr: PullRequest) {
+    const base = pr.base.ref as PrBase;
+    const ref = z.object({ ref: z.literal(`refs/heads/${base}`), object: z.object({ type: z.literal("commit"), sha }) })
+      .parse(await this.api(`${REPOSITORY}/git/ref/heads/${base}`));
     return ref.object.sha;
   }
   private routines(channel: TestBuildSource["channel"], available: boolean, platform: TestBuildPlatform) {
@@ -175,7 +180,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const filter = pr ? `event=pull_request&head_sha=${pr.head.sha}` : `branch=${query.channel}`;
     const data = z.object({ workflow_runs: z.array(runSchema) }).parse(
       await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=10`));
-    const base = pr ? await this.baseSha() : undefined;
+    const base = pr ? await this.baseSha(pr) : undefined;
     return Promise.all(data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr)).map(run =>
       this.describe(run, query.channel, platform, pr, base)));
   }
@@ -191,7 +196,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
     requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, platform, pr),
       "Build does not match the selected source and publication attempt");
-    const result = await this.describe(run, source.channel, platform, pr, pr ? await this.baseSha() : undefined, true);
+    const result = await this.describe(run, source.channel, platform, pr, pr ? await this.baseSha(pr) : undefined, true);
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
   }
@@ -227,19 +232,19 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const receipt = await this.metadata("pr-builds", `mentra-ios-${suffix}.json`);
     const data = z.object({ schemaVersion: z.union([z.literal(1), z.literal(2)]), pr: positive, headSha: sha,
       runId: positive, runAttempt: positive, buildAttempt: positive.optional(), buildSha: sha,
-      app: z.object({ bundleId: z.literal("com.mentra.mentra"), teamId: z.literal("T5XXXL6N36"), backend: z.literal("dev"),
+      app: z.object({ bundleId: z.literal("com.mentra.mentra"), teamId: z.literal("T5XXXL6N36"), backend: z.enum(PR_BASES),
         headSha: sha, buildSha: sha, runId: positive, runAttempt: positive, otaManifestUrl: z.string(),
         executableSha256: digest, javascriptSha256: digest }), artifacts: z.object({ mac: assetSchema }) }).parse(receipt.value);
     const otaName = `ota-pr-${pr.number}-${pr.head.sha}.json`;
     requireThat(data.pr === pr.number && data.headSha === pr.head.sha && data.runId === run.id && data.runAttempt === attempts.publish
       && (data.buildAttempt ?? data.runAttempt) === attempts.build && data.app.headSha === data.headSha
       && data.app.buildSha === data.buildSha && data.app.runId === run.id && data.app.runAttempt === attempts.build
-      && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
+      && data.app.backend === pr.base.ref && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
       && data.artifacts.mac.name === `mentra-ios-mac-pr-${pr.number}-${pr.head.sha}-${run.id}-${attempts.build}.zip`,
       "Mac receipt belongs to a different PR build");
     const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
     requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === baseSha
-      && commit.parents[1]!.sha === pr.head.sha, "Mac build does not contain the current PR head and dev base");
+      && commit.parents[1]!.sha === pr.head.sha, "Mac build does not contain the current PR head and base");
     const ota = await this.metadata("pr-builds", otaName);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
@@ -263,16 +268,16 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const data = z.object({ schemaVersion: z.literal(1), pr: positive, headSha: sha, baseSha: sha, buildSha: sha,
       runId: positive, runAttempt: positive,
       app: z.object({ packageId: z.literal("com.mentra.mentra"), version: z.string().min(1), build: z.string().regex(/^[1-9]\d*$/),
-        headSha: sha, buildSha: sha, backend: z.literal("dev"), otaManifestUrl: z.string() }),
+        headSha: sha, buildSha: sha, backend: z.enum(PR_BASES), otaManifestUrl: z.string() }),
       artifacts: z.object({ android: assetSchema }) }).parse(receipt.value);
     const otaName = `ota-pr-${pr.number}-${pr.head.sha}.json`;
     requireThat(data.pr === pr.number && data.headSha === pr.head.sha && data.baseSha === baseSha
       && data.runId === run.id && data.runAttempt === attempt && data.app.headSha === data.headSha
-      && data.app.buildSha === data.buildSha && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
+      && data.app.buildSha === data.buildSha && data.app.backend === pr.base.ref && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
       && data.artifacts.android.name === `${name}.apk`, "Android receipt belongs to a different PR build");
     const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
     requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === baseSha
-      && commit.parents[1]!.sha === pr.head.sha, "Android build does not contain the current PR head and dev base");
+      && commit.parents[1]!.sha === pr.head.sha, "Android build does not contain the current PR head and base");
     const ota = await this.metadata("pr-builds", otaName);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");

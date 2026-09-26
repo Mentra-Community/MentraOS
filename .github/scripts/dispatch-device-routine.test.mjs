@@ -24,8 +24,8 @@ const artifact = {id: 77, name: "mentra-routine-request-123-2", expired: false, 
 const request = {schemaVersion: 1, kind: "mentra-routine-request", requestId: "routine-123-2-42-day1-ota", status: "ready",
   trigger: {kind: "workflow_dispatch", repository: repo, workflow: producer.path, runId: 123, runAttempt: 2,
     ref: "refs/heads/dev", sha: source, workflowSha: source, workflowRef: `${repo}/${producer.path}@refs/heads/dev`},
-  routine: {id: "day1-ota", harnessRevision: source}, pullRequest: {number: 42, headSha: head, baseSha: base},
-  selection: {platform: "ios-on-mac", build: {headSha: head, baseSha: base}}}
+  routine: {id: "day1-ota", harnessRevision: source}, pullRequest: {number: 42, headSha: head, baseSha: base, baseRef: "dev"},
+  selection: {platform: "ios-on-mac", app: {backend: "dev"}, build: {headSha: head, baseSha: base}}}
 
 const publishedJobs = ["build", "publish"].map((name, id) => ({name, id, run_attempt: 2,
   status: "completed", conclusion: "success", started_at: "2026-09-22T00:00:00Z", completed_at: "2026-09-22T00:01:00Z"}))
@@ -53,7 +53,8 @@ function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, j
         calls.push(["read-callbacks", input]); return {data:
           typeof historyResponse === "function" ? historyResponse(input) : historyResponse ?? {total_count: history.length, workflow_runs: history}}},
       listJobsForWorkflowRun, listWorkflowRunArtifacts: () => {}, createWorkflowDispatch: async (input) => {calls.push(["dispatch", input]); return dispatch()}},
-    pulls: {get: async () => ({data: pull})}, git: {getRef: async () => ({data: {object: {sha: baseSha}}})},
+    pulls: {get: async () => ({data: pull})},
+    git: {getRef: async ({ref}) => {calls.push(["read-base", ref]); return {data: {ref: `refs/${ref}`, object: {type: "commit", sha: baseSha}}}}},
   }, paginate: async (method, input) => {
     if (method === listJobsForWorkflowRun) return callbackJobs[input.run_id] ??
       (input.run_id === build.id ? jobs : [])
@@ -144,7 +145,7 @@ test("late opt-in only wakes metadata resolution for a current eligible PR and s
   for (const setup of [
     {run: {...wake, pull_requests: []}}, {run: {...wake, pull_requests: [{number: 42}, {number: 43}]}},
     {run: {...wake, head_sha: source}}, {pull: {...pr, labels: []}}, {pull: {...pr, state: "closed"}},
-    {pull: {...pr, base: {ref: "staging"}}}, {builds: []}, {jobs: []},
+    {pull: {...pr, base: {ref: "main"}}}, {builds: []}, {jobs: []},
     ...[{head_sha: source}, {head_branch: "other"}, {head_repository: {full_name: "fork/repo"}},
       {repository: {full_name: "other/repo"}}, {path: producer.path}, {status: "in_progress"}]
       .map((delta) => ({builds: [{...build, ...delta}]})),
@@ -234,7 +235,7 @@ test("failed, stale, ambiguous or no-longer-requested builds never create a requ
     {run: {...build, conclusion: "failure"}, jobs: []}, {run: {...build, pull_requests: []}},
     {run: {...build, pull_requests: [{number: 42}, {number: 43}]}},
     {run: {...build, head_sha: "e".repeat(40)}}, {pull: {...pr, labels: []}},
-    {pull: {...pr, state: "closed"}}, {pull: {...pr, base: {ref: "staging"}}},
+    {pull: {...pr, state: "closed"}}, {pull: {...pr, base: {ref: "main"}}},
     {run: {...build, path: ".github/workflows/unrelated.yml"}},
   ]) assert.equal((await planDeviceDispatch({github: fake(setup).github, context})).mode, "skip")
 })
@@ -421,7 +422,7 @@ for (const routine of ["no-glasses", "mentra-call"]) test(`explicit trusted ${ro
     "private-job-requested")
   assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "123", request_attempt: "2", routine_id: routine})
   for (const setup of [{pull: {...pr, state: "closed", labels: []}}, {pull: {...pr, head: {...pr.head, sha: source}, labels: []}},
-    {baseSha: source}, {pull: {...pr, base: {ref: "staging"}, labels: []}}]) {
+    {baseSha: source}, {pull: {...pr, base: {ref: "main"}, labels: []}}]) {
     const changed = fake(setup), privateGithub = fake()
     assert.equal((await dispatchReadyRequest({...changed, privateGithub: privateGithub.github, context, plan, bytes: bytes(manual)})).status,
       "not-dispatched")
@@ -434,6 +435,52 @@ for (const routine of ["no-glasses", "mentra-call"]) test(`explicit trusted ${ro
   }
   for (const routine of [{...manual.routine, id: "unknown"}, {...manual.routine, authorization: "label-free"}])
     await assert.rejects(() => dispatchReadyRequest({...f, context, plan, bytes: bytes({...manual, routine})}))
+})
+
+const stagingPr = {...pr, base: {ref: "staging"}}
+test("staging PR build, late-label and wake-up callbacks request through the unchanged trusted dev route", async () => {
+  for (const [run, callbackContext, setup] of [[build, context, {}], [wake, wakeContext, wakeHistory]]) {
+    const f = fake({run, pull: stagingPr, ...setup})
+    const plan = await planDeviceDispatch({...f, context: callbackContext})
+    assert.deepEqual(plan, {...requestPlan, callbackRunId: callbackContext.runId})
+    assert.equal((await requestAfterPublication({...f, context: callbackContext, plan})).status, "request-dispatched")
+    const [, dispatch] = f.calls.find(([kind]) => kind === "dispatch")
+    assert.equal(dispatch.ref, "dev")
+    assert.deepEqual(dispatch.inputs, {pr: "42", routine: "day1-ota", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"})
+  }
+  // A notification-only retry of a staging build is still not a new generation.
+  const retained = fake({pull: stagingPr, jobs: [...publishedJobs.map(job => ({...job, id: job.id + 10, run_attempt: 1})), ...publishedJobs]})
+  assert.equal((await planDeviceDispatch({...retained, context})).mode, "skip")
+})
+
+test("the shared staging wire request dispatches only while its PR base, head, tip and backend still agree", async () => {
+  const fixtures = JSON.parse(await readFile(new URL("./fixtures/pr-routine-requests.json", import.meta.url)))
+  const plan = (value) => ({mode: "dispatch", runId: value.trigger.runId, runAttempt: value.trigger.runAttempt, sourceSha: value.trigger.sha})
+  const current = (value, delta = {}) => ({number: value.pullRequest.number, state: "open", base: {ref: value.pullRequest.baseRef},
+    head: {sha: value.pullRequest.headSha, ref: "feature", repo: {full_name: repo}}, labels: [{name: "routine:day1-ota"}], ...delta})
+  for (const name of ["labelCallback", "stagingLabelCallback"]) {
+    const value = fixtures[name], f = fake({pull: current(value), baseSha: value.pullRequest.baseSha}), remote = fake()
+    const result = await dispatchReadyRequest({...f, privateGithub: remote.github, context, plan: plan(value), bytes: bytes(value)})
+    assert.equal(result.status, "private-job-requested")
+    assert.deepEqual(f.calls.filter(([kind]) => kind === "read-base"), [["read-base", `heads/${value.pullRequest.baseRef}`]])
+    assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "200", request_attempt: "1", routine_id: "day1-ota"})
+  }
+  const staged = fixtures.stagingLabelCallback
+  for (const setup of [{pull: current(staged, {base: {ref: "dev"}})}, {pull: current(staged), baseSha: "f".repeat(40)},
+    {pull: current(staged, {head: {sha: "f".repeat(40), ref: "feature", repo: {full_name: repo}}})},
+    {pull: current(staged, {labels: []})}, {pull: current(staged, {state: "closed"})}]) {
+    const f = fake({baseSha: staged.pullRequest.baseSha, ...setup}), remote = fake()
+    assert.equal((await dispatchReadyRequest({...f, privateGithub: remote.github, context, plan: plan(staged), bytes: bytes(staged)})).status, "not-dispatched")
+    assert.equal(remote.calls.length, 0)
+  }
+  for (const change of [v => { v.selection.app.backend = "dev" }, v => { v.pullRequest.baseRef = "dev" },
+    v => { v.pullRequest.baseRef = v.selection.app.backend = "main" }, v => { delete v.selection.app }]) {
+    const value = structuredClone(staged); change(value)
+    const f = fake({pull: current(staged), baseSha: staged.pullRequest.baseSha}), remote = fake()
+    await assert.rejects(() => dispatchReadyRequest({...f, privateGithub: remote.github, context, plan: plan(value), bytes: bytes(value)}),
+      /destination is not admitted/)
+    assert.equal(remote.calls.length, 0)
+  }
 })
 
 test("workflow matrix preserves trusted code, independent routine fences and disabled POST retries", async () => {
