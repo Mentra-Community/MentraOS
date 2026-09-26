@@ -46,7 +46,7 @@ class WifiScanEvidenceTest {
             listOf(mapOf("ssid" to ssid, "requiresPassword" to true, "signalStrength" to -40)),
             complete,
             scanId,
-            BleEvidenceLog.scanChunk(null, scanId, emptyList(), complete),
+            BleEvidenceLog.scanChunk(null, scanId, emptyList(), complete, entriesParsed = true),
         )
 
     @Test

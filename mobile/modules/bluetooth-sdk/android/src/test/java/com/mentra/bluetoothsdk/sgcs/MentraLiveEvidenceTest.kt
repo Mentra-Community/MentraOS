@@ -459,6 +459,96 @@ class MentraLiveEvidenceTest {
         assertFalse(FakeGattWrites.written.any { it.contains("scan-pending") })
     }
 
+    private fun scanJson(networksNeo: String?) =
+        "{\"type\":\"wifi_scan_result\",\"scanId\":\"scan-raw\",\"scan_complete\":true" +
+            (networksNeo?.let { ",\"networks_neo\":$it" } ?: "") + "}"
+
+    private fun scanDelivered(): List<String> {
+        @Suppress("UNCHECKED_CAST")
+        val networks = events.last { it.first == "wifi_scan_result" }.second["networks"] as List<Map<String, Any>>
+        return networks.map { it["ssid"] as String }
+    }
+
+    @Test
+    fun `an unparsed scan entry leaves later targets unknown, not absent`() {
+        val gatt = connect(manager(), peerA)
+        val other = "{\"ssid\":\"Other\",\"requiresPassword\":false}"
+        val lab = "{\"ssid\":\"LabAP\",\"requiresPassword\":true}"
+        for (bad in listOf("null", "42", "\"text\"", "[1]")) {
+            events.clear()
+            BleEvidenceLog.resetForTest()
+            notifyJson(gatt, scanJson("[$other,$bad,$lab]"))
+            // The normal payload keeps its existing behavior: entries before the bad one.
+            assertEquals(listOf("Other"), scanDelivered())
+            val lab70 = kind("scan_chunk", BleEvidenceLog.sha256Hex("LabAP")).single()
+            assertTrue("[$bad] must not certify LabAP absent", lab70.isNull("targetSeen"))
+            assertEquals("incomplete", lab70.getString("targetCoverage"))
+            // A parsed target is present, but unparsed entries could repeat it with other security.
+            val seen = kind("scan_chunk", BleEvidenceLog.sha256Hex("Other")).single()
+            assertTrue(seen.getBoolean("targetSeen"))
+            assertTrue("[$bad] security must stay uncertified", seen.isNull("targetRequiresPassword"))
+        }
+    }
+
+    @Test
+    fun `a malformed or missing network array is never a certified empty scan`() {
+        val gatt = connect(manager(), peerA)
+        for (form in listOf("{\"ssid\":\"LabAP\"}", "\"LabAP\"", "null", null)) {
+            events.clear()
+            BleEvidenceLog.resetForTest()
+            notifyJson(gatt, scanJson(form))
+            assertEquals(emptyList<String>(), scanDelivered())
+            val chunk = kind("scan_chunk", BleEvidenceLog.sha256Hex("LabAP")).single()
+            assertTrue("networks_neo=$form must not certify absence", chunk.isNull("targetSeen"))
+            assertEquals("incomplete", chunk.getString("targetCoverage"))
+        }
+        // Control: a well-formed empty list is a complete, certified empty chunk.
+        BleEvidenceLog.resetForTest()
+        notifyJson(gatt, scanJson("[]"))
+        val empty = kind("scan_chunk", BleEvidenceLog.sha256Hex("LabAP")).single()
+        assertEquals("complete", empty.getString("targetCoverage"))
+        assertFalse(empty.getBoolean("targetSeen"))
+    }
+
+    @Test
+    fun `fallback battery values are displayed without fresh provenance`() {
+        val gatt = connect(manager(), peerA)
+        notifyJson(gatt, """{"type":"battery_status","percent":57}""")
+        for (bad in listOf("""{"type":"battery_status"}""", """{"type":"battery_status","percent":"abc"}""",
+                """{"type":"battery_status","percent":null}""", """{"type":"battery_status","percent":57.5}""",
+                """{"type":"battery_status","percent":150}""")) {
+            notifyJson(gatt, bad)
+        }
+        val events = batteryEvents()
+        // Display behavior is unchanged: missing/invalid fields fall back as before.
+        assertEquals(listOf(57, 57, 57, 57, 57, 150), events.map { it["level"] })
+        assertTrue(events.first().containsKey("eventId"))
+        assertTrue("fallback values must not carry an event id", events.drop(1).none { it.containsKey("eventId") })
+        assertEquals(listOf(57), kind("battery").map { it.getInt("percent") })
+    }
+
+    @Test
+    fun `K900 battery fields are validated before provenance`() {
+        val gatt = connect(manager(), peerA)
+        notifyK900(gatt, """{"C":"sr_hrt","B":{"pt":64,"ready":1,"charg":1}}""")
+        notifyK900(gatt, """{"C":"sr_batv","B":{"vt":4010,"pt":63}}""")
+        notifyK900(gatt, """{"C":"sr_batv","B":{"vt":4010}}""")
+        notifyK900(gatt, """{"C":"sr_batv","B":{"vt":4010,"pt":"x"}}""")
+        notifyK900(gatt, """{"C":"sr_hrt","B":{"pt":61,"ready":1,"charg":2}}""")
+
+        val events = batteryEvents()
+        // sr_batv without a valid pt keeps its existing 0 display value, with no id.
+        assertEquals(listOf(64, 63, 0, 0, 61), events.map { it["level"] })
+        assertEquals(listOf(true, true, false, false, true), events.map { it.containsKey("eventId") })
+        val batteries = kind("battery")
+        assertEquals(listOf(64, 63, 61), batteries.map { it.getInt("percent") })
+        assertTrue(batteries[0].getBoolean("pmuCharging"))
+        assertFalse(batteries[1].has("pmuCharging"))
+        // charg=2 is not a PMU bit: the percentage is measured, the charging claim is not.
+        assertEquals("k900_sr_hrt", batteries[2].getString("source"))
+        assertFalse(batteries[2].has("pmuCharging"))
+    }
+
     @Test
     fun `events without native provenance carry no id`() {
         // e.g. another glasses model or a synthesized status: nothing to adopt.

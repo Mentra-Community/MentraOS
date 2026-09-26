@@ -80,6 +80,7 @@ class BleEvidenceLogTest {
                 mapOf("ssid" to "Stringly", "requiresPassword" to "true"),
             ),
             complete = true,
+            entriesParsed = true,
         )
 
         val targeted = BleEvidenceLog.snapshot(0, BleEvidenceLog.sha256Hex("LabAP"))
@@ -110,7 +111,7 @@ class BleEvidenceLogTest {
         val origin = BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01")
         // 70 unique networks: only the first 64 digests are retained.
         val networks = (1..70).map { mapOf("ssid" to "Net$it", "requiresPassword" to (it % 2 == 0)) }
-        BleEvidenceLog.scanChunk(origin, "scan-many", networks, complete = true)
+        BleEvidenceLog.scanChunk(origin, "scan-many", networks, complete = true, entriesParsed = true)
 
         val beyond = chunkRecord("Net70")
         assertTrue("target at index 70 must not be reported absent", beyond.isNull("targetSeen"))
@@ -134,7 +135,7 @@ class BleEvidenceLogTest {
     fun `absence is reported only with complete coverage`() {
         val origin = BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01")
         val networks = (1..64).map { mapOf("ssid" to "Net$it", "requiresPassword" to true) }
-        BleEvidenceLog.scanChunk(origin, "scan-full", networks, complete = true)
+        BleEvidenceLog.scanChunk(origin, "scan-full", networks, complete = true, entriesParsed = true)
 
         val absent = chunkRecord("LabAP")
         assertEquals("complete", absent.getString("targetCoverage"))
@@ -156,6 +157,7 @@ class BleEvidenceLogTest {
                 mapOf("ssid" to "Dup", "requiresPassword" to false),
             ),
             complete = true,
+            entriesParsed = true,
         )
         val missing = chunkRecord("LabAP")
         assertEquals("incomplete", missing.getString("targetCoverage"))
@@ -163,6 +165,25 @@ class BleEvidenceLogTest {
         val duplicate = chunkRecord("Dup")
         assertTrue(duplicate.getBoolean("targetSeen"))
         assertTrue(duplicate.isNull("targetRequiresPassword"))
+    }
+
+    @Test
+    fun `a partially parsed chunk certifies neither absence nor security`() {
+        val origin = BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01")
+        BleEvidenceLog.scanChunk(
+            origin,
+            "scan-partial",
+            listOf(mapOf("ssid" to "Other", "requiresPassword" to false)),
+            complete = true,
+            entriesParsed = false,
+        )
+        val absent = chunkRecord("LabAP")
+        assertTrue(absent.isNull("targetSeen"))
+        assertEquals("incomplete", absent.getString("targetCoverage"))
+        assertFalse(absent.getBoolean("entriesParsed"))
+        val seen = chunkRecord("Other")
+        assertTrue(seen.getBoolean("targetSeen"))
+        assertTrue(seen.isNull("targetRequiresPassword"))
     }
 
     @Test

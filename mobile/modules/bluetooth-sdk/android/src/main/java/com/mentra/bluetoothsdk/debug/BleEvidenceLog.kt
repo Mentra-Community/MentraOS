@@ -63,6 +63,11 @@ object BleEvidenceLog {
         val ssidSecurity: Map<String, Boolean?>? = null,
         /** False when some network of the chunk was not retained in [ssidSecurity]. */
         val ssidCoverageComplete: Boolean = true,
+        /**
+         * False when some entry of the chunk could not be identified (unparsed or without a
+         * string SSID); such an entry could repeat a seen target with another security value.
+         */
+        val ssidSecurityCertain: Boolean = true,
     )
 
     private val lock = Any()
@@ -194,13 +199,26 @@ object BleEvidenceLog {
         }
     }
 
-    fun scanChunk(origin: Origin?, scanId: String?, networks: List<Map<String, Any>>, complete: Boolean): String {
+    /**
+     * [networks] are the entries the decoder parsed. [entriesParsed] is false when the raw chunk
+     * had entries (or a network list) that could not be parsed; they were not delivered either,
+     * so a target among them is unknown rather than absent.
+     */
+    fun scanChunk(
+        origin: Origin?,
+        scanId: String?,
+        networks: List<Map<String, Any>>,
+        complete: Boolean,
+        entriesParsed: Boolean,
+    ): String {
         val security = LinkedHashMap<String, Boolean?>()
-        var coverageComplete = true
+        var identitiesKnown = entriesParsed
+        var coverageComplete = entriesParsed
         for (network in networks) {
             // An entry without a string SSID could be anything: coverage is no longer complete.
             val ssid = network["ssid"] as? String
             if (ssid == null) {
+                identitiesKnown = false
                 coverageComplete = false
                 continue
             }
@@ -225,10 +243,12 @@ object BleEvidenceLog {
                         "origin" to originJson(origin),
                         "scanId" to scanId,
                         "networks" to networks.size,
+                        "entriesParsed" to entriesParsed,
                         "complete" to complete,
                     ),
                     security,
                     coverageComplete,
+                    identitiesKnown,
                 )
             eventId(seq)
         }
@@ -376,9 +396,10 @@ object BleEvidenceLog {
         fields: Map<String, Any?>,
         ssidSecurity: Map<String, Boolean?>? = null,
         ssidCoverageComplete: Boolean = true,
+        ssidSecurityCertain: Boolean = true,
     ): Long {
         val seq = ++lastSeq
-        records.addLast(Record(seq, clock(), kind, fields, ssidSecurity, ssidCoverageComplete))
+        records.addLast(Record(seq, clock(), kind, fields, ssidSecurity, ssidCoverageComplete, ssidSecurityCertain))
         while (records.size > CAPACITY) {
             records.removeFirst()
             droppedCount++
@@ -402,7 +423,9 @@ object BleEvidenceLog {
             when {
                 seen -> {
                     json.put("targetSeen", true)
-                    json.put("targetRequiresPassword", security[target] ?: JSONObject.NULL)
+                    // Presence is certain; its security is only certain when no entry was unidentified.
+                    val requiresPassword = if (record.ssidSecurityCertain) security[target] else null
+                    json.put("targetRequiresPassword", requiresPassword ?: JSONObject.NULL)
                 }
                 // Absence is only known when every network of the chunk was retained.
                 record.ssidCoverageComplete -> json.put("targetSeen", false)

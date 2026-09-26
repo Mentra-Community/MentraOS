@@ -4215,7 +4215,15 @@ class MentraLive : SGCManager() {
                 // that reads "charging" for most of a discharging pack's range. Charging
                 // state comes exclusively from the PMU charg bit in the sr_hrt heartbeat.
                 val percent = json.optInt("percent", batteryLevel)
-                updateBatteryStatus(percent, isCharging, "battery_status", origin, null)
+                // A missing or invalid field keeps the previous fallback display value, but only a
+                // measured percentage carries provenance.
+                updateBatteryStatus(
+                        percent,
+                        isCharging,
+                        measuredPercent(json, "percent")?.let {
+                            BatteryProvenance("battery_status", origin, null)
+                        }
+                )
             }
             "stream_controller_probe" -> {
                 val values = mapOf("protocolVersion" to json.opt("protocolVersion"),
@@ -4390,6 +4398,8 @@ class MentraLive : SGCManager() {
             "wifi_scan_result" -> {
                 // Process WiFi scan results
                 val networks: MutableList<Map<String, Any>> = ArrayList()
+                // Evidence only: false when the network list is missing or not fully parsed.
+                var networksParsed = false
 
                 if (json.has("networks_neo")) {
                     try {
@@ -4407,6 +4417,7 @@ class MentraLive : SGCManager() {
                             }
                             networks.add(networkMap)
                         }
+                        networksParsed = true
 
                         Bridge.log(
                                 "Received enhanced WiFi scan results: " +
@@ -4421,7 +4432,8 @@ class MentraLive : SGCManager() {
                 val scanComplete =
                         json.optBoolean("scan_complete", json.optBoolean("scanComplete", false))
                 val scanId = json.optString("scanId", "").ifEmpty { null }
-                val eventId = BleEvidenceLog.scanChunk(origin, scanId, networks, scanComplete)
+                val eventId =
+                        BleEvidenceLog.scanChunk(origin, scanId, networks, scanComplete, networksParsed)
                 Bridge.updateWifiScanResults(networks, scanComplete, scanId, eventId)
             }
             "token_status" -> {
@@ -5586,9 +5598,17 @@ class MentraLive : SGCManager() {
                                 updateBatteryStatus(
                                         batteryPercentage,
                                         charg == 1,
-                                        "k900_sr_hrt",
-                                        origin,
-                                        charg == 1
+                                        measuredPercent(bodyObj, "pt")?.let {
+                                            BatteryProvenance(
+                                                    "k900_sr_hrt",
+                                                    origin,
+                                                    // Only an actual PMU bit (0/1) is charging evidence.
+                                                    (bodyObj.opt("charg") as? Number)
+                                                            ?.toInt()
+                                                            ?.takeIf { it == 0 || it == 1 }
+                                                            ?.let { it == 1 }
+                                            )
+                                        }
                                 )
                     }
                 } catch (e: Exception) {
@@ -5620,7 +5640,13 @@ class MentraLive : SGCManager() {
                         // charging from voltage (>4.0V) reads "not charging" for most of a
                         // genuinely-charging pack's range. Charging state comes exclusively
                         // from the PMU charg bit in the sr_hrt heartbeat.
-                        updateBatteryStatus(batteryPercentage, isCharging, "k900_sr_batv", origin, null)
+                        updateBatteryStatus(
+                                batteryPercentage,
+                                isCharging,
+                                measuredPercent(bodyObj, "pt")?.let {
+                                    BatteryProvenance("k900_sr_batv", origin, null)
+                                }
+                        )
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_batv response", e)
@@ -5975,13 +6001,29 @@ class MentraLive : SGCManager() {
      * [source] names the decoded message. [pmuCharging] is set only when the PMU charg bit of
      * this very message supplied [isCharging]; percent-only sources re-pass the inherited value.
      */
-    private fun updateBatteryStatus(
-            level: Int,
-            isCharging: Boolean,
-            source: String,
-            origin: BleEvidenceLog.Origin?,
-            pmuCharging: Boolean?
-    ) {
+    /**
+     * Provenance of a battery update decoded from one notification. [pmuCharging] is set only
+     * when the PMU charg bit of that message supplied the charging state.
+     */
+    private data class BatteryProvenance(
+            val source: String,
+            val origin: BleEvidenceLog.Origin?,
+            val pmuCharging: Boolean?
+    )
+
+    /** The field's value when it is an actual integer percentage, else null (missing/invalid). */
+    private fun measuredPercent(obj: JSONObject, key: String): Int? {
+        val value = obj.opt(key) as? Number ?: return null
+        val asDouble = value.toDouble()
+        if (asDouble != Math.floor(asDouble) || asDouble < 0 || asDouble > 100) return null
+        return asDouble.toInt()
+    }
+
+    /**
+     * [provenance] is null for fallback or cached values: they are still displayed as before but
+     * carry no event id, so they can never count as a fresh measurement.
+     */
+    private fun updateBatteryStatus(level: Int, isCharging: Boolean, provenance: BatteryProvenance?) {
         // Keep the field in sync: percent-only messages (battery_status/sr_batv) re-pass
         // it as the last-known charging state, so a stale field would clobber the value
         // the sr_hrt PMU charg bit established.
@@ -5992,7 +6034,10 @@ class MentraLive : SGCManager() {
         DeviceStore.apply("glasses", "charging", isCharging)
 
         if (level >= 0) {
-            val eventId = BleEvidenceLog.battery(origin, level, source, pmuCharging)
+            val eventId =
+                    provenance?.let {
+                        BleEvidenceLog.battery(it.origin, level, it.source, it.pmuCharging)
+                    }
             Bridge.sendBatteryStatus(level, isCharging, eventId)
         }
     }
