@@ -28,8 +28,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * Never delete its history to authorize replay. An unknown send or missing
  * history requires manual reconciliation, even if no child request is visible.
  * The current send must be observable under the exact job name that later
- * callbacks search, and is observed before other callbacks are read, so two
- * unserialized callbacks cannot both miss each other and send.
+ * callbacks search. Other callbacks' jobs are read only after that observation,
+ * so waiting for it never leaves their job reads older than the wait. Duplicate
+ * prevention still relies on per-generation concurrency and earlier-send fences.
  */
 async function automaticGenerationFence(github, context, plan, wait) {
   const {callbackAttempt, sourceCreatedAt} = plan
