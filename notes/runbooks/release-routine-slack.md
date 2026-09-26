@@ -75,8 +75,10 @@ from GitHub metadata:
   `request_attempt` inputs and the job labels from `routine_id`. These name the
   candidate request, which must be the trusted successful dev request with its
   authenticated artifact and pinned build/archive;
-- the run was created, and not rerun, by the dispatcher GitHub App's bot account
-  (fixed numeric ID);
+- the run was created by the dispatcher GitHub App's bot account (fixed numeric
+  ID), and both the selected attempt and the run's latest metadata show that it
+  is the first and only attempt. A rerun, even by the same App, may follow an
+  attempt that executed without a receipt, so it is refused;
 - the trusted dev `dispatch-device-routine.yml` callback for that exact request
   completed exactly one private send, and this is the only private run of that
   name created during the send.

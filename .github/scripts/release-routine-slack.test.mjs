@@ -267,14 +267,21 @@ function actionsApi(repository, runs, jobs, artifacts = {}) {
     const [from, to] = created.split("..").map(Date.parse)
     return Date.parse(item.created_at) >= from && Date.parse(item.created_at) <= to
   }
+  // GitHub keeps every attempt; run lists and GET run return only the latest one.
+  const latest = () => runs.filter(item => !runs.some(other => other.id === item.id && other.run_attempt > item.run_attempt))
   const actions = {
+    getWorkflowRun: async ({run_id}) => {
+      const found = latest().find(item => item.id === run_id)
+      if (!found) throw Object.assign(new Error("Not Found"), {status: 404})
+      return {data: structuredClone(found)}
+    },
     getWorkflowRunAttempt: async ({run_id, attempt_number}) => {
       const found = runs.find(item => item.id === run_id && item.run_attempt === attempt_number)
       if (!found) throw Object.assign(new Error("Not Found"), {status: 404})
       return {data: structuredClone(found)}
     },
     listWorkflowRuns: async ({workflow_id, event, branch, created, page}) => {
-      const all = runs.filter(item => item.path === workflow_id && item.event === event && item.head_branch === branch && inRange(item, created))
+      const all = latest().filter(item => item.path === workflow_id && item.event === event && item.head_branch === branch && inRange(item, created))
       return {data: {total_count: all.length, workflow_runs: structuredClone(all.slice((page - 1) * 100, page * 100))}}
     },
     listJobsForWorkflowRun: async ({run_id}) => ({data: {jobs: structuredClone(jobs.filter(item => item.run_id === run_id))}}),
@@ -459,4 +466,60 @@ test("the cancellation proof names the dispatcher job and send step that actuall
   assert.ok(workflow.includes(`|| '${DISPATCHER.job}' }}`))
   assert.equal(workflow.split(`      - name: ${DISPATCHER.step}\n`).length, 2)
   assert.match(workflow.split(`      - name: ${DISPATCHER.step}\n`)[1], /^\s+if: matrix\.mode == 'dispatch'\n[\s\S]*?dispatchReadyRequest/)
+})
+
+// Review finding: the dispatcher App can also rerun. A rerun may follow an attempt that executed.
+const executedAttempt = v => ({...structuredClone(v.worker), conclusion: "failure", updated_at: "2026-09-26T05:00:00Z"})
+const executedJob = v => ({...structuredClone(v.workerJobs[0]), conclusion: "failure", runner_id: 42, runner_name: "mentra-mac-mini",
+  runner_group_id: 1, completed_at: "2026-09-26T05:00:00Z",
+  steps: [{name: "Enter the enrolled worker once", status: "completed", conclusion: "failure", number: 4,
+    started_at: "2026-09-26T04:40:00Z", completed_at: "2026-09-26T05:00:00Z"}]})
+const queuedRerun = (v, overrides = {}) => ({...structuredClone(v.worker), run_attempt: 2, run_started_at: "2026-09-26T05:10:00Z", ...overrides})
+const queuedRerunJob = v => ({...structuredClone(v.workerJobs[0]), id: 108338589999, run_attempt: 2, started_at: "2026-09-26T05:10:02Z"})
+const rerunRefusal = /Only an unrerun first dispatched attempt/
+
+test("a same-App cancelled rerun after an executed attempt without a receipt is refused", async () => {
+  // Selected attempt 2 never ran, but attempt 1 executed and failed without retaining a receipt.
+  await assert.rejects(resolveRoutineNotifications(cancelled({workerAttempt: 2, corrupt: v => {
+    const second = queuedRerun(v), secondJob = queuedRerunJob(v)
+    v.worker = executedAttempt(v); v.workerJobs = [executedJob(v), secondJob]; v.privateRuns.push(second)
+  }})), rerunRefusal)
+  // Even when both attempts were queue cancellations, a rerun is never the dispatcher's own send.
+  await assert.rejects(resolveRoutineNotifications(cancelled({workerAttempt: 2, corrupt: v => {
+    v.privateRuns.push(queuedRerun(v)); v.workerJobs.push(queuedRerunJob(v))
+  }})), rerunRefusal)
+})
+
+test("a cancelled first attempt is refused once the run has any later attempt", async () => {
+  for (const later of [{status: "queued", conclusion: null}, {status: "in_progress", conclusion: null},
+    {status: "completed", conclusion: "failure"}, {status: "completed", conclusion: "cancelled"}]) {
+    await assert.rejects(resolveRoutineNotifications(cancelled({corrupt: v => {
+      v.privateRuns.push(queuedRerun(v, later)); v.workerJobs.push(queuedRerunJob(v))
+    }})), rerunRefusal, JSON.stringify(later))
+  }
+})
+
+test("latest run metadata must be the same unrerun first attempt", async () => {
+  const selected = structuredClone(dev404.privateRun)
+  for (const [name, change] of Object.entries({
+    "latest revision differs": latest => { latest.head_sha = "f".repeat(40) },
+    "latest title differs": latest => { latest.display_title = "Device routine request 36218240618 / attempt 1" },
+    "latest conclusion differs": latest => { latest.conclusion = "failure" },
+    "latest creator differs": latest => { latest.actor = {login: "PhilippeFerreiraDeSousa", id: 12345678, type: "User"} },
+    "latest attempt differs": latest => { latest.run_attempt = 2 },
+  })) {
+    const options = cancelled(), latest = structuredClone(selected)
+    change(latest)
+    options.privateGithub.rest.actions.getWorkflowRun = async () => ({data: latest})
+    await assert.rejects(resolveRoutineNotifications(options), rerunRefusal, name)
+  }
+})
+
+test("ordinary terminal receipts from retried attempts keep their exact attempt lineage", async () => {
+  const retried = terminal(); retried.privateRun.runAttempt = 2
+  const options = resolver({terminal: retried, worker: {...structuredClone(worker), run_attempt: 2}})
+  options.workerAttempt = 2
+  const [result] = await resolveRoutineNotifications(options)
+  assert.equal(result.row.privateAttempt, 2)
+  assert.equal(result.row.status, "passed")
 })

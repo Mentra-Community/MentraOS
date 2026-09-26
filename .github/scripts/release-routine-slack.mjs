@@ -140,9 +140,17 @@ async function completeRuns(github, repo, query, message) {
 async function unexecutedCancellation({github, privateGithub, context, run, read}) {
   const title = workerTitle.exec(run.display_title ?? "")
   requireThat(run.path === WORKER && run.conclusion === "cancelled" && title, NOT_PROVEN)
-  // A rerun by anyone else changes triggering_actor; only the App's own dispatch qualifies.
   requireThat(createdByDispatcherApp(run.actor) && createdByDispatcherApp(run.triggering_actor),
     "Private run was not created by the trusted dispatcher App")
+  // The dispatcher only ever creates first attempts. Any rerun, even by the same App,
+  // may follow an attempt that executed without a receipt; that keeps its recovery path.
+  // The latest run metadata must show that this first attempt is still the only one.
+  const {data: latest} = await privateGithub.rest.actions.getWorkflowRun({...PRIVATE, run_id: run.id})
+  requireThat(run.run_attempt === 1 && latest?.id === run.id && latest.run_attempt === 1 &&
+    ["path", "head_branch", "head_sha", "event", "status", "conclusion", "display_title", "created_at"]
+      .every(key => latest[key] === run[key]) && latest.repository?.full_name === run.repository.full_name &&
+    createdByDispatcherApp(latest.actor) && createdByDispatcherApp(latest.triggering_actor),
+  "Only an unrerun first dispatched attempt can be reported as cancelled before execution")
   const jobs = await privateGithub.paginate(privateGithub.rest.actions.listJobsForWorkflowRunAttempt,
     {...PRIVATE, run_id: run.id, attempt_number: run.run_attempt, per_page: 100})
   requireThat(jobs.length === 1, "Cancelled attempt jobs are ambiguous")
