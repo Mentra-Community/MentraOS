@@ -93,8 +93,9 @@ retroactively.
 
 ## Request a recorded UI walkthrough
 
-Add `routine:no-glasses` to a same-repository PR targeting `dev` to request the
-walkthrough on its published Mac build. Wait for the iOS build and Mac artifact
+Add `routine:no-glasses` to a same-repository PR targeting `dev` or `staging` to
+request the walkthrough on its published Mac build. A staging-targeted PR app
+uses staging services; every other PR app uses dev. Wait for the iOS build and Mac artifact
 publication to finish. The request pins the PR revision and archive; a label or
 successful app build alone does not mean the walkthrough passed.
 

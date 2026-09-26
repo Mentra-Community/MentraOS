@@ -21,6 +21,7 @@ on:
       - ".github/workflows/mentra-app-ios-build.yml"
       - ".github/workflows/reusable-pr-build-notification.yml"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
       - ".github/scripts/allocate-asg-version.mjs"
@@ -139,7 +140,8 @@ jobs:
           cp .env.example .env
           # Pin which cloud this binary talks to (OS-1875).
           #
-          # main is production-configured; dev, PRs and feature branches use dev
+          # main is production-configured; staging-targeted PRs use staging; dev,
+          # other PRs and feature branches use dev
           # cloud. Trusted PRs publish ad hoc iPhone/Mac downloads; other events
           # remain compile checks. No TestFlight export or upload occurs here.
           #
@@ -147,10 +149,21 @@ jobs:
           # A lane that produces a distributable must not inherit that silently.
           # Fatal on release-producing events, warning on pull_request, matching the
           # Sentry DSN rule (OS-1827).
-          case "${{ github.ref_name }}" in
-            main) CLOUD_ENV="prod" ;;
-            *) CLOUD_ENV="dev" ;;
-          esac
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # A PR app targets its base's services: staging-targeted PRs use
+            # staging, every other PR keeps dev. GITHUB_BASE_REF is GitHub's PR
+            # base, not PR-controlled input. The backend is part of the reuse
+            # fingerprint, so a dev binary is never repackaged as staging.
+            case "$GITHUB_BASE_REF" in
+              staging) CLOUD_ENV="staging" ;;
+              *) CLOUD_ENV="dev" ;;
+            esac
+          else
+            case "${{ github.ref_name }}" in
+              main) CLOUD_ENV="prod" ;;
+              *) CLOUD_ENV="dev" ;;
+            esac
+          fi
           case "$CLOUD_ENV" in
             dev)
               CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"

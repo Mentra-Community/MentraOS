@@ -22,6 +22,7 @@ on:
       - ".github/workflows/mentra-app-ios-build.yml"
       - ".github/workflows/reusable-pr-build-notification.yml"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
       - ".github/scripts/allocate-asg-version.mjs"
@@ -170,7 +171,7 @@ jobs:
 
       - name: Verify PR packaging and notification contracts
         run: |
-          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs
+          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs
           python3 .github/scripts/test_repackage_pr_apk.py
 
       - name: Setup environment
@@ -187,7 +188,8 @@ jobs:
           printf '\nEXPO_PUBLIC_ASG_OTA_VERSION_URL=%s\n' "$EXPO_PUBLIC_ASG_OTA_VERSION_URL" >> .env
           # Pin which cloud this binary talks to (OS-1875).
           #
-          # main is production-configured; dev, PRs and feature branches use dev
+          # main is production-configured; staging-targeted PRs use staging; dev,
+          # other PRs and feature branches use dev
           # cloud. Nothing uploads from this workflow, so these are compile checks,
           # but they should still match the environment they claim to check.
           #
@@ -195,10 +197,21 @@ jobs:
           # A lane that produces a distributable must not inherit that silently.
           # Fatal on release-producing events, warning on pull_request, matching the
           # Sentry DSN rule (OS-1827).
-          case "${{ github.ref_name }}" in
-            main) CLOUD_ENV="prod" ;;
-            *) CLOUD_ENV="dev" ;;
-          esac
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # A PR app targets its base's services: staging-targeted PRs use
+            # staging, every other PR keeps dev. GITHUB_BASE_REF is GitHub's PR
+            # base, not PR-controlled input. The backend is part of the reuse
+            # fingerprint, so a dev binary is never repackaged as staging.
+            case "$GITHUB_BASE_REF" in
+              staging) CLOUD_ENV="staging" ;;
+              *) CLOUD_ENV="dev" ;;
+            esac
+          else
+            case "${{ github.ref_name }}" in
+              main) CLOUD_ENV="prod" ;;
+              *) CLOUD_ENV="dev" ;;
+            esac
+          fi
           case "$CLOUD_ENV" in
             dev)
               CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
@@ -482,6 +495,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          node .github/scripts/pr-android-artifacts.mjs mobile/android/app/build/outputs/apk/release/app-release.apk
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/pr-builds" --jq .id)
           name="mobile-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
           node .github/scripts/publish-immutable-release-asset.mjs \

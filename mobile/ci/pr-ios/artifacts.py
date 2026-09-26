@@ -20,7 +20,7 @@ BUNDLE_ID = "com.mentra.mentra"
 PROFILE_NAME = f"match AdHoc {BUNDLE_ID}"
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[2] / ".github/scripts"))
-from pr_mobile_config import read_build
+from pr_mobile_config import pr_backend, read_build
 
 
 def run(*args):
@@ -80,6 +80,16 @@ def verify_pr_ota(app, repository, pr, head_sha):
     if not valid:
         raise ValueError("Exported PR app is missing its exact-head glasses OTA pin (OTA disabled or stale)")
     return expected
+
+
+def packaged_backend(compilation, env):
+    """The fingerprint binds EXPO_PUBLIC_BUILD_ENV, so a reused binary keeps its compiled backend."""
+    backend = env.get("EXPO_PUBLIC_BUILD_ENV")
+    if compilation["mobileFingerprint"] != env.get("MENTRA_PR_MOBILE_FINGERPRINT"):
+        raise ValueError("Packaged compilation differs from this job's backend fingerprint")
+    if backend != pr_backend(env.get("GITHUB_BASE_REF", "")):
+        raise ValueError("Packaged backend differs from the PR base")
+    return backend
 
 
 def verify_private_signing(keychain, certificate):
@@ -239,7 +249,8 @@ def package(ipa, output, mac_signing):
         executable = app / info["CFBundleExecutable"]
         if executable.parent != app:
             raise ValueError("Invalid executable name")
-        manifest = {**context, "bundleId": BUNDLE_ID, "app": "Mentra.app", "backend": "dev", "otaManifestUrl": ota_url,
+        backend = packaged_backend(compilation, os.environ)
+        manifest = {**context, "bundleId": BUNDLE_ID, "app": "Mentra.app", "backend": backend, "otaManifestUrl": ota_url,
                     "macPackageVersion": 2, "macInstaller": "Install Mentra.app",
                     "mobileFingerprint": compilation["mobileFingerprint"],
                     "mobileSourceCommit": compilation["mobileSourceCommit"],
