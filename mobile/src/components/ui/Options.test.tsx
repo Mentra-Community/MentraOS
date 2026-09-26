@@ -37,9 +37,9 @@ const options = [
 test("only the current camera option is selected and check glyphs are decorative", () => {
   render(<OptionList options={options} selected="max" onSelect={jest.fn()} />)
 
-  expect(screen.getByRole("button", {name: "Max (4032×3024)", selected: true})).toBeTruthy()
-  expect(screen.getByRole("button", {name: "Low (960×720)", selected: false})).toBeTruthy()
-  expect(screen.getAllByRole("button")).toHaveLength(2)
+  expect(screen.getByRole("radio", {name: "Max (4032×3024)", checked: true})).toBeTruthy()
+  expect(screen.getByRole("radio", {name: "Low (960×720)", checked: false})).toBeTruthy()
+  expect(screen.getAllByRole("radio")).toHaveLength(2)
   expect(screen.queryAllByText("check")).toHaveLength(0)
   expect(screen.getAllByText("check", {includeHiddenElements: true})).toHaveLength(2)
 })
@@ -61,23 +61,23 @@ test("normal selection moves the accessible selected state with the controlled v
   }
   render(<ControlledOptions />)
 
-  fireEvent.press(screen.getByRole("button", {name: "Low (960×720)"}))
+  fireEvent.press(screen.getByRole("radio", {name: "Low (960×720)"}))
 
   expect(onSelect).toHaveBeenCalledTimes(1)
   expect(onSelect).toHaveBeenCalledWith("low")
-  expect(screen.getByRole("button", {name: "Low (960×720)", selected: true})).toBeTruthy()
-  expect(screen.getByRole("button", {name: "Max (4032×3024)", selected: false})).toBeTruthy()
+  expect(screen.getByRole("radio", {name: "Low (960×720)", checked: true})).toBeTruthy()
+  expect(screen.getByRole("radio", {name: "Max (4032×3024)", checked: false})).toBeTruthy()
 })
 
 test("a press does not claim selection if the caller declines the setting change", () => {
   const onSelect = jest.fn()
   render(<OptionList options={options} selected="max" onSelect={onSelect} />)
 
-  fireEvent.press(screen.getByRole("button", {name: "Low (960×720)"}))
+  fireEvent.press(screen.getByRole("radio", {name: "Low (960×720)"}))
 
   expect(onSelect).toHaveBeenCalledWith("low")
-  expect(screen.getByRole("button", {name: "Max (4032×3024)", selected: true})).toBeTruthy()
-  expect(screen.getByRole("button", {name: "Low (960×720)", selected: false})).toBeTruthy()
+  expect(screen.getByRole("radio", {name: "Max (4032×3024)", checked: true})).toBeTruthy()
+  expect(screen.getByRole("radio", {name: "Low (960×720)", checked: false})).toBeTruthy()
 })
 
 test("externally restored settings update selection without invoking a writer", () => {
@@ -86,16 +86,16 @@ test("externally restored settings update selection without invoking a writer", 
 
   rerender(<OptionList options={options} selected="max" onSelect={onSelect} />)
 
-  expect(screen.getByRole("button", {name: "Max (4032×3024)", selected: true})).toBeTruthy()
-  expect(screen.getByRole("button", {name: "Low (960×720)", selected: false})).toBeTruthy()
+  expect(screen.getByRole("radio", {name: "Max (4032×3024)", checked: true})).toBeTruthy()
+  expect(screen.getByRole("radio", {name: "Low (960×720)", checked: false})).toBeTruthy()
   expect(onSelect).not.toHaveBeenCalled()
 })
 
 test("an unavailable selected key does not invent a selected option", () => {
   render(<OptionList options={options} selected="legacy" onSelect={jest.fn()} />)
 
-  expect(screen.queryAllByRole("button", {selected: true})).toHaveLength(0)
-  expect(screen.getAllByRole("button", {selected: false})).toHaveLength(2)
+  expect(screen.queryAllByRole("radio", {checked: true})).toHaveLength(0)
+  expect(screen.getAllByRole("radio", {checked: false})).toHaveLength(2)
 })
 
 test("accessible names preserve the visible label, badge and subtitle", () => {
@@ -107,5 +107,5 @@ test("accessible names preserve the visible label, badge and subtitle", () => {
     />,
   )
 
-  expect(screen.getByRole("button", {name: "Max, Recommended, 4032×3024", selected: true})).toBeTruthy()
+  expect(screen.getByRole("radio", {name: "Max, Recommended, 4032×3024", checked: true})).toBeTruthy()
 })

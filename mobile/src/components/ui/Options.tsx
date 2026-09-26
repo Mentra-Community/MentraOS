@@ -41,9 +41,9 @@ const OptionItem = <T extends string>({
 
   return (
     <TouchableOpacity
-      accessibilityRole="button"
+      accessibilityRole="radio"
       accessibilityLabel={[option.label, option.badge, option.subtitle].filter(Boolean).join(", ")}
-      accessibilityState={{selected: selected === option.key}}
+      accessibilityState={{checked: selected === option.key}}
       onPress={() => onSelect(option.key)}>
       <GlassView className="flex-row justify-between items-center py-5 px-6 bg-primary-foreground" style={style}>
         <View className="gap-1 flex-col">
