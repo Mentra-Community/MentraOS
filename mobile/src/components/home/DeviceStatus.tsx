@@ -5,6 +5,7 @@ import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropTy
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useDiagnosticRenderMarker} from "@/hooks/useDiagnosticRenderMarker"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
@@ -25,6 +26,36 @@ import {
 
 import MicIcon from "assets/icons/component/MicIcon"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
+
+/**
+ * The glasses battery percentage. While Home is focused it reports the opaque native event id
+ * behind the committed value, or an empty id list when the value has no provenance (cached or
+ * fallback). When another route covers Home or the reading unmounts it withdraws the marker, so
+ * an earlier id never stays attributed to what is shown. Android device-test provenance only;
+ * nothing is displayed.
+ */
+export function GlassesBatteryReading({
+  level,
+  charging,
+  eventId,
+}: {
+  level: number
+  charging: boolean
+  eventId?: string
+}) {
+  const {theme} = useAppTheme()
+  useDiagnosticRenderMarker("glasses_battery", eventId ? [eventId] : [], level)
+  return (
+    <View className="flex-row items-center gap-1">
+      <Icon
+        name={charging ? "battery-charging" : (getBatteryIcon(level) as any)}
+        size={22}
+        color={theme.colors.foreground}
+      />
+      <Text className="text-secondary-foreground text-sm" text={`${level}%`} />
+    </View>
+  )
+}
 
 const getBatteryIcon = (batteryLevel: number): string => {
   if (batteryLevel >= 75) return "battery-3"
@@ -85,6 +116,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const caseBatteryLevel = glassesStatus.case.battery
   const caseOpen = glassesStatus.case.open
   const batteryLevel = glassesStatus.battery
+  const batteryEventId = glassesStatus.batteryEventId
   const charging = glassesStatus.charging
   const [projectName] = useSetting<string>(SETTINGS.project_name.key)
   const wifiConnected = wifiStatus.state === "connected"
@@ -328,14 +360,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       <Text className="font-semibold text-secondary-foreground text-base" text={displayName} />
       <View className="flex-row items-center gap-3">
         {batteryLevel !== -1 && (
-          <View className="flex-row items-center gap-1">
-            <Icon
-              name={charging ? "battery-charging" : (getBatteryIcon(batteryLevel) as any)}
-              size={22}
-              color={theme.colors.foreground}
-            />
-            <Text className="text-secondary-foreground text-sm" text={`${batteryLevel}%`} />
-          </View>
+          <GlassesBatteryReading level={batteryLevel} charging={charging} eventId={batteryEventId} />
         )}
         <MicIcon width={18} height={18} />
         <Icon name="bluetooth-connected" size={22} color={theme.colors.foreground} />

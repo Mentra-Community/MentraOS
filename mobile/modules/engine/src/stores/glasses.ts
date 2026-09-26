@@ -31,7 +31,15 @@ export interface GlassesState extends EngineGlassesStatus {
   systemTimeMs: number
   wifiStatusKnown: boolean
   setGlassesInfo: (info: GlassesInfoUpdate) => void
-  setBatteryInfo: (batteryLevel: number, charging: boolean, caseBatteryLevel: number, caseCharging: boolean) => void
+  /** Opaque native provenance id of the notification behind batteryLevel, when the SDK supplies one. */
+  batteryEventId?: string
+  setBatteryInfo: (
+    batteryLevel: number,
+    charging: boolean,
+    caseBatteryLevel: number,
+    caseCharging: boolean,
+    batteryEventId?: string,
+  ) => void
   setWifiInfo: (connected: boolean, ssid: string) => void
   setHotspotInfo: (enabled: boolean, ssid: string, password: string, ip: string) => void
   // OTA methods
@@ -106,6 +114,7 @@ export const getGlasesInfoPartial = (state: EngineGlassesStatus) => {
 }
 
 interface GlassesStore extends EngineGlassesStatus {
+  batteryEventId?: string
   systemTimeMs: number
   mtkUpdatedThisSession: boolean
   wifiStatusKnown: boolean
@@ -145,6 +154,7 @@ const initialState: GlassesStore = {
   wifiStatusKnown: false,
   // battery info
   batteryLevel: -1,
+  batteryEventId: undefined,
   charging: false,
   caseBatteryLevel: -1,
   caseCharging: false,
@@ -201,7 +211,16 @@ export const useGlassesStore = create<GlassesState>()(
           ...(hotspotUpdate ? {hotspot: hotspotUpdate} : {}),
           ...(hasWifiInfoUpdate ? {wifiStatusKnown: true} : {}),
         }
+        // batteryEventId names the notification behind batteryLevel. A status-sync value that
+        // differs, or a disconnect, leaves no provenance for what is now shown.
+        if (
+          Object.prototype.hasOwnProperty.call(sdkInfo, "batteryLevel") &&
+          sdkInfo.batteryLevel !== state.batteryLevel
+        ) {
+          next.batteryEventId = undefined
+        }
         if (!isGlassesConnected(next.connection)) {
+          next.batteryEventId = undefined
           next.wifiStatusKnown = false
           next.hotspotOtaVersion = 0
           // packageName is deliberately NOT cleared here. It is only ever safe to clear together
@@ -213,12 +232,14 @@ export const useGlassesStore = create<GlassesState>()(
         return next
       }),
 
-    setBatteryInfo: (batteryLevel, charging, caseBatteryLevel, caseCharging) =>
+    setBatteryInfo: (batteryLevel, charging, caseBatteryLevel, caseCharging, batteryEventId) =>
       set({
         batteryLevel,
         charging,
         caseBatteryLevel,
         caseCharging,
+        // Always replaced: a value without provenance must not inherit an older event's id.
+        batteryEventId,
       }),
 
     setWifiInfo: (connected, ssid) =>

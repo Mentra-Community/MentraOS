@@ -2,6 +2,7 @@ import {createScanSession} from "./scanSession"
 import {NativeModule, requireNativeModule} from "expo"
 import {Platform} from "react-native"
 
+import {createReportDiagnosticRender, type DiagnosticRenderSurface} from "./diagnosticRender"
 import {installNativeLogConsole} from "./nativeLogConsole"
 
 import {
@@ -125,6 +126,14 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Incident Reporting
   sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
+
+  /**
+   * Associates committed UI state with the opaque native `eventId`s it was derived from, for
+   * Android device-test provenance. An empty list (and a null value when nothing is shown)
+   * records that the surface currently has no provenance. Accepts only allowlisted surfaces and
+   * bounded integers. Returns false (and does nothing) on iOS, older native builds or rejected input.
+   */
+  reportDiagnosticRender(surface: DiagnosticRenderSurface, eventIds: string[], value?: number | null): boolean
 
   // WiFi Commands
   requestWifiScan(): Promise<WifiSearchResult[]>
@@ -343,6 +352,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 }
 
 export type BluetoothSdkInternalModule = BluetoothSdkNativeModule
+
+export type {DiagnosticRenderSurface} from "./diagnosticRender"
 
 // This call loads the native module object from the JSI.
 // NativeModule<BluetoothSdkModuleEvents> already extends EventEmitter<BluetoothSdkModuleEvents>
@@ -746,6 +757,8 @@ NativeBluetoothSdkModule.requestWearTuning = bindNativeMethod<() => Promise<void
   "requestWearTuning",
 )
 NativeBluetoothSdkModule.resetWearTuning = bindNativeMethod<() => Promise<void>>(nativeWearModule, "resetWearTuning")
+
+NativeBluetoothSdkModule.reportDiagnosticRender = createReportDiagnosticRender(nativeWearModule, Platform.OS)
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule

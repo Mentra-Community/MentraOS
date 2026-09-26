@@ -455,6 +455,7 @@ const mockIslandEntries = () => {
         },
         status: jest.fn(() => ({state: "disconnected"})),
         onStatus: jest.fn(() => () => {}),
+        reportDiagnosticRender: jest.fn(() => false),
         info: jest.fn(() => ({})),
         onInfo: jest.fn(() => () => {}),
         capabilities: jest.fn(() => ({})),

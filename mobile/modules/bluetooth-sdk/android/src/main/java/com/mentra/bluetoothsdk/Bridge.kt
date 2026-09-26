@@ -9,6 +9,7 @@ package com.mentra.bluetoothsdk
 
 import android.util.Base64
 import android.util.Log
+import com.mentra.bluetoothsdk.debug.BleEvidenceLog
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import java.util.HashMap
 import java.util.UUID
@@ -248,13 +249,18 @@ public class Bridge private constructor() {
             sendTypedMessage("speaking_status", body as Map<String, Any>)
         }
 
-        /** Send battery status */
+        /**
+         * Send battery status. [eventId] is the opaque native provenance id of the decoded
+         * notification (see BleEvidenceLog); it is diagnostic only.
+         */
         @JvmStatic
-        fun sendBatteryStatus(level: Int, charging: Boolean) {
+        @JvmOverloads
+        fun sendBatteryStatus(level: Int, charging: Boolean, eventId: String? = null) {
             val body = HashMap<String, Any>()
             body["level"] = level
             body["charging"] = charging
             body["timestamp"] = System.currentTimeMillis()
+            if (eventId != null) body["eventId"] = eventId
             sendTypedMessage("battery_status", body as Map<String, Any>)
         }
 
@@ -696,10 +702,12 @@ public class Bridge private constructor() {
 
         /** Send WiFi scan results */
         @JvmStatic
+        @JvmOverloads
         fun updateWifiScanResults(
                 networks: List<Map<String, Any>>,
                 scanComplete: Boolean,
-                scanId: String? = null
+                scanId: String? = null,
+                eventId: String? = null
         ) {
             // Only chunks echoing the active scanId claimed at request time may mutate
             // the store; foreign chunks are still forwarded to the SDK sink, which
@@ -736,6 +744,9 @@ public class Bridge private constructor() {
             body["scanComplete"] = scanComplete
             if (scanId != null) {
                 body["scanId"] = scanId
+            }
+            if (eventId != null) {
+                body["eventId"] = eventId
             }
             sendTypedMessage("wifi_scan_result", body)
         }
@@ -930,6 +941,9 @@ public class Bridge private constructor() {
 
             try {
                 val sinks = getEventSinks()
+                (mutableBody["eventId"] as? String)?.let {
+                    BleEvidenceLog.bridgeDispatch(it, type, sinks.size)
+                }
                 if (sinks.isEmpty()) {
                     Log.w(
                             TAG,

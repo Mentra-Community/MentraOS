@@ -78,7 +78,7 @@ export function startDeviceEventRouter(): void {
   subs.push(
     BluetoothSdk.addListener("battery_status", (event) => {
       const state = useGlassesStore.getState()
-      state.setBatteryInfo(event.level, event.charging, state.caseBatteryLevel, state.caseCharging)
+      state.setBatteryInfo(event.level, event.charging, state.caseBatteryLevel, state.caseCharging, event.eventId)
       localMiniappRuntime.forwardEvent("glasses_battery_update", {
         type: "glasses_battery_update",
         level: event.level,

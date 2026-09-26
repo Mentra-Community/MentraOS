@@ -4,6 +4,7 @@ package com.mentra.bluetoothsdk
 
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
+import com.mentra.bluetoothsdk.debug.BleEvidenceLog
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.audio.PcmStreamManager
@@ -630,6 +631,12 @@ class BluetoothSdkModule : Module() {
         }
         AsyncFunction("sendPhoneNotification") { notification: Map<String, Any> ->
             deviceManager?.sendPhoneNotification(notification)
+        }
+
+        // Diagnostic correlation of committed UI state with native provenance ids. Accepts only
+        // allowlisted surfaces and bounded integers; returns false for anything else.
+        Function("reportDiagnosticRender") { surface: String, eventIds: List<String>, value: Int? ->
+            BleEvidenceLog.uiRender(surface, eventIds, value)
         }
 
         // MARK: - WiFi Commands
