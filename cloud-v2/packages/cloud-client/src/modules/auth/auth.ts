@@ -14,10 +14,14 @@
  *  - Exchange, refresh, and each per-miniapp mint are single-flighted, so a
  *    reconnect storm cannot fire a burst of competing requests (and a rotated
  *    refresh token cannot be invalidated out from under a concurrent caller).
- *  - If a refresh fails and the host can fetch a fresh subject token on demand,
- *    we clear the dead refresh token and exchange once. If no fresh subject is
- *    available (or exchange also fails), `onExpired` fires once and the host
- *    re-authenticates. We do not retry forever against a dead refresh token.
+ *  - If Core definitely rejects a refresh (a 4xx) and the host can fetch a fresh
+ *    subject token on demand, we clear the dead refresh token and exchange once.
+ *    If no fresh subject is available (or exchange also fails), `onExpired`
+ *    fires once and the host re-authenticates. We do not retry forever against
+ *    a dead refresh token.
+ *  - A refresh that never got a definite answer (the transport failed, or Core
+ *    answered 5xx) says nothing about the refresh token, so it is kept: the
+ *    call rejects with an `HttpError` and the next call refreshes again.
  *
  * Security: the access token is never written to storage, never given to a
  * miniapp, and no token is ever logged.
@@ -132,11 +136,12 @@ interface RuntimeTokenEntry {
 }
 
 /**
- * A revoke is worth retrying only when Core gave no definite answer: the
- * transport failed (`status` 0) or the server errored (5xx). A 4xx means Core
- * rejected the request and repeating it would not change the outcome.
+ * Core gave no definite answer: the transport failed (`status` 0) or the server
+ * errored (5xx). A revoke is worth retrying on this, and a refresh that hit it
+ * must not treat the refresh token as dead. A 4xx means Core rejected the
+ * request and repeating it would not change the outcome.
  */
-function isRetryableRevokeError(err: unknown): boolean {
+function isTransientHttpError(err: unknown): boolean {
   return err instanceof HttpError && (err.status === 0 || err.status >= 500)
 }
 
@@ -369,7 +374,7 @@ export class Auth implements AuthModule {
         await this.http.post(REVOKE_PATH, {}, {bearer: accessToken})
         return
       } catch (err) {
-        if (attempt + 1 >= REVOKE_ATTEMPTS || !isRetryableRevokeError(err)) throw err
+        if (attempt + 1 >= REVOKE_ATTEMPTS || !isTransientHttpError(err)) throw err
         this.logger.warn("Core session revocation failed; retrying", {attempt: attempt + 1})
         await new Promise<void>((resolve) => this.timers.setTimeout(resolve, REVOKE_RETRY_BASE_MS * 2 ** attempt))
       }
@@ -422,6 +427,9 @@ export class Auth implements AuthModule {
       try {
         return await this.refresh(refreshToken, {deferExpired: this.canExchangeFreshSubject(), generation})
       } catch (err) {
+        // No verdict on the refresh token (offline, or Core 5xx): keep it and
+        // do not open a second session by exchanging; the next call retries.
+        if (isTransientHttpError(err)) throw err
         if (this.canExchangeFreshSubject()) {
           this.logger.info("refresh failed; exchanging fresh subject token")
           try {
@@ -488,11 +496,15 @@ export class Auth implements AuthModule {
    * Refresh near expiry: trade the stored refresh token for a new access token
    * and a rotated refresh token, saving both.
    *
-   * On failure (the refresh token is dead or revoked) we clear stored state.
-   * The caller either falls back to one fresh subject-token exchange (for
-   * on-demand subject-token configs) or fires `onExpired` once and surfaces an
-   * `AuthExpiredError`. We do not retry refresh forever: a dead refresh token
-   * will not heal on its own, and retrying would loop.
+   * On a definite rejection (the refresh token is dead or revoked) we clear
+   * stored state. The caller either falls back to one fresh subject-token
+   * exchange (for on-demand subject-token configs) or fires `onExpired` once
+   * and surfaces an `AuthExpiredError`. We do not retry refresh forever: a dead
+   * refresh token will not heal on its own, and retrying would loop.
+   *
+   * A transient failure (no response, or a 5xx) is not a rejection of the
+   * token: the `HttpError` propagates and stored state is left untouched, so
+   * the same refresh token is presented again once Core is reachable.
    */
   private async refresh(refreshToken: string, opts?: {deferExpired?: boolean; generation?: number}): Promise<string> {
     const body = new URLSearchParams({
@@ -503,7 +515,8 @@ export class Auth implements AuthModule {
     let tokens: TokenResponse
     try {
       tokens = await this.postForm(REFRESH_PATH, body, "refresh")
-    } catch {
+    } catch (err) {
+      if (isTransientHttpError(err)) throw err
       // The refresh token is unusable: drop it so we do not keep presenting a
       // known-bad token.
       await this.store.clear()
@@ -601,20 +614,35 @@ export class Auth implements AuthModule {
    * endpoints require `application/x-www-form-urlencoded` and present the
    * subject/refresh token in the body, not as a Bearer header. We never log the
    * body: it carries a token.
+   *
+   * A transport failure or a 5xx is no verdict on the presented token and
+   * surfaces as an `HttpError` (status 0 or the 5xx), matching the shared HTTP
+   * helper; a 4xx is Core's definite rejection and surfaces as `AuthExpiredError`.
    */
   private async postForm(path: string, body: URLSearchParams, label: string): Promise<TokenResponse> {
     const url = this.joinUrl(path)
-    const res = await this.httpTransport(url, {
-      method: "POST",
-      headers: {"Content-Type": "application/x-www-form-urlencoded"},
-      body: body.toString(),
-    })
+    let res: Response
+    try {
+      res = await this.httpTransport(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: body.toString(),
+      })
+    } catch {
+      // Keep the network-error detail out of the message, as the shared HTTP
+      // helper does: a host may surface it to a user.
+      this.logger.warn("auth token request failed", {label, status: 0})
+      throw new HttpError(`Network request failed: ${label}`, 0, "NETWORK_ERROR")
+    }
 
     if (!res.ok) {
       // The body may carry an RFC `{ error, error_description }`, but we keep the
       // thrown detail to the status + label so no token field can leak into a
-      // message a host might surface. The caller maps this to re-auth.
+      // message a host might surface. A 4xx maps to re-auth in the caller.
       this.logger.warn("auth token request failed", {label, status: res.status})
+      if (res.status >= 500) {
+        throw new HttpError(`${label} request failed with status ${res.status}`, res.status)
+      }
       throw new AuthExpiredError(`${label} request failed with status ${res.status}`)
     }
 
