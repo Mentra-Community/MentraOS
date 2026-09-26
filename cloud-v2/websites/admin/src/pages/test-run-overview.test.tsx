@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import type { OverviewJob, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import { elapsed, TestRunOverviewView } from "./test-run-overview";
 
 const stamp = "2026-09-24T20:00:00.000Z";
@@ -181,4 +181,39 @@ test("one readiness row per worker/fixture shows its newest claim; every cancell
   for (const id of ["u1", "u2", "u3", "g1", "o1", "p1", "t1"]) expect(history).toContain("no-glasses-" + id);
   expect(history!.match(/Recorded result/g)).toHaveLength(7);
   expect(history).toContain("Cleanup did not pass; physical return is unverified.");
+});
+
+test("a recorded failure is shown apart from the current recovery status, as plain text, without inventing a cause", () => {
+  const blocked = (recordedFailure: NonNullable<OverviewJob["attention"]>["recordedFailure"]) => {
+    const value = data(); value.jobs[0]!.state = "blocked"; value.jobs[0]!.resultRunId = "original";
+    value.jobs[0]!.attention = { reason: "The recorded run left the fixture unavailable.", responsible: "Test runner / operator",
+      nextAction: "Complete recovery for this request and publish its verified return evidence.", recordedFailure };
+    return renderToStaticMarkup(<TestRunOverviewView data={value} now={Date.parse(stamp)} onResult={() => {}} />);
+  };
+  // Sample shaped like beta397: lifecycle IDs only; the local signed-out/Home cause was not exported.
+  let html = blocked({ resultRunId: "original", detailUnpublished: true,
+    failure: { phase: "setup", step: { id: "recording-start", label: "Start recording" }, message: "Phase failed." } });
+  const [status, recorded] = html.split('aria-label="Recorded failure"');
+  expect(status).toContain("The recorded run left the fixture unavailable."); expect(status).toContain("Responsible: Test runner / operator");
+  expect(recorded).toContain("Setup · Start recording (recording-start)"); expect(recorded).toContain("Phase failed.");
+  expect(recorded).toContain("The detailed cause was not published with this result.");
+  expect(recorded).toContain("not a diagnosis of the current recovery state");
+  expect(html).not.toMatch(/signed out|Waiting for user|Your action/i);
+  // Sample shaped like Day1: the authored failed chapter and expectation, not which comparison failed.
+  html = blocked({ resultRunId: "original", detailUnpublished: false,
+    failure: { phase: "test", step: { id: "customer-sequence", label: "Customer sequence" }, message: "Phase failed." },
+    chapter: { id: "OTA-03", status: "failed", instruction: "Confirm the January device ID, ASG27 build and IP match", expected: "Device ID, build 27 and IP match" } });
+  expect(html).toContain("Test · Customer sequence (customer-sequence)");
+  expect(html).toContain("Chapter OTA-03 failed: Confirm the January device ID, ASG27 build and IP match");
+  expect(html).toContain("Chapter expected: Device ID, build 27 and IP match"); expect(html).not.toContain("detailed cause was not published");
+  html = blocked({ resultRunId: "original", detailUnpublished: true,
+    failure: { phase: "evidence", step: { id: "recording-integrity", label: "recording-integrity" }, message: "Phase failed." } });
+  expect(html).toContain("Evidence · recording-integrity</p>");
+  html = blocked({ resultRunId: "recovery-2", failure: null, detailUnpublished: true });
+  expect(html).toContain("This result published no failure step or cause.");
+  html = blocked({ resultRunId: "original", detailUnpublished: false,
+    failure: { phase: "test", message: "<img src=x onerror=alert(1)>", expected: "<script>x</script>" } });
+  expect(html).toContain("Step not reported"); expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  expect(html).toContain("&lt;script&gt;x&lt;/script&gt;");
+  expect(html).not.toContain("<img"); expect(html).not.toContain("<script>");
 });

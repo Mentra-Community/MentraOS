@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRequest, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import { api } from "../lib/api";
 
 const triggerNames: Record<OverviewRequest["trigger"], string> = {
@@ -40,6 +40,24 @@ function Checkpoint({ claim, now }: { claim: OverviewClaim; now: number }) {
     <p className={"mt-1 text-[11px] " + (stale ? "text-[#94631b]" : "text-[#68746d]")}>Last checkpoint {elapsed(progress.receivedAt, now)} ago{stale ? " · No recent checkpoint; activity is unconfirmed" : ""}</p>
   </div>;
 }
+const failurePhaseNames: Record<NonNullable<OverviewRecordedFailure["failure"]>["phase"], string> = { preflight: "Preflight", setup: "Setup",
+  test: "Test", "final-assertions": "Final checks", teardown: "Cleanup", "return-verification": "Return verification", evidence: "Evidence", unknown: "Phase not reported" };
+/** What the result recorded, kept apart from the current recovery reason above it. */
+function RecordedFailure({ value }: { value: OverviewRecordedFailure }) {
+  const { failure, chapter } = value;
+  return <div className="mt-2 rounded border border-[#e0e4de] p-2" aria-label="Recorded failure">
+    <p className="font-medium">Recorded failure</p>
+    {failure ? <>
+      <p className="mt-1">{failurePhaseNames[failure.phase] ?? failure.phase} · {!failure.step ? "Step not reported" : failure.step.label === failure.step.id ? failure.step.id : failure.step.label + " (" + failure.step.id + ")"}</p>
+      <p className="mt-1">{failure.message}</p>
+      {failure.expected ? <p className="mt-1">Expected: {failure.expected}</p> : null}
+      {chapter ? <><p className="mt-1">Chapter {chapter.id} {chapter.status}: {chapter.instruction}</p>
+        {chapter.expected ? <p className="mt-1">Chapter expected: {chapter.expected}</p> : null}</> : null}
+      {value.detailUnpublished ? <p className="mt-1 text-[#805619]">The detailed cause was not published with this result.</p> : null}
+    </> : <p className="mt-1 text-[#805619]">This result published no failure step or cause.</p>}
+    <p className="mt-1 text-[#68746d]">As recorded by the result; not a diagnosis of the current recovery state.</p>
+  </div>;
+}
 function JobRow({ job, now, onResult, onCancel }: { job: OverviewJob; now: number; onResult: (id: string) => void; onCancel?: (id: string) => Promise<void> }) {
   const [confirming, setConfirming] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -63,6 +81,7 @@ function JobRow({ job, now, onResult, onCancel }: { job: OverviewJob; now: numbe
         <p className="mt-1">Responsible: {job.attention.responsible}</p>
         <p className="mt-1">Next: {job.attention.nextAction}</p>
         {job.resultRunId ? <button className="mt-1 text-[#087d50] underline" onClick={() => onResult(job.resultRunId!)}>Recorded result</button> : null}
+        {job.attention.recordedFailure ? <RecordedFailure value={job.attention.recordedFailure} /> : null}
         {job.attention.cancelledAt ? <p className="mt-2 text-[#68746d]">Follow-up cancelled {elapsed(job.attention.cancelledAt, now)} ago. Fixture readiness remains unverified.</p> : null}
         {job.attention.cancelRequestId && onCancel ? confirming ? <div className="mt-2 rounded border border-[#e0e4de] p-2">
           <p>Cancel further work on this inactive request? This preserves its result and does not stop a writer, release a device, or repair the fixture.</p>

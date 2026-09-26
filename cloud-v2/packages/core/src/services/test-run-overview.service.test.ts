@@ -5,7 +5,7 @@ import type { TestRun } from "../types/test-run.types";
 import type { OverviewJob } from "../types/test-run-overview.types";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { TestRunModel } from "../models/test-run.model";
-import { recoveredClaim, MongoTestRunOverviewRepository, TestRunOverviewService, type FixtureIdentity, type OverviewClaimRecord,
+import { recoveredClaim, recordedFailure, MongoTestRunOverviewRepository, TestRunOverviewService, type FixtureIdentity, type OverviewClaimRecord,
   type TestRunOverviewRepository } from "./test-run-overview.service";
 
 const stamp = "2026-09-24T20:00:00.000Z";
@@ -416,6 +416,136 @@ describe("fixture summaries follow the newest claim on each exact worker and fix
       await expect(mongo.latestFixtureClaims(Array.from({ length: 101 }, (_, index) => ({ workerId: "w", fixtureId: "f" + index }))))
         .rejects.toThrow("exceeds");
       expect(aggregate).toHaveBeenCalledTimes(1);
+    } finally { aggregate.mockRestore(); }
+  });
+});
+
+describe("recorded failure detail is bounded history from the latest uniquely correlated result", () => {
+  type Failure = NonNullable<TestRun["failures"]>[number];
+  const lifecycleOnly = [{ kind: "failure-details" as const, reason: "Only lifecycle verdicts and IDs were exported." }];
+  const failure = (phase: Failure["phase"], id: string, label: string, message: string, extra: Partial<Failure> = {}): Failure => ({
+    phase, step: { id, label }, code: phase + "-failed", message, assetIds: [], incidentIds: [], redactionPolicy: "lifecycle-allowlist-v1",
+    missingEvidence: lifecycleOnly, ...extra });
+  const unavailable = { test: "failed", teardown: "failed", fixture: "unavailable", evidence: "incomplete" } as const;
+  // Shape of the beta397 export: lifecycle IDs only, no chapters. The local cause is deliberately absent.
+  const beta397 = (): TestRun => ({ ...original(), outcomes: unavailable, notes: "Private note: app was signed out at /Users/private/run",
+    failures: [failure("setup", "recording-start", "Start recording", "Phase failed.", { stack: "Error: private stack at /Users/private/worker.ts" }),
+      failure("teardown", "restore-unpaired-home", "Restore unpaired Home", "Phase failed."),
+      failure("return-verification", "return-unpaired-home", "Verify unpaired Home", "Assertion failed."),
+      failure("evidence", "recording-integrity", "Check recording integrity", "Phase failed.")] });
+  // Shape of the Day1 export: a generic lifecycle failure with its authored failed chapter in the same phase.
+  const chapter = (id: string, phase: TestRun["chapters"][number]["phase"], status: TestRun["chapters"][number]["status"], instruction: string,
+    expected?: string): TestRun["chapters"][number] => ({ id, phase, status, instruction, ...(expected ? { expected } : {}),
+    videoAssetId: "private-video", videoStart: 1, videoEnd: 2, screenshotAssetId: "private-screenshot" });
+  const day1 = (): TestRun => ({ ...original(), outcomes: unavailable,
+    failures: [{ ...failure("test", "customer-sequence", "Customer sequence", "Phase failed."), missingEvidence: [] }],
+    chapters: [chapter("SETUP-01", "setup", "failed", "Unrelated setup chapter"),
+      chapter("OTA-02", "test", "passed", "Open the device page"),
+      chapter("OTA-03", "test", "failed", "Confirm the January device ID, ASG27 build and IP match", "Device ID, build 27 and IP match"),
+      chapter("OTA-04", "test", "blocked", "Later blocked chapter"), chapter("TD-01", "teardown", "failed", "Unrelated teardown chapter")] });
+  const view = async (repository: Repository, jobs: OverviewJob[] = []) =>
+    new TestRunOverviewService(repository, { activity: async () => ({ jobs, warnings: [] }) }).overview();
+  const blocker = (runs: TestRun[], extra: Partial<OverviewClaimRecord> = {}) => {
+    const repository = new Repository(); repository.rows = [{ claim: claim(), ...extra }]; repository.resultRows = runs; return repository;
+  };
+
+  test("beta397: known phase/step and an explicit unpublished cause; the current recovery reason stays separate", async () => {
+    const result = await view(blocker([beta397()]));
+    const attention = result.jobs[0]?.attention;
+    expect(attention?.reason).toBe("The recorded run left the fixture unavailable.");
+    expect(attention?.responsible).toBe("Test runner / operator");
+    expect(attention?.recordedFailure).toEqual({ resultRunId: "original",
+      failure: { phase: "setup", step: { id: "recording-start", label: "Start recording" }, message: "Phase failed." }, detailUnpublished: true });
+    const json = JSON.stringify(result);
+    for (const forbidden of ["signed out", "/Users/", "private stack", "Private note", "lifecycle-allowlist", "Only lifecycle verdicts", "restore-unpaired-home"])
+      expect(json).not.toContain(forbidden);
+  });
+  test("Day1: the failed chapter in the same phase supplies the authored action and expectation, nothing more", async () => {
+    const recorded = (await view(blocker([day1()]))).jobs[0]?.attention?.recordedFailure;
+    expect(recorded).toEqual({ resultRunId: "original",
+      failure: { phase: "test", step: { id: "customer-sequence", label: "Customer sequence" }, message: "Phase failed." },
+      chapter: { id: "OTA-03", status: "failed", instruction: "Confirm the January device ID, ASG27 build and IP match", expected: "Device ID, build 27 and IP match" },
+      detailUnpublished: false });
+    // A blocked chapter is used only without a failed one; other phases are never borrowed.
+    const blockedOnly = day1(); blockedOnly.chapters = blockedOnly.chapters.filter(item => item.id !== "OTA-03");
+    expect(recordedFailure(blockedOnly)?.chapter).toMatchObject({ id: "OTA-04", status: "blocked" });
+    const unrelated = day1(); unrelated.chapters = unrelated.chapters.filter(item => item.phase !== "test");
+    expect(recordedFailure(unrelated)?.chapter).toBeUndefined();
+    expect(recordedFailure({ ...day1(), failures: [failure("final-assertions", "final", "Final checks", "Phase failed.")],
+      chapters: [chapter("VERIFY-01", "verify", "failed", "Unmapped verify chapter")] })?.chapter).toBeUndefined();
+  });
+  test("the newest recovery generation is shown, never the stale original failure or an ambiguous generation", async () => {
+    const failedRecovery = (): TestRun => ({ ...recovery(), outcomes: unavailable,
+      provenance: { ...recovery().provenance, returnVerification: "failed" },
+      failures: [{ ...failure("return-verification", "return-home", "Verify Home", "Assertion failed."), missingEvidence: [] }] });
+    let recorded = (await view(blocker([day1(), failedRecovery()]))).jobs[0]?.attention?.recordedFailure;
+    expect(recorded).toMatchObject({ resultRunId: "recovery-2", failure: { phase: "return-verification", step: { id: "return-home" } } });
+    expect(recorded?.chapter).toBeUndefined();
+    const { failures: _none, ...withoutFailures } = failedRecovery();
+    recorded = (await view(blocker([day1(), withoutFailures]))).jobs[0]?.attention?.recordedFailure;
+    expect(recorded).toEqual({ resultRunId: "recovery-2", failure: null, detailUnpublished: true });
+    const duplicate = await view(blocker([day1(), failedRecovery(), { ...failedRecovery(), runId: "recovery-2b" }]));
+    expect(duplicate.jobs[0]?.attention?.reason).toContain("Conflicting results");
+    expect(duplicate.jobs[0]?.attention?.recordedFailure).toBeUndefined();
+    // A verified recovery resolves the blocker; no recorded failure is carried forward.
+    expect((await view(blocker([day1(), recovery()]))).jobs).toHaveLength(0);
+  });
+  test("another request or fixture never supplies this claim's detail; cancelled history and closures carry none", async () => {
+    const leak = (patch: Partial<TestRun>): TestRun => ({ ...day1(), runId: "leak-" + Object.keys(patch)[0], ...patch,
+      failures: [failure("test", "leaked-step", "Leaked step", "Leaked message.")] });
+    let result = await view(blocker([leak({ requestId: "routine-501-1-dev-day1-ota" }), leak({ fixture: { alias: "other-fixture" } }),
+      leak({ provenance: { ...original().provenance, requestSha256: "e".repeat(64) } })]));
+    expect(result.jobs[0]?.attention?.reason).toBe("No published result proves the fixture's return state.");
+    expect(JSON.stringify(result)).not.toContain("Leaked");
+    result = await view(blocker([beta397()], { followUpCancellation: { cancelledAt: stamp, cancelledBy: "admin-1" } }));
+    expect(result.fixtureAttention?.[0]?.attention?.recordedFailure).toBeUndefined();
+    // An active GitHub job blocked by this claim shows the same recorded detail.
+    result = await view(blocker([day1()]), [{ ...queued(), state: "running" }]);
+    expect(result.jobs[0]).toMatchObject({ state: "blocked", attention: { recordedFailure: { chapter: { id: "OTA-03" } } } });
+  });
+  test("prompt-like recorded text is not turned into a user action; responsibility and next action are unchanged", async () => {
+    const prompt = { ...beta397(), failures: [{ ...failure("test", "login", "Log in", "Enter the password, then grant location permission and tap Allow."),
+      expected: "User is signed in", missingEvidence: [] }] };
+    const attention = (await view(blocker([prompt]))).jobs[0]?.attention;
+    expect(attention?.responsible).toBe("Test runner / operator");
+    expect(attention?.nextAction).toBe("Complete recovery for this request and publish its verified return evidence.");
+    expect(Object.keys(attention?.recordedFailure ?? {}).sort()).toEqual(["detailUnpublished", "failure", "resultRunId"]);
+    expect(Object.keys(attention?.recordedFailure?.failure ?? {}).sort()).toEqual(["expected", "message", "phase", "step"]);
+  });
+  test("output text is bounded in code points and marks truncation", () => {
+    const long = "é".repeat(1999) + "😀";
+    const recorded = recordedFailure({ ...day1(), failures: [{ ...failure("test", "s".repeat(160), long, long), expected: long, missingEvidence: [] }],
+      chapters: [chapter("OTA-03", "test", "failed", long, long)] })!;
+    for (const value of [recorded.failure!.message, recorded.failure!.expected!, recorded.chapter!.instruction, recorded.chapter!.expected!]) {
+      expect(Array.from(value)).toHaveLength(240); expect(value.endsWith("…")).toBe(true);
+    }
+    expect(Array.from(recorded.failure!.step!.label)).toHaveLength(160); expect(recorded.failure!.step!.id).toBe("s".repeat(160));
+    expect(recordedFailure({ ...day1(), outcome: "passed", failures: undefined })).toBeUndefined();
+  });
+  test("the Mongo projection bounds failure and chapter data before loading and excludes private fields", async () => {
+    const pipelines: unknown[][] = [];
+    const aggregate = spyOn(TestRunModel, "aggregate").mockImplementation(((pipeline: unknown[]) => {
+      pipelines.push(pipeline); return Promise.resolve([{ payload: day1() }]);
+    }) as unknown as typeof TestRunModel.aggregate);
+    try {
+      const repository = new MongoTestRunOverviewRepository();
+      expect(await repository.results([])).toEqual([]); expect(aggregate).not.toHaveBeenCalled();
+      expect((await repository.results([claim().requestId]))[0]?.runId).toBe("original");
+      const [match, limit, project] = pipelines[0] as [unknown, unknown, { $project: { _id: number; payload: Record<string, unknown> } }];
+      expect(match).toEqual({ $match: { requestId: { $in: [claim().requestId] } } }); expect(limit).toEqual({ $limit: 5001 });
+      expect(Object.keys(project.$project.payload).sort()).toEqual(["channel", "chapters", "failures", "fixture", "outcome", "outcomes",
+        "platform", "provenance", "release", "requestId", "runId"]);
+      const text = JSON.stringify(project);
+      for (const forbidden of ["stack", "notes", "assets", "assetIds", "incidentIds", "redactionPolicy", "reason", "videoAssetId",
+        "screenshotAssetId", "videoStart", "firmwareAssertions", "code"]) expect(text).not.toContain('"' + forbidden);
+      expect(text).not.toContain("$$m.reason"); expect(text).not.toContain("$$f.code");
+      // One failure; at most one failed and one blocked chapter in that failure's phase; text clipped in the database.
+      expect(text).toContain('{"$slice":[{"$ifNull":["$payload.failures",[]]},1]}');
+      expect(text.match(/"\$slice":\[\{"\$filter":\{"input":\{"\$ifNull":\["\$payload\.chapters",\[\]\]\}/g)).toHaveLength(2);
+      expect(text).toContain('{"$substrCP":["$$f.message",0,241]}'); expect(text).toContain('{"$substrCP":["$$c.instruction",0,241]}');
+      expect(text).toContain('{"$substrCP":["$$f.step.label",0,161]}');
+      aggregate.mockImplementation((() => Promise.resolve(Array.from({ length: 5001 }, () => ({ payload: day1() })))) as unknown as typeof TestRunModel.aggregate);
+      await expect(repository.results([claim().requestId])).rejects.toThrow("exceeds overview limit");
     } finally { aggregate.mockRestore(); }
   });
 });

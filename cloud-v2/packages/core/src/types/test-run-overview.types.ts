@@ -23,6 +23,24 @@ export interface OverviewClaim {
 }
 /** Cancels only outstanding follow-up. The original claim and physical ownership do not change. */
 export interface TestRunFollowUpCancellation { cancelledAt: string; cancelledBy: string }
+/**
+ * What the latest uniquely correlated result recorded, from its reviewed metadata only.
+ * History, not a diagnosis of the current recovery state. Text is bounded and plain.
+ */
+export interface OverviewRecordedFailure {
+  resultRunId: string;
+  /** The first failure the result lists; null when it published none. */
+  failure: {
+    phase: "preflight" | "setup" | "test" | "final-assertions" | "teardown" | "return-verification" | "evidence" | "unknown";
+    step?: { id: string; label: string };
+    message: string;
+    expected?: string;
+  } | null;
+  /** The first failed (else blocked) authored chapter in that same phase, when one was recorded. */
+  chapter?: { id: string; status: "failed" | "blocked"; instruction: string; expected?: string };
+  /** The result declares that detailed failure information was not exported. */
+  detailUnpublished: boolean;
+}
 export interface OverviewAttention {
   reason: string;
   responsible: "Test runner / operator" | "GitHub / runner operator";
@@ -31,6 +49,8 @@ export interface OverviewAttention {
   cancelledAt?: string;
   /** Original-owner closure time. The request is resolved; the fixture is not ready. */
   closedAt?: string;
+  /** Recorded failure of the result behind this blocker, separate from `reason`. */
+  recordedFailure?: OverviewRecordedFailure;
 }
 export interface OverviewJob {
   id: string;

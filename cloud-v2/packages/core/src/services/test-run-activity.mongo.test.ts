@@ -52,6 +52,24 @@ describe.skipIf(!uri)("Mongo live activity reconciliation", () => {
     expect((await TestRunClaimModel.findOne({ requestId: late }).lean())?.claim).toEqual(claim(late));
     expect((await TestRunModel.findOne({ runId: late }).lean())?.payload.outcomes.test).toBe("failed");
   });
+  test("stored results project only the bounded recorded failure and same-phase chapter candidates", async () => {
+    const id = "routine-104-1-dev-day1-ota", long = "x".repeat(2000);
+    const chapter = (index: number, phase: "setup" | "test", status: "passed" | "failed" | "blocked") => ({ id: "C-" + index, phase, status,
+      instruction: index === 1500 ? long : "Chapter " + index, expected: long });
+    const stored = { ...run(id, false), notes: "Private note", chapters: [chapter(0, "setup", "failed"),
+      ...Array.from({ length: 1998 }, (_, index) => chapter(index + 1, "test", index + 1 === 1500 ? "failed" : index + 1 > 1500 ? "blocked" : "passed")),
+      chapter(1999, "test", "blocked")],
+      failures: [{ phase: "test" as const, step: { id: "customer-sequence", label: long }, code: "phase-failed", message: long, expected: long,
+        stack: "private stack", assetIds: [], incidentIds: [], redactionPolicy: "lifecycle-allowlist-v1",
+        missingEvidence: [{ kind: "other" as const, reason: "private reason" }, { kind: "failure-details" as const, reason: "private reason" }] },
+        { phase: "teardown" as const, step: null, code: "second", message: "second", assetIds: [], incidentIds: [], redactionPolicy: "p", missingEvidence: [] }] };
+    await save(stored);
+    const [projected] = await new MongoTestRunOverviewRepository().results([id]);
+    expect(projected?.failures).toEqual([{ phase: "test", step: { id: "customer-sequence", label: "x".repeat(161) }, message: "x".repeat(241),
+      expected: "x".repeat(241), missingEvidence: [{ kind: "failure-details" }] }] as unknown as TestRun["failures"]);
+    expect(projected?.chapters.map(item => [item.id, item.status, item.instruction.length])).toEqual([["C-1500", "failed", 241], ["C-1501", "blocked", "Chapter 1501".length]]);
+    expect(JSON.stringify(projected)).not.toMatch(/private|notes|assets|stack|videoAssetId/);
+  });
   test("the newest stored claim per exact worker and fixture includes ordinary terminal passes", async () => {
     const at = (minute: number) => new Date(Date.parse(stamp) + minute * 60_000).toISOString();
     const stored = (id: string, workerId: string, fixtureId: string, minute: number) => ({ ...claim(id, true), workerId, fixtureId, claimedAt: at(minute) });
