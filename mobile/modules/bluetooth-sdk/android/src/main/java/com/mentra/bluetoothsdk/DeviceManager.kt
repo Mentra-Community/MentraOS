@@ -1574,10 +1574,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             handleMach1Ready() // Z100 uses same initialization as Mach1
         }
 
-        // Re-apply microphone settings after reconnection
-        // Cache was cleared on disconnect, so this will definitely send commands
+        // Disconnect clears micEnabled but preserves the consumers' audio requests.
+        // Recompute that derived flag before selecting a microphone; replaying an
+        // unchanged should_send_* setting is deduplicated by DeviceStore.apply().
         Bridge.log("MAN: Re-applying microphone settings after reconnection")
-        updateMicState()
+        setMicState()
 
         // send to the server our battery status:
         Bridge.sendBatteryStatus(sgc?.batteryLevel ?: -1, false)

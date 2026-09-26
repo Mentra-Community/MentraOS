@@ -25,6 +25,55 @@ class DeviceManagerSceneHandoffTest {
     @Before fun setup() { Bridge.initialize(ApplicationProvider.getApplicationContext()) }
 
     @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun reconnectRestoresUnchangedAudioRequests() {
+        for (request in listOf("should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active")) {
+            withReadyRecordingDevice { manager, original, _ ->
+                for (key in listOf("should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active")) {
+                    DeviceStore.set("bluetooth", key, key == request)
+                }
+                DeviceStore.set("bluetooth", "micRanking", listOf("glasses"))
+                DeviceStore.set("glasses", "micEnabled", false)
+                original.hasMic = true
+                manager.setMicState()
+                assertEquals(true, DeviceStore.get("bluetooth", "micEnabled"))
+
+                manager.disconnect()
+                assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
+                assertEquals(true, DeviceStore.get("bluetooth", request))
+                val replacement = NimoRecordingSGC().apply { hasMic = true }
+                manager.sgc = replacement
+                DeviceStore.set("glasses", "micEnabled", false)
+
+                // The same request is deduplicated, exactly as on the phone.
+                DeviceStore.apply("bluetooth", request, true)
+                assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
+                DeviceStore.apply("glasses", "fullyBooted", true)
+
+                assertEquals("Reconnect must restore $request", true, DeviceStore.get("bluetooth", "micEnabled"))
+                assertEquals(listOf(true), replacement.micChanges)
+                assertEquals("glasses", manager.activeMicSource())
+            }
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun reconnectWithoutAudioRequestsLeavesMicrophoneOff() {
+        withReadyRecordingDevice { manager, _, _ ->
+            for (key in listOf("should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active")) {
+                DeviceStore.set("bluetooth", key, false)
+            }
+            manager.disconnect()
+            val replacement = NimoRecordingSGC().apply { hasMic = true }
+            manager.sgc = replacement
+            DeviceStore.set("glasses", "micEnabled", false)
+            DeviceStore.apply("glasses", "fullyBooted", true)
+            assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
+            assertEquals("", manager.activeMicSource())
+            assertTrue(replacement.micChanges.isEmpty())
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
     fun nimoBrightnessChangesDoNotReplaceTheSelectedScene() {
         for (headUp in listOf(false, true)) for ((key, value) in brightnessChanges()) {
             withSharedRecordingDevice { manager, device ->
@@ -499,6 +548,7 @@ class DeviceManagerSceneHandoffTest {
     }
 
     private open class RecordingSGC(override val sceneHandoffRequiresClear: Boolean) : SGCManager() {
+        val micChanges = mutableListOf<Boolean>()
         val calls = CopyOnWriteArrayList<String>()
         val brightnessCalls = mutableListOf<String>()
         val textSent = CountDownLatch(1)
@@ -511,7 +561,10 @@ class DeviceManagerSceneHandoffTest {
         override fun sendTextWall(text: String) { lastTextNanos = System.nanoTime(); calls += "text:$text"; textSent.countDown() }
         override fun disconnect() { calls += "disconnect" }
         override fun cleanup() { calls += "cleanup" }
-        override fun setMicEnabled(enabled: Boolean) {}
+        override fun setMicEnabled(enabled: Boolean) {
+            micChanges += enabled
+            DeviceStore.set("glasses", "micEnabled", enabled)
+        }
         override fun sortMicRanking(list: MutableList<String>) = list
         override fun requestPhoto(request: PhotoRequest) {}
         override fun startStream(message: MutableMap<String, Any>) {}
