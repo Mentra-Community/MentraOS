@@ -70,17 +70,23 @@ export function assertNotification(value) {
 
 const generation = row => [row.requestRunId, row.requestAttempt, row.privateRunId, row.privateAttempt]
 const compare = (a, b) => { for (let i = 0; i < a.length; i++) { if (a[i] !== b[i]) return a[i] - b[i] } return 0 }
+// A request cancelled before any runner accepted it has no test result. It may
+// only fill a pending row; any worker-attested result outranks it.
+const CANCELLED = "cancelled"
 
 /** All unaffected blocks are retained verbatim; a late older result cannot regress a row. */
 export function applyRoutineResult(notification, row) {
   assertNotification(notification)
   requireThat(Object.hasOwn(routineNames, row?.routineId) && generation(row).every(positive) &&
-    ["passed", "failed", "blocked", "aborted", "upload-incomplete"].includes(row.status) &&
+    ["passed", "failed", "blocked", "aborted", "upload-incomplete", CANCELLED].includes(row.status) &&
+    (row.status !== CANCELLED || row.resultRunId === undefined) &&
     (!row.resultRunId || /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(row.resultRunId)), "Invalid routine result row")
   const previous = notification.rows[row.routineId]
-  if (previous && compare(generation(previous), generation(row)) >= 0) return notification
+  if (previous && (row.status === CANCELLED ? previous.status !== CANCELLED || compare(generation(previous), generation(row)) >= 0
+    : previous.status !== CANCELLED && compare(generation(previous), generation(row)) >= 0)) return notification
   const rows = {...notification.rows, [row.routineId]: row}
-  const labels = {passed: "Passed", failed: "Failed", blocked: "Blocked", aborted: "Aborted", "upload-incomplete": "Result upload incomplete"}
+  const labels = {passed: "Passed", failed: "Failed", blocked: "Blocked", aborted: "Aborted", "upload-incomplete": "Result upload incomplete",
+    [CANCELLED]: "Cancelled before execution; no test result"}
   const lines = Object.keys(routineNames).filter(id => rows[id]).map(id => {
     const result = rows[id]
     const resultLink = result.resultRunId

@@ -60,7 +60,30 @@ modified automatically.
 complete evidence, acknowledged settlement and successful result publication.
 Uploading a result is different from passing it. Runs stopped before a terminal
 receipt exists do not claim a Slack result; their workflow remains the diagnostic
-source. PR requests use this same authenticated callback to post one comment
+source.
+
+One exception has no receipt by construction: a request cancelled while queued.
+The private callback forwards a cancelled `device-routine.yml` attempt only when
+its single job has no runner and no steps. The public resolver then re-proves it:
+
+- the exact private `main` attempt was dispatched and completed as cancelled,
+  with no terminal artifact and the job labels of the requested routine/platform;
+- the run name only locates the request, which must be the trusted successful
+  dev request with its authenticated request artifact and pinned build/archive;
+- the trusted dev `dispatch-device-routine.yml` callback for that exact request
+  completed one private send, and this is the only private run of that name
+  created during the send.
+
+The post then shows **Cancelled before execution; no test result** for that
+routine. It is not a test result, result link, recording or qualification. It
+only fills a pending row or replaces an older cancellation; any worker-attested
+result for the routine outranks it. Build status and other routine rows are
+unchanged. A started, interrupted or crashed attempt without a receipt is still
+refused and keeps its recovery/evidence path. PR comments are unchanged.
+
+To backfill one proven cancellation after this is deployed, dispatch this
+workflow on `dev` with that worker run ID and attempt, exactly as the callback
+does. PR requests use this same authenticated callback to post one comment
 per worker run/attempt/routine on the originating PR; they do not need Slack
 configuration. See [PR result history](../../.github/DEVICE-ROUTINES.md#results-and-slack).
 

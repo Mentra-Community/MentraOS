@@ -236,3 +236,207 @@ test("Android results authenticate the sibling Mac archive attached to the origi
   assert.match(JSON.stringify(applied.payload), /Android no-glasses UI/)
   await assert.rejects(resolveRoutineNotifications({...f, published: async () => ({archive: {sha256: "f".repeat(64)}})}), /another tested build/)
 })
+
+// Cancelled before any runner: projected from GitHub metadata, never as a test result.
+const dev404 = JSON.parse(readFileSync(new URL("fixtures/cancelled-unexecuted-routine.json", import.meta.url)))
+const dev404Request = (channel = "dev") => {
+  const value = structuredClone(request), {publicRequestRun: source, sourceBuild} = dev404
+  Object.assign(value.trigger, {runId: source.id, runAttempt: source.run_attempt, sha: source.head_sha, workflowSha: source.head_sha})
+  value.routine.harnessRevision = source.head_sha
+  value.requestId = `routine-${source.id}-${source.run_attempt}-${channel}-no-glasses`
+  value.source = {...value.source, channel, buildRunId: sourceBuild.runId, publicationAttempt: 1}
+  value.selection.build = {...value.selection.build, sourceCommit: sourceBuild.headSha, releaseIdentity: sourceBuild.release}
+  value.selection.app.backend = channel
+  return value
+}
+const dev404Post = (channel = "dev") => ({schemaVersion: 1, kind: "mentra-release-slack-message",
+  build: {repository: "Mentra-Community/MentraOS", channel, runId: dev404.sourceBuild.runId, headSha: dev404.sourceBuild.headSha,
+    release: dev404.sourceBuild.release, archiveSha256: request.selection.archive.sha256},
+  producer: {runId: dev404.sourceBuild.runId, runAttempt: 1, headSha: dev404.sourceBuild.headSha},
+  message: {channel: "CBUILDS", ts: "1790397224.657789", botId: "BBUILDS"},
+  payload: {blocks: [{type: "section", text: {type: "mrkdwn", text: "Downloads / OTA / build passed"}}, {type: "section", block_id: ROUTINE_BLOCK,
+    text: {type: "mrkdwn", text: "No-glasses UI — Automatic request follows successful workflow completion; execution and results are pending."}}]}, rows: {}})
+
+/** Minimal GitHub REST double: the resolver reads the same endpoint shapes GitHub returns. */
+function actionsApi(repository, runs, jobs, artifacts = {}) {
+  const inRange = (item, created) => {
+    if (!created) return true
+    const [from, to] = created.split("..").map(Date.parse)
+    return Date.parse(item.created_at) >= from && Date.parse(item.created_at) <= to
+  }
+  const actions = {
+    getWorkflowRunAttempt: async ({run_id, attempt_number}) => {
+      const found = runs.find(item => item.id === run_id && item.run_attempt === attempt_number)
+      if (!found) throw Object.assign(new Error("Not Found"), {status: 404})
+      return {data: structuredClone(found)}
+    },
+    listWorkflowRuns: async ({workflow_id, event, branch, created, page}) => {
+      const all = runs.filter(item => item.path === workflow_id && item.event === event && item.head_branch === branch && inRange(item, created))
+      return {data: {total_count: all.length, workflow_runs: structuredClone(all.slice((page - 1) * 100, page * 100))}}
+    },
+    listJobsForWorkflowRun: async ({run_id}) => ({data: {jobs: structuredClone(jobs.filter(item => item.run_id === run_id))}}),
+    listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) =>
+      ({data: {jobs: structuredClone(jobs.filter(item => item.run_id === run_id && item.run_attempt === attempt_number))}}),
+    listWorkflowRunArtifacts: async ({run_id}) => ({data: {artifacts: structuredClone(artifacts[run_id] ?? [])}}),
+  }
+  return {repository, rest: {actions}, paginate: async (method, params) => {
+    const {data} = await method(params)
+    return data.artifacts ?? data.jobs ?? data.workflow_runs
+  }}
+}
+
+function cancelled({channel = "dev", corrupt = () => {}, workerAttempt = 1} = {}) {
+  const values = {requestRun: structuredClone(dev404.publicRequestRun), worker: structuredClone(dev404.privateRun),
+    workerJobs: structuredClone(dev404.privateJobs), dispatcher: structuredClone(dev404.dispatcher),
+    request: dev404Request(channel), post: dev404Post(channel), privateRuns: [], privateArtifacts: [], publicRuns: []}
+  corrupt(values)
+  const build = run(dev404.sourceBuild.runId, {path: ".github/workflows/coordinated-release.yml", head_sha: dev404.sourceBuild.headSha,
+    head_branch: channel, event: "push", created_at: "2026-09-26T03:10:00Z"})
+  const github = actionsApi("MentraOS", [values.requestRun, values.dispatcher.run, build, ...values.publicRuns], values.dispatcher.jobs,
+    {[build.id]: [{name: `release-slack-message-${build.id}-1`}]})
+  const privateGithub = actionsApi("Mentra-Automated-Testing", [values.worker, ...values.privateRuns], values.workerJobs,
+    {[values.worker.id]: values.privateArtifacts})
+  const verified = []
+  return {github, privateGithub, context, workerRunId: dev404.privateRun.id, workerAttempt,
+    verify: async ({request: verifiedRequest}) => { verified.push(verifiedRequest.requestId) }, verified,
+    read: async (_github, _repo, source, name) => name === `mentra-routine-request-${source.id}-${source.run_attempt}`
+      ? {"request.json": structuredClone(values.request)} : name === `release-slack-message-${dev404.sourceBuild.runId}-1`
+      ? {"slack-release-message.json": structuredClone(values.post)} : readActionsJson(_github, _repo, source, name, ["routine-terminal-no-glasses.json"])}
+}
+
+test("actual dev404 request cancelled before any runner updates its existing post without a result", async () => {
+  const options = cancelled()
+  const [plan] = await resolveRoutineNotifications(options)
+  assert.deepEqual(options.verified, ["routine-36218243731-1-dev-no-glasses"])
+  assert.deepEqual(plan.row, {routineId: "no-glasses", requestRunId: 36218243731, requestAttempt: 1,
+    privateRunId: 36218299907, privateAttempt: 1, status: "cancelled"})
+  assert.equal(plan.notification.message.ts, "1790397224.657789")
+  assert.equal(plan.notification.build.release, "3.3.0-dev.404")
+  const updated = applyRoutineResult(plan.notification, plan.row)
+  const text = updated.payload.blocks[1].text.text
+  assert.match(text, /No-glasses UI — \*Cancelled before execution; no test result\* · <https:\/\/github\.com\/Mentra-Community\/MentraOS\/actions\/runs\/36218243731\/attempts\/1\|Request>/)
+  assert.doesNotMatch(text, /Passed|Failed|Recording|testRun=|pending/)
+  assert.deepEqual(updated.payload.blocks[0], plan.notification.payload.blocks[0])
+  assert.equal(updated.rows["no-glasses"].resultRunId, undefined)
+  // PR comments render worker receipts only; there is none to invent here.
+  const {resolvePrRoutineResults} = await import("./pr-routine-result.mjs")
+  assert.deepEqual(await resolvePrRoutineResults(cancelled()), [])
+})
+
+test("staging cancellation updates its own post from the original request without dispatching a test", async () => {
+  const options = cancelled({channel: "staging"})
+  const [plan] = await resolveRoutineNotifications(options)
+  assert.equal(plan.notification.build.channel, "staging")
+  assert.equal(plan.row.status, "cancelled")
+  assert.deepEqual(options.verified, ["routine-36218243731-1-staging-no-glasses"])
+  for (const api of [options.github, options.privateGithub]) assert.equal(api.rest.actions.createWorkflowDispatch, undefined)
+})
+
+test("cancellation is refused unless GitHub proves the exact request never reached a runner", async () => {
+  const workerStep = {name: "Check out the immutable private workflow revision", status: "completed", conclusion: "success", number: 1,
+    started_at: "2026-09-26T05:50:00Z", completed_at: "2026-09-26T05:50:02Z"}
+  const identity = /Workflow identity differs/, notProven = /only a cancelled attempt that never reached a runner/
+  const executed = /may have reached a runner/, binding = /differs from its requested routine/
+  const producer = /Request differs from its trusted producer/, dispatcher = /Trusted dispatcher/, post = /another tested build/
+  // Frozen invalid examples: each must be refused for its own reason.
+  const invalid = {
+    "private repository": [v => { v.worker.repository.full_name = "Mentra-Community/MentraOS" }, identity],
+    "nightly workflow path": [v => { v.worker.path = ".github/workflows/nightly-device-routines.yml" }, notProven],
+    "feature branch": [v => { v.worker.head_branch = "codex/forged" }, identity],
+    "push event": [v => { v.worker.event = "push" }, identity],
+    "jobs from another attempt": [v => { v.workerJobs[0].run_attempt = 2 }, /jobs are ambiguous/],
+    "failed without receipt": [v => { v.worker.conclusion = "failure" }, /Expected one retained notification artifact/],
+    "expired terminal receipt": [v => { v.privateArtifacts.push({id: 9, name: "routine-terminal-36218299907-1", expired: true}) }, /expired/],
+    "malformed title": [v => { v.worker.display_title = "Device routine request 36218243731" }, notProven],
+    "title for another request": [v => { v.worker.display_title = "Device routine request 36218243730 / attempt 1" }, /Not Found/],
+    "title for another request attempt": [v => { v.worker.display_title = "Device routine request 36218243731 / attempt 2" }, /Not Found/],
+    "worker step started": [v => { v.workerJobs[0].steps.push(workerStep) }, executed],
+    "runner assigned": [v => { v.workerJobs[0].runner_id = 42; v.workerJobs[0].runner_name = "mentra-mac-mini" }, executed],
+    "runner name only": [v => { v.workerJobs[0].runner_name = "mentra-mac-mini" }, executed],
+    "runner group assigned": [v => { v.workerJobs[0].runner_group_id = 1 }, executed],
+    "job not cancelled": [v => { v.workerJobs[0].conclusion = "failure" }, executed],
+    "job still queued": [v => { v.workerJobs[0].status = "queued"; v.workerJobs[0].conclusion = null }, executed],
+    "ambiguous jobs": [v => { v.workerJobs.push({...v.workerJobs[0], id: 108338589125}) }, /jobs are ambiguous/],
+    "other routine labels": [v => { v.workerJobs[0].labels[2] = "mentra-routine-day1-ota" }, binding],
+    "android labels for Mac request": [v => { v.workerJobs[0].labels[1] = "android" }, binding],
+    "job for another revision": [v => { v.workerJobs[0].head_sha = "f".repeat(40) }, binding],
+    "request routine differs": [v => { v.request.routine.id = "day1-ota" }, binding],
+    "request platform differs": [v => { v.request.selection.platform = "android" }, /not a device worker routine/],
+    "request source head differs": [v => { v.request.trigger.sha = "f".repeat(40) }, producer],
+    "request not ready": [v => { v.request.status = "no-artifact" }, producer],
+    "request run failed": [v => { v.requestRun.conclusion = "failure" }, /did not succeed/],
+    "request from feature branch": [v => { v.requestRun.head_branch = "codex/forged" }, identity],
+    "worker predates request": [v => { v.worker.created_at = "2026-09-26T04:30:00Z" }, /predates/],
+    "dispatcher absent": [v => { v.dispatcher.run.display_title = "Device request callback 36218243730 / attempt 1" }, dispatcher],
+    "dispatcher from another workflow": [v => { v.dispatcher.run.path = ".github/workflows/request-e2e-routine.yml" }, dispatcher],
+    "duplicate dispatcher": [v => { v.publicRuns.push({...v.dispatcher.run, id: 36218250002}) }, dispatcher],
+    "dispatcher did not send": [v => { v.dispatcher.jobs[1].steps[3].conclusion = "skipped" }, dispatcher],
+    "dispatcher send failed": [v => { v.dispatcher.jobs[1].steps[3].conclusion = "failure" }, dispatcher],
+    "dispatcher sent twice": [v => { v.dispatcher.jobs.push({...v.dispatcher.jobs[1], id: 108338500003, run_attempt: 2,
+      steps: v.dispatcher.jobs[1].steps.map(step => ({...step, started_at: "2026-09-26T04:40:00Z", completed_at: "2026-09-26T04:40:05Z"}))}) }, dispatcher],
+    "worker created outside the send": [v => { v.dispatcher.jobs[1].steps[3].completed_at = "2026-09-26T04:35:36Z" }, dispatcher],
+    "second private run for the request": [v => { v.privateRuns.push({...v.worker, id: 36218299908, conclusion: "success"}) }, /Private dispatch for this request is ambiguous/],
+    "post for another archive": [v => { v.post.build.archiveSha256 = "f".repeat(64) }, post],
+    "post for another source": [v => { v.post.build.headSha = "f".repeat(40); v.post.producer.headSha = "f".repeat(40) }, post],
+    "post for another release": [v => { v.post.build.release = "3.3.0-dev.403" }, post],
+  }
+  for (const [name, [corrupt, reason]] of Object.entries(invalid))
+    await assert.rejects(resolveRoutineNotifications(cancelled({corrupt})), reason, name)
+  await assert.rejects(resolveRoutineNotifications(cancelled({workerAttempt: 2})), /Not Found/)
+})
+
+test("a retried dispatcher that cloned its completed send is still one send", async () => {
+  const options = cancelled({corrupt: v => { v.dispatcher.jobs.push({...structuredClone(v.dispatcher.jobs[1]), id: 108338500003, run_attempt: 2}) }})
+  assert.equal((await resolveRoutineNotifications(options))[0].row.status, "cancelled")
+})
+
+test("cancelled rows only fill pending rows; worker results always outrank them", () => {
+  const post = dev404Post(), gen = {requestRunId: 36218243731, requestAttempt: 1, privateRunId: 36218299907, privateAttempt: 1}
+  const cancellation = {routineId: "no-glasses", ...gen, status: "cancelled"}
+  const android = {routineId: "no-glasses-android", requestRunId: 36218243800, requestAttempt: 1, privateRunId: 36218299950,
+    privateAttempt: 1, status: "failed", resultRunId: "routine-36218243800-1-dev-no-glasses-android"}
+  const both = applyRoutineResult(applyRoutineResult(post, android), cancellation)
+  assert.equal(both.rows["no-glasses"].status, "cancelled")
+  assert.deepEqual(both.rows["no-glasses-android"], android)
+  assert.match(both.payload.blocks[1].text.text, /Android no-glasses UI — \*Failed\*.*testRun=routine-36218243800-1-dev-no-glasses-android/)
+  // Duplicate callbacks are idempotent.
+  assert.deepEqual(applyRoutineResult(both, cancellation), both)
+  // A newer request's cancellation never hides an earlier completed result.
+  const passed = {routineId: "no-glasses", requestRunId: 36218243700, requestAttempt: 1, privateRunId: 36218299900, privateAttempt: 1,
+    status: "passed", resultRunId: "routine-36218243700-1-dev-no-glasses"}
+  const withPass = applyRoutineResult(post, passed)
+  assert.deepEqual(applyRoutineResult(withPass, cancellation), withPass)
+  // A worker-attested result for the same request replaces the cancellation, even from an earlier worker run.
+  const failed = {...gen, routineId: "no-glasses", privateRunId: 36218299900, status: "failed", resultRunId: "routine-36218243731-1-dev-no-glasses"}
+  assert.equal(applyRoutineResult(both, failed).rows["no-glasses"].status, "failed")
+  // A newer cancellation may replace an older cancellation only.
+  const later = {...cancellation, requestRunId: 36218243800, privateRunId: 36218299960}
+  assert.equal(applyRoutineResult(both, later).rows["no-glasses"].requestRunId, 36218243800)
+  assert.deepEqual(applyRoutineResult(applyRoutineResult(both, later), cancellation).rows["no-glasses"], later)
+  assert.throws(() => applyRoutineResult(post, {...cancellation, resultRunId: "routine-36218243731-1-dev-no-glasses"}), /Invalid routine result row/)
+})
+
+test("cancelled worker rows never pass the terminal receipt validator", () => {
+  const forged = terminal(); forged.status = "cancelled"
+  assert.throws(() => terminalRow(forged, worker, request), /does not match/)
+})
+
+test("a cancelled attempt that retained a terminal receipt keeps the ordinary worker-attested result", async () => {
+  const stopped = terminal(); stopped.status = "aborted"; stopped.testOutcome = "cancelled"; stopped.resultRunId = undefined
+  for (const key of Object.keys(stopped.checks)) stopped.checks[key] = false
+  const options = resolver({terminal: stopped, worker: {...structuredClone(worker), conclusion: "cancelled"}})
+  options.privateGithub.rest.actions.listWorkflowRunArtifacts = "artifacts"
+  options.privateGithub.paginate = async () => [{name: "routine-terminal-600-1"}]
+  const [result] = await resolveRoutineNotifications(options)
+  assert.equal(result.row.status, "aborted")
+  assert.equal(result.row.privateRunId, 600)
+})
+
+test("the cancellation proof names the dispatcher job and send step that actually exist", async () => {
+  const {DISPATCHER} = await import("./release-routine-slack.mjs")
+  const workflow = readFileSync(new URL(`../../${DISPATCHER.workflow}`, import.meta.url), "utf8")
+  assert.match(workflow, /^run-name: Device request callback \$\{\{ github\.event\.workflow_run\.id \}\} \/ attempt \$\{\{ github\.event\.workflow_run\.run_attempt \}\}$/m)
+  assert.ok(workflow.includes(`|| '${DISPATCHER.job}' }}`))
+  assert.equal(workflow.split(`      - name: ${DISPATCHER.step}\n`).length, 2)
+  assert.match(workflow.split(`      - name: ${DISPATCHER.step}\n`)[1], /^\s+if: matrix\.mode == 'dispatch'\n[\s\S]*?dispatchReadyRequest/)
+})

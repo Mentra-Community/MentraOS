@@ -61,7 +61,8 @@ export function renderPrRoutineResult({request, terminal, row}) {
 
 /** Historical results remain valid after the PR advances, closes or merges. */
 export async function resolvePrRoutineResults(options) {
-  return (await resolveRoutineResults(options)).filter(result => result.request.schemaVersion === 1).map(renderPrRoutineResult)
+  // A cancellation before any runner has no terminal receipt to render; only release posts project it.
+  return (await resolveRoutineResults(options)).filter(result => result.terminal && result.request.schemaVersion === 1).map(renderPrRoutineResult)
 }
 
 /** The workflow serializes this exact execution key. An uncertain POST is never
