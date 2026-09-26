@@ -85,11 +85,33 @@ recording, incident submission and result publication.
 
 ## 4. Develop with recorded evidence
 
+**Before the first complete pass, iterate from usable live state rather than
+restarting the routine after every fix.** Preserve the failed observation and
+retry the failed step or smallest dependent section. Do not repeat downloads,
+installation, OTA preparation or an already-passed prefix merely because a later
+step changed. Re-establish only prerequisites that changed or are no longer
+proven. Keep the existing ownership and command-completion rules: an unanswered
+writer needs reconciliation, and owned recorders still need confirmed cleanup.
+
 Run focused checks for the changed flow/helper and the relevant typecheck. Use
 the supported development entry in the selected private revision for hardware
 iteration. Preserve the exact harness snapshot, selected app artifacts, steps,
 assertions, recording and cleanup outcome with the result. Inspect playback and
 the failure evidence, not just the process exit code.
+
+Label section runs **development evidence**, recording their starting state,
+executed steps and ending state. Do not combine successful sections into a full
+pass. Once the flow works, perform one clean recorded end-to-end qualification
+against the exact source and build. Normal CI and nightly runs retain their full
+setup, assertions, teardown and verified return state.
+
+Check the selected revision's actual commands. The development CLI introduced in
+private [PR #105](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/105)
+still wraps `run` in setup and Home cleanup; `recover` reconciles the original
+execution, not a failed-step retry. Neither provides live-state continuation.
+Until a reviewed continuation entry exists, state that tooling gap and continue
+source work; do not invent step/range flags or repeatedly use the full lifecycle
+as a substitute.
 
 Separate worktrees allow parallel authoring; execution still uses shared resource
 ownership. Independent Mac and Android fixtures can run together. Routines using
