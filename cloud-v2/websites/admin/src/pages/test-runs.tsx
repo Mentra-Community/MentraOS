@@ -402,24 +402,21 @@ export function TestRunView({
             </a>
           ) : null}
         </div>
-        {related ? (
-          <aside
-            aria-label={related.kind === "recovery" ? "Recovery result" : "Source run"}
-            className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
-            {related.kind === "recovery" ? (
-              <>
-                <span className="font-semibold">Recovery result.</span> The original test outcome is preserved.{" "}
-              </>
-            ) : (
-              <>
-                <span className="font-semibold">Source run.</span> This result records a link to another run.{" "}
-              </>
-            )}
+        {related?.kind === "recovery" ? (
+          <aside aria-label="Recovery result" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
+            <span className="font-semibold">Recovery result.</span> The original test outcome is preserved.{" "}
             <a
               href={`/?testRun=${encodeURIComponent(related.runId)}`}
               className="font-semibold text-[#087d50] underline">
-              {related.kind === "recovery" ? "View original run" : "View source run"}
+              View original run
             </a>
+          </aside>
+        ) : related ? (
+          // A source reference can be a local authoring ID that was never published, so it is not a link.
+          <aside aria-label="Source reference" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
+            <span className="font-semibold">Source reference.</span> This result records source ID{" "}
+            <code className="break-all font-mono text-xs">{related.runId}</code>. It may not be a published
+            result.
           </aside>
         ) : null}
         <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
