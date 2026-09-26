@@ -76,6 +76,15 @@ test("Slack escapes PR text and includes all three firmware targets", () => {
   assert.match(body, /26\.9\.7\.0/)
   assert.match(body, /MentraLive_20260908\.0/)
   assert.doesNotMatch(body, /WRONG|TestFlight|Google Play/)
+  // Only a receipt-verified backend is named; the live PR base alone is not evidence.
+  assert.match(body, /Backend: not verified/)
+  const post = (options) => JSON.stringify(buildPost({pr: {...pr, base: {ref: "staging"}}, sha, androidUrl: "https://example.com/a.apk",
+    manifestUrl: "https://example.com/m.json", targets: readOtaTargets(manifest, 123, sha), androidRunUrl: run.html_url, ...options}).blocks)
+  assert.match(post({}), /feature → staging/)
+  assert.match(post({}), /Backend: not verified/)
+  assert.match(post({backend: "staging"}), /Backend: \*Staging\* · Android ARM64/)
+  assert.match(post({backend: "staging", unverifiedBackend: ["Android"]}), /Backend: \*Staging\* \(Android not verified\)/)
+  assert.match(post({backend: "dev"}), /Backend: \*Dev\*/)
 })
 
 const iosRun = {...run, id: 3}
@@ -86,6 +95,7 @@ const iosReceipt = {
   buildSha: "b".repeat(40),
   runId: 3,
   runAttempt: 1,
+  app: {backend: "dev"},
   artifacts: Object.fromEntries(
     [
       ["iphone", "ipa"],
@@ -101,6 +111,12 @@ const iosReceipt = {
   ),
 }
 const androidRun = {...run, id: 2, html_url: "https://github.com/o/r/actions/runs/2"}
+// Every Android PR publication commits this receipt beside its APK.
+const androidReceipt = (backend = "dev", digest = "e".repeat(64)) => ({schemaVersion: 1, pr: 123, headSha: sha,
+  baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
+  app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40), backend,
+    otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
+  artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 10}}})
 const job = (name, conclusion = "success", attempt = 1, id = attempt) => ({
   name,
   conclusion,
@@ -117,11 +133,14 @@ function harness(options = {}) {
     ios: iosRun,
     files: [],
     receipt: iosReceipt,
+    androidReceipt: androidReceipt(),
     comments: [],
     currentPr: pr,
     artifactStatus: 200,
     missingMac: false,
     missingInstall: false,
+    missingUrls: [],
+    lengths: {},
     wrongInstallType: false,
     corruptInstall: false,
     textArtifacts: {},
@@ -200,14 +219,16 @@ function harness(options = {}) {
           ? state.corruptInstall
             ? "bad bytes!"
             : (state.textArtifacts[url.endsWith(".html") ? "install" : "manifest"] ?? "test bytes")
-          : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
+          : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt
+            : url.includes("mentra-android-pr-") ? state.androidReceipt : manifest),
       {
         status:
-          (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html"))
+          (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html")) ||
+          state.missingUrls.includes(url)
             ? 404
             : state.artifactStatus,
         headers: {
-          ...(isInstallFile ? {"content-encoding": "br"} : {"content-length": "10"}),
+          ...(isInstallFile ? {"content-encoding": "br"} : {"content-length": state.lengths[url] ?? "10"}),
           "content-type": state.wrongInstallType
             ? "application/octet-stream"
             : url.endsWith(".html")
@@ -306,6 +327,7 @@ test("advertises HTTPS Mac handoff only from a verified capable page and uses th
       bundleId: "com.mentra.mentra",
       version: "3.2.1",
       build: "302018377",
+      backend: "dev",
       macPackageVersion: 2,
       macInstaller: "Install Mentra.app",
     },
@@ -443,8 +465,24 @@ test("iOS path applicability matches its filtered workflow", () => {
     ".github/workflows/mentra-app-ios-build.yml",
     ".github/workflows/reusable-pr-build-notification.yml",
     ".github/scripts/pr-ios-artifacts.test.mjs",
+    ".github/scripts/pr-android-artifacts.mjs",
+    ".github/scripts/pr-android-artifacts.test.mjs",
   ])
     assert.equal(iosBuildRequired([{filename}]), true)
+})
+
+test("an Android artifact-helper-only PR reports its triggered iOS build, including a failure", async () => {
+  const files = [{filename: ".github/scripts/pr-android-artifacts.mjs"}]
+  const ready = harness({files})
+  await notifyPrBuilds(ready.args)
+  assert.match(ready.written[0].body, /Download iPhone IPA/)
+  assert.ok(ready.requests.some(url => url.includes("mentra-ios-pr-")))
+  const failed = harness({files, ios: {...iosRun, conclusion: "failure"}})
+  await notifyPrBuilds(failed.args)
+  assert.match(failed.posts[0].text, /incomplete/)
+  assert.match(JSON.stringify(failed.posts[0]), /iOS failure; downloads are not ready/)
+  assert.match(failed.written[0].body, /iOS failure; downloads are not ready/)
+  assert.doesNotMatch(failed.written[0].body, /not built for these changed paths/)
 })
 
 test("pending/missing producers defer to their completion without posting an incomplete result", async () => {
@@ -688,4 +726,172 @@ test("Mentra Call opt-in adds its exact results link without posting again on re
   assert.equal(results.searchParams.get("pr"), String(pr.number))
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 1)
+})
+
+const slack = (post) => post.blocks.flatMap(block => block.text?.text ?? []).join("\n")
+const links = (post) => JSON.stringify(post.blocks[3])
+
+const cdn = "https://artifactscdn.mentraglass.com/o/r/releases/pr-builds"
+const aliasApk = `${cdn}/mobile-pr-123-${sha.slice(0, 7)}.apk`
+const immutableApk = `${cdn}/mentra-android-pr-123-${sha}-2-1.apk`
+const bothLinks = (h, index) => `${links(h.posts[index])}\n${h.written[index].body}`
+
+test("a verified post links the receipt's immutable APK, not a replaced alias, and binds its hash", async () => {
+  // The mutable alias was overwritten by another attempt; its bytes no longer match.
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], lengths: {[aliasApk]: "999"}})
+  await notifyPrBuilds(h.args)
+  assert.match(slack(h.posts[0]), /Backend: \*Dev\* · Android ARM64/)
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.ok(bothLinks(h, 0).includes(immutableApk))
+  assert.ok(!bothLinks(h, 0).includes(aliasApk))
+  assert.ok(!h.requests.includes(aliasApk))
+  assert.match(h.written[0].body, new RegExp(`^<!-- ${sha}:ready:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+})
+
+test("a valid immutable APK is ready even when the legacy alias is missing", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], missingUrls: [aliasApk]})
+  await notifyPrBuilds(h.args)
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  assert.ok(bothLinks(h, 0).includes(immutableApk))
+})
+
+test("a missing or wrong immutable APK after a verified receipt is incomplete without an alias fallback", async () => {
+  for (const failure of [{missingUrls: [immutableApk]}, {lengths: {[immutableApk]: "11"}}]) {
+    const h = harness({files: [{filename: "mobile/app.config.ts"}], ...failure})
+    await notifyPrBuilds(h.args)
+    assert.match(h.posts[0].text, /incomplete/)
+    assert.doesNotMatch(links(h.posts[0]), /Download APK/)
+    assert.doesNotMatch(h.written[0].body, /Download Android APK/)
+    assert.ok(!bothLinks(h, 0).includes(aliasApk))
+    assert.doesNotMatch(h.written[0].body, /:android-/)
+  }
+})
+
+test("a transient receipt miss never downgrades an already verified post", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
+  await notifyPrBuilds(h.args)
+  h.state.androidReceipt = {unavailable: true}
+  await notifyPrBuilds(h.args)
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.equal(h.written.length, 1)
+  // Readiness may still advance during the miss, without claiming a verified Android backend.
+  h.state.androidReceipt = {unavailable: true}
+  h.state.missingMac = true
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.match(h.posts[1].text, /incomplete/)
+  assert.match(slack(h.posts[1]), /Backend: not verified/)
+  assert.ok(bothLinks(h, 1).includes(aliasApk) && !bothLinks(h, 1).includes(immutableApk))
+  // The changed-readiness fallback does not inherit the earlier verified identity.
+  assert.match(h.written[1].body, new RegExp(`^<!-- ${sha}:incomplete:2-1:1-1:3-1:android-receipt-unavailable -->$`, "m"))
+  // The receipt returns while the Mac download is still missing: enrich once, then stay quiet.
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 3)
+  assert.equal(h.written.length, 3)
+  assert.match(h.posts[2].text, /incomplete/)
+  assert.match(slack(h.posts[2]), /Backend: \*Dev\* · Android ARM64/)
+  assert.ok(bothLinks(h, 2).includes(immutableApk) && !bothLinks(h, 2).includes(aliasApk))
+  assert.match(h.written[2].body, new RegExp(`^<!-- ${sha}:incomplete:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
+})
+
+test("an initially missing receipt enriches the post once with the verified immutable APK", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true}})
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.ok(bothLinks(h, 0).includes(aliasApk) && !bothLinks(h, 0).includes(immutableApk))
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.equal(h.written.length, 2)
+  assert.match(slack(h.posts[1]), /Backend: \*Dev\* · Android ARM64/)
+  assert.ok(bothLinks(h, 1).includes(immutableApk) && !bothLinks(h, 1).includes(aliasApk))
+})
+
+test("a same-head retarget never relabels retained builds for the new destination", async () => {
+  const staging = {...pr, base: {ref: "staging"}}
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: staging})
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.match(h.posts[0].text, /incomplete/)
+  const text = slack(h.posts[0])
+  assert.match(text, /Android was built for the Dev backend, but this PR now targets staging/)
+  assert.match(text, /iOS \/ macOS was built for the Dev backend, but this PR now targets staging/)
+  assert.doesNotMatch(text, /Backend:|Glasses OTA/)
+  assert.doesNotMatch(links(h.posts[0]), /Download APK|Install on|Download ZIP/)
+  assert.doesNotMatch(h.written[0].body, /Download Android APK|Download iPhone IPA|Download Mac app/)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+
+  // Rebuilt publications for the new destination are verified and labelled from their receipts.
+  const rebuilt = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: staging,
+    androidReceipt: androidReceipt("staging"), receipt: {...iosReceipt, app: {backend: "staging"}}})
+  await notifyPrBuilds(rebuilt.args)
+  assert.doesNotMatch(rebuilt.posts[0].text, /incomplete/)
+  assert.match(slack(rebuilt.posts[0]), /Backend: \*Staging\* · Android ARM64/)
+  assert.match(links(rebuilt.posts[0]), /Download APK/)
+})
+
+test("platforms completing separately are each checked against the same destination", async () => {
+  // Android was rebuilt after the retarget; the retained Apple publication was not.
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, base: {ref: "staging"}},
+    androidReceipt: androidReceipt("staging")})
+  await notifyPrBuilds(h.args)
+  assert.match(h.posts[0].text, /incomplete/)
+  const text = slack(h.posts[0])
+  assert.match(text, /Backend: \*Staging\* · Android ARM64/)
+  assert.match(text, /iOS \/ macOS was built for the Dev backend/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  assert.doesNotMatch(links(h.posts[0]), /Install on|Download ZIP/)
+})
+
+test("a retarget while notifying suppresses the post", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
+  let reads = 0
+  h.args.github.rest.pulls.get = async () => ({data: reads++ ? {...pr, base: {ref: "staging"}} : pr})
+  await notifyPrBuilds(h.args)
+  assert.ok(reads >= 2)
+  assert.equal(h.posts.length, 0)
+  assert.equal(h.written.length, 0)
+})
+
+test("an unavailable Android receipt keeps downloads but does not claim their backend", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true}})
+  await notifyPrBuilds(h.args)
+  assert.match(slack(h.posts[0]), /Backend: \*Dev\* \(Android not verified\)/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  assert.match(h.written[0].body, /:android-receipt-unavailable -->/)
+  const androidOnly = harness({androidReceipt: {unavailable: true}})
+  await notifyPrBuilds(androidOnly.args)
+  assert.match(slack(androidOnly.posts[0]), /Backend: not verified/)
+  // Once the receipt verifies, the post is refreshed with its verified backend.
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.match(slack(h.posts[1]), /Backend: \*Dev\* · Android ARM64/)
+})
+
+test("a staging PR with a missing Android receipt stays idempotent and keeps its Mac routine links", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true},
+    currentPr: {...pr, base: {ref: "staging"}, labels: [{name: "routine:no-glasses"}]},
+    receipt: {...iosReceipt, app: {backend: "staging"}}})
+  await notifyPrBuilds(h.args)
+  const text = slack(h.posts[0])
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.match(text, /Backend: \*Staging\* \(Android not verified\)/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  const results = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(results.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
+  assert.equal(results.searchParams.get("platform"), "ios-mac")
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.equal(h.written.length, 1)
 })

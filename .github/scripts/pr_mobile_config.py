@@ -17,6 +17,11 @@ def read_build(config):
     return build
 
 
+def pr_backend(base_ref):
+    """Match prBackend in pr-mobile-build.mjs: only staging-targeted PRs use staging."""
+    return 'staging' if base_ref == 'staging' else 'dev'
+
+
 def build_info(env=os.environ):
     return {'commit': env['PR_HEAD_SHA'], 'branch': env['GITHUB_HEAD_REF'],
             'user': env['GITHUB_ACTOR'], 'time': dt.datetime.now(dt.timezone.utc).isoformat()}

@@ -40,6 +40,7 @@ export const MOBILE_PR_PATHS = [
   ".github/workflows/mentra-app-ios-build.yml",
   ".github/workflows/reusable-pr-build-notification.yml",
   ".github/scripts/pr-ios-artifacts*",
+  ".github/scripts/pr-android-artifacts*",
   ".github/scripts/select-pr-asg.mjs",
   ".github/scripts/compute-asg-build-identity.mjs",
   ".github/scripts/allocate-asg-version.mjs",
@@ -47,6 +48,10 @@ export const MOBILE_PR_PATHS = [
 ]
 
 const packagingKeys = new Set(["EXPO_PUBLIC_ASG_OTA_VERSION_URL"])
+
+/** A staging-targeted PR app uses staging services; every other PR keeps dev.
+ * The backend is compiled in and fingerprinted, so reuse never crosses backends. */
+export const prBackend = (baseRef) => (baseRef === "staging" ? "staging" : "dev")
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 const transientNetworkCodes = new Set(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ECONNRESET", "EAI_AGAIN"])
 

@@ -5,7 +5,7 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {runInNewContext} from "node:vm"
-import {candidateAssets, fingerprintMobile, MOBILE_INPUT_PATHS, selectMobile} from "./pr-mobile-build.mjs"
+import {candidateAssets, fingerprintMobile, MOBILE_INPUT_PATHS, MOBILE_PR_PATHS, prBackend, selectMobile} from "./pr-mobile-build.mjs"
 
 const input = {tree: "mobile tree", env: {EXPO_PUBLIC_BUILD_ENV: "dev"}, tools: {node: "20", java: "17"}}
 test("configuration-only packaging inputs do not invalidate compiled APK reuse", () => {
@@ -25,6 +25,30 @@ test("configuration-only packaging inputs do not invalidate compiled APK reuse",
   assert.notEqual(a, fingerprintMobile({...input, env: {...input.env, EXPO_PUBLIC_BUILD_ENV: "prod"}}))
   assert.notEqual(a, fingerprintMobile({...input, tree: "changed dependency lockfile"}))
   assert.notEqual(a, fingerprintMobile({...input, tools: {...input.tools, java: "21"}}))
+})
+
+test("staging-targeted PR binaries are compiled separately and never reuse a dev binary", async () => {
+  assert.deepEqual(["dev", "staging", "main", "feature", undefined].map(prBackend), ["dev", "staging", "dev", "dev", "dev"])
+  const backend = (name) => ({...input.env, EXPO_PUBLIC_BUILD_ENV: name,
+    EXPO_PUBLIC_CLOUD_CORE_URL: `https://core.${name}.us-west-2.mentraglass.com`})
+  const dev = fingerprintMobile({...input, env: backend("dev")})
+  const staging = fingerprintMobile({...input, env: backend("staging")})
+  assert.notEqual(dev, staging)
+  // A URL alone also changes the compilation; the backend label cannot drift from it.
+  assert.notEqual(staging, fingerprintMobile({...input, env: {...backend("staging"), EXPO_PUBLIC_CLOUD_CORE_URL: "https://core.dev.us-west-2.mentraglass.com"}}))
+  const digest = "b".repeat(64)
+  const devAssets = [{name: "mobile-pr-1-ccccccc.apk", label: `mobile-v1:${dev}:${digest}`},
+    {name: `mentra-ios-iphone-pr-1-${"c".repeat(40)}-2-1.ipa`, label: `mobile-v1:${dev}:${digest}`}]
+  for (const platform of ["android", "ios"]) assert.deepEqual(candidateAssets(devAssets, staging, platform), [])
+  // Every workflow step after environment setup, including the fingerprint, sees the pinned backend.
+  for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml"]) {
+    const workflow = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
+    const selection = workflow.indexOf('case "$GITHUB_BASE_REF" in\n              staging) CLOUD_ENV="staging" ;;\n              *) CLOUD_ENV="dev" ;;')
+    assert.ok(selection > 0 && workflow.lastIndexOf('if [ "${{ github.event_name }}" = "pull_request" ]; then', selection) > workflow.indexOf("- name: Setup environment"))
+    assert.match(workflow, /case "\$\{\{ github\.ref_name \}\}" in\n\s+main\) CLOUD_ENV="prod" ;;\n\s+\*\) CLOUD_ENV="dev" ;;/)
+    assert.ok(workflow.indexOf('echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"') < workflow.indexOf("node .github/scripts/pr-mobile-build.mjs"))
+    assert.doesNotMatch(workflow, /\$\{\{ github\.(base_ref|event\.pull_request\.base\.ref) \}\}/)
+  }
 })
 
 test("real git fingerprint inputs exclude glasses sources but include shared mobile sources and lockfiles", () => {
@@ -132,6 +156,20 @@ test("iOS and Android never select each other's binaries, and all producer trigg
       .trim()
   assert.equal(paths("mentra-app-ios-build.yml"), paths("mentra-app-android-build.yml"))
   assert.equal(paths("mentra-asg-client-build.yml"), paths("mentra-app-android-build.yml"))
+})
+
+test("every producer trigger path is a shared mobile PR path, and every shared path triggers each producer", () => {
+  for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml", "mentra-asg-client-build.yml"]) {
+    const block = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
+      .split("\n  pull_request:\n")[1].split("\n  push:")[0].split("    paths:\n")[1].split("\n")
+    // Keep the existing shape: the block is only quoted path entries.
+    const triggers = block.map(line => /^      - "([^"]+)"$/.exec(line)?.[1])
+    assert.ok(triggers.every(Boolean), `${name} has an unexpected trigger line`)
+    assert.deepEqual(triggers.filter(path => !MOBILE_PR_PATHS.includes(path)), [], `${name} triggers paths the notifier ignores`)
+    assert.deepEqual(MOBILE_PR_PATHS.filter(path => !triggers.includes(path)), [], `${name} misses shared paths`)
+    assert.deepEqual(triggers, MOBILE_PR_PATHS)
+  }
+  assert.ok(MOBILE_PR_PATHS.includes(".github/scripts/pr-android-artifacts*"))
 })
 
 test("iOS selection skips corrupt candidates, verifies signature/provenance and falls back to compilation", async () => {
