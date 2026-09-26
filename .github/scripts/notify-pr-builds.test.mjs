@@ -465,8 +465,24 @@ test("iOS path applicability matches its filtered workflow", () => {
     ".github/workflows/mentra-app-ios-build.yml",
     ".github/workflows/reusable-pr-build-notification.yml",
     ".github/scripts/pr-ios-artifacts.test.mjs",
+    ".github/scripts/pr-android-artifacts.mjs",
+    ".github/scripts/pr-android-artifacts.test.mjs",
   ])
     assert.equal(iosBuildRequired([{filename}]), true)
+})
+
+test("an Android artifact-helper-only PR reports its triggered iOS build, including a failure", async () => {
+  const files = [{filename: ".github/scripts/pr-android-artifacts.mjs"}]
+  const ready = harness({files})
+  await notifyPrBuilds(ready.args)
+  assert.match(ready.written[0].body, /Download iPhone IPA/)
+  assert.ok(ready.requests.some(url => url.includes("mentra-ios-pr-")))
+  const failed = harness({files, ios: {...iosRun, conclusion: "failure"}})
+  await notifyPrBuilds(failed.args)
+  assert.match(failed.posts[0].text, /incomplete/)
+  assert.match(JSON.stringify(failed.posts[0]), /iOS failure; downloads are not ready/)
+  assert.match(failed.written[0].body, /iOS failure; downloads are not ready/)
+  assert.doesNotMatch(failed.written[0].body, /not built for these changed paths/)
 })
 
 test("pending/missing producers defer to their completion without posting an incomplete result", async () => {

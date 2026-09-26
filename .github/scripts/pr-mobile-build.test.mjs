@@ -5,7 +5,7 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {runInNewContext} from "node:vm"
-import {candidateAssets, fingerprintMobile, MOBILE_INPUT_PATHS, prBackend, selectMobile} from "./pr-mobile-build.mjs"
+import {candidateAssets, fingerprintMobile, MOBILE_INPUT_PATHS, MOBILE_PR_PATHS, prBackend, selectMobile} from "./pr-mobile-build.mjs"
 
 const input = {tree: "mobile tree", env: {EXPO_PUBLIC_BUILD_ENV: "dev"}, tools: {node: "20", java: "17"}}
 test("configuration-only packaging inputs do not invalidate compiled APK reuse", () => {
@@ -156,6 +156,20 @@ test("iOS and Android never select each other's binaries, and all producer trigg
       .trim()
   assert.equal(paths("mentra-app-ios-build.yml"), paths("mentra-app-android-build.yml"))
   assert.equal(paths("mentra-asg-client-build.yml"), paths("mentra-app-android-build.yml"))
+})
+
+test("every producer trigger path is a shared mobile PR path, and every shared path triggers each producer", () => {
+  for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml", "mentra-asg-client-build.yml"]) {
+    const block = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
+      .split("\n  pull_request:\n")[1].split("\n  push:")[0].split("    paths:\n")[1].split("\n")
+    // Keep the existing shape: the block is only quoted path entries.
+    const triggers = block.map(line => /^      - "([^"]+)"$/.exec(line)?.[1])
+    assert.ok(triggers.every(Boolean), `${name} has an unexpected trigger line`)
+    assert.deepEqual(triggers.filter(path => !MOBILE_PR_PATHS.includes(path)), [], `${name} triggers paths the notifier ignores`)
+    assert.deepEqual(MOBILE_PR_PATHS.filter(path => !triggers.includes(path)), [], `${name} misses shared paths`)
+    assert.deepEqual(triggers, MOBILE_PR_PATHS)
+  }
+  assert.ok(MOBILE_PR_PATHS.includes(".github/scripts/pr-android-artifacts*"))
 })
 
 test("iOS selection skips corrupt candidates, verifies signature/provenance and falls back to compilation", async () => {
