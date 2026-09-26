@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest, OverviewResourceObservation,
-  TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import { CHECKPOINT_FRESH_MS, type OverviewClaim, type OverviewFixtureSummary, type OverviewJob, type OverviewRecordedFailure, type OverviewRequest,
+  type OverviewResourceObservation, type TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import type { TestResourceReason } from "../../../../packages/core/src/types/test-resource-observation.types";
 import { api } from "../lib/api";
 
@@ -12,7 +12,15 @@ const triggerNames: Record<OverviewRequest["trigger"], string> = {
 const platformName = (value?: OverviewRequest["platform"]) => value === "ios-on-mac" ? "iOS on Mac" : value === "ios" ? "iPhone" : value === "android" ? "Android" : "Platform not reported";
 const phaseNames = { preflight: "Checking prerequisites", setup: "Setting up", test: "Testing", "final-assertions": "Final checks",
   teardown: "Cleaning up", "return-verification": "Verifying return state", evidence: "Saving evidence" };
-const checkpointIsFresh = (receivedAt: string, now: number) => now - Date.parse(receivedAt) <= 120_000;
+const checkpointIsFresh = (receivedAt: string, now: number) => now - Date.parse(receivedAt) <= CHECKPOINT_FRESH_MS;
+/**
+ * Core shows a GitHub-queued job as running only from a fresh worker checkpoint.
+ * The view keeps aging that checkpoint between refreshes: once it is no longer
+ * recent, the activity is unconfirmed rather than running.
+ */
+export function displayState(job: OverviewJob, now: number): OverviewJob["state"] {
+  return job.reportedActivity && !checkpointIsFresh(job.reportedActivity.receivedAt, now) ? "unknown" : job.state;
+}
 export function elapsed(since: string, now: number) {
   const seconds = Math.max(0, Math.floor((now - Date.parse(since)) / 1000));
   if (!Number.isFinite(seconds)) return "Unknown";
@@ -64,12 +72,15 @@ function JobRow({ job, now, onResult, onCancel }: { job: OverviewJob; now: numbe
   const [confirming, setConfirming] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string>();
-  const colors = job.state === "blocked" ? "bg-[#fff0e9] text-[#a64235]" : job.state === "running"
+  const state = displayState(job, now);
+  const colors = state === "blocked" ? "bg-[#fff0e9] text-[#a64235]" : state === "running"
     ? "bg-[#e6f5ed] text-[#087d50]" : "bg-[#f0f2ef] text-[#59655e]";
   const label = job.kind === "maintenance" ? "Host maintenance / recovery" : job.kind === "nightly" ? "Nightly sequence" : null;
   return <tr className="border-t border-[#eceeeb] align-top">
-    <td className="px-4 py-3"><span className={"inline-block rounded-md px-2 py-1 text-[11px] font-medium " + colors}>{job.state}</span>
+    <td className="px-4 py-3"><span className={"inline-block rounded-md px-2 py-1 text-[11px] font-medium " + colors}>{state}</span>
       {label ? <p className="mt-1 text-[11px] text-[#68746d]">{label}</p> : null}
+      {job.reportedActivity ? <p className="mt-1 text-[11px] text-[#68746d]">{state === "running" ? "Reported by the worker"
+        : "Worker checkpoint no longer recent; activity is unconfirmed"} · GitHub status: {job.workflow?.status ?? "not reported"}</p> : null}
       {job.workflow ? <a className="mt-1 inline-block text-[11px] text-[#087d50] underline" href={job.workflow.url} target="_blank" rel="noreferrer">GitHub job</a> : null}</td>
     <td className="max-w-[250px] px-4 py-3">{job.requests.length ? job.requests.map(request => <RequestLabel key={request.requestId} request={request} />)
       : <><p className="font-medium">{job.title}</p><p className="mt-1 text-[11px] text-[#68746d]">{job.kind === "maintenance" ? "Reviewed host operation; build and fixture are not published by this workflow." : "Build details unavailable"}</p></>}
@@ -104,8 +115,9 @@ function JobRow({ job, now, onResult, onCancel }: { job: OverviewJob; now: numbe
       : <p className="text-[#68746d]">No routine checkpoint reported.</p>}
       {job.workflow?.step && !job.claims.some(claim => claim.progress && claim.progress.mode !== "complete" && checkpointIsFresh(claim.progress.receivedAt, now))
         ? <p className="mt-2 text-[11px] text-[#68746d]">GitHub step: {job.workflow.step}</p> : null}</td>
-    <td className="whitespace-nowrap px-4 py-3"><p>{elapsed(job.startedAt ?? job.createdAt, now)}</p>
-      <p className="mt-0.5 text-[11px] text-[#68746d]">{["claim", "fixture"].includes(job.kind) ? "Since recorded claim" : job.startedAt ? "Job elapsed" : "Waiting"}</p>
+    <td className="whitespace-nowrap px-4 py-3"><p>{elapsed(job.startedAt ?? job.reportedActivity?.claimedAt ?? job.createdAt, now)}</p>
+      <p className="mt-0.5 text-[11px] text-[#68746d]">{["claim", "fixture"].includes(job.kind) ? "Since recorded claim" : job.startedAt ? "Job elapsed"
+        : job.reportedActivity ? "Since worker claim" : "Waiting"}</p>
       {job.workflow ? <p className="mt-2 text-[11px] text-[#68746d]">GitHub update {elapsed(job.workflow.updatedAt, now)} ago</p> : null}</td>
   </tr>;
 }
@@ -295,7 +307,7 @@ export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: T
   return <>
     <p className="mt-2 text-[11px] text-[#68746d]">View refreshed {elapsed(data.observedAt, now)} ago.</p>
     <div className="mt-3 flex flex-wrap gap-2 text-xs">{states.map(state => <span key={state} className="rounded-md bg-[#f1f4ef] px-2 py-1">
-      <strong>{data.jobs.filter(job => job.state === state).length}</strong> {state}</span>)}</div>
+      <strong>{data.jobs.filter(job => displayState(job, now) === state).length}</strong> {state}</span>)}</div>
     {data.warnings.length ? <div role="status" className="mt-3 space-y-1 rounded-lg bg-[#fff5df] p-3 text-xs text-[#805619]">{data.warnings.map(message => <p key={message}>{message}</p>)}</div> : null}
     {data.jobs.length ? <div className="mt-3 overflow-x-auto rounded-xl border border-[#e0e4de]"><table className="w-full text-left text-xs">
       <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Status", "Build / routine", "Worker / fixture", "Last recorded progress", "Elapsed / update"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>

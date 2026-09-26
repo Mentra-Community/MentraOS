@@ -4,11 +4,28 @@ The Admin **Test runs** page shows GitHub's active private worker jobs above the
 
 | Display | Source | Meaning |
 | --- | --- | --- |
-| Queued / waiting / running | GitHub Actions | Job activity, not proof of a test step |
+| Queued / waiting / running | GitHub Actions, or a fresh worker checkpoint (below) | Job activity, not proof of a test step |
 | Build and routine | Published request ZIP from its exact Actions run/attempt | The selected build; unavailable metadata does not hide the job |
 | Worker / fixture | Assigned GitHub runner and existing Core claim | Unassigned or unreported values remain explicit |
 | Phase, step, action and counts | Last committed lifecycle journal checkpoint | Phase step counts and action counts stay separate; dynamic totals may be unknown |
 | Recovery required | Original Core settlement | Resolved in one of two ways. A valid recovery result correlated with the same claim, with verified return, passed teardown and a ready fixture, clears it and links the original and recovery results. An original-owner closure (for example, a released Android install refusal) resolves the request without a test: the failed result is unchanged and the fixture stays uncommissioned and unverified. A GitHub job that is still active stays in the live view; closure only removes its recovery blocker. An inactive closed claim moves to fixture history |
+
+GitHub can keep listing a dispatched run as queued or waiting after its worker has
+claimed the request and started reporting. Such a job is shown as **running**,
+labeled "Reported by the worker" with the GitHub status beside it, when all of
+these hold: the claim is still active (not closed, cancelled, terminal or
+recovery-required), no result is published for the request, and its latest
+checkpoint is unfinished and was received within two minutes (Core time, the same
+bound as below). Elapsed time then counts from the worker's claim, and the
+"GitHub has not started this job" guidance is not shown. Once that checkpoint is
+older than two minutes the job is **unknown** with its activity unconfirmed, both
+in Core's refreshed response and in the Admin view, which keeps aging the
+checkpoint between refreshes. It still shows the GitHub status and the worker
+claim time, and it never falls back to the "GitHub has not started" guidance.
+A queued job whose claim never reported keeps that guidance. Blockers, closures,
+cancellations, published results and terminal claims still take precedence.
+This is a display projection only. It never extends, grants or
+proves a lease, and it does not change any claim, result or GitHub state.
 
 Queued rows are displayed oldest first. This is waiting order, **not a guarantee of execution order**. Compatible workers and resource ownership still determine when GitHub can execute a job. There is no second scheduler, queue mutation, rank, ETA or calculated completion percentage.
 

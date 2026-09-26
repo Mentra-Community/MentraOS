@@ -665,3 +665,120 @@ describe("recorded failure detail is bounded history from the latest uniquely co
     } finally { aggregate.mockRestore(); }
   });
 });
+
+describe("fresh worker-reported progress on a GitHub-queued job", () => {
+  // Sanitized DEV424 observation: GitHub still listed run 36271748180 as queued while
+  // the claimed Android worker reported checkpoint 44 (test action 6/38) 3.671s earlier.
+  const observedAt = "2026-09-26T22:00:32.755Z";
+  const requestId = "routine-36271681505-1-dev-no-glasses-android";
+  const activeClaim = (overrides: Partial<TestRunClaim> = {}): TestRunClaim => ({ requestId, requestSha256: "a".repeat(64),
+    workerId: "mentra-device-mini-1-android", fixtureId: "mini-samsung-a54", executionId: "execution-dev424",
+    claimedAt: "2026-09-26T21:57:58.897Z", state: "claimed", ...overrides } as TestRunClaim);
+  const checkpoint = (receivedAt = "2026-09-26T22:00:29.084Z", mode: "running" | "recovering" | "complete" = "running") => ({
+    sequence: 44, mode, phase: "test" as const, receivedAt,
+    step: { id: "walkthrough", label: "Replay the shared Home, miniapp and Settings walkthrough on Android without account or pairing mutations." },
+    completedSteps: 0, totalSteps: 1,
+    action: { id: "HOME-05-close", label: "Press Android Back once to close the all-miniapps sheet.", completedActions: 6, totalActions: 38 } });
+  const githubJob = (status: "queued" | "waiting" = "queued"): OverviewJob => ({ id: "github-36271748180", kind: "routine", state: status,
+    title: "Device routine request 36271681505 / attempt 1", createdAt: "2026-09-26T21:05:41Z",
+    requests: [{ requestId, requestRunId: 36271681505, requestAttempt: 1, routineId: "no-glasses-android", trigger: "successful-build",
+      platform: "android", channel: "dev", release: "3.3.0-dev.424", headSha: "f138390f2e1886802d93686035ed07f673894319",
+      buildRunId: 36266780518, publicationAttempt: 1 }], claims: [],
+    workflow: { runId: 36271748180, url: "https://github.com/Mentra-Community/Mentra-Automated-Testing/actions/runs/36271748180",
+      status, updatedAt: "2026-09-26T21:05:41Z" } });
+  const view = async (rows: OverviewClaimRecord[], at = observedAt, jobs = [githubJob()], results: TestRun[] = []) => {
+    const repository = new Repository(); repository.rows = rows; repository.resultRows = results;
+    const overview = await new TestRunOverviewService(repository, { activity: async () => ({ jobs, warnings: [] }) }, () => new Date(at)).overview();
+    return overview.jobs.find(job => job.id === "github-36271748180")!;
+  };
+  const waitingGuidance = "GitHub has not started this job; runner availability has not been verified.";
+
+  test("the observed DEV424 case is running from worker progress while GitHub stays queued transport metadata", async () => {
+    const job = await view([{ claim: activeClaim(), progress: checkpoint() }]);
+    expect(job.state).toBe("running");
+    expect(job.reportedActivity).toEqual({ requestId, claimedAt: "2026-09-26T21:57:58.897Z", receivedAt: "2026-09-26T22:00:29.084Z" });
+    expect(job.workflow?.status).toBe("queued");
+    expect(job.attention).toBeUndefined();
+    expect(job.claims[0]?.progress?.action).toEqual(expect.objectContaining({ completedActions: 6, totalActions: 38 }));
+    expect(job.startedAt).toBeUndefined(); // GitHub has not reported a start; elapsed uses the worker claim instead.
+  });
+
+  test("a GitHub waiting job with fresh recovery progress is also worker-reported activity", async () => {
+    const job = await view([{ claim: activeClaim(), progress: checkpoint(undefined, "recovering") }], observedAt, [githubJob("waiting")]);
+    expect(job.state).toBe("running");
+    expect(job.workflow?.status).toBe("waiting");
+  });
+
+  test("progress at the freshness bound counts; one millisecond older is unconfirmed worker activity, not a never-started job", async () => {
+    const received = "2026-09-26T22:00:29.084Z";
+    expect((await view([{ claim: activeClaim(), progress: checkpoint(received) }], "2026-09-26T22:02:29.084Z")).state).toBe("running");
+    for (const status of ["queued", "waiting"] as const) {
+      const stale = await view([{ claim: activeClaim(), progress: checkpoint(received) }], "2026-09-26T22:02:29.085Z", [githubJob(status)]);
+      expect(stale.state).toBe("unknown");
+      expect(stale.reportedActivity).toEqual({ requestId, claimedAt: "2026-09-26T21:57:58.897Z", receivedAt: received });
+      expect(stale.workflow?.status).toBe(status);
+      expect(stale.attention).toBeUndefined();
+      expect(stale.claims[0]?.progress?.sequence).toBe(44);
+    }
+  });
+
+  test("no checkpoint or a completed checkpoint is not current activity", async () => {
+    for (const row of [{ claim: activeClaim() }, { claim: activeClaim(), progress: checkpoint(undefined, "complete") }]) {
+      const job = await view([row]);
+      expect(job.state).toBe("queued");
+      expect(job.reportedActivity).toBeUndefined();
+      expect(job.attention?.reason).toBe(waitingGuidance);
+    }
+  });
+
+  test("a blocker or a published result keeps precedence over a newer fresh checkpoint", async () => {
+    const recovering = await view([{ claim: activeClaim({ state: "recovery-required", settledAt: observedAt,
+      settlement: { state: "recovery-required", reason: "synthetic" } } as Partial<TestRunClaim>), progress: checkpoint(undefined, "recovering") }]);
+    expect(recovering.state).toBe("blocked");
+    expect(recovering.reportedActivity).toBeUndefined();
+    const failed: TestRun = { ...original(), runId: requestId, requestId, fixture: { alias: "mini-samsung-a54" } };
+    const published = await view([{ claim: activeClaim(), progress: checkpoint() }], observedAt, [githubJob()], [failed]);
+    expect(published.state).toBe("blocked");
+    expect(published.resultRunId).toBe(requestId);
+    expect(published.reportedActivity).toBeUndefined();
+  });
+
+  test("closed, cancelled and terminal claims never become running from a checkpoint", async () => {
+    const closure = { kind: "android-refused-install-released" as const, originalTerminal: { sequence: 26, sha256: "b".repeat(64) },
+      journalPrefix: { bytes: 4096, sha256: "c".repeat(64) }, release: { type: "setup-abandoned-after-refusal" as const, sequence: 27,
+        eventSha256: "d".repeat(64), revision: "1".repeat(40), implementationSha256: "e".repeat(64) }, fixture: "uncommissioned" as const,
+      selectedCandidateInstalled: false as const, candidateTestRun: false as const, recordingStarted: false as const, closedAt: observedAt };
+    const rows: OverviewClaimRecord[] = [
+      { claim: activeClaim(), progress: checkpoint(), closure },
+      { claim: activeClaim(), progress: checkpoint(), followUpCancellation: { cancelledAt: observedAt, cancelledBy: "operator" } },
+      { claim: activeClaim({ state: "terminal", settledAt: observedAt, settlement: { state: "terminal", resultRunId: requestId } } as Partial<TestRunClaim>),
+        progress: checkpoint() },
+    ];
+    for (const row of rows) {
+      const job = await view([row]);
+      expect(job.state).not.toBe("running");
+      expect(job.reportedActivity).toBeUndefined();
+    }
+  });
+
+  test("a GitHub-running job is unchanged and gains no worker-reported marker", async () => {
+    const running = { ...githubJob(), state: "running" as const, startedAt: "2026-09-26T21:58:00Z",
+      workflow: { ...githubJob().workflow!, status: "in_progress" } };
+    const job = await view([{ claim: activeClaim(), progress: checkpoint() }], observedAt, [running]);
+    expect(job.state).toBe("running");
+    expect(job.startedAt).toBe("2026-09-26T21:58:00Z");
+    expect(job.reportedActivity).toBeUndefined();
+  });
+
+  test("with several requests the freshest active checkpoint is reported and a stale sibling does not block it", async () => {
+    const second = "routine-36271681506-1-dev-no-glasses";
+    const job = githubJob();
+    job.requests.push({ ...job.requests[0]!, requestId: second, requestRunId: 36271681506, routineId: "no-glasses" });
+    const view2 = await view([
+      { claim: activeClaim(), progress: checkpoint("2026-09-26T21:50:00.000Z") },
+      { claim: activeClaim({ requestId: second, claimedAt: "2026-09-26T21:59:00.000Z" }), progress: checkpoint("2026-09-26T22:00:30.000Z") },
+    ], observedAt, [job]);
+    expect(view2.state).toBe("running");
+    expect(view2.reportedActivity).toEqual({ requestId: second, claimedAt: "2026-09-26T21:59:00.000Z", receivedAt: "2026-09-26T22:00:30.000Z" });
+  });
+});

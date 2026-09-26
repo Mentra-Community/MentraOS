@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { aliveObservation, noOwnerObservation, resourceProgress, retainedObservation } from "../../../../packages/core/src/types/test-resource-observation.examples";
 import type { TestResourceObservation } from "../../../../packages/core/src/types/test-resource-observation.types";
 import type { OverviewJob, OverviewResourceObservation, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import { TestRunOverviewService, type OverviewClaimRecord, type TestRunOverviewRepository } from "../../../../packages/core/src/services/test-run-overview.service";
 import { elapsed, resourceStatus, TestRunOverviewView } from "./test-run-overview";
 
 const stamp = "2026-09-24T20:00:00.000Z";
@@ -317,5 +318,128 @@ describe("local resource observations", () => {
     expect(section).toContain("Fixture record malformed."); expect(section).toContain("Responsible: Operator");
     expect(section).toContain("Next: Recommission this fixture before routines use it.");
     expect(resourceStatus(item("mini-1", unreadable), Date.parse(later(3_600_000)) + 86_400_000).priority).toBe(1);
+  });
+});
+
+describe("worker-reported activity on a GitHub-queued job", () => {
+  // Sanitized DEV424 observation as Core now projects it.
+  const observedAt = "2026-09-26T22:00:32.755Z";
+  const receivedAt = "2026-09-26T22:00:29.084Z";
+  const view = (reported: boolean): TestRunOverview => ({ observedAt, warnings: [], resolvedRecoveries: [], recentMaintenance: [], fixtureSummary: [], jobs: [{
+    id: "github-36271748180", kind: "routine", state: reported ? "running" : "queued", title: "Device routine request 36271681505 / attempt 1",
+    createdAt: "2026-09-26T21:05:41Z",
+    requests: [{ requestId: "routine-36271681505-1-dev-no-glasses-android", requestRunId: 36271681505, requestAttempt: 1, routineId: "no-glasses-android",
+      trigger: "successful-build", platform: "android", channel: "dev", release: "3.3.0-dev.424" }],
+    claims: [{ requestId: "routine-36271681505-1-dev-no-glasses-android", workerId: "mentra-device-mini-1-android", fixtureId: "mini-samsung-a54",
+      claimedAt: "2026-09-26T21:57:58.897Z", progress: { sequence: 44, mode: "running", phase: "test", receivedAt,
+        step: { id: "walkthrough", label: "Replay the shared walkthrough" }, completedSteps: 0, totalSteps: 1,
+        action: { id: "HOME-05-close", label: "Press Android Back once to close the all-miniapps sheet.", completedActions: 6, totalActions: 38 } } }],
+    workflow: { runId: 36271748180, url: "https://github.com/Mentra-Community/Mentra-Automated-Testing/actions/runs/36271748180",
+      status: "queued", updatedAt: "2026-09-26T21:05:41Z" },
+    ...(reported ? { reportedActivity: { requestId: "routine-36271681505-1-dev-no-glasses-android", claimedAt: "2026-09-26T21:57:58.897Z", receivedAt } }
+      : { attention: { reason: "GitHub has not started this job; runner availability has not been verified.", responsible: "GitHub / runner operator" as const,
+        nextAction: "Check the GitHub job's required labels and the runner's status." } }),
+  }] });
+  const render = (value: TestRunOverview, now: number) => renderToStaticMarkup(<TestRunOverviewView data={value} now={now} onResult={() => {}} />);
+
+  test("fresh worker progress is the primary running state, counted and timed from the worker claim; GitHub queued stays visible", () => {
+    const html = render(view(true), Date.parse(observedAt));
+    expect(html).toContain(">running</span>");
+    expect(html).toContain("<strong>1</strong> running");
+    expect(html).toContain("<strong>0</strong> queued");
+    expect(html).toContain("Reported by the worker · GitHub status: queued");
+    expect(html).toContain("6 of 38 actions completed");
+    expect(html).toContain("2m 33s"); expect(html).toContain("Since worker claim");
+    expect(html).not.toContain("GitHub has not started this job");
+    expect(html).not.toContain(">Waiting<");
+  });
+
+  test("once the checkpoint ages past the bound between refreshes, the activity is unconfirmed rather than running", () => {
+    const html = render(view(true), Date.parse(receivedAt) + 120_001);
+    expect(html).toContain(">unknown</span>");
+    expect(html).toContain("<strong>0</strong> running");
+    expect(html).toContain("<strong>1</strong> unknown");
+    expect(html).toContain("Worker checkpoint no longer recent; activity is unconfirmed · GitHub status: queued");
+    expect(html).toContain("No recent checkpoint; activity is unconfirmed");
+    // At the bound itself it is still running.
+    expect(render(view(true), Date.parse(receivedAt) + 120_000)).toContain("<strong>1</strong> running");
+  });
+
+  test("a queued job without worker-reported activity keeps the waiting state and GitHub guidance", () => {
+    const html = render(view(false), Date.parse(observedAt));
+    expect(html).toContain(">queued</span>");
+    expect(html).toContain("<strong>1</strong> queued");
+    expect(html).toContain("GitHub has not started this job; runner availability has not been verified.");
+    expect(html).toContain("Waiting");
+    expect(html).not.toContain("Reported by the worker");
+  });
+});
+
+describe("Core refresh and cached aging agree on stale worker activity", () => {
+  // Real overview service responses (JSON round-tripped like the API), rendered by the Admin view.
+  const requestId = "routine-36271681505-1-dev-no-glasses-android";
+  const receivedAt = "2026-09-26T22:00:29.084Z", received = Date.parse(receivedAt);
+  const claimed = { requestId, requestSha256: "a".repeat(64), workerId: "mentra-device-mini-1-android", fixtureId: "mini-samsung-a54",
+    executionId: "execution-dev424", claimedAt: "2026-09-26T21:57:58.897Z", state: "claimed" as const };
+  const progress = (mode: "running" | "recovering" = "running") => ({ sequence: 44, mode, phase: "test" as const, receivedAt,
+    step: { id: "walkthrough", label: "Replay the shared walkthrough" }, completedSteps: 0, totalSteps: 1,
+    action: { id: "HOME-05-close", label: "Press Android Back once to close the all-miniapps sheet.", completedActions: 6, totalActions: 38 } });
+  const githubJob = (): OverviewJob => ({ id: "github-36271748180", kind: "routine", state: "queued", title: "Device routine request 36271681505 / attempt 1",
+    createdAt: "2026-09-26T21:05:41Z", claims: [],
+    requests: [{ requestId, requestRunId: 36271681505, requestAttempt: 1, routineId: "no-glasses-android", trigger: "successful-build",
+      platform: "android", channel: "dev", release: "3.3.0-dev.424" }],
+    workflow: { runId: 36271748180, url: "https://github.com/Mentra-Community/Mentra-Automated-Testing/actions/runs/36271748180",
+      status: "queued", updatedAt: "2026-09-26T21:05:41Z" } });
+  const repository = (rows: OverviewClaimRecord[]): TestRunOverviewRepository => ({
+    claims: async () => ({ claims: rows, truncated: false }), latestFixtureClaims: async () => [], results: async () => [],
+    adminRequests: async () => [], resourceObservations: async () => ({ rows: [], truncated: false }), publishedRunIds: async () => [] });
+  const refresh = async (rows: OverviewClaimRecord[], at: number): Promise<TestRunOverview> => JSON.parse(JSON.stringify(
+    await new TestRunOverviewService(repository(rows), { activity: async () => ({ jobs: [githubJob()], warnings: [] }) }, () => new Date(at)).overview()));
+  const render = (value: TestRunOverview, now: number) => renderToStaticMarkup(<TestRunOverviewView data={value} now={now} onResult={() => {}} />);
+  const statusCell = (html: string) => /<td class="px-4 py-3">[\s\S]*?<\/td>/.exec(html)![0];
+  const counts = (html: string) => /<div class="mt-3 flex flex-wrap gap-2 text-xs">[\s\S]*?<\/div>/.exec(html)![0];
+  const stale = received + 120_001;
+  const neverStarted = "GitHub has not started this job";
+
+  test("after 120 001 ms the refreshed Core response matches the aged cached view: unknown, unconfirmed, GitHub still queued", async () => {
+    const rows = [{ claim: claimed, progress: progress() }];
+    const fresh = await refresh(rows, received + 60_000);
+    expect(render(fresh, received + 60_000)).toContain("Reported by the worker · GitHub status: queued");
+    const cached = render(fresh, stale), refreshed = render(await refresh(rows, stale), stale);
+    for (const html of [cached, refreshed]) {
+      expect(html).toContain(">unknown</span>");
+      expect(html).toContain("Worker checkpoint no longer recent; activity is unconfirmed · GitHub status: queued");
+      expect(html).toContain("<strong>1</strong> unknown"); expect(html).toContain("<strong>0</strong> queued");
+      expect(html).toContain("Since worker claim");
+      expect(html).toContain("No recent checkpoint; activity is unconfirmed");
+      expect(html).not.toContain(neverStarted);
+    }
+    expect(statusCell(refreshed)).toBe(statusCell(cached));
+    expect(counts(refreshed)).toBe(counts(cached));
+  });
+
+  test("a queued job whose claim never reported keeps the queued state and GitHub guidance", async () => {
+    const html = render(await refresh([{ claim: claimed }], stale), stale);
+    expect(html).toContain(">queued</span>"); expect(html).toContain(neverStarted);
+    expect(html).not.toContain("Reported by the worker"); expect(html).not.toContain("Worker checkpoint no longer recent");
+  });
+
+  test("blocked, closed and terminal claims with an old checkpoint are not shown as worker activity", async () => {
+    const closure = { kind: "android-refused-install-released" as const, originalTerminal: { sequence: 26, sha256: "b".repeat(64) },
+      journalPrefix: { bytes: 4096, sha256: "c".repeat(64) }, release: { type: "setup-abandoned-after-refusal" as const, sequence: 27,
+        eventSha256: "d".repeat(64), revision: "1".repeat(40), implementationSha256: "e".repeat(64) }, fixture: "uncommissioned" as const,
+      selectedCandidateInstalled: false as const, candidateTestRun: false as const, recordingStarted: false as const, closedAt: receivedAt };
+    const blocked = render(await refresh([{ claim: { ...claimed, state: "recovery-required", settledAt: receivedAt,
+      settlement: { state: "recovery-required", reason: "synthetic" } }, progress: progress("recovering") }], stale), stale);
+    expect(blocked).toContain(">blocked</span>");
+    const closed = render(await refresh([{ claim: claimed, progress: progress(), closure }], stale), stale);
+    const terminal = render(await refresh([{ claim: { ...claimed, state: "terminal", settledAt: receivedAt,
+      settlement: { state: "terminal", resultRunId: requestId } }, progress: progress() }], stale), stale);
+    for (const html of [blocked, closed, terminal]) {
+      expect(html).not.toContain("Reported by the worker");
+      expect(html).not.toContain("Worker checkpoint no longer recent");
+      expect(html).not.toContain(">unknown</span>");
+      expect(html).not.toContain(">running</span>");
+    }
   });
 });

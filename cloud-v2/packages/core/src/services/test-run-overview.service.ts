@@ -5,8 +5,9 @@ import { TestRunModel } from "../models/test-run.model";
 import type { TestRunClaim, TestRunClaimClosureRecord, TestRunProgressCheckpoint } from "../types/test-run-claim.types";
 import { testResourceHostIdSchema, testResourceKeySchema, testResourceObservationSchema } from "../types/test-resource-observation.types";
 import { testRunIdSchema, type TestRun } from "../types/test-run.types";
-import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest, OverviewResolution, OverviewResourceObservation,
-  OverviewResourceObservations, TestRunFollowUpCancellation, TestRunOverview } from "../types/test-run-overview.types";
+import { CHECKPOINT_FRESH_MS, type OverviewClaim, type OverviewFixtureSummary, type OverviewJob, type OverviewRecordedFailure, type OverviewRequest,
+  type OverviewResolution, type OverviewResourceObservation, type OverviewResourceObservations, type TestRunFollowUpCancellation,
+  type TestRunOverview } from "../types/test-run-overview.types";
 import { storedObservation, type StoredTestResourceObservation } from "./test-resource-observation.service";
 import { completeGithubActivity, GithubTestRunOverview, type TestRunOverviewGateway } from "./test-run-overview.github";
 
@@ -258,14 +259,28 @@ export class TestRunOverviewService {
     const jobs = githubResult.status === "fulfilled" ? structuredClone(githubResult.value.jobs) : [];
     const fixtureAttention: OverviewJob[] = [];
     const assigned = new Set<string>();
+    const checkedAt = this.now().getTime();
     for (const job of jobs) {
+      const rows: OverviewClaimRecord[] = [];
       for (const row of claims) if (job.requests.some(request => request.requestId === row.claim.requestId)) {
-        job.claims.push(project(row)); assigned.add(row.claim.requestId);
+        job.claims.push(project(row)); assigned.add(row.claim.requestId); rows.push(row);
         const state = evidence.get(row.claim.requestId)!;
         if (state.needsAttention && state.blocked && !row.closure) {
           job.state = "blocked";
           job.attention = attention(row, state, false);
           if (state.latest) job.resultRunId = state.latest.runId;
+        }
+      }
+      // GitHub can still report a dispatched run as queued after its worker has
+      // claimed the request and started reporting. Blockers above take precedence.
+      // A fresh checkpoint shows the job running; once it ages past the bound the
+      // activity is unconfirmed (unknown), never "GitHub has not started".
+      if (job.state === "queued" || job.state === "waiting") {
+        const activity = reportedActivity(rows, evidence);
+        if (activity) {
+          const age = checkedAt - Date.parse(activity.receivedAt);
+          job.state = Number.isFinite(age) && age <= CHECKPOINT_FRESH_MS ? "running" : "unknown";
+          job.reportedActivity = activity;
         }
       }
     }
@@ -378,6 +393,26 @@ export class TestRunOverviewService {
     }).sort((a, b) => order[a.status] - order[b.status] || newestFirst({ claimedAt: a.latestCancelledClaimAt }, { claimedAt: b.latestCancelledClaimAt })
       || a.workerId.localeCompare(b.workerId) || a.fixtureId.localeCompare(b.fixtureId));
   }
+}
+
+/**
+ * The newest worker-reported activity among a job's claims, or undefined. Only
+ * an active claim ("claimed", not closed or cancelled) with no published result
+ * counts, and only an unfinished checkpoint. The caller decides fresh or stale
+ * from its receipt time. Read-only: this never extends, grants or proves a lease.
+ */
+function reportedActivity(rows: OverviewClaimRecord[], evidence: Map<string, ReturnType<typeof classifyEvidence>>) {
+  let newest: NonNullable<OverviewJob["reportedActivity"]> | undefined;
+  for (const row of rows) {
+    const progress = row.progress, state = evidence.get(row.claim.requestId);
+    if (row.claim.state !== "claimed" || row.closure || row.followUpCancellation || !progress || progress.mode === "complete"
+      || !state || state.latest || state.resolution) continue;
+    const received = Date.parse(progress.receivedAt);
+    if (!Number.isFinite(received)) continue;
+    if (!newest || received > Date.parse(newest.receivedAt))
+      newest = { requestId: row.claim.requestId, claimedAt: row.claim.claimedAt, receivedAt: progress.receivedAt };
+  }
+  return newest;
 }
 
 /** Why the original owner could close the claim; never a pass or a ready fixture. */
