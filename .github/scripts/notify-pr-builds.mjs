@@ -176,8 +176,7 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
   return url.href
 }
 
-async function requestedRoutineLinks({github, context, pr, sha, ios, android, core}) {
-  const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
+async function requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested}) {
   if (!requested.length) return []
   const repository = `${context.repo.owner}/${context.repo.repo}`
   const workflow = "request-e2e-routine.yml"
@@ -350,7 +349,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     if (iosBuild.conclusion !== "success") ios.error = `iOS ${iosBuild.conclusion}; downloads are not ready.`
   }
   const base = `https://artifactscdn.mentraglass.com/${repo.owner}/${repo.repo}/releases/pr-builds`
-  const androidUrl = `${base}/mobile-pr-${pr.number}-${sha.slice(0, 7)}.apk`
+  // Mutable compatibility alias, linked only while the immutable receipt is unavailable.
+  let androidUrl = `${base}/mobile-pr-${pr.number}-${sha.slice(0, 7)}.apk`
   const manifestUrl = `${base}/ota-pr-${pr.number}-${sha}.json`
   let targets
   const request = async (url, method = "GET") => {
@@ -361,7 +361,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   if (!error) {
     try {
       targets = readOtaTargets(await (await request(manifestUrl)).json(), pr.number, sha)
-      await request(androidUrl, "HEAD")
       const asg = await request(targets.asg.apkUrl, "HEAD")
       const size = asg.headers.get("content-length")
       if (size && Number(size) !== targets.asg.apkSize)
@@ -403,21 +402,31 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const android = {}
   if (!error) {
     // The selected publication's receipt is the only evidence of the APK's backend.
-    let receipt, archiveSha256
+    let receipt, asset
     try {
       const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
       receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
         androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
-      archiveSha256 = validateAndroidReceipt(receipt, coordinates).android.sha256
+      asset = validateAndroidReceipt(receipt, coordinates).android
     } catch (failure) {
       receipt = undefined
       core.warning(`Android receipt unavailable: ${failure.message}; publish available downloads and keep receipt verification retryable.`)
       android.receiptUnavailable = true
     }
-    if (receipt && receipt.app.backend !== backend) error = mismatch("Android", receipt.app.backend)
-    else if (receipt) {
-      android.backend = backend
-      if (hasRoutineLabel(pr, "no-glasses-android")) android.archiveSha256 = archiveSha256
+    try {
+      if (!receipt) await request(androidUrl, "HEAD")
+      else if (receipt.app.backend !== backend) error = mismatch("Android", receipt.app.backend)
+      else {
+        // Link the exact receipt-bound APK; the alias may hold another attempt's bytes.
+        const url = artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds", asset.name)
+        if (Number((await request(url, "HEAD")).headers.get("content-length")) !== asset.size)
+          throw new Error("Published Android APK size disagrees with its receipt")
+        androidUrl = url
+        android.backend = backend
+        android.archiveSha256 = asset.sha256
+      }
+    } catch (failure) {
+      error = failure.message
     }
   }
   const comments = await github.paginate(github.rest.issues.listComments, {
@@ -430,24 +439,31 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const publicationIdentity = builds
     .map((build) => `${build.run.id}-${build.attempt}`)
     .join(":")
-  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}`
+  // Selected routines are part of the delivered post, so a label added to the same
+  // publications posts their requested tests and result links once.
+  const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}${
+    requested.length ? `:routines-${requested.join(",")}` : ""}`
   if (android.receiptUnavailable) {
     const previous = comment?.body.split("\n").map(line =>
-      new RegExp(`^<!-- ${sha}:(?:incomplete|ready):${publicationIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
+      new RegExp(`^<!-- ${buildIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
     if (previous) {
-      // Reuse only the hash already verified for these exact publications. Readiness
-      // can still advance so a newly available Apple download is not suppressed. The
-      // identity does not record a destination, so the Android backend stays unverified.
+      // A transient receipt miss must not downgrade a post already verified for this exact
+      // build identity, readiness included, so this matches it and nothing is reposted. When
+      // readiness changed, the new post stays receipt-unavailable so a later verified receipt
+      // enriches it once instead of being suppressed by a reused verified identity.
       android.archiveSha256 = previous[1]
       android.receiptUnavailable = false
     }
   }
+  // A verified APK binds its immutable hash; an unverified backend is distinct so a
+  // later notification can replace it once its receipt verifies.
   const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
     core.info("This PR revision's notification was already delivered.")
     return
   }
-  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core})
+  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested})
   if (!(await current())) {
     core.info("PR superseded or retargeted before notification.")
     return
