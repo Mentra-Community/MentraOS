@@ -18,7 +18,11 @@ configuration and recordings in the private testing system.
    the shared reporting path; retain its ID or submission failure. Keep the
    affected path failed or blocked and continue independent exploration whose
    prerequisites still hold. Bug fixing proceeds separately; it does not gate
-   all discovery or turn the failed check into a pass.
+   all discovery or turn the failed check into a pass. Acoustic calibration and
+   probes are prerequisites for automated audio measurement, not for using or
+   exploring the app: without them, keep audio assertions unverified and
+   continue UI exploration that is otherwise valid. Normal action, ownership
+   and recording prerequisites still apply.
 2. **Capture and edit.** Turn the exploration into a readable routine of stable
    English actions and observable assertions using the existing flow helpers.
    Keep steps editable so coverage can change and grow with the product.
@@ -115,13 +119,38 @@ pass. Once the flow works, perform one clean recorded end-to-end qualification
 against the exact source and build. Normal CI and nightly runs retain their full
 setup, assertions, teardown and verified return state.
 
-Check the selected revision's actual commands. The development CLI introduced in
-private [PR #105](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/105)
-still wraps `run` in setup and Home cleanup; `recover` reconciles the original
-execution, not a failed-step retry. Neither provides live-state continuation.
-Until a reviewed continuation entry exists, state that tooling gap and continue
-source work; do not invent step/range flags or repeatedly use the full lifecycle
-as a substitute.
+Check the selected revision's actual commands. At private `e20dbb9` they are
+the [`develop.ts` usage](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/e20dbb96b93696d681e7e06f5ddb90b580e86bfd/worker/develop.ts#L60-L90)
+and the [development entry guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/e20dbb96b93696d681e7e06f5ddb90b580e86bfd/docs/DEVELOPMENT-ENTRY.md#development-segments);
+copy invocations from there, not from memory.
+
+- **Full `run`/`recover` (Mac unpaired only).** `run`, from private
+  [PR #105](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/105),
+  wraps the frozen flow in install, account setup and Home cleanup. `recover`
+  reconciles that original execution; it is not a failed-step retry.
+- **`segment` (`mac-unpaired-ui` and `android-no-glasses` only).** It runs one
+  authored `--section`, or a stable `--from`/`--through` step range, once with
+  `--mode execute` (sends actions) or `--mode observe` (no input; recheck a
+  corrected assertion after an answered action). The snapshot and flow export
+  are hash-pinned. A first segment names a platform-specific settled `--origin`;
+  each later one names the previous immutable result with `--parent`.
+  Before any input it requires the pinned previous owner settled (writer and
+  recorder included), the actual pinned app and driver/tools, and fresh entry
+  assertions. It never installs, signs in or runs setup: if the app moved or
+  needs setup it is refused, so use full `run` or the existing setup instead.
+  Each segment has its own recording and result; a failed result is kept and
+  never rewritten by a later success.
+- `inspect-segment` verifies a result receipt without device access.
+  `recover-segment` reconciles the same original owner and never resends
+  unknown input or recorder work. `end` closes the session with the declared
+  return cleanup.
+
+Segments are local UI development evidence, not Day1 firmware or Call
+continuation. Merged source does not mean a host's runtime is ready or
+authorized to run them, and the private guide records only offline tests; no
+live segment or full routine pass is implied. Where no supported segment
+applies, state the gap and continue source work. Do not invent flags or present
+a full-lifecycle rerun as continuation.
 
 Separate worktrees allow parallel authoring; execution still uses shared resource
 ownership. Independent Mac and Android fixtures can run together. Routines using
