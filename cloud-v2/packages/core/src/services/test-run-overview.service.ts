@@ -158,13 +158,11 @@ export function recordedFailure(run: Pick<TestRun, "runId" | "outcome" | "failur
   const step = failure.step ? { id: clipText(failure.step.id, RECORDED_LABEL), label: clipText(failure.step.label, RECORDED_LABEL) } : undefined;
   const candidates = chapterPhases.has(failure.phase) ? (run.chapters ?? []).filter(chapter => chapter.phase === failure.phase) : [];
   const chapter = candidates.find(item => item.status === "failed") ?? candidates.find(item => item.status === "blocked");
-  const instruction = chapter && clipText(chapter.instruction, RECORDED_TEXT);
   return { resultRunId: run.runId,
     failure: { phase: failure.phase, ...(step ? { step } : {}), message: clipText(failure.message, RECORDED_TEXT),
       ...(failure.expected ? { expected: clipText(failure.expected, RECORDED_TEXT) } : {}) },
-    // A chapter that only repeats the step label adds no action.
-    ...(chapter && instruction !== step?.label ? { chapter: { id: clipText(chapter.id, RECORDED_LABEL), status: chapter.status as "failed" | "blocked",
-      instruction: instruction!, ...(chapter.expected ? { expected: clipText(chapter.expected, RECORDED_TEXT) } : {}) } } : {}),
+    ...(chapter ? { chapter: { id: clipText(chapter.id, RECORDED_LABEL), status: chapter.status as "failed" | "blocked",
+      instruction: clipText(chapter.instruction, RECORDED_TEXT), ...(chapter.expected ? { expected: clipText(chapter.expected, RECORDED_TEXT) } : {}) } } : {}),
     detailUnpublished: (failure.missingEvidence ?? []).some(item => item.kind === "failure-details") };
 }
 /** One evidence decision controls reconciliation, active blocking and inactive visibility. */

@@ -466,6 +466,10 @@ describe("recorded failure detail is bounded history from the latest uniquely co
       failure: { phase: "test", step: { id: "customer-sequence", label: "Customer sequence" }, message: "Phase failed." },
       chapter: { id: "OTA-03", status: "failed", instruction: "Confirm the January device ID, ASG27 build and IP match", expected: "Device ID, build 27 and IP match" },
       detailUnpublished: false });
+    // A chapter whose instruction repeats the step label still carries its own ID, status and expectation.
+    expect(recordedFailure({ ...day1(), failures: [{ ...failure("test", "identity", "Confirm device identity", "Phase failed."), missingEvidence: [] }],
+      chapters: [chapter("OTA-03", "test", "failed", "Confirm device identity", "Device ID, build 27 and IP match")] })?.chapter)
+      .toEqual({ id: "OTA-03", status: "failed", instruction: "Confirm device identity", expected: "Device ID, build 27 and IP match" });
     // A blocked chapter is used only without a failed one; other phases are never borrowed.
     const blockedOnly = day1(); blockedOnly.chapters = blockedOnly.chapters.filter(item => item.id !== "OTA-03");
     expect(recordedFailure(blockedOnly)?.chapter).toMatchObject({ id: "OTA-04", status: "blocked" });
