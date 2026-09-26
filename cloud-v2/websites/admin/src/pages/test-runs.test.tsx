@@ -12,6 +12,7 @@ import {
   chapterSeekTime,
   EMPTY_FILTERS,
   initialChapter,
+  relatedRun,
   runDuration,
   safeProducerUrl,
   testRunListPath,
@@ -76,6 +77,25 @@ const run: TestRunDetail = {
       uploaded: true,
     },
   ],
+};
+
+// Synthetic appended CI recovery shaped like the registered CI exporter's provenance.
+const ciRecovery: TestRunDetail = {
+  ...run,
+  runId: "recovery-2",
+  channel: "dev",
+  provenance: {
+    ...run.provenance,
+    executionMode: "ci-registered",
+    requestRelationship: "consumed",
+    resultGeneration: "2",
+    terminalSnapshotSha256: "1".repeat(64),
+    originalTerminalSnapshotSha256: "2".repeat(64),
+    originalRunId: "original_run-01",
+    previousResultRunId: "original_run-01",
+    recoveryRevisionSha256: "3".repeat(64),
+    recoveryHistorySha256: "4".repeat(64),
+  },
 };
 
 describe("authenticated result navigation", () => {
@@ -405,42 +425,88 @@ describe("recording and chapter integrity", () => {
     expect(returned).toContain("26.9.21.3");
     expect(returned).toContain(">passed<");
   });
-  test("links a recovery result to the original run while retaining the failed test outcome", () => {
-    const markup = renderToStaticMarkup(
-      <TestRunView
-        run={{
-          ...run,
-          provenance: {
-            ...run.provenance,
-            originalRunId: "original_run-01",
-            resultGeneration: "2",
-            previousResultRunId: "original_run-01",
-          },
-        }}
-        onStep={() => {}}
-      />,
-    );
+  test("links a CI recovery result to the original run while retaining the failed test outcome", () => {
+    const markup = renderToStaticMarkup(<TestRunView run={ciRecovery} onStep={() => {}} />);
+    expect(relatedRun(ciRecovery)).toEqual({ kind: "recovery", runId: "original_run-01" });
     expect(markup).toContain('aria-label="Recovery result"');
     expect(markup).toContain('href="/?testRun=original_run-01"');
     expect(markup).toContain("The original test outcome is preserved.");
+    expect(markup).not.toContain('aria-label="Source run"');
     expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
     expect(markup).toMatch(/>fixture<\/p>[\s\S]*?>ready<\/span>/);
   });
-  test("only valid distinct original run IDs produce a recovery link", () => {
-    for (const originalRunId of [
-      undefined,
-      run.runId,
-      "../other",
-      "https://elsewhere.invalid",
-      "one&testRun=two",
-      "\ud800",
-      "a".repeat(121),
+  test("development and legacy original run IDs keep a neutral source link, not a recovery label", () => {
+    const development = {
+      ...run,
+      runId: "local-account-miniapps-fixed-export-20260926-28c679bd",
+      provenance: {
+        ...run.provenance,
+        executionMode: "development-exploration",
+        recoveryOnly: "false",
+        ciQualification: "false",
+        originalRunId: "account-fixed-export-authoring-28c679bd-0383-4978-bea8-d601970dc867",
+      },
+    };
+    const legacy = { ...run, provenance: { ...run.provenance, originalRunId: "recovery-legacy_run-2" } };
+    for (const [linked, source] of [
+      [development, "account-fixed-export-authoring-28c679bd-0383-4978-bea8-d601970dc867"],
+      [legacy, "recovery-legacy_run-2"],
+    ] as const) {
+      const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
+      expect(relatedRun(linked)).toEqual({ kind: "source", runId: source });
+      expect(markup).toContain('aria-label="Source run"');
+      expect(markup).toContain(`href="/?testRun=${source}"`);
+      expect(markup).toContain("View source run");
+      expect(markup).not.toContain("Recovery result");
+      expect(markup).not.toContain("original test outcome");
+      expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
+      expect(markup).toMatch(/>teardown<\/p>[\s\S]*?>passed<\/span>/);
+    }
+  });
+  test("incomplete or malformed CI lineage is a source link, never a recovery", () => {
+    const { recoveryRevisionSha256: _revision, ...withoutRevision } = ciRecovery.provenance;
+    for (const provenance of [
+      withoutRevision,
+      { ...ciRecovery.provenance, executionMode: "development-exploration" },
+      { ...ciRecovery.provenance, requestRelationship: "unrelated" },
+      { ...ciRecovery.provenance, resultGeneration: "1" },
+      { ...ciRecovery.provenance, resultGeneration: "02" },
+      { ...ciRecovery.provenance, resultGeneration: "2.5" },
+      { ...ciRecovery.provenance, resultGeneration: "9".repeat(20) },
+      { ...ciRecovery.provenance, previousResultRunId: undefined },
+      { ...ciRecovery.provenance, previousResultRunId: ciRecovery.runId },
+      { ...ciRecovery.provenance, previousResultRunId: "../other" },
+      { ...ciRecovery.provenance, recoveryHistorySha256: "E".repeat(64) },
+      { ...ciRecovery.provenance, originalTerminalSnapshotSha256: "" },
+      { ...ciRecovery.provenance, terminalSnapshotSha256: "not-a-digest" },
     ]) {
-      const markup = renderToStaticMarkup(
-        <TestRunView run={{ ...run, provenance: { ...run.provenance, originalRunId } }} onStep={() => {}} />,
-      );
-      expect(markup).not.toContain('aria-label="Recovery result"');
-      expect(markup).not.toContain("View original run");
+      const linked = { ...ciRecovery, provenance };
+      expect(relatedRun(linked)).toEqual({ kind: "source", runId: "original_run-01" });
+      const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
+      expect(markup).toContain('aria-label="Source run"');
+      expect(markup).toContain('href="/?testRun=original_run-01"');
+      expect(markup).not.toContain("Recovery result");
+    }
+  });
+  test("only valid distinct original run IDs produce a linked run", () => {
+    for (const base of [run, ciRecovery]) {
+      for (const originalRunId of [
+        undefined,
+        base.runId,
+        "../other",
+        "https://elsewhere.invalid",
+        "one&testRun=two",
+        "\ud800",
+        "a".repeat(121),
+      ]) {
+        const linked = { ...base, provenance: { ...base.provenance, originalRunId } };
+        const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
+        expect(relatedRun(linked)).toBeNull();
+        expect(markup).not.toContain('aria-label="Recovery result"');
+        expect(markup).not.toContain('aria-label="Source run"');
+        expect(markup).not.toContain("View original run");
+        expect(markup).not.toContain("View source run");
+      }
     }
   });
   test("incomplete media gets explicit text and is never requested as a playable recording", () => {
