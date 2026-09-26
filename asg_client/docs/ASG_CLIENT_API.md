@@ -753,6 +753,22 @@ No response. Clips live under `assets/pairing/` (`letter_a.wav` … `letter_z.wa
 
 ---
 
+### Audio reproduction harness (engineering only)
+
+Replays scheduled cue, capture and I2S bridge sequences for audio investigation. Every command is refused unless the gate file `<external files dir>/audio-repro/ENABLED` exists, which only an engineer creates over adb; without it these commands have no effect. Results are reported as `AUDIO_REPRO ...` logcat lines under the `AudioRepro` tag and in `audio-repro/runs/<run_id>/events.jsonl`. Drive them with `asg_client/tools/audio-repro/run.py`, which documents the sequence schema.
+
+| Command | Fields | Effect |
+|---|---|---|
+| `audio_repro_run` | `sequence_path` (relative to `audio-repro/`) or inline `sequence` | Validate and start a run |
+| `audio_repro_signal` | `key` (for example `w0.satisfied`), optional `fields` | Release a host-verified wait |
+| `audio_repro_pause` / `audio_repro_resume` | none | Hold or continue before the next trial |
+| `audio_repro_abort` | none | End the current trial, run its cleanup, stop the run |
+| `audio_repro_status` | none | Log one status line |
+
+No response.
+
+---
+
 ### RGB LED control
 
 Controls the RGB LEDs on the glasses themselves (not the local MTK recording LED). See [features/led-control.md](features/led-control.md) for the layered architecture.

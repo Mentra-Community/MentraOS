@@ -363,7 +363,7 @@ MAC is sourced from BES (`hs_syvr`/`sr_btaddr`), persisted in
 The MTK Wi-Fi interface MAC is read from Android's Wi-Fi service and forwarded
 separately as `wifi_mac_address` when available.
 
-`asg_client` includes logging, crash/error reporting, incident log buffering, and debug receivers for development and OTA testing. Production behavior should prioritize device stability and useful logs for support while avoiding secrets in logs.
+`asg_client` includes logging, crash/error reporting, incident log buffering, and debug receivers for development and OTA testing. An engineering-only audio reproduction harness (`audio_repro_*` commands, `tools/audio-repro/`) replays scheduled cue, capture and bridge sequences; it refuses every command unless an adb-created gate file exists, and its trace hooks are inert without an active run. Production behavior should prioritize device stability and useful logs for support while avoiding secrets in logs.
 
 ## How Mentra Live works at runtime
 

@@ -18,6 +18,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
 import com.mentra.asg_client.audio.I2sReadyGate;
+import com.mentra.asg_client.audio.diag.AudioTraceBus;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.camera.UvcStreamingState;
@@ -576,7 +577,20 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             + " payload="
                             + payload);
 
+            long sendBeginNs = System.nanoTime();
             boolean sent = sendK900Command(payload.toString());
+            AudioTraceBus.emit(
+                    AudioTraceBus.UART_I2S_CMD,
+                    "command",
+                    command,
+                    "request_id",
+                    requestId,
+                    "rate",
+                    rateHz != null ? rateHz : 0,
+                    "sent",
+                    sent,
+                    "send_begin_ns",
+                    sendBeginNs);
             Log.i(
                     TAG,
                     "[I2S-RATE] uart_send result="

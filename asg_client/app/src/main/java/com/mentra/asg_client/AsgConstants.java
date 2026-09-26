@@ -26,6 +26,30 @@ public class AsgConstants {
     /** Internal service extra carrying the correlated BES START request. */
     public static final String EXTRA_I2S_REQUEST_ID = "i2s_request_id";
 
+    /**
+     * Audio reproduction harness root, relative to the app's external files directory. The harness
+     * refuses every command unless {@link #AUDIO_REPRO_ENABLED_FILE} exists there (created over
+     * adb), so its presence in a build never changes production behavior.
+     */
+    public static final String AUDIO_REPRO_DIR = "audio-repro";
+    /** Gate file inside {@link #AUDIO_REPRO_DIR}. */
+    public static final String AUDIO_REPRO_ENABLED_FILE = "ENABLED";
+    /** Default wait for an anchor event, measured from the producing operation's execution. */
+    public static final long AUDIO_REPRO_ANCHOR_TIMEOUT_MS = 8_000L;
+    /** Execution later than its target by more than this marks the trial {@code schedule_miss}. */
+    public static final long AUDIO_REPRO_LATE_TOLERANCE_MS = 5L;
+    /** Failsafe bound on a single trial. */
+    public static final long AUDIO_REPRO_MAX_TRIAL_MS = 60_000L;
+    /** Default gap between trials when a trial does not specify its own pre-delay. */
+    public static final long AUDIO_REPRO_INTER_TRIAL_MS = 1_000L;
+    /**
+     * With no bridge event observed yet, wait this long for a close before treating the bridge as
+     * closed; it exceeds {@link #I2S_IDLE_CLOSE_MS} so a grace period in progress completes first.
+     */
+    public static final long AUDIO_REPRO_BRIDGE_SETTLE_MS = 1_000L;
+    /** Interval between HAL-derived AudioRecord timestamp samples during harness capture. */
+    public static final long AUDIO_REPRO_CAPTURE_TS_INTERVAL_MS = 250L;
+
     /** Maximum wait for Camera2 re-registration before a FOV readiness error. */
     public static final long CAMERA_FOV_READY_TIMEOUT_MS = 20_000L;
 
