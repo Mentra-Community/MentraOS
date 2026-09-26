@@ -176,11 +176,17 @@ class DataExportService {
   }
 
   /**
-   * Collect settings from AsyncStorage
+   * Collect the user's settings, redacting values the settings registry marks
+   * as credentials (such as the Cloud bearer in `core_token`).
    */
   private static async collectSettingsData(): Promise<{[key: string]: any}> {
     console.log("DataExportService: Collecting settings data...")
-    const settings: Record<string, any> = engine.settings.getAll()
+    const settings: Record<string, any> = Object.fromEntries(
+      Object.entries(engine.settings.getAll()).map(([key, value]) => [
+        key,
+        engine.settings.descriptor(key)?.credential && value ? "[REDACTED]" : value,
+      ]),
+    )
     console.log(`DataExportService: Collected ${Object.keys(settings).length} settings`)
     return settings
   }

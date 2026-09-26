@@ -1,4 +1,6 @@
+import {engine, SETTINGS} from "@mentra/engine"
 import {act, fireEvent, render, screen} from "@testing-library/react-native"
+import * as Clipboard from "expo-clipboard"
 import {Share} from "react-native"
 
 import DataExportPage from "@/app/miniapps/settings/data-export"
@@ -10,6 +12,8 @@ jest.mock("expo-application", () => ({
     return mockNativeApplicationVersion
   },
 }))
+jest.mock("expo-clipboard", () => ({setStringAsync: jest.fn(() => Promise.resolve(true))}))
+jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
 jest.mock("@/contexts/AuthContext", () => ({useAuth: () => ({user: null, session: null})}))
 jest.mock("@/contexts/ThemeContext", () => ({
   useAppTheme: () => ({theme: {spacing: {s3: 12, s4: 16, s6: 24}, colors: {}}, themed: () => ({})}),
@@ -47,8 +51,73 @@ async function sharedExportMetadata() {
   return JSON.parse(message.slice(message.indexOf("{"))).metadata
 }
 
+async function copiedExport(): Promise<string> {
+  render(<DataExportPage />)
+  await act(async () => {})
+  await act(async () => fireEvent.press(screen.getByRole("button", {name: "profileSettings:dataExportCopy"})))
+
+  expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1)
+  return jest.mocked(Clipboard.setStringAsync).mock.calls[0][0]
+}
+
 afterEach(() => {
   jest.restoreAllMocks()
+  jest.clearAllMocks()
+  engine.settings.resetAllLocal()
+})
+
+describe("copied export redacts the Cloud bearer held in settings", () => {
+  // Synthetic sentinel only; never a real credential.
+  const CORE_TOKEN_SENTINEL = "synthetic-core-token-sentinel-7f3a"
+
+  beforeEach(async () => {
+    mockNativeApplicationVersion = "3.3.0"
+    // The same writes CloudClientService and the settings screens perform.
+    await engine.settings.set(SETTINGS.core_token.key, CORE_TOKEN_SENTINEL, false)
+    await engine.settings.set(SETTINGS.auth_email.key, "export-user@example.test", false)
+    await engine.settings.set(SETTINGS.theme_preference.key, "dark", false)
+    await engine.settings.set(SETTINGS.metric_system.key, true, false)
+    await engine.settings.set(SETTINGS.head_up_angle.key, 27, false)
+  })
+
+  test("no credential value appears anywhere in the copied payload", async () => {
+    const payload = await copiedExport()
+
+    expect(payload).not.toContain(CORE_TOKEN_SENTINEL)
+    expect(JSON.parse(payload).userSettings[SETTINGS.core_token.key]).toBe("[REDACTED]")
+  })
+
+  test("legitimate user settings are exported unchanged", async () => {
+    const {userSettings} = JSON.parse(await copiedExport())
+
+    expect(userSettings).toMatchObject({
+      auth_email: "export-user@example.test",
+      theme_preference: "dark",
+      metric_system: true,
+      head_up_angle: 27,
+    })
+    // Only the credential differs from what the engine reports.
+    const {core_token: _exportedToken, ...exported} = userSettings
+    const {core_token: _engineToken, ...engineSettings} = engine.settings.getAll()
+    expect(exported).toEqual(JSON.parse(JSON.stringify(engineSettings)))
+  })
+
+  test("export does not mutate engine settings", async () => {
+    const before = engine.settings.getAll()
+
+    await copiedExport()
+
+    expect(engine.settings.get(SETTINGS.core_token.key)).toBe(CORE_TOKEN_SENTINEL)
+    expect(engine.settings.getAll()).toEqual(before)
+  })
+
+  test("an unset bearer stays empty rather than implying a credential", async () => {
+    await engine.settings.set(SETTINGS.core_token.key, "", false)
+
+    const {userSettings} = JSON.parse(await copiedExport())
+
+    expect(userSettings[SETTINGS.core_token.key]).toBe("")
+  })
 })
 
 test.each(["3.3.0", "4.0.1", "3.2.0-beta.4"])(
