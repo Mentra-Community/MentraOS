@@ -441,11 +441,12 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}`
   if (android.receiptUnavailable) {
     const previous = comment?.body.split("\n").map(line =>
-      new RegExp(`^<!-- ${sha}:(?:incomplete|ready):${publicationIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
+      new RegExp(`^<!-- ${buildIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
     if (previous) {
-      // A transient receipt miss must not downgrade a post already verified for these
-      // exact publications. Readiness can still advance; the identity does not record a
-      // destination, so the Android backend stays unverified and no verified link is claimed.
+      // A transient receipt miss must not downgrade a post already verified for this exact
+      // build identity, readiness included, so this matches it and nothing is reposted. When
+      // readiness changed, the new post stays receipt-unavailable so a later verified receipt
+      // enriches it once instead of being suppressed by a reused verified identity.
       android.archiveSha256 = previous[1]
       android.receiptUnavailable = false
     }

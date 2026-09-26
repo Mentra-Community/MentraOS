@@ -787,6 +787,18 @@ test("a transient receipt miss never downgrades an already verified post", async
   assert.match(h.posts[1].text, /incomplete/)
   assert.match(slack(h.posts[1]), /Backend: not verified/)
   assert.ok(bothLinks(h, 1).includes(aliasApk) && !bothLinks(h, 1).includes(immutableApk))
+  // The changed-readiness fallback does not inherit the earlier verified identity.
+  assert.match(h.written[1].body, new RegExp(`^<!-- ${sha}:incomplete:2-1:1-1:3-1:android-receipt-unavailable -->$`, "m"))
+  // The receipt returns while the Mac download is still missing: enrich once, then stay quiet.
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 3)
+  assert.equal(h.written.length, 3)
+  assert.match(h.posts[2].text, /incomplete/)
+  assert.match(slack(h.posts[2]), /Backend: \*Dev\* · Android ARM64/)
+  assert.ok(bothLinks(h, 2).includes(immutableApk) && !bothLinks(h, 2).includes(aliasApk))
+  assert.match(h.written[2].body, new RegExp(`^<!-- ${sha}:incomplete:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
 })
 
 test("an initially missing receipt enriches the post once with the verified immutable APK", async () => {
