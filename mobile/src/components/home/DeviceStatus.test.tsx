@@ -4,6 +4,7 @@ import {useSettingsStore} from "@mentra/engine-host-internal"
 import type {ReactNode} from "react"
 
 import {GlassesBatteryReading, GlassesStatus} from "./DeviceStatus"
+import {renderInStack} from "@/test-utils/renderInStack"
 import {useNavigationStore} from "@/stores/navigation"
 import {showAlert} from "@/utils/AlertUtils"
 
@@ -91,48 +92,70 @@ describe("glasses battery reading", () => {
   beforeEach(() => report.mockClear())
 
   it("shows the value and reports the committed value with its native event id", () => {
-    const screen = render(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
+    const {screen, update} = renderInStack(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
     expect(screen.getByText("57%")).toBeTruthy()
     expect(screen.queryByText(/stream:5/)).toBeNull()
     expect(report).toHaveBeenCalledTimes(1)
     expect(report).toHaveBeenCalledWith("glasses_battery", ["stream:5"], 57)
 
     // Re-rendering the same state is not a new observation.
-    screen.rerender(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
+    update(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
     expect(report).toHaveBeenCalledTimes(1)
 
     // A fresh packet with an unchanged percentage is reported with its own id.
-    screen.rerender(<GlassesBatteryReading level={57} charging={false} eventId="stream:8" />)
+    update(<GlassesBatteryReading level={57} charging={false} eventId="stream:8" />)
     expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:8"], 57)
   })
 
   it("reports a value without native provenance as an empty marker", () => {
-    const screen = render(<GlassesBatteryReading level={64} charging={true} />)
+    const {screen} = renderInStack(<GlassesBatteryReading level={64} charging={true} />)
     expect(screen.getByText("64%")).toBeTruthy()
     expect(report).toHaveBeenCalledTimes(1)
     expect(report).toHaveBeenCalledWith("glasses_battery", [], 64)
   })
 
   it("invalidates the earlier marker when the id disappears at the same level", () => {
-    const screen = render(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
+    const {screen, update} = renderInStack(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
     expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:5"], 57)
 
     // The same 57% is now a cached/fallback value: it must not stay attributed to stream:5.
-    screen.rerender(<GlassesBatteryReading level={57} charging={false} />)
+    update(<GlassesBatteryReading level={57} charging={false} />)
     expect(screen.getByText("57%")).toBeTruthy()
     expect(report).toHaveBeenLastCalledWith("glasses_battery", [], 57)
 
     // A later measured packet restores provenance with its own id.
-    screen.rerender(<GlassesBatteryReading level={57} charging={false} eventId="stream:9" />)
+    update(<GlassesBatteryReading level={57} charging={false} eventId="stream:9" />)
     expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:9"], 57)
     expect(report).toHaveBeenCalledTimes(3)
   })
 
   it("invalidates the marker when the reading is removed from the screen", () => {
-    const screen = render(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
+    const {screen} = renderInStack(<GlassesBatteryReading level={57} charging={false} eventId="stream:5" />)
     screen.unmount()
     expect(report).toHaveBeenLastCalledWith("glasses_battery", [])
-    expect(report).toHaveBeenCalledTimes(2)
+  })
+
+  it("withdraws the marker while another route covers Home and reports current state on return", () => {
+    const {screen, update, push, back} = renderInStack(
+      <GlassesBatteryReading level={57} charging={false} eventId="stream:5" />,
+    )
+    expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:5"], 57)
+
+    // Pushing a route keeps Home mounted underneath but no longer visible.
+    push()
+    expect(screen.getByText("next screen")).toBeTruthy()
+    expect(report).toHaveBeenLastCalledWith("glasses_battery", [])
+    const callsAfterBlur = report.mock.calls.length
+
+    // Updates to the hidden reading must not produce positive markers.
+    update(<GlassesBatteryReading level={58} charging={false} eventId="stream:9" />)
+    update(<GlassesBatteryReading level={59} charging={false} eventId="stream:11" />)
+    expect(report.mock.calls.slice(callsAfterBlur).filter(([, ids]) => ids.length > 0)).toEqual([])
+
+    // Returning to Home reports what is actually shown now.
+    back()
+    expect(screen.getByText("59%")).toBeTruthy()
+    expect(report).toHaveBeenLastCalledWith("glasses_battery", ["stream:11"], 59)
   })
 
   it("reports only when the connected card actually renders the reading", () => {

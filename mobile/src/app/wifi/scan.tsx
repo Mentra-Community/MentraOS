@@ -12,6 +12,7 @@ import {Badge} from "@/components/ui/Badge"
 import {Group} from "@/components/ui"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useDiagnosticRenderMarker} from "@/hooks/useDiagnosticRenderMarker"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
@@ -113,18 +114,15 @@ export default function WifiScanScreen() {
       frequency: network.frequency,
     }))
 
-  // After every committed list, report which native chunks it came from. An empty id list marks a
-  // list without provenance (cleared, or containing an id-less chunk); any chunk from another scan
-  // makes the list unqualified. Leaving the screen clears the marker. The list itself is unchanged.
-  useEffect(() => {
-    const eventIds = scanHasUnprovenancedChunkRef.current ? [] : scanEventIdsRef.current
-    engine.glasses.reportDiagnosticRender("wifi_scan", eventIds, networks.length)
-  }, [networks])
-  useEffect(
-    () => () => {
-      engine.glasses.reportDiagnosticRender("wifi_scan", [])
-    },
-    [],
+  // While this screen is focused, report which native chunks the committed list came from. The
+  // refs are updated before each setNetworks, so this render sees the ids behind this list. An
+  // empty id list marks a list without provenance (cleared, or containing an id-less chunk); any
+  // chunk from another scan makes the list unqualified. A pushed route (password, connecting) or
+  // leaving the screen withdraws the marker. The list itself is unchanged.
+  useDiagnosticRenderMarker(
+    "wifi_scan",
+    scanHasUnprovenancedChunkRef.current ? [] : scanEventIdsRef.current,
+    networks.length,
   )
 
   const startScan = async () => {

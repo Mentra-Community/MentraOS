@@ -270,6 +270,9 @@ object BleEvidenceLog {
     /**
      * Records that app UI committed state derived from [eventIds]. Only allowlisted surfaces and
      * bounded integer values are accepted; ids from another stream are counted, not stored.
+     * An out-of-range value is not accepted: it is recorded as a withdrawal of the surface (no
+     * ids, null value, the value itself not stored) and false is returned, so the surface's
+     * earlier marker never stays current for a value it does not describe.
      */
     fun uiRender(surface: String, eventIds: List<String>, value: Int?): Boolean {
         val maxValue =
@@ -278,7 +281,21 @@ object BleEvidenceLog {
                 SURFACE_WIFI_SCAN -> 500
                 else -> return false
             }
-        if (value != null && (value < 0 || value > maxValue)) return false
+        if (value != null && (value < 0 || value > maxValue)) {
+            synchronized(lock) {
+                append(
+                    "ui_render",
+                    mapOf(
+                        "surface" to surface,
+                        "eventIds" to JSONArray(),
+                        "rejectedEventIds" to eventIds.size,
+                        "truncated" to false,
+                        "value" to null,
+                    ),
+                )
+            }
+            return false
+        }
         return synchronized(lock) {
             val prefix = "$streamId:"
             val accepted = eventIds.filter { id ->

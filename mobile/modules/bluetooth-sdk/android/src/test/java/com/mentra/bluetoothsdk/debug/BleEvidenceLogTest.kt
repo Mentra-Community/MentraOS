@@ -222,6 +222,40 @@ class BleEvidenceLogTest {
     }
 
     @Test
+    fun `an out-of-range render value withdraws the surface without storing the value`() {
+        val id = BleEvidenceLog.battery(BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01"), 57, "battery_status", null)
+        assertTrue(BleEvidenceLog.uiRender(BleEvidenceLog.SURFACE_BATTERY, listOf(id), 57))
+
+        for ((surface, value) in listOf(
+            BleEvidenceLog.SURFACE_BATTERY to 150,
+            BleEvidenceLog.SURFACE_BATTERY to -1,
+            BleEvidenceLog.SURFACE_WIFI_SCAN to 501,
+            BleEvidenceLog.SURFACE_WIFI_SCAN to Int.MAX_VALUE,
+        )) {
+            // The value is not accepted, but the surface's earlier marker must not stay current.
+            assertFalse(BleEvidenceLog.uiRender(surface, listOf(id), value))
+            val withdrawal = records(BleEvidenceLog.snapshot(0, null)).last()
+            assertEquals("ui_render", withdrawal.getString("kind"))
+            assertEquals(surface, withdrawal.getString("surface"))
+            assertEquals(0, withdrawal.getJSONArray("eventIds").length())
+            assertTrue(withdrawal.isNull("value"))
+            assertFalse(withdrawal.toString().contains(value.toString()))
+        }
+
+        // Boundary values stay qualifying markers; the next valid reading restores provenance.
+        assertTrue(BleEvidenceLog.uiRender(BleEvidenceLog.SURFACE_BATTERY, listOf(id), 100))
+        assertTrue(BleEvidenceLog.uiRender(BleEvidenceLog.SURFACE_WIFI_SCAN, emptyList(), 500))
+        val restored = records(BleEvidenceLog.snapshot(0, null)).last { it.getString("surface") == BleEvidenceLog.SURFACE_BATTERY }
+        assertEquals(100, restored.getInt("value"))
+        assertEquals(1, restored.getJSONArray("eventIds").length())
+
+        // An unknown surface has nothing to withdraw and is still refused without a record.
+        val before = BleEvidenceLog.snapshot(0, null).getLong("fenceSeq")
+        assertFalse(BleEvidenceLog.uiRender("debug_panel", listOf(id), 1))
+        assertEquals(before, BleEvidenceLog.snapshot(0, null).getLong("fenceSeq"))
+    }
+
+    @Test
     fun `dump answers only its command and reports an unavailable owner`() {
         BleEvidenceLog.connectionAccepted("AA:BB:CC:DD:EE:01")
         val main = Handler(Looper.getMainLooper())

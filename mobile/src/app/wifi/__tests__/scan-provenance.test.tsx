@@ -1,7 +1,8 @@
-import {act, fireEvent, render} from "@testing-library/react-native"
+import {act, fireEvent} from "@testing-library/react-native"
 import {engine, type WifiSearchResult} from "@mentra/engine"
 
 import WifiScanScreen from "../scan"
+import {renderInStack} from "@/test-utils/renderInStack"
 
 jest.mock("expo-router", () => ({
   useFocusEffect: jest.fn(),
@@ -68,7 +69,7 @@ describe("Wi-Fi scan render provenance", () => {
   const network = (ssid: string): WifiSearchResult => ({ssid, requiresPassword: true, signalStrength: -40})
 
   it("reports every native chunk behind the committed list, including foreign ones", async () => {
-    const screen = render(<WifiScanScreen />)
+    const {screen} = renderInStack(<WifiScanScreen />)
     act(() => emitChunk([network("LabAP")], {eventId: "stream:9"}))
     expect(screen.getByText("LabAP")).toBeTruthy()
     expect(report).toHaveBeenLastCalledWith("wifi_scan", ["stream:9"], 1)
@@ -84,7 +85,7 @@ describe("Wi-Fi scan render provenance", () => {
   })
 
   it("reports lists without native provenance as empty markers", async () => {
-    const screen = render(<WifiScanScreen />)
+    const {screen} = renderInStack(<WifiScanScreen />)
     act(() => emitChunk([network("LegacyAP")], {}))
     await act(async () => finishScan([network("LegacyAP")]))
     expect(screen.getByText("LegacyAP")).toBeTruthy()
@@ -93,7 +94,7 @@ describe("Wi-Fi scan render provenance", () => {
   })
 
   it("invalidates the marker when a chunk without provenance joins the list", () => {
-    render(<WifiScanScreen />)
+    renderInStack(<WifiScanScreen />)
     act(() => emitChunk([network("LabAP")], {eventId: "stream:9"}))
     expect(report).toHaveBeenLastCalledWith("wifi_scan", ["stream:9"], 1)
     act(() => emitChunk([network("LegacyAP")], {}))
@@ -101,7 +102,7 @@ describe("Wi-Fi scan render provenance", () => {
   })
 
   it("invalidates the previous list when a rescan clears it", () => {
-    const screen = render(<WifiScanScreen />)
+    const {screen} = renderInStack(<WifiScanScreen />)
     act(() => emitChunk([network("LabAP")], {eventId: "stream:9"}))
     expect(report).toHaveBeenLastCalledWith("wifi_scan", ["stream:9"], 1)
     fireEvent.press(screen.getByLabelText("rescan"))
@@ -109,8 +110,29 @@ describe("Wi-Fi scan render provenance", () => {
     expect(report).toHaveBeenLastCalledWith("wifi_scan", [], 0)
   })
 
+  it("withdraws the marker while a pushed route covers the scan and reports current state on return", () => {
+    const {screen, push, back} = renderInStack(<WifiScanScreen />)
+    act(() => emitChunk([network("LabAP")], {eventId: "stream:9"}))
+    expect(report).toHaveBeenLastCalledWith("wifi_scan", ["stream:9"], 1)
+
+    // Selecting a network pushes /wifi/password or /wifi/connecting; the scan stays mounted below.
+    push()
+    expect(screen.getByText("next screen")).toBeTruthy()
+    expect(report).toHaveBeenLastCalledWith("wifi_scan", [])
+    const callsAfterBlur = report.mock.calls.length
+
+    // The hidden scan keeps receiving chunks; they must not produce positive markers.
+    act(() => emitChunk([network("OtherAP")], {eventId: "stream:12"}))
+    expect(report.mock.calls.slice(callsAfterBlur).filter(([, ids]) => ids.length > 0)).toEqual([])
+
+    // Back on the scan screen, the list actually shown is reported again.
+    back()
+    expect(screen.getByText("OtherAP")).toBeTruthy()
+    expect(report).toHaveBeenLastCalledWith("wifi_scan", ["stream:9", "stream:12"], 2)
+  })
+
   it("invalidates the marker when the scan screen is left", () => {
-    const screen = render(<WifiScanScreen />)
+    const {screen} = renderInStack(<WifiScanScreen />)
     act(() => emitChunk([network("LabAP")], {eventId: "stream:9"}))
     screen.unmount()
     expect(report).toHaveBeenLastCalledWith("wifi_scan", [])

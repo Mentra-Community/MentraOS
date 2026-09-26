@@ -5,6 +5,7 @@ import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropTy
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useDiagnosticRenderMarker} from "@/hooks/useDiagnosticRenderMarker"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
@@ -27,10 +28,11 @@ import MicIcon from "assets/icons/component/MicIcon"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 
 /**
- * The glasses battery percentage. After each committed value it reports the opaque native event
- * id behind it, or an empty id list when the value has no provenance (cached or fallback), and an
- * empty marker when it leaves the screen, so an earlier id never stays attributed to what is shown.
- * Android device-test provenance only; nothing is displayed.
+ * The glasses battery percentage. While Home is focused it reports the opaque native event id
+ * behind the committed value, or an empty id list when the value has no provenance (cached or
+ * fallback). When another route covers Home or the reading unmounts it withdraws the marker, so
+ * an earlier id never stays attributed to what is shown. Android device-test provenance only;
+ * nothing is displayed.
  */
 export function GlassesBatteryReading({
   level,
@@ -42,15 +44,7 @@ export function GlassesBatteryReading({
   eventId?: string
 }) {
   const {theme} = useAppTheme()
-  useEffect(() => {
-    engine.glasses.reportDiagnosticRender("glasses_battery", eventId ? [eventId] : [], level)
-  }, [level, eventId])
-  useEffect(
-    () => () => {
-      engine.glasses.reportDiagnosticRender("glasses_battery", [])
-    },
-    [],
-  )
+  useDiagnosticRenderMarker("glasses_battery", eventId ? [eventId] : [], level)
   return (
     <View className="flex-row items-center gap-1">
       <Icon
