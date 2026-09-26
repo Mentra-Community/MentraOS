@@ -238,6 +238,9 @@ test("Android results authenticate the sibling Mac archive attached to the origi
 })
 
 // Cancelled before any runner: projected from GitHub metadata, never as a test result.
+// GitHub run/job/callback receipts are actual (see the fixture's provenance). The
+// request.json body and Slack post receipt were not captured; they adapt the
+// repository's coordinated request fixture to the actual run/build identities.
 const dev404 = JSON.parse(readFileSync(new URL("fixtures/cancelled-unexecuted-routine.json", import.meta.url)))
 const dev404Request = (channel = "dev") => {
   const value = structuredClone(request), {publicRequestRun: source, sourceBuild} = dev404
@@ -285,6 +288,10 @@ function actionsApi(repository, runs, jobs, artifacts = {}) {
   }}
 }
 
+const callback = v => v.dispatcher.window.workflow_runs.find(item => item.id === 36218261570)
+const dispatchJob = v => v.dispatcher.jobs.find(item => item.name === "Dispatch trusted request")
+const send = v => dispatchJob(v).steps.find(step => step.name === "Queue the ready request in the private repository")
+
 function cancelled({channel = "dev", corrupt = () => {}, workerAttempt = 1} = {}) {
   const values = {requestRun: structuredClone(dev404.publicRequestRun), worker: structuredClone(dev404.privateRun),
     workerJobs: structuredClone(dev404.privateJobs), dispatcher: structuredClone(dev404.dispatcher),
@@ -292,7 +299,7 @@ function cancelled({channel = "dev", corrupt = () => {}, workerAttempt = 1} = {}
   corrupt(values)
   const build = run(dev404.sourceBuild.runId, {path: ".github/workflows/coordinated-release.yml", head_sha: dev404.sourceBuild.headSha,
     head_branch: channel, event: "push", created_at: "2026-09-26T03:10:00Z"})
-  const github = actionsApi("MentraOS", [values.requestRun, values.dispatcher.run, build, ...values.publicRuns], values.dispatcher.jobs,
+  const github = actionsApi("MentraOS", [values.requestRun, ...values.dispatcher.window.workflow_runs, build, ...values.publicRuns], values.dispatcher.jobs,
     {[build.id]: [{name: `release-slack-message-${build.id}-1`}]})
   const privateGithub = actionsApi("Mentra-Automated-Testing", [values.worker, ...values.privateRuns], values.workerJobs,
     {[values.worker.id]: values.privateArtifacts})
@@ -305,6 +312,8 @@ function cancelled({channel = "dev", corrupt = () => {}, workerAttempt = 1} = {}
 }
 
 test("actual dev404 request cancelled before any runner updates its existing post without a result", async () => {
+  // The actual callback window also holds the concurrent callback for request 36218240618.
+  assert.equal(dev404.dispatcher.window.workflow_runs.length, 2)
   const options = cancelled()
   const [plan] = await resolveRoutineNotifications(options)
   assert.deepEqual(options.verified, ["routine-36218243731-1-dev-no-glasses"])
@@ -338,6 +347,7 @@ test("cancellation is refused unless GitHub proves the exact request never reach
   const identity = /Workflow identity differs/, notProven = /only a cancelled attempt that never reached a runner/
   const executed = /may have reached a runner/, binding = /differs from its requested routine/
   const producer = /Request differs from its trusted producer/, dispatcher = /Trusted dispatcher/, post = /another tested build/
+  const creator = /not created by the trusted dispatcher App/, person = {login: "PhilippeFerreiraDeSousa", id: 12345678, type: "User"}
   // Frozen invalid examples: each must be refused for its own reason.
   const invalid = {
     "private repository": [v => { v.worker.repository.full_name = "Mentra-Community/MentraOS" }, identity],
@@ -367,14 +377,19 @@ test("cancellation is refused unless GitHub proves the exact request never reach
     "request run failed": [v => { v.requestRun.conclusion = "failure" }, /did not succeed/],
     "request from feature branch": [v => { v.requestRun.head_branch = "codex/forged" }, identity],
     "worker predates request": [v => { v.worker.created_at = "2026-09-26T04:30:00Z" }, /predates/],
-    "dispatcher absent": [v => { v.dispatcher.run.display_title = "Device request callback 36218243730 / attempt 1" }, dispatcher],
-    "dispatcher from another workflow": [v => { v.dispatcher.run.path = ".github/workflows/request-e2e-routine.yml" }, dispatcher],
-    "duplicate dispatcher": [v => { v.publicRuns.push({...v.dispatcher.run, id: 36218250002}) }, dispatcher],
-    "dispatcher did not send": [v => { v.dispatcher.jobs[1].steps[3].conclusion = "skipped" }, dispatcher],
-    "dispatcher send failed": [v => { v.dispatcher.jobs[1].steps[3].conclusion = "failure" }, dispatcher],
-    "dispatcher sent twice": [v => { v.dispatcher.jobs.push({...v.dispatcher.jobs[1], id: 108338500003, run_attempt: 2,
-      steps: v.dispatcher.jobs[1].steps.map(step => ({...step, started_at: "2026-09-26T04:40:00Z", completed_at: "2026-09-26T04:40:05Z"}))}) }, dispatcher],
-    "worker created outside the send": [v => { v.dispatcher.jobs[1].steps[3].completed_at = "2026-09-26T04:35:36Z" }, dispatcher],
+    "worker created by a person": [v => { v.worker.actor = v.worker.triggering_actor = person }, creator],
+    "worker rerun by a person": [v => { v.worker.triggering_actor = person }, creator],
+    "worker created by another App": [v => { v.worker.actor = v.worker.triggering_actor = {login: "github-actions[bot]", id: 41898282, type: "Bot"} }, creator],
+    "dispatcher login on another account": [v => { v.worker.actor = v.worker.triggering_actor = {...v.worker.actor, id: 1} }, creator],
+    "dispatcher absent": [v => { callback(v).display_title = "Device request callback 36218243730 / attempt 1" }, dispatcher],
+    "dispatcher from another workflow": [v => { callback(v).path = ".github/workflows/request-e2e-routine.yml" }, dispatcher],
+    "dispatcher from a feature branch": [v => { callback(v).head_branch = "codex/forged" }, dispatcher],
+    "duplicate dispatcher": [v => { v.publicRuns.push({...callback(v), id: 36218261999}) }, dispatcher],
+    "dispatcher did not send": [v => { send(v).conclusion = "skipped" }, dispatcher],
+    "dispatcher send failed": [v => { send(v).conclusion = "failure" }, dispatcher],
+    "dispatcher sent twice": [v => { v.dispatcher.jobs.push({...structuredClone(dispatchJob(v)), id: 108338527999, run_attempt: 2,
+      steps: dispatchJob(v).steps.map(step => ({...step, started_at: "2026-09-26T04:40:00Z", completed_at: "2026-09-26T04:40:05Z"}))}) }, dispatcher],
+    "worker created outside the send": [v => { send(v).started_at = send(v).completed_at = "2026-09-26T04:35:30Z" }, dispatcher],
     "second private run for the request": [v => { v.privateRuns.push({...v.worker, id: 36218299908, conclusion: "success"}) }, /Private dispatch for this request is ambiguous/],
     "post for another archive": [v => { v.post.build.archiveSha256 = "f".repeat(64) }, post],
     "post for another source": [v => { v.post.build.headSha = "f".repeat(40); v.post.producer.headSha = "f".repeat(40) }, post],
@@ -386,7 +401,7 @@ test("cancellation is refused unless GitHub proves the exact request never reach
 })
 
 test("a retried dispatcher that cloned its completed send is still one send", async () => {
-  const options = cancelled({corrupt: v => { v.dispatcher.jobs.push({...structuredClone(v.dispatcher.jobs[1]), id: 108338500003, run_attempt: 2}) }})
+  const options = cancelled({corrupt: v => { v.dispatcher.jobs.push({...structuredClone(dispatchJob(v)), id: 108338527999, run_attempt: 2}) }})
   assert.equal((await resolveRoutineNotifications(options))[0].row.status, "cancelled")
 })
 
@@ -406,6 +421,11 @@ test("cancelled rows only fill pending rows; worker results always outrank them"
     status: "passed", resultRunId: "routine-36218243700-1-dev-no-glasses"}
   const withPass = applyRoutineResult(post, passed)
   assert.deepEqual(applyRoutineResult(withPass, cancellation), withPass)
+  // A later queued attempt of the same request cancelled after a real result cannot hide that result.
+  const attempted = {...gen, routineId: "no-glasses", status: "failed", resultRunId: "routine-36218243731-1-dev-no-glasses"}
+  const afterResult = applyRoutineResult(post, attempted)
+  assert.deepEqual(applyRoutineResult(afterResult, {...cancellation, privateAttempt: 2}), afterResult)
+  assert.deepEqual(applyRoutineResult(afterResult, {...cancellation, privateRunId: 36218299999}), afterResult)
   // A worker-attested result for the same request replaces the cancellation, even from an earlier worker run.
   const failed = {...gen, routineId: "no-glasses", privateRunId: 36218299900, status: "failed", resultRunId: "routine-36218243731-1-dev-no-glasses"}
   assert.equal(applyRoutineResult(both, failed).rows["no-glasses"].status, "failed")

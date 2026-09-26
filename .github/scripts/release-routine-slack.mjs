@@ -96,6 +96,13 @@ const WORKER_JOB = "prepared-mac-routine"
 const CALLBACK_JOB = "Dispatch trusted request"
 const PRIVATE_SEND_STEP = "Queue the ready request in the private repository"
 export const DISPATCHER = {workflow: CALLBACK, job: CALLBACK_JOB, step: PRIVATE_SEND_STEP}
+// The trusted dispatcher queues private workers with the TEST_RUN GitHub App token
+// (dispatch-device-routine.yml). GitHub records that App's bot as the worker run's
+// creator; the numeric account ID is immutable. Actual receipt: worker 36218299907
+// was created by this bot during callback 36218261570's private send.
+const DISPATCHER_APP = Object.freeze({login: "mentra-release-coordinator[bot]", id: 321969383, type: "Bot"})
+const createdByDispatcherApp = actor => actor?.id === DISPATCHER_APP.id && actor.login === DISPATCHER_APP.login &&
+  actor.type === DISPATCHER_APP.type
 // GitHub records run creation and step times on different services, in whole seconds.
 const CLOCK_SKEW_MS = 5_000
 const NOT_PROVEN = "No terminal receipt; only a cancelled attempt that never reached a runner can be reported without one"
@@ -120,14 +127,22 @@ async function completeRuns(github, repo, query, message) {
 
 /**
  * GitHub metadata, not worker code, is the only witness when an attempt is
- * cancelled before a runner accepts it. The worker run name only locates the
- * candidate request. The request must be the trusted dev producer, the job must
- * show no runner or step, and the trusted dev callback must be the single
- * dispatcher of exactly this private run.
+ * cancelled before a runner accepts it. Private main's device-routine.yml (the
+ * same trust root that writes ordinary terminal receipts) makes GitHub derive the
+ * run name from the request_run_id/request_attempt inputs and the job labels from
+ * routine_id; the digits-only title parse is unambiguous. Those inputs still only
+ * name a candidate: the request must be the trusted dev producer, the run must be
+ * created by the dispatcher App, the job must show no runner or step, and the
+ * trusted dev callback for that request must be the single sender of exactly this
+ * run. Private dispatch returns no run ID, so there is no stronger binding for
+ * historical runs; anything ambiguous is refused.
  */
 async function unexecutedCancellation({github, privateGithub, context, run, read}) {
   const title = workerTitle.exec(run.display_title ?? "")
   requireThat(run.path === WORKER && run.conclusion === "cancelled" && title, NOT_PROVEN)
+  // A rerun by anyone else changes triggering_actor; only the App's own dispatch qualifies.
+  requireThat(createdByDispatcherApp(run.actor) && createdByDispatcherApp(run.triggering_actor),
+    "Private run was not created by the trusted dispatcher App")
   const jobs = await privateGithub.paginate(privateGithub.rest.actions.listJobsForWorkflowRunAttempt,
     {...PRIVATE, run_id: run.id, attempt_number: run.run_attempt, per_page: 100})
   requireThat(jobs.length === 1, "Cancelled attempt jobs are ambiguous")

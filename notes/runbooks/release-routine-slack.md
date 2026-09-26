@@ -60,19 +60,33 @@ modified automatically.
 complete evidence, acknowledged settlement and successful result publication.
 Uploading a result is different from passing it. Runs stopped before a terminal
 receipt exists do not claim a Slack result; their workflow remains the diagnostic
-source.
+source. PR requests use this same authenticated callback to post one comment
+per worker run/attempt/routine on the originating PR; they do not need Slack
+configuration. See [PR result history](../../.github/DEVICE-ROUTINES.md#results-and-slack).
 
 One exception has no receipt by construction: a request cancelled while queued.
 The private callback forwards a cancelled `device-routine.yml` attempt only when
-its single job has no runner and no steps. The public resolver then re-proves it:
+its single job has no runner and no steps. The public resolver then re-proves it
+from GitHub metadata:
 
-- the exact private `main` attempt was dispatched and completed as cancelled,
-  with no terminal artifact and the job labels of the requested routine/platform;
-- the run name only locates the request, which must be the trusted successful
-  dev request with its authenticated request artifact and pinned build/archive;
+- the exact private `main` attempt completed as cancelled with no terminal
+  artifact; its only job has no runner or step;
+- private `main` makes GitHub derive the run name from the `request_run_id` and
+  `request_attempt` inputs and the job labels from `routine_id`. These name the
+  candidate request, which must be the trusted successful dev request with its
+  authenticated artifact and pinned build/archive;
+- the run was created, and not rerun, by the dispatcher GitHub App's bot account
+  (fixed numeric ID);
 - the trusted dev `dispatch-device-routine.yml` callback for that exact request
-  completed one private send, and this is the only private run of that name
-  created during the send.
+  completed exactly one private send, and this is the only private run of that
+  name created during the send.
+
+Private dispatch does not return the created run ID, so historical runs have no
+stronger binding than this. A same-input run created by another holder of the
+App key during the send makes the history ambiguous and is refused. The only
+unexcluded case is such a run appearing while the trusted send itself created
+none. Even then the run did receive that request as input and never ran, so the
+status stays true. Manual redispatches outside the send, and reruns, are refused.
 
 The post then shows **Cancelled before execution; no test result** for that
 routine. It is not a test result, result link, recording or qualification. It
@@ -83,9 +97,7 @@ refused and keeps its recovery/evidence path. PR comments are unchanged.
 
 To backfill one proven cancellation after this is deployed, dispatch this
 workflow on `dev` with that worker run ID and attempt, exactly as the callback
-does. PR requests use this same authenticated callback to post one comment
-per worker run/attempt/routine on the originating PR; they do not need Slack
-configuration. See [PR result history](../../.github/DEVICE-ROUTINES.md#results-and-slack).
+does.
 
 ## Concurrent routines and retries
 
