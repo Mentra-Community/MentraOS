@@ -1062,6 +1062,11 @@ struct ViewState {
         #endif
         checkCurrentAudioDevice()
 
+        // Disconnect clears micEnabled but preserves the consumers' audio requests.
+        // Recompute demand before selecting a microphone; unchanged requests are
+        // deduplicated by DeviceStore.apply().
+        setMicState()
+
         // save the default_wearable now that we're connected:
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
