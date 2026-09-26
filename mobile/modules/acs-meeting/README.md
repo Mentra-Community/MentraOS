@@ -1064,8 +1064,9 @@ Same contract, fewer knobs. `AcsMeetingModule.swift` exposes the same Expo surfa
 `WhepVideoSource` and `LocalWhipIngestSource.swift` deliver `CVPixelBuffer`;
 `AcsFrameSender.swift` sends on the virtual stream behind a `VideoSendGate` with a simple fps
 throttle. `GlassesHotspotNetwork` uses the same persistent `NEHotspotConfiguration` join as
-gallery transfers, verifies the joined SSID and `en0` address, and waits for DHCP against the
-gateway the glasses advertised before resolving. Audio policy logic is shared through the
+gallery transfers, verifies the joined SSID and the address of the one interface Network framework
+reports as Wi-Fi (never a fixed `en0`), and waits for DHCP against the gateway the glasses
+advertised before resolving. Join and SoftAP rebind use that same verified interface and address. Audio policy logic is shared through the
 `PolicyKit` Swift package.
 
 Screen-off and background operation already work in the Mentra App through its existing

@@ -4,7 +4,7 @@ Native receivers, WHIP publishers and network helpers shared by the Mentra App. 
 
 - Android: the existing `GlassesMediaSource`, local WHIP and WHEP receivers, scoped SoftAP networking, decoded I420/PCM delivery, and transport diagnostics moved here. The ACS session and raw outgoing streams remain in `acs-meeting`.
 - iOS: `DecodedGlassesMediaSource` delivers `CVPixelBuffer` video and interleaved PCM16. `LocalWhipIngestSource` answers the glasses' existing WHIP client; `WhepVideoSource` retains the cloud subscription path.
-- `GlassesHotspotNetwork` uses the same persistent `NEHotspotConfiguration` join as gallery transfers. Wi-Fi carries the glasses link; cellular carries the call. It verifies the joined SSID and `en0` address, reports network loss, and retains a cancelled join until the uncancellable system callback has been cleaned up.
+- `GlassesHotspotNetwork` uses the same persistent `NEHotspotConfiguration` join as gallery transfers. Wi-Fi carries the glasses link; cellular carries the call. It verifies the joined SSID and the address of the one interface Network framework reports as Wi-Fi (not a fixed `en0`; a Mac can use `en1`), keeps that interface for loss checks and ACS binding, reports network loss, and retains a cancelled join until the uncancellable system callback has been cleaned up.
 
 The publisher owns its outgoing encoders, audio policy, and destination. Receivers do not open the phone microphone or play the glasses microphone locally. iOS uses a receive-only audio device to drive decoded PCM delivery without changing the app's audio session.
 
