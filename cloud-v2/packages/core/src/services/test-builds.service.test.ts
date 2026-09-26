@@ -108,7 +108,7 @@ describe("exact PR build inventory", () => {
 });
 
 // A staging-targeted PR: its merge parent is the staging tip and its app uses staging.
-function targetStaging(f: ReturnType<typeof fixture>, receipt: { app: { backend: string } } = f.receipt) {
+function targetStaging(f: { rows: Map<string, unknown>; receipt: { app: { backend: string } } }, receipt = f.receipt) {
   f.rows.set(`${API}/pulls/12`, { ...pr, base: { ref: "staging" } });
   f.rows.delete(`${API}/git/ref/heads/dev`);
   f.rows.set(`${API}/git/ref/heads/staging`, { ref: "refs/heads/staging", object: { type: "commit", sha: BASE } });
