@@ -60,4 +60,14 @@ describe.each([
     expect(mockItems.slice(2, 4).map((item) => item.value)).toEqual(["—", "—"])
     expect(engine.gallery.refreshStatus).not.toHaveBeenCalled()
   })
+
+  it("keeps connected counts unknown until a summary arrives", async () => {
+    render(<Screen />)
+    await act(async () => {})
+    expect(mockItems.slice(2, 4).map((item) => item.value)).toEqual(["—", "—"])
+    act(() => {
+      useGallerySyncStore.getState().setGlassesGalleryStatus(0, 0, 0, false)
+    })
+    expect(mockItems.slice(2, 4).map((item) => item.value)).toEqual(["0", "0"])
+  })
 })

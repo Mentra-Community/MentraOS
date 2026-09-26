@@ -72,6 +72,7 @@ export interface GallerySyncInfo {
   syncServiceOpenedHotspot: boolean
 
   // Gallery status from glasses
+  glassesGalleryStatusKnown: boolean
   glassesPhotoCount: number
   glassesVideoCount: number
   glassesTotalCount: number
@@ -135,6 +136,7 @@ const initialState: GallerySyncInfo & {processingFiles: Set<string>; processedFi
   queueIndex: 0,
   hotspotInfo: null,
   syncServiceOpenedHotspot: false,
+  glassesGalleryStatusKnown: false,
   glassesPhotoCount: 0,
   glassesVideoCount: 0,
   glassesTotalCount: 0,
@@ -319,6 +321,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
         hasContent && (state.syncState === "complete" || state.syncState === "error" || state.syncState === "cancelled")
 
       set({
+        glassesGalleryStatusKnown: true,
         glassesPhotoCount: photos,
         glassesVideoCount: videos,
         glassesTotalCount: total,
@@ -329,6 +332,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
 
     clearGlassesGalleryStatus: () =>
       set({
+        glassesGalleryStatusKnown: false,
         glassesPhotoCount: 0,
         glassesVideoCount: 0,
         glassesTotalCount: 0,
@@ -381,6 +385,7 @@ export const selectIssyncing = (state: GallerySyncState) =>
   state.syncState === "connecting_wifi"
 
 export const selectGlassesGalleryStatus = (state: GallerySyncState) => ({
+  known: state.glassesGalleryStatusKnown,
   photos: state.glassesPhotoCount,
   videos: state.glassesVideoCount,
   total: state.glassesTotalCount,

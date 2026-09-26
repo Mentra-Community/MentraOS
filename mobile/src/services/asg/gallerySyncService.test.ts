@@ -405,6 +405,7 @@ describe("GallerySyncService", () => {
 
   it("updates gallery status from glasses events", () => {
     gallerySyncService.initialize()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
 
     GlobalEventEmitter.emit("gallery_status", {
       photos: 2,
@@ -416,12 +417,34 @@ describe("GallerySyncService", () => {
 
     expect(useGallerySyncStore.getState()).toEqual(
       expect.objectContaining({
+        glassesGalleryStatusKnown: true,
         glassesPhotoCount: 2,
         glassesVideoCount: 1,
         glassesTotalCount: 3,
         glassesHasContent: true,
       }),
     )
+  })
+
+  it("invalidates idle gallery counts across reconnects and ignores late disconnected events", () => {
+    gallerySyncService.initialize()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    GlobalEventEmitter.emit("gallery_status", {photos: 2, videos: 1, total: 3, has_content: true})
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    GlobalEventEmitter.emit("gallery_status", {photos: 2, videos: 1, total: 3, has_content: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    expect(useGallerySyncStore.getState()).toMatchObject({
+      syncState: "idle",
+      glassesGalleryStatusKnown: false,
+      glassesPhotoCount: 0,
+      glassesVideoCount: 0,
+    })
+
+    GlobalEventEmitter.emit("gallery_status", {photos: 0, videos: 0, total: 0, has_content: false})
+    expect(useGallerySyncStore.getState().glassesGalleryStatusKnown).toBe(true)
+    gallerySyncService.cleanup()
+    expect(useGallerySyncStore.getState().glassesGalleryStatusKnown).toBe(false)
   })
 
   it("cancels an active sync if glasses disconnect", () => {

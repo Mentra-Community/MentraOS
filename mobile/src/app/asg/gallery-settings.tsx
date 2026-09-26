@@ -158,13 +158,13 @@ export default function GallerySettingsScreen() {
                 label: translate("glasses:photosOnGlasses", {
                   glassesName: defaultWearable || translate("glasses:title"),
                 }),
-                value: glassesConnected ? glassesGallery.photos.toString() : "—",
+                value: glassesConnected && glassesGallery.known ? glassesGallery.photos.toString() : "—",
               },
               {
                 label: translate("glasses:videosOnGlasses", {
                   glassesName: defaultWearable || translate("glasses:title"),
                 }),
-                value: glassesConnected ? glassesGallery.videos.toString() : "—",
+                value: glassesConnected && glassesGallery.known ? glassesGallery.videos.toString() : "—",
               },
               {
                 label: translate("glasses:storageUsed"),

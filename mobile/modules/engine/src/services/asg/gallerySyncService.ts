@@ -239,6 +239,7 @@ class GallerySyncService {
 
     this.syncStartPromise = null
     useGallerySyncStore.getState().setSyncStarting(false)
+    useGallerySyncStore.getState().clearGlassesGalleryStatus()
     this.waitingForWifiRetry = false
     this.wifiSettingsOpenedAt = null
     this.startAborted = false
@@ -252,6 +253,9 @@ class GallerySyncService {
    */
   private handleGlassesDisconnected = (): void => {
     const store = useGallerySyncStore.getState()
+    // Counts belong to this connection even when no gallery screen or sync is
+    // active. Keep them unknown until the next connection reports its summary.
+    store.clearGlassesGalleryStatus()
 
     // Pre-flight has no sync state yet — abort quietly; runStartSync checks this flag after awaits
     if (this.syncStartPromise && !this.isSyncing()) {
@@ -368,6 +372,7 @@ class GallerySyncService {
    * Handle gallery status from glasses
    */
   private handleGalleryStatus = (data: any): void => {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) return
     console.log("[GallerySyncService] Received gallery_status:", data)
 
     const store = useGallerySyncStore.getState()
