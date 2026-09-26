@@ -6,7 +6,7 @@ import {AppState, Platform} from "react-native"
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
 import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
-import { useNavigationStore } from "@/stores/navigation"
+import {useNavigationStore} from "@/stores/navigation"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -239,6 +239,23 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         return
       }
 
+      if (authParams?.type === "signup" && authParams.access_token) {
+        const res = await mentraAuth.completeSignupVerification(authParams.access_token)
+        try {
+          WebBrowser.dismissBrowser()
+        } catch {
+          // The confirmation link may have opened outside an in-app browser.
+        }
+        if (res.is_error()) {
+          console.error("Email verification sign-in failed:", res.error)
+          nav.replace("/auth/start?authError=invalid_grant")
+          return
+        }
+        nav.setAnimation("none")
+        nav.replaceAll("/")
+        return
+      }
+
       if (authParams && authParams.access_token && authParams.refresh_token) {
         // Fragment tokens come from GoTrue links (email verification, legacy
         // magic links). They are SUPABASE tokens: adopting them as V2 tokens
@@ -443,7 +460,6 @@ const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContext
 export const useDeeplink = () => useContext(DeeplinkContext)
 
 export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
-
   const {setSplashEnabled} = useSplashLoader()
   const lastProcessed = useRef({url: null as string | null, time: 0})
   const nav = useNavigationStore.getState()
