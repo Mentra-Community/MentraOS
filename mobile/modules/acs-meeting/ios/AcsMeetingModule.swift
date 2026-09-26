@@ -55,20 +55,29 @@ public class AcsMeetingModule: Module {
             let token = try requireString(options, "token")
             let meetingUrl = try requireString(options, "meetingUrl")
             let source = try parseMediaSource(options)
-            if source.kind == .softap, source.bindAddress != GlassesHotspotNetwork.wifiAddress() {
-                throw AcsMeetingError("The glasses hotspot address changed before join")
-            }
             let video = try parseAcsOutgoingVideo(options["video"])
-            self.meetingSession().join(
-                token: token, identityMode: options["identityMode"] as? String ?? "guest", meetingUrl: meetingUrl, sourceConfig: source,
-                displayName: options["displayName"] as? String,
-                dumpWav: options["dumpPcmWav"] as? Bool ?? false,
-                audioSource: options["audioSource"] as? String ?? "glasses", video: video
-            ) { result in
-                switch result {
-                case let .success(state): promise.resolve(state)
-                case let .failure(error): promise.reject(error)
+            let session = self.meetingSession()
+            let join = {
+                session.join(
+                    token: token, identityMode: options["identityMode"] as? String ?? "guest", meetingUrl: meetingUrl, sourceConfig: source,
+                    displayName: options["displayName"] as? String,
+                    dumpWav: options["dumpPcmWav"] as? Bool ?? false,
+                    audioSource: options["audioSource"] as? String ?? "glasses", video: video
+                ) { result in
+                    switch result {
+                    case let .success(state): promise.resolve(state)
+                    case let .failure(error): promise.reject(error)
+                    }
                 }
+            }
+            guard source.kind == .softap else { join(); return }
+            // Bind only to the address this module's hotspot session verified on its Wi-Fi interface.
+            self.hotspot.verifiedAddress { address in
+                guard let address, source.bindAddress == address else {
+                    promise.reject(AcsMeetingError("The glasses hotspot address changed before join"))
+                    return
+                }
+                join()
             }
         }
 
@@ -197,10 +206,13 @@ public class AcsMeetingModule: Module {
                 promise.reject(AcsMeetingError("No active meeting to rebind"))
                 return
             }
-            session.rebindSoftApIngest { result in
-                switch result {
-                case let .success(url): promise.resolve(url)
-                case let .failure(error): promise.reject(error)
+            // The caller rejoins first; that session's verified Wi-Fi binding is the only valid address.
+            self.hotspot.verifiedAddress { address in
+                session.rebindSoftApIngest(address: address) { result in
+                    switch result {
+                    case let .success(url): promise.resolve(url)
+                    case let .failure(error): promise.reject(error)
+                    }
                 }
             }
         }
@@ -675,8 +687,8 @@ final class AcsMeetingSession {
     }
 
     /// Destroy the current SoftAP listener generation and bind a new one on the
-    /// address the hotspot reports *now*. The caller rejoins first, then asks for this.
-    func rebindSoftApIngest(completion: @escaping (Result<String, Error>) -> Void) {
+    /// address the hotspot verified *now*. The caller rejoins first, then asks for this.
+    func rebindSoftApIngest(address: String?, completion: @escaping (Result<String, Error>) -> Void) {
         queue.async {
             guard MediaDiagnostics.softapRecoveryEnabled else {
                 completion(.failure(AcsMeetingError("SoftAP ingest rebind is disabled")))
@@ -686,7 +698,7 @@ final class AcsMeetingSession {
                 completion(.failure(AcsMeetingError("rebindSoftApIngest is only valid for a SoftAP call")))
                 return
             }
-            guard let address = GlassesHotspotNetwork.wifiAddress() else {
+            guard let address else {
                 completion(.failure(AcsMeetingError("scoped network has no IPv4 address after rejoin")))
                 return
             }
