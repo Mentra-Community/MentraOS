@@ -20,7 +20,9 @@ public final class GlassesHotspotNetwork {
     private var joinReply: ((Result<String, Error>) -> Void)?
     private var leaveReplies: [() -> Void] = []
     private var interfaceMonitors: [NWPathMonitor] = []
-    private var interfaceReports: [[HotspotInterfaceReport]?] = []
+    /// Wi-Fi identity learned since this join started; replaced on every join and cleared on leave.
+    private var wifiIdentity = HotspotWifiIdentity()
+    private var monitorsReported: [Bool] = []
     private var interfaceReportsReady: (() -> Void)?
     private var localAccess: LocalNetworkAccessRequest?
     private var localAddress: String? { binding?.address }
@@ -252,18 +254,23 @@ public final class GlassesHotspotNetwork {
     }
 
     /// iOS can omit an internet-less Wi-Fi from its default path, and iOS-on-Mac has rejected
-    /// a Wi-Fi type constraint on a usable hotspot route. Keep both paths' interface types;
-    /// HotspotInterfacePolicy fails closed when they are missing or conflict.
+    /// a Wi-Fi type constraint on a usable hotspot route. Both paths' interface types feed one
+    /// session identity (HotspotWifiIdentity): a positive Wi-Fi report outlives later omission
+    /// only while the same interface stays attached; contrary reports and replacement fail closed.
     private func startInterfaceMonitors(generation gen: Int) {
         interfaceMonitors.forEach { $0.cancel() }
         let monitors = [NWPathMonitor(requiredInterfaceType: .wifi), NWPathMonitor()]
         interfaceMonitors = monitors
-        interfaceReports = Array(repeating: nil, count: monitors.count)
+        wifiIdentity = HotspotWifiIdentity()
+        monitorsReported = Array(repeating: false, count: monitors.count)
         for (index, monitor) in monitors.enumerated() {
             monitor.pathUpdateHandler = { [weak self] path in
                 guard let self, gen == self.generation else { return }
-                self.interfaceReports[index] = path.availableInterfaces.map { HotspotInterfaceReport(name: $0.name, isWifi: $0.type == .wifi) }
-                if self.interfaceReports.allSatisfy({ $0 != nil }) { self.fireInterfaceReportsReady() }
+                self.wifiIdentity.observe(path.availableInterfaces.map {
+                    HotspotInterfaceReport(name: $0.name, index: $0.index, isWifi: $0.type == .wifi)
+                })
+                self.monitorsReported[index] = true
+                if !self.monitorsReported.contains(false) { self.fireInterfaceReportsReady() }
                 // This AP intentionally has no internet. Loss of its default internet path is not
                 // loss of the local link; check the verified interface and address instead.
                 if let binding = self.binding, !self.cancelled, !self.isBindingIntact(binding) {
@@ -280,7 +287,7 @@ public final class GlassesHotspotNetwork {
             guard let self, gen == self.generation, !self.cancelled else { return }
             proceed()
         }
-        if interfaceReports.allSatisfy({ $0 != nil }) { fireInterfaceReportsReady(); return }
+        if !monitorsReported.contains(false) { fireInterfaceReportsReady(); return }
         queue.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self, gen == self.generation else { return }
             self.fireInterfaceReportsReady()
@@ -293,18 +300,21 @@ public final class GlassesHotspotNetwork {
         ready?()
     }
 
-    private var currentReports: [HotspotInterfaceReport] {
-        interfaceReports.compactMap { $0 }.flatMap { $0 }
+    /// Every check samples interfaces first, so a detach or replacement between path updates
+    /// is recorded in the session identity before it is used.
+    private func observeInterfaces() -> HotspotInterfaceSnapshot {
+        let snapshot = Self.interfaceSnapshot()
+        wifiIdentity.observe(snapshot)
+        return snapshot
     }
 
     private func selectBinding() -> HotspotInterfaceBinding? {
-        HotspotInterfacePolicy.select(addresses: Self.interfaceAddresses(),
-                                      wifiInterfaces: HotspotInterfacePolicy.wifiInterfaces(currentReports),
-                                      gateway: gatewayAddress)
+        HotspotInterfacePolicy.select(snapshot: observeInterfaces(), identity: wifiIdentity, gateway: gatewayAddress)
     }
 
     private func isBindingIntact(_ binding: HotspotInterfaceBinding) -> Bool {
-        HotspotInterfacePolicy.isIntact(binding, addresses: Self.interfaceAddresses(), reports: currentReports)
+        let snapshot = observeInterfaces()
+        return HotspotInterfacePolicy.isIntact(binding, snapshot: snapshot, identity: wifiIdentity)
     }
 
     private func bind(_ selected: HotspotInterfaceBinding) {
@@ -314,8 +324,9 @@ public final class GlassesHotspotNetwork {
 
     /// Interface names and their IPv4 addresses only; never credentials or SSIDs.
     private func wifiDiagnostic() -> String {
-        let wifi = HotspotInterfacePolicy.wifiInterfaces(currentReports)
-        let addresses = Self.interfaceAddresses().filter { wifi.contains($0.name) }.map { "\($0.name)=\($0.ipv4)" }
+        let snapshot = observeInterfaces()
+        let wifi = Set(wifiIdentity.trusted.keys)
+        let addresses = snapshot.addresses.filter { wifi.contains($0.name) }.map { "\($0.name)=\($0.ipv4)" }
         return "Wi-Fi interfaces=\(wifi.isEmpty ? "none" : wifi.sorted().joined(separator: ",")), " +
             "Wi-Fi IPv4=\(addresses.isEmpty ? "none" : addresses.sorted().joined(separator: ","))"
     }
@@ -352,7 +363,8 @@ public final class GlassesHotspotNetwork {
         localAccess?.cancel(); localAccess = nil
         interfaceMonitors.forEach { $0.cancel() }
         interfaceMonitors = []
-        interfaceReports = []
+        wifiIdentity = HotspotWifiIdentity()
+        monitorsReported = []
         interfaceReportsReady = nil
         if let ssid, ownsConfiguration { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
         ownsConfiguration = false
@@ -364,23 +376,31 @@ public final class GlassesHotspotNetwork {
         replies.forEach { $0() }
     }
 
-    /// Every IPv4 address with its interface name and up state. Selection belongs to
-    /// HotspotInterfacePolicy; an interface name alone never identifies Wi-Fi.
-    static func interfaceAddresses() -> [HotspotInterfaceAddress] {
+    /// Every attached interface's kernel index (its AF_LINK row) and every IPv4 address with its
+    /// interface name and up state. Selection belongs to HotspotInterfacePolicy; an interface
+    /// name alone never identifies Wi-Fi. A failed read yields an empty sample, which fails closed.
+    static func interfaceSnapshot() -> HotspotInterfaceSnapshot {
         var interfaces: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&interfaces) == 0 else { return [] }
+        guard getifaddrs(&interfaces) == 0 else { return HotspotInterfaceSnapshot(links: [:], addresses: []) }
         defer { freeifaddrs(interfaces) }
+        var links: [String: Int] = [:]
         var rows: [HotspotInterfaceAddress] = []
         var cursor = interfaces
         while let item = cursor {
             defer { cursor = item.pointee.ifa_next }
             let value = item.pointee
-            guard let address = value.ifa_addr, address.pointee.sa_family == UInt8(AF_INET) else { continue }
+            guard let address = value.ifa_addr else { continue }
+            let name = String(cString: value.ifa_name)
+            if address.pointee.sa_family == UInt8(AF_LINK) {
+                let index = address.withMemoryRebound(to: sockaddr_dl.self, capacity: 1) { Int($0.pointee.sdl_index) }
+                if index > 0 { links[name] = index }
+                continue
+            }
+            guard address.pointee.sa_family == UInt8(AF_INET) else { continue }
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             guard getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
-            rows.append(HotspotInterfaceAddress(name: String(cString: value.ifa_name),
-                                                isUp: value.ifa_flags & UInt32(IFF_UP) != 0, ipv4: String(cString: host)))
+            rows.append(HotspotInterfaceAddress(name: name, isUp: value.ifa_flags & UInt32(IFF_UP) != 0, ipv4: String(cString: host)))
         }
-        return rows
+        return HotspotInterfaceSnapshot(links: links, addresses: rows)
     }
 }
