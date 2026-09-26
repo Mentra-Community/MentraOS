@@ -191,9 +191,11 @@ function safeRelatedRunId(value: string | undefined, runId: string) {
 
 /**
  * The run this result links back to. It is a recovery only when the CI exporter
- * declared an appended lifecycle generation with its immutable lineage; any
- * other safe, distinct original run ID (development exports, legacy results)
- * stays a neutral source link. Run ID prefixes are never used as evidence.
+ * declared an appended lifecycle generation with its previous result and terminal
+ * snapshot lineage. Ordinary and amended recoveries both qualify; amendment-only
+ * hashes are not required. Any other safe, distinct original run ID (development
+ * exports, legacy results) stays a neutral source link. Run ID prefixes are never
+ * used as evidence.
  */
 export function relatedRun(run: Pick<TestRunDetail, "runId" | "provenance">): RelatedRun | null {
   const provenance = run.provenance;
@@ -207,12 +209,8 @@ export function relatedRun(run: Pick<TestRunDetail, "runId" | "provenance">): Re
     Number.isSafeInteger(generation) &&
     generation > 1 &&
     !!safeRelatedRunId(provenance.previousResultRunId, run.runId) &&
-    [
-      provenance.terminalSnapshotSha256,
-      provenance.originalTerminalSnapshotSha256,
-      provenance.recoveryRevisionSha256,
-      provenance.recoveryHistorySha256,
-    ].every((value) => DIGEST.test(value ?? ""));
+    DIGEST.test(provenance.terminalSnapshotSha256 ?? "") &&
+    DIGEST.test(provenance.originalTerminalSnapshotSha256 ?? "");
   return { kind: recovery ? "recovery" : "source", runId };
 }
 

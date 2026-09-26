@@ -79,7 +79,8 @@ const run: TestRunDetail = {
   ],
 };
 
-// Synthetic appended CI recovery shaped like the registered CI exporter's provenance.
+// Synthetic ordinary appended CI recovery shaped like the registered CI exporter's
+// provenance: a same-definition recovery has no amendment hashes.
 const ciRecovery: TestRunDetail = {
   ...run,
   runId: "recovery-2",
@@ -93,6 +94,16 @@ const ciRecovery: TestRunDetail = {
     originalTerminalSnapshotSha256: "2".repeat(64),
     originalRunId: "original_run-01",
     previousResultRunId: "original_run-01",
+  },
+};
+// The same recovery after a recoveryRef amendment, which adds amendment lineage.
+const amendedCiRecovery: TestRunDetail = {
+  ...ciRecovery,
+  runId: "recovery-3",
+  provenance: {
+    ...ciRecovery.provenance,
+    resultGeneration: "3",
+    previousResultRunId: "recovery-2",
     recoveryRevisionSha256: "3".repeat(64),
     recoveryHistorySha256: "4".repeat(64),
   },
@@ -425,15 +436,19 @@ describe("recording and chapter integrity", () => {
     expect(returned).toContain("26.9.21.3");
     expect(returned).toContain(">passed<");
   });
-  test("links a CI recovery result to the original run while retaining the failed test outcome", () => {
-    const markup = renderToStaticMarkup(<TestRunView run={ciRecovery} onStep={() => {}} />);
-    expect(relatedRun(ciRecovery)).toEqual({ kind: "recovery", runId: "original_run-01" });
-    expect(markup).toContain('aria-label="Recovery result"');
-    expect(markup).toContain('href="/?testRun=original_run-01"');
-    expect(markup).toContain("The original test outcome is preserved.");
-    expect(markup).not.toContain('aria-label="Source run"');
-    expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
-    expect(markup).toMatch(/>fixture<\/p>[\s\S]*?>ready<\/span>/);
+  test("links ordinary and amended CI recoveries to the original run while retaining the failed test outcome", () => {
+    expect(ciRecovery.provenance.recoveryRevisionSha256).toBeUndefined();
+    expect(ciRecovery.provenance.recoveryHistorySha256).toBeUndefined();
+    for (const recovery of [ciRecovery, amendedCiRecovery]) {
+      const markup = renderToStaticMarkup(<TestRunView run={recovery} onStep={() => {}} />);
+      expect(relatedRun(recovery)).toEqual({ kind: "recovery", runId: "original_run-01" });
+      expect(markup).toContain('aria-label="Recovery result"');
+      expect(markup).toContain('href="/?testRun=original_run-01"');
+      expect(markup).toContain("The original test outcome is preserved.");
+      expect(markup).not.toContain('aria-label="Source run"');
+      expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
+      expect(markup).toMatch(/>fixture<\/p>[\s\S]*?>ready<\/span>/);
+    }
   });
   test("development and legacy original run IDs keep a neutral source link, not a recovery label", () => {
     const development = {
@@ -464,9 +479,8 @@ describe("recording and chapter integrity", () => {
     }
   });
   test("incomplete or malformed CI lineage is a source link, never a recovery", () => {
-    const { recoveryRevisionSha256: _revision, ...withoutRevision } = ciRecovery.provenance;
     for (const provenance of [
-      withoutRevision,
+      { ...ciRecovery.provenance, executionMode: undefined },
       { ...ciRecovery.provenance, executionMode: "development-exploration" },
       { ...ciRecovery.provenance, requestRelationship: "unrelated" },
       { ...ciRecovery.provenance, resultGeneration: "1" },
@@ -476,7 +490,7 @@ describe("recording and chapter integrity", () => {
       { ...ciRecovery.provenance, previousResultRunId: undefined },
       { ...ciRecovery.provenance, previousResultRunId: ciRecovery.runId },
       { ...ciRecovery.provenance, previousResultRunId: "../other" },
-      { ...ciRecovery.provenance, recoveryHistorySha256: "E".repeat(64) },
+      { ...amendedCiRecovery.provenance, originalTerminalSnapshotSha256: "E".repeat(64) },
       { ...ciRecovery.provenance, originalTerminalSnapshotSha256: "" },
       { ...ciRecovery.provenance, terminalSnapshotSha256: "not-a-digest" },
     ]) {
@@ -489,7 +503,7 @@ describe("recording and chapter integrity", () => {
     }
   });
   test("only valid distinct original run IDs produce a linked run", () => {
-    for (const base of [run, ciRecovery]) {
+    for (const base of [run, ciRecovery, amendedCiRecovery]) {
       for (const originalRunId of [
         undefined,
         base.runId,
