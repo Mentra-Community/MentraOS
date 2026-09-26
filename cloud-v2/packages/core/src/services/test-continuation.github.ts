@@ -50,10 +50,13 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     ensure(!owner || (harness && owner !== grant.agentRunId), "A case candidate binding applies only to an adopted shared harness candidate");
     const pr = prSchema.parse(await this.api(candidate.repository, `pulls/${candidate.pullRequest}`));
     const base = harness ? "main" : source!.pullRequest?.baseBranch ?? source!.branch;
-    const branch = !harness && source!.pullRequest ? source!.branch : `fix/routine-${owner ?? grant.agentRunId}`;
+    // An originating PR keeps its recorded branch. A newly allocated case branch is
+    // exactly `codex/routine-<anchor>`, or the legacy `fix/routine-<anchor>` of frozen cases.
+    const anchor = owner ?? grant.agentRunId;
+    const branches = !harness && source!.pullRequest ? [source!.branch] : [`codex/routine-${anchor}`, `fix/routine-${anchor}`];
     ensure(pr.number === candidate.pullRequest && pr.head.repo?.full_name === candidate.repository
       && pr.base.repo.full_name === candidate.repository && pr.head.sha === candidate.headSha
-      && pr.head.ref === branch && pr.base.ref === base, "Candidate repository, branch, base or current head differs");
+      && branches.includes(pr.head.ref) && pr.base.ref === base, "Candidate repository, branch, base or current head differs");
     ensure(harness || !source!.pullRequest || source!.pullRequest.number === pr.number, "Use the originating PR");
     ensure(["dev", "staging"].includes(base) || harness, "Candidate destination is not admitted");
     ensure(pr.state === "open" || pr.merged, "Candidate PR closed without merging");
