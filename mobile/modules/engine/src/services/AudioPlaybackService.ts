@@ -324,6 +324,21 @@ class AudioPlaybackService {
     this.tailUplinkSuppressions.clear()
   }
 
+  private failPlayback(playback: PlaybackState, message: string): void {
+    if (this.currentPlayback !== playback || playback.completed) return
+    console.error(`AUDIO: Playback failed for ${playback.requestId}: ${message}`)
+    playback.completed = true
+    this.currentPlayback = null
+    if (playback.suppressCloudUplink) {
+      setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+    }
+    this.unloadPlaybackSource(playback, "playback failure")
+    this.notifyAudioStopDebounced()
+    void this.restoreGlassesMediaVolume()
+    // Unload and finish bookkeeping before the caller can start offline TTS.
+    playback.onComplete(playback.requestId, false, message, null, "error")
+  }
+
   /**
    * Play audio from a URL.
    * Returns a promise that resolves with playback result when audio finishes or errors.
@@ -430,7 +445,7 @@ class AudioPlaybackService {
         console.warn("AUDIO: Failed to notify native of audio start:", e)
       })
 
-      console.log(`AUDIO: Started playback for ${requestId}`)
+      console.log(`AUDIO: Requested native playback for ${requestId}`)
     } catch (error) {
       if (suppressCloudUplink) {
         setAudioCloudUplinkSuppressed(`url:${requestId}`, false)
@@ -530,23 +545,16 @@ class AudioPlaybackService {
       return
     }
 
-    // Detect silent playback failures: expo-audio doesn't surface errors to JS,
-    // so when ExoPlayer fails to load/play a URL (network error, HTTP 500, etc.),
-    // the player state goes to "idle" with nothing loaded and no buffering.
-    // We wait 1500ms after play() to avoid false positives during initial load.
-    if (status.playbackState === "idle" && !status.isBuffering && !status.isLoaded) {
+    // iOS reports "failed"; Android falls idle after a load/play error. Keep
+    // the initial grace period for status updates from source replacement.
+    const wentIdle = status.playbackState === "idle" && !status.isBuffering && !status.isLoaded
+    if (status.playbackState === "failed" || wentIdle) {
       const elapsedMs = Date.now() - playback.startTime
       if (elapsedMs > 1500) {
-        console.error(`AUDIO: Playback failed for ${playback.requestId} (player went idle after ${elapsedMs}ms)`)
-        playback.completed = true
-        this.currentPlayback = null
-        if (playback.suppressCloudUplink) {
-          setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
-        }
-        this.unloadPlaybackSource(playback, "playback failure")
-        playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null, "error")
-        this.notifyAudioStopDebounced()
-        void this.restoreGlassesMediaVolume()
+        this.failPlayback(
+          playback,
+          wentIdle ? "Playback failed (player went idle)" : "Playback failed (native player failed)",
+        )
       }
     }
   }
