@@ -223,11 +223,10 @@ function screenshotContentType(raw: string | undefined): string {
 // Structural check only: an ISO base media file starts with an `ftyp` box
 // (4-byte size, then the box type). It does not prove the stream is H264 or
 // that a browser can decode it.
-async function hasIsoMediaHeader(file: File): Promise<boolean> {
-  const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
-  if (head.byteLength !== 8) return false;
-  const boxSize = new DataView(head.buffer, head.byteOffset, 8).getUint32(0);
-  return boxSize >= 8 && new TextDecoder().decode(head.subarray(4, 8)) === "ftyp";
+function hasIsoMediaHeader(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 8) return false;
+  const boxSize = new DataView(bytes.buffer, bytes.byteOffset, 8).getUint32(0);
+  return boxSize >= 8 && new TextDecoder().decode(bytes.subarray(4, 8)) === "ftyp";
 }
 
 function textField(body: Record<string, unknown>, name: string): string | undefined {
@@ -306,13 +305,16 @@ async function readAttachmentUpload(c: AppContext): Promise<AttachmentUpload> {
     if (value.size > maxBytes) {
       throw new InvalidRequest(`artifact ${name} exceeds ${maxBytes} bytes`);
     }
-    if (video && !(await hasIsoMediaHeader(value))) {
+    // Buffered once, within the limit above; the header check reads these
+    // same bytes, which are then stored.
+    const bytes = new Uint8Array(await value.arrayBuffer());
+    if (video && !hasIsoMediaHeader(bytes)) {
       throw new InvalidRequest(`artifact ${name} has no MP4 file header`);
     }
     files.push({
       filename: value.name || `artifact-${Date.now()}`,
       contentType: video ? MP4_CONTENT_TYPE : screenshotContentType(value.type),
-      bytes: new Uint8Array(await value.arrayBuffer()),
+      bytes,
     });
   }
 
