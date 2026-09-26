@@ -1,4 +1,4 @@
-import {engine, SETTINGS, useApps} from "@mentra/engine"
+import {engine, SETTINGS, useApps, type ClientApp} from "@mentra/engine"
 import {act, fireEvent, render, screen} from "@testing-library/react-native"
 import * as Clipboard from "expo-clipboard"
 import {Share} from "react-native"
@@ -239,13 +239,26 @@ describe("full export payload carries no credential from any source", () => {
   const SENTINELS = [SETTINGS_TOKEN, STATUS_TOKEN, SESSION_TOKEN, APP_API_KEY, APP_ENDPOINT_SECRET]
 
   const user: MentraAuthUser = {id: "user-1", email: "export-user@example.test", name: "Export User"}
-  const apps = [
-    {
-      packageName: "com.example.synthetic",
-      name: "Synthetic Miniapp",
-      hashedApiKey: APP_API_KEY,
-      hashedEndpointSecret: APP_ENDPOINT_SECRET,
-    },
+  const app: ClientApp = {
+    packageName: "com.example.synthetic",
+    name: "Synthetic Miniapp",
+    webviewUrl: "",
+    logoUrl: "https://apps.example.test/synthetic.png",
+    type: "standard",
+    permissions: [],
+    running: false,
+    healthy: true,
+    hardwareRequirements: [],
+    offline: false,
+    offlineRoute: "",
+    loading: false,
+    local: true,
+    hidden: false,
+  }
+  // ClientApp does not declare these server-side fields; the export redacts
+  // them whenever they are present at runtime.
+  const apps: Array<ClientApp & {hashedApiKey: string; hashedEndpointSecret: string}> = [
+    {...app, hashedApiKey: APP_API_KEY, hashedEndpointSecret: APP_ENDPOINT_SECRET},
   ]
   // iOS getBluetoothStatus/bluetooth_status forward the whole native "bluetooth"
   // store, so synced settings such as core_token sit at the status root beside
@@ -265,7 +278,7 @@ describe("full export payload carries no credential from any source", () => {
   beforeEach(async () => {
     mockNativeApplicationVersion = "3.3.0"
     mockAuth = {user, session: {token: SESSION_TOKEN, user}}
-    jest.mocked(useApps).mockImplementation(() => apps as any)
+    jest.mocked(useApps).mockImplementation(() => apps)
     jest.mocked(engine.dev.bluetoothStatus).mockImplementation(() => flatNativeStatus)
     await engine.settings.set(SETTINGS.core_token.key, SETTINGS_TOKEN, false)
     await engine.settings.set(SETTINGS.theme_preference.key, "dark", false)
@@ -285,14 +298,7 @@ describe("full export payload carries no credential from any source", () => {
     expect(exportedStatusToken).toBe("[REDACTED]")
     expect(exportedStatus).toMatchObject(legitimateStatus)
     expect(data.userSettings).toMatchObject({core_token: "[REDACTED]", theme_preference: "dark"})
-    expect(data.installedApps).toEqual([
-      {
-        packageName: "com.example.synthetic",
-        name: "Synthetic Miniapp",
-        hashedApiKey: "[REDACTED]",
-        hashedEndpointSecret: "[REDACTED]",
-      },
-    ])
+    expect(data.installedApps).toEqual([{...app, hashedApiKey: "[REDACTED]", hashedEndpointSecret: "[REDACTED]"}])
     expect(data.authentication).toEqual({
       user: {...user, avatarUrl: null, createdAt: null, provider: null},
       sessionInfo: {hasAccessToken: true},

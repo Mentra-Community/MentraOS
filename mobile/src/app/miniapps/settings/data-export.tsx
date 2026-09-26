@@ -144,11 +144,16 @@ class DataExportService {
    * the settings synced to it, and iOS returns its whole "bluetooth" store,
    * including `core_token`, at the status root.
    */
-  private static redactCredentials(value: unknown): any {
+  private static redactCredentials(value: unknown): unknown {
     if (Array.isArray(value)) return value.map((entry) => this.redactCredentials(entry))
     if (!value || typeof value !== "object") return value
+    return this.redactCredentialEntries(value)
+  }
+
+  /** `redactCredentials` for one object's own entries. */
+  private static redactCredentialEntries(record: object): Record<string, unknown> {
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
+      Object.entries(record).map(([key, entry]: [string, unknown]) => [
         key,
         engine.settings.descriptor(key)?.credential && entry ? "[REDACTED]" : this.redactCredentials(entry),
       ]),
@@ -187,7 +192,7 @@ class DataExportService {
    */
   private static async collectSettingsData(): Promise<{[key: string]: any}> {
     console.log("DataExportService: Collecting settings data...")
-    const settings: Record<string, any> = this.redactCredentials(engine.settings.getAll())
+    const settings = this.redactCredentialEntries(engine.settings.getAll())
     console.log(`DataExportService: Collected ${Object.keys(settings).length} settings`)
     return settings
   }
