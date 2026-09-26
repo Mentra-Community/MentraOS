@@ -20,6 +20,7 @@
 
 import {Directory, Paths, File} from "expo-file-system"
 import {unzip} from "react-native-zip-archive"
+import {createMMKV, type MMKV} from "react-native-mmkv"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
@@ -34,6 +35,7 @@ import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
 import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+import {sameMiniappBundle} from "./sameMiniappBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
 export {normalizeManifestPermissions} from "./manifestPermissions"
@@ -188,6 +190,12 @@ async function unpackMiniApp(
   zipPath: string,
   versionOverride?: string,
   expected?: MiniappInstallExpectations,
+  adoptExisting?: (
+    packageName: string,
+    version: string,
+    extracted: Directory,
+    installed: Directory,
+  ) => Promise<boolean>,
 ): Promise<{packageName: string; version: string}> {
   const unzipDir = new Directory(Paths.cache, "lma_unzip")
   try {
@@ -242,6 +250,11 @@ async function unpackMiniApp(
   const versionDir = new Directory(basePackageDir, version)
   try {
     if (expected?.rejectExistingVersion && versionDir.exists) {
+      // The host may adopt a byte-identical bundled release after verifying a
+      // deployment ZIP. Never replace its files or trust a version label alone.
+      if (adoptExisting && (await adoptExisting(packageName, version, appDir, versionDir))) {
+        return {packageName, version}
+      }
       throw new Error(`Miniapp ${packageName}@${version} is already installed`)
     }
     if (!versionDir.exists) {
@@ -262,6 +275,10 @@ async function unpackMiniApp(
     }
   } catch (error) {
     console.error("Error moving the contents of the folder to the destination directory", error)
+    // With rejectExistingVersion, this invocation created the destination.
+    // Roll back here while the install queue is held, never from a caller's
+    // stale pre-download snapshot of which versions used to exist.
+    if (expected?.rejectExistingVersion && versionDir.exists) versionDir.delete()
     throw "INSTALL_CONTENTS_FAILED"
   }
 
@@ -301,6 +318,19 @@ class AppRegistry {
   private sttModelRequired = new Set<string>()
   private refreshNeeded: boolean = true
   private listeners = new Set<Listener>()
+  private installationMetadata?: MMKV
+
+  // Bundle files survive logout; their provenance must survive with them.
+  // Keep installation metadata out of the default, session-cleared MMKV store.
+  private get releaseIdentities(): MMKV {
+    return (this.installationMetadata ??= createMMKV({id: "mentra-miniapp-installations"}))
+  }
+
+  private removeReleaseIdentity(packageName: string, version: string): void {
+    const key = releaseIdentityKey(packageName, version)
+    this.releaseIdentities.remove(key)
+    storage.remove(key)
+  }
 
   private static instance: AppRegistry | null = null
 
@@ -470,15 +500,36 @@ class AppRegistry {
       expectedPackageName?: string
       expectedVersion?: string
       rejectExistingVersion?: boolean
+      /** Host-only migration after the deployment ZIP's digest is verified. */
+      adoptIdenticalInstalledVersion?: boolean
     },
   ): AsyncResult<{packageName: string; version: string}, Error> {
     return Res.try_async(() =>
       serializeInstall(async () => {
-        const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride, {
-          packageName: opts?.expectedPackageName,
-          version: opts?.expectedVersion,
-          rejectExistingVersion: opts?.rejectExistingVersion,
-        })
+        if (
+          opts?.adoptIdenticalInstalledVersion &&
+          (opts.releaseIdentity?.source !== "deployment_manifest" ||
+            !opts.expectedPackageName ||
+            !opts.expectedVersion ||
+            opts.versionOverride ||
+            !opts.rejectExistingVersion)
+        )
+          throw new Error("Bundle adoption requires a verified deployment release with an exact identity")
+        const {packageName, version} = await unpackMiniApp(
+          zipPath,
+          opts?.versionOverride,
+          {
+            packageName: opts?.expectedPackageName,
+            version: opts?.expectedVersion,
+            rejectExistingVersion: opts?.rejectExistingVersion,
+          },
+          opts?.adoptIdenticalInstalledVersion
+            ? async (pkg, ver, extracted, installed) => {
+                const identity = this.getReleaseIdentity(pkg, ver)
+                return identity?.source !== "deployment_manifest" && (await sameMiniappBundle(extracted, installed))
+              }
+            : undefined,
+        )
         console.log("APP_REGISTRY: Installed mini app from local zip")
         this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
         return {packageName, version}
@@ -503,14 +554,28 @@ class AppRegistry {
     }
 
     this.setActiveVersion(packageName, version)
-    storage.save(releaseIdentityKey(packageName, version), releaseIdentity)
+    this.releaseIdentities.set(releaseIdentityKey(packageName, version), JSON.stringify(releaseIdentity))
     this.refreshNeeded = true
     this.notify()
   }
 
   public getReleaseIdentity(packageName: string, version: string): MiniappReleaseIdentity | null {
-    const result = storage.load<MiniappReleaseIdentity>(releaseIdentityKey(packageName, version))
-    return result.is_ok() ? result.value : null
+    const key = releaseIdentityKey(packageName, version)
+    const stored = this.releaseIdentities.getString(key)
+    if (stored) {
+      try {
+        return JSON.parse(stored) as MiniappReleaseIdentity
+      } catch {
+        return null
+      }
+    }
+    // Migrate pre-upgrade metadata when it still exists. If an older logout
+    // already erased it, verified byte comparison can recover an exact bundle.
+    const legacy = storage.load<MiniappReleaseIdentity>(key)
+    if (legacy.is_error()) return null
+    this.releaseIdentities.set(key, JSON.stringify(legacy.value))
+    storage.remove(key)
+    return legacy.value
   }
 
   /** Enumerate installed releases carrying deployment ownership metadata. */
@@ -564,7 +629,7 @@ class AppRegistry {
         for (const item of pkgDir.list()) {
           if (item instanceof Directory && item.name.startsWith("dev-")) {
             try {
-              storage.remove(releaseIdentityKey(packageName, item.name))
+              this.removeReleaseIdentity(packageName, item.name)
               item.delete()
             } catch (e) {
               console.warn(`APP_REGISTRY: failed to delete ${item.name}:`, e)
@@ -620,7 +685,7 @@ class AppRegistry {
         // Guard exists: a dev miniapp loads over HTTP and has no on-disk dir,
         // so an unconditional delete() would throw and abort the cleanup below.
         if (lmaDir.exists) lmaDir.delete()
-        storage.remove(releaseIdentityKey(packageName, version))
+        this.removeReleaseIdentity(packageName, version)
         console.log("APP_REGISTRY: Uninstalled mini app version", version)
         const packageDir = new Directory(Paths.document, "lmas", packageName)
         if (packageDir.exists && packageDir.list().length === 0) {
@@ -628,7 +693,7 @@ class AppRegistry {
         }
       } else {
         for (const installedVersion of this.getInstalledVersions(packageName)) {
-          storage.remove(releaseIdentityKey(packageName, installedVersion))
+          this.removeReleaseIdentity(packageName, installedVersion)
         }
         const packageDir = new Directory(Paths.document, "lmas", packageName)
         if (packageDir.exists) {
@@ -698,7 +763,16 @@ class AppRegistry {
   }
 
   public setActiveVersion(packageName: string, version: string): Result<void, Error> {
-    return storage.save(`${packageName}_active_version`, version)
+    const key = `${packageName}_active_version`
+    const previous = storage.load<string>(key)
+    const result = storage.save(key, version)
+    if (result.is_ok() && (previous.is_error() || previous.value !== version)) {
+      // Selecting an already-installed workspace pin must update cached app
+      // metadata and subscribers just like a new installation does.
+      this.refreshNeeded = true
+      this.notify()
+    }
+    return result
   }
 
   /**

@@ -12,6 +12,7 @@
 
 // The namespaced OEM-facing engine API (the "(A) host API"). See ./engine.
 export {engine} from "./engine"
+export {submitIncidentReport, type IncidentReportResult} from "./services/SubmitIncidentReportService"
 export type {
   ReportAttachmentInput,
   ReportContext,
@@ -190,11 +191,9 @@ export {
   type DevLaunchResult,
   type DevManifest,
 } from "./utils/devMiniappLaunch"
-export {
-  decideDevOpenRoute,
-  type DevOpenDecision,
-} from "./utils/devMiniappSnapshot"
+export {decideDevOpenRoute, type DevOpenDecision} from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
+export {getAppBuildInfo} from "./utils/appBuildInfo"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 export {default as glassesMicProbe, parseMicProbeParams} from "./services/GlassesMicProbe"
 export type {MicProbeA2dpMode, MicProbeOptions, MicProbeSample} from "./services/GlassesMicProbe"

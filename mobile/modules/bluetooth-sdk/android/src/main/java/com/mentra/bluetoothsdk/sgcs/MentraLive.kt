@@ -141,6 +141,7 @@ class MentraLive : SGCManager() {
         private const val LC3_FRAME_SIZE = 40
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
         private const val LOUDNESS_GATE_SWITCH_TYPE = 10
+        private const val AUTO_POWER_OFF_SWITCH_TYPE = 11
         // Mic tuning field names, matching the BES cs_mictun body.
         private val MIC_TUNING_FIELDS =
                 listOf("gain", "open", "close", "attack", "hang", "sp_open", "sp_close", "sp_hold")
@@ -2147,7 +2148,7 @@ class MentraLive : SGCManager() {
                             // than scanning).
                             // Falls back to name-based scan if no address is saved.
                             val lastDeviceAddress =
-                                    DeviceStore.get("bluetooth", "device_address") as String?
+                                    selectedConnectionAddress()
                             if (lastDeviceAddress != null &&
                                             !lastDeviceAddress.isEmpty() &&
                                             bluetoothAdapter != null
@@ -4137,7 +4138,9 @@ class MentraLive : SGCManager() {
                     "controllerId" to json.opt("controllerId"), "streamId" to json.opt("streamId"),
                     "probeId" to json.opt("probeId"))
                 com.mentra.bluetoothsdk.streaming.StreamControllerProbe.response(values)?.let {
-                    sendJson(JSONObject(it))
+                    // BES buffers non-waking commands when MTK enters standby, even while
+                    // its streaming CPU lease is held. The current probe needs a live reply.
+                    sendJson(JSONObject(it), true)
                 }
             }
             "pong" ->
@@ -5548,7 +5551,9 @@ class MentraLive : SGCManager() {
                     if (bodyObj != null) {
                         val type = bodyObj.optInt("type", -1)
                         val value = bodyObj.optInt("switch", -1)
-                        handleSwitchStatus(type, value, System.currentTimeMillis())
+                        // K900 replies carry result in "S"; 0 is RC_SUCCESS.
+                        val resultCode = json.optInt("S", -1)
+                        handleSwitchStatus(type, value, System.currentTimeMillis(), resultCode)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_swit response", e)
@@ -5578,7 +5583,13 @@ class MentraLive : SGCManager() {
                 try {
                     val bodyObj = optK900Body(json)
                     if (bodyObj != null) {
-                        Bridge.sendWearState(bodyObj.optInt("on", 0) != 0)
+                        val extras = HashMap<String, Any>()
+                        if (bodyObj.has("elapsed_ms")) extras["elapsedMs"] = bodyObj.optInt("elapsed_ms")
+                        if (bodyObj.has("timeout_ms")) extras["timeoutMs"] = bodyObj.optInt("timeout_ms")
+                        if (bodyObj.has("enabled")) extras["enabled"] = bodyObj.optInt("enabled") != 0
+                        if (bodyObj.has("armed")) extras["armed"] = bodyObj.optInt("armed") != 0
+                        if (bodyObj.has("inhibited")) extras["inhibited"] = bodyObj.optInt("inhibited") != 0
+                        Bridge.sendWearState(bodyObj.optInt("on", 0) != 0, extras)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_wrst response", e)
@@ -5933,8 +5944,20 @@ class MentraLive : SGCManager() {
         Bridge.sendWearTuningState(state)
     }
 
-    private fun handleSwitchStatus(switchType: Int, switchValue: Int, timestamp: Long) {
+    private fun handleSwitchStatus(
+            switchType: Int,
+            switchValue: Int,
+            timestamp: Long,
+            resultCode: Int = -1
+    ) {
         Bridge.sendSwitchStatus(switchType, switchValue, timestamp)
+        if (switchType == AUTO_POWER_OFF_SWITCH_TYPE) {
+            val ok = resultCode == 0
+            Bridge.log(
+                    "LIVE: 🔋 auto power-off sr_swit reply type=$switchType switch=$switchValue" +
+                            " result=$resultCode ok=$ok"
+            )
+        }
         if (switchType == VOICE_ACTIVITY_DETECTION_SWITCH_TYPE &&
                         (switchValue == 0 || switchValue == 1)
         ) {
@@ -6140,7 +6163,8 @@ class MentraLive : SGCManager() {
             val json = JSONObject()
             json.put("type", "request_version")
             requestId?.let { json.put("request_id", it) }
-            sendJson(json, false)
+            // Wake ASG so the version request and its response can finish after idle.
+            sendJson(json, true)
             Bridge.log("LIVE: 📱 Requesting version info from glasses")
         } catch (e: JSONException) {
             Log.e(TAG, "📱 Error creating request_version command", e)
@@ -6602,6 +6626,14 @@ class MentraLive : SGCManager() {
         return false
     }
 
+    private fun selectedConnectionAddress(): String? = SelectedDeviceAddress.resolve(
+        savedDeviceName,
+        DeviceStore.get("bluetooth", "pending_device_name") as? String,
+        DeviceStore.get("bluetooth", "pending_device_address") as? String,
+        DeviceStore.get("bluetooth", "device_name") as? String,
+        DeviceStore.get("bluetooth", "device_address") as? String,
+    )
+
     fun connectToSmartGlasses() {
         if (postGattLifecycle { connectToSmartGlasses() }) return
         if (pairingYieldActive) {
@@ -6636,13 +6668,7 @@ class MentraLive : SGCManager() {
         // var context = Bridge.getContext();
         // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         // String lastDeviceAddress = prefs.getString(PREF_DEVICE_NAME, null);
-        val pendingAddress =
-                (DeviceStore.get("bluetooth", "pending_device_address") as String?)?.takeIf {
-                    it.isNotEmpty()
-                }
-        val lastDeviceAddress =
-                pendingAddress
-                        ?: (DeviceStore.get("bluetooth", "device_address") as String?)
+        val lastDeviceAddress = selectedConnectionAddress()
 
         if (lastDeviceAddress != null && lastDeviceAddress.length > 0) {
             // Connect to last known device if available
@@ -9467,7 +9493,11 @@ class MentraLive : SGCManager() {
                 }
             } else {
                 // Normal single message transmission
-                transportLog("LIVE: Sending data to glasses: " + wireData, bridgeLogging)
+                transportLog(
+                        "LIVE: Sending data to glasses: " +
+                                loggableOutgoingPayload(wireData, commandTraceInfo.commandType),
+                        bridgeLogging
+                )
 
                 // Pack the data using the centralized utility with the negotiated endianness
                 val packedData =
@@ -9768,6 +9798,18 @@ class MentraLive : SGCManager() {
             else -> null
         }
     }
+
+    /**
+     * Wi-Fi credentials are sent unchanged but never logged; the BLE trace records the command
+     * with the password redacted.
+     */
+    private fun loggableOutgoingPayload(payload: String, commandType: String): String =
+            try {
+                if (JSONObject(payload).has("password")) "<$commandType with credentials omitted>"
+                else payload
+            } catch (_: JSONException) {
+                payload
+            }
 
     private fun summarizeOutgoingMessage(payload: String?): String {
         if (payload == null || payload.isEmpty()) {
@@ -10825,6 +10867,9 @@ class MentraLive : SGCManager() {
         // Send glasses-side loudness / Barrier gate setting.
         sendLoudnessGateSetting()
 
+        // Send glasses-side auto power-off setting.
+        sendAutoPowerOffSetting()
+
         // Send mic tuning. With nothing authorized this sends a reset, which is
         // what returns a freshly connected pair of glasses to stock behaviour.
         sendMicTuningSetting()
@@ -11105,6 +11150,52 @@ class MentraLive : SGCManager() {
             queueData(packedData)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating loudness gate setting command", e)
+        }
+    }
+
+    override fun sendAutoPowerOffSetting() {
+        val value = DeviceStore.get("bluetooth", "auto_power_off_enabled")
+        val enabled =
+                if (value is Boolean) value
+                else BluetoothSdkDefaults.AUTO_POWER_OFF_ENABLED
+
+        Bridge.log(
+                "LIVE: 🔋 Sending auto power-off setting to glasses: enabled=$enabled" +
+                        " (cs_swit type=$AUTO_POWER_OFF_SWITCH_TYPE)"
+        )
+
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send auto power-off setting - not connected")
+            return
+        }
+
+        try {
+            val body = JSONObject()
+            body.put("type", AUTO_POWER_OFF_SWITCH_TYPE)
+            body.put("switch", if (enabled) 1 else 0)
+
+            val cmdObject = JSONObject()
+            cmdObject.put("C", "cs_swit")
+            cmdObject.put("V", 1)
+            cmdObject.put("B", body.toString())
+
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack auto power-off setting command")
+                return
+            }
+            queueData(packedData)
+            Bridge.log(
+                    "LIVE: 🔋 Queued auto power-off cs_swit type=$AUTO_POWER_OFF_SWITCH_TYPE" +
+                            " switch=${if (enabled) 1 else 0}"
+            )
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating auto power-off setting command", e)
         }
     }
 

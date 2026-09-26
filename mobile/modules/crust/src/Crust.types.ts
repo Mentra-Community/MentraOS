@@ -16,7 +16,7 @@ export type CrustModuleEvents = {
   onHeading: (params: HeadingPayload) => void
   phone_notification: (event: PhoneNotificationEvent) => void
   phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
-  captions_tester_incident: (event: CaptionsTesterIncidentEvent) => void
+  submit_incident_report: (event: SubmitIncidentReportEvent) => void
 }
 
 export type NavOffRoutePayload = {
@@ -144,13 +144,16 @@ export type PhoneNotificationDismissedEvent = {
   notificationId: string
 }
 
-export type CaptionsTesterIncidentEvent = {
+export type SubmitIncidentReportEvent = {
   action?: string
   timestamp?: number
   failure_code?: string
   failure_message?: string
   test_run_id?: string
   scenario_name?: string
+  alert_id?: string
+  expected_behavior?: string
+  dashboard_url?: string
   source?: string
   [key: string]: unknown
 }

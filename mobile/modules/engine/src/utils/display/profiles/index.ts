@@ -26,3 +26,6 @@ export {G2_PROFILE, G2_HYPHEN_WIDTH_PX, G2_SPACE_WIDTH_PX} from "./g2"
 
 // Mentra Nex Profile (a.k.a. Mentra Display)
 export {NEX_PROFILE, NEX_HYPHEN_WIDTH_PX, NEX_SPACE_WIDTH_PX} from "./nex"
+
+// NIMO Dynamic Layout V1
+export {NIMO_PROFILE} from "./nimo"

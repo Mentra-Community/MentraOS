@@ -90,7 +90,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
-            "captions_tester_incident",
+            "submit_incident_report",
             "extraction_progress"
         )
 
@@ -463,6 +463,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("setLoudnessGateEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             try await sdk.setLoudnessGateEnabled(enabled)
+        }
+
+        AsyncFunction("setAutoPowerOffEnabled") { (enabled: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try await sdk.setAutoPowerOffEnabled(enabled)
         }
 
         AsyncFunction("setPhotoCaptureDefaults") { (params: [String: Any]) in

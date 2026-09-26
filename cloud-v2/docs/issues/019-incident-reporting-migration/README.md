@@ -51,6 +51,29 @@ There is deliberately no `/api/incidents` compatibility mount in Cloud V2.
 Glasses logs are report artifacts and use the same artifact endpoint as phone
 logs and screenshots.
 
+The report owner can also attach MP4 recordings to an existing report, whatever
+its status, with multipart `type=video`, a declared capture `source` label (for
+example `phone` or `host`) and `video/mp4` files. Cloud Client exposes this as
+`core.reports.addVideos(reportId, source, videos)`. The source is stored as
+declared; the server cannot verify where a recording was captured. Each video
+may be up to 20 MiB and must start with an ISO `ftyp` box. That header check is
+structural only and does not prove the stream is H264 or decodable. Uploads
+without `type`, or with `type=screenshot`, keep the screenshot contract (phone
+source, 10 MiB); a `video/*` file there is rejected rather than stored as a
+screenshot. Unknown types, non-MP4 videos and a missing source are rejected.
+The 5-file and 51 MiB request limits are unchanged. One invalid file rejects the
+whole upload before anything is stored.
+
+The admin artifact route (GET and HEAD) serves the MP4 inline with its exact
+`Content-Length`. It honors a single byte `Range` with `206` and
+`Content-Range`, returns `416` for multiple or unsatisfiable ranges, and applies
+`If-Range` against the artifact's SHA-256 `ETag`, like the test-run media route.
+The bounded payload is read into memory as before. The admin console plays it in
+a native `<video>` at the same authenticated URL, next to the usual download
+link, and the admin proxy keeps exact lengths on these ranged responses.
+Browser playback and seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
+artifacts with an `.mp4` extension.
+
 ## Mobile Flow
 
 Manual bug report:
@@ -110,12 +133,15 @@ Gallery media integrity:
   (`MediaMetadataRetriever`/`AVAsset` style) is a separate follow-up if we want
   to prove device-playability before the user opens a video.
 
-Captions tester laptop report:
+External incident requests, including the captions tester:
 
-- Trigger: Android internal Crust event `captions_tester_incident`.
+- Trigger: `com.mentra.SUBMIT_INCIDENT_REPORT` on Android, available in all builds,
+  forwards the Crust event `submit_incident_report` to the engine.
 - Submission:
-  `mobile/modules/engine/src/services/CaptionsTesterReportService.ts`.
-- The service emits the existing `CAPTIONS_TESTER_INCIDENT_RESULT` logcat marker.
+  `mobile/modules/engine/src/services/SubmitIncidentReportService.ts`.
+- The service emits `INCIDENT_REPORT_RESULT` with the request's alert/test IDs
+  and a report ID, skipped reason, or failure error. The Mentra App must be
+  running and signed in. [Android contract](../../../../mobile/docs/incident-report-intent.md).
 - Cloud V2 transcript test logging is emitted from island via
   `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`, and the
   laptop monitor records the marker in
@@ -165,7 +191,7 @@ Island/engine:
 - `mobile/modules/engine/src/services/MentraJSCrashloopReportService.ts`
 - `mobile/modules/engine/src/facades/pairing.ts`
 - `mobile/modules/engine/src/services/asg/GalleryMediaIntegrityReportService.ts`
-- `mobile/modules/engine/src/services/CaptionsTesterReportService.ts`
+- `mobile/modules/engine/src/services/SubmitIncidentReportService.ts`
 - `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`
 
 Host UI:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Write the iOS compile-check job summary: attempt outcomes, per-step timings
+# Write the iOS build job summary: attempt outcomes, per-step timings
 # for THIS job so far (from the Actions jobs API), xcodebuild's Build Timing
 # Summary per attempt, and the Actions cache state recorded at job start.
 #
@@ -11,11 +11,10 @@
 #   GITHUB_STEP_SUMMARY, RUNNER_TEMP
 #   JOB_STARTED_AT            epoch seconds recorded by the first step
 #   CACHE_SIZE_BYTES, CACHE_COUNT   Actions cache usage at job start
-#   DERIVED_CACHE_HIT         optional; printed when set
+#   REUSED                    whether a verified compiled app was reused
 #   ATTEMPT1_OUTCOME, ATTEMPT1_SECONDS, ATTEMPT1_TIMING, ATTEMPT1_TIMELINE, ATTEMPT1_MEMORY
 #   ATTEMPT2_OUTCOME, ATTEMPT2_SECONDS, ATTEMPT2_TIMING, ATTEMPT2_TIMELINE, ATTEMPT2_MEMORY
-#   EVENT_NAME, PR_COMPILE_MODE, HEAD_SHA
-#   CCACHE_ENABLED, CCACHE_STATSLOG, CCACHE_DIR   per-job ccache stats when enabled
+#   EVENT_NAME, HEAD_SHA
 set -u
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
@@ -37,13 +36,11 @@ if [[ "${JOB_STARTED_AT:-}" =~ ^[0-9]+$ ]]; then
 fi
 
 {
-  echo "## iOS compile check timing"
+  echo "## iOS build timing"
   echo ""
-  echo "- Runner: \`${RUNNER_NAME:-unknown}\`  event: \`${EVENT_NAME:-?}\`  PR compile mode: \`${PR_COMPILE_MODE:-?}\`  sha: \`${HEAD_SHA:-?}\`"
+  echo "- Runner: \`${RUNNER_NAME:-unknown}\`  event: \`${EVENT_NAME:-?}\`  sha: \`${HEAD_SHA:-?}\`"
   echo "- Elapsed at summary time (excludes post-job steps such as cache saves): **${elapsed}**"
-  if [ -n "${DERIVED_CACHE_HIT:-}" ]; then
-    echo "- DerivedData exact-key cache hit: ${DERIVED_CACHE_HIT}"
-  fi
+  echo "- Reused verified compiled app: ${REUSED:-false}"
   echo ""
   echo "| Attempt | Outcome | Duration |"
   echo "| --- | --- | ---: |"
@@ -95,6 +92,7 @@ emit_timing() {
       echo '```'
       # Cap so a pathological summary cannot blow the 1 MiB step-summary limit.
       head -c 60000 "$file"
+      echo ""
       echo '```'
       echo ""
     } >> "$summary"
@@ -117,32 +115,6 @@ emit_timeline() {
 }
 emit_timeline "First build" "${ATTEMPT1_TIMELINE:-}" "${ATTEMPT1_MEMORY:-}"
 emit_timeline "Clean-cache retry" "${ATTEMPT2_TIMELINE:-}" "${ATTEMPT2_MEMORY:-}"
-
-if [ "${CCACHE_ENABLED:-false}" = "true" ] && command -v ccache >/dev/null 2>&1; then
-  {
-    echo "### ccache (this job only, from CCACHE_STATSLOG)"
-    echo ""
-    echo '```'
-    if [ -n "${CCACHE_STATSLOG:-}" ] && [ -s "$CCACHE_STATSLOG" ]; then
-      ccache --show-log-stats 2>&1 | head -40
-    else
-      echo "(no stats log written; no compiler invocation went through ccache)"
-    fi
-    echo '```'
-    echo ""
-    echo "Shared cache dir: \`${CCACHE_DIR:-?}\` — $(ccache --show-stats 2>/dev/null | grep -iE 'cache size|max cache size' | tr -s ' ' | paste -sd ';' - || echo 'size unavailable')"
-    echo ""
-  } >> "$summary"
-  # Also print to the job log. GITHUB_STEP_SUMMARY is not in `gh run view --log`.
-  echo "ccache-stats-start"
-  if [ -n "${CCACHE_STATSLOG:-}" ] && [ -s "$CCACHE_STATSLOG" ]; then
-    ccache --show-log-stats 2>&1 | head -40
-  else
-    echo "(no stats log written; no compiler invocation went through ccache)"
-  fi
-  ccache --show-stats 2>&1 | head -20 || true
-  echo "ccache-stats-end"
-fi
 
 if [[ "${CACHE_SIZE_BYTES:-}" =~ ^[0-9]+$ ]]; then
   {

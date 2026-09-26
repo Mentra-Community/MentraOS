@@ -5,12 +5,16 @@ on:
     paths:
       - "mobile/modules/glasses-media/ios/**"
       - "mobile/modules/acs-meeting/ios/PolicyKit/**"
+      - "mobile/modules/frame-preview/ios/**"
+      - "mobile/modules/frame-preview/fixtures/**"
       - ".github/workflows/mentra-glasses-media-swift-tests.yml"
   push:
     branches: [main, dev]
     paths:
       - "mobile/modules/glasses-media/ios/**"
       - "mobile/modules/acs-meeting/ios/PolicyKit/**"
+      - "mobile/modules/frame-preview/ios/**"
+      - "mobile/modules/frame-preview/fixtures/**"
       - ".github/workflows/mentra-glasses-media-swift-tests.yml"
   workflow_dispatch:
 
@@ -31,3 +35,6 @@ jobs:
         run: swift test --package-path mobile/modules/acs-meeting/ios/PolicyKit
       - name: Test local WHIP when the internet path omits Wi-Fi
         run: mobile/modules/glasses-media/ios/Tests/LocalWhipNetwork/run.sh
+      # Golden fixtures, pacer, pack/downscale and the real loopback WebSocket listener.
+      - name: Test frame preview core
+        run: swift test --package-path mobile/modules/frame-preview/ios/PreviewKit

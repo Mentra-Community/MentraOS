@@ -102,6 +102,29 @@ that the token's `oid` and `tid` match the same employee and directory before
 exchanging it. Without a delegated token, the same endpoint issues a guest
 credential from this deployment's ACS resource.
 
+## Meeting creation
+
+Joining does not require Graph meeting-creation permissions. To enable creation,
+configure a confidential Graph application in the same tenant with application
+permission `OnlineMeetings.ReadWrite.All` and grant tenant admin consent. Keep
+its secret on Runtime, separate from the public Mobile registration.
+
+Using Microsoft Teams PowerShell, authorize each permitted employee organizer
+and the licensed fallback organizer:
+
+```powershell
+Connect-MicrosoftTeams
+New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds <graph-client-id>
+Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Identity <organizer-object-id>
+```
+
+Repeat the grant for each organizer. Allow time for policy propagation before
+testing. `configure-entra.sh` configures sign-in and ACS consent; these Graph
+permissions and Teams access-policy grants are separate administrator steps.
+See the [Runtime API contract](../../private-deployment.md#teams-meeting-creation)
+for identity selection and the [deployment inputs](./README.md#teams-meeting-creation)
+for secret/configuration wiring.
+
 ## Qualification
 
 - Assigned employee sign-in and silent Core/Teams token acquisition.
@@ -110,3 +133,6 @@ credential from this deployment's ACS resource.
 - Logout and workspace switching without credential crossover.
 - Revoked consent and disabled-user behavior.
 - Official Android APK/Play and iOS redirect paths.
+- Meeting creation as a licensed employee, fallback creation for an unlicensed
+  or non-Entra caller, Graph policy rejection without fallback, and retirement
+  restricted to the creating caller.

@@ -111,6 +111,16 @@ export function startGlassesSettingsSync(): void {
     (settings: Record<string, unknown>, previous: Record<string, unknown>) => {
       const changed = diffBluetoothSettingsForPush(settings, previous)
       if (Object.keys(changed).length > 0) {
+        // Mentra Live cs_swit type 11 — log the push hop so phone logs show
+        // the value leaving JS before native BLE, with old → new.
+        if ("auto_power_off_enabled" in changed) {
+          console.log(
+            "GlassesSettingsSync: auto_power_off_enabled",
+            previous.auto_power_off_enabled,
+            "→",
+            changed.auto_power_off_enabled,
+          )
+        }
         flushBluetoothSettingsPatch(changed)
       }
     },

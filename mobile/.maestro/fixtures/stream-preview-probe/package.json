@@ -1,0 +1,9 @@
+{
+  "name": "stream-preview-probe-miniapp",
+  "private": true,
+  "description": "Test-only miniapp for the stream preview non-owner Maestro flow",
+  "scripts": {
+    "build": "bun run build.ts",
+    "pack": "bun run build && mkdir -p build && cd dist && zip -qr ../build/$(node -p \"require('../miniapp.json').packageName + '-' + require('../miniapp.json').version\").zip ."
+  }
+}

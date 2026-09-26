@@ -6,6 +6,7 @@ import com.mentra.crust.services.NotificationListener
 import com.mentra.crust.services.NotificationProcessBridge
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.functions.Queues
 import java.net.URL
 
 import com.mentra.crust.navigation.NavigationManager
@@ -13,12 +14,14 @@ import com.mentra.crust.heading.HeadingManager
 import com.mentra.crust.jsc.JSCRuntime
 import com.mentra.crust.jsc.InstalledMiniappManifest
 import com.mentra.crust.jsc.JSCPolyfillBridge
+import com.mentra.crust.receivers.IncidentReportDelivery
 
 class CrustModule : Module() {
   companion object {
     private const val TAG = "CrustModule"
 
     @Volatile private var eventEmitter: ((String, Map<String, Any>) -> Unit)? = null
+    private val incidentReports = IncidentReportDelivery()
 
     fun emitPhoneNotification(
             context: android.content.Context,
@@ -50,9 +53,8 @@ class CrustModule : Module() {
       NotificationProcessBridge.emitDismissed(context, notificationKey, packageName)
     }
 
-    fun emitCaptionsTesterIncident(data: Map<String, Any>) {
-      emitEvent("captions_tester_incident", data)
-    }
+    /** Returns false when no started JS report service received the request. */
+    fun emitSubmitIncidentReport(data: Map<String, Any>): Boolean = incidentReports.deliver(data)
 
     private fun emitEvent(eventName: String, data: Map<String, Any>) {
       val emitter = eventEmitter
@@ -120,7 +122,7 @@ class CrustModule : Module() {
       "onChange",
       "phone_notification",
       "phone_notification_dismissed",
-      "captions_tester_incident",
+      "submit_incident_report",
       "onNavManeuver",
       "onNavRerouting",
       "onNavArrived",
@@ -136,6 +138,7 @@ class CrustModule : Module() {
 
     OnCreate {
       eventEmitter = { eventName, data -> sendEvent(eventName, data) }
+      incidentReports.attach { data -> sendEvent("submit_incident_report", data) }
       registerNotificationBridgeIfPossible()
       installRuntimeIfPossible("OnCreate")
     }
@@ -149,10 +152,17 @@ class CrustModule : Module() {
       notificationEventReceiver = null
       notificationBridgeContext = null
       eventEmitter = null
+      incidentReports.detach()
     }
 
     Function("hello") {
       "Hello world! 👋"
+    }
+
+    // SubmitIncidentReportService reports its listener state so broadcasts that
+    // arrive before it subscribes get an immediate failed receipt, not silence.
+    Function("setIncidentReportServiceReady") { ready: Boolean ->
+      incidentReports.setServiceReady(ready)
     }
 
     AsyncFunction("setValueAsync") { value: String ->
@@ -922,7 +932,7 @@ class CrustModule : Module() {
         android.util.Log.e("CrustModule", "stopNavigation failed", e)
         mapOf("ok" to false, "error" to (e.message ?: "stop failed"))
       }
-    }
+    }.runOnQueue(Queues.MAIN)
 
     // Dev-only: nudge the simulated position ~offsetMeters off-route to
     // exercise the Nav SDK's onRerouting() pipeline without having to

@@ -11,10 +11,23 @@ import {useConnectionStore} from "../stores/connection"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
+import {getAppBuildInfo} from "./appBuildInfo"
 import {buildMiniappDiagnosticContext} from "./miniappDiagnostics"
 
+/**
+ * Account credentials. The native Bluetooth status snapshot mirrors these same
+ * keys from its settings store, so the policy applies to `runtime.core` too.
+ */
 const SENSITIVE_SETTINGS_KEYS = ["core_token", "auth_token", "auth_email"] as const
 const SENSITIVE_GLASSES_KEYS = ["hotspotPassword"] as const
+
+function omitSensitiveSettings(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      ([key]) => !SENSITIVE_SETTINGS_KEYS.includes(key as (typeof SENSITIVE_SETTINGS_KEYS)[number]),
+    ),
+  )
+}
 
 /**
  * The glasses store keeps hotspot credentials NESTED (`hotspot: {state, ssid,
@@ -64,11 +77,8 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
       ),
     ),
   )
-  const filteredSettings = Object.fromEntries(
-    Object.entries(settingsState.settings || {}).filter(
-      ([key]) => !SENSITIVE_SETTINGS_KEYS.includes(key as (typeof SENSITIVE_SETTINGS_KEYS)[number]),
-    ),
-  )
+  const filteredSettings = omitSensitiveSettings(settingsState.settings || {})
+  const filteredCore = omitSensitiveSettings(coreState)
 
   let networkInfo: Record<string, unknown> = {type: "unknown", isConnected: false, isInternetReachable: false}
   try {
@@ -124,13 +134,7 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
   })
 
   return {
-    app: {
-      appVersion: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version",
-      buildCommit: process.env.EXPO_PUBLIC_BUILD_COMMIT || "commit",
-      buildBranch: process.env.EXPO_PUBLIC_BUILD_BRANCH || "branch",
-      buildTime: process.env.EXPO_PUBLIC_BUILD_TIME || "time",
-      buildUser: process.env.EXPO_PUBLIC_BUILD_USER || "user",
-    },
+    app: getAppBuildInfo(),
     phone: {
       deviceName: Constants.deviceName || "deviceName",
       osVersion: `${Platform.OS} ${Platform.Version}`,
@@ -140,7 +144,7 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
     },
     glasses: filteredGlasses,
     runtime: {
-      core: coreState,
+      core: filteredCore,
       connection: connectionState,
       miniapps: miniappRuntime,
     },

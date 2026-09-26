@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/react-native"
-import {SETTINGS, engine} from "@mentra/engine"
+import {SETTINGS, engine, getAppBuildInfo} from "@mentra/engine"
 import {deploymentStore} from "@/services/deployment"
 
 export const SentryNavigationIntegration = Sentry.reactNavigationIntegration({
@@ -29,8 +29,9 @@ function initializeSentry() {
     return
   }
 
-  const release = `${process.env.EXPO_PUBLIC_MENTRAOS_VERSION}`
-  const dist = `${process.env.EXPO_PUBLIC_BUILD_TIME}-${process.env.EXPO_PUBLIC_BUILD_COMMIT}`
+  const buildInfo = getAppBuildInfo()
+  const release = buildInfo.appVersion
+  const dist = `${buildInfo.buildTime}-${buildInfo.buildCommit}`
   // const sampleRate = isProd ? 0.1 : 1.0
   const sampleRate = 1.0
 

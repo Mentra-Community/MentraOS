@@ -1,9 +1,0 @@
-appId: com.mentra.mentra
----
-- assertVisible: Leave the call
-- tapOn: Leave the call
-- extendedWaitUntil:
-    visible: You left the call
-    timeout: 30000
-- tapOn: Back to Home
-- assertVisible: Join a meeting

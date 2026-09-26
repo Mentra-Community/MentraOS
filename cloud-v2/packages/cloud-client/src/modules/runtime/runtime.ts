@@ -30,6 +30,7 @@ import { HandshakeRejectedError } from "./connection";
 import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
 import type { Camera, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
+import type { Meetings } from "./meetings";
 import type { Maps, DirectionsRequest, DirectionsResult, LatLng, ReverseGeocodeResult } from "./maps";
 import type { Tts, RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
 import type { UdpAudio } from "./audio-udp";
@@ -68,6 +69,7 @@ export type { RuntimeStatus, RuntimeSnapshot } from "./status";
  * unsubscribe function.
  */
 export interface RuntimeModule {
+  readonly meetings: Meetings;
   connect(): Promise<void>;
   close(): void;
 
@@ -111,6 +113,7 @@ export interface RuntimeModule {
 }
 
 export interface RuntimeDeps {
+  meetings?: Meetings;
   connection: Connection;
   emitter: RuntimeEmitter;
   subscriptions: Subscriptions;
@@ -136,6 +139,11 @@ export interface RuntimeDeps {
 const AUTH_EXPIRED_CODE = "AUTH_EXPIRED";
 
 export class Runtime implements RuntimeModule {
+  private readonly meetingService?: Meetings;
+  get meetings(): Meetings {
+    if (!this.meetingService) throw new Error("Meeting credentials are unavailable");
+    return this.meetingService;
+  }
   private readonly connection: Connection;
   private readonly emitter: RuntimeEmitter;
   private readonly subscriptions: Subscriptions;
@@ -175,6 +183,7 @@ export class Runtime implements RuntimeModule {
   private opened = false;
 
   constructor(deps: RuntimeDeps) {
+    this.meetingService = deps.meetings;
     this.connection = deps.connection;
     this.emitter = deps.emitter;
     this.subscriptions = deps.subscriptions;

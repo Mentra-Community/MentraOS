@@ -4,6 +4,8 @@ import {readFileSync, statSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {prepareDownloads} from "./coordinated-install-downloads.mjs"
+import {artifactUrl} from "./release-artifact-storage.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {validateMentraosTestflightDistribution} from "./mentraos-testflight-distribution.mjs"
 
@@ -81,8 +83,17 @@ export function createAndroidRecord({
   storeStatus,
   provenanceUrl,
   internalSharing,
+  androidBuildNumber = plan.native?.buildNumber,
 }) {
   validatePlan(plan)
+  // A testing track above the family window lends the Android build its floor
+  // plus one (resolve-android-version-code.mjs); the code is never below the
+  // family number.
+  if (!Number.isSafeInteger(androidBuildNumber) || androidBuildNumber < plan.native.buildNumber) {
+    throw new Error(
+      `Android build number ${androidBuildNumber} is below the family build number ${plan.native.buildNumber}`,
+    )
+  }
   const uploadGooglePlay = plan.native.googlePlayUpload !== false
   if (!uploadGooglePlay && plan.channel !== "dev") throw new Error("Only dev may skip Google Play publication")
   if (uploadGooglePlay && !playTrack) throw new Error("Google Play track is required")
@@ -92,13 +103,14 @@ export function createAndroidRecord({
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
+    native: {androidBuildNumber},
     publications: {
       mentraos: uploadGooglePlay
         ? {
             "google-play": {
               ...publication({
                 status: storeStatus,
-                coordinate: `com.mentra.mentra:${plan.native.buildNumber}:${playTrack}`,
+                coordinate: `com.mentra.mentra:${androidBuildNumber}:${playTrack}`,
                 url,
                 provenanceUrl,
                 file: aab,
@@ -127,7 +139,18 @@ export function createAndroidRecord({
   }
 }
 
-export function createIosRecord({plan, ipa, ipaUrl, testflightGroup, storeStatus, provenanceUrl, testflight}) {
+export function createIosRecord({
+  plan,
+  ipa,
+  ipaUrl,
+  testflightGroup,
+  storeStatus,
+  provenanceUrl,
+  testflight,
+  downloads,
+  otaUrl,
+  repository,
+}) {
   validatePlan(plan)
   if (!testflightGroup) throw new Error("TestFlight group is required")
   if (storeStatus !== "built" && (plan.native.testflight || testflight)) {
@@ -151,6 +174,17 @@ export function createIosRecord({plan, ipa, ipaUrl, testflightGroup, storeStatus
       },
     },
     artifacts: [
+      ...(downloads
+        ? Object.values(prepareDownloads(downloads, plan, repository, otaUrl).artifacts).map((asset) =>
+            publication({
+              status: storeStatus,
+              coordinate: asset.name,
+              url: artifactUrl(repository, plan.artifactContainerTag, asset.name),
+              provenanceUrl,
+              file: path.join(downloads, asset.name),
+            }),
+          )
+        : []),
       publication({
         status: storeStatus,
         coordinate: plan.artifactNames.iosApp,
@@ -170,6 +204,7 @@ export function mergeMobileRecords({plan, android, ios}) {
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
+    ...(android.native ? {native: android.native} : {}),
     publications: {
       mentraos: {...android.publications.mentraos, ...ios.publications.mentraos},
     },
@@ -204,10 +239,14 @@ function main() {
       storeStatus: args.status,
       provenanceUrl: args["provenance-url"],
       internalSharing: args["internal-sharing"] ? readJson(path.resolve(args["internal-sharing"])) : undefined,
+      ...(args["android-build-number"] ? {androidBuildNumber: Number(args["android-build-number"])} : {}),
     })
   } else if (command === "create-ios") {
     record = createIosRecord({
       plan,
+      downloads: args.downloads || undefined,
+      otaUrl: process.env.COORDINATED_OTA_URL,
+      repository: process.env.GITHUB_REPOSITORY,
       ipa: path.resolve(args.ipa),
       ipaUrl: args["ipa-url"],
       testflightGroup: args["testflight-group"],

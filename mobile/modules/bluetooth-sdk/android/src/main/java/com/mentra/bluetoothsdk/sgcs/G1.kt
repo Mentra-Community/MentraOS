@@ -1370,8 +1370,8 @@ class G1 : SGCManager() {
         context!!.registerReceiver(bondingReceiver, filter)
         isBondingReceiverRegistered = true
 
-        preferredG1DeviceId = DeviceStore.get("bluetooth", "device_name") as String?
-
+        // Keep the target supplied by connectById. device_name still belongs to
+        // the previous pairing until DeviceManager promotes the ready device.
         if (!bluetoothAdapter!!.isEnabled()) {
             return
         }

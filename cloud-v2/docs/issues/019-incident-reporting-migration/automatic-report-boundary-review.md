@@ -70,7 +70,7 @@ before changing the public engine surface.
 | Miniapp start failure | `mobile/src/services/bugReport/miniappStartBugReport.ts` | `miniapp_launch` / `miniapp_start_failed` | A miniapp start request fails with an Axios/HTTP/runtime error. |
 | Pairing boot timeout | `mobile/src/app/pairing/loading.tsx` | `pairing_loading` / `glasses_connect_timeout` | Pairing screen waits 35s and glasses never report fully booted. |
 | Gallery video playback | `mobile/src/services/bugReport/galleryVideoPlaybackBugReport.ts` | `gallery_video` / `gallery_video_on_error` | Host gallery video player gets a playback error. |
-| Captions tester laptop report | `mobile/e2e-tests/scripts/live_word_monitor.py` -> internal Crust receiver -> island engine service | external monitor alert / `captions_tester_incident` | Laptop e2e harness decides a captions test failed and asks the app runtime to file a report. |
+| External incident report | Broadcast/deep-link caller -> shared engine report service | external request / `submit_incident_report` | Caller identifies the failure; engine gathers context/logs and submits the report. |
 
 ## 1. MentraJS Crashloop
 
@@ -260,13 +260,18 @@ Research note:
 
 ## 5. Captions Tester Laptop Report
 
+Current trigger: `com.mentra.SUBMIT_INCIDENT_REPORT` is available in all Android
+builds, with the generic `submit_incident_report` event and
+`INCIDENT_REPORT_RESULT` receipt. It is no longer an internal-build-only captions
+hook. See the [broadcast contract](../../../../mobile/docs/incident-report-intent.md).
+
 Original behavior:
 
-- `MantleManager` listens for Crust `captions_tester_incident` events.
+- `MantleManager` listens for Crust `submit_incident_report` events.
 - It extracts failure/test metadata, files an automatic report, and logs a
-  `CAPTIONS_TESTER_INCIDENT_RESULT` JSON line for the test harness.
-- The Android internal Crust module registers a
-  `com.mentra.CAPTIONS_TESTER_INCIDENT` broadcast receiver. The e2e live-word
+  `INCIDENT_REPORT_RESULT` JSON line for the test harness.
+- The Android Crust module registers a
+  `com.mentra.SUBMIT_INCIDENT_REPORT` broadcast receiver. The e2e live-word
   monitor sends that broadcast when its own alert thresholds trip.
 - That means the laptop test harness owns the failure decision, but the current
   implementation routes report submission through host `MantleManager`.
@@ -289,7 +294,7 @@ Original ownership:
   entered the app process.
 - Raw Cloud V2 transcript events belong to island's Cloud V2 runtime path.
 - Transcript test logging is an internal/e2e diagnostic concern, not OEM host UI.
-- The existing Crust broadcast path is an Android/internal test harness bridge,
+- The Crust broadcast path is an Android incident-report bridge,
   not the source of transcript truth and not a reason for `MantleManager` to own
   report submission.
 
@@ -304,17 +309,17 @@ Judgment:
 - Gate the log behind the existing e2e/dev logging switch, or a more specific
   transcript-test switch, so normal builds do not log user speech.
 - The test harness can keep its own alert bookkeeping by reading the existing
-  `CAPTIONS_TESTER_INCIDENT_RESULT` log line emitted after engine submission.
+  `INCIDENT_REPORT_RESULT` log line emitted after engine submission.
 
 Implemented move:
 
-- Delete the host `captions_tester_incident` automatic-report listener from
+- Delete the host `submit_incident_report` automatic-report listener from
   `MantleManager`.
-- Keep the internal Crust broadcast/Android Intent as the test-harness trigger.
-- Add an island-internal `captions_tester_incident` listener started by
+- Keep the Crust broadcast/Android Intent as the external trigger in all builds.
+- Add an island-internal `submit_incident_report` listener started by
   `engine.start()`.
 - Have that listener submit an automatic Cloud V2 report through the island
-  reports service and emit the existing `CAPTIONS_TESTER_INCIDENT_RESULT` logcat
+  reports service and emit the existing `INCIDENT_REPORT_RESULT` logcat
   marker for the laptop monitor.
 - Add an island-internal Cloud V2 transcript diagnostic logger next to
   `CloudClientService` / `LocalMiniappRuntime`, using the typed

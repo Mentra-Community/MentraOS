@@ -1,7 +1,0 @@
-appId: com.mentra.mentra
----
-- assertVisible: 'Pair with Mentra_Live_03BE\?'
-- takeScreenshot: setup-03be-pair-confirmation
-- tapOn:
-    id: android:id/button1
-- takeScreenshot: setup-03be-paired

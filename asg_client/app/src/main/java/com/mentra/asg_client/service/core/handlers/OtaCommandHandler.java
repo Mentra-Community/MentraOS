@@ -52,7 +52,7 @@ public class OtaCommandHandler implements ICommandHandler {
                 case "ota_update_response":
                     return handleOtaUpdateResponse(data);
                 case "ota_query_status":
-                    return handleOtaQueryStatus();
+                    return handleOtaQueryStatus(data);
                 default:
                     Log.e(TAG, "Unsupported OTA command: " + commandType);
                     return false;
@@ -175,7 +175,7 @@ public class OtaCommandHandler implements ICommandHandler {
         }
     }
 
-    private boolean handleOtaQueryStatus() {
+    private boolean handleOtaQueryStatus(JSONObject data) throws JSONException {
         Log.i(TAG, "📱 Received ota_query_status from phone");
 
         if (otaHelper == null) {
@@ -183,8 +183,22 @@ public class OtaCommandHandler implements ICommandHandler {
             return false;
         }
 
+        // Read diagnostics before the existing status projection, which may expire old
+        // session state. Observation itself must not make an unfinished session look idle.
+        JSONObject activity = null;
+        Object requestedId = data != null ? data.opt("request_id") : null;
+        String requestId = requestedId instanceof String ? (String) requestedId : "";
+        if (data != null && Boolean.TRUE.equals(data.opt("include_activity"))
+                && requestId.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,119}")) {
+            activity = otaHelper.getOtaActivitySnapshot(requestId);
+            Log.i(TAG, "OTA activity snapshot: " + activity);
+        }
+
         JSONObject state = otaHelper.getOtaSessionState();
         if (state != null && communicationManager != null) {
+            // Terminal BLE payloads retain their existing compact form. The explicit local
+            // diagnostic log above is also available when that compaction removes activity.
+            if (activity != null) state.put("activity", activity);
             communicationManager.sendOtaStatus(state);
             String statusStr = state.optString("status", "?");
             Log.i(TAG, "📱 Sent ota_status response: " + statusStr);

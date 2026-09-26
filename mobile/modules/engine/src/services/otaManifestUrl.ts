@@ -1,6 +1,10 @@
 import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
-import {resolveDeploymentAwareOtaManifestPolicy, selectModernOtaManifestPin} from "./otaManifestPolicy"
+import {
+  isLegacyAsgOtaStartBuild,
+  resolveDeploymentAwareOtaManifestPolicy,
+  selectModernOtaManifestPin,
+} from "./otaManifestPolicy"
 import {getConfigValues} from "../runtime/bootstrap"
 
 function getOtaVersionUrlDevOverride(): string | null {
@@ -39,6 +43,11 @@ export function hasConfiguredModernOtaManifestPin(): boolean {
       engineReleasePin: getEmbeddedEngineReleasePin(),
     }),
   )
+}
+
+/** Legacy rescue manifests are intermediate targets before the release pin can be used. */
+export function isLegacyOtaManifestSelected(glassesBuildNumber?: string | null): boolean {
+  return !hasDeploymentOtaPolicy() && isLegacyAsgOtaStartBuild(glassesBuildNumber)
 }
 
 export function resolveOtaManifestUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string | null {

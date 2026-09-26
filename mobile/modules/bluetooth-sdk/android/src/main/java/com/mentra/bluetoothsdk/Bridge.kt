@@ -402,9 +402,10 @@ public class Bridge private constructor() {
 
         /** Wear state from sr_wrst, or from a wear transition on the glasses. */
         @JvmStatic
-        fun sendWearState(worn: Boolean) {
+        fun sendWearState(worn: Boolean, extras: Map<String, Any> = emptyMap()) {
             val body = HashMap<String, Any>()
             body["worn"] = worn
+            body.putAll(extras)
             sendTypedMessage("wear_state", body)
         }
 

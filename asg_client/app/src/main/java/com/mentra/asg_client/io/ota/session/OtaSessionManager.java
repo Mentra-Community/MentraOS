@@ -132,6 +132,15 @@ public class OtaSessionManager {
         return mStatus;
     }
 
+    /** Read the raw activity state without expiring a session or consuming its restart guard. */
+    public synchronized JSONObject getActivitySnapshot() throws JSONException {
+        JSONObject snapshot = new JSONObject();
+        snapshot.put("session_id", mSessionId != null ? mSessionId : "");
+        snapshot.put("status", getStatus());
+        snapshot.put("restart_pending", mRestartingSinceElapsed >= 0);
+        return snapshot;
+    }
+
     /**
      * Builds the JSON payload sent to the phone via BLE as an {@code ota_status} message.
      *
@@ -238,6 +247,37 @@ public class OtaSessionManager {
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
         Log.i(TAG, "Session complete: " + mSessionId);
+    }
+
+    /**
+     * Reconcile the native BES terminal result with its owning final install step.
+     *
+     * <p>The durable BES record outlives EventBus delivery and process restarts. An old or debug
+     * transaction must never finish another session, advance a step, or replace an existing failure.
+     */
+    public synchronized boolean reconcileBesTerminalStatus(JSONObject besStatus) {
+        if (besStatus == null
+                || mSessionId == null
+                || mSessionId.isEmpty()
+                || !mSessionId.equals(besStatus.optString("sid", ""))
+                || !"bes".equals(besStatus.optString("st", ""))
+                || !"install".equals(besStatus.optString("phase", ""))
+                || !"in_progress".equals(mStatus)
+                || !"bes".equals(getStepType(mCurrentStepIndex))
+                || !"install".equals(mCurrentPhase)
+                || mCurrentStepIndex != mTotalSteps - 1
+                || mRestartingSinceElapsed >= 0) {
+            return false;
+        }
+        if ("complete".equals(besStatus.optString("status", ""))) {
+            setComplete();
+            return true;
+        }
+        if ("failed".equals(besStatus.optString("status", ""))) {
+            setFailed(besStatus.optString("err", "install_failed"));
+            return true;
+        }
+        return false;
     }
 
     public synchronized boolean setRestarting() {

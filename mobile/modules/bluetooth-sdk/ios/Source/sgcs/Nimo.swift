@@ -7,10 +7,8 @@
 //
 
 import AVFoundation
-import Compression
 import CoreBluetooth
 import Foundation
-import CoreGraphics
 
 // MARK: - Nimo BLE Constants
 
@@ -23,7 +21,7 @@ enum NimoBLE {
     static let CHAR_MIC = CBUUID(string: "00002025-0000-1000-8000-00805F9B34FB")
 
     static let NAME_PREFIX = "nimo"
-    // iOS ANCS side-channel devices advertise "<name>_ble" — never the data channel.
+    /// iOS ANCS side-channel devices advertise "<name>_ble" — never the data channel.
     static let BLE_NAME_SUFFIX = "_ble"
 
     static let CHUNK_SIZE = 501
@@ -31,6 +29,7 @@ enum NimoBLE {
 }
 
 // MARK: - Nimo Protocol Constants
+
 // Byte values follow the glasses firmware protocol and must not be changed.
 
 enum NimoProtocol {
@@ -69,7 +68,7 @@ enum NimoProtocol {
     static let CTRL_QUIT_APP = 0x03
     static let CTRL_UPDATE_CONTENT = 0x04
 
-    // notification keys
+    /// notification keys
     static let NOTIFICATION_SEND = 0x01
 
     // report keys (cmd 0x06)
@@ -108,7 +107,7 @@ enum NimoProtocol {
     static let APP_ID_PROMPTER = 0x06
     static let APP_ID_AI_TALK = 0x07
 
-    // enterApp modes
+    /// enterApp modes
     static let APP_MODE_STANDALONE = 0x00
 
     // widget resTypes
@@ -126,7 +125,7 @@ enum NimoProtocol {
     static let NAV_LARGE_MAP_WIDTH = 452
     static let NAV_LARGE_MAP_HEIGHT = 170
 
-    // phone types
+    /// phone types
     static let PHONE_TYPE_IOS = 0x01
 
     // image header
@@ -570,6 +569,9 @@ actor NimoReconnectionManager {
 class Nimo: NSObject, SGCManager {
     var type: String = DeviceTypes.NIMO
     let hasMic = true
+    let showBrightnessConfirmation = false
+    let showConnectionConfirmation = false
+    let sceneHandoffRequiresClear = false
 
     private static let _bluetoothQueue = DispatchQueue(label: "BluetoothNimo", qos: .userInitiated)
 
@@ -578,18 +580,9 @@ class Nimo: NSObject, SGCManager {
         static let ackTimeoutSeconds: TimeInterval = 5
         static let pairingTimeoutSeconds: TimeInterval = 15
         static let batteryPollSeconds: TimeInterval = 30
-        static let textQueueTickSeconds: TimeInterval = 0.1
-        static let writeWatchdogSeconds: TimeInterval = 1
-        // Fall back to the other ear if the preferred one goes quiet for this long.
+        /// Fall back to the other ear if the preferred one goes quiet for this long.
         static let micSideFallbackSeconds: TimeInterval = 2
     }
-
-    // The text surface every sendTextWall renders into. The ASR note view (appId 0x04,
-    // note text resId 0x00) is a plain text page that renders pushed text directly;
-    // Prompter (0x06) was tried first but did not display pushed text on hardware.
-    private let textAppId = NimoProtocol.APP_ID_ASR_NOTE
-    private let textLayoutId = 0
-    private let textResId = 0
 
     // BLE
     private var centralManager: CBCentralManager?
@@ -599,7 +592,7 @@ class Nimo: NSObject, SGCManager {
     private var micChar: CBCharacteristic?
     private var isDisconnecting = false
 
-    // Device search
+    /// Device search
     private var DEVICE_SEARCH_ID = "NOT_SET"
 
     private var lastDeviceName: String? {
@@ -615,7 +608,7 @@ class Nimo: NSObject, SGCManager {
     private let reconnectionManager = NimoReconnectionManager()
     private let receiveAssembler = NimoReceiveAssembler()
 
-    // Handshake
+    /// Handshake
     private enum HandshakeState {
         case idle
         case awaitingTws
@@ -625,10 +618,12 @@ class Nimo: NSObject, SGCManager {
 
     private var handshakeState = HandshakeState.idle
     private var twsConnected = false
+    private var peerCompanionReady: Bool?
+    private var setTimeAttempts = 0
     private var twsTimeoutItem: DispatchWorkItem?
     private var pairingTimeoutItem: DispatchWorkItem?
 
-    // Pending acks keyed by (cmd << 8) | key
+    /// Pending acks keyed by (cmd << 8) | key
     private struct PendingAck {
         let onResult: (Bool) -> Void
         let timeoutItem: DispatchWorkItem
@@ -636,26 +631,36 @@ class Nimo: NSObject, SGCManager {
 
     private var pendingAcks: [Int: PendingAck] = [:]
 
-    // Serialized write queue: writes use .withResponse, the next write goes out after
-    // didWriteValueFor (plus a 5 ms inter-frame delay), with a watchdog to unstick the queue.
-    private struct QueuedWrite {
-        let char: CBCharacteristic
-        let bytes: Data
+    private static func scheduler(_ queue: DispatchQueue) -> NimoScheduler {
+        { delay, task in
+            let item = DispatchWorkItem(block: task)
+            queue.asyncAfter(deadline: .now() + delay, execute: item)
+            return { item.cancel() }
+        }
     }
 
-    private var writeQueue: [QueuedWrite] = []
-    private var writeInFlight = false
-    private var writeWatchdogItem: DispatchWorkItem?
-
-    // Timers
+    private let encoderQueue = DispatchQueue(label: "NimoCanvasEncoder", qos: .userInitiated)
+    private lazy var canvasEncoder = NimoCanvasEncoder(
+        main: Self.scheduler(.main), worker: Self.scheduler(encoderQueue),
+        failure: { Bridge.log("NIMO: canvas encoding failed; retaining last valid scene: \($0)") }
+    )
+    private lazy var writes = NimoWriteQueue<CBCharacteristic>(
+        schedule: Self.scheduler(.main), write: { [weak self] characteristic, bytes in
+            guard let self, let peripheral = self.peripheral, peripheral.state == .connected,
+                  bytes.count <= peripheral.maximumWriteValueLength(for: .withResponse) else { return false }
+            peripheral.writeValue(bytes, for: characteristic, type: .withResponse)
+            return true
+        }, failure: { [weak self] in self?.abortTransport($0) }
+    )
+    private lazy var canvas = NimoCanvasCoordinator(
+        schedule: Self.scheduler(.main),
+        writeCapacity: { [weak self] in min(512, self?.peripheral?.maximumWriteValueLength(for: .withResponse) ?? 20) },
+        enqueue: { [weak self] frames, started, completed in
+            self?.enqueueFrames(frames, finalStarted: started, completed: completed) ?? false
+        }, reconnect: { [weak self] in self?.abortTransport($0) },
+        rejected: { Bridge.log("NIMO: canvas rejected status=\($0); not a render ACK") }
+    )
     private var batteryPollTimer: Timer?
-    private var textQueueTimer: Timer?
-
-    // Text rendering
-    private var pendingText: String?
-    private var textAppEntered = false
-    private var navAppEntered = false
-    private var currentGlassesAppId = -1
 
     // Battery
     private var lastBatteryLevel = -1
@@ -804,8 +809,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     func clearDisplay() {
-        // Keep the text app/page alive — a blank update avoids re-entering the app next time.
-        pendingText = " "
+        encodeCanvas(scope: "legacy") { try NimoCanvasCodec.replace([]) }
     }
 
     func sendText(_ text: String) async {
@@ -813,92 +817,61 @@ class Nimo: NSObject, SGCManager {
     }
 
     func sendTextWall(_ text: String) async {
-        // Coalesced: only the most recent pending text survives until the next 100ms drain.
-        pendingText = text
+        encodeCanvas(scope: "legacy") {
+            try NimoCanvasCodec.replace(NimoCanvasCodec.text(text, 0, 0, 500, 220, border: 0, radius: 0))
+        }
     }
 
     func sendDoubleTextWall(_ top: String, _ bottom: String) async {
         await sendTextWall(top + "\n\n" + bottom)
     }
 
-    func sendPositionedText(
-        _ text: String, x _: Int32, y _: Int32, width _: Int32, height _: Int32,
-        borderWidth _: Int32, borderRadius _: Int32
-    ) async {
-        // Navigation pushes turn text via positioned_text. Nimo widgets have fixed geometry, so
-        // position/border are ignored — funnel the text through the same coalesced path as
-        // sendTextWall so it renders on the ASR note page. Without this override the base no-op
-        // silently dropped all navigation text.
-        // Bridge.log("NIMO: sendPositionedText(text=\(text))")
-        // pendingText = text
+    func sendPositionedText(_ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
+                            borderWidth: Int32, borderRadius: Int32) async
+    {
+        encodeCanvas(scope: "legacy") {
+            try NimoCanvasCodec.replace(NimoCanvasCodec.text(text, Int(x), Int(y), Int(width), Int(height),
+                                                             border: Int(borderWidth), radius: Int(borderRadius)))
+        }
     }
 
-    func displayBitmap(
-        base64ImageData: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?
-    ) async -> Bool {
-        // Nimo widgets have fixed geometry; x/y are not honored. Renders into the navigation
-        // large-map widget (appId 0x01, resId 0x05, 452x170 2bpp) — the full-width nav map,
-        // which shows far more than the small 160x160 mini-map (resId 0x00). bitmapToGrayscale
-        // aspect-fits onto black, so a non-matching source aspect letterboxes rather than
-        // distorts. The nav app must be foregrounded before pushing content (mirrors the text
-        // path). TODO: hardware-verify the large-map widget renders and the nav app-mode.
-        let targetWidth = NimoProtocol.NAV_LARGE_MAP_WIDTH
-        let targetHeight = NimoProtocol.NAV_LARGE_MAP_HEIGHT
-        Bridge.log("NIMO: displayBitmap → nav large map (navAppEntered=\(navAppEntered))")
-        guard let imageData = Data(base64Encoded: base64ImageData),
-              let image = SdkImage(data: imageData)
-        else {
-            Bridge.log("NIMO: displayBitmap — could not decode image")
+    func displayBitmap(base64ImageData: String, x: Int32?, y: Int32?, width: Int32?, height: Int32?) async -> Bool {
+        do {
+            let left = Int(x ?? 0), top = Int(y ?? 0)
+            let w = width.map(Int.init) ?? (NimoCanvasCodec.width - left)
+            let h = height.map(Int.init) ?? (NimoCanvasCodec.height - top)
+            try NimoCanvasCodec.region(left, top, w, h)
+            // True acknowledges bounded local validation, never visible rendering.
+            let source = try NimoCanvasImage.source(base64ImageData)
+            encodeCanvas(scope: "legacy") {
+                try NimoCanvasCodec.replace([NimoCanvasCodec.bitmap(left, top, w, h,
+                                                                    gray: NimoCanvasImage.grayscale(source, width: w, height: h))])
+            }
+            return true
+        } catch {
+            Bridge.log("NIMO: displayBitmap failed: \(error)")
             return false
         }
-        guard let grayscale = bitmapToGrayscale(image, width: targetWidth, height: targetHeight)
-        else { return false }
-        let packed = packL8To2bpp(grayscale)
-        let (payload, compression) = compressAdaptive(packed)
-        if !navAppEntered {
-            sendFrame(
-                NimoFrameCodec.encodeFrame(
-                    cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
-                    key: NimoProtocol.CTRL_ENTER_APP,
-                    payload: Data([UInt8(NimoProtocol.APP_ID_NAV), UInt8(NimoProtocol.APP_MODE_STANDALONE)])
-                )
-            )
-            // Optimistic; corrected by app-state reports if the glasses refuse/exit.
-            navAppEntered = true
+    }
+
+    func applySceneFrame(_ frame: SceneFrame) async {
+        encodeCanvas(scope: "\(frame.appId):\(frame.epoch)", force: frame.replay) {
+            try NimoCanvasCodec.scene(frame.elements) { try NimoCanvasImage.decode($0, width: $1, height: $2) }
         }
-        let content =
-            NimoFrameCodec.imageHeader(
-                width: targetWidth,
-                height: targetHeight,
-                formatBpp: NimoProtocol.FORMAT_2BPP,
-                compression: compression,
-                originalSize: packed.count,
-                compressedSize: compression == NimoProtocol.COMPRESSION_NONE ? 0 : payload.count
-            ) + payload
-        let frames = NimoFrameCodec.updateContentFrames(
-            appId: NimoProtocol.APP_ID_NAV,
-            layoutId: 0,
-            resId: NimoProtocol.NAV_RES_LARGE_MAP,
-            resType: NimoProtocol.WIDGET_PICTURE,
-            content: content
-        )
-        enqueueFrames(frames)
-        return true
+    }
+
+    func clearSceneElements(_: [String]) async {
+        clearDisplay()
+    }
+
+    private func encodeCanvas(scope: String, force: Bool = false, encode: @escaping () throws -> Data) {
+        canvasEncoder.submit(encode: encode) { [weak self] bytes in
+            self?.canvas.offer(bytes, scope: scope, force: force)
+        }
     }
 
     func showDashboard() {
-        Bridge.log("NIMO: showDashboard()")
-        textAppEntered = false
-        navAppEntered = false
-        sendFrame(
-            NimoFrameCodec.encodeFrame(
-                cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
-                key: NimoProtocol.CTRL_ENTER_APP,
-                payload: Data([
-                    UInt8(NimoProtocol.APP_ID_DASHBOARD), UInt8(NimoProtocol.APP_MODE_STANDALONE),
-                ])
-            )
-        )
+        exit()
     }
 
     func setDashboardPosition(_ height: Int, _ depth: Int) {
@@ -963,17 +936,8 @@ class Nimo: NSObject, SGCManager {
     }
 
     func exit() {
-        Bridge.log("NIMO: exit()")
-        let appId = currentGlassesAppId >= 0 ? currentGlassesAppId : textAppId
-        textAppEntered = false
-        navAppEntered = false
-        sendFrame(
-            NimoFrameCodec.encodeFrame(
-                cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
-                key: NimoProtocol.CTRL_QUIT_APP,
-                payload: Data([UInt8(appId & 0xFF)])
-            )
-        )
+        canvasEncoder.invalidate()
+        canvas.exit()
     }
 
     func sendShutdown() {
@@ -1020,7 +984,9 @@ class Nimo: NSObject, SGCManager {
         if bytes.count > maxLen {
             // Truncate on a UTF-8 boundary
             var end = maxLen
-            while end > 0, bytes[end] & 0xC0 == 0x80 { end -= 1 }
+            while end > 0, bytes[end] & 0xC0 == 0x80 {
+                end -= 1
+            }
             bytes = bytes.subdata(in: 0 ..< end)
         }
         dest.replaceSubrange(offset ..< offset + bytes.count, with: bytes)
@@ -1070,7 +1036,7 @@ class Nimo: NSObject, SGCManager {
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}
-    func sendOtaStart(otaVersionUrl: String?) {}
+    func sendOtaStart(otaVersionUrl _: String?) {}
     func sendOtaQueryStatus() {}
 
     // MARK: - SGCManager: User Context / Gallery / Version
@@ -1163,44 +1129,9 @@ class Nimo: NSObject, SGCManager {
 
     // MARK: - Write Queue
 
-    private func drainWriteQueue() {
-        if writeInFlight { return }
-        guard !writeQueue.isEmpty else { return }
-        guard let peripheral else {
-            writeQueue.removeAll()
-            return
-        }
-        let item = writeQueue.removeFirst()
-        writeInFlight = true
-        peripheral.writeValue(item.bytes, for: item.char, type: .withResponse)
-
-        // Watchdog: if the write callback never arrives, unblock the queue.
-        writeWatchdogItem?.cancel()
-        let watchdog = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            if self.writeInFlight {
-                Bridge.log("NIMO: write watchdog fired — forcing queue drain")
-                self.writeInFlight = false
-                self.drainWriteQueue()
-            }
-        }
-        writeWatchdogItem = watchdog
-        DispatchQueue.main.asyncAfter(deadline: .now() + Const.writeWatchdogSeconds, execute: watchdog)
-    }
-
-    private func onWriteCompleted() {
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(NimoBLE.INTER_FRAME_DELAY_MS)
-        ) { [weak self] in
-            guard let self else { return }
-            self.writeInFlight = false
-            self.drainWriteQueue()
-        }
-    }
-
-    private func enqueueWrite(_ char: CBCharacteristic, _ bytes: Data) {
-        writeQueue.append(QueuedWrite(char: char, bytes: bytes))
-        drainWriteQueue()
+    private func enqueueWrite(_ characteristic: CBCharacteristic, _ bytes: Data) {
+        guard let peripheral else { return }
+        writes.enqueue(peripheral, characteristic: characteristic, frames: [bytes])
     }
 
     private func sendFrame(_ frame: Data) {
@@ -1208,12 +1139,18 @@ class Nimo: NSObject, SGCManager {
         enqueueWrite(txChar, frame)
     }
 
-    private func enqueueFrames(_ frames: [Data]) {
-        guard let txChar else { return }
-        for frame in frames {
-            writeQueue.append(QueuedWrite(char: txChar, bytes: frame))
-        }
-        drainWriteQueue()
+    private func enqueueFrames(_ frames: [Data], finalStarted: @escaping () -> Void,
+                               completed: @escaping () -> Void) -> Bool
+    {
+        guard let peripheral, let txChar else { return false }
+        return writes.enqueue(peripheral, characteristic: txChar, frames: frames,
+                              finalStarted: finalStarted, completed: completed)
+    }
+
+    private func abortTransport(_ reason: String) {
+        Bridge.log("NIMO: retiring transport: \(reason)")
+        resetSessionState()
+        if let peripheral { centralManager?.cancelPeripheralConnection(peripheral) }
     }
 
     // MARK: - Pending ACKs
@@ -1286,18 +1223,24 @@ class Nimo: NSObject, SGCManager {
         cancelTwsTimeout()
         handshakeState = .awaitingTimeAck
         Bridge.log("NIMO: TWS OK — sending setTime (awaiting ACK)")
-        sendAwaitingAck(
-            cmd: NimoProtocol.CMD_SET_PARAMETER,
-            key: NimoProtocol.SET_TIME,
-            payload: NimoFrameCodec.encodeDeviceTime()
-        ) { [weak self] ok in
-            guard let self else { return }
-            if !ok {
-                Bridge.log("NIMO: setTime ACK failed/timed out — handshake failed")
-                self.handshakeFailed()
-            } else {
-                self.finishHandshake()
-            }
+        setTimeAttempts = 0
+        attemptSetTime()
+    }
+
+    private func attemptSetTime() {
+        guard handshakeState == .awaitingTimeAck, let expected = peripheral else { return }
+        setTimeAttempts += 1
+        sendAwaitingAck(cmd: NimoProtocol.CMD_SET_PARAMETER, key: NimoProtocol.SET_TIME,
+                        payload: NimoFrameCodec.encodeDeviceTime())
+        { [weak self] ok in
+            guard let self, self.peripheral === expected, self.handshakeState == .awaitingTimeAck else { return }
+            if ok { self.finishHandshake() }
+            else if self.setTimeAttempts < 3 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self, self.peripheral === expected else { return }
+                    self.attemptSetTime()
+                }
+            } else { self.handshakeFailed() }
         }
     }
 
@@ -1321,6 +1264,7 @@ class Nimo: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "fullyBooted", true)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         startTimers()
+        canvas.readiness(twsConnected && peerCompanionReady == true)
     }
 
     private func handshakeFailed() {
@@ -1333,16 +1277,13 @@ class Nimo: NSObject, SGCManager {
 
     private func resetSessionState() {
         handshakeState = .idle
+        cancelTwsTimeout()
         twsConnected = false
-        textAppEntered = false
-        navAppEntered = false
-        currentGlassesAppId = -1
-        pendingText = nil
+        peerCompanionReady = nil
+        canvasEncoder.invalidate()
+        canvas.disconnected()
         receiveAssembler.reset()
-        writeQueue.removeAll()
-        writeInFlight = false
-        writeWatchdogItem?.cancel()
-        writeWatchdogItem = nil
+        writes.reset()
         failAllPendingAcks()
         stopTimers()
     }
@@ -1366,7 +1307,7 @@ class Nimo: NSObject, SGCManager {
         }
     }
 
-    // MARK: - Timers (battery poll keepalive + text queue)
+    // MARK: - Timers (battery poll keepalive)
 
     private func startTimers() {
         stopTimers()
@@ -1379,62 +1320,29 @@ class Nimo: NSObject, SGCManager {
                 self?.getBatteryStatus()
             }
         }
-        textQueueTimer = Timer.scheduledTimer(
-            withTimeInterval: Const.textQueueTickSeconds, repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.drainTextQueue()
-            }
-        }
     }
 
     private func stopTimers() {
         batteryPollTimer?.invalidate()
         batteryPollTimer = nil
-        textQueueTimer?.invalidate()
-        textQueueTimer = nil
-    }
-
-    // MARK: - Text Rendering
-
-    private func drainTextQueue() {
-        guard let text = pendingText, handshakeState == .ready else { return }
-        pendingText = nil
-
-        // All text (text_wall / double_text_wall / reference_card / positioned_text) renders on
-        // the ASR note page — the only text surface confirmed to render on hardware.
-        if !textAppEntered {
-            sendFrame(
-                NimoFrameCodec.encodeFrame(
-                    cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
-                    key: NimoProtocol.CTRL_ENTER_APP,
-                    payload: Data([UInt8(textAppId), UInt8(NimoProtocol.APP_MODE_STANDALONE)])
-                )
-            )
-            // Optimistic; corrected by app-state reports if the glasses refuse/exit.
-            textAppEntered = true
-        }
-
-        let frames = NimoFrameCodec.updateContentFrames(
-            appId: textAppId,
-            layoutId: textLayoutId,
-            resId: textResId,
-            resType: NimoProtocol.WIDGET_TEXT_NEW,
-            content: Data(text.utf8)
-        )
-        enqueueFrames(frames)
     }
 
     // MARK: - Incoming Data
 
     private func handleRxPacket(_ packet: Data) {
+        if packet.count >= 10, packet[8] == 7, [1, 3, 4].contains(packet[9]) {
+            if let response = NimoCanvasCodec.response(packet) {
+                canvas.response(key: response.key, payload: response.payload)
+            }
+            return
+        }
         receiveAssembler.cleanup()
         for frame in receiveAssembler.ingest(packet) {
             guard let decoded = NimoFrameCodec.decode(frame),
                   let cmd = decoded.cmd, let key = decoded.key
             else { continue }
             if cmd == NimoProtocol.CMD_INSTRUCTION_REPORT {
-                handleReport(key: key, data: decoded.data ?? Data())
+                if decoded.statusCode == 0 { handleReport(key: key, data: decoded.data ?? Data()) }
             } else {
                 handleResponse(
                     cmd: cmd, key: key, statusCode: decoded.statusCode ?? 1,
@@ -1457,13 +1365,9 @@ class Nimo: NSObject, SGCManager {
                 Bridge.log("NIMO: app state report appId=\(appId) phase=\(phase)")
                 switch phase {
                 case NimoProtocol.STATE_ENTER:
-                    currentGlassesAppId = appId
-                    if appId != textAppId { textAppEntered = false }
-                    if appId != NimoProtocol.APP_ID_NAV { navAppEntered = false }
+                    if canvas.nativeApp(appId, entered: true) { canvasEncoder.invalidate() }
                 case NimoProtocol.STATE_EXIT:
-                    if appId == currentGlassesAppId { currentGlassesAppId = -1 }
-                    if appId == textAppId { textAppEntered = false }
-                    if appId == NimoProtocol.APP_ID_NAV { navAppEntered = false }
+                    if canvas.nativeApp(appId, entered: false) { canvasEncoder.invalidate() }
                 default:
                     break
                 }
@@ -1490,7 +1394,11 @@ class Nimo: NSObject, SGCManager {
         case NimoProtocol.BUSINESS_HEARTBEAT:
             // [leftMv(2)][rightMv(2)][btSysStatus(4)][twsStatus(1)][slaveGatt(1)]
             if v.count >= 10 {
+                peerCompanionReady = v[9] != 0
                 onTwsState(Int(v[8]) >= 1)
+                if handshakeState == .ready {
+                    canvas.readiness(twsConnected && peerCompanionReady == true, confirmed: true)
+                }
             }
         case NimoProtocol.BUSINESS_BATTERY:
             if v.count >= 4 {
@@ -1512,6 +1420,7 @@ class Nimo: NSObject, SGCManager {
         if !connected, handshakeState == .ready {
             Bridge.log("NIMO: TWS service dropped mid-session (arm removed/off?)")
         }
+        if handshakeState == .ready { canvas.readiness(connected && peerCompanionReady == true) }
     }
 
     private func handleInputEvent(_ code: Int) {
@@ -1573,7 +1482,9 @@ class Nimo: NSObject, SGCManager {
             }
         case NimoProtocol.GET_VERSION_DETAIL:
             var end = bytes.count
-            while end > 0, bytes[end - 1] == 0 { end -= 1 }
+            while end > 0, bytes[end - 1] == 0 {
+                end -= 1
+            }
             firmwareVersionDetail =
                 String(bytes: bytes[0 ..< end], encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1636,121 +1547,6 @@ class Nimo: NSObject, SGCManager {
             }
         }
     }
-
-    // MARK: - Bitmap Helpers
-
-    /// Aspect-fit the image into `width`x`height` on black, then convert to L8 grayscale.
-    private func bitmapToGrayscale(_ image: SdkImage, width: Int, height: Int) -> Data? {
-        guard let cgImage = image.cgImage else { return nil }
-        let colorSpace = CGColorSpaceCreateDeviceGray()
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: width,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else { return nil }
-
-        context.setFillColor(gray: 0, alpha: 1)
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        let scale = min(CGFloat(width) / CGFloat(cgImage.width), CGFloat(height) / CGFloat(cgImage.height))
-        let dw = CGFloat(cgImage.width) * scale
-        let dh = CGFloat(cgImage.height) * scale
-        let rect = CGRect(
-            x: (CGFloat(width) - dw) / 2, y: (CGFloat(height) - dh) / 2, width: dw, height: dh
-        )
-        context.interpolationQuality = .medium
-        context.draw(cgImage, in: rect)
-
-        guard let buffer = context.data else { return nil }
-        // CGContext rows are top-down here; copy row by row in case bytesPerRow != width.
-        // Invert luminance (255 - value): MentraOS app bitmaps follow the platform convention
-        // of dark content on a light background, but Nimo's additive display lights up high
-        // 2bpp values (3 = white). Without inverting, the background lights the whole lens and
-        // the content stays dark — the inverted look. Flipping renders content lit on a dark lens.
-        var gray = Data(capacity: width * height)
-        let bytesPerRow = context.bytesPerRow
-        let base = buffer.assumingMemoryBound(to: UInt8.self)
-        for row in 0 ..< height {
-            let rowOffset = row * bytesPerRow
-            for col in 0 ..< width {
-                gray.append(255 - base[rowOffset + col])
-            }
-        }
-        return gray
-    }
-
-    /// L8 → 2bpp: thresholds 0x40/0x80/0xC0, 4 pixels per byte, MSB first.
-    private func packL8To2bpp(_ l8: Data) -> Data {
-        let bytes = [UInt8](l8)
-        let outBytes = (bytes.count + 3) >> 2
-        var dst = Data(count: outBytes)
-        for i in 0 ..< outBytes {
-            var packed: UInt8 = 0
-            for j in 0 ..< 4 {
-                let idx = i * 4 + j
-                var value: UInt8 = 0
-                if idx < bytes.count {
-                    let px = bytes[idx]
-                    if px < 0x40 {
-                        value = 0
-                    } else if px < 0x80 {
-                        value = 1
-                    } else if px < 0xC0 {
-                        value = 2
-                    } else {
-                        value = 3
-                    }
-                }
-                packed |= (value & 0x03) << UInt8(6 - 2 * j)
-            }
-            dst[i] = packed
-        }
-        return dst
-    }
-
-    /// zlib-compress (RFC1950); falls back to uncompressed when not smaller.
-    /// Apple's Compression framework emits raw deflate, so the 2-byte zlib header
-    /// and adler32 trailer the firmware expects are added manually.
-    private func compressAdaptive(_ data: Data) -> (Data, Int) {
-        guard !data.isEmpty, let compressed = zlibCompress(data), compressed.count < data.count
-        else { return (data, NimoProtocol.COMPRESSION_NONE) }
-        return (compressed, NimoProtocol.COMPRESSION_ZLIB)
-    }
-
-    private func zlibCompress(_ data: Data) -> Data? {
-        let dstCapacity = data.count + data.count / 16 + 256
-        var deflated = Data(count: dstCapacity)
-        let written = deflated.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) -> Int in
-            data.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Int in
-                compression_encode_buffer(
-                    dst.bindMemory(to: UInt8.self).baseAddress!, dstCapacity,
-                    src.bindMemory(to: UInt8.self).baseAddress!, data.count,
-                    nil, COMPRESSION_ZLIB
-                )
-            }
-        }
-        guard written > 0 else { return nil }
-        deflated.removeSubrange(written ..< deflated.count)
-
-        var out = Data([0x78, 0x9C]) // zlib header, default compression
-        out.append(deflated)
-        // adler32 over the uncompressed data, big-endian
-        var a: UInt32 = 1
-        var b: UInt32 = 0
-        for byte in data {
-            a = (a + UInt32(byte)) % 65521
-            b = (b + a) % 65521
-        }
-        let adler = (b << 16) | a
-        out.append(contentsOf: [
-            UInt8((adler >> 24) & 0xFF), UInt8((adler >> 16) & 0xFF),
-            UInt8((adler >> 8) & 0xFF), UInt8(adler & 0xFF),
-        ])
-        return out
-    }
 }
 
 // MARK: - CBCentralManagerDelegate
@@ -1775,7 +1571,7 @@ extension Nimo: CBCentralManagerDelegate {
     ) {
         guard
             let name = peripheral.name
-                ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
+            ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
         else { return }
         let rssiValue = rssi.intValue
 
@@ -1803,6 +1599,8 @@ extension Nimo: CBCentralManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             Bridge.log("NIMO: Connected to \(peripheral.name ?? "unknown")")
+            guard self.peripheral === peripheral else { return }
+            self.writes.connected(peripheral)
             self.lastDeviceUUID = peripheral.identifier.uuidString
             peripheral.discoverServices([NimoBLE.SERVICE_UUID])
         }
@@ -1816,18 +1614,19 @@ extension Nimo: CBCentralManagerDelegate {
             Bridge.log(
                 "NIMO: Failed to connect \(peripheral.name ?? "unknown"): \(error?.localizedDescription ?? "unknown")"
             )
+            guard self.peripheral === peripheral else { return }
             self.peripheral = nil
             self.startReconnectionTimer()
         }
     }
 
     nonisolated func centralManager(
-        _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error: Error?
+        _: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             Bridge.log("NIMO: Disconnected: \(error?.localizedDescription ?? "clean")")
-            if self.isDisconnecting { return }
+            if self.isDisconnecting || self.peripheral !== peripheral { return }
 
             self.peripheral = nil
             self.txChar = nil
@@ -1846,15 +1645,19 @@ extension Nimo: CBCentralManagerDelegate {
 // MARK: - CBPeripheralDelegate
 
 extension Nimo: CBPeripheralDelegate {
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {
-        guard let services = peripheral.services else { return }
-        for service in services where service.uuid == NimoBLE.SERVICE_UUID {
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.peripheral === peripheral else { return }
+            guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == NimoBLE.SERVICE_UUID }) else {
+                self.abortTransport("NIMO service discovery failed")
+                return
+            }
             peripheral.discoverCharacteristics(nil, for: service)
         }
     }
 
     nonisolated func peripheral(
-        _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error _: Error?
+        _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?
     ) {
         guard service.uuid == NimoBLE.SERVICE_UUID,
               let characteristics = service.characteristics
@@ -1862,6 +1665,8 @@ extension Nimo: CBPeripheralDelegate {
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            guard self.peripheral === peripheral else { return }
+            guard error == nil else { self.abortTransport("NIMO characteristic discovery failed"); return }
             for char in characteristics {
                 switch char.uuid {
                 case NimoBLE.CHAR_TX:
@@ -1876,6 +1681,10 @@ extension Nimo: CBPeripheralDelegate {
                     break
                 }
             }
+            guard self.txChar?.properties.contains(.write) == true, self.rxChar != nil, self.micChar != nil else {
+                self.abortTransport("Required NIMO characteristics unavailable")
+                return
+            }
             Bridge.log(
                 "NIMO: chars tx=\(self.txChar != nil) rx=\(self.rxChar != nil) mic=\(self.micChar != nil)"
             )
@@ -1883,46 +1692,48 @@ extension Nimo: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(
-        _: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        _ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            guard self.peripheral === peripheral else { return }
             if let error {
+                self.abortTransport("Notification subscription failed")
                 Bridge.log("NIMO: notify enable failed: \(error.localizedDescription)")
                 return
             }
-            // RX notifications live → the data channel is usable; run the handshake.
-            if characteristic.uuid == NimoBLE.CHAR_RX, self.handshakeState == .idle {
+            guard characteristic === self.rxChar || characteristic === self.micChar else { return }
+            guard characteristic.isNotifying else { self.abortTransport("NIMO notifications disabled"); return }
+            if self.rxChar?.isNotifying == true, self.micChar?.isNotifying == true,
+               self.txChar?.properties.contains(.write) == true, self.handshakeState == .idle
+            {
                 self.startHandshake()
             }
         }
     }
 
     nonisolated func peripheral(
-        _: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
+        _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
     ) {
         guard let data = characteristic.value, error == nil else { return }
         let uuid = characteristic.uuid
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if uuid == NimoBLE.CHAR_RX {
+            guard self.peripheral === peripheral else { return }
+            if uuid == NimoBLE.CHAR_RX, characteristic === self.rxChar {
                 self.handleRxPacket(data)
-            } else if uuid == NimoBLE.CHAR_MIC {
+            } else if uuid == NimoBLE.CHAR_MIC, characteristic === self.micChar {
                 self.handleMicPacket(data)
             }
         }
     }
 
     nonisolated func peripheral(
-        _: CBPeripheral, didWriteValueFor _: CBCharacteristic, error: Error?
+        _ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if let error {
-                Bridge.log("NIMO: Write error: \(error.localizedDescription)")
-            }
-            self.onWriteCompleted()
+            self?.writes.written(peripheral, characteristic: characteristic, success: error == nil)
         }
     }
 }

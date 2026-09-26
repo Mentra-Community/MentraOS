@@ -217,6 +217,7 @@ ext_for_content_type() {
     image/jpeg) echo "jpg" ;;
     image/webp) echo "webp" ;;
     image/gif) echo "gif" ;;
+    video/mp4) echo "mp4" ;;
     text/*) echo "txt" ;;
     *) echo "bin" ;;
   esac

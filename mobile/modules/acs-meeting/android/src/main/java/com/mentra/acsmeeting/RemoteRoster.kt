@@ -1,7 +1,7 @@
 package com.mentra.acsmeeting
 
 import android.util.Log
-import com.azure.android.communication.calling.Call
+import com.azure.android.communication.calling.CommonCall
 import com.azure.android.communication.calling.ParticipantState
 import com.azure.android.communication.calling.ParticipantsUpdatedListener
 import com.azure.android.communication.calling.PropertyChangedListener
@@ -21,11 +21,11 @@ class RemoteRoster(
     val listener: PropertyChangedListener,
   )
 
-  private var call: Call? = null
+  private var call: CommonCall? = null
   private var updatedListener: ParticipantsUpdatedListener? = null
   private val tracked = ConcurrentHashMap<String, Tracked>()
 
-  fun attach(joined: Call) {
+  fun attach(joined: CommonCall) {
     detach()
     call = joined
     val listener = ParticipantsUpdatedListener { event ->

@@ -9,12 +9,11 @@ import struct
 import subprocess
 import sys
 import tempfile
-from urllib.parse import urlsplit
 import zipfile
 
 CONFIG = "assets/app.config"
 MANIFEST = "AndroidManifest.xml"
-CONTRACT = "mentraPrBuild"
+from pr_mobile_config import CONTRACT, read_build, packaged_config, build_info
 
 
 def version_code(xml, replacement=None):
@@ -70,26 +69,14 @@ def read_config(apk):
     if len(names) != len(set(names)):
         raise ValueError("APK has duplicate entries")
     config = json.loads(apk.read(CONFIG))
-    build = config.get("extra", {}).get(CONTRACT, {})
-    if build.get("schemaVersion") != 1 or not re.fullmatch(r"[a-f0-9]{64}", build.get("mobileFingerprint", "")):
-        raise ValueError("APK does not support PR repackaging")
-    if not re.fullmatch(r"[a-f0-9]{40}", build.get("mobileSourceCommit", "")):
-        raise ValueError("Missing original mobile source revision")
-    return config, build
+    return config, read_build(config)
 
 
-def rewrite_apk(source, destination, *, fingerprint, ota_url, head_sha, build_number):
-    url = urlsplit(ota_url)
-    if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password or url.fragment or re.search(r"\s", ota_url):
-        raise ValueError("Invalid OTA manifest URL")
-    if not re.fullmatch(r"[a-f0-9]{40}", head_sha):
-        raise ValueError("Expected full PR head SHA")
+def rewrite_apk(source, destination, *, fingerprint, ota_url, head_sha, build_number, metadata=None):
     with zipfile.ZipFile(source) as original:
-        config, build = read_config(original)
-        if build["mobileFingerprint"] != fingerprint:
-            raise ValueError("Mobile fingerprint mismatch")
-        build.update(otaManifestUrl=ota_url, prHeadSha=head_sha, buildNumber=build_number)
-        config.setdefault("android", {})["versionCode"] = build_number
+        config, _ = read_config(original)
+        config = packaged_config(config, fingerprint=fingerprint, ota_url=ota_url, head_sha=head_sha,
+                                  build_number=build_number, platform="android", build_info=metadata)
         with zipfile.ZipFile(destination, "w") as output:
             for entry in original.infolist():
                 if signature_entry(entry.filename):
@@ -102,11 +89,13 @@ def rewrite_apk(source, destination, *, fingerprint, ota_url, head_sha, build_nu
                 output.writestr(entry, content)
 
 
-def verify_payload(source, output, *, fingerprint, ota_url, head_sha, build_number):
+def verify_payload(source, output, *, fingerprint, ota_url, head_sha, build_number, metadata=None):
     with zipfile.ZipFile(source) as before, zipfile.ZipFile(output) as after:
         old_config, old_build = read_config(before)
         config, build = read_config(after)
-        expected_build = dict(old_build, otaManifestUrl=ota_url, prHeadSha=head_sha, buildNumber=build_number)
+        expected_config = packaged_config(old_config, fingerprint=fingerprint, ota_url=ota_url, head_sha=head_sha,
+                                           build_number=build_number, platform="android", build_info=metadata)
+        expected_build = expected_config["extra"][CONTRACT]
         if build != expected_build or build["mobileFingerprint"] != fingerprint:
             raise ValueError("Packaged PR configuration does not match requested inputs")
         if config["android"]["versionCode"] != build_number or version_code(after.read(MANIFEST)) != build_number:
@@ -117,9 +106,7 @@ def verify_payload(source, output, *, fingerprint, ota_url, head_sha, build_numb
         for name in names - {CONFIG, MANIFEST}:
             if before.read(name) != after.read(name):
                 raise ValueError(f"Compiled payload changed: {name}")
-        old_config["extra"][CONTRACT] = expected_build
-        old_config.setdefault("android", {})["versionCode"] = build_number
-        if config != old_config or after.read(MANIFEST) != version_code(before.read(MANIFEST), build_number):
+        if config != expected_config or after.read(MANIFEST) != version_code(before.read(MANIFEST), build_number):
             raise ValueError("Unexpected configuration or manifest changes")
 
 
@@ -157,7 +144,7 @@ def main():
     output = Path(sys.argv[4])
     output.parent.mkdir(parents=True, exist_ok=True)
     inputs = dict(fingerprint=fingerprint, ota_url=os.environ["PR_OTA_MANIFEST_URL"],
-                  head_sha=os.environ["PR_HEAD_SHA"], build_number=int(os.environ["MENTRAOS_PINNED_BUILD_NUMBER"]))
+                  head_sha=os.environ["PR_HEAD_SHA"], build_number=int(os.environ["MENTRAOS_PINNED_BUILD_NUMBER"]), metadata=build_info())
     with tempfile.TemporaryDirectory(prefix="mentra-pr-apk-") as tmp:
         unsigned, aligned = Path(tmp) / "unsigned.apk", Path(tmp) / "aligned.apk"
         rewrite_apk(source, unsigned, **inputs)

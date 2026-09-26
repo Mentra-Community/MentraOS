@@ -468,8 +468,10 @@ class G1: NSObject, SGCManager {
         set {
             if let newValue = newValue {
                 UserDefaults.standard.set(newValue.uuidString, forKey: "leftGlassUUID")
+                UserDefaults.standard.set(DEVICE_SEARCH_ID, forKey: "leftGlassSearchID")
             } else {
                 UserDefaults.standard.removeObject(forKey: "leftGlassUUID")
+                UserDefaults.standard.removeObject(forKey: "leftGlassSearchID")
             }
         }
     }
@@ -484,8 +486,10 @@ class G1: NSObject, SGCManager {
         set {
             if let newValue = newValue {
                 UserDefaults.standard.set(newValue.uuidString, forKey: "rightGlassUUID")
+                UserDefaults.standard.set(DEVICE_SEARCH_ID, forKey: "rightGlassSearchID")
             } else {
                 UserDefaults.standard.removeObject(forKey: "rightGlassUUID")
+                UserDefaults.standard.removeObject(forKey: "rightGlassSearchID")
             }
         }
     }
@@ -2401,17 +2405,22 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
 
         Bridge.log("G1: 🔵 Attempting to connect by UUID")
-        var foundAny = false
+        var foundSides = 0
 
         if let leftUUID = leftGlassUUID {
             Bridge.log("G1: 🔵 Found stored left glass UUID: \(leftUUID.uuidString)")
             let leftDevices = centralManager!.retrievePeripherals(withIdentifiers: [leftUUID])
 
-            if let leftDevice = leftDevices.first {
+            if let leftDevice = leftDevices.first,
+               G1ConnectionTarget.matchesCachedPeripheral(
+                   name: leftDevice.name, searchID: DEVICE_SEARCH_ID,
+                   cachedSearchID: UserDefaults.standard.string(forKey: "leftGlassSearchID")
+               )
+            {
                 Bridge.log(
                     "G1: 🔵 Successfully retrieved left glass: \(leftDevice.name ?? "Unknown")"
                 )
-                foundAny = true
+                foundSides += 1
                 leftPeripheral = leftDevice
                 leftDevice.delegate = self
                 centralManager!.connect(
@@ -2428,11 +2437,16 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
             Bridge.log("G1: 🔵 Found stored right glass UUID: \(rightUUID.uuidString)")
             let rightDevices = centralManager!.retrievePeripherals(withIdentifiers: [rightUUID])
 
-            if let rightDevice = rightDevices.first {
+            if let rightDevice = rightDevices.first,
+               G1ConnectionTarget.matchesCachedPeripheral(
+                   name: rightDevice.name, searchID: DEVICE_SEARCH_ID,
+                   cachedSearchID: UserDefaults.standard.string(forKey: "rightGlassSearchID")
+               )
+            {
                 Bridge.log(
                     "G1: 🔵 Successfully retrieved right glass: \(rightDevice.name ?? "Unknown")"
                 )
-                foundAny = true
+                foundSides += 1
                 rightPeripheral = rightDevice
                 rightDevice.delegate = self
                 centralManager!.connect(
@@ -2445,7 +2459,8 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
             }
         }
 
-        return foundAny
+        // Continue scanning if only one matching cached half was available.
+        return foundSides == 2
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {

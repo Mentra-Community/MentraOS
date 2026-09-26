@@ -22,8 +22,20 @@ param miniappJwtPrivateKey string
 @secure()
 param miniappJwtPublicKey string
 
+@description('Comma-separated administrator emails for existing Core admin authorization. For an org API key, allowlist api-key@<keyId>.local. This is not a bearer credential.')
+param coreAdminEmails string = ''
+
+@description('Durable Core attachment storage account. The default is stable for this resource group.')
+param reportStorageAccountName string = 'mentra${uniqueString(subscription().id, resourceGroup().id)}'
+
 @description('Optional canonical workspace hostname. DNS must point directly to the Container App before enabling it.')
 param workspaceHostname string = ''
+
+@description('Managed certificate resource name for the canonical hostname. Use a new name when changing hostnames so the previous certificate can remain bound.')
+param workspaceCertificateName string = '${runtimeName}-workspace'
+
+@description('Existing hostname bindings to retain during a migration. Each entry has hostname and certificateName; the managed certificate must already exist in this Container Apps environment.')
+param additionalWorkspaceDomains array = []
 
 @description('Create the AcrPull assignment. Set false for CI after an administrator has bootstrapped it.')
 param manageAcrPullRoleAssignment bool = true
@@ -44,6 +56,14 @@ param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
 param communicationDataLocation string = 'United States'
+@description('Microsoft Graph tenant for meeting creation. Employee organizers must belong to this tenant.')
+param teamsGraphTenantId string = tenantId
+@description('Graph application with OnlineMeetings.ReadWrite.All and a Teams application access policy.')
+param teamsGraphClientId string = ''
+@secure()
+param teamsGraphClientSecret string = ''
+@description('Licensed organizer object ID used when the caller has no eligible Teams identity.')
+param teamsGraphOrganizerId string = ''
 param approvedSystemMiniapps array = ['com.mentra.settings']
 @description('Customer-managed userland miniapp entries: packageName, version, bundleUrl, and sha256.')
 param managedMiniapps array = []
@@ -131,11 +151,54 @@ resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
 
 resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (!empty(workspaceHostname)) {
   parent: environment
-  name: '${runtimeName}-workspace'
+  name: workspaceCertificateName
   location: location
   properties: {
     subjectName: workspaceHostname
     domainControlValidation: 'CNAME'
+  }
+}
+
+// Reuse Core's filesystem storage provider on a durable Azure Files mount.
+// No attachment bytes or storage keys are exposed by the workspace manifest.
+resource reportStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: reportStorageAccountName
+  location: location
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
+    // The Container Apps AzureFile mount authenticates with an account key.
+    allowSharedKeyAccess: true
+  }
+}
+
+resource reportFileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+  parent: reportStorage
+  name: 'default'
+  properties: {
+    shareDeleteRetentionPolicy: { enabled: true, days: 7 }
+  }
+}
+
+resource reportFiles 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  parent: reportFileService
+  name: 'core-attachments'
+  properties: { shareQuota: 100, enabledProtocols: 'SMB' }
+}
+
+resource reportMount 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
+  parent: environment
+  name: 'core-attachments'
+  properties: {
+    azureFile: {
+      accountName: reportStorage.name
+      accountKey: reportStorage.listKeys().keys[0].value
+      shareName: reportFiles.name
+      accessMode: 'ReadWrite'
+    }
   }
 }
 
@@ -246,6 +309,9 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'MENTRA_MINIAPP_JWT_PRIVATE_KEY', secretRef: 'miniapp-jwt-private-key' }
             { name: 'MENTRA_MINIAPP_JWT_PUBLIC_KEY', secretRef: 'miniapp-jwt-public-key' }
             { name: 'CLOUD_CORE_ISSUER', value: coreOrigin }
+            { name: 'CLOUD_CORE_ADMIN_EMAILS', value: coreAdminEmails }
+            { name: 'CLOUD_STORAGE_PROVIDER', value: 'local' }
+            { name: 'CLOUD_STORAGE_LOCAL_DIR', value: '/mnt/core-attachments' }
             {
               name: 'CLOUD_CORE_OIDC_PROVIDERS'
               value: '[{"id":"workforce","protocol":"oidc","providerKind":"microsoft-entra","tenantId":"${deploymentId}","issuer":"${loginEndpoint}${tenantId}/v2.0","jwksUrl":"${loginEndpoint}${tenantId}/discovery/v2.0/keys","audience":"${coreApiClientId}","subjectClaim":"oid","directoryTenantClaim":"tid","expectedDirectoryTenantId":"${tenantId}","requiredScopes":["mentra.session"],"allowedClientIds":["${mobileClientId}"]}]'
@@ -254,6 +320,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'SERVICE_NAME', value: 'core-enterprise-reference' }
           ]
           resources: { cpu: json('0.5'), memory: '1Gi' }
+          volumeMounts: [{ volumeName: 'core-attachments', mountPath: '/mnt/core-attachments' }]
           probes: [
             { type: 'Liveness', httpGet: { path: '/healthz', port: 3000 }, initialDelaySeconds: 20, periodSeconds: 10 }
             { type: 'Readiness', httpGet: { path: '/ready', port: 3000 }, initialDelaySeconds: 10, periodSeconds: 5 }
@@ -261,10 +328,18 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: { minReplicas: 1, maxReplicas: 1 }
+      volumes: [{ name: 'core-attachments', storageType: 'AzureFile', storageName: reportMount.name }]
     }
   }
   dependsOn: [registryPull]
 }
+
+var additionalWorkspaceBindings = [for domain in additionalWorkspaceDomains: {
+  name: domain.hostname
+  bindingType: 'SniEnabled'
+  certificateId: resourceId('Microsoft.App/managedEnvironments/managedCertificates', environmentName, domain.certificateName)
+}]
+var workspaceAliasOrigins = [for domain in additionalWorkspaceDomains: 'https://${domain.hostname}']
 
 resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   name: runtimeName
@@ -282,7 +357,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 3001
         transport: 'auto'
         allowInsecure: false
-        customDomains: empty(workspaceHostname)
+        customDomains: concat(empty(workspaceHostname)
           ? []
           : [
               {
@@ -290,7 +365,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
                 bindingType: 'SniEnabled'
                 certificateId: workspaceCertificate.id
               }
-            ]
+            ], additionalWorkspaceBindings)
       }
       registries: [
         {
@@ -298,9 +373,9 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
           identity: pullIdentity.id
         }
       ]
-      secrets: [
+      secrets: concat([
         { name: 'acs-connection-string', value: communication.listKeys().primaryConnectionString }
-      ]
+      ], empty(teamsGraphClientSecret) ? [] : [{ name: 'teams-graph-client-secret', value: teamsGraphClientSecret }])
     }
     template: {
       containers: [
@@ -318,6 +393,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'DEPLOYMENT_MANIFEST_JSON'
               value: string(deploymentManifest)
             }
+            { name: 'DEPLOYMENT_WORKSPACE_ALIASES', value: string(workspaceAliasOrigins) }
             { name: 'DEPLOYMENT_PRIVACY_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/privacy.html' }
             { name: 'DEPLOYMENT_TERMS_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/terms.html' }
             {
@@ -340,6 +416,10 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'ENTRA_TENANT_ID', value: tenantId }
             { name: 'ENTRA_CLIENT_ID', value: mobileClientId }
             { name: 'ACS_CONNECTION_STRING', secretRef: 'acs-connection-string' }
+            { name: 'TEAMS_GRAPH_TENANT_ID', value: teamsGraphTenantId }
+            { name: 'TEAMS_GRAPH_CLIENT_ID', value: teamsGraphClientId }
+            { name: 'TEAMS_GRAPH_ORGANIZER_ID', value: teamsGraphOrganizerId }
+            union({ name: 'TEAMS_GRAPH_CLIENT_SECRET' }, empty(teamsGraphClientSecret) ? { value: '' } : { secretRef: 'teams-graph-client-secret' })
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'runtime-enterprise-reference' }
           ]

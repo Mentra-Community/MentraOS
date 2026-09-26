@@ -1,12 +1,12 @@
 package com.mentra.acsmeeting
 
-import com.azure.android.communication.calling.Call
+import com.azure.android.communication.calling.CommonCall
 import com.azure.android.communication.calling.CallState
 import com.azure.android.communication.calling.ParticipantState
 
 /** Admit one current lobby guest without blocking the session executor or changing meeting policy. */
 internal fun admitLobbyParticipant(
-  active: Call,
+  active: CommonCall,
   participantId: String,
   allowed: Boolean,
   isCurrent: () -> Boolean,

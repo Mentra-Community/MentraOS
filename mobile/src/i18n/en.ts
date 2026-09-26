@@ -16,6 +16,8 @@ const en = {
     advancedSettings: "Advanced settings",
     recommended: "Recommended",
     autoBrightness: "Auto brightness",
+    autoPowerOff: "Turn off automatically",
+    autoPowerOffSubtitle: "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
     brightness: "Brightness",
     display: "Display",
     disconnectGlasses: "Disconnect glasses",
@@ -148,6 +150,8 @@ const en = {
     forget: "Forget",
   },
   pairing: {
+    cancelPairing: "Cancel pairing",
+    cancelFailed: "Pairing could not be cancelled. Please try again.",
     selectModel: "Select Model",
     pairingGuide: "Pairing Guide",
     pairing: "Pairing",
@@ -495,6 +499,7 @@ const en = {
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
+    versionInfoFailedMessage: "Couldn't read the glasses software versions. Keep the glasses connected and try again.",
     updateInfoUnavailable: "Update Info Unavailable",
     updateInfoUnavailableMessage:
       "Update information for this version of the app is unavailable. Please check the app store for a newer version of the Mentra App.",
@@ -842,6 +847,7 @@ const en = {
   debugSettings: {
     showMentraCallIos: "Show Mentra Call (experimental)",
     showMentraCallIosSubtitle: "Show Mentra Call on this device for testing.",
+    mentraCallWorkspacePolicy: "Mentra Call availability is managed by your workspace.",
     mentraCallBuildOverride: "Enabled by this build's EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS override.",
     showNotifyIos: "Show Notify (experimental)",
     showNotifyIosSubtitle: "Show Notify on this device for testing.",
@@ -1172,6 +1178,25 @@ const en = {
     pairingCouldNotStart:
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
+  phoneWifi: {
+    videoReason: "Your phone needs Wi-Fi to receive video from your glasses.",
+    openWifiSettings: "Open Wi-Fi settings",
+    title: "Turn on Wi-Fi",
+    reason: "Mentra uses your phone’s Wi-Fi to connect to your glasses.",
+    instructionsAndroid:
+      "When you tap Turn on Wi-Fi, a system Wi-Fi panel will open. Turn the Wi-Fi switch on, tap Done, and return to Mentra to continue.",
+    instructionsIos:
+      "When you tap Open Settings, Mentra’s Settings page will open. Go back to the main Settings screen, tap Wi-Fi, turn it on, then return to Mentra to continue.",
+    turnOn: "Turn on Wi-Fi",
+    openSettings: "Open Settings",
+    stillOffTitle: "Wi-Fi is still off",
+    stillOffAndroid:
+      "Wi-Fi is still off. Tap Turn on Wi-Fi again to open the panel, turn the switch on, tap Done, and return to Mentra.",
+    stillOffIos:
+      "Wi-Fi is still off. Tap Open Settings again, go to Wi-Fi, turn it on, then return to Mentra.",
+    onTitle: "Wi-Fi is on",
+    onMessage: "Continuing the call.",
+  },
   common: {
     miniappUiUnavailable: "This miniapp has no page to display. You can minimize or close it.",
     ok: "OK",
@@ -1195,6 +1220,7 @@ const en = {
     settings: "Settings",
     openWebView: "Open Web View",
     version: "MentraOS v{{number}}",
+    starRatingValue: "{{rating}} out of {{max}} stars",
     reset: "Reset",
     learnMore: "Learn more",
     noResults: "No results found",
@@ -1256,9 +1282,18 @@ const en = {
     noAppsOpen: "No miniapps open",
     yourRecentlyUsedAppsWillAppearHere: "Your recently used miniapps will appear here",
   },
+  incidentAutomation: {
+    title: "Incident report",
+    signInRequired: "Incident report unavailable because the Mentra App is not signed in.",
+    submitting: "Submitting the incident report and recent phone logs…",
+    finished: "Incident report request finished.",
+  },
   feedback: {
     thankYou: "Thank You!",
     feedbackReceived: "Your feedback has been received.",
+    reportReceived: "Your feedback has been received.\n\nReport ID: {{reportId}}",
+    copyReportId: "Copy report ID",
+    copyReportIdFailed: "Could not copy the report ID. You can copy it from the confirmation message.",
     submitFeedback: "Submit Feedback",
     shareYourThoughts: "Share your thoughts, suggestions, or report issues…",
     giveFeedback: "Give Feedback",

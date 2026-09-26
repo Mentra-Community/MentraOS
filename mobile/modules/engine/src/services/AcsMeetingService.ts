@@ -113,8 +113,12 @@ export function parseMeetingEndReason(event: Record<string, unknown>): MeetingEn
 }
 
 export interface MeetingState {
+  identityMode?: "guest" | "teams-user"
+  guestReason?: "no-entra-identity" | "teams-license-unavailable" | "legacy-credential"
   state: MeetingPhase
   muted: boolean
+  /** Whether Teams receives the glasses camera. Omitted by natives that cannot toggle it. */
+  videoEnabled?: boolean
   error?: string
   meetingUrl?: string
   provider?: "acs-teams"
@@ -355,10 +359,16 @@ export function parseAcsCallOrigin(value: unknown): AcsCallOrigin {
 }
 
 type NativeModule = {
-  prepareAgent?(options: {token: string; displayName?: string}): Promise<MeetingState>
+  supportsTeamsIdentity?(): boolean
+  prepareAgent?(options: {
+    token: string
+    displayName?: string
+    identityMode?: "guest" | "teams-user"
+  }): Promise<MeetingState>
   join(options: {
     meetingUrl: string
     token: string
+    identityMode?: "guest" | "teams-user"
     /** Legacy field, still sent for whep so an older native keeps working. */
     whepUrl: string
     videoSource: AcsVideoSource
@@ -396,6 +406,8 @@ type NativeModule = {
   endForEveryone?(): Promise<MeetingState>
   admitParticipant?(participantId: string): Promise<void>
   setMuted(muted: boolean): Promise<MeetingState>
+  /** Stop or resume ACS outgoing video; the call and glasses stream stay up. Absent on older natives. */
+  setVideoEnabled?(enabled: boolean): Promise<MeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
@@ -553,6 +565,7 @@ const MIC_UPLINK_SWEEP_LOG_INTERVAL_MS = 1000
 const MIC_GAP_WARN_MS = 90
 
 class AcsMeetingService {
+  private identity: Pick<MeetingState, "identityMode" | "guestReason"> = {}
   private owner: string | null = null
   private pcmStreamId: string | null = null
   private pcmFormat: {sampleRate: number; channels: number} | null = null
@@ -634,6 +647,8 @@ class AcsMeetingService {
   private lastMicLevel: {meanAbs: number; peak: number} | null = null
   /** Guards [releaseHostState] so a remote hang-up followed by an explicit leave releases once. */
   private hostStateReleased = true
+  /** Read-only observers of a meeting ending; see [onMeetingReleased]. */
+  private readonly releasedListeners = new Set<(instanceId: string) => void>()
 
   setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
     this.onState = handler
@@ -645,6 +660,24 @@ class AcsMeetingService {
 
   ownerPackage(): string | null {
     return this.owner
+  }
+
+  /**
+   * The active meeting and a per-meeting id, or null when there is none. A new join always gets a
+   * new id, so a lease recorded against one meeting can never be inherited by the next.
+   */
+  meetingInstance(): {ownerPackage: string; instanceId: string} | null {
+    if (!this.owner || this.hostStateReleased) return null
+    return {ownerPackage: this.owner, instanceId: `acs-${this.callGeneration}`}
+  }
+
+  /**
+   * Observe meetings ending, by the id [meetingInstance] reported. Observers cannot affect the
+   * meeting: they run after the release and their failures are swallowed here.
+   */
+  onMeetingReleased(listener: (instanceId: string) => void): () => void {
+    this.releasedListeners.add(listener)
+    return () => this.releasedListeners.delete(listener)
   }
 
   /**
@@ -962,7 +995,11 @@ class AcsMeetingService {
    * SoftAP DNS cannot resolve Teams hosts. Doing this on the phone's existing internet is what
    * stops `createCallAgent` from hanging until the hotspot is torn down.
    */
-  async prepareAgent(args: {token: string; displayName?: string}): Promise<void> {
+  async prepareAgent(args: {
+    token: string
+    displayName?: string
+    identityMode?: "guest" | "teams-user"
+  }): Promise<void> {
     // iOS creates its agent after the host's hotspot/default-route wait so signaling starts
     // on the post-handoff route instead of reusing an agent signed in over the previous Wi-Fi.
     if (Platform.OS === "ios") {
@@ -981,7 +1018,10 @@ class AcsMeetingService {
     const startedAt = Date.now()
     softapTrace("acs_native_prepare_agent", {hasDisplayName: Boolean(args.displayName)})
     try {
-      await native.prepareAgent({token: args.token, displayName: args.displayName})
+      if (args.identityMode === "teams-user" && !native.supportsTeamsIdentity?.()) {
+        throw new Error("Update the Mentra App to use your Teams identity")
+      }
+      await native.prepareAgent(args)
     } catch (error) {
       softapTraceFailure("acs_native_prepare_agent_failed", {
         durationMs: Date.now() - startedAt,
@@ -996,6 +1036,7 @@ class AcsMeetingService {
   async join(
     packageName: string,
     args: {
+      identity?: Pick<MeetingState, "identityMode" | "guestReason">
       meetingUrl: string
       token: string
       videoSource: AcsVideoSource
@@ -1021,9 +1062,14 @@ class AcsMeetingService {
     // Validate before claiming ownership so a bad request cannot leave the slot taken.
     const video = args.video ? parseAcsOutgoingVideo(args.video) : undefined
     const resolved = resolveAcsAudioSource()
+    const identity = args.identity ?? {identityMode: "guest", guestReason: "legacy-credential"}
+    if (identity.identityMode === "teams-user" && !native.supportsTeamsIdentity?.()) {
+      throw new Error("Update the Mentra App to use your Teams identity")
+    }
     const generation = ++this.callGeneration
     this.hostStateReleased = false
     this.owner = packageName
+    this.identity = identity
     // Only a whep source has a URL to re-feed on recovery; softap rebuilds instead.
     this.whepUrl = args.videoSource.type === "whep" ? args.videoSource.url : null
     this.videoSource = args.videoSource
@@ -1076,6 +1122,7 @@ class AcsMeetingService {
       const state = await native.join({
         meetingUrl: args.meetingUrl,
         token: args.token,
+        identityMode: this.identity.identityMode,
         whepUrl: this.whepUrl ?? "",
         videoSource: args.videoSource,
         displayName: args.displayName,
@@ -1114,6 +1161,7 @@ class AcsMeetingService {
       const {ingestUrl: _ingestUrl, ...meetingState} = state
       this.lastState = {
         ...meetingState,
+        ...this.identity,
         audioSource: resolved.source,
         audioSourceReason: resolved.reason,
         micTransport: this.micTransport,
@@ -1300,6 +1348,7 @@ class AcsMeetingService {
   private async releaseHostState(): Promise<void> {
     if (this.hostStateReleased) return
     this.hostStateReleased = true
+    const releasedInstance = `acs-${this.callGeneration}`
     this.callGeneration++
     // Before anything else: a caller parked on a frame that will now never arrive has to be
     // rejected, or a leave mid-join leaves the orchestrator waiting out its whole timeout.
@@ -1318,7 +1367,15 @@ class AcsMeetingService {
     this.videoSource = null
     this.ingestUrl = null
     this.lastMediaRestartAt = 0
+    this.identity = {}
     this.lastState = {state: "idle", muted: false}
+    for (const listener of [...this.releasedListeners]) {
+      try {
+        listener(releasedInstance)
+      } catch (error) {
+        console.warn("[AcsMeeting] meeting-released observer threw", error)
+      }
+    }
   }
 
   /**
@@ -1622,6 +1679,20 @@ class AcsMeetingService {
     return this.lastState
   }
 
+  async setVideoEnabled(packageName: string, enabled: boolean): Promise<MeetingState> {
+    this.assertOwner(packageName)
+    const native = getNative()
+    if (!native?.setVideoEnabled) throw new Error("Turning the camera off needs a newer Mentra App")
+    const state = await native.setVideoEnabled(enabled)
+    this.lastState = {
+      ...this.lastState,
+      ...state,
+      audioSourceReason: this.lastState.audioSourceReason,
+      micTransport: this.micTransport,
+    }
+    return this.lastState
+  }
+
   async updateVideoSource(packageName: string, whepUrl: string): Promise<void> {
     this.assertOwner(packageName)
     const native = getNative()
@@ -1642,7 +1713,7 @@ class AcsMeetingService {
     const native = getNative()
     if (!native) return {state: "idle", muted: false}
     const state = await native.getState()
-    this.lastState = {...state, micTransport: this.micTransport}
+    this.lastState = {...state, ...this.identity, micTransport: this.micTransport}
     return this.lastState
   }
 
@@ -1698,8 +1769,10 @@ class AcsMeetingService {
         const capabilities = parseMeetingCapabilities(event.capabilities)
         const endReason = parseMeetingEndReason(event as Record<string, unknown>)
         const state: MeetingState = {
+          ...this.identity,
           state: (event.state as MeetingPhase) ?? "idle",
           muted: Boolean(event.muted),
+          ...(typeof event.videoEnabled === "boolean" ? {videoEnabled: event.videoEnabled} : {}),
           error: event.error as string | undefined,
           meetingUrl: event.meetingUrl as string | undefined,
           provider: "acs-teams",
@@ -1733,6 +1806,7 @@ class AcsMeetingService {
         console.log("[AcsMeeting] phase=native-state", {
           state: state.state,
           muted: state.muted,
+          videoEnabled: state.videoEnabled,
           error: state.error,
           audioSource: state.audioSource,
           activeStream: state.activeStream,

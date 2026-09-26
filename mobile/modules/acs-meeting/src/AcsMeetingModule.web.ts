@@ -8,7 +8,11 @@ export default {
   async join(_options: AcsMeetingJoinOptions): Promise<AcsMeetingState> {
     unavailable()
   },
-  async prepareAgent(_options: {token: string; displayName?: string}): Promise<AcsMeetingState> {
+  async prepareAgent(_options: {
+    token: string
+    displayName?: string
+    identityMode?: "guest" | "teams-user"
+  }): Promise<AcsMeetingState> {
     unavailable()
   },
   async leave(): Promise<void> {
@@ -18,6 +22,9 @@ export default {
     unavailable()
   },
   async setMuted(_muted: boolean): Promise<AcsMeetingState> {
+    unavailable()
+  },
+  async setVideoEnabled(_enabled: boolean): Promise<AcsMeetingState> {
     unavailable()
   },
   async setAudioSource(_source: "glasses" | "phone"): Promise<AcsMeetingState> {

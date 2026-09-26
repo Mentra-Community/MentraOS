@@ -2,9 +2,10 @@ package com.mentra.glassesmedia.publisher
 
 import android.content.Context
 import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.HandlerThread
+import com.mentra.glassesmedia.network.InternetHold
+import com.mentra.glassesmedia.trace.SoftApTrace
 import com.mentra.glassesmedia.source.I420Planes
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
@@ -65,12 +66,9 @@ class PhoneWhipPublisher(
         val url = endpoint.toHttpUrl()
         require(url.isHttps) { "Managed WHIP requires HTTPS" }
         val manager = context.getSystemService(ConnectivityManager::class.java)
-        val internet = manager.allNetworks.firstOrNull { network ->
-          manager.getNetworkCapabilities(network)?.let {
-            it.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
-              it.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-          } == true
-        } ?: error("Phone mobile data is unavailable")
+        val internet = InternetHold.findValidatedCellular(manager)
+          ?: error("Phone mobile data is unavailable")
+        SoftApTrace.stage("whip_uplink_network", "network" to internet)
         client = OkHttpClient.Builder().socketFactory(internet.socketFactory)
           .dns(object : okhttp3.Dns { override fun lookup(hostname: String) = internet.getAllByName(hostname).toList() })
           .callTimeout(20, TimeUnit.SECONDS).followRedirects(false).build()
@@ -167,7 +165,12 @@ class PhoneWhipPublisher(
     val request = Request.Builder().url(endpoint)
       .post(pc.localDescription.description.toRequestBody("application/sdp".toMediaType())).build()
     http.newCall(request).enqueue(object : Callback {
-      override fun onFailure(call: Call, error: IOException) { queue.post { fail("WHIP signaling failed") } }
+      override fun onFailure(call: Call, error: IOException) {
+        // Exception messages can contain the credential-bearing publish URL. Record types only.
+        SoftApTrace.failure("whip_uplink_signaling", "error" to error.javaClass.simpleName,
+          "cause" to error.cause?.javaClass?.simpleName)
+        queue.post { fail("WHIP signaling failed (${error.javaClass.simpleName})") }
+      }
       override fun onResponse(call: Call, response: Response) {
         response.use {
           val location = response.header("Location")?.let { request.url.resolve(it) }

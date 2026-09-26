@@ -88,6 +88,7 @@ object NavigationManager {
 
   private var mapboxNavigation: MapboxNavigation? = null
   private var appContext: Context? = null
+  private val sessionGuard = NavigationSessionGuard()
 
   private var activeCallbacks: Callbacks? = null
   private var lastEmittedKey: String? = null
@@ -153,6 +154,9 @@ object NavigationManager {
    */
   private var skipCrossingsEnabled: Boolean = false
   private var skipCrossingsTimer: java.util.Timer? = null
+  private val simulationHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  @Volatile private var deviationRerouteRunnable: Runnable? = null
+  @Volatile private var deviationReattachRunnable: Runnable? = null
   private val SKIP_CROSSINGS_BASE_M_PER_TICK = 0.56
   private val SKIP_CROSSINGS_TICK_MS = 400L
   private val CROSSING_MAX_LEG_METERS = 25.0
@@ -382,6 +386,12 @@ object NavigationManager {
       return
     }
 
+    // Invalidate every callback owned by the previous session before clearing
+    // its native state. Mapbox can replay cached observer values on registration
+    // and an earlier route request can finish after stop/start.
+    val session = sessionGuard.begin()
+    cleanupSession(nav)
+
     activeCallbacks = callbacks
     activeOptions = options
     simulating = options.simulate
@@ -389,7 +399,7 @@ object NavigationManager {
     offRouteFired = false
     arrivedHandled = false
 
-    attachObservers(nav, callbacks)
+    attachObservers(nav, callbacks, session)
 
     // Origin handling — the crux of a correct trip start.
     //
@@ -407,7 +417,9 @@ object NavigationManager {
     // params until the gate fires; `handleLocation` invokes it on the first
     // location and clears it.
     pendingRouteRequest = { originLat, originLng ->
-      requestAndStartRoute(nav, activity, options, originLat, originLng, callbacks)
+      if (sessionGuard.acceptsCallback(session)) {
+        requestAndStartRoute(nav, activity, options, originLat, originLng, callbacks, session)
+      }
     }
     startTripSession(nav, options)
   }
@@ -424,6 +436,7 @@ object NavigationManager {
     originLat: Double,
     originLng: Double,
     callbacks: Callbacks,
+    session: NavigationSessionGuard.Token,
   ) {
     val coordinates = ArrayList<Point>()
     coordinates.add(Point.fromLngLat(originLng, originLat))
@@ -446,24 +459,29 @@ object NavigationManager {
       routeOptions,
       object : NavigationRouterCallback {
         override fun onRoutesReady(routes: List<NavigationRoute>, routerOrigin: String) {
+          if (!sessionGuard.acceptsCallback(session)) return
           if (routes.isEmpty()) {
             callbacks.onError("no route found")
             return
           }
+          val route = routes.first()
+          if (!sessionGuard.activateInitialRoute(session, route.id)) return
           nav.setNavigationRoutes(routes)
           // In sim mode the ReplayRouteSession observes setNavigationRoutes
           // and starts driving the puck automatically — no manual replay
           // kick needed here.
-          emitRoute(routes.first(), callbacks)
+          emitRoute(route, callbacks)
         }
 
         override fun onFailure(reasons: List<RouterFailure>, routeOptions: RouteOptions) {
+          if (!sessionGuard.acceptsCallback(session)) return
           val msg = reasons.firstOrNull()?.message ?: "route request failed"
           Log.e(TAG, "requestRoutes failed: $msg")
           callbacks.onError(msg)
         }
 
         override fun onCanceled(routeOptions: RouteOptions, routerOrigin: String) {
+          if (!sessionGuard.acceptsCallback(session)) return
           Log.w(TAG, "route request canceled")
         }
       },
@@ -588,7 +606,11 @@ object NavigationManager {
 
   fun stop() {
     Log.d(TAG, "stop")
-    val nav = mapboxNavigation
+    sessionGuard.invalidate()
+    cleanupSession(mapboxNavigation)
+  }
+
+  private fun cleanupSession(nav: MapboxNavigation?) {
     activeCallbacks = null
     lastEmittedKey = null
     simulating = false
@@ -597,6 +619,10 @@ object NavigationManager {
     // Tear down dev walkers first.
     skipCrossingsEnabled = false
     skipCrossingsTimer?.cancel(); skipCrossingsTimer = null
+    deviationRerouteRunnable?.let(simulationHandler::removeCallbacks)
+    deviationRerouteRunnable = null
+    deviationReattachRunnable?.let(simulationHandler::removeCallbacks)
+    deviationReattachRunnable = null
     wrongSidewalkOffsetEnabled = false
 
     if (nav != null) {
@@ -637,7 +663,11 @@ object NavigationManager {
   // Observers — translate Mapbox events into the existing Callbacks shape.
   // =====================================================================
 
-  private fun attachObservers(nav: MapboxNavigation, callbacks: Callbacks) {
+  private fun attachObservers(
+    nav: MapboxNavigation,
+    callbacks: Callbacks,
+    session: NavigationSessionGuard.Token,
+  ) {
     // REROUTING IS FULLY OWNED BY MAPBOX. Auto-reroute is ON by default in
     // v3 — when the user diverges, the SDK detects off-route AND fetches a
     // new route on its own. We do NOT hand-roll perpendicular-distance
@@ -653,6 +683,7 @@ object NavigationManager {
     // clear our off-route flag and (for the host) reads as a fresh route.
     val routesObs = RoutesObserver { result: RoutesUpdatedResult ->
       val route = result.navigationRoutes.firstOrNull() ?: return@RoutesObserver
+      if (!sessionGuard.acceptRouteUpdate(session, route.id)) return@RoutesObserver
       val reason = result.reason
       // Ignore refresh (same geometry, just live traffic) — it would
       // needlessly re-emit the whole polyline + rebuild pivots.
@@ -669,6 +700,7 @@ object NavigationManager {
     // RouteProgressObserver — every location tick. Carries current step,
     // upcoming maneuver, distance-to-maneuver, and trip totals.
     val progressObs = RouteProgressObserver { progress: RouteProgress ->
+      if (!sessionGuard.acceptsProgress(session, progress.navigationRoute.id)) return@RouteProgressObserver
       handleRouteProgress(progress, callbacks)
     }
     routeProgressObserver = progressObs
@@ -679,17 +711,22 @@ object NavigationManager {
     val locObs = object : LocationObserver {
       override fun onNewRawLocation(rawLocation: Location) { /* prefer matched */ }
       override fun onNewLocationMatcherResult(result: LocationMatcherResult) {
+        if (!sessionGuard.acceptsLocation(session)) return
         handleLocation(result, callbacks)
       }
     }
     locationObserver = locObs
     nav.registerLocationObserver(locObs)
+    // Mapbox synchronously replays its cached matcher result from register().
+    // Only locations delivered after registration belong to this fresh trip.
+    sessionGuard.enableLocationCallbacks(session)
 
     // OffRouteObserver — Mapbox's automatic off-route edge signal. PURELY
     // OBSERVATIONAL: registering it does NOT disable auto-reroute. We
     // surface onOffRoute for the UI's "off route" banner; the SDK handles
     // the actual reroute and the new route arrives via RoutesObserver.
     val offRouteObs = OffRouteObserver { offRoute: Boolean ->
+      if (!sessionGuard.acceptsCallback(session)) return@OffRouteObserver
       if (offRoute && !offRouteFired) {
         offRouteFired = true
         // Distance from the route is best-effort context for the banner;
@@ -707,6 +744,7 @@ object NavigationManager {
     // route then lands via RoutesObserver(REROUTE). Available only while
     // auto-reroute is enabled (getRerouteController() is null otherwise).
     val rerouteObs = RerouteController.RerouteStateObserver { state: RerouteState ->
+      if (!sessionGuard.acceptsCallback(session)) return@RerouteStateObserver
       when (state) {
         is RerouteState.FetchingRoute -> {
           Log.d(TAG, "reroute state: FetchingRoute → onRerouting")
@@ -1054,6 +1092,10 @@ object NavigationManager {
    */
   @OptIn(ExperimentalPreviewMapboxNavigationAPI::class)
   fun simulateDeviation(offsetMeters: Double = 0.0) {
+    val session = sessionGuard.captureActive() ?: run {
+      Log.w(TAG, "simulateDeviation: no active navigation session")
+      return
+    }
     val replayer = replayer ?: run {
       Log.w(TAG, "simulateDeviation: not in simulate mode — nothing to push off-route")
       return
@@ -1138,8 +1180,11 @@ object NavigationManager {
       // onRoute exactly like an automatic reroute. Fire it slightly after
       // the off-route events start playing so the controller reroutes from
       // the diverged position, not the on-route one.
-      val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-      mainHandler.postDelayed({
+      deviationRerouteRunnable?.let(simulationHandler::removeCallbacks)
+      lateinit var rerouteRunnable: Runnable
+      rerouteRunnable = Runnable {
+        if (deviationRerouteRunnable === rerouteRunnable) deviationRerouteRunnable = null
+        if (!sessionGuard.acceptsCallback(session)) return@Runnable
         try {
           val controller = mapboxNavigation?.getRerouteController()
           if (controller != null) {
@@ -1148,6 +1193,7 @@ object NavigationManager {
             Log.d(TAG, "simulateDeviation: requesting reroute() directly")
             controller.reroute(
               RerouteController.RoutesCallback { routes: List<NavigationRoute>, _: String ->
+                if (!sessionGuard.acceptsCallback(session)) return@RoutesCallback
                 // RoutesObserver(REROUTE) will also fire and emit the route;
                 // we don't setNavigationRoutes here (the controller does).
                 Log.d(TAG, "simulateDeviation: reroute() returned ${routes.size} route(s)")
@@ -1159,20 +1205,28 @@ object NavigationManager {
         } catch (e: Throwable) {
           Log.e(TAG, "simulateDeviation reroute() failed", e)
         }
-      }, 1500L)
+      }
+      deviationRerouteRunnable = rerouteRunnable
+      simulationHandler.postDelayed(rerouteRunnable, 1500L)
 
       // Re-attach the session so it resumes driving the puck once a route is
       // active again (locationResetEnabled snaps it onto the new route).
       // Delay until AFTER the off-route events + reroute fetch.
       val playSeconds = (ts / simulationSpeed.coerceAtLeast(0.1f)).toDouble()
       val reattachMs = ((playSeconds + 4.0) * 1000.0).toLong().coerceIn(5000L, 20000L)
-      mainHandler.postDelayed({
+      deviationReattachRunnable?.let(simulationHandler::removeCallbacks)
+      lateinit var reattachRunnable: Runnable
+      reattachRunnable = Runnable {
+        if (deviationReattachRunnable === reattachRunnable) deviationReattachRunnable = null
+        if (!sessionGuard.acceptsCallback(session)) return@Runnable
         try {
           if (simulating) replaySession?.onAttached(nav)
         } catch (e: Throwable) {
           Log.w(TAG, "simulateDeviation: re-attach session failed: ${e.message}")
         }
-      }, reattachMs)
+      }
+      deviationReattachRunnable = reattachRunnable
+      simulationHandler.postDelayed(reattachRunnable, reattachMs)
     } catch (e: Throwable) {
       Log.e(TAG, "simulateDeviation push failed", e)
     }
@@ -1199,6 +1253,10 @@ object NavigationManager {
   }
 
   private fun startSkipCrossingsWalker() {
+    val session = sessionGuard.captureActive() ?: run {
+      Log.w(TAG, "startSkipCrossingsWalker: no active navigation session")
+      return
+    }
     val flat = activePolyline
     if (flat == null || flat.size < 2) { Log.w(TAG, "startSkipCrossingsWalker: no route polyline"); return }
     try { replayer?.stop() } catch (_: Throwable) {}
@@ -1215,6 +1273,8 @@ object NavigationManager {
     timer.scheduleAtFixedRate(object : java.util.TimerTask() {
       override fun run() {
         mainHandler.post {
+          if (!sessionGuard.acceptsCallback(session)) return@post
+          if (skipCrossingsTimer !== timer) return@post
           try {
             if (!skipCrossingsEnabled) { cancel(); return@post }
             cursor = advanceCursor(modified, cursor, stepMeters)

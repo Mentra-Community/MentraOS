@@ -237,6 +237,7 @@ Audio and video control:
 | Function | Notes |
 |---|---|
 | `setMuted(muted)` | Gates the uplink chain synchronously, then applies ACS policy |
+| `setVideoEnabled(enabled)` | ACS `stopVideo`/`startVideo` on the virtual outgoing stream. Glasses source and preview tap keep running; `videoEnabled` resets to true per join |
 | `setAudioSource(source)` | **No-op.** The source is locked for the call at join |
 | `pushOutgoingPcm(base64, rate, ch)` | Synchronous `Function`, ~100 calls/s. Returns whether it entered the uplink |
 | `updateVideoSource(whepUrl)` | WHEP only |
@@ -1063,8 +1064,9 @@ Same contract, fewer knobs. `AcsMeetingModule.swift` exposes the same Expo surfa
 `WhepVideoSource` and `LocalWhipIngestSource.swift` deliver `CVPixelBuffer`;
 `AcsFrameSender.swift` sends on the virtual stream behind a `VideoSendGate` with a simple fps
 throttle. `GlassesHotspotNetwork` uses the same persistent `NEHotspotConfiguration` join as
-gallery transfers, verifies the joined SSID and `en0` address, and waits for DHCP against the
-gateway the glasses advertised before resolving. Audio policy logic is shared through the
+gallery transfers, verifies the joined SSID and the address of the one interface Network framework
+reports as Wi-Fi (never a fixed `en0`), and waits for DHCP against the gateway the glasses
+advertised before resolving. Join and SoftAP rebind use that same verified interface and address. Audio policy logic is shared through the
 `PolicyKit` Swift package.
 
 Screen-off and background operation already work in the Mentra App through its existing

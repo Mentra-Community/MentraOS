@@ -12,8 +12,8 @@ import { userAuth } from "../middleware/user-auth.middleware";
 import { InvalidRequest } from "../../types/oauth.types";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import {
+  addAttachmentArtifacts,
   addLogArtifact,
-  addScreenshotArtifacts,
   markReportReady,
   submitReport,
   type ReportAttachmentInput,
@@ -87,11 +87,16 @@ const logsArtifactSchema = z.object({
 });
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+// An explicit `type=video` upload may be larger than a screenshot. 20 MiB
+// admits a short screen recording, while the unchanged router ceiling below
+// still bounds each request.
+const MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 // The feedback UI attaches at most 5 screenshots, and the cloud-client sends
 // them in a single multipart call.
 const MAX_ATTACHMENT_FILES = 5;
 // Router-wide request-body ceiling: the full attachment budget plus slack for
-// multipart framing. Also bounds the JSON routes (submit, logs).
+// multipart framing. Also bounds the JSON routes (submit, logs). Video uploads
+// share this ceiling; it is not raised for them.
 const MAX_REQUEST_BODY_BYTES =
   MAX_ATTACHMENT_BYTES * MAX_ATTACHMENT_FILES + 1024 * 1024;
 
@@ -139,14 +144,14 @@ async function postReportArtifacts(c: AppContext) {
   const contentType = c.req.header("content-type") ?? "";
 
   if (contentType.includes("multipart/form-data")) {
-    const files = await readAttachmentFiles(c);
-    if (files.length === 0) {
+    const upload = await readAttachmentUpload(c);
+    if (upload.files.length === 0) {
       throw new InvalidRequest("at least one artifact file is required");
     }
-    const result = await addScreenshotArtifacts({
+    const result = await addAttachmentArtifacts({
       mentraUserId: user.mentraUserId,
       reportId,
-      files,
+      ...upload,
     });
     if (!result) return c.json({ error: "report not found" }, 404);
     return c.json(result, 200);
@@ -201,9 +206,34 @@ const SCREENSHOT_CONTENT_TYPES = new Set([
   "image/heif",
 ]);
 
+const MP4_CONTENT_TYPE = "video/mp4";
+// Caller-declared capture source such as `phone` or `host`. It is stored as
+// a label only; the server cannot verify where a recording was captured.
+const SOURCE_LABEL = /^[A-Za-z0-9._:-]{1,64}$/;
+
+function mediaType(raw: string | undefined): string {
+  return (raw ?? "").split(";")[0].trim().toLowerCase();
+}
+
 function screenshotContentType(raw: string | undefined): string {
-  const cleaned = (raw ?? "").split(";")[0].trim().toLowerCase();
+  const cleaned = mediaType(raw);
   return SCREENSHOT_CONTENT_TYPES.has(cleaned) ? cleaned : "application/octet-stream";
+}
+
+// Structural check only: an ISO base media file starts with an `ftyp` box
+// (4-byte size, then the box type). It does not prove the stream is H264 or
+// that a browser can decode it.
+function hasIsoMediaHeader(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 8) return false;
+  const boxSize = new DataView(bytes.buffer, bytes.byteOffset, 8).getUint32(0);
+  return boxSize >= 8 && new TextDecoder().decode(bytes.subarray(4, 8)) === "ftyp";
+}
+
+function textField(body: Record<string, unknown>, name: string): string | undefined {
+  const value = body[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new InvalidRequest(`${name} must be a single text field`);
+  return value.trim();
 }
 
 async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
@@ -220,8 +250,35 @@ async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
   throw new InvalidRequest("request body must be a JSON object");
 }
 
-async function readAttachmentFiles(c: AppContext): Promise<ReportAttachmentInput[]> {
+interface AttachmentUpload {
+  type: "screenshot" | "video";
+  source: string;
+  files: ReportAttachmentInput[];
+}
+
+/**
+ * The multipart `type` field selects the contract. Absent or `screenshot`
+ * keeps the original screenshot behavior (phone source, image allowlist,
+ * 10 MiB). `video` requires a caller-declared `source` and video/mp4 files up
+ * to 20 MiB. Every file is validated before anything is stored, so one
+ * rejected file leaves the report and its existing artifacts untouched.
+ */
+async function readAttachmentUpload(c: AppContext): Promise<AttachmentUpload> {
   const body = await c.req.parseBody({ all: true });
+  const declaredType = textField(body, "type") || "screenshot";
+  if (declaredType !== "screenshot" && declaredType !== "video") {
+    throw new InvalidRequest("unsupported multipart artifact type");
+  }
+  const video = declaredType === "video";
+  let source = "phone";
+  if (video) {
+    const declaredSource = textField(body, "source");
+    if (!declaredSource || !SOURCE_LABEL.test(declaredSource)) {
+      throw new InvalidRequest("video uploads require a source label");
+    }
+    source = declaredSource;
+  }
+
   const values = Object.entries(body)
     .filter(([key]) => key === "files" || key.startsWith("files["))
     .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
@@ -232,19 +289,36 @@ async function readAttachmentFiles(c: AppContext): Promise<ReportAttachmentInput
     if (files.length >= MAX_ATTACHMENT_FILES) {
       throw new InvalidRequest(`too many artifact files (max ${MAX_ATTACHMENT_FILES})`);
     }
+    const name = value.name || "file";
+    const declaredMime = mediaType(value.type);
+    // A video upload accepts only MP4, and a video file never silently
+    // becomes a screenshot.
+    if (video && declaredMime !== MP4_CONTENT_TYPE) {
+      throw new InvalidRequest(`artifact ${name} must be declared ${MP4_CONTENT_TYPE}`);
+    }
+    if (!video && declaredMime.startsWith("video/")) {
+      throw new InvalidRequest(`artifact ${name} is a video; upload it with type=video`);
+    }
     // Enforce the per-file limit on the parsed size BEFORE buffering the file
     // into its own array, so an oversized upload is rejected without copies.
-    if (value.size > MAX_ATTACHMENT_BYTES) {
-      throw new InvalidRequest(`artifact ${value.name || "file"} exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+    const maxBytes = video ? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
+    if (value.size > maxBytes) {
+      throw new InvalidRequest(`artifact ${name} exceeds ${maxBytes} bytes`);
+    }
+    // Buffered once, within the limit above; the header check reads these
+    // same bytes, which are then stored.
+    const bytes = new Uint8Array(await value.arrayBuffer());
+    if (video && !hasIsoMediaHeader(bytes)) {
+      throw new InvalidRequest(`artifact ${name} has no MP4 file header`);
     }
     files.push({
       filename: value.name || `artifact-${Date.now()}`,
-      contentType: screenshotContentType(value.type),
-      bytes: new Uint8Array(await value.arrayBuffer()),
+      contentType: video ? MP4_CONTENT_TYPE : screenshotContentType(value.type),
+      bytes,
     });
   }
 
-  return files;
+  return { type: video ? "video" : "screenshot", source, files };
 }
 
 export default reportsApp;

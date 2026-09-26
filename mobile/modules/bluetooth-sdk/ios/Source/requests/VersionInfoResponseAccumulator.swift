@@ -7,7 +7,7 @@ enum VersionInfoAccumulatorOutcome {
     case complete(VersionInfoResult)
 }
 
-/// One request, explicit modern completion, or the deployed legacy chunk-3 terminal boundary.
+/// One request, explicit modern completion, or the legacy firmware's terminal chunk.
 final class VersionInfoResponseAccumulator {
     static let responseChunkKey = "_responseChunk"
     static let responseRequestIdKey = "_responseRequestId"
@@ -23,6 +23,7 @@ final class VersionInfoResponseAccumulator {
     private var count: Int?
     private var sid: String?
     private var legacyStarted = false
+    private var legacyTwoChunkResponse = false
     private var completed = false
 
     init(expectedRequestId: String) {
@@ -63,10 +64,19 @@ final class VersionInfoResponseAccumulator {
         case "version_info_1":
             values.removeAll()
             legacyStarted = true
+            legacyTwoChunkResponse = event["buildNumber"] as? String == "27"
             merge(event)
         case "version_info_2":
             guard legacyStarted else { return .ignored }
+            // Factory ASG27 sends only chunks 1 and 2. Its second chunk carries the
+            // OTA URL and legacy firmware version; ASG31+ moves firmware to chunk 3.
             merge(event)
+            if legacyTwoChunkResponse, values["buildNumber"] as? String == "27",
+               let otaUrl = event["otaVersionUrl"] as? String,
+               !otaUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                return finish()
+            }
         case "version_info_3":
             guard legacyStarted else { return .ignored }
             merge(event)

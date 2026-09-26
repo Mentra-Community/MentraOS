@@ -14,15 +14,13 @@
 #   xcodebuild itself prints no timestamps.
 # - memory_pressure / vm_stat are sampled every 10 s into <log>.memory while
 #   the build runs (regression matrix C2).
-# - MENTRA_IOS_RESULT_BUNDLE names a fresh .xcresult path for the command to
-#   pass as -resultBundlePath (xcodebuild refuses an existing path).
 # - The console gets the xcbeautify --quiet view (errors, warnings, result)
 #   when xcbeautify is installed, otherwise a grep of the same classes.
 # - The step's exit status is xcodebuild's, taken from PIPESTATUS[0]. Neither
 #   tee nor the filter can turn a failed build green, and the caller's retry
 #   logic keys off this status.
-# - Writes duration_seconds, status, log, timing_summary, timeline, memory
-#   and result_bundle to GITHUB_OUTPUT.
+# - Writes duration_seconds, status, log, timing_summary, timeline and memory
+#   to GITHUB_OUTPUT.
 set -u
 set -o pipefail
 
@@ -36,16 +34,13 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
-tmp="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+tmp="${IOS_BUILD_LOG_DIR:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}}"
+mkdir -p "$tmp"
 log="${tmp}/xcodebuild-${attempt}.log"
 timing="${tmp}/xcodebuild-${attempt}.timing.txt"
 timeline="${tmp}/xcodebuild-${attempt}.timeline"
 memory="${tmp}/xcodebuild-${attempt}.memory"
-result_bundle="${tmp}/xcodebuild-${attempt}.xcresult"
 out="${GITHUB_OUTPUT:-/dev/null}"
-
-rm -rf "$result_bundle"
-export MENTRA_IOS_RESULT_BUNDLE="$result_bundle"
 
 if command -v xcbeautify >/dev/null 2>&1; then
   filter=(xcbeautify --quiet)
@@ -98,12 +93,8 @@ awk '/^Build Timing Summary/ {found=1} found' "$log" > "$timing" 2>/dev/null || 
   echo "timing_summary=${timing}"
   echo "timeline=${timeline}"
   echo "memory=${memory}"
-  if [ -d "$result_bundle" ]; then echo "result_bundle=${result_bundle}"; fi
 } >> "$out"
 
-if [ -d "$result_bundle" ]; then
-  echo "Result bundle: $result_bundle ($(du -sh "$result_bundle" 2>/dev/null | cut -f1))"
-fi
 if [ "$status" -eq 0 ]; then
   echo "xcodebuild (${attempt}) succeeded in ${duration}s"
 else

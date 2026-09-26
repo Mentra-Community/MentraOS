@@ -32,8 +32,9 @@ public class I2SAudioController {
     private final Context context;
 
     private MediaPlayer mediaPlayer;
-    private final Map<Long, MediaPlayer> overlayPlayers = new HashMap<>();
+    private final Map<Long, CameraCuePlayer> overlayPlayers = new HashMap<>();
     private final Handler cameraAudioHandler = new Handler(Looper.getMainLooper());
+    private final CameraCuePlayer.Pool cameraCuePool;
     private final Set<Long> prepOverlays = new HashSet<>();
     private final Set<Long> stoppingPrepOverlays = new HashSet<>();
     private final Set<Long> snapOverlays = new HashSet<>();
@@ -57,6 +58,7 @@ public class I2SAudioController {
 
     public I2SAudioController(Context context) {
         this.context = context.getApplicationContext();
+        cameraCuePool = new CameraCuePlayer.Pool(this.context, cameraAudioHandler);
     }
 
     public synchronized void playAsset(String assetName, float playbackVolume) {
@@ -80,6 +82,16 @@ public class I2SAudioController {
         return true;
     }
 
+    /**
+     * Queue bridge readiness before camera status messages enter the shared UART queue.
+     * No player is prepared here. The existing idle grace releases an unused reservation
+     * if capture fails or the audio worker is cancelled before creating its overlay.
+     */
+    public synchronized void prepareCameraAudioPlayback() {
+        if (ensureI2sOpen()) closeI2SIfIdle();
+        refreshControlFlag();
+    }
+
     /** Play a short overlay without interrupting the current primary asset. */
     public synchronized void playOverlayAsset(String assetName, float playbackVolume) {
         playOverlayAssetTracked(assetName, playbackVolume);
@@ -96,15 +108,11 @@ public class I2SAudioController {
             return 0L;
         }
 
-        MediaPlayer overlayPlayer = null;
+        CameraCuePlayer overlayPlayer = null;
         long overlayToken = ++overlayPlaybackGeneration;
-        try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
-            overlayPlayer = new MediaPlayer();
-            configurePlayer(overlayPlayer, playbackVolume);
-            overlayPlayer.setDataSource(
-                    afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
-
-            final MediaPlayer trackedPlayer = overlayPlayer;
+        try {
+            overlayPlayer = new CameraCuePlayer(cameraCuePool, assetName, playbackVolume);
+            final CameraCuePlayer trackedPlayer = overlayPlayer;
             overlayPlayers.put(overlayToken, trackedPlayer);
             trackedPlayer.setOnCompletionListener(
                     mp -> {
@@ -173,7 +181,7 @@ public class I2SAudioController {
 
     /** Stop one overlay only when its token still identifies an active player. */
     public synchronized boolean stopOverlayPlayback(long overlayToken) {
-        MediaPlayer overlayPlayer = overlayPlayers.get(overlayToken);
+        CameraCuePlayer overlayPlayer = overlayPlayers.get(overlayToken);
         if (overlayPlayer == null) {
             return false;
         }
@@ -214,7 +222,7 @@ public class I2SAudioController {
     }
 
     private void startCameraOverlay(
-            long token, MediaPlayer player, boolean prep) {
+            long token, CameraCuePlayer player, boolean prep) {
         if (overlayPlayers.get(token) != player) {
             return;
         }
@@ -422,10 +430,11 @@ public class I2SAudioController {
         prepOverlays.clear();
         snapOverlays.clear();
         stoppingPrepOverlays.clear();
-        for (MediaPlayer overlayPlayer : overlayPlayers.values()) {
+        for (CameraCuePlayer overlayPlayer : overlayPlayers.values()) {
             stopAndRelease(overlayPlayer);
         }
         overlayPlayers.clear();
+        cameraCuePool.clear();
     }
 
     private void stopAndRelease(MediaPlayer player) {
@@ -437,6 +446,52 @@ public class I2SAudioController {
             // best-effort
         }
         player.release();
+    }
+
+    private void stopAndRelease(CameraCuePlayer player) {
+        try {
+            if (player.isPlaying()) player.stop();
+        } catch (IllegalStateException ignore) {
+            // best-effort, matching the MediaPlayer overlay path
+        }
+        player.release();
+    }
+
+    private void startPlayerWhenReady(
+            CameraCuePlayer player, BooleanSupplier canStart, Runnable onStarted) {
+        Runnable start = () -> {
+            synchronized (I2SAudioController.this) {
+                if (!overlayPlayers.containsValue(player)) return;
+                if (!canStart.getAsBoolean()) { failWaitingPlayer(player); return; }
+                try {
+                    player.start();
+                    onStarted.run();
+                    Log.i(TAG, "[I2S-READY] camera cue start after bridge ready");
+                } catch (IllegalStateException e) {
+                    failWaitingPlayer(player);
+                }
+            }
+        };
+        if (bridgeHeld) {
+            readiness.whenReady(start, () -> {
+                synchronized (I2SAudioController.this) { failWaitingPlayer(player); }
+            });
+        } else {
+            start.run();
+        }
+    }
+
+    private void failWaitingPlayer(CameraCuePlayer player) {
+        Long token = null;
+        for (Map.Entry<Long, CameraCuePlayer> entry : overlayPlayers.entrySet()) {
+            if (entry.getValue() == player) { token = entry.getKey(); break; }
+        }
+        if (token == null) return;
+        overlayPlayers.remove(token);
+        player.release();
+        finishCameraOverlay(token);
+        closeI2SIfIdle();
+        refreshControlFlag();
     }
 
     private boolean ensureI2sOpen() {
@@ -455,7 +510,7 @@ public class I2SAudioController {
     }
 
     private boolean ownsPlayer(MediaPlayer player) {
-        return mediaPlayer == player || overlayPlayers.containsValue(player);
+        return mediaPlayer == player;
     }
 
     private void startPlayerWhenReady(
@@ -492,14 +547,6 @@ public class I2SAudioController {
         if (!ownsPlayer(player)) return;
         Log.w(TAG, "[I2S-READY] Cancelling pending sound before playback");
         if (mediaPlayer == player) mediaPlayer = null;
-        Long token = null;
-        for (Map.Entry<Long, MediaPlayer> entry : overlayPlayers.entrySet()) {
-            if (entry.getValue() == player) { token = entry.getKey(); break; }
-        }
-        if (token != null) {
-            overlayPlayers.remove(token);
-            finishCameraOverlay(token);
-        }
         player.release();
         closeI2SIfIdle();
         refreshControlFlag();

@@ -1,6 +1,6 @@
 {
   "name": "@mentra/miniapp",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "description": "SDK for building MentraOS local miniapps (browser/WebView)",
   "author": "Mentra Labs",
   "license": "Apache-2.0",
@@ -57,18 +57,23 @@
     }
   },
   "dependencies": {
-    "@mentra/cloud-protocol": "3.2.1",
+    "@mentra/cloud-protocol": "3.3.0",
     "eventemitter3": "^5.0.1"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^17.6.3",
     "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.0",
+    "happy-dom": "^17.6.3",
     "react": "^19.1.0",
+    "react-dom": "^19.2.0",
     "typescript": "^5.0.0"
   },
   "files": [
     "dist",
     "src",
-    "!src/**/*.test.ts"
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
   ],
   "keywords": [
     "mentra",

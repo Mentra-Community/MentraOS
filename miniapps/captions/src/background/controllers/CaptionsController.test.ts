@@ -1,168 +1,76 @@
 import {afterEach, describe, expect, mock, test} from "bun:test"
 
-import {G2_PROFILE, NEX_PROFILE} from "../../core/CaptionsFormatter"
 import {DEFAULT_CAPTION_TIMEOUT_SECONDS} from "../../shared/types"
-import {calculateCaptionBox, CaptionsController, isSupportedCaptionTimeoutSeconds} from "./CaptionsController"
+import {CaptionsController, isSupportedCaptionTimeoutSeconds} from "./CaptionsController"
 
 describe("CaptionsController caption position", () => {
-  test("selects the connected G2 profile after CONNECT_ACK readiness", async () => {
-    const session = {
-      capabilities: null as Record<string, unknown> | null,
-      ui: {
-        send: mock(() => undefined),
-        on: mock(() => () => undefined),
-        onOpen: mock(() => () => undefined),
-      },
-      onCapabilitiesChange: mock(() => () => undefined),
-      waitForReady: mock(async () => {
-        session.capabilities = {
-          modelName: "Even Realities G2",
-          display: {width: 576, height: 288, canPosition: true, maxTextLines: 8},
-        }
+  test("sends source text and line preferences, leaving fitting to the host", async () => {
+    const render = mock(() =>
+      Promise.resolve({
+        status: "displayed",
+        textLayout: {
+          caption: {
+            lines: [{text: "newest words", start: 12, end: 24}],
+            lineStarts: [0, 12],
+            capacity: 3,
+            truncated: true,
+          },
+        },
       }),
-      storage: {get: mock(() => Promise.resolve(null))},
-      transcription: {on: mock(() => () => undefined)},
-      cloud: {onStatusChanged: mock(() => () => undefined)},
-      display: {render: mock(() => Promise.resolve({status: "rendered"}))},
-    }
-    const controller = new CaptionsController(session as never) as unknown as {
-      currentProfile: {id: string; lineHeightPx?: number}
-      start: () => Promise<void>
-    }
-
-    await controller.start()
-
-    expect(session.waitForReady).toHaveBeenCalledTimes(1)
-    expect(controller.currentProfile).toMatchObject({id: "even-realities-g2", lineHeightPx: 40})
-  })
-
-  test("anchors a fixed three-line G2 band at the top or bottom", () => {
-    const base = {
-      canvasWidth: 576,
-      canvasHeight: 288,
-      canPosition: true,
-      lineCount: 3,
-      maxTextLines: 8,
-      lineHeightPx: 40,
-    }
-
-    expect(calculateCaptionBox({...base, position: "top"})).toEqual({x: 0, y: 0, w: 576, h: 120})
-    expect(calculateCaptionBox({...base, position: "bottom"})).toEqual({x: 0, y: 168, w: 576, h: 120})
-  })
-
-  test("keeps a full-canvas text wall when positioning is unsupported", () => {
-    expect(
-      calculateCaptionBox({
-        canvasWidth: 576,
-        canvasHeight: 288,
-        canPosition: false,
-        position: "bottom",
-        lineCount: 3,
-        lineHeightPx: 40,
-      }),
-    ).toEqual({x: 0, y: 0, w: 576, h: 288})
-  })
-
-  test("infers a line height when the device has no calibrated profile", () => {
-    expect(
-      calculateCaptionBox({
-        canvasWidth: 500,
-        canvasHeight: 220,
-        canPosition: true,
-        position: "bottom",
-        lineCount: 3,
-        maxTextLines: 5,
-      }),
-    ).toEqual({x: 0, y: 88, w: 500, h: 132})
-  })
-
-  test("keeps uncalibrated positioning displays on the full-canvas fallback", () => {
-    const render = mock(() => Promise.resolve({status: "rendered"}))
+    )
     const controller = new CaptionsController({
-      capabilities: {display: {width: 500, height: 220, canPosition: true, maxTextLines: 5}},
+      capabilities: {display: {width: 500, height: 220, canPosition: true}},
       display: {render},
     } as never) as unknown as {
-      currentMaxLines: number
-      currentProfile: typeof NEX_PROFILE
-      settings: {captionPosition: "top" | "bottom"}
-      getDisplayCapabilities: () => {canPosition: boolean}
-      showTextWall: (text: string) => void
+      settings: {captionPosition: string; displayWidth: number; displayLines: number}
+      ui: {send: ReturnType<typeof mock>}
+      showOnGlasses: (text: string, final: boolean) => void
+      lastDisplayPreview: {text: string; isFinal: boolean}
     }
-    controller.currentMaxLines = 5
-    controller.currentProfile = NEX_PROFILE
     controller.settings.captionPosition = "bottom"
-
-    controller.showTextWall("Mentra Display caption")
-
-    expect(controller.getDisplayCapabilities()).toEqual({canPosition: false})
-    expect(render).toHaveBeenCalledWith([
-      {type: "text", id: "caption", box: {x: 0, y: 0, w: 500, h: 220}, text: "Mentra Display caption"},
-    ])
+    controller.settings.displayWidth = 2
+    controller.ui = {send: mock(() => {})}
+    controller.showOnGlasses("older words newest words", false)
+    await Promise.resolve()
+    expect(render).toHaveBeenCalledWith(
+      [
+        {
+          type: "text",
+          id: "caption",
+          box: {x: 0, y: 0, w: 500, h: 220},
+          text: "older words newest words",
+          style: {maxLines: 3, textWindow: "end", breakMode: "word", verticalAlign: "bottom"},
+        },
+      ],
+      {includeTextLayout: true},
+    )
+    expect(controller.lastDisplayPreview).toMatchObject({text: "newest words", isFinal: false})
   })
 
-  test("re-renders the active interim when its position changes", async () => {
-    const render = mock(() => Promise.resolve({status: "rendered"}))
+  test("position changes preserve interim source and ignore stale render feedback", async () => {
+    const resolve: Array<(value: unknown) => void> = []
+    const render = mock(() => new Promise((done) => resolve.push(done)))
     const controller = new CaptionsController({
-      capabilities: {display: {width: 576, height: 288, canPosition: true, maxTextLines: 8}},
+      capabilities: {display: {width: 576, height: 288, canPosition: true}},
       display: {render},
       storage: {set: mock(() => Promise.resolve())},
     } as never) as unknown as {
-      currentDisplayText: string
-      currentMaxLines: number
-      currentProfile: typeof G2_PROFILE
-      settings: {captionPosition: string}
       ui: {send: ReturnType<typeof mock>}
-      setCaptionPosition: (position: "top" | "bottom") => Promise<void>
+      showOnGlasses: (text: string, final: boolean) => void
+      setCaptionPosition: (position: "bottom") => Promise<void>
+      lastDisplayPreview: {text: string}
     }
-    controller.currentDisplayText = "live interim words"
-    controller.currentMaxLines = 3
-    controller.currentProfile = G2_PROFILE
-    controller.ui = {send: mock(() => undefined)}
-
+    controller.ui = {send: mock(() => {})}
+    controller.showOnGlasses("interim words", false)
     await controller.setCaptionPosition("bottom")
-
-    expect(render).toHaveBeenCalledWith([
-      {type: "text", id: "caption", box: {x: 0, y: 168, w: 576, h: 120}, text: "live interim words"},
-    ])
-    expect(controller.settings.captionPosition).toBe("bottom")
-  })
-
-  test("preserves an active interim when capabilities refresh", () => {
-    const render = mock(() => Promise.resolve({status: "rendered"}))
-    const controller = new CaptionsController({
-      capabilities: {display: {width: 600, height: 300, canPosition: true, maxTextLines: 8}},
-      display: {render},
-    } as never) as unknown as {
-      activeInterim: {text: string; speakerId?: string; speakerChanged: boolean}
-      createFormatter: () => void
-      currentDisplayText: string
-      currentMaxLines: number
-      currentProfile: typeof G2_PROFILE
-      lastDisplayPreview: {text: string; lines: string[]; isFinal: boolean; timestamp: number}
-      settings: {captionPosition: "top" | "bottom"}
-      ui: {send: ReturnType<typeof mock>}
-      refreshDisplay: () => void
-    }
-    controller.activeInterim = {text: "one\ntwo\nthree\nfour\nfive", speakerChanged: false}
-    controller.currentDisplayText = "one\ntwo\nthree\nfour\nfive"
-    controller.currentMaxLines = 2
-    controller.currentProfile = G2_PROFILE
-    controller.createFormatter()
-    controller.lastDisplayPreview = {
-      text: "one\ntwo\nthree\nfour\nfive",
-      lines: ["one", "two", "three", "four", "five"],
-      isFinal: false,
-      timestamp: Date.now(),
-    }
-    controller.settings.captionPosition = "bottom"
-    controller.ui = {send: mock(() => undefined)}
-
-    controller.refreshDisplay()
-
-    expect(render).toHaveBeenCalledWith([
-      {type: "text", id: "caption", box: {x: 0, y: 220, w: 600, h: 80}, text: "four\nfive"},
-    ])
-    expect(controller.lastDisplayPreview).toMatchObject({text: "four\nfive", isFinal: false})
+    const feedback = (text: string) => ({textLayout: {caption: {lines: [{text}]}}})
+    resolve[1](feedback("latest"))
+    await Promise.resolve()
+    resolve[0](feedback("stale"))
+    await Promise.resolve()
+    expect(controller.lastDisplayPreview.text).toBe("latest")
+    expect(render.mock.calls[1][0][0].text).toBe("interim words")
+    expect(render.mock.calls[1][0][0].style.verticalAlign).toBe("bottom")
   })
 
   test("restores bottom and defaults unknown stored values to top", async () => {

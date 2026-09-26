@@ -93,6 +93,9 @@ export {useConnected} from "../react/useConnected"
 export {useSafeArea} from "../react/useSafeArea"
 export {useCapsuleHeaderStyle} from "../react/useCapsuleHeaderStyle"
 export {useRpc, type RpcCallable} from "../react/useRpc"
+export {useHistoryState, type SetHistoryState} from "../react/useHistoryState"
+export {StreamPreview} from "../react/StreamPreview"
+export type {StreamPreviewProps, StreamPreviewStatus, PreviewFit, PreviewConnectionState} from "../react/StreamPreview"
 
 /**
  * Type helper for declaring a typed `mentra` global inside a miniapp.

@@ -159,6 +159,11 @@ Cloud V2 services use Bun tests via `cd cloud-v2 && bun run test`; add suites in
 
 Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") and keep scope focused. Reference issue IDs or Slack threads in the body when applicable. Before opening a PR, run relevant `bun run test` suites and platform builds, attach log excerpts for hardware-dependent steps, and call out configuration updates. PR descriptions should outline scope, test evidence, and screenshots or screen recordings for UI-impacting changes.
 
+When opening or updating a PR, use the
+[`select-pr-routines` skill](.agents/skills/select-pr-routines/SKILL.md) to search
+existing device-test coverage and add relevant `routine:<id>` labels. Report
+uncovered behavior; a routine request is not a passing test result.
+
 ### AI agent attribution
 
 Do not add `Co-Authored-By:` trailers that name AI assistants (Claude, Codex, Copilot, etc.) to commit messages. Do not include "Generated with" or similar attribution lines (e.g., `🤖 Generated with [Claude Code]`) in commit messages or PR descriptions. Commits and PRs should reflect the human author responsible for the change; the tools used to produce it are not part of the durable record.

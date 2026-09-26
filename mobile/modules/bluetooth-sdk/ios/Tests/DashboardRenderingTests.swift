@@ -15,6 +15,36 @@ final class DashboardRenderingTests: XCTestCase {
         return (manager, display)
     }
 
+    func testFullFrameDashboardHandoffDoesNotClearActiveScene() async {
+        let (manager, display) = setupDashboard()
+        display.sceneHandoffRequiresClear = false
+        await manager.setDashboardContent("new dashboard")
+        XCTAssertEqual(display.cleanupCount, 0)
+        XCTAssertEqual(display.clearDisplayCount, 0)
+        XCTAssertEqual(display.texts.count, 1)
+        XCTAssertTrue(display.texts[0].hasSuffix("new dashboard"))
+    }
+
+    func testHiddenSceneHandoffCannotClearMainView() async {
+        let (manager, display) = setupDashboard()
+        DeviceStore.shared.apply("glasses", "headUp", false)
+        manager.displayEvent([
+            "view": "dashboard",
+            "scene": ["appId": "replacement", "sceneEpoch": 2, "elements": [[String: Any]]()],
+        ])
+        await Task.yield()
+        XCTAssertEqual(display.cleanupCount, 0)
+        XCTAssertEqual(display.clearDisplayCount, 0)
+        XCTAssertTrue(display.scenes.isEmpty)
+    }
+
+    func testNimoOptsOutOfDestructiveTransientOverlays() {
+        let device: SGCManager = Nimo()
+        XCTAssertFalse(device.sceneHandoffRequiresClear)
+        XCTAssertFalse(device.showBrightnessConfirmation)
+        XCTAssertFalse(device.showConnectionConfirmation)
+    }
+
     func testSetterWaitsForCleanupAndLatestContentWins() async {
         let (manager, display) = setupDashboard()
         var firstReturned = false
@@ -74,6 +104,7 @@ final class DashboardRenderingTests: XCTestCase {
 private final class PausedDisplay: SGCManager {
     var type = "Test display"
     let hasMic = false
+    var sceneHandoffRequiresClear = true
     let cleanupStarted = XCTestExpectation(description: "cleanup suspended")
     var cleanupCount = 0
     var clearDisplayCount = 0

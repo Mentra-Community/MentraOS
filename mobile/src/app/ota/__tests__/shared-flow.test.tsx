@@ -1,10 +1,11 @@
-import {act, fireEvent, render, waitFor} from "@testing-library/react-native"
+import {act, fireEvent, render, renderHook, waitFor} from "@testing-library/react-native"
 
-import {MentraLiveOtaFlow} from "@mentra/engine/ota"
+import {MentraLiveOtaFlow, useMentraLiveOta} from "@mentra/engine/ota"
 
-import {stopOtaAutoChain} from "@/services/otaAutoChain"
+import {beginOtaAutoChain, isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
 import {ota} from "@/../modules/engine/src/facades/ota"
 import {useGlassesStore} from "@/../modules/engine/src/stores/glasses"
+import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("MentraLiveOtaFlow", () => {
   beforeEach(() => {
@@ -78,6 +79,83 @@ describe("MentraLiveOtaFlow", () => {
 
     expect(prepare).toHaveBeenCalledWith(result)
     expect(getByText("Starting update…")).toBeDefined()
+  })
+
+  it("keeps the approved flow finishing when an installed MTK patch is awaiting reboot", async () => {
+    jest.useFakeTimers()
+    resetBluetoothSdkMock()
+    const legacyVersions = {
+      appVersion: "37.0",
+      buildNumber: "37",
+      androidVersion: "11",
+      firmwareVersion: "",
+      mtkFirmwareVersion: "MentraLive_20260418",
+      besFirmwareVersion: "17.26.7.9",
+      otaVersionUrl: "https://ota.example/legacy.json",
+    }
+    const modernVersions = {
+      ...legacyVersions,
+      appVersion: "39.0",
+      buildNumber: "39",
+      mtkFirmwareVersion: "MentraLive_20260709",
+    }
+    useGlassesStore.getState().setGlassesInfo({
+      ...legacyVersions,
+      connection: {state: "connected", fullyBooted: true},
+      wifi: {state: "connected", ssid: "Test WiFi"},
+    })
+    useGlassesStore.getState().setMtkUpdatedThisSession(true)
+    bluetoothSdkMock.requestVersionInfo.mockResolvedValueOnce(legacyVersions).mockResolvedValueOnce(modernVersions)
+    jest.spyOn(global, "fetch").mockImplementation(
+      async (url) =>
+        ({
+          ok: true,
+          json: async () =>
+            url === legacyVersions.otaVersionUrl
+              ? {
+                  apps: {"com.mentra.asg_client": {versionCode: 37, versionName: "37.0"}},
+                  mtk_patches: [
+                    {
+                      start_firmware: legacyVersions.mtkFirmwareVersion,
+                      end_firmware: modernVersions.mtkFirmwareVersion,
+                      url: "https://ota.example/mtk.zip",
+                    },
+                  ],
+                }
+              : {
+                  releaseVersion: "3.1.1",
+                  apps: {"com.mentra.asg_client": {versionCode: 301010001, versionName: "3.1.1"}},
+                  bes_firmware: {version: "26.9.4.1", url: "https://ota.example/bes.bin"},
+                },
+        }) as Response,
+    )
+    beginOtaAutoChain("legacy-mtk", false, {fromVersion: "37.0", toVersion: "37.0", releaseVersion: null})
+    const onFinished = jest.fn()
+    const prepare = jest.spyOn(ota.installSession, "prepare").mockImplementation(() => "wifi")
+    jest.spyOn(ota.installSession, "attach").mockImplementation(() => {})
+    jest.spyOn(ota.installSession, "detach").mockImplementation(() => {})
+    const {result, unmount} = renderHook(() => useMentraLiveOta({initializeRuntime: false, onFinished}))
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(7_000)
+    })
+    expect(result.current.state).toMatchObject({screen: "finishing", completedUpdate: false, canFinish: false})
+    expect(isOtaAutoChainActive()).toBe(true)
+    expect(onFinished).not.toHaveBeenCalled()
+    expect(prepare).not.toHaveBeenCalled()
+
+    // The real checker must now change manifests and the real hook must resume
+    // the approved session automatically, without showing a completion screen.
+    await act(async () => {
+      useGlassesStore.getState().setMtkUpdatedThisSession(false)
+      useGlassesStore.getState().setGlassesInfo(modernVersions)
+      await jest.advanceTimersByTimeAsync(1_100)
+    })
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({buildNumber: "39", updates: ["apk", "bes"]}))
+    expect(result.current.state).toMatchObject({screen: "starting", completedUpdate: false})
+    expect(isOtaAutoChainActive()).toBe(true)
+    expect(onFinished).not.toHaveBeenCalled()
+    unmount()
   })
 
   it("blocks an update below 25% and reacts to live battery changes", async () => {

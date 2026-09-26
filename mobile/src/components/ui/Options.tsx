@@ -40,7 +40,11 @@ const OptionItem = <T extends string>({
   let bgColor = Platform.OS === "android" ? theme.colors.primary_foreground : theme.colors.palette.transparent
 
   return (
-    <TouchableOpacity onPress={() => onSelect(option.key)}>
+    <TouchableOpacity
+      accessibilityRole="radio"
+      accessibilityLabel={[option.label, option.badge, option.subtitle].filter(Boolean).join(", ")}
+      accessibilityState={{checked: selected === option.key}}
+      onPress={() => onSelect(option.key)}>
       <GlassView className="flex-row justify-between items-center py-5 px-6 bg-primary-foreground" style={style}>
         <View className="gap-1 flex-col">
           <View className="flex-row items-center gap-2">
@@ -52,6 +56,9 @@ const OptionItem = <T extends string>({
         <Icon
           name="check"
           size={24}
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
           // color={selected === option.key ? theme.colors.primary : theme.colors.palette.transparent}
           color={selected === option.key ? theme.colors.primary : bgColor}
         />

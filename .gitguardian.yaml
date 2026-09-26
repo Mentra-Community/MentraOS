@@ -4,3 +4,9 @@ secret:
   # secrets. Ignore so Generic High Entropy Secret does not fail CI.
   ignored_paths:
     - "mobile/src/services/ar99ApiConfig.ts"
+    # Fake handshake token in the StreamPreview test harness; never a credential.
+    - "mobile/modules/miniapp/src/react/StreamPreview.harness.test.tsx"
+  ignored_matches:
+    # SHA-256 of the earlier StreamPreview harness token fixture (GitGuardian incident 37534669).
+    - name: StreamPreview harness test token
+      match: 179000782ca9d7475329a9854944b5f098f0e19ebabc661c57c4740a4b249ee0

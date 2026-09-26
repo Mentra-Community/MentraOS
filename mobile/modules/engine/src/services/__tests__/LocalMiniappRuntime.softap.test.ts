@@ -196,6 +196,7 @@ function buildFixture(gates: Gates) {
     5,
   )
   const host = new Host()
+  host.meetingCredentialRequests = new Map()
   const events: unknown[] = []
   host.sendToMiniapp = (owner: string, state: unknown) => events.push({owner, state})
   host.softapAttemptSeq = 0
@@ -569,6 +570,7 @@ function permissionGateFixture(granted: boolean) {
     {MEETING_JOIN: "meeting:join"},
   )
   const host = new Host()
+  host.meetingCredentialRequests = new Map()
   host.sendResult = (
     _pkg: string,
     _id: string,

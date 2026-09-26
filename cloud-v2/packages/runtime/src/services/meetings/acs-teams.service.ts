@@ -1,7 +1,5 @@
 import {CommunicationIdentityClient, type CommunicationUserToken} from "@azure/communication-identity"
-import * as jose from "jose"
 
-const REQUIRED_TEAMS_SCOPES = new Set(["Teams.ManageCalls", "Teams.ManageChats"])
 export const ACS_GUEST_TOKEN_EXPIRES_IN_MINUTES = 120
 export const ACS_GUEST_MINT_LIMIT_PER_WINDOW = 12
 export const ACS_GUEST_MINT_WINDOW_MS = 10 * 60 * 1000
@@ -10,7 +8,6 @@ export const ACS_GUEST_STATE_IDLE_TTL_MS = 4 * 60 * 60 * 1000
 export const ACS_GUEST_STATE_MAX_ENTRIES = 10_000
 const ACS_GUEST_STATE_SWEEP_INTERVAL_MS = 5 * 60 * 1000
 const ACS_GUEST_STATE_SWEEP_BATCH_SIZE = 25
-let microsoftJwks: ReturnType<typeof jose.createRemoteJWKSet> | undefined
 
 export interface AcsIdentityClient {
   createUserAndToken(
@@ -36,6 +33,7 @@ export type AcsMeetingCredential =
       expiresOn: string
       identityMode: "guest"
       acsUserId: string
+      guestReason?: "teams-license-unavailable"
     }
   | {
       token: string
@@ -73,7 +71,7 @@ export class AcsCredentialError extends Error {
   }
 }
 
-export interface VerifiedTeamsSubject {
+export interface TeamsSubject {
   token: string
   tenantId: string
   objectId: string
@@ -83,77 +81,70 @@ export function assertAcsTeamsConfigured(): void {
   if (!process.env.ACS_CONNECTION_STRING?.trim()) throw new Error("meetings service requires ACS_CONNECTION_STRING")
 }
 
-export async function verifyTeamsSubjectToken(
-  token: string,
-  expected: {tenantId: string; objectId: string},
-): Promise<VerifiedTeamsSubject> {
-  const {tenantId, clientId} = teamsUserConfiguration()
-  if (expected.tenantId !== tenantId)
-    throw new TeamsIdentityRejectedError("Teams token tenant does not match Runtime identity")
-
-  microsoftJwks ??= jose.createRemoteJWKSet(
-    new URL(`https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`),
-  )
-  const issuers = [`https://login.microsoftonline.com/${tenantId}/v2.0`, `https://sts.windows.net/${tenantId}/`]
-  let payload: jose.JWTPayload
-  try {
-    ;({payload} = await jose.jwtVerify(token, microsoftJwks, {
-      issuer: issuers,
-      audience: process.env.ENTRA_TEAMS_TOKEN_AUDIENCE ?? "https://auth.msft.communication.azure.com",
-      algorithms: ["RS256"],
-      clockTolerance: "2 minutes",
-    }))
-  } catch (error) {
-    // Signature/claim/key mismatches are credential rejection. Network and
-    // JWKS timeouts remain provider outages so the API can return a 5xx.
-    if (error instanceof jose.errors.JOSEError && error.code !== "ERR_JWKS_TIMEOUT") {
-      throw new TeamsIdentityRejectedError("Teams token verification failed")
-    }
-    throw error
-  }
-  validateTeamsSubjectClaims(payload, expected, {tenantId, clientId})
+/**
+ * Bind the opaque Microsoft token to our authenticated Runtime caller. ACS, the
+ * token's resource server, validates it with the expected userObjectId/clientId.
+ * Microsoft-owned access tokens are not necessarily readable JWTs:
+ * https://learn.microsoft.com/entra/identity-platform/access-tokens#token-ownership
+ */
+export function bindTeamsSubject(token: string, expected: {tenantId: string; objectId: string}): TeamsSubject {
+  const {tenantId} = teamsUserConfiguration()
+  if (expected.tenantId !== tenantId || !expected.objectId)
+    throw new TeamsIdentityRejectedError("Teams token subject does not match Runtime identity")
   return {token, tenantId, objectId: expected.objectId}
 }
 
-export function validateTeamsSubjectClaims(
-  payload: jose.JWTPayload,
-  expected: {tenantId: string; objectId: string},
-  configuration: {tenantId: string; clientId: string},
-): void {
-  const tokenTenant = typeof payload.tid === "string" ? payload.tid : undefined
-  const objectId = typeof payload.oid === "string" ? payload.oid : undefined
-  const authorizedParty =
-    typeof payload.azp === "string" ? payload.azp : typeof payload.appid === "string" ? payload.appid : undefined
-  const scopes = new Set(typeof payload.scp === "string" ? payload.scp.split(" ").filter(Boolean) : [])
-
-  if (expected.tenantId !== configuration.tenantId) {
-    throw new TeamsIdentityRejectedError("Teams token tenant does not match Runtime identity")
-  }
-  if (tokenTenant !== configuration.tenantId || objectId !== expected.objectId) {
-    throw new TeamsIdentityRejectedError("Teams token subject does not match Runtime identity")
-  }
-  if (authorizedParty !== configuration.clientId)
-    throw new TeamsIdentityRejectedError("Teams token was issued to an unexpected client")
-  for (const scope of REQUIRED_TEAMS_SCOPES) {
-    if (!scopes.has(scope))
-      throw new TeamsIdentityRejectedError("Teams token is missing required delegated permissions")
-  }
-}
-
 export async function exchangeAcsTeamsUserToken(
-  subject: VerifiedTeamsSubject,
+  subject: TeamsSubject,
 ): Promise<Extract<AcsMeetingCredential, {identityMode: "teams-user"}>> {
-  const {clientId} = teamsUserConfiguration()
+  const {tenantId, clientId} = teamsUserConfiguration()
+  if (subject.tenantId !== tenantId || !subject.objectId)
+    throw new TeamsIdentityRejectedError("Teams token subject does not match Runtime identity")
   const client = identityClient()
-  const result = await client.getTokenForTeamsUser({
-    teamsUserAadToken: subject.token,
-    clientId,
-    userObjectId: subject.objectId,
-  })
+  let result
+  try {
+    // These trusted identifiers must never come from the request body or a decoded
+    // access token. Microsoft validates both against its opaque token.
+    result = await client.getTokenForTeamsUser({
+      teamsUserAadToken: subject.token,
+      clientId,
+      userObjectId: subject.objectId,
+    })
+  } catch (error) {
+    if (isTeamsLicenseUnavailable(error)) throw error
+    const status = error && typeof error === "object" && "statusCode" in error ? error.statusCode : undefined
+    if (status === 400 || status === 401 || status === 403)
+      throw new TeamsIdentityRejectedError(
+        "Microsoft could not verify your Teams account. Sign in again or contact your administrator",
+      )
+    if (status === 429) throw new AcsCredentialError("Microsoft Teams is busy; try again later", 429)
+    // Azure errors can include the request (and its bearer). Never forward/log them.
+    throw new AcsCredentialError("Teams identity provider unavailable", 502)
+  }
   return {
     token: result.token,
     expiresOn: result.expiresOn.toISOString(),
     identityMode: "teams-user",
+  }
+}
+
+/** Only Microsoft's explicit license rejection permits automatic guest joining. */
+export function isTeamsLicenseUnavailable(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && "code" in error && error.code === "UserLicenseNotPresentForbidden"
+  )
+}
+
+/** The subject identifiers must come from the authenticated Runtime user. */
+export async function issueAcsTeamsCredential(
+  subject: TeamsSubject,
+  authenticatedUserId: string,
+): Promise<AcsMeetingCredential> {
+  try {
+    return await exchangeAcsTeamsUserToken(subject)
+  } catch (error) {
+    if (!isTeamsLicenseUnavailable(error)) throw error
+    return {...(await mintAcsGuestToken(authenticatedUserId)), guestReason: "teams-license-unavailable"}
   }
 }
 
@@ -223,7 +214,6 @@ async function mintGuestTokenForState(
 }
 
 export function resetAcsTeamsAuthCache(): void {
-  microsoftJwks = undefined
   guestMintState.clear()
   lastGuestStateSweepAt = 0
   testClient = null

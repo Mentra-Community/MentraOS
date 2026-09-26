@@ -26,6 +26,7 @@
         "@mentra/engine": "workspace:*",
         "@mentra/engine-host-internal": "workspace:*",
         "@mentra/entra-auth": "workspace:*",
+        "@mentra/frame-preview": "workspace:*",
         "@mentra/jspolyfill": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "@react-native-community/netinfo": "11.5.2",
@@ -152,9 +153,9 @@
     },
     "../cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.1",
+        "@mentra/cloud-protocol": "3.3.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
@@ -170,17 +171,17 @@
     },
     "../cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
         "zod": "^3.24.1",
       },
     },
     "modules/acs-meeting": {
       "name": "@mentra/acs-meeting",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
         "@expo/config-plugins": "~55.0.10",
-        "@mentra/glasses-media": "3.2.1",
+        "@mentra/glasses-media": "3.3.0",
       },
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
@@ -194,9 +195,9 @@
     },
     "modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.1",
+        "@mentra/cloud-protocol": "3.3.0",
       },
       "devDependencies": {
         "@types/node": "^25.9.3",
@@ -213,9 +214,9 @@
     },
     "modules/crust": {
       "name": "@mentra/crust",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/jspolyfill": "3.2.1",
+        "@mentra/jspolyfill": "3.3.0",
       },
       "devDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -232,15 +233,15 @@
     },
     "modules/engine": {
       "name": "@mentra/engine",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/acs-meeting": "3.2.1",
-        "@mentra/bluetooth-sdk": "3.2.1",
-        "@mentra/cloud-client": "3.2.1",
-        "@mentra/cloud-protocol": "3.2.1",
-        "@mentra/crust": "3.2.1",
-        "@mentra/glasses-media": "3.2.1",
-        "@mentra/miniapp": "3.2.1",
+        "@mentra/acs-meeting": "3.3.0",
+        "@mentra/bluetooth-sdk": "3.3.0",
+        "@mentra/cloud-client": "3.3.0",
+        "@mentra/cloud-protocol": "3.3.0",
+        "@mentra/crust": "3.3.0",
+        "@mentra/glasses-media": "3.3.0",
+        "@mentra/miniapp": "3.3.0",
         "buffer": "^6.0.3",
         "events": "^3.3.0",
         "react-native-marked": "8.1.1",
@@ -308,27 +309,43 @@
         "react-native": "*",
       },
     },
+    "modules/frame-preview": {
+      "name": "@mentra/frame-preview",
+      "version": "3.3.0",
+      "dependencies": {
+        "@mentra/glasses-media": "3.3.0",
+      },
+      "peerDependencies": {
+        "expo": "*",
+        "react": "*",
+        "react-native": "*",
+      },
+    },
     "modules/glasses-media": {
       "name": "@mentra/glasses-media",
-      "version": "3.2.1",
+      "version": "3.3.0",
     },
     "modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "devDependencies": {
         "esbuild": "^0.23.0",
       },
     },
     "modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.1",
+        "@mentra/cloud-protocol": "3.3.0",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {
+        "@happy-dom/global-registrator": "^17.6.3",
         "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.0",
+        "happy-dom": "^17.6.3",
         "react": "^19.1.0",
+        "react-dom": "^19.2.0",
         "typescript": "^5.0.0",
       },
       "peerDependencies": {
@@ -867,6 +884,8 @@
 
     "@grpc/proto-loader": ["@grpc/proto-loader@0.7.15", "", { "dependencies": { "lodash.camelcase": "^4.3.0", "long": "^5.0.0", "protobufjs": "^7.2.5", "yargs": "^17.7.2" }, "bin": { "proto-loader-gen-types": "build/bin/proto-loader-gen-types.js" } }, "sha512-tMXdRCfYVixjuFK+Hk0Q1s38gV9zDiDJfWL3h1rv4Qc39oILCu1TRTDt7+fGUI8K4G1Fj125Hx/ru3azECWTyQ=="],
 
+    "@happy-dom/global-registrator": ["@happy-dom/global-registrator@17.6.3", "", { "dependencies": { "happy-dom": "^17.6.3" } }, "sha512-SE8Mu6bdkgKENemVg20yMrKdYeAvVesQrLPVfNBKnhicCM3ylHV9oIDzDMxSFj3qYCrHrIWOZsItOXSafrM4Tw=="],
+
     "@humanfs/core": ["@humanfs/core@0.19.2", "", { "dependencies": { "@humanfs/types": "^0.15.0" } }, "sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA=="],
 
     "@humanfs/node": ["@humanfs/node@0.16.8", "", { "dependencies": { "@humanfs/core": "^0.19.2", "@humanfs/types": "^0.15.0", "@humanwhocodes/retry": "^0.4.0" } }, "sha512-gE1eQNZ3R++kTzFUpdGlpmy8kDZD/MLyHqDwqjkVQI0JMdI1D51sy1H958PNXYkM2rAac7e5/CnIKZrHtPh3BQ=="],
@@ -962,6 +981,8 @@
     "@mentra/engine-host-internal": ["@mentra/engine-host-internal@workspace:modules/engine-host-internal"],
 
     "@mentra/entra-auth": ["@mentra/entra-auth@workspace:modules/entra-auth"],
+
+    "@mentra/frame-preview": ["@mentra/frame-preview@workspace:modules/frame-preview"],
 
     "@mentra/glasses-media": ["@mentra/glasses-media@workspace:modules/glasses-media"],
 
@@ -1228,6 +1249,8 @@
     "@types/node": ["@types/node@25.9.3", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-603BddQMv3pUcr4U2dhujk83N2tTDVr/34wII2B6bJy6g+8WD6yUb11jszNs0gdi4PesVWl7ABt8nYMVpnLUcg=="],
 
     "@types/react": ["@types/react@19.2.17", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-MXfmqaVPEVgkBT/aY0aGCkRWWtByiYQXo3xdQ8r5RzuFrPiRn8Gar2tQdXSUQ2GKV3bkXckek89V8wQBY2Q/Aw=="],
+
+    "@types/react-dom": ["@types/react-dom@19.3.0", "", { "peerDependencies": { "@types/react": "^19.3.0" } }, "sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q=="],
 
     "@types/semver": ["@types/semver@7.7.1", "", {}, "sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA=="],
 
@@ -1870,6 +1893,8 @@
     "gopd": ["gopd@1.2.0", "", {}, "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg=="],
 
     "graceful-fs": ["graceful-fs@4.2.11", "", {}, "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ=="],
+
+    "happy-dom": ["happy-dom@17.6.3", "", { "dependencies": { "webidl-conversions": "^7.0.0", "whatwg-mimetype": "^3.0.0" } }, "sha512-UVIHeVhxmxedbWPCfgS55Jg2rDfwf2BCKeylcPSqazLz5w3Kri7Q4xdBJubsr/+VUzFLh0VjIvh13RaDA2/Xug=="],
 
     "has-bigints": ["has-bigints@1.1.0", "", {}, "sha512-R3pbpkcIqv2Pm3dUwgjclDRVmWpTJW2DcMzcIhEXEx1oh/CEMObMm3KLmRJOdvhM7o4uQBnwr8pzRK2sJWIqfg=="],
 

@@ -82,6 +82,8 @@ export function DeviceSettingsSection() {
     isAr99Identifier(defaultWearable) ||
     isAr99Identifier(glassesInfo.model) ||
     isAr99Identifier(glassesInfo.bluetoothName)
+  const isMentraLive =
+    defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
   const showAr99OtaEntry =
     deploymentStore.getActive().kind === "consumer" &&
     glassesConnected &&
@@ -225,14 +227,13 @@ export function DeviceSettingsSection() {
         onPress={() => push("/miniapps/settings/microphone")}
       />
 
-      {superMode &&
-        (defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)) && (
-          <RouteButton
-            label="Wear Detection"
-            subtitle="Tune the don/doff vote window (cs_weartun)."
-            onPress={() => push("/miniapps/settings/wear-tuning")}
-          />
-        )}
+      {superMode && isMentraLive && (
+        <RouteButton
+          label="Wear Detection"
+          subtitle="Tune the don/doff vote window (cs_weartun)."
+          onPress={() => push("/miniapps/settings/wear-tuning")}
+        />
+      )}
 
       {/* WiFi — connected glasses that support WiFi */}
       {showAr99OtaEntry && (

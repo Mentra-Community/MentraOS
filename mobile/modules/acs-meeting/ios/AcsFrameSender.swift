@@ -20,21 +20,23 @@ final class AcsFrameSender: NSObject {
         stream.delegate = self
     }
 
-    func send(_ pixelBuffer: CVPixelBuffer) {
+    /// True when the frame was handed to ACS; false when readiness, pacing or the send gate dropped it.
+    @discardableResult
+    func send(_ pixelBuffer: CVPixelBuffer) -> Bool {
         stateLock.lock()
         guard running, let stream else {
             stateLock.unlock()
-            return
+            return false
         }
         let fps = stream.format.framesPerSecond
         let now = CFAbsoluteTimeGetCurrent()
         if lastSent > 0, now - lastSent < 1.0 / Double(max(fps, 1)) {
             stateLock.unlock()
-            return
+            return false
         }
         guard let token = sendGate.acquire() else {
             stateLock.unlock()
-            return
+            return false
         }
         lastSent = now
         stateLock.unlock()
@@ -48,6 +50,7 @@ final class AcsFrameSender: NSObject {
             sendGate.release(token)
             if let error { NSLog("ACS-SPIKE send frame failed: \(error)") }
         }
+        return true
     }
 
     func detach() {

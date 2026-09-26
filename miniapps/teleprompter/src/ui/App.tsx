@@ -1,5 +1,5 @@
-import {useEffect, useState} from "react"
-import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
+import {useEffect} from "react"
+import {useColorScheme, useHistoryState, useSafeArea} from "@mentra/miniapp/ui"
 
 import {BottomNav, type Tab} from "./components/BottomNav"
 import {Header} from "./components/Header"
@@ -17,7 +17,7 @@ import {HEADER_FROM, HEADER_TO} from "./lib/theme"
  * (preview + transport + editor) and Settings.
  */
 export function App() {
-  const [activeTab, setActiveTab] = useState<Tab>("script")
+  const [activeTab, setActiveTab] = useHistoryState<Tab>("tab", "script")
   const scheme = useColorScheme()
   const {insets} = useSafeArea()
 

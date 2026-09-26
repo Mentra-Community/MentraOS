@@ -1,6 +1,6 @@
 {
   "name": "@mentra/bluetooth-sdk",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "description": "SDK for communicating with smart glasses",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -114,7 +114,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@mentra/cloud-protocol": "3.2.1"
+    "@mentra/cloud-protocol": "3.3.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",

@@ -88,6 +88,11 @@ android {
     namespace "com.mentra.lc3Lib"
     compileSdk 33
 
+    // Reuse the host's NDK instead of downloading AGP's default alongside it.
+    if (rootProject.ext.has('ndkVersion')) {
+        ndkVersion rootProject.ext.ndkVersion
+    }
+
     publishing {
         singleVariant("release") {
             withSourcesJar()

@@ -138,7 +138,10 @@ class PhoneStreamCoordinator extends BaseCoordinator {
             ssid: "glasses",
             password: "password",
           }),
-          startGlasses: (request) => startStream(request) as never,
+          startGlasses: (request) => {
+            status("connected", "Phone publisher connected")
+            return startStream(request) as never
+          },
           stopGlasses: stopStream,
           connected,
           deferredStop,
@@ -574,6 +577,46 @@ describe("PhoneStreamCoordinator", () => {
       expect(result.mode).toBe("webrtc")
       expect(getManagedStreamStatus).toHaveBeenCalledTimes(1)
       await coord.stop("com.a")
+    })
+
+    test("Cloudflare connected cannot unlock playback before the native uplink connects", async () => {
+      let relayStatus!: (status: string, reason: string) => void
+      const coord = new PhoneStreamCoordinator(
+        {
+          cloudflareStartupPollInitialMs: 5,
+          cloudflareStatusPollMs: 5,
+        },
+        {
+          relayFactory: (_options, status) => {
+            relayStatus = status
+            return {
+              start: async () => undefined,
+              stop: async () => {},
+              cancel() {},
+              owns: () => false,
+              handleGlassesStatus() {},
+            }
+          },
+        },
+      )
+      const updates: string[] = []
+      coord.setStatusSubscriber((_pkg, update) => updates.push(update.status))
+      let resolved = false
+      const starting = coord.startManaged("com.a", {ingest: "whip"}).then((result) => {
+        resolved = true
+        return result
+      })
+      try {
+        await settle(20)
+        expect(getManagedStreamStatus).toHaveBeenCalled()
+        expect(resolved).toBe(false)
+        expect(updates).not.toContain("webrtc_ready")
+        relayStatus("connected", "Phone publisher connected")
+        await starting
+        expect(updates).toContain("webrtc_ready")
+      } finally {
+        await coord.stop("com.a")
+      }
     })
 
     test("WHIP BLE start timeout does not fall back to RTMP", async () => {

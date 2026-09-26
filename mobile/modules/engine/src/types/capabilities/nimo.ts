@@ -1,8 +1,8 @@
 /**
  * @fileoverview NIMO hardware capabilities.
  *
- * NIMO uses framed UART-over-BLE for widget content and a separate Opus
- * microphone channel.
+ * NIMO uses framed Companion commands for Dynamic Layout V1 canvas content
+ * and a separate Opus microphone channel. Requires dynamic-capable firmware.
  */
 
 import type {Capabilities} from "../hardware"
@@ -17,12 +17,25 @@ export const nimo: Capabilities = {
     isColor: false,
     color: "green",
     canDisplayBitmap: true,
-    // Bitmaps render into the 160x160 2bpp navigation widget. The resolution
-    // below remains the existing text-display placeholder until hardware
-    // screen information is available.
-    resolution: {width: 640, height: 400},
-    maxTextLines: 5,
+    // Public logical canvas; the 540×280 physical framebuffer includes margins.
+    resolution: {width: 500, height: 220},
+    maxTextLines: 11,
     adjustBrightness: true,
+    width: 500,
+    height: 220,
+    canPosition: true,
+    // Host policy ceilings, not independent firmware pool guarantees. Rects
+    // share the host text budget. The host profile also enforces aggregate
+    // object/text/pixel limits and reserves worst-case encoded frame bytes;
+    // native validates the final encoding again before transmission.
+    maxTextElements: 32,
+    maxImageElements: 4,
+    maxImagePx: {width: 200, height: 200},
+    shapes: ["rect"],
+    // Production image encoding is 2bpp, despite the physical panel's 4bpp.
+    intensityLevels: 4,
+    // The communicator serializes the complete scene as a replacement frame.
+    partialUpdate: false,
   },
   hasMicrophone: true,
   microphone: {

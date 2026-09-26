@@ -18,7 +18,13 @@ case "${BRANCH:-}" in
     ;;
 esac
 
-if [[ -z "$webhook_url" ]]; then
+bot_channel="${SLACK_DEV_BUILDS_CHANNEL_ID:-}"
+[[ "${BRANCH:-}" != staging ]] || bot_channel="${SLACK_STAGING_BUILDS_CHANNEL_ID:-}"
+use_bot=false
+if [[ "${RELEASE_SCOPE:-core}" != examples && -n "${SLACK_BUILDS_BOT_TOKEN:-}" && "$bot_channel" =~ ^C[A-Z0-9]+$ ]]; then
+  use_bot=true
+fi
+if [[ -z "$webhook_url" && "$use_bot" != true ]]; then
   echo "::warning::$webhook_secret is not set; skipping the $channel_label release notification."
   exit 0
 fi
@@ -140,11 +146,11 @@ play_detail="${PLAY_TRACK:-unknown}"
 if [[ "${UPLOAD_GOOGLE_PLAY:-true}" == "false" ]]; then
   play_detail="dev uploads paused; APK/AAB downloads remain available"
 fi
-android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${play_detail}"
+android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Android: $(icon "$android_result") $(label "$android_result") · Google Play: ${play_detail}"
 if [[ -n "${PLAY_INSTALL_URL:-}" ]]; then
   android_line+=" - <${PLAY_INSTALL_URL}|Install from Google Play>"
 fi
-ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
+ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}iOS: $(icon "$ios_result") $(label "$ios_result") · TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
 if [[ -n "${TESTFLIGHT_DISTRIBUTION_STATUS:-}" ]]; then
   ios_line+=" - ${TESTFLIGHT_DISTRIBUTION_STATUS}"
 fi
@@ -180,7 +186,21 @@ else
   checks_line+="${newline}Examples and docs dispatch: $(icon "${EXAMPLES_DISPATCH_RESULT:-unknown}") $(label "${EXAMPLES_DISPATCH_RESULT:-unknown}") - <${examples_url}|View separate workflow>"
 fi
 
+platforms='[]'
+routines='[]'
+if [[ "$scope" != examples ]]; then
+  platforms=$(node "$(dirname -- "$0")/coordinated-downloads-slack.mjs" platforms)
+  routines=$(node "$(dirname -- "$0")/coordinated-downloads-slack.mjs" routines)
+  if [[ -n "${OTA_MANIFEST_URL:-}" ]]; then
+    targets=$(node "$(dirname -- "$0")/coordinated-downloads-slack.mjs" ota)
+    asg_line+="${newline}${targets}${newline}<${OTA_MANIFEST_URL}|OTA manifest>"
+    asg_line+="${newline}Install the Mentra App, connect your glasses, and follow the update prompt to reach these versions."
+  fi
+fi
+
 payload=$(jq -n \
+  --argjson platforms "$platforms" \
+  --argjson routines "$routines" \
   --arg scope "$scope" \
   --arg header "$header_icon $header_text" \
   --arg commit "$commit_subject" \
@@ -204,9 +224,10 @@ payload=$(jq -n \
         {type: "section", text: {type: "mrkdwn", text: $starter}},
         {type: "section", text: {type: "mrkdwn", text: $docs}}
       else
-        {type: "section", text: {type: "mrkdwn", text: $android}},
-        {type: "section", text: {type: "mrkdwn", text: $ios}},
-        {type: "section", text: {type: "mrkdwn", text: $asg}}
+        $platforms[],
+        {type: "section", text: {type: "mrkdwn", text: (($android | split("\n")[1]) + "\n" + ($ios | split("\n")[1]))}},
+        {type: "section", text: {type: "mrkdwn", text: $asg}},
+        $routines[]
       end),
       {type: "section", text: {type: "mrkdwn", text: $checks}},
       {type: "context", elements: [{type: "mrkdwn", text: $context}]}
@@ -218,8 +239,12 @@ if [[ "${SLACK_NOTIFY_DRY_RUN:-}" == "true" ]]; then
   exit 0
 fi
 
-curl --fail --silent --show-error --retry 3 \
-  --header "Content-Type: application/json" \
-  --data "$payload" \
-  "$webhook_url"
+if [[ "$use_bot" == true ]]; then
+  printf '%s\n' "$payload" | node "$(dirname -- "$0")/release-slack-message.mjs"
+else
+  curl --fail --silent --show-error --retry 3 \
+    --header "Content-Type: application/json" \
+    --data "$payload" \
+    "$webhook_url"
+fi
 echo

@@ -491,10 +491,11 @@ export class TextWrapper {
 
     // Remove characters until hyphen fits
     while (adjustedWidth + hyphenWidth > maxWidthPx && adjustedLine.length > opts.minCharsBeforeHyphen) {
-      const lastChar = adjustedLine[adjustedLine.length - 1];
+      const glyphs = Array.from(adjustedLine);
+      const lastChar = glyphs[glyphs.length - 1];
       const lastCharWidth = this.measurer.measureChar(lastChar);
 
-      adjustedLine = adjustedLine.slice(0, -1);
+      adjustedLine = adjustedLine.slice(0, -lastChar.length);
       adjustedWidth -= lastCharWidth;
       remainder = lastChar + remainder;
 

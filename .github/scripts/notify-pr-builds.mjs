@@ -1,15 +1,16 @@
+import {androidReceiptName, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
+import {MOBILE_PR_PATHS, prBackend} from "./pr-mobile-build.mjs"
 import {createHash} from "node:crypto"
-import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
+import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
+import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
 
 export function iosBuildRequired(files) {
-  return files.some(
-    ({filename}) =>
-      filename.startsWith("mobile/") ||
-      filename === ".github/workflows/mentra-app-ios-build.yml" ||
-      filename === ".github/workflows/reusable-pr-build-notification.yml" ||
-      filename.startsWith(".github/scripts/pr-ios-artifacts"),
+  return files.some(({filename}) =>
+    MOBILE_PR_PATHS.some((pattern) =>
+      pattern.endsWith("*") ? filename.startsWith(pattern.replace(/\*+$/, "")) : filename === pattern,
+    ),
   )
 }
 
@@ -27,6 +28,7 @@ export async function verifyIosTextArtifact(response, kind, asset) {
   if (bytes.length !== asset.size) throw new Error(`Published ${kind} download size disagrees with its receipt`)
   if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
     throw new Error(`Published ${kind} download hash disagrees with its receipt`)
+  return kind === "install" && bytes.toString("utf8").includes('data-mentra-mac-install="1"')
 }
 
 export function readOtaTargets(manifest, number, sha) {
@@ -51,7 +53,11 @@ export function readOtaTargets(manifest, number, sha) {
   return {asg, bes: bes.version, mtk: mtk.end_firmware}
 }
 
-export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios}) {
+const backendName = (backend) => (backend === "staging" ? "Staging" : "Dev")
+
+/** `backend` is shown only when a published receipt verified it for this PR's destination. */
+export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios, routines = [],
+  backend, unverifiedBackend = []}) {
   const ready = !error && !ios?.error
   const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
   const lines = [
@@ -66,18 +72,27 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     if (ios.assets.install)
       iphoneLinks.push(
         richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
-        richLink(ios.assets.install, "Install via Safari"),
+        richLink(ios.assets.install, "Share install link"),
       )
-    iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
+    else iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
   }
+  const macLinks = ios?.assets
+    ? [
+        ...(ios.macInstallUrl ? [richLink(ios.macInstallUrl, "Install on Mac")] : []),
+        richLink(ios.assets.mac, ios.macInstallUrl ? "First-time setup ZIP" : "Download ZIP"),
+      ]
+    : []
   // Slack's webhook mrkdwn parser escapes itms-services links as literal text.
-  // Rich-text link elements preserve the direct install action and aligned rows.
+  // Rich-text links open the installer on iPhone; Slack renders them as plain
+  // text on Mac, so also include the HTTPS installation page for sharing.
+  // Mac installation uses HTTPS too; the browser performs the custom-protocol
+  // handoff instead of depending on Slack's handling of a new URL scheme.
   const platforms = {
     type: "rich_text",
     elements: [
       ["iphone", "Android", error ? [] : [richLink(androidUrl, "Download APK")], "Unavailable"],
       ["iphone", "iOS", iphoneLinks, appleStatus],
-      ["computer", "macOS", ios?.assets ? [richLink(ios.assets.mac, "Download ZIP")] : [], appleStatus],
+      ["computer", "macOS", macLinks, appleStatus],
     ].map(([icon, name, links, status]) => ({
       type: "rich_text_section",
       elements: [
@@ -94,7 +109,8 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   if (ios?.error) lines.push(`*iOS / macOS:* ${escape(ios.error)}`)
   if (!error || ios?.assets)
     lines.push(
-      `Backend: *Dev*${!error ? " · Android ARM64" : ""}${
+      `Backend: ${backend ? `*${backendName(backend)}*` : "not verified"}${
+        backend && unverifiedBackend.length ? ` (${unverifiedBackend.join(", ")} not verified)` : ""}${!error ? " · Android ARM64" : ""}${
         ios?.assets
           ? ` · Apple devices must be registered · ${link(ios.instructionsUrl, "Installation instructions")}`
           : ""
@@ -110,9 +126,16 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
       )}`,
     )
     lines.push(
-      "Install the APK, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
+      "Install the app, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
     )
   }
+  for (const routine of routines)
+    lines.push(
+      `*Requested tests:* ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n${[
+        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable || `Results link available with the ${deviceRoutine(routine.id).platform === "android" ? "Android" : "Mac"} build`,
+        link(routine.pipelineUrl, routine.pipelineLabel),
+      ].join(" · ")}\nResults appear after the device run is uploaded.`,
+    )
   lines.push(
     `${link(pr.html_url, "View PR and checks")} · ${link(androidRunUrl, "Android build logs")}${
       ios?.runUrl ? ` · ${link(ios.runUrl, "iOS / macOS build logs")}` : ""
@@ -127,6 +150,73 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     unfurl_media: false,
     blocks,
   }
+}
+
+export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId = "day1-ota"}) {
+  if (
+    !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
+    !Number.isSafeInteger(pr) ||
+    pr <= 0 ||
+    !/^[a-f0-9]{40}$/.test(sha) ||
+    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !Object.hasOwn(DEVICE_ROUTINES, routineId)
+  )
+    return null
+  // Results are stored centrally regardless of the app backend. This is the deployed
+  // admin origin documented in cloud-v2/docs/prds/admin-console.md, not the worker's UI.
+  const url = new URL("https://admin.dev.mentraglass.com/")
+  url.search = new URLSearchParams({
+    testRuns: "1",
+    repository,
+    pr: String(pr),
+    headSha: sha,
+    archiveSha256,
+    routineId,
+    platform: DEVICE_ROUTINES[routineId].platform === "android" ? "android" : "ios-mac",
+  }).toString()
+  return url.href
+}
+
+async function requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested}) {
+  if (!requested.length) return []
+  const repository = `${context.repo.owner}/${context.repo.repo}`
+  const workflow = "request-e2e-routine.yml"
+  const result = {
+    pipelineUrl: `https://github.com/${repository}/actions/workflows/${workflow}`,
+    pipelineLabel: "Request pipeline (workflow)",
+  }
+  try {
+    const {data} = await github.rest.actions.listWorkflowRuns({
+      ...context.repo,
+      workflow_id: workflow,
+      head_sha: sha,
+      event: "pull_request",
+      per_page: 100,
+    })
+    // One branch/head can back several PRs with different base branches. A
+    // request belongs to a PR, so require its unambiguous Actions association.
+    const associated = data.workflow_runs.filter(
+      (run) => run.pull_requests?.length === 1 && run.pull_requests[0]?.number === pr.number,
+    )
+    const run = matchingBuildRun(associated, pr, sha)
+    if (
+      run &&
+      Number.isSafeInteger(run.id) &&
+      run.id > 0 &&
+      Number.isSafeInteger(run.run_attempt) &&
+      run.run_attempt > 0
+    ) {
+      result.pipelineUrl = `https://github.com/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}`
+      result.pipelineLabel = "Request pipeline"
+    }
+  } catch (error) {
+    // Request creation and hardware are independent of build availability. A
+    // missing/pending request or a lookup failure must not gate the build post.
+    core.warning(`Could not locate this revision's routine request; linking its workflow: ${error.message}`)
+  }
+  return requested.map(id => ({...result, id,
+    ...(DEVICE_ROUTINES[id].platform === "android" && android.receiptUnavailable
+      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
+    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: DEVICE_ROUTINES[id].platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id})}))
 }
 
 export function matchingBuildRun(runs, pr, sha) {
@@ -214,14 +304,21 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const repo = context.repo
   let pr = context.payload.pull_request
   const sha = pr.head.sha
+  // Snapshot the live destination. Artifacts are validated against it and a
+  // retarget before sending suppresses the post instead of relabelling builds.
+  let destination
   const current = async () => {
     pr = (await github.rest.pulls.get({...repo, pull_number: pr.number})).data
-    return pr.state === "open" && pr.head.sha === sha
+    destination ??= pr.base.ref
+    return pr.state === "open" && pr.head.sha === sha && pr.base.ref === destination
   }
   if (!(await current())) {
     core.info("PR closed or superseded; no notification.")
     return
   }
+  const backend = prBackend(destination)
+  const mismatch = (platform, actual) =>
+    `${platform} was built for ${["dev", "staging"].includes(actual) ? `the ${backendName(actual)}` : "an unrecorded"} backend, but this PR now targets ${destination}; rebuild it for this destination.`
   const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100})
   const ios = {required: iosBuildRequired(files)}
   const [androidBuild, asgBuild, iosBuild] = await Promise.all([
@@ -245,14 +342,15 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     androidBuild.conclusion !== "success"
       ? `Android build ${androidBuild.conclusion}; no ready-to-test build is available.`
       : asgBuild.conclusion !== "success"
-      ? `ASG + OTA ${asgBuild.conclusion}; Android is not ready to test.`
-      : null
+        ? `ASG + OTA ${asgBuild.conclusion}; Android is not ready to test.`
+        : null
   if (ios.required) {
     ios.runUrl = iosRun.html_url
     if (iosBuild.conclusion !== "success") ios.error = `iOS ${iosBuild.conclusion}; downloads are not ready.`
   }
   const base = `https://artifactscdn.mentraglass.com/${repo.owner}/${repo.repo}/releases/pr-builds`
-  const androidUrl = `${base}/mobile-pr-${pr.number}-${sha.slice(0, 7)}.apk`
+  // Mutable compatibility alias, linked only while the immutable receipt is unavailable.
+  let androidUrl = `${base}/mobile-pr-${pr.number}-${sha.slice(0, 7)}.apk`
   const manifestUrl = `${base}/ota-pr-${pr.number}-${sha}.json`
   let targets
   const request = async (url, method = "GET") => {
@@ -263,7 +361,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   if (!error) {
     try {
       targets = readOtaTargets(await (await request(manifestUrl)).json(), pr.number, sha)
-      await request(androidUrl, "HEAD")
       const asg = await request(targets.asg.apkUrl, "HEAD")
       const size = asg.headers.get("content-length")
       if (size && Number(size) !== targets.asg.apkSize)
@@ -282,18 +379,54 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       )
       const receipt = await (await request(receiptUrl)).json()
       const assets = validateIosReceipt(receipt, coordinates)
+      if (receipt.app?.backend !== backend) throw new Error(mismatch("iOS / macOS", receipt.app?.backend))
       const urls = {}
+      let macHandoff = false
       for (const [kind, asset] of Object.entries(assets)) {
         urls[kind] = artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds", asset.name)
         const response = await request(urls[kind], iosTextTypes[kind] ? "GET" : "HEAD")
-        if (iosTextTypes[kind]) await verifyIosTextArtifact(response, kind, asset)
-        else if (Number(response.headers.get("content-length")) !== asset.size)
+        if (iosTextTypes[kind]) {
+          if (await verifyIosTextArtifact(response, kind, asset)) macHandoff = true
+        } else if (Number(response.headers.get("content-length")) !== asset.size)
           throw new Error(`Published ${kind} download size disagrees with its receipt`)
       }
       ios.assets = urls
+      ios.backend = backend
+      ios.archiveSha256 = assets.mac.sha256
+      if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.runAttempt)
       ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/mobile/ci/pr-ios/README.md`
     } catch (failure) {
       ios.error = failure.message
+    }
+  }
+  const android = {}
+  if (!error) {
+    // The selected publication's receipt is the only evidence of the APK's backend.
+    let receipt, asset
+    try {
+      const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
+      receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
+        androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
+      asset = validateAndroidReceipt(receipt, coordinates).android
+    } catch (failure) {
+      receipt = undefined
+      core.warning(`Android receipt unavailable: ${failure.message}; publish available downloads and keep receipt verification retryable.`)
+      android.receiptUnavailable = true
+    }
+    try {
+      if (!receipt) await request(androidUrl, "HEAD")
+      else if (receipt.app.backend !== backend) error = mismatch("Android", receipt.app.backend)
+      else {
+        // Link the exact receipt-bound APK; the alias may hold another attempt's bytes.
+        const url = artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds", asset.name)
+        if (Number((await request(url, "HEAD")).headers.get("content-length")) !== asset.size)
+          throw new Error("Published Android APK size disagrees with its receipt")
+        androidUrl = url
+        android.backend = backend
+        android.archiveSha256 = asset.sha256
+      }
+    } catch (failure) {
+      error = failure.message
     }
   }
   const comments = await github.paginate(github.rest.issues.listComments, {
@@ -303,17 +436,39 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   })
   const comment = comments.find((item) => item.user?.type === "Bot" && item.body?.startsWith(marker))
   const incomplete = Boolean(error || ios.error)
-  const identity = `${sha}:${incomplete ? "incomplete" : "ready"}:${builds
+  const publicationIdentity = builds
     .map((build) => `${build.run.id}-${build.attempt}`)
-    .join(":")}`
+    .join(":")
+  // Selected routines are part of the delivered post, so a label added to the same
+  // publications posts their requested tests and result links once.
+  const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}${
+    requested.length ? `:routines-${requested.join(",")}` : ""}`
+  if (android.receiptUnavailable) {
+    const previous = comment?.body.split("\n").map(line =>
+      new RegExp(`^<!-- ${buildIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
+    if (previous) {
+      // A transient receipt miss must not downgrade a post already verified for this exact
+      // build identity, readiness included, so this matches it and nothing is reposted. When
+      // readiness changed, the new post stays receipt-unavailable so a later verified receipt
+      // enriches it once instead of being suppressed by a reused verified identity.
+      android.archiveSha256 = previous[1]
+      android.receiptUnavailable = false
+    }
+  }
+  // A verified APK binds its immutable hash; an unverified backend is distinct so a
+  // later notification can replace it once its receipt verifies.
+  const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
     core.info("This PR revision's notification was already delivered.")
     return
   }
+  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested})
   if (!(await current())) {
-    core.info("PR superseded before notification.")
+    core.info("PR superseded or retargeted before notification.")
     return
   }
+  routines = routines.filter(routine => hasRoutineLabel(pr, routine.id))
   const payload = buildPost({
     pr,
     sha,
@@ -324,6 +479,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     asgRunUrl: asgRun?.html_url,
     error,
     ios,
+    routines,
+    backend: android.backend ?? ios.backend,
+    unverifiedBackend: !error && !android.backend ? ["Android"] : [],
   })
   // No automatic POST retry: an ambiguous network failure must not duplicate a post.
   const response = await fetchImpl(webhook, {
@@ -339,9 +497,19 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     downloads.push(
       `${ios.assets.install ? `[Install on iPhone](${ios.assets.install}) · ` : ""}[Download iPhone IPA](${
         ios.assets.iphone
-      }) · [Download Mac app](${ios.assets.mac}) · [Installation instructions](${ios.instructionsUrl})`,
+      }) · ${ios.macInstallUrl ? `[Install on Mac](${ios.macInstallUrl}) · ` : ""}[Download Mac app](${
+        ios.assets.mac
+      }) · [Installation instructions](${ios.instructionsUrl})`,
     )
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
+  for (const routine of routines)
+    downloads.push(
+      `**Requested tests:** ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n\n${[
+        ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
+        ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
+        `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
+      ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
+    )
   const body = `${marker}\n<!-- ${identity} -->\n${
     incomplete ? "⚠️ PR build incomplete" : "✅ PR build ready to test"
   } for \`${sha.slice(0, 7)}\` — posted to **#pr-builds**.\n\n${downloads.join(

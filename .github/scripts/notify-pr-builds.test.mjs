@@ -5,6 +5,7 @@ import {createServer} from "node:http"
 import test from "node:test"
 import {readFileSync} from "node:fs"
 import {brotliCompressSync} from "node:zlib"
+import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 import {
   iosBuildRequired,
   buildPost,
@@ -12,6 +13,7 @@ import {
   notifyPrBuilds,
   readOtaTargets,
   verifyIosTextArtifact,
+  routineResultsUrl,
 } from "./notify-pr-builds.mjs"
 
 const sha = "a".repeat(40)
@@ -74,6 +76,15 @@ test("Slack escapes PR text and includes all three firmware targets", () => {
   assert.match(body, /26\.9\.7\.0/)
   assert.match(body, /MentraLive_20260908\.0/)
   assert.doesNotMatch(body, /WRONG|TestFlight|Google Play/)
+  // Only a receipt-verified backend is named; the live PR base alone is not evidence.
+  assert.match(body, /Backend: not verified/)
+  const post = (options) => JSON.stringify(buildPost({pr: {...pr, base: {ref: "staging"}}, sha, androidUrl: "https://example.com/a.apk",
+    manifestUrl: "https://example.com/m.json", targets: readOtaTargets(manifest, 123, sha), androidRunUrl: run.html_url, ...options}).blocks)
+  assert.match(post({}), /feature → staging/)
+  assert.match(post({}), /Backend: not verified/)
+  assert.match(post({backend: "staging"}), /Backend: \*Staging\* · Android ARM64/)
+  assert.match(post({backend: "staging", unverifiedBackend: ["Android"]}), /Backend: \*Staging\* \(Android not verified\)/)
+  assert.match(post({backend: "dev"}), /Backend: \*Dev\*/)
 })
 
 const iosRun = {...run, id: 3}
@@ -84,6 +95,7 @@ const iosReceipt = {
   buildSha: "b".repeat(40),
   runId: 3,
   runAttempt: 1,
+  app: {backend: "dev"},
   artifacts: Object.fromEntries(
     [
       ["iphone", "ipa"],
@@ -99,6 +111,12 @@ const iosReceipt = {
   ),
 }
 const androidRun = {...run, id: 2, html_url: "https://github.com/o/r/actions/runs/2"}
+// Every Android PR publication commits this receipt beside its APK.
+const androidReceipt = (backend = "dev", digest = "e".repeat(64)) => ({schemaVersion: 1, pr: 123, headSha: sha,
+  baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
+  app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40), backend,
+    otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
+  artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 10}}})
 const job = (name, conclusion = "success", attempt = 1, id = attempt) => ({
   name,
   conclusion,
@@ -115,14 +133,20 @@ function harness(options = {}) {
     ios: iosRun,
     files: [],
     receipt: iosReceipt,
+    androidReceipt: androidReceipt(),
     comments: [],
     currentPr: pr,
     artifactStatus: 200,
     missingMac: false,
     missingInstall: false,
+    missingUrls: [],
+    lengths: {},
     wrongInstallType: false,
     corruptInstall: false,
+    textArtifacts: {},
     jobs: {},
+    routineRuns: [],
+    routineLookupError: false,
     ...options,
   }
   const posts = [],
@@ -133,19 +157,27 @@ function harness(options = {}) {
     rest: {
       pulls: {get: async () => ({data: state.currentPr}), listFiles: "files"},
       actions: {
-        listWorkflowRuns: async ({workflow_id}) => ({
-          data: {
-            workflow_runs: [
-              state[
-                workflow_id === "mentra-app-ios-build.yml"
-                  ? "ios"
-                  : workflow_id === "mentra-app-android-build.yml"
-                  ? "android"
-                  : "asg"
-              ],
-            ].filter(Boolean),
-          },
-        }),
+        listWorkflowRuns: async ({workflow_id, head_sha, event}) => {
+          if (workflow_id === "request-e2e-routine.yml") {
+            assert.equal(head_sha, sha)
+            assert.equal(event, "pull_request")
+            if (state.routineLookupError) throw new Error("Temporary Actions failure")
+            return {data: {workflow_runs: state.routineRuns}}
+          }
+          return {
+            data: {
+              workflow_runs: [
+                state[
+                  workflow_id === "mentra-app-ios-build.yml"
+                    ? "ios"
+                    : workflow_id === "mentra-app-android-build.yml"
+                      ? "android"
+                      : "asg"
+                ],
+              ].filter(Boolean),
+            },
+          }
+        },
         listJobsForWorkflowRun: "jobs",
       },
       issues: {
@@ -184,22 +216,24 @@ function harness(options = {}) {
       options.method === "HEAD"
         ? null
         : isInstallFile
-        ? state.corruptInstall
-          ? "bad bytes!"
-          : "test bytes"
-        : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
+          ? state.corruptInstall
+            ? "bad bytes!"
+            : (state.textArtifacts[url.endsWith(".html") ? "install" : "manifest"] ?? "test bytes")
+          : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt
+            : url.includes("mentra-android-pr-") ? state.androidReceipt : manifest),
       {
         status:
-          (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html"))
+          (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html")) ||
+          state.missingUrls.includes(url)
             ? 404
             : state.artifactStatus,
         headers: {
-          ...(isInstallFile ? {"content-encoding": "br"} : {"content-length": "10"}),
+          ...(isInstallFile ? {"content-encoding": "br"} : {"content-length": state.lengths[url] ?? "10"}),
           "content-type": state.wrongInstallType
             ? "application/octet-stream"
             : url.endsWith(".html")
-            ? "text/html; charset=utf-8"
-            : "text/xml; charset=utf-8",
+              ? "text/html; charset=utf-8"
+              : "text/xml; charset=utf-8",
         },
       },
     )
@@ -219,7 +253,7 @@ function harness(options = {}) {
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
 
-test("publishes a direct Slack install link and Safari fallback only after verifying the complete install set", async () => {
+test("publishes direct iPhone installation and a shareable Safari link without the raw IPA download", async () => {
   const receipt = structuredClone(iosReceipt)
   receipt.schemaVersion = 2
   for (const [kind, ext] of [
@@ -244,10 +278,14 @@ test("publishes a direct Slack install link and Safari fallback only after verif
   assert.ok(platformRows.every((row) => row.type === "rich_text_section" && row.elements[1].style.bold))
   assert.equal(platformRows[0].elements[3].text, "Download APK")
   assert.equal(platformRows[2].elements[3].text, "Download ZIP")
+  assert.deepEqual(
+    platformRows.map((row) => row.elements.filter((element) => element.type === "link").length),
+    [1, 2, 1],
+  )
   const iphoneLinks = platformRows[1].elements.filter((element) => element.type === "link")
   assert.deepEqual(
     iphoneLinks.map((element) => element.text),
-    ["Install on iPhone", "Install via Safari", "Download IPA"],
+    ["Install on iPhone", "Share install link"],
   )
   // A structured link is required: webhook mrkdwn escapes this URL scheme.
   const direct = new URL(iphoneLinks[0].url)
@@ -255,7 +293,12 @@ test("publishes a direct Slack install link and Safari fallback only after verif
   assert.equal(direct.searchParams.get("action"), "download-manifest")
   const verifiedManifest = ready.requests.find((url) => url.endsWith(".plist"))
   assert.equal(direct.searchParams.get("url"), verifiedManifest)
-  assert.match(iphoneLinks[1].url, /^https:\/\/artifactscdn.*\.html$/)
+  assert.equal(
+    iphoneLinks[1].url,
+    ready.requests.find((url) => url.endsWith(".html")),
+  )
+  assert.doesNotMatch(JSON.stringify(ready.posts[0]), /Download IPA/)
+  assert.match(JSON.stringify(ready.posts[0]), /Install the app, connect your Mentra Live glasses/)
   assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
   assert.doesNotMatch(ready.written[0].body, /itms-services:/)
   assert.ok(ready.requests.some((url) => url.endsWith(".plist")))
@@ -272,6 +315,64 @@ test("publishes a direct Slack install link and Safari fallback only after verif
   assert.match(legacy.written[0].body, /Download iPhone IPA/)
   assert.doesNotMatch(legacy.written[0].body, /Install on iPhone/)
   assert.doesNotMatch(JSON.stringify(legacy.posts[0]), /itms-services:/)
+})
+
+test("advertises HTTPS Mac handoff only from a verified capable page and uses the publication attempt", async () => {
+  const receipt = structuredClone(iosReceipt)
+  Object.assign(receipt, {
+    schemaVersion: 2,
+    runAttempt: 2,
+    buildAttempt: 1,
+    app: {
+      bundleId: "com.mentra.mentra",
+      version: "3.2.1",
+      build: "302018377",
+      backend: "dev",
+      macPackageVersion: 2,
+      macInstaller: "Install Mentra.app",
+    },
+    macInstaller: {
+      bundleId: "com.mentra.mac-installer",
+      teamId: "T5XXXL6N36",
+      notarizationStatus: "Accepted",
+      notarizationId: "12345678-abcd-1234-abcd-123456789012",
+      stapled: true,
+    },
+  })
+  const files = iosInstallationFiles(receipt, "o/r")
+  const textArtifacts = {}
+  for (const [kind, file] of Object.entries(files)) {
+    textArtifacts[kind] = file.content
+    receipt.artifacts[kind] = {
+      name: file.name,
+      size: Buffer.byteLength(file.content),
+      sha256: createHash("sha256").update(file.content).digest("hex"),
+    }
+  }
+  const ready = harness({
+    files: [{filename: "mobile/app.config.ts"}],
+    receipt,
+    textArtifacts,
+    ios: {...iosRun, run_attempt: 2},
+  })
+  await notifyPrBuilds(ready.args)
+  const macLinks = ready.posts[0].blocks[3].elements[2].elements.filter((item) => item.type === "link")
+  assert.deepEqual(
+    macLinks.map((item) => item.text),
+    ["Install on Mac", "First-time setup ZIP"],
+  )
+  const handoff = new URL(macLinks[0].url)
+  assert.equal(handoff.protocol, "https:")
+  assert.equal(handoff.search, "?platform=mac&attempt=2")
+  assert.match(handoff.pathname, /-3-1\.html$/)
+  assert.match(macLinks[1].url, /-3-1\.zip$/)
+  assert.doesNotMatch(JSON.stringify(ready.posts[0]), /mentra-install:/)
+  assert.match(ready.written[0].body, /\[Install on Mac\]\(https:[^)]*platform=mac&attempt=2\)/)
+  assert.equal(ready.requests.filter((url) => url.endsWith(".html")).length, 1)
+
+  const corrupted = harness({...ready.state, comments: [], corruptInstall: true})
+  await notifyPrBuilds(corrupted.args)
+  assert.doesNotMatch(JSON.stringify(corrupted.posts[0]), /Install on Mac/)
 })
 
 test("verifies decoded install files through real HTTP compression with missing or compressed Content-Length", async (t) => {
@@ -356,14 +457,35 @@ test("deduplicates completion events and suppresses closed/superseded/cancelled 
 })
 
 test("iOS path applicability matches its filtered workflow", () => {
-  assert.equal(iosBuildRequired([{filename: "cloud-v2/core/index.ts"}]), false)
+  assert.equal(iosBuildRequired([{filename: "README.md"}]), false)
   for (const filename of [
     "mobile/app.config.ts",
+    "asg_client/ota_manifests/firmware_live.json",
+    "cloud-v2/core/index.ts",
     ".github/workflows/mentra-app-ios-build.yml",
     ".github/workflows/reusable-pr-build-notification.yml",
     ".github/scripts/pr-ios-artifacts.test.mjs",
+    ".github/scripts/pr-android-artifacts.mjs",
+    ".github/scripts/pr-android-artifacts.test.mjs",
+    ".github/scripts/ensure-android-ndk.mjs",
+    ".github/scripts/ios-xcodebuild-attempt.sh",
+    ".github/actions/disk-guard/action.yml",
   ])
     assert.equal(iosBuildRequired([{filename}]), true)
+})
+
+test("an Android artifact-helper-only PR reports its triggered iOS build, including a failure", async () => {
+  const files = [{filename: ".github/scripts/pr-android-artifacts.mjs"}]
+  const ready = harness({files})
+  await notifyPrBuilds(ready.args)
+  assert.match(ready.written[0].body, /Download iPhone IPA/)
+  assert.ok(ready.requests.some(url => url.includes("mentra-ios-pr-")))
+  const failed = harness({files, ios: {...iosRun, conclusion: "failure"}})
+  await notifyPrBuilds(failed.args)
+  assert.match(failed.posts[0].text, /incomplete/)
+  assert.match(JSON.stringify(failed.posts[0]), /iOS failure; downloads are not ready/)
+  assert.match(failed.written[0].body, /iOS failure; downloads are not ready/)
+  assert.doesNotMatch(failed.written[0].body, /not built for these changed paths/)
 })
 
 test("pending/missing producers defer to their completion without posting an incomplete result", async () => {
@@ -478,3 +600,403 @@ test("Android failure still allows verified iOS links; cancelled iOS suppresses 
   await notifyPrBuilds(cancelled.args)
   assert.equal(cancelled.posts.length, 0)
 })
+
+test("requested tests link the exact Mac archive and current-head request without waiting for device results", async () => {
+  const h = harness({
+    files: [{filename: "mobile/app.config.ts"}],
+    currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+    routineRuns: [
+      {...run, id: 90, head_sha: "d".repeat(40), pull_requests: [{number: pr.number}]},
+      {...run, id: 91, head_repository: {full_name: "someone/fork"}, pull_requests: [{number: pr.number}]},
+      {...run, id: 9, run_attempt: 2, status: "in_progress", conclusion: null, pull_requests: [{number: pr.number}]},
+    ],
+  })
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap((block) => block.text?.text ?? []).join("\n")
+  assert.match(text, /Requested tests:\* Day-one OTA · iOS on Mac/)
+  assert.match(text, /https:\/\/github.com\/o\/r\/actions\/runs\/9\/attempts\/2\|Request pipeline/)
+  assert.doesNotMatch(text, /Tests passed|Test running|Ready to run|localhost|127\.0\.0\.1/)
+  const results = new URL(text.match(/<(https:[^|]+)\|View results>/)[1])
+  assert.equal(results.origin, "https://admin.dev.mentraglass.com")
+  assert.deepEqual(Object.fromEntries(results.searchParams), {
+    testRuns: "1",
+    repository: "o/r",
+    pr: "123",
+    headSha: sha,
+    archiveSha256: iosReceipt.artifacts.mac.sha256,
+    routineId: "day1-ota",
+    platform: "ios-mac",
+  })
+  assert.match(h.written[0].body, /\[View results\]\(https:\/\/admin\.dev\.mentraglass\.com/)
+  assert.match(text, /Results appear after the device run is uploaded/)
+  h.state.routineRuns[2].status = "completed"
+  h.state.routineRuns[2].conclusion = "success"
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1, "request completion does not change build-post deduplication")
+})
+
+test("request links reject another PR on the same branch/head and ambiguous or missing associations", async () => {
+  const currentRequest = {...run, id: 9, pull_requests: [{number: pr.number}]}
+  const otherRequest = {...run, id: 99, pull_requests: [{number: pr.number + 1, base: {ref: "staging"}}]}
+  const cases = [
+    {runs: [otherRequest, currentRequest], exact: true},
+    {runs: [otherRequest], exact: false},
+    {runs: [{...run, id: 99}], exact: false},
+    {runs: [{...run, id: 99, pull_requests: []}], exact: false},
+    {runs: [{...run, id: 99, pull_requests: [{number: pr.number}, {number: pr.number + 1}]}], exact: false},
+  ]
+  for (const {runs, exact} of cases) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      routineRuns: runs,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.doesNotMatch(body, /actions\/runs\/99/)
+    if (exact) assert.match(body, /actions\/runs\/9\/attempts\/1\|Request pipeline/)
+    else assert.match(body, /request-e2e-routine.yml\|Request pipeline \(workflow\)/)
+  }
+})
+
+test("optional request lookup never gates the build post or substitutes another revision", async () => {
+  for (const options of [
+    {routineRuns: [{...run, id: 90, head_sha: "d".repeat(40), pull_requests: [{number: pr.number}]}]},
+    {routineLookupError: true},
+  ]) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      ...options,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.match(body, /request-e2e-routine.yml\|Request pipeline \(workflow\)/)
+    assert.doesNotMatch(body, /actions\/runs\/90/)
+  }
+  for (const options of [{missingMac: true}, {files: []}]) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      ...options,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.match(body, /Requested tests/)
+    assert.doesNotMatch(body, /\|View results>/)
+  }
+  const unrequested = harness({files: [{filename: "mobile/app.config.ts"}]})
+  await notifyPrBuilds(unrequested.args)
+  assert.doesNotMatch(JSON.stringify(unrequested.posts[0]), /Requested tests|View results|Request pipeline/)
+})
+
+test("result links require a complete build identity", () => {
+  const identity = {repository: "o/r", pr: 123, sha, archiveSha256: "b".repeat(64)}
+  for (const patch of [{repository: "../bad"}, {pr: -1}, {sha: "short"}, {archiveSha256: undefined}, {routineId: "unknown"}])
+    assert.equal(routineResultsUrl({...identity, ...patch}), null)
+})
+
+test("no-glasses and day-one labels link their own exact build results without altering post deduplication", async () => {
+  for (const labels of [["routine:no-glasses"], ["routine:day1-ota", "routine:no-glasses"]]) {
+    const h = harness({files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: labels.map(name => ({name}))}})
+    await notifyPrBuilds(h.args)
+    const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+    assert.match(text, /Requested tests:\* No-glasses UI · iOS on Mac/)
+    const links = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]))
+    assert.deepEqual(links.map(url => url.searchParams.get("routineId")), labels.map(label => label.slice("routine:".length)))
+    for (const url of links) {
+      assert.equal(url.searchParams.get("headSha"), sha)
+      assert.equal(url.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
+      assert.equal(url.searchParams.get("pr"), String(pr.number))
+    }
+    assert.match(h.written[0].body, /No-glasses UI/)
+    await notifyPrBuilds(h.args)
+    assert.equal(h.posts.length, 1)
+  }
+})
+
+test("Mentra Call opt-in adds its exact results link without posting again on retry", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}],
+    currentPr: {...pr, labels: [{name: "routine:mentra-call"}]}})
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+  assert.match(text, /Requested tests:\* Mentra Call · iOS on Mac/)
+  const results = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(results.searchParams.get("routineId"), "mentra-call")
+  assert.equal(results.searchParams.get("headSha"), sha)
+  assert.equal(results.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
+  assert.equal(results.searchParams.get("pr"), String(pr.number))
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+})
+
+
+test("Android opt-in links the APK receipt hash and Android result platform, independently of Mac", async () => {
+  const h = harness({files: [], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
+  const original = h.args.fetchImpl
+  const digest = "e".repeat(64)
+  h.args.fetchImpl = async (url, options) => url.includes("mentra-android-pr-") && url.endsWith(".json") ? new Response(JSON.stringify({
+    schemaVersion: 1, pr: 123, headSha: sha, baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
+    app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40),
+      backend: "dev", otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
+    artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 10}},
+  })) : original(url, options)
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+  assert.match(text, /Android no-glasses UI · Android/)
+  const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(result.searchParams.get("archiveSha256"), digest)
+  assert.equal(result.searchParams.get("platform"), "android")
+  assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
+})
+
+test("an Android routine label added to already delivered publications posts its exact results link once", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: []}})
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.doesNotMatch(JSON.stringify(h.posts[0]), /Requested tests/)
+  // Same source and publications; only the routine selection changes.
+  h.state.currentPr = {...pr, labels: [{name: "routine:no-glasses-android"}]}
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.equal(h.written.length, 2)
+  const text = h.posts[1].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+  assert.match(text, /Requested tests:\* Android no-glasses UI · Android/)
+  const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(result.searchParams.get("archiveSha256"), "e".repeat(64))
+  assert.equal(result.searchParams.get("platform"), "android")
+  assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
+  assert.match(h.written[1].body, /Android no-glasses UI/)
+  assert.ok(h.written[1].body.includes(`archiveSha256=${"e".repeat(64)}`))
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.equal(h.written.length, 2)
+})
+
+
+test("a last-callback Android receipt miss publishes all downloads and later enriches results once", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
+  const original = h.args.fetchImpl, digest = "e".repeat(64)
+  let available = false, reads = 0
+  h.args.fetchImpl = async (url, options) => {
+    if (!url.includes("mentra-android-pr-") || !url.endsWith(".json")) return original(url, options)
+    reads++
+    if (!available) return new Response("temporarily unavailable", {status: 404})
+    return new Response(JSON.stringify({schemaVersion: 1, pr: 123, headSha: sha, baseSha: "b".repeat(40), buildSha: "c".repeat(40), runId: 2, runAttempt: 1,
+      app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: sha, buildSha: "c".repeat(40), backend: "dev",
+        otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${sha}.json`},
+      artifacts: {android: {name: `mentra-android-pr-123-${sha}-2-1.apk`, sha256: digest, size: 10}}}))
+  }
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 1); assert.equal(h.posts.length, 1); assert.equal(h.written.length, 1)
+  assert.ok(h.written[0].body.includes("Download Android APK"))
+  assert.ok(h.written[0].body.includes("Download iPhone IPA"))
+  assert.ok(h.written[0].body.includes("Download Mac app"))
+  assert.ok(h.written[0].body.includes("Android receipt unavailable"))
+  assert.ok(JSON.stringify(h.posts[0]).includes("rerun the build notification"))
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 2); assert.equal(h.posts.length, 1); assert.equal(h.written.length, 1)
+  available = true
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 3); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+  assert.ok(JSON.stringify(h.posts[1]).includes(digest)); assert.ok(h.written[1].body.includes(digest))
+  assert.ok(!h.written[1].body.includes("Android receipt unavailable"))
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 4); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+  available = false
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 5); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+  available = true
+  await notifyPrBuilds(h.args)
+  assert.equal(reads, 6); assert.equal(h.posts.length, 2); assert.equal(h.written.length, 2)
+  h.state.missingMac = true
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 3); assert.match(h.posts[2].text, /incomplete/)
+  assert.ok(h.written[2].body.includes(digest))
+  h.state.missingMac = false
+  available = false
+  // Readiness changed during the miss: publish the Mac download without reusing the
+  // earlier verified Android identity, so the recovered receipt can enrich it once.
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 4); assert.doesNotMatch(h.posts[3].text, /incomplete/)
+  assert.ok(!h.written[3].body.includes(digest)); assert.ok(h.written[3].body.includes("Download Mac app"))
+  assert.ok(h.written[3].body.includes("Android receipt unavailable"))
+  assert.match(h.written[3].body, /:android-receipt-unavailable -->/)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 4); assert.equal(h.written.length, 4)
+  available = true
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 5); assert.doesNotMatch(h.posts[4].text, /incomplete/)
+  assert.ok(JSON.stringify(h.posts[4]).includes(digest)); assert.ok(h.written[4].body.includes(digest))
+  assert.ok(!h.written[4].body.includes("Android receipt unavailable"))
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 5); assert.equal(h.written.length, 5)
+})
+
+const slack = (post) => post.blocks.flatMap(block => block.text?.text ?? []).join("\n")
+const links = (post) => JSON.stringify(post.blocks[3])
+
+const cdn = "https://artifactscdn.mentraglass.com/o/r/releases/pr-builds"
+const aliasApk = `${cdn}/mobile-pr-123-${sha.slice(0, 7)}.apk`
+const immutableApk = `${cdn}/mentra-android-pr-123-${sha}-2-1.apk`
+const bothLinks = (h, index) => `${links(h.posts[index])}\n${h.written[index].body}`
+
+test("a verified post links the receipt's immutable APK, not a replaced alias, and binds its hash", async () => {
+  // The mutable alias was overwritten by another attempt; its bytes no longer match.
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], lengths: {[aliasApk]: "999"}})
+  await notifyPrBuilds(h.args)
+  assert.match(slack(h.posts[0]), /Backend: \*Dev\* · Android ARM64/)
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.ok(bothLinks(h, 0).includes(immutableApk))
+  assert.ok(!bothLinks(h, 0).includes(aliasApk))
+  assert.ok(!h.requests.includes(aliasApk))
+  assert.match(h.written[0].body, new RegExp(`^<!-- ${sha}:ready:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+})
+
+test("a valid immutable APK is ready even when the legacy alias is missing", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], missingUrls: [aliasApk]})
+  await notifyPrBuilds(h.args)
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  assert.ok(bothLinks(h, 0).includes(immutableApk))
+})
+
+test("a missing or wrong immutable APK after a verified receipt is incomplete without an alias fallback", async () => {
+  for (const failure of [{missingUrls: [immutableApk]}, {lengths: {[immutableApk]: "11"}}]) {
+    const h = harness({files: [{filename: "mobile/app.config.ts"}], ...failure})
+    await notifyPrBuilds(h.args)
+    assert.match(h.posts[0].text, /incomplete/)
+    assert.doesNotMatch(slack(h.posts[0]), /Backend: \*Dev\* · Android ARM64/)
+    assert.doesNotMatch(links(h.posts[0]), /Download APK/)
+    assert.doesNotMatch(h.written[0].body, /Download Android APK/)
+    assert.ok(!bothLinks(h, 0).includes(aliasApk))
+    assert.doesNotMatch(h.written[0].body, /:android-/)
+  }
+})
+
+test("a transient receipt miss never downgrades an already verified post", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
+  await notifyPrBuilds(h.args)
+  h.state.androidReceipt = {unavailable: true}
+  await notifyPrBuilds(h.args)
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.equal(h.written.length, 1)
+  // Readiness may still advance during the miss, without claiming a verified Android backend.
+  h.state.androidReceipt = {unavailable: true}
+  h.state.missingMac = true
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.match(h.posts[1].text, /incomplete/)
+  assert.match(slack(h.posts[1]), /Backend: not verified/)
+  assert.ok(bothLinks(h, 1).includes(aliasApk) && !bothLinks(h, 1).includes(immutableApk))
+  // The changed-readiness fallback does not inherit the earlier verified identity.
+  assert.match(h.written[1].body, new RegExp(`^<!-- ${sha}:incomplete:2-1:1-1:3-1:android-receipt-unavailable -->$`, "m"))
+  // The receipt returns while the Mac download is still missing: enrich once, then stay quiet.
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 3)
+  assert.equal(h.written.length, 3)
+  assert.match(h.posts[2].text, /incomplete/)
+  assert.match(slack(h.posts[2]), /Backend: \*Dev\* · Android ARM64/)
+  assert.ok(bothLinks(h, 2).includes(immutableApk) && !bothLinks(h, 2).includes(aliasApk))
+  assert.match(h.written[2].body, new RegExp(`^<!-- ${sha}:incomplete:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
+})
+
+test("an initially missing receipt enriches the post once with the verified immutable APK", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true}})
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.ok(bothLinks(h, 0).includes(aliasApk) && !bothLinks(h, 0).includes(immutableApk))
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.equal(h.written.length, 2)
+  assert.match(slack(h.posts[1]), /Backend: \*Dev\* · Android ARM64/)
+  assert.ok(bothLinks(h, 1).includes(immutableApk) && !bothLinks(h, 1).includes(aliasApk))
+})
+
+test("a same-head retarget never relabels retained builds for the new destination", async () => {
+  const staging = {...pr, base: {ref: "staging"}}
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: staging})
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.match(h.posts[0].text, /incomplete/)
+  const text = slack(h.posts[0])
+  assert.match(text, /Android was built for the Dev backend, but this PR now targets staging/)
+  assert.match(text, /iOS \/ macOS was built for the Dev backend, but this PR now targets staging/)
+  assert.doesNotMatch(text, /Backend:|Glasses OTA/)
+  assert.doesNotMatch(links(h.posts[0]), /Download APK|Install on|Download ZIP/)
+  assert.doesNotMatch(h.written[0].body, /Download Android APK|Download iPhone IPA|Download Mac app/)
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+
+  // Rebuilt publications for the new destination are verified and labelled from their receipts.
+  const rebuilt = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: staging,
+    androidReceipt: androidReceipt("staging"), receipt: {...iosReceipt, app: {backend: "staging"}}})
+  await notifyPrBuilds(rebuilt.args)
+  assert.doesNotMatch(rebuilt.posts[0].text, /incomplete/)
+  assert.match(slack(rebuilt.posts[0]), /Backend: \*Staging\* · Android ARM64/)
+  assert.match(links(rebuilt.posts[0]), /Download APK/)
+})
+
+test("platforms completing separately are each checked against the same destination", async () => {
+  // Android was rebuilt after the retarget; the retained Apple publication was not.
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, base: {ref: "staging"}},
+    androidReceipt: androidReceipt("staging")})
+  await notifyPrBuilds(h.args)
+  assert.match(h.posts[0].text, /incomplete/)
+  const text = slack(h.posts[0])
+  assert.match(text, /Backend: \*Staging\* · Android ARM64/)
+  assert.match(text, /iOS \/ macOS was built for the Dev backend/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  assert.doesNotMatch(links(h.posts[0]), /Install on|Download ZIP/)
+})
+
+test("a retarget while notifying suppresses the post", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
+  let reads = 0
+  h.args.github.rest.pulls.get = async () => ({data: reads++ ? {...pr, base: {ref: "staging"}} : pr})
+  await notifyPrBuilds(h.args)
+  assert.ok(reads >= 2)
+  assert.equal(h.posts.length, 0)
+  assert.equal(h.written.length, 0)
+})
+
+test("an unavailable Android receipt keeps downloads but does not claim their backend", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true}})
+  await notifyPrBuilds(h.args)
+  assert.match(slack(h.posts[0]), /Backend: \*Dev\* \(Android not verified\)/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  assert.match(h.written[0].body, /:android-receipt-unavailable -->/)
+  const androidOnly = harness({androidReceipt: {unavailable: true}})
+  await notifyPrBuilds(androidOnly.args)
+  assert.match(slack(androidOnly.posts[0]), /Backend: not verified/)
+  // Once the receipt verifies, the post is refreshed with its verified backend.
+  h.state.androidReceipt = androidReceipt()
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 2)
+  assert.match(slack(h.posts[1]), /Backend: \*Dev\* · Android ARM64/)
+})
+
+for (const filename of [".github/scripts/ios-xcodebuild-attempt.sh", ".github/actions/disk-guard/action.yml"]) {
+  test(`${filename}-only PR waits for Apple publication and includes all downloads`, async () => {
+    const h = harness({files: [{filename}],
+      jobs: {3: [job("build"), {...job("publish"), status: "in_progress", conclusion: null}]}})
+    await reconcileFromWorkflow("mentra-app-android-build.yml", h, 2)
+    assert.equal(h.posts.length, 0)
+    h.state.jobs = {}
+    await reconcileFromWorkflow("mentra-app-ios-build.yml", h, 3)
+    assert.equal(h.posts.length, 1)
+    assert.match(h.written[0].body, /Download Android APK/)
+    assert.match(h.written[0].body, /Download iPhone IPA/)
+    assert.match(h.written[0].body, /Download Mac app/)
+  })
+}

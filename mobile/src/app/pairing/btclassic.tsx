@@ -1,5 +1,5 @@
 import {useRoute} from "@react-navigation/native"
-import {useEffect, useMemo} from "react"
+import {useEffect, useMemo, useRef, useState} from "react"
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
@@ -8,7 +8,7 @@ import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHist
 import {engine} from "@mentra/engine"
 import type {Device} from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {routePairingKickoffFailure} from "@/utils/PairingUtils"
+import {cancelPendingPairing, routePairingKickoffFailure} from "@/utils/PairingUtils"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -45,10 +45,13 @@ export default function BtClassicPairingScreen() {
   const [savedDeviceName] = useSetting(SETTINGS.device_name.key)
   const deviceName = device?.name || savedDeviceName || ""
   const {theme} = useAppTheme()
+  const cancellingPairing = useRef(false)
+  const [isCancellingPairing, setIsCancellingPairing] = useState(false)
 
   focusEffectPreventBack()
 
   const handleSuccess = () => {
+    if (cancellingPairing.current) return
     if (device) {
       // The loading screen owns the selected-device connect. Revealing it first
       // keeps one cancellable kickoff path for Android, iOS, and controllers.
@@ -70,6 +73,16 @@ export default function BtClassicPairingScreen() {
 
   const handleBack = () => {
     goBack()
+  }
+
+  const handleCancelPairing = async () => {
+    if (cancellingPairing.current) return
+    cancellingPairing.current = true
+    setIsCancellingPairing(true)
+    if (!(await cancelPendingPairing())) {
+      cancellingPairing.current = false
+      setIsCancellingPairing(false)
+    }
   }
 
   const handleOpenSettings = async () => {
@@ -146,9 +159,18 @@ export default function BtClassicPairingScreen() {
         endButtonFn={handleOpenSettings}
         showSkipButton={false}
       />
+      {device && (
+        <Button
+          className="mt-2"
+          preset="secondary"
+          tx="pairing:cancelPairing"
+          disabled={isCancellingPairing}
+          onPress={handleCancelPairing}
+        />
+      )}
 
       {otherBtConnected && (
-        <View className="absolute bottom-16 w-full">
+        <View className={device ? "mt-2 w-full" : "absolute bottom-16 w-full"}>
           <Button
             text={translate("onboarding:showDevicePicker")}
             preset="secondary"

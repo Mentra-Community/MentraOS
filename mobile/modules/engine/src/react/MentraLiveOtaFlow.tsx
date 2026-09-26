@@ -127,6 +127,8 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:noUpdatesAvailable": "Your glasses are running the latest version.",
   "ota:checkFailed": "Check Failed",
   "ota:checkFailedMessage": "Couldn't check for updates. Please check your connection and try again.",
+  "ota:versionInfoFailedMessage":
+    "Couldn't read the glasses software versions. Keep the glasses connected and try again.",
   "ota:updateInfoUnavailable": "Update Info Unavailable",
   "ota:updateInfoUnavailableMessage":
     "Update information for this version of the app is unavailable. Please check the app store for a newer version of the Mentra App.",
@@ -451,7 +453,7 @@ function OtaFlowContent({
         colors={colors}
         icon="alert"
         title={translate("ota:checkFailed")}>
-        <BodyText colors={colors}>{translate("ota:checkFailedMessage")}</BodyText>
+        <BodyText colors={colors}>{failureMessage(state.error, translate)}</BodyText>
       </FlowPage>
     )
   }

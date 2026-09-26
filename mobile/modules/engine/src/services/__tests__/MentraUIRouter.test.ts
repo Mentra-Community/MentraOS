@@ -182,3 +182,76 @@ describe("MentraUIRouter — lifecycle", () => {
     expect(router.isBound("com.foo")).toBe(true)
   })
 })
+
+describe("MentraUIRouter — host channels", () => {
+  let crust: ReturnType<typeof buildMockCrust>
+  let router: MentraUIRouter
+
+  beforeEach(() => {
+    crust = buildMockCrust()
+    router = new MentraUIRouter(crust.binding)
+  })
+
+  function recvFrames(injects: string[]): Array<Record<string, unknown>> {
+    return injects.map((js) => {
+      const match = /JSON\.parse\((".*")\)\); true;$/.exec(js)
+      return JSON.parse(JSON.parse(match![1]!)) as Record<string, unknown>
+    })
+  }
+
+  test("a host channel request is answered by the host and never reaches the background", () => {
+    const seen: Array<{packageName: string; payload: unknown; requestId?: string}> = []
+    router.setHostChannel("_preview", (packageName, message) => seen.push({packageName, ...message}))
+    const injects = bindCapture(router, "com.foo")
+    router.routeFromWebView(
+      "com.foo",
+      JSON.stringify({type: "msg", seq: 3, channel: "_preview", payload: {cmd: "handshake"}, requestId: "r1"}),
+    )
+    expect(seen).toEqual([{packageName: "com.foo", payload: {cmd: "handshake"}, requestId: "r1"}])
+    expect(crust.dispatchCalls).toHaveLength(0)
+
+    router.replyToWebView("com.foo", "_preview", "r1", {ok: true, result: {t: "waiting_for_lease"}})
+    router.pushToWebView("com.foo", "_preview", {t: "lease_available"})
+    expect(recvFrames(injects)).toEqual([
+      {
+        type: "msg",
+        seq: 0,
+        channel: "_preview",
+        requestId: "r1",
+        payload: {ok: true, result: {t: "waiting_for_lease"}},
+      },
+      {type: "msg", seq: 0, channel: "_preview", payload: {t: "lease_available"}},
+    ])
+  })
+
+  test("the background cannot send on a host channel", () => {
+    router.setHostChannel("_preview", () => {})
+    const injects = bindCapture(router, "com.foo")
+    router.routeFromBackground("com.foo", {type: "UI_SEND", channel: "_preview", payload: {t: "lease_available"}})
+    expect(injects).toHaveLength(0)
+    router.routeFromBackground("com.foo", {type: "UI_SEND", channel: "notes", payload: {}})
+    expect(injects).toHaveLength(1)
+  })
+
+  test("ready notifies observers once per envelope, and a throwing observer does not block UI_OPEN", () => {
+    const ready: string[] = []
+    router.onWebViewReady(() => {
+      throw new Error("observer bug")
+    })
+    const unsubscribe = router.onWebViewReady((packageName) => ready.push(packageName))
+    bindCapture(router, "com.foo")
+    router.routeFromWebView("com.foo", JSON.stringify({type: "ready"}))
+    unsubscribe()
+    router.routeFromWebView("com.foo", JSON.stringify({type: "ready"}))
+    expect(ready).toEqual(["com.foo"])
+    expect(crust.dispatchCalls).toHaveLength(2)
+  })
+
+  test("releasing a host channel routes it to the background again", () => {
+    router.setHostChannel("_preview", () => {})
+    router.setHostChannel("_preview", null)
+    bindCapture(router, "com.foo")
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", seq: 1, channel: "_preview", payload: {}}))
+    expect(crust.dispatchCalls).toHaveLength(1)
+  })
+})

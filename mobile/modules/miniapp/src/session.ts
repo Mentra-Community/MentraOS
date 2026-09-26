@@ -66,6 +66,8 @@ import {
  * not zero. Populated on the "ready" event (null in `start()`).
  */
 export interface DisplayCapabilities {
+  /** Legacy panel dimensions. Prefer drawable width/height when present. */
+  resolution?: {width: number; height: number}
   /** Public drawable canvas in px — raw coordinate space for `display.render()` boxes. */
   width?: number
   height?: number
@@ -710,6 +712,7 @@ export class MiniappSession<TChannels extends object = any> {
         const event: import("./modules/meeting").MeetingState = {
           state,
           muted: Boolean(payload.muted),
+          videoEnabled: typeof payload.videoEnabled === "boolean" ? payload.videoEnabled : undefined,
           error: payload.error as string | undefined,
           meetingUrl: payload.meetingUrl as string | undefined,
           provider: payload.provider as import("./modules/meeting").MeetingProvider | undefined,
@@ -726,6 +729,11 @@ export class MiniappSession<TChannels extends object = any> {
         }
         this.meeting._applyState(event)
         this.emitter.emit("meetingState", event)
+        return
+      }
+
+      case MiniappResponseType.STREAM_PREVIEW_STATUS: {
+        this.stream._applyPreviewStatus(payload)
         return
       }
 

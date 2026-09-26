@@ -1,5 +1,20 @@
 import {engine} from "@mentra/engine"
+import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
+import {showAlert} from "@/utils/AlertUtils"
+
+/** Explicit cancellation discards only unfinished pairing, then leaves its route stack. */
+export async function cancelPendingPairing(): Promise<boolean> {
+  try {
+    await engine.pairing.abandonAttempt({clearPendingSelection: true})
+    useNavigationStore.getState().clearHistoryAndGoHome()
+    return true
+  } catch (error) {
+    console.warn("Failed to cancel unfinished pairing:", error)
+    showAlert(translate("pairing:errorTitle"), translate("pairing:cancelFailed"))
+    return false
+  }
+}
 
 /**
  * Routes a pairing/connect KICKOFF rejection to the failure screen.

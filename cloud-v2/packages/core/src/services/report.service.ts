@@ -1,7 +1,7 @@
 /**
  * @fileoverview Report service for Cloud V2 core.
  *
- * Artifact payloads (screenshot bytes, serialized log bundles) never live in
+ * Artifact payloads (screenshot/video bytes, serialized log bundles) never live in
  * the report document: each one is written to blob storage and described by a
  * `report_assets` row (same pattern as miniapp assets), while the report
  * embeds only artifact metadata. A report therefore stays a few KB no matter
@@ -85,6 +85,8 @@ export interface ReportLogEntry {
   message: string;
   source?: string;
 }
+
+export type ReportArtifactType = "logs" | "screenshot" | "state_snapshot" | "video";
 
 export interface ReportAttachmentInput {
   filename: string;
@@ -198,17 +200,23 @@ export async function addLogArtifact(input: {
   });
 }
 
-export async function addScreenshotArtifacts(input: {
+/**
+ * Multipart file attachments: screenshots, or MP4 videos with the capture
+ * source the uploader declared. The upload route validates type, MIME and size.
+ */
+export async function addAttachmentArtifacts(input: {
   mentraUserId: string;
   reportId: string;
+  type: Extract<ReportArtifactType, "screenshot" | "video">;
+  source: string;
   files: ReportAttachmentInput[];
 }): Promise<AddReportArtifactsResult | null> {
   return await addArtifacts({
     reportId: input.reportId,
     mentraUserId: input.mentraUserId,
     payloads: input.files.map((file) => ({
-      type: "screenshot" as const,
-      source: "phone",
+      type: input.type,
+      source: input.source,
       filename: file.filename,
       contentType: file.contentType,
       bytes: file.bytes,
@@ -250,7 +258,7 @@ export async function markReportReady(input: {
 }
 
 interface ReportArtifactPayload {
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: ReportArtifactType;
   source: string;
   filename: string | null;
   contentType: string;
@@ -363,7 +371,7 @@ async function addArtifacts(input: {
 
 export interface AdminReportArtifact {
   artifactId: string;
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: ReportArtifactType;
   source: string;
   filename: string | null;
   contentType: string | null;
@@ -451,11 +459,11 @@ export async function getReport(
 export async function readReportArtifactPayload(
   reportId: string,
   artifactId: string,
-): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null } | null> {
+): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null; sha256: string } | null> {
   const asset = await ReportAssetModel.findOne({ reportId, artifactId }).lean();
   if (!asset) return null;
   const bytes = await getStorage().getObject(asset.storageKey);
-  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null };
+  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256 };
 }
 
 function serializeReportSummary(row: {

@@ -335,8 +335,21 @@ class Bridge {
     }
 
     /// Wear state from sr_wrst, or from a wear transition on the glasses.
-    static func sendWearState(worn: Bool) {
-        Bridge.sendTypedMessage("wear_state", body: ["worn": worn])
+    static func sendWearState(
+        worn: Bool,
+        elapsedMs: Int? = nil,
+        timeoutMs: Int? = nil,
+        enabled: Bool? = nil,
+        armed: Bool? = nil,
+        inhibited: Bool? = nil
+    ) {
+        var body: [String: Any] = ["worn": worn]
+        if let elapsedMs { body["elapsedMs"] = elapsedMs }
+        if let timeoutMs { body["timeoutMs"] = timeoutMs }
+        if let enabled { body["enabled"] = enabled }
+        if let armed { body["armed"] = armed }
+        if let inhibited { body["inhibited"] = inhibited }
+        Bridge.sendTypedMessage("wear_state", body: body)
     }
 
     /// Wear vote config the glasses report as in force, from sr_weartun.

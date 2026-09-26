@@ -44,7 +44,23 @@ export {
   type RouterLogger as MentraJSRouterLogger,
 } from "./services/MentraJSRouter"
 export {buildMentraUiShim, type MentraUiShimOptions} from "./services/mentraUiShim"
-export {MentraUIRouter, type MentraUICrustBinding} from "./services/MentraUIRouter"
+export {
+  MentraUIRouter,
+  type MentraUICrustBinding,
+  type MentraUIHostChannelHandler,
+  type MentraUIHostReply,
+} from "./services/MentraUIRouter"
+// Stream preview: the runtime-to-host seam and the read-only meeting view it authorizes against.
+export {
+  setStreamPreviewHost,
+  getStreamPreviewHost,
+  StreamPreviewError,
+  type StreamPreviewHostPort,
+  type StreamPreviewStartRequest,
+  type StreamPreviewStartResult,
+  type StreamPreviewStatusEvent,
+} from "./services/streamPreviewPort"
+export {acsMeetingPreviewSource, type StreamPreviewMeetingSource} from "./services/streamPreviewMeetingSource"
 export {
   MentraJSCrashController,
   type CrashState,

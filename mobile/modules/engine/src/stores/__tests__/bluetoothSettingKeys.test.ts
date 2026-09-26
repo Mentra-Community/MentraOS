@@ -17,6 +17,10 @@ describe("MENTRA_LIVE_SETTING_KEYS", () => {
     expect(MENTRA_LIVE_SETTING_KEYS).toContain("loudness_gate_enabled")
   })
 
+  test("syncs auto power-off, which the glasses cannot learn any other way", () => {
+    expect(MENTRA_LIVE_SETTING_KEYS).toContain("auto_power_off_enabled")
+  })
+
   test("syncs only the effective mic tuning, never the persisted one", () => {
     expect(MENTRA_LIVE_SETTING_KEYS).toContain("mic_tuning")
     expect(MENTRA_LIVE_SETTING_KEYS).not.toContain("mic_tuning_desired")

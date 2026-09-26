@@ -74,6 +74,8 @@ export type {
   RenderRectStyle,
   RenderResult,
   RenderTextStyle,
+  RenderTextLayout,
+  RenderTextLine,
   ViewType,
 } from "./modules/display"
 export type {
@@ -94,7 +96,7 @@ export type {
   VadData,
   WifiData,
 } from "./modules/events"
-export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "./modules/phone"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult, PhoneWifiEnableResult} from "./modules/phone"
 export type {
   PlayAudioOptions,
   SpeakOptions,
@@ -129,7 +131,14 @@ export type {
   StreamResult,
   StreamStatus,
   StreamVideoConfig,
+  StreamPreviewOptions,
+  PreviewHandle,
+  PreviewHandleState,
+  PreviewHandleStatus,
 } from "./modules/stream"
+export {PreviewError} from "./modules/stream"
+export {PREVIEW_ERROR_CODES, PREVIEW_UI_CHANNEL, isPreviewErrorCode} from "./protocol"
+export type {PreviewErrorCode, PreviewSource, PreviewStatus} from "./protocol"
 export type {
   ShareOptions,
   ShareResult,
@@ -186,6 +195,12 @@ export type {SpeakerModule} from "./modules/speaker"
 export type {
   MeetingModule,
   MeetingJoinOptions,
+  MeetingCreateOptions,
+  CreatedMeeting,
+  MeetingConfiguration,
+  MeetingIdentity,
+  MeetingIdentityMode,
+  MeetingGuestReason,
   MeetingState,
   MeetingEndReason,
   MeetingPhase,

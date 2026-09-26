@@ -2,7 +2,7 @@ import CoreVideo
 import Foundation
 import WebRTC
 
-/// ASG's full-ICE WHIP negotiation, fed from the shared decoded receiver. One peer per attempt.
+/// ASG's bounded STUN-gather WHIP negotiation, fed from the shared decoded receiver.
 final class PhoneWhipPublisher: NSObject {
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.whip.publish")
     private let frameSlot = DispatchSemaphore(value: 1)
@@ -17,7 +17,10 @@ final class PhoneWhipPublisher: NSObject {
     private var capturer: RTCVideoCapturer?
     private var resource: URL?
     private var posted = false
-    private var localSet = false
+    private var offerGate = WhipOfferGate()
+    private var candidateCount = 0
+    private var phase = "creating offer"
+    private var firstFrameSeen = false
     private var stopped = false
     private var failed = false
     private var connected = false
@@ -81,13 +84,19 @@ final class PhoneWhipPublisher: NSObject {
                         self.queue.async {
                             guard !self.stopped else { return }
                             guard error == nil else { self.fail("WHIP local description failed"); return }
-                            self.localSet = true; self.maybePost()
+                            self.phase = "gathering ICE"
+                            self.maybePost(.localDescriptionSet)
+                            if peer.iceGatheringState == .complete { self.maybePost(.gatheringComplete) }
+                            // STUN gathering can stall longer than the entire start request.
+                            // Match the glasses publisher's 1.5s cap; the remote ICE-lite
+                            // candidates in the answer let this peer initiate connectivity.
+                            self.queue.asyncAfter(deadline: .now() + 1.5) { self.maybePost(.deadline) }
                         }
                     }
                 }
             }
             self.queue.asyncAfter(deadline: .now() + 35) {
-                if !self.connected { self.fail("WHIP connection timed out") }
+                if !self.connected { self.fail("WHIP connection timed out while \(self.phase) (\(self.candidateCount) candidates)") }
             }
         }
     }
@@ -97,6 +106,10 @@ final class PhoneWhipPublisher: NSObject {
         queue.async {
             defer { self.frameSlot.signal() }
             guard !self.stopped, let source = self.videoSource, let capturer = self.capturer else { return }
+            if !self.firstFrameSeen {
+                self.firstFrameSeen = true
+                self.onState("diagnostic", "First decoded glasses video frame reached the phone publisher")
+            }
             self.lastTimestamp = max(Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000), self.lastTimestamp + 1)
             let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: self.lastTimestamp)
             source.capturer(capturer, didCapture: frame)
@@ -107,9 +120,12 @@ final class PhoneWhipPublisher: NSObject {
         if captureAudio { audioDevice.pcm.push(data, sampleRate: rate, channels: channels) }
     }
 
-    private func maybePost() {
-        guard !stopped, !posted, localSet, let peer, peer.iceGatheringState == .complete, let offer = peer.localDescription else { return }
+    private func maybePost(_ signal: WhipOfferGate.Signal) {
+        guard !stopped, !failed, let peer, offerGate.observe(signal) else { return }
+        guard let offer = peer.localDescription else { fail("WHIP local description unavailable"); return }
         posted = true
+        phase = "sending offer"
+        onState("diagnostic", "Posting WHIP offer (\(candidateCount) candidates)")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
@@ -128,9 +144,16 @@ final class PhoneWhipPublisher: NSObject {
                       let data, let answer = String(data: data, encoding: .utf8), !answer.isEmpty
                 else {
                     if let location { self.delete(location) }
-                    self.fail("WHIP server rejected publish (HTTP \(response?.statusCode ?? 0))"); return
+                    if let error = error as NSError? {
+                        self.fail("WHIP signaling failed (\(error.domain) \(error.code))")
+                    } else {
+                        self.fail("WHIP server rejected publish (HTTP \(response?.statusCode ?? 0))")
+                    }
+                    return
                 }
                 self.resource = location
+                self.phase = "connecting ICE"
+                self.onState("diagnostic", "WHIP server accepted publish (HTTP 201)")
                 peer.setRemoteDescription(RTCSessionDescription(type: .answer, sdp: answer)) { error in
                     self.queue.async { if error != nil { self.fail("WHIP answer failed") } }
                 }
@@ -154,6 +177,7 @@ final class PhoneWhipPublisher: NSObject {
         queue.async {
             if !self.stopped {
                 self.stopped = true
+                _ = self.offerGate.observe(.stop)
                 self.peer?.close()
                 // Drain the external audio callback while its native delegate/factory is still alive.
                 _ = self.audioDevice.terminateDevice()
@@ -176,6 +200,7 @@ extension PhoneWhipPublisher: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange state: RTCIceConnectionState) {
         queue.async {
             guard self.peer === peerConnection, !self.stopped else { return }
+            self.onState("diagnostic", "WHIP ICE state \(state.rawValue)")
             switch state {
             case .connected, .completed:
                 self.connected = true; self.disconnectGeneration += 1
@@ -192,11 +217,22 @@ extension PhoneWhipPublisher: RTCPeerConnectionDelegate {
         }
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange _: RTCIceGatheringState) {
-        queue.async { if self.peer === peerConnection { self.maybePost() } }
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange state: RTCIceGatheringState) {
+        queue.async {
+            guard self.peer === peerConnection, !self.stopped else { return }
+            self.onState("diagnostic", "WHIP ICE gathering state \(state.rawValue) (\(self.candidateCount) candidates)")
+            if state == .complete { self.maybePost(.gatheringComplete) }
+        }
     }
 
-    func peerConnection(_: RTCPeerConnection, didGenerate _: RTCIceCandidate) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+        queue.async {
+            guard self.peer === peerConnection, !self.stopped else { return }
+            self.candidateCount += 1
+            if candidate.sdp.contains(" typ srflx ") { self.maybePost(.serverReflexiveCandidate) }
+        }
+    }
+
     func peerConnection(_: RTCPeerConnection, didRemove _: [RTCIceCandidate]) {}
     func peerConnection(_: RTCPeerConnection, didOpen _: RTCDataChannel) {}
 }

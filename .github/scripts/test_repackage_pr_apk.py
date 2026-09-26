@@ -84,7 +84,7 @@ class RepackagingTests(unittest.TestCase):
             run("keytool", "-genkeypair", "-storetype", "JKS", "-keystore", keystore, "-alias", "upload", "-storepass", "fixturepass", "-keypass", "fixturepass", "-keyalg", "RSA", "-dname", "CN=Repackaging Test", "-validity", "1")
             source = root / "signed.apk"
             run(tools / "apksigner", "sign", "--ks", keystore, "--ks-pass", "pass:fixturepass", "--out", source, unsigned)
-            env = dict(os.environ, PR_OTA_MANIFEST_URL="https://example.com/new.json", PR_HEAD_SHA=SHA,
+            env = dict(os.environ, GITHUB_HEAD_REF="fixture-pr", GITHUB_ACTOR="tester", PR_OTA_MANIFEST_URL="https://example.com/new.json", PR_HEAD_SHA=SHA,
                        MENTRAOS_PINNED_BUILD_NUMBER="12345", ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS="upload",
                        ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_STORE_PASSWORD="fixturepass",
                        ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_PASSWORD="fixturepass")

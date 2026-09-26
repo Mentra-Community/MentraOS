@@ -543,6 +543,15 @@ export type WearTuning = {
 export type WearStateEvent = {
   type: "wear_state"
   worn: boolean
+  /** Unworn countdown, present on firmware that reports it. Milliseconds. */
+  elapsedMs?: number
+  timeoutMs?: number
+  /** cs_swit type 11. Absent on older firmware. */
+  enabled?: boolean
+  /** Countdown is running (glasses are off the face and the feature is on). */
+  armed?: boolean
+  /** Clock is running, but charging, a call, OTA, or factory test is holding shutdown. */
+  inhibited?: boolean
 }
 
 /**
@@ -1417,6 +1426,7 @@ export interface BluetoothSdkPublicModule {
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   setLoudnessGateEnabled(enabled: boolean): Promise<void>
+  setAutoPowerOffEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
    * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
@@ -1798,6 +1808,7 @@ export type BluetoothSettingsUpdate = Partial<{
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
   loudness_gate_enabled: boolean
+  auto_power_off_enabled: boolean
   /** Effective mic tuning only. `{}` means "reset to firmware defaults". */
   mic_tuning: MicTuning
   button_photo_size: ButtonPhotoSize

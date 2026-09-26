@@ -9,6 +9,8 @@
 #   --start-firmware VALUE   Override start_firmware in generated version.json
 #   --end-firmware VALUE     Override end_firmware in generated version.json
 #   --port PORT              Override local HTTP server port (default: 9876)
+#   --full                   Use a selected full A/B ZIP; --end-firmware is required
+# Requires an ASG build with the MTK-only self-reboot behavior (current builds).
 #
 
 set -euo pipefail
@@ -18,12 +20,15 @@ if [ -n "${ADB_SERIAL:-}" ] && [ -z "${ANDROID_SERIAL:-}" ]; then
 fi
 
 PORT=${OTA_TEST_PORT:-9876}
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WAIT_SECONDS=20
 MAX_TRIGGER_ATTEMPTS=3
 TRIGGER_RETRY_DELAY_SECONDS=8
 TRIGGER_ACTIVITY_TIMEOUT_SECONDS=15
 MTK_UPDATE_TIMEOUT_SECONDS=900
 SERVE_DIR="$(mktemp -d)"
+REVERSE_CREATED=false
+FULL_OTA=false
 PATCH_PATH=""
 START_FIRMWARE_OVERRIDE=""
 END_FIRMWARE_OVERRIDE=""
@@ -32,6 +37,7 @@ DEBUG_RECEIVER_COMPONENT="com.mentra.asg_client/.receiver.DebugMtkOtaReceiver"
 
 usage() {
     echo "Usage: ./scripts/test-mtk-ota.sh path/to/mtk_firmware_<start>_<end>.zip [--start-firmware VALUE] [--end-firmware VALUE] [--port PORT]"
+    echo "       ./scripts/test-mtk-ota.sh path/to/full.zip --full --end-firmware MentraLive_YYYYMMDD[.N] [--port PORT]"
 }
 
 cleanup() {
@@ -40,7 +46,9 @@ cleanup() {
     if [ -n "${HTTP_PID:-}" ] && kill -0 "$HTTP_PID" 2>/dev/null; then
         kill "$HTTP_PID" 2>/dev/null || true
     fi
-    adb reverse --remove tcp:$PORT 2>/dev/null || true
+    if [ "$REVERSE_CREATED" = true ]; then
+        adb reverse --remove "tcp:$PORT" 2>/dev/null || true
+    fi
     rm -rf "$SERVE_DIR"
     echo "✅ Cleanup complete"
 }
@@ -50,15 +58,6 @@ fail() {
     echo ""
     echo "❌ $1"
     exit 1
-}
-
-extract_version_suffix() {
-    local value="$1"
-    if [[ "$value" =~ ([0-9]{8}(\.[0-9]+)?)$ ]]; then
-        echo "${BASH_REMATCH[1]}"
-        return 0
-    fi
-    return 1
 }
 
 print_phase() {
@@ -88,104 +87,12 @@ trigger_mtk_ota() {
 }
 
 monitor_update() {
-    local last_download=-1
-    local last_install=-1
-    local line=""
-    local progress=0
-    local raw_progress=0
-    local idle_seconds=0
-    local saw_activity=0
-    local update_deadline=$((SECONDS + MTK_UPDATE_TIMEOUT_SECONDS))
-
-    exec 3< <(adb logcat -v time)
-    while true; do
-        if [ "$SECONDS" -ge "$update_deadline" ]; then
-            exec 3<&-
-            fail "MTK OTA did not complete within $((MTK_UPDATE_TIMEOUT_SECONDS / 60)) minutes"
-        fi
-        if IFS= read -r -t 1 line <&3; then
-            idle_seconds=0
-        else
-            idle_seconds=$((idle_seconds + 1))
-            if [ "$saw_activity" -eq 0 ] && [ "$idle_seconds" -ge "$TRIGGER_ACTIVITY_TIMEOUT_SECONDS" ]; then
-                exec 3<&-
-                return 3
-            fi
-            continue
-        fi
-
-        if [[ "$line" == *"OtaHelper not initialized - is OtaService running?"* ]]; then
-            exec 3<&-
-            return 2
-        fi
-
-        if [[ "$line" == *"Failed to download MTK firmware"* ]] || \
-           [[ "$line" == *"MTK firmware verification failed"* ]] || \
-           [[ "$line" == *"MTK OTA error:"* ]]; then
-            exec 3<&-
-            fail "$line"
-        fi
-
-        if [[ "$line" == *"MTK OTA source URL:"* ]]; then
-            saw_activity=1
-            echo "📥 Downloading MTK patch..."
-            continue
-        fi
-
-        if [[ "$line" =~ MTK\ firmware\ download\ progress:\ ([0-9]+)% ]]; then
-            saw_activity=1
-            progress="${BASH_REMATCH[1]}"
-            if [ "$progress" -ne "$last_download" ]; then
-                echo "📥 Downloading MTK patch: ${progress}%"
-                last_download="$progress"
-            fi
-            continue
-        fi
-
-        if [[ "$line" == *"MTK firmware downloaded to:"* ]]; then
-            saw_activity=1
-            if [ "$last_download" -lt 100 ]; then
-                echo "📥 Downloading MTK patch: 100%"
-                last_download=100
-            fi
-            continue
-        fi
-
-        if [[ "$line" =~ MTK\ OTA\ update\ -\ cmd:\ write,\ msg:\ ([0-9]+) ]]; then
-            saw_activity=1
-            raw_progress="${BASH_REMATCH[1]}"
-            progress=$((raw_progress / 2))
-            if [ "$progress" -gt "$last_install" ]; then
-                echo "🛠️ Installing MTK firmware: ${progress}%"
-                last_install="$progress"
-            fi
-            continue
-        fi
-
-        if [[ "$line" =~ MTK\ OTA\ update\ -\ cmd:\ update,\ msg:\ ([0-9]+) ]]; then
-            saw_activity=1
-            raw_progress="${BASH_REMATCH[1]}"
-            progress=$((50 + (raw_progress / 2)))
-            if [ "$progress" -gt "$last_install" ]; then
-                echo "🛠️ Installing MTK firmware: ${progress}%"
-                last_install="$progress"
-            fi
-            continue
-        fi
-
-        if [[ "$line" == *'"type":"mtk_update_complete"'* ]] || \
-           [[ "$line" == *"MTK OTA success:"* ]]; then
-            exec 3<&-
-            echo "✅ Complete. Rebooting glasses..."
-            if adb reboot >/dev/null 2>&1; then
-                echo "✅ Reboot command sent"
-            else
-                echo "⚠️  ADB disconnected before reboot completed. This can be expected after the update."
-            fi
-            echo "ℹ️  Done! Please wait for the glasses to reboot..."
-            return 0
-        fi
-    done
+    # One monotonic deadline owns logcat and every postboot read, including EOF.
+    python3 "$SCRIPT_DIR/mtk-ota-observe.py" \
+        --source-boot "$SOURCE_BOOT" --source-cid "$SOURCE_CID" \
+        --target-version "$END_FIRMWARE" --target-slot "$TARGET_SLOT" \
+        --timeout "$MTK_UPDATE_TIMEOUT_SECONDS" \
+        --activity-timeout "$TRIGGER_ACTIVITY_TIMEOUT_SECONDS"
 }
 
 run_mtk_ota() {
@@ -227,6 +134,10 @@ run_mtk_ota() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --full)
+            FULL_OTA=true
+            shift
+            ;;
         --start-firmware)
             START_FIRMWARE_OVERRIDE="${2:-}"
             shift 2
@@ -265,67 +176,32 @@ if [ ! -f "$PATCH_PATH" ]; then
     fail "Patch file not found: $PATCH_PATH"
 fi
 
-PATCH_NAME="$(basename "$PATCH_PATH")"
-if [[ "$PATCH_NAME" =~ ([0-9]{8}(\.[0-9]+)?)_([0-9]{8}(\.[0-9]+)?)\.zip$ ]]; then
-    FILE_START_VERSION="${BASH_REMATCH[1]}"
-    FILE_END_VERSION="${BASH_REMATCH[3]}"
-else
-    fail "Could not parse start/end versions from filename: $PATCH_NAME"
-fi
-
 DEVICE_VERSION="$(adb shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
 if [ -z "$DEVICE_VERSION" ]; then
     fail "Failed to read ro.custom.ota.version from device"
 fi
 
-if ! DEVICE_START_VERSION="$(extract_version_suffix "$DEVICE_VERSION")"; then
-    fail "Device firmware version does not end with YYYYMMDD or YYYYMMDD.N: $DEVICE_VERSION"
-fi
-
-START_FIRMWARE="${START_FIRMWARE_OVERRIDE:-$DEVICE_VERSION}"
-if ! START_VERSION="$(extract_version_suffix "$START_FIRMWARE")"; then
-    fail "start_firmware does not end with YYYYMMDD or YYYYMMDD.N: $START_FIRMWARE"
-fi
-
-if [ "$FILE_START_VERSION" != "$START_VERSION" ]; then
-    fail "Patch start version ($FILE_START_VERSION) does not match start_firmware version ($START_VERSION)"
-fi
-
-if [ -n "$END_FIRMWARE_OVERRIDE" ]; then
-    END_FIRMWARE="$END_FIRMWARE_OVERRIDE"
-else
-    END_FIRMWARE="${START_FIRMWARE%$START_VERSION}$FILE_END_VERSION"
-fi
-if ! END_VERSION="$(extract_version_suffix "$END_FIRMWARE")"; then
-    fail "end_firmware does not end with YYYYMMDD or YYYYMMDD.N: $END_FIRMWARE"
-fi
-if [ "$FILE_END_VERSION" != "$END_VERSION" ]; then
-    fail "Patch end version ($FILE_END_VERSION) does not match end_firmware version ($END_VERSION)"
-fi
-
-if command -v shasum >/dev/null 2>&1; then
-    SHA256="$(shasum -a 256 "$PATCH_PATH" | awk '{print $1}')"
-elif command -v sha256sum >/dev/null 2>&1; then
-    SHA256="$(sha256sum "$PATCH_PATH" | awk '{print $1}')"
-else
-    fail "No sha256 tool found (need shasum or sha256sum)"
-fi
-
-cp "$PATCH_PATH" "$SERVE_DIR/mtk_firmware.zip"
-
-cat > "$SERVE_DIR/version.json" <<EOF
-{
-  "apps": {},
-  "mtk_patches": [
-    {
-      "start_firmware": "$START_FIRMWARE",
-      "end_firmware": "$END_FIRMWARE",
-      "url": "http://localhost:$PORT/mtk_firmware.zip",
-      "sha256": "$SHA256"
-    }
-  ]
-}
-EOF
+# Serve precisely the bytes inspected and hashed below.
+mkdir "$SERVE_DIR/input"
+OTA_COPY="$SERVE_DIR/input/$(basename "$PATCH_PATH")"
+cp "$PATCH_PATH" "$OTA_COPY"
+MANIFEST_ARGS=("$SCRIPT_DIR/mtk-ota-manifest.py" "$OTA_COPY" --device-version "$DEVICE_VERSION" --port "$PORT")
+[ "$FULL_OTA" = false ] || MANIFEST_ARGS+=(--full)
+if [ "$FULL_OTA" = true ]; then MAX_TRIGGER_ATTEMPTS=1; fi
+[ -z "$START_FIRMWARE_OVERRIDE" ] || MANIFEST_ARGS+=(--start-firmware "$START_FIRMWARE_OVERRIDE")
+[ -z "$END_FIRMWARE_OVERRIDE" ] || MANIFEST_ARGS+=(--end-firmware "$END_FIRMWARE_OVERRIDE")
+python3 "${MANIFEST_ARGS[@]}" > "$SERVE_DIR/version.json" || fail "Invalid OTA selection"
+read -r START_FIRMWARE END_FIRMWARE SHA256 < <(python3 -c 'import json,sys; p=json.load(open(sys.argv[1]))["mtk_patches"][0]; print(p["start_firmware"], p["end_firmware"], p["sha256"])' "$SERVE_DIR/version.json")
+mv "$OTA_COPY" "$SERVE_DIR/mtk_firmware.zip"
+SOURCE_BOOT="$(adb shell cat /proc/sys/kernel/random/boot_id | tr -d '\r\n')"
+SOURCE_CID="$(adb shell cat /sys/block/mmcblk0/device/cid | tr -d '\r\n')"
+SOURCE_SLOT="$(adb shell getprop ro.boot.slot_suffix | tr -d '\r\n')"
+[[ "$SOURCE_BOOT" =~ ^[0-9a-f-]{36}$ && "$SOURCE_CID" =~ ^[0-9a-fA-F]{32}$ ]] || fail "Missing source boot/eMMC identity"
+case "$SOURCE_SLOT" in
+    _a) TARGET_SLOT=_b ;;
+    _b) TARGET_SLOT=_a ;;
+    *) fail "Unknown source A/B slot" ;;
+esac
 
 echo "=========================================="
 echo "🔧 MTK OTA Test"
@@ -336,11 +212,12 @@ echo "Patch SHA256:   $SHA256"
 echo "Device version: $DEVICE_VERSION"
 echo "Start firmware: $START_FIRMWARE"
 echo "End firmware:   $END_FIRMWARE"
+echo "Full A/B mode:  $FULL_OTA (POWERWASH follows the inspected ZIP metadata)"
 echo "Port:           $PORT"
 
 print_phase "🌐 Starting HTTP server on port $PORT..."
 cd "$SERVE_DIR"
-python3 -m http.server "$PORT" > /dev/null 2>&1 &
+python3 -m http.server --bind 127.0.0.1 "$PORT" > /dev/null 2>&1 &
 HTTP_PID=$!
 sleep 1
 
@@ -350,7 +227,8 @@ fi
 echo "✅ HTTP server running"
 
 print_phase "🔌 Setting up ADB reverse port forwarding..."
-adb reverse "tcp:$PORT" "tcp:$PORT" >/dev/null
+adb reverse --no-rebind "tcp:$PORT" "tcp:$PORT" >/dev/null
+REVERSE_CREATED=true
 echo "✅ ADB reverse forwarding active"
 
 print_phase "🗑️  Clearing MTK OTA cache on device..."

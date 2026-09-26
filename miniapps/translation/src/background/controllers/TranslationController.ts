@@ -19,16 +19,15 @@
  * full snapshot on every session.ui.onOpen.
  */
 
-import type {CloudClientStatus, MiniappSession, TranslationData, UnsubscribeFn} from "@mentra/miniapp/background"
+import type {
+  CloudClientStatus,
+  MiniappSession,
+  TranslationData,
+  TranscriptionLanguage,
+  UnsubscribeFn,
+} from "@mentra/miniapp/background"
 
-import {
-  CaptionsFormatter,
-  G1_PROFILE,
-  Z100_PROFILE,
-  NEX_PROFILE,
-  type DisplayProfile,
-  type TranscriptHistoryEntry,
-} from "../../core/CaptionsFormatter"
+import {CaptionsFormatter} from "../../core/CaptionsFormatter"
 import type {Channels} from "../../shared/channels"
 import type {TranslationEntry, TranslationSettings, TranslationsSnapshot, DisplayPreview} from "../../shared/types"
 
@@ -105,33 +104,6 @@ const STORAGE_KEYS = {
   glassesDisplayMode: "glassesDisplayMode",
 } as const
 
-// ── Profile selection (verbatim from DisplayManager) ───────────────────────
-function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
-  if (!modelName) return G1_PROFILE
-  const lower = modelName.toLowerCase()
-  if (lower.includes("g1") || lower.includes("even realities") || lower.includes("even_g1")) {
-    return G1_PROFILE
-  }
-  if (lower.includes("z100") || lower.includes("vuzix") || lower.includes("mach1") || lower.includes("mach 1")) {
-    return Z100_PROFILE
-  }
-  if (lower.includes("nex") || lower.includes("mentra display") || lower.includes("mentra_nex")) {
-    return NEX_PROFILE
-  }
-  return G1_PROFILE
-}
-
-/** Read the glasses model name from capabilities (best-effort). */
-function getModelName(session: MiniappSession): string | null {
-  try {
-    const caps = session.capabilities as Record<string, unknown> | null
-    const m = caps?.modelName
-    return typeof m === "string" ? m : null
-  } catch {
-    return null
-  }
-}
-
 export class TranslationController {
   private subscribed = false
   private readonly unsubs: Array<() => void> = []
@@ -157,13 +129,11 @@ export class TranslationController {
   private readonly maxTranslations = 100
 
   // ── Display state (DisplayManager) ───────────────────────────────────────
-  private formatter!: CaptionsFormatter
-  private currentProfile: DisplayProfile = G1_PROFILE
-  private currentDisplayWidthPx: number = G1_PROFILE.displayWidthPx
-  private currentMaxLines: number = G1_PROFILE.maxLines
-  private currentWordBreaking = true
-  private currentWidthSetting = 1 // matches default displayWidth (Medium)
+  private formatter = new CaptionsFormatter()
+  private renderRevision = 0
+  private currentIsFinal = true
   private lastSpeakerId: string | undefined = undefined
+  private currentDisplayText = ""
   private lastDisplayPreview: DisplayPreview | null = null
   private cloudStatus: CloudClientStatus = {status: "disconnected", audioTransport: "none"}
 
@@ -180,25 +150,10 @@ export class TranslationController {
       onOpen: (cb: () => void) => () => void
     }
 
-    // Detect initial profile from glasses capabilities.
-    this.currentProfile = getProfileForModel(getModelName(this.session))
-    this.currentDisplayWidthPx = this.currentProfile.displayWidthPx
-    this.currentMaxLines = this.currentProfile.maxLines
-    this.createFormatter()
-
-    // React to glasses model changes (re-pick profile).
-    try {
-      this.unsubs.push(
-        this.session.onCapabilitiesChange(() => {
-          const newProfile = getProfileForModel(getModelName(this.session))
-          if (newProfile.id !== this.currentProfile.id) {
-            this.updateProfile(newProfile)
-          }
-        }),
-      )
-    } catch {
-      // capabilities change not available — keep default profile.
-    }
+    const refresh = () => this.refreshDisplay()
+    this.unsubs.push(this.session.onCapabilitiesChange(refresh))
+    // Initial capabilities arrive on ready, not capabilities-change.
+    this.unsubs.push(this.session.on("ready", refresh))
 
     // Load persisted settings, then subscribe to translation accordingly.
     await this.loadSettings()
@@ -208,10 +163,11 @@ export class TranslationController {
 
     this.registerUiHandlers()
     this.registerActions()
-    console.log(`LocalTranslation: started (target=${this.settings.targetLanguage}, profile=${this.currentProfile.id})`)
+    console.log(`LocalTranslation: started (target=${this.settings.targetLanguage})`)
   }
 
   stop(): void {
+    this.renderRevision++
     if (this.translationCleanup) {
       try {
         this.translationCleanup()
@@ -450,6 +406,7 @@ export class TranslationController {
    * but recomputes the per-line content for the new mode.
    */
   private rebuildGlassesDisplay(): void {
+    this.currentDisplayText = ""
     const both = this.settings.glassesDisplayMode === "both"
     this.createFormatter()
     let lastSpeaker: string | undefined
@@ -500,7 +457,7 @@ export class TranslationController {
       // keeps the microphone/cloud translation union live while settings are
       // changed and preserves the working subscription if replacement fails.
       const previousCleanup = this.translationCleanup
-      const nextCleanup = this.session.translation.to(targetLanguage, handler)
+      const nextCleanup = this.session.translation.to(targetLanguage as TranscriptionLanguage, handler)
       this.translationCleanup = nextCleanup
       this.translationTarget = targetLanguage
       if (previousCleanup) {
@@ -668,66 +625,18 @@ export class TranslationController {
   // ───────────────────────────────────────────────────────────────────────
 
   private createFormatter(): void {
-    this.formatter = new CaptionsFormatter(this.currentProfile, {
-      maxFinalTranscripts: 30,
-      breakMode: this.currentWordBreaking ? "character" : "word",
-      displayWidthPx: this.currentDisplayWidthPx,
-      maxLines: this.currentMaxLines,
-    })
+    this.formatter = new CaptionsFormatter()
   }
 
-  private calculateDisplayWidth(widthSetting: number, profile: DisplayProfile): number {
-    const maxWidthPx = profile.displayWidthPx
-    let widthPercent: number
-    switch (widthSetting) {
-      case 0:
-        widthPercent = 0.7
-        break
-      case 1:
-        widthPercent = 0.85
-        break
-      case 2:
-      default:
-        widthPercent = 1.0
-        break
-    }
-    return Math.round(maxWidthPx * widthPercent)
-  }
-
-  /** Apply the current settings object to the display formatter. */
   private applySettingsToDisplay(): void {
-    this.updateDisplaySettings(this.settings.displayWidth, this.settings.displayLines, this.settings.wordBreaking)
-  }
-
-  private updateDisplaySettings(displayWidth: number, numberOfLines: number, wordBreaking: boolean): void {
-    this.currentWidthSetting = displayWidth
-    this.currentDisplayWidthPx = this.calculateDisplayWidth(displayWidth, this.currentProfile)
-    this.currentMaxLines = Math.min(Math.max(2, numberOfLines), this.currentProfile.maxLines)
-    this.currentWordBreaking = wordBreaking
-
-    const previousHistory = this.formatter.getFinalTranscriptHistory()
-    this.createFormatter()
-    this.restoreHistory(previousHistory)
     this.refreshDisplay()
-  }
-
-  private updateProfile(newProfile: DisplayProfile): void {
-    const previousHistory = this.formatter.getFinalTranscriptHistory()
-    this.currentProfile = newProfile
-    this.currentDisplayWidthPx = this.calculateDisplayWidth(this.currentWidthSetting, newProfile)
-    this.currentMaxLines = Math.min(this.currentMaxLines, newProfile.maxLines)
-    this.createFormatter()
-    this.restoreHistory(previousHistory)
-    this.refreshDisplay()
-  }
-
-  private restoreHistory(previousHistory: TranscriptHistoryEntry[]): void {
-    for (const e of previousHistory) {
-      this.formatter.processTranscription(e.text, true, e.speakerId, e.hadSpeakerChange)
-    }
   }
 
   private refreshDisplay(): void {
+    if (this.currentDisplayText) {
+      this.showTextWall(this.currentDisplayText)
+      return
+    }
     const history = this.formatter.getFinalTranscriptHistory()
     if (history.length === 0) {
       this.broadcastDisplayPreview("", [""], true)
@@ -736,9 +645,7 @@ export class TranslationController {
     const result = this.formatter.processTranscription("", true, undefined, false)
     if (result.displayText.trim()) {
       const cleaned = this.cleanTranscriptText(result.displayText)
-      const lines = cleaned.split("\n")
       this.showTextWall(cleaned)
-      this.broadcastDisplayPreview(cleaned, lines, true)
     }
   }
 
@@ -753,22 +660,44 @@ export class TranslationController {
   }
 
   private showOnGlasses(text: string, isFinal: boolean): void {
+    this.currentIsFinal = isFinal
     const cleaned = this.cleanTranscriptText(text)
-    const lines = cleaned.split("\n")
     this.showTextWall(cleaned)
-    this.broadcastDisplayPreview(cleaned, lines, isFinal)
   }
 
   private showTextWall(text: string): void {
-    // One full-canvas text element with a stable id: successive translations
-    // update it in place on the glasses (no flicker). Box coordinates are raw
-    // device px — read from capabilities, falling back to the largest canvas
-    // (the host clamps to the real one). render() never throws; it resolves
-    // {status: "blocked"} instead.
+    this.currentDisplayText = text
+    const revision = ++this.renderRevision
     const d = this.session.capabilities?.display
-    void this.session.display.render([
-      {type: "text", id: "translation", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
-    ])
+    const widthFraction = [0.7, 0.85, 1][this.settings.displayWidth] ?? 1
+    const isFinal = this.currentIsFinal
+    void this.session.display
+      .render(
+        [
+          {
+            type: "text",
+            id: "translation",
+            box: {
+              x: 0,
+              y: 0,
+              w: Math.round((d?.width ?? d?.resolution?.width ?? 576) * widthFraction),
+              h: d?.height ?? d?.resolution?.height ?? 288,
+            },
+            text,
+            style: {
+              maxLines: this.settings.displayLines,
+              textWindow: "end",
+              breakMode: this.settings.wordBreaking ? "character" : "word",
+            },
+          },
+        ],
+        {includeTextLayout: true},
+      )
+      .then((result) => {
+        if (revision !== this.renderRevision) return
+        const lines = result.textLayout?.translation?.lines.map((line) => line.text)
+        if (lines) this.broadcastDisplayPreview(lines.join("\n"), lines, isFinal)
+      })
   }
 
   private cleanTranscriptText(text: string): string {
@@ -793,6 +722,8 @@ export class TranslationController {
     }
     // Clear the formatter + glasses display after 40s of inactivity.
     this.inactivityTimer = setTimeout(() => {
+      this.renderRevision++
+      this.currentDisplayText = ""
       this.formatter.clear()
       this.lastSpeakerId = undefined
       void this.session.display.render([])
