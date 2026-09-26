@@ -113,6 +113,8 @@ describe("glasses battery reading", () => {
   })
 
   it("reports only when the connected card actually renders the reading", () => {
+    engine.pairing.onScanning = jest.fn(() => () => {})
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({clearHistoryAndGoHome: jest.fn(), push: jest.fn()})
     ;(engine.glasses.status as jest.Mock).mockReturnValue({
       state: "disconnected",
       fullyBooted: false,
