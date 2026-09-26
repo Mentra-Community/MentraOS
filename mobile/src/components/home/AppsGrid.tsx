@@ -885,6 +885,13 @@ export function AppsGrid({
           accessibilityRole="button"
           accessibilityLabel={item.name}
           testID={`${showAllApps ? "allApps" : "home"}.miniapp.${item.packageName}`}
+          onAccessibilityTap={() => {
+            void handlePress(item)
+          }}
+          accessibilityActions={[{name: "activate"}]}
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === "activate") void handlePress(item)
+          }}
           className="flex-1 items-center justify-center pt-3"
           onPress={() => {
             // if (showAllApps) {
