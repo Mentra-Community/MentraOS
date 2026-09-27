@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { zipSync, strToU8 } from "fflate";
 import { GithubTestBuildGateway, readRequestZip, readTestMetadata } from "./test-builds.service";
-import { testBuildQuerySchema, testDispatchInputSchema, testRoutinePlatform, type TestDispatchInput } from "../types/test-dispatch.types";
+import { testBuildQuerySchema, testDispatchInputSchema, testRoutinePlatform, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPO = "Mentra-Community/MentraOS";
@@ -198,7 +198,10 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
   expect(available.routines.find(routine => routine.id === "mentra-call")?.available).toBe(false);
   const commissioned = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
     routines: ["no-glasses", "day1-ota", "mentra-call"] });
-  expect((await commissioned.inventory({ channel }))[0]!.routines.filter(routine => testRoutinePlatform(routine.id) === "ios-on-mac").every(routine => routine.available)).toBe(true);
+  // Every enabled Mac routine is available; the planned Mac routines stay unavailable.
+  expect(Object.fromEntries((await commissioned.inventory({ channel }))[0]!.routines
+    .filter(routine => testRoutinePlatform(routine.id) === "ios-on-mac").map(routine => [routine.id, routine.available])))
+    .toEqual({ "no-glasses": true, "day1-ota": true, "mentra-call": true, "account-miniapps": false, livestreamer: false });
 });
 
 for (const channel of ["dev", "staging"] as const) test(`${channel} lists planned routines as unavailable even when a deployment enables them`, async () => {
@@ -206,9 +209,9 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} lists planne
   const gateway = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
     routines: ["no-glasses", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer"] });
   const routines = (await gateway.inventory({ channel }))[0]!.routines;
-  const row = (id: string) => routines.find(routine => routine.id === id)!;
-  expect(["no-glasses", "day1-ota", "mentra-call"].every(id => row(id).available)).toBe(true);
-  for (const id of ["account-miniapps", "livestreamer"]) expect(row(id)).toEqual({ id, available: false,
+  const row = (id: TestRoutineId) => routines.find(routine => routine.id === id)!;
+  expect((["no-glasses", "day1-ota", "mentra-call"] as const).every(id => row(id).available)).toBe(true);
+  for (const id of ["account-miniapps", "livestreamer"] as const) expect(row(id)).toEqual({ id, available: false,
     reason: "Planned routine: its automatic worker is not registered yet" });
   // Connected glasses is an Android routine: a Mac build reports the platform first, never a Mac run.
   expect(testRoutinePlatform("connected-glasses")).toBe("android");
