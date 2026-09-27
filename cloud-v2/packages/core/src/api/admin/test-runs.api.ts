@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { TestFailureCorrectionService } from "../../services/test-failure-correction.service";
 import { TestRunError, TestRunService } from "../../services/test-run.service";
 import { TestRunOverviewService } from "../../services/test-run-overview.service";
 import { TestRunFollowUpError, TestRunFollowUpService } from "../../services/test-run-follow-up.service";
@@ -6,7 +8,8 @@ import { testRunQuerySchema } from "../../types/test-run.types";
 import type { AppEnv } from "../../types/hono.types";
 
 /** Mounted only behind preinstalled.api's existing adminAuth gate. */
-export function createTestRunAdminApi(service = new TestRunService(), overview = new TestRunOverviewService(), followUp = new TestRunFollowUpService()) {
+export function createTestRunAdminApi(service = new TestRunService(), overview = new TestRunOverviewService(), followUp = new TestRunFollowUpService(),
+  corrections = new TestFailureCorrectionService()) {
   const app = new Hono<AppEnv>();
   app.onError((error, c) => {
     if (error instanceof TestRunError) return c.json({ error: "test_run_error", error_description: error.message }, error.status);
@@ -30,6 +33,22 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
     if (!input || input.confirmation !== "cancel-follow-up" || Object.keys(input).length !== 1)
       throw new TestRunFollowUpError(400, "explicit follow-up cancellation confirmation required");
     return c.json(await followUp.cancel(c.req.param("requestId"), admin.developerId));
+  });
+  // Explicit reviewed provenance correction of one acknowledged occurrence. The admin session identifies the reviewer;
+  // the service still corroborates every binding against the immutable result. No other caller can write it.
+  const correctionPath = "/:runId/failures/:occurrenceId/provenance-correction";
+  app.get(correctionPath, async c => {
+    c.header("Cache-Control", "no-store");
+    return c.json(await corrections.read(c.req.param("runId"), c.req.param("occurrenceId")));
+  });
+  app.post(correctionPath, bodyLimit({ maxSize: 16 * 1024, onError: c => c.json({ error: "too_large" }, 413) }), async c => {
+    c.header("Cache-Control", "no-store");
+    const admin = c.get("developer");
+    if (!c.get("isAdmin") || !admin) throw new TestRunFollowUpError(403, "admin access required");
+    if (c.req.header("content-type") !== "application/json") throw new TestRunError(400, "JSON correction required");
+    const input = await c.req.json().catch(() => null);
+    const result = await corrections.submit(c.req.param("runId"), c.req.param("occurrenceId"), input, admin.developerId);
+    return c.json(result.correction, result.created ? 201 : 200);
   });
   app.get("/:runId", async c => c.json(await service.detail(c.req.param("runId"))));
   app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => service.media(c.req.param("runId"), c.req.param("assetId"), c.req.raw));

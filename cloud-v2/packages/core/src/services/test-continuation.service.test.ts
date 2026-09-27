@@ -4,7 +4,7 @@ import { createTestFailureAgentApi } from "../api/agent/test-failures.api";
 import type { ContinuationGrant } from "../types/test-continuation.types";
 import type { TestDispatchReceipt } from "../types/test-dispatch.types";
 import { TestDispatchService, type TestDispatchRepository } from "./test-dispatch.service";
-import { TestContinuationService, continuationOperationId } from "./test-continuation.service";
+import { TestContinuationService, acknowledgedCase, continuationOperationId } from "./test-continuation.service";
 import { signTestContinuationGrant, signTestFailureReadGrant, verifyTestContinuationGrant } from "./test-failure-auth";
 import type { TestBuildGateway } from "./test-builds.service";
 import type { TestRunService } from "./test-run.service";
@@ -439,4 +439,13 @@ test("registered rerun incidents require the exact result binding before the inc
   expect((await app.request(`/${occurrenceId}/incidents/rep_01ORIGINAL`, { headers })).status).toBe(401);
   process.env.CLOUD_CORE_ENVIRONMENT = "staging";
   expect((await app.request(`${rerun}/rep_01RERUN`, { headers })).status).toBe(401);
+});
+
+test("a reviewed corrected source admits continuation only for the same acknowledged anchor; missing source still refuses", async () => {
+  const packet = (sourceStatus: string, source: unknown, agentRunId = "run_123") => ({ failureDetail: async () => ({ occurrenceId, sourceStatus, source,
+    delivery: { state: "acknowledged", agentRunId } }) }) as unknown as Pick<TestRunService, "failureDetail">;
+  const source = { repository: "Mentra-Community/MentraOS", headSha };
+  expect((await acknowledgedCase(packet("corrected", source), grant)).source).toMatchObject(source);
+  for (const runs of [packet("missing", null), packet("corrected", null), packet("corrected", source, "other_run")])
+    await expect(acknowledgedCase(runs, grant)).rejects.toMatchObject({ status: 409 });
 });
