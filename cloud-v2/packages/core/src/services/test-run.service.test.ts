@@ -11,7 +11,7 @@ import { adminAuth } from "../api/middleware/admin-auth.middleware";
 import { TestRunModel } from "../models/test-run.model";
 import { signTestFailureCorrectionDelivery, signTestFailureDelivery, signTestFailureReadGrant } from "./test-failure-auth";
 import { TestFailureCorrectionService } from "./test-failure-correction.service";
-import type { TestFailureProvenanceCorrection } from "../types/test-failure.types";
+import { testFailureSchema, type TestFailureProvenanceCorrection } from "../types/test-failure.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
 import { TestFailureDeliveryService, startTestFailureDelivery } from "./test-failure-delivery.service";
 import { testRunQuerySchema, testRunSchema, type TestRun, type TestRunQuery } from "../types/test-run.types";
@@ -900,6 +900,34 @@ describe("reviewed provenance correction of an existing source-null occurrence",
     expect(await service.failureDetail(p.id)).toMatchObject({ sourceStatus: "corrected", failure: { code: "no_transition",
       assetIds: ["gate-screenshot"], incidentIds: ["rep_original"], redactionPolicy: "routine-diagnostics-v1" } });
     expect(repository.runs.get(run.runId)!.failureOccurrences).toEqual(original);
+  });
+
+  test("original plus added assets must fit the unchanged 100-ID failure contract: the bound is accepted, one more refuses with no write", async () => {
+    const filled = (runId: string, count: number) => {
+      const run = localRun(); run.runId = runId;
+      const fillers = Array.from({ length: count }, (_, index) => ({ assetId: `fill-${index}`, kind: "metadata" as const,
+        contentType: "application/json" as const, filename: `fill-${index}.json`, sizeBytes: 2, sha256: sha256(Buffer.from("{}")) }));
+      run.assets.push(...fillers);
+      run.failures = [{ phase: "test", step: { id: "update-gate", label: "Press Back on the update-only page" }, code: "no_transition",
+        message: "Back on the update-only page made no transition.", assetIds: fillers.map(item => item.assetId), incidentIds: [],
+        redactionPolicy: "routine-diagnostics-v1", missingEvidence: [] }];
+      return run;
+    };
+    const add = { diagnostics: diag([{ assetId: "gate-video", sha256: sha256(video), chapterId: "update-gate" }]) };
+    const atBound = await published(filled("synthetic-local-99", 99));
+    const accepted = await submit(adminApp(), atBound.run.runId, atBound.id, request(atBound, add));
+    expect(accepted.status).toBe(201);
+    const packet = await service.failureDetail(atBound.id);
+    expect(packet.failure.assetIds).toHaveLength(100); expect(packet.failure.assetIds.at(-1)).toBe("gate-video");
+    expect(packet.evidence.assets).toHaveLength(100);
+    expect(testFailureSchema.shape.assetIds.safeParse(packet.failure.assetIds).success).toBe(true);
+    const over = await published(filled("synthetic-local-100", 100));
+    const before = structuredClone(repository.runs.get(over.run.runId)!);
+    const refused = await submit(adminApp(), over.run.runId, over.id, request(over, add));
+    expect(refused.status).toBe(400);
+    expect(repository.runs.get(over.run.runId)).toEqual(before); // No append, truncation or change to the original 100 bindings.
+    expect(await service.failureDetail(over.id)).toMatchObject({ sourceStatus: "missing", source: null });
+    expect((await service.failureDetail(over.id)).failure.assetIds).toHaveLength(100);
   });
 
   test("the correction route sits behind the existing admin gate", async () => {

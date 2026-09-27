@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  testFailureOccurrenceIdSchema, testFailureProvenanceCorrectionRequestSchema,
+  testFailureOccurrenceIdSchema, testFailureProvenanceCorrectionRequestSchema, testFailureSchema,
   type TestFailureOccurrence, type TestFailureProvenanceCorrection, type TestFailureProvenanceCorrectionRequest, type TestFailureSource,
 } from "../types/test-failure.types";
 import { testRunIdSchema, type TestRun } from "../types/test-run.types";
@@ -97,6 +97,11 @@ export class TestFailureCorrectionService {
     }
     if (occurrence.failure.assetIds.length + occurrence.failure.incidentIds.length + (request.diagnostics?.assets.length ?? 0) === 0)
       throw new TestRunError(400, "insufficient diagnostics: bind at least one reviewed recording or screenshot of a non-passing chapter");
+    // The effective bindings (original plus additions) must still fit the unchanged failure contract that publishers and
+    // the controller's evidence readers enforce (100 asset IDs, 20 incident IDs). Overflow refuses; nothing is truncated.
+    const effectiveAssets = [...occurrence.failure.assetIds, ...(request.diagnostics?.assets ?? []).map(item => item.assetId)];
+    if (!testFailureSchema.shape.assetIds.safeParse(effectiveAssets).success || !testFailureSchema.shape.incidentIds.safeParse(occurrence.failure.incidentIds).success)
+      throw new TestRunError(400, "the original plus added diagnostics exceed the failure evidence limits; nothing was changed");
     const { corroborated, asserted } = corroborateCorrectionSource(stored.run, request.source);
     const correction: TestFailureProvenanceCorrection = {
       schemaVersion: 1, correctionId: `tpc_${correctionSha256}`, correctionSha256, revision: 1, environment,
