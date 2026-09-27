@@ -213,7 +213,10 @@ async function requestedRoutineLinks({github, context, pr, sha, ios, android, co
     // missing/pending request or a lookup failure must not gate the build post.
     core.warning(`Could not locate this revision's routine request; linking its workflow: ${error.message}`)
   }
-  return requested.map(id => ({...result, id,
+  return requested.map(id => DEVICE_ROUTINES[id].pending
+    // A planned routine's label requests nothing: it has no registered automatic worker.
+    ? {...result, id, resultsUnavailable: "Planned routine: no automatic worker is registered yet, so no test was requested."}
+    : ({...result, id,
     ...(DEVICE_ROUTINES[id].platform === "android" && android.receiptUnavailable
       ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
     resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: DEVICE_ROUTINES[id].platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id})}))

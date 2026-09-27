@@ -7,8 +7,8 @@ const repository = "Mentra-Community/MentraOS", privateRepository = "Mentra-Comm
 const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "workflow_dispatch", ref: "refs/heads/dev"}
 const requestWorkflow = ".github/workflows/request-e2e-routine.yml"
 const bot = {type: "Bot", login: "github-actions[bot]"}
-function fixture({outcome = "passed", status = "passed", published = true, workerId = 200, attempt = 1, requestAttempt = 1, android = false, baseRef = "dev"} = {}) {
-  const routine = android ? "no-glasses-android" : "day1-ota"
+function fixture({outcome = "passed", status = "passed", published = true, workerId = 200, attempt = 1, requestAttempt = 1, android = false, baseRef = "dev",
+  routine = android ? "no-glasses-android" : "day1-ota"} = {}) {
   const source = {id: 100, run_attempt: requestAttempt, head_sha: "a".repeat(40), head_branch: "dev", event: "workflow_dispatch",
     status: "completed", conclusion: "success", path: requestWorkflow, repository: {full_name: repository}, head_repository: {full_name: repository}}
   const worker = {...source, id: workerId, run_attempt: attempt, head_sha: "b".repeat(40), head_branch: "main",
@@ -168,4 +168,22 @@ test("PR comments run independently of Slack configuration with serialized execu
   const checks = readFileSync(new URL("../workflows/e2e-setup-checks.yml", import.meta.url), "utf8")
   assert.equal(checks.match(/- "\.github\/scripts\/pr-routine-result\*"/g).length, 2)
   assert.match(checks, /pr-routine-result.test.mjs/)
+})
+
+test("each final nightly routine's PR result renders on the originating PR only with its own platform and terminal", async () => {
+  const names = {"day1-ota": "Day-one OTA", "mentra-call": "Mentra Call", "account-miniapps": "Account and miniapps",
+    "connected-glasses": "Connected glasses (Android)", livestreamer: "Livestreamer"}
+  for (const [routine, name] of Object.entries(names)) {
+    const android = routine === "connected-glasses"
+    const [result] = await resolvePrRoutineResults(fixture({routine, android}).options)
+    assert.equal(result.pr, 4136)
+    assert.equal(result.routineId, routine)
+    assert.ok(result.body.startsWith(`<!-- mentra-routine-result:200:1:${routine} -->\n### ${name} — test passed`))
+    const crossed = fixture({routine, android: !android})
+    await assert.rejects(resolvePrRoutineResults(crossed.options), /differ/)
+    const renamed = fixture({routine, android})
+    renamed.options.read = async (_github, _repo, _run, file) => file.startsWith("routine-terminal-")
+      ? {"routine-terminal-no-glasses.json": renamed.terminal} : {"request.json": renamed.request}
+    await assert.rejects(resolvePrRoutineResults(renamed.options))
+  }
 })

@@ -5,7 +5,7 @@ import {matchingBuildRun, readOtaTargets} from "./notify-pr-builds.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {ANDROID_WORKFLOW, ANDROID_PUBLICATION_STEP, androidReceiptName, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
+import {deviceRoutine, hasRoutineLabel, registeredRoutine} from "./device-routines.mjs"
 
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
 export const REQUEST_LABEL = "routine:day1-ota"
@@ -265,6 +265,7 @@ export async function createRoutineRequest({
   fetchImpl = fetch,
   now = () => new Date(),
   readZip,
+  routineCatalog,
 }) {
   if (channel !== "pr") {
     // Coordinated originals are already selected by their exact historical source run and attempt.
@@ -272,12 +273,13 @@ export async function createRoutineRequest({
       throw new Error("Original request replay applies to PR requests; select a coordinated original by its exact source")
     const {createCoordinatedRoutineRequest} = await import("./coordinated-routine-request.mjs")
     return createCoordinatedRoutineRequest({github, context, number, channel, routine, requestOrigin, source,
-      sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode, fetchImpl, now})
+      sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode, fetchImpl, now, routineCatalog})
   }
   const repository = `${context.repo.owner}/${context.repo.repo}`
   if (sourcePublication(nightlyRunId, nightlyRunAttempt) || (nightlyMode && nightlyMode !== "ordered")) throw new Error("Nightly sequences require a coordinated channel")
   const selectedSource = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
-  const registered = deviceRoutine(routine)
+  // A planned routine without a registered automatic worker refuses before any request is created.
+  const registered = registeredRoutine(routine, routineCatalog)
   const android = registered.platform === "android"
   const producer = routineProducer(routine)
   const platformName = android ? "Android" : "Mac"

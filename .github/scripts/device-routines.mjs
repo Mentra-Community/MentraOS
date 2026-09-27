@@ -2,6 +2,7 @@
 // means a routine can exercise this behavior; only a completed run proves it.
 const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/90a70edfe2fa17fd766dda3d98977555d6608a05/"
 const androidDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58483a6c729018dc9955122dd071ecefbfb8ae92/"
+const pendingDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/754d527a3d6aac8ac971c600998aece203015394/"
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",
@@ -43,12 +44,59 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${definitions}tools/mentra-e2e/runner/call-routine.ts`,
     worker: `${definitions}worker/CALL-RECIPE.md`,
   }),
+  // Planned nightly targets. Their names, labels, platforms and result rows are wired end to end, but each is
+  // `pending`: it has no registered automatic worker, so every request, dispatch and nightly path refuses it with
+  // this exact reason. Remove `pending` only in the reviewed change that registers its qualified worker, and add its
+  // label to request-e2e-routine.yml's pull_request trigger and explicit REQUEST_ROUTINE chain in that same change.
+  "account-miniapps": Object.freeze({
+    label: "routine:account-miniapps", name: "Account and miniapps", platform: "ios-on-mac",
+    coverage: "One combined paired-account routine: email login/logout, data export, Google SSO, exact feedback report, paired miniapps and visual incompatible tiles, with account and pairing restoration.",
+    relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/src/services/**", "mobile/assets/miniapps/**"],
+    prerequisites: "CI Mac app; enrolled paired glasses fixture, the original consumer account and the Google account, with the Safari provider recording.",
+    exclusions: "Sections are one routine and are never requested separately. No Android, OTA or Call coverage.",
+    definition: `${pendingDefinitions}docs/ACCOUNT-MINIAPPS-ROUTINE.md`,
+    implementation: `${pendingDefinitions}tools/mentra-e2e/runner/account-miniapps-routine.ts`,
+    worker: `${pendingDefinitions}worker/account-miniapps.ts`,
+    pending: "No automatic worker: the existing host's admitAccountMiniappsRun refuses (safari-google-provider), and no exported automatic preparation binds the request's selected Mac build and claim-bound recording evidence (the host installs its static build and records development evidence only)",
+  }),
+  "connected-glasses": Object.freeze({
+    label: "routine:connected-glasses", name: "Connected glasses (Android)", platform: "android",
+    coverage: "One combined Android routine with paired glasses: disconnect/unpair/reconnect, Bluetooth, camera settings, Wi-Fi connect, gallery delivery and YouTube audio, returning the original account and pairing.",
+    relatedPaths: ["mobile/modules/bluetooth-sdk/**", "mobile/modules/**/android/**", "mobile/src/app/**", "mobile/src/services/**"],
+    prerequisites: "CI signed Android APK and immutable OTA manifest; enrolled Android phone with its paired glasses and existing account.",
+    exclusions: "Never relabelled as the Android no-glasses walkthrough; no Mac, OTA or Call coverage.",
+    definition: `${pendingDefinitions}docs/routines/connected-glasses-brief.md`,
+    implementation: `${pendingDefinitions}tools/mentra-e2e/runner/connected-glasses-routine.ts`,
+    worker: `${pendingDefinitions}worker/connected-glasses.ts`,
+    pending: "No automatic worker: the existing host's admitConnectedGlassesRun refuses, its Wi-Fi connect, gallery delivery and YouTube audio sections are still pending, and no exported automatic preparation binds the request's selected APK and claim-bound recording evidence",
+  }),
+  livestreamer: Object.freeze({
+    label: "routine:livestreamer", name: "Livestreamer", platform: "ios-on-mac",
+    coverage: "Stream here (WebRTC) and local RTMP start/stop from the Mentra app, observed by an owned receiver, with receiver and network cleanup.",
+    relatedPaths: ["mobile/assets/miniapps/**", "mobile/src/services/**"],
+    prerequisites: "CI Mac app; enrolled paired glasses and an owned local receiver.",
+    exclusions: "Receiver observations alone do not qualify the routine.",
+    definition: `${pendingDefinitions}docs/LIVESTREAMER-ROUTINE-BRIEF.md`,
+    implementation: `${pendingDefinitions}tools/mentra-e2e/runner/livestreamer-receiver.ts`,
+    worker: null,
+    pending: "No automatic worker: no editable Livestreamer flow, lifecycle routine or host exists yet (only media and receiver helpers)",
+  }),
 })
 
 export function deviceRoutine(id) {
   if (!Object.hasOwn(DEVICE_ROUTINES, id)) throw new Error("Unsupported device routine")
   return DEVICE_ROUTINES[id]
 }
+
+/** Execution paths (request, dispatch and nightly) accept only a routine with a registered automatic worker. A planned
+ * routine refuses with its exact pending reason. Tests may pass a catalog that models a completed registration. */
+export function registeredRoutine(id, catalog = DEVICE_ROUTINES) {
+  if (!Object.hasOwn(catalog, id)) throw new Error("Unsupported device routine")
+  const routine = catalog[id]
+  if (routine.pending) throw new Error(`Routine ${id} is planned but not registered for automatic execution: ${routine.pending}`)
+  return routine
+}
+export const isRegisteredRoutine = (id, catalog = DEVICE_ROUTINES) => Object.hasOwn(catalog, id) && !catalog[id].pending
 
 export function hasRoutineLabel(pr, id) {
   return pr.labels?.some((label) => (typeof label === "string" ? label : label.name) === deviceRoutine(id).label) ?? false

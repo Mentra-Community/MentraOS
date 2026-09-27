@@ -237,6 +237,33 @@ test("Android results authenticate the sibling Mac archive attached to the origi
   await assert.rejects(resolveRoutineNotifications({...f, published: async () => ({archive: {sha256: "f".repeat(64)}})}), /another tested build/)
 })
 
+test("each final nightly routine's worker terminal updates its own row on the original release post", async () => {
+  const names = {"day1-ota": "Day-one OTA", "mentra-call": "Mentra Call", "account-miniapps": "Account and miniapps",
+    "connected-glasses": "Connected glasses (Android)", livestreamer: "Livestreamer"}
+  for (const [routineId, name] of Object.entries(names)) {
+    const android = routineId === "connected-glasses"
+    const routineRequest = structuredClone(request)
+    routineRequest.routine.id = routineId
+    routineRequest.requestId = routineRequest.requestId.replace(/no-glasses$/, routineId)
+    if (android) { routineRequest.selection.platform = "android"; routineRequest.selection.archive.sha256 = "9".repeat(64) }
+    const result = terminal()
+    result.request.routineId = routineId; result.resultRunId = routineRequest.requestId
+    const f = {...resolver({request: routineRequest, terminal: result}),
+      published: async () => ({archive: {sha256: "e".repeat(64)}})}
+    const plans = await resolveRoutineNotifications(f)
+    assert.equal(plans[0].row.routineId, routineId)
+    assert.equal(plans[0].row.requestRunId, 500)
+    assert.match(JSON.stringify(applyRoutineResult(plans[0].notification, plans[0].row).payload), new RegExp(name.replace(/[()]/g, "\\$&")))
+    // The terminal file must be the routine's own. (Platform binding is the real request verifier's, stubbed here.)
+    const renamed = {...f, read: async (github, repository, run, name, ...rest) => name.startsWith("routine-terminal-")
+      ? {"routine-terminal-no-glasses.json": result} : f.read(github, repository, run, name, ...rest)}
+    await assert.rejects(resolveRoutineNotifications(renamed), /Terminal filename differs/)
+  }
+  const unknown = terminal(); unknown.request.routineId = "arbitrary"
+  const arbitrary = structuredClone(request); arbitrary.routine.id = "arbitrary"
+  await assert.rejects(resolveRoutineNotifications(resolver({request: arbitrary, terminal: unknown})))
+})
+
 // Cancelled before any runner: projected from GitHub metadata, never as a test result.
 // GitHub run/job/callback receipts are actual (see the fixture's provenance). The
 // request.json body and Slack post receipt were not captured; they adapt the

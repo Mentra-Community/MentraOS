@@ -10,7 +10,8 @@ import {applyRoutineResult, assertNotification, positive, receiptName, REPOSITOR
 export const WORKFLOW = ".github/workflows/notify-release-routine.yml"
 const PRIVATE = {owner: "Mentra-Community", repo: "Mentra-Automated-Testing"}
 const REQUEST = ".github/workflows/request-e2e-routine.yml"
-const routines = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"]
+// Every catalogued device routine, including planned ones: a result exists only after a registered worker ran it.
+const routines = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer"]
 export const jobName = plan => `Update release ${plan.notification.build.runId} / post ${plan.notification.producer.runAttempt} / ${plan.row.routineId}`
 export const stateName = (runId, attempt, routine) => `release-slack-state-${runId}-${attempt}-${routine}`
 

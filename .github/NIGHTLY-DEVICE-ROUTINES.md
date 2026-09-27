@@ -11,11 +11,40 @@ on each latest verified coordinated **dev** and **staging** publication:
 | `connected-glasses` | Android | Author-owned combined routine; unavailable until its real worker is registered and qualified |
 | `livestreamer` | iOS on Mac | Planned author-owned routine covering Livestreamer's WebRTC **Stream here** and local RTMP; unavailable until its real worker is registered and qualified |
 
-Planning, registration and qualification are separate steps. A planned target only
-reserves a routine ID and platform. The planner reports it as unavailable and never
-requests it until the worker is registered. Registration is not a passing device
-result either. No-glasses tests requested after each coordinated build remain
-unchanged. The scheduler creates no commits or builds.
+Planning, registration and qualification are separate steps. A planned target is
+catalogued in [`device-routines.mjs`](scripts/device-routines.mjs) with its name,
+label, platform and a `pending` reason. That wires its request choice, Slack row,
+terminal filename and PR result rendering, but every execution path refuses it:
+PR label and explicit requests, dispatch planning, the private callback and the
+nightly send all require `registeredRoutine`. The planner lists it as unavailable
+with its exact `pending` text and never requests it. Core lists it with a `planned`
+reason that deployment enablement cannot override, and the private worker refuses
+it during preparation before any claim. Registration is not a passing device result
+either. No-glasses tests requested after each coordinated build remain unchanged
+and stay the only successful-build defaults. The scheduler creates no commits or
+builds.
+
+Each planned routine's remaining owner contract:
+
+- `account-miniapps`: the owner's `admitAccountMiniappsRun` still refuses
+  (`safari-google-provider`), and `worker/account-miniapps.ts` exports no automatic
+  preparation. Its `createAccountMiniappsHost` installs the host configuration's
+  static build and finalizes development evidence. The missing export must bind
+  the request's selected Mac build and claim-bound evidence.
+- `connected-glasses`: the owner's `admitConnectedGlassesRun` still refuses with
+  its observation blockers, and its Wi-Fi connect, gallery delivery and YouTube
+  audio sections are still pending. `worker/connected-glasses.ts` exports no
+  automatic preparation that verifies the request's APK through
+  `verifySelectedAndroidApk` and records claim-bound Android evidence.
+- `livestreamer`: no host exists; the owner must add `worker/livestreamer.ts`
+  exporting `prepareLivestreamerWorker(configRef, mode, expectedRequest)` backed by
+  an editable Stream here and local RTMP flow with owned receiver and network
+  cleanup.
+
+Registering one is a single reviewed change: remove its `pending` (public) and
+`planned` (Core), route its private enrolled configuration to the owner's completed
+lifecycle instead of `worker/planned-routine-intake.ts`, and add its label to
+`request-e2e-routine.yml`'s `pull_request` trigger and `REQUEST_ROUTINE` chain.
 
 ## Schedule and exact selection
 
@@ -84,8 +113,10 @@ change does not enable it. Before enabling:
    dispatcher does not make an older runtime understand the new marker.
 2. Merge the public producer/callback/scheduler and Core overview projection to
    `dev`, the default branch. Complete the three author-owned routine registrations
-   (`account-miniapps`, `connected-glasses` and `livestreamer`) across public
-   selectors, private parsers/workers and runner capabilities.
+   (`account-miniapps`, `connected-glasses` and `livestreamer`) as described above.
+   Selectors, parsers, platform routing (`connected-glasses` is Android only),
+   enrollment keys and runner labels already exist; enrolling a planned routine
+   still ends in its preparation refusal.
 3. Qualify **each** full recorded routine, its setup/verified return, resource
    transitions and actual queue-to-admin publication. Call qualification includes
    the browser-peer recording, two-way audio, background operation and independent
@@ -120,7 +151,12 @@ Focused offline checks:
 node --test .github/scripts/nightly-device-routines.test.mjs \
   .github/scripts/request-e2e-routine.test.mjs \
   .github/scripts/coordinated-routine-request.test.mjs \
-  .github/scripts/dispatch-device-routine.test.mjs
+  .github/scripts/dispatch-device-routine.test.mjs \
+  .github/scripts/notify-pr-builds.test.mjs \
+  .github/scripts/pr-routine-result.test.mjs \
+  .github/scripts/release-routine-slack.test.mjs
 ```
 
 These synthetic metadata checks exercise no hardware and do not enable scheduling.
+The five-by-two chain tests use a labelled model of a completed public registration
+for the planned routines; a pass there models wiring only and qualifies nothing.

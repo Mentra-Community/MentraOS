@@ -194,8 +194,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return TEST_ROUTINES.map(routine => {
       const compatible = testRoutinePlatform(routine.id) === platform;
       const enabled = enabledRoutines.includes(routine.id);
-      return { id: routine.id, available: available && channels.includes(channel) && compatible && enabled,
+      // A planned routine has no registered automatic worker; enabling it in a deployment cannot make it requestable.
+      const planned = "planned" in routine ? routine.planned : undefined;
+      return { id: routine.id, available: available && channels.includes(channel) && compatible && enabled && !planned,
         ...(!compatible ? { reason: `This routine requires a ${testRoutinePlatform(routine.id) === "android" ? "published Android APK" : "published Mac build"}` }
+          : planned ? { reason: planned }
           : !available ? { reason: "A verified published app build is required" }
           : !channels.includes(channel) ? { reason: "Dispatch for this channel is not enabled on the trusted issuer yet" }
           : !enabled ? { reason: "This routine is not enabled on the test workers yet" } : {}) };

@@ -1,7 +1,7 @@
 import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
 import {admittedPrBase, currentBaseSha, successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
-import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
+import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel, isRegisteredRoutine, registeredRoutine} from "./device-routines.mjs"
 import {validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 
@@ -122,7 +122,7 @@ async function currentPr(github, context, number, headSha, routine, labelRequire
 
 /** Runs only from the trusted default-branch workflow; reads PR metadata, never PR code. */
 export async function planDeviceDispatch({github, context, callbackAttempt, routine = "day1-ota"}) {
-  deviceRoutine(routine)
+  registeredRoutine(routine)
   const buildWorkflow = `.github/workflows/${routineProducer(routine)}`
   const run = await completedRun(github, context)
   if (!run) return {mode: "skip", reason: "Workflow has not completed"}
@@ -200,7 +200,8 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
  * request already names one routine, so its private callback remains singular. */
 export async function planDeviceDispatches(options) {
   const plans = []
-  for (const routine of Object.keys(DEVICE_ROUTINES)) {
+  // Planned routines have no registered worker: a label on them never becomes an automatic request.
+  for (const routine of Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id))) {
     const plan = await planDeviceDispatch({...options, routine})
     if (plan.mode === "dispatch") return [plan]
     plans.push(plan)
@@ -209,7 +210,7 @@ export async function planDeviceDispatches(options) {
 }
 
 export async function requestAfterPublication({github, context, plan, wait = sleep}) {
-  deviceRoutine(plan.routine)
+  registeredRoutine(plan.routine)
   const coordinated = ["dev", "staging"].includes(plan.channel)
   requireThat(plan.mode === "request" && (coordinated ? !plan.pr && ["no-glasses", "no-glasses-android"].includes(plan.routine) : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
     && plan.callbackRunId === context.runId && plan.callbackAttempt === 1, "Invalid request dispatch")
@@ -233,12 +234,12 @@ export async function requestAfterPublication({github, context, plan, wait = sle
 }
 
 /** Read the downloaded JSON as data. The private worker independently authenticates it again. */
-export async function dispatchReadyRequest({github, privateGithub, context, plan, bytes, fetchImpl = fetch}) {
+export async function dispatchReadyRequest({github, privateGithub, context, plan, bytes, fetchImpl = fetch, routineCatalog}) {
   requireThat(plan.mode === "dispatch" && positive(plan.runId) && positive(plan.runAttempt) &&
     SHA.test(plan.sourceSha ?? ""), "Invalid private dispatch plan")
   requireThat(bytes.byteLength <= 1024 * 1024, "Request exceeds 1 MiB")
   const request = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(bytes))
-  deviceRoutine(request.routine?.id)
+  registeredRoutine(request.routine?.id, routineCatalog)
   const coordinated = request.schemaVersion === 2
   requireThat(request.routine.authorization === undefined ||
     ["pr-label", "workflow-dispatch", ...(coordinated ? ["successful-build"] : [])].includes(request.routine.authorization), "Unsupported request authorization")

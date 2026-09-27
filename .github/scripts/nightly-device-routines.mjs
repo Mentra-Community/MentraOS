@@ -1,6 +1,6 @@
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, resolveCoordinatedSelection} from "./coordinated-routine-request.mjs"
 
-import {DEVICE_ROUTINES} from "./device-routines.mjs"
+import {DEVICE_ROUTINES, isRegisteredRoutine} from "./device-routines.mjs"
 
 export const NIGHTLY_WORKFLOW = ".github/workflows/nightly-device-routines.yml"
 
@@ -80,8 +80,9 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
   const requests = [], unavailable = []
   for (const channel of ["dev", "staging"]) {
     const targets = NIGHTLY_TARGETS.filter(target => {
-      if (Object.hasOwn(routineCatalog, target.routine) && routineCatalog[target.routine].platform === target.platform) return true
-      unavailable.push({date, channel, ...target, reason: "Required routine has no compatible registered worker; authoring and qualification are pending"})
+      if (isRegisteredRoutine(target.routine, routineCatalog) && routineCatalog[target.routine].platform === target.platform) return true
+      unavailable.push({date, channel, ...target, reason: "Required routine has no compatible registered worker; authoring and qualification are pending",
+        ...(routineCatalog[target.routine]?.pending ? {pending: routineCatalog[target.routine].pending} : {})})
       return false
     })
     if (!targets.length) continue
@@ -134,11 +135,11 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
 }
 
 /** One entered send step fences one date/channel/routine, even after a lost response. */
-export async function sendNightlyRequest({github, context, attempt, plan}) {
+export async function sendNightlyRequest({github, context, attempt, plan, routineCatalog = DEVICE_ROUTINES}) {
   const {run, date} = await scheduledRun(github, context, attempt)
   requireThat(attempt === 1 && date && plan.date === date && ["dev", "staging"].includes(plan.channel) &&
     NIGHTLY_TARGETS.some(target => target.routine === plan.routine && target.platform === plan.platform) &&
-    Object.hasOwn(DEVICE_ROUTINES, plan.routine) && DEVICE_ROUTINES[plan.routine].platform === plan.platform &&
+    isRegisteredRoutine(plan.routine, routineCatalog) && routineCatalog[plan.routine].platform === plan.platform &&
     positive(plan.sourceRunId) && positive(plan.publicationAttempt), "Invalid nightly request coordinates")
   const since = new Date(Date.parse(run.created_at) - 26 * 3600_000).toISOString()
   const history = await completePages(page => github.rest.actions.listWorkflowRuns({...context.repo,

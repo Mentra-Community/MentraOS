@@ -201,6 +201,21 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
   expect((await commissioned.inventory({ channel }))[0]!.routines.filter(routine => testRoutinePlatform(routine.id) === "ios-on-mac").every(routine => routine.available)).toBe(true);
 });
 
+for (const channel of ["dev", "staging"] as const) test(`${channel} lists planned routines as unavailable even when a deployment enables them`, async () => {
+  const f = releaseFixture(channel);
+  const gateway = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
+    routines: ["no-glasses", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer"] });
+  const routines = (await gateway.inventory({ channel }))[0]!.routines;
+  const row = (id: string) => routines.find(routine => routine.id === id)!;
+  expect(["no-glasses", "day1-ota", "mentra-call"].every(id => row(id).available)).toBe(true);
+  for (const id of ["account-miniapps", "livestreamer"]) expect(row(id)).toEqual({ id, available: false,
+    reason: "Planned routine: its automatic worker is not registered yet" });
+  // Connected glasses is an Android routine: a Mac build reports the platform first, never a Mac run.
+  expect(testRoutinePlatform("connected-glasses")).toBe("android");
+  expect(row("connected-glasses").available).toBe(false);
+  expect(row("connected-glasses").reason).toContain("published Android APK");
+});
+
 for (const channel of ["dev", "staging"] as const) test(`${channel} retained artifacts cannot qualify a non-publishing attempt`, async () => {
   for (const scenario of ["earlier-attempt", "later-skipped", "later-failed", "dry-run", "missing-step", "ambiguous-finalizer"]) {
     const f = releaseFixture(channel, 2);
