@@ -1,7 +1,7 @@
 ---
 name: routine-fixer
 description: Investigate an assigned automated routine failure, fix its cause, and iterate Codex review and regression runs.
-tools: Read, Edit, Write, Glob, Grep, Bash, Skill
+tools: Read, Edit, Write, Glob, Grep, Bash, Skill, StructuredOutput
 skills:
   - fix-routine-failure
   - codex-pr-review
