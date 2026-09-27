@@ -12,8 +12,11 @@ configuration and recordings in the private testing system.
 
 ## Authoring workflow
 
-1. **Explore.** Use AI to navigate the Mentra App's pages, click controls and try
-   miniapps as a person would, observing and recording what happens. When a real
+1. **Plan.** Define the human checks and expected outcomes in the brief below
+   before choosing selectors or writing replay code.
+2. **Explore and capture.** Use AI computer use to traverse the whole real flow
+   in the Mentra App as a person would. Capture video, screenshots and action
+   notes that show the actions and observed outcomes. When a real
    product bug appears, attempt an incident with the available evidence through
    the shared reporting path; retain its ID or submission failure. Keep the
    affected path failed or blocked and continue independent exploration whose
@@ -21,13 +24,14 @@ configuration and recordings in the private testing system.
    all discovery or turn the failed check into a pass. Acoustic calibration and
    probes are prerequisites for automated audio measurement, not for using or
    exploring the app: without them, keep audio assertions unverified and
-   continue UI exploration that is otherwise valid. Normal action, ownership
-   and recording prerequisites still apply.
-2. **Capture and edit.** Turn the exploration into a readable routine of stable
-   English actions and observable assertions using the existing flow helpers.
-   Keep steps editable so coverage can change and grow with the product.
-3. **Replay and qualify.** Replay the captured flow deterministically for faster
-   repeated coverage without AI rediscovery. Iterate from usable live state as
+   continue UI exploration that is otherwise valid. Permission, resource
+   ownership, in-flight operation and recording/cleanup restrictions still apply.
+3. **Encode the observed flow.** After a complete successful real traversal,
+   turn its captured actions and outcomes into editable English steps and
+   observable assertions using the existing flow helpers. Do not substitute
+   scripted assumptions for paths that discovery has not completed successfully.
+4. **Replay and qualify.** Replay the captured flow deterministically without
+   AI for faster repeated coverage. Iterate from usable live state as
    described below, then qualify the complete flow with one clean recording
    against the exact source and build. Partial exploration remains development
    evidence, not a full routine pass.
@@ -80,7 +84,8 @@ must also refresh any pinned copy/reference used by that worker.
 
 ## 3. Reuse the lifecycle
 
-Compose **setup → test → final checks → cleanup → return verification** using
+When encoding deterministic replay, compose
+**setup → test → final checks → cleanup → return verification** using
 the existing platform lifecycle. Mac flows use the `Step` contract in
 `tools/mentra-e2e/runner/suite.ts`; use the corresponding Android adapter for
 Android execution. Reuse artifact preparation, fixture ownership, progress,
@@ -107,11 +112,13 @@ step changed. Re-establish only prerequisites that changed or are no longer
 proven. Keep the existing ownership and command-completion rules: an unanswered
 writer needs reconciliation, and owned recorders still need confirmed cleanup.
 
-Run focused checks for the changed flow/helper and the relevant typecheck. Use
-the supported development entry in the selected private revision for hardware
-iteration. Preserve the exact harness snapshot, selected app artifacts, steps,
-assertions, recording and cleanup outcome with the result. Inspect playback and
-the failure evidence, not just the process exit code.
+For scripted iteration, run focused checks for the changed flow/helper and the
+relevant typecheck, and use the supported development entry in the selected
+private revision. For AI discovery, use the available authorized computer-use
+surface; a replay entry is not a prerequisite. Preserve the exact harness
+snapshot, selected app artifacts, steps, assertions, recording and cleanup
+outcome with the result. Inspect playback and the failure evidence, not just
+the process exit code.
 
 Label section runs **development evidence**, recording their starting state,
 executed steps and ending state. Do not combine successful sections into a full
@@ -148,16 +155,22 @@ copy invocations from there, not from memory.
 Segments are local UI development evidence, not Day1 firmware or Call
 continuation. Merged source does not mean a host's runtime is ready or
 authorized to run them, and the private guide records only offline tests; no
-live segment or full routine pass is implied. Where no supported segment
-applies, state the gap and continue source work. Do not invent flags or present
-a full-lifecycle rerun as continuation.
+live segment or full routine pass is implied. Missing scripted replay, segment
+or observer support does not itself stop authorized AI computer-use discovery
+on available resources. State the automation gap, continue the real flow and
+retain video, screenshots and action notes; leave assertions unverified when
+their required evidence is unavailable. Do not invent flags or present a
+full-lifecycle rerun as continuation.
 
 Separate worktrees allow parallel authoring; execution still uses shared resource
 ownership. Independent Mac and Android fixtures can run together. Routines using
 the same app, glasses, account or network/audio configuration must coordinate.
-Use the existing worker's admission and cleanup; do not clear another run's lock,
-change global enrollment or invoke a legacy runner to bypass an unavailable
-development entry. Continue source work while that dependency is resolved.
+Use the existing ownership/admission and cleanup rules for the resource; do not
+clear another run's lock, change global enrollment or invoke a legacy runner to
+bypass an unavailable development entry. If a resource is owned or an operation
+remains in flight, wait for its normal handoff or reconciliation; continue
+independent discovery on available resources or source work while that dependency
+is resolved.
 
 Local development proves the tested snapshot. It is not a CI qualification of a
 different revision or platform.
