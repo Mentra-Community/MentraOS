@@ -426,6 +426,52 @@ private struct InstallerCoreTests {
                 try InstallerFiles.manager.removeItem(at: path)
             }
         }
+        do {
+            // A concurrent glasses owner (the shared JS readLockState, as Android admission uses) polls the app lock
+            // while the native installer repeatedly adopts a running app's lease and hands it back.
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let folder = fixture.temporary.appendingPathComponent(".cache/mentra-e2e")
+            try InstallerFiles.manager.createDirectory(at: folder, withIntermediateDirectories: true)
+            let path = folder.appendingPathComponent("com.mentra.mentra.lock")
+            let app = Process()
+            app.executableURL = URL(fileURLWithPath: "/bin/sleep")
+            app.arguments = ["60"]
+            try app.run()
+            defer { if app.isRunning { app.terminate() } }
+            try encode(["pid": Int(app.processIdentifier), "token": "app-token", "launchedApp": true]).write(to: path, options: .atomic)
+            let poller = """
+            import {existsSync, writeFileSync} from "node:fs";
+            const {readLockState} = await import(process.argv[1]);
+            const folder = process.argv[2];
+            let reads = 0, free = [];
+            writeFileSync(folder + "/../poller-ready", "");
+            while (!existsSync(folder + "/../poller-stop")) {
+              let state;
+              try { state = (await readLockState(folder)).state } catch { state = "unverifiable" }
+              reads++;
+              if (state === "absent" || state === "reclaimable") free.push(state);
+            }
+            process.stdout.write(JSON.stringify({reads, free: free.length}));
+            """
+            let (reader, output) = try node(poller, fixture.temporary)
+            defer { if reader.isRunning { reader.terminate() } }
+            let ready = fixture.temporary.appendingPathComponent(".cache/poller-ready")
+            for _ in 0..<500 where !InstallerFiles.exists(ready) { usleep(10_000) }
+            try expect(InstallerFiles.exists(ready), "The concurrent reader did not start")
+            for _ in 0..<300 {
+                let lease = try AppOwnershipLease(homeDirectory: fixture.temporary)
+                try lease.release() // the app was not quit, so it gets its lease back
+            }
+            try Data().write(to: fixture.temporary.appendingPathComponent(".cache/poller-stop"))
+            reader.waitUntilExit()
+            let seen = try JSONSerialization.jsonObject(with: output.fileHandleForReading.readDataToEndOfFile()) as? [String: Int]
+            try test("native takeover of a running app's lease never exposes it as absent to a concurrent glasses owner") {
+                try expect((seen?["reads"] ?? 0) > 0 && seen?["free"] == 0, "A concurrent reader saw the running app's lock free: \(String(describing: seen))")
+                try expect(InstallerFiles.dictionary(InstallerFiles.read(path))["pid"] as? Int == Int(app.processIdentifier), "The app lost its lease")
+                try expect(try InstallerFiles.manager.contentsOfDirectory(atPath: folder.path) == ["com.mentra.mentra.lock"], "Takeover left files behind")
+            }
+        }
         try test("installer first: a glasses owner reading the native lease finds an owner without a reservation") {
             let fixture = try Fixture()
             defer { fixture.clean() }

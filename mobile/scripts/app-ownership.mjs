@@ -147,10 +147,9 @@ export async function acquireAppOwnership(
       // Only an installer adopts it: it keeps broad custody (no reservation) while it normally terminates that app,
       // then hands off to the next app or releases. Any other owner, which may narrow to one pair of glasses, must
       // wait until that process has exited (then the lock is reclaimed below as usual).
-      if (owner.launchedApp === true && installer) {
-        adopted = owner.pid
-        await unlink(path)
-      } else {
+      // The running app's lease is replaced in one rename below, never removed first.
+      if (owner.launchedApp === true && installer) adopted = owner.pid
+      else {
         if (installer || ((owner.retainOnExit === true || recovering) && !ownsRecovery))
           throw new Error(
             `Mentra is owned by a test or installation; finish it or recover its retained lease before installing: ${path}`,
@@ -171,19 +170,27 @@ export async function acquireAppOwnership(
     } catch (error) {
       if (error.code !== "ENOENT") throw error
     }
-    const file = await open(path, "wx", 0o600)
+    const record = JSON.stringify({
+      pid: process.pid,
+      token,
+      ...(installer || reservation ? {retainOnExit: true} : {}),
+      ...(reservation ? {reservation} : {}),
+    })
+    // Adopting a running app: write the record privately and rename it over the app's lease, so readers always see
+    // one owner or the other, never an absent lock. On any failure the app keeps its lease untouched.
+    const target = adopted === undefined ? path : `${path}.${token}.takeover`
     try {
-      await file.writeFile(
-        JSON.stringify({
-          pid: process.pid,
-          token,
-          ...(installer || reservation ? {retainOnExit: true} : {}),
-          ...(reservation ? {reservation} : {}),
-        }),
-      )
-      await file.sync()
-    } finally {
-      await file.close()
+      const file = await open(target, "wx", 0o600)
+      try {
+        await file.writeFile(record)
+        await file.sync()
+      } finally {
+        await file.close()
+      }
+      if (adopted !== undefined) await rename(target, path)
+    } catch (error) {
+      if (adopted !== undefined) await unlink(target).catch(() => {})
+      throw error
     }
     await syncDirectory(folder)
     let released

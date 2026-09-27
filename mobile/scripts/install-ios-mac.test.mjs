@@ -267,6 +267,84 @@ test("a dangling symlink as a glasses lease is held: launching refuses, a file-o
   await glassesAdmissionCase("no-launch-dangling")
 })
 
+// A concurrent physical-glasses owner reads the app lock (readLockState, as Android admission does) at every step of an
+// installer's takeover of a running app's lease. Only temporary folders and one temporary stand-in process are used.
+async function takeoverInterleavingCase(mode) {
+  const root = await fixture()
+  const folder = path.join(path.dirname(path.dirname(root)), ".cache/mentra-e2e")
+  const program = String.raw`
+    import assert from "node:assert/strict";
+    import {execFileSync} from "node:child_process";
+    import fsp from "node:fs/promises";
+    import {syncBuiltinESMExports} from "node:module";
+    import path from "node:path";
+    const [ownershipURL, folder, mode] = process.argv.slice(1);
+    const lockPath = path.join(folder, "com.mentra.mentra.lock");
+    // The running app: a detached stand-in process (reaped on exit), always killed when this test ends.
+    const app = Number(execFileSync("/bin/sh", ["-c", "/bin/sleep 60 >/dev/null 2>&1 & echo $!"], {encoding: "utf8"}).trim());
+    process.on("exit", () => { try { process.kill(app) } catch {} });
+    await fsp.mkdir(folder, {recursive: true});
+    const appRecord = JSON.stringify({pid: app, token: "app-token", launchedApp: true});
+    await fsp.writeFile(lockPath, appRecord, {mode: 0o600});
+    let readLockState;
+    const observed = [];
+    const observe = async (step) => {
+      let state;
+      try { state = await readLockState(folder) } catch { state = {state: "unverifiable"} }
+      observed.push({step, ...state});
+    };
+    const {open, rename, unlink} = fsp;
+    fsp.open = async (file, flags, ...rest) => {
+      if (String(file).startsWith(lockPath) && flags === "wx") {
+        await observe("before creating " + path.basename(String(file)));
+        if (mode === "write-failure") throw Object.assign(new Error("fake disk full"), {code: "ENOSPC"});
+      }
+      return open(file, flags, ...rest);
+    };
+    fsp.rename = async (from, to) => {
+      if (to === lockPath) await observe("before replacing");
+      await rename(from, to);
+      if (to === lockPath) await observe("after replacing");
+    };
+    fsp.unlink = async (file) => {
+      await unlink(file);
+      if (file === lockPath) await observe("after unlinking");
+    };
+    syncBuiltinESMExports();
+    const ownership = await import(ownershipURL);
+    readLockState = ownership.readLockState;
+    if (mode === "write-failure") {
+      // The installer's replacement cannot be written: the running app keeps its exact lease, nothing is left behind.
+      await assert.rejects(ownership.acquireAppOwnership(folder, {installer: true}), /fake disk full/);
+      assert.equal(await fsp.readFile(lockPath, "utf8"), appRecord);
+      assert.deepEqual(await fsp.readdir(folder), ["com.mentra.mentra.lock"]);
+    } else {
+      const release = await ownership.acquireAppOwnership(folder, {installer: true});
+      const taken = JSON.parse(await fsp.readFile(lockPath, "utf8"));
+      assert.deepEqual([taken.pid, taken.retainOnExit, taken.reservation], [process.pid, true, undefined]);
+      assert.deepEqual(await fsp.readdir(folder), ["com.mentra.mentra.lock"]);
+      await release(); // the app was not quit, so it gets its lease back
+      assert.deepEqual(await readLockState(folder), {state: "held", pid: app});
+    }
+    // At no step could a physical-glasses owner see the app lock absent or free while the app ran.
+    assert.ok(observed.length > 0, "no takeover step was observed");
+    for (const seen of observed) assert.equal(seen.state, "held", JSON.stringify(observed));
+  `
+  await promisify(execFile)(
+    process.execPath,
+    ["--input-type=module", "--eval", program, new URL("./app-ownership.mjs", import.meta.url).href, folder, mode],
+    {timeout: 10000},
+  )
+}
+
+test("an installer takes over a running app's lease without ever exposing it as absent", async () => {
+  await takeoverInterleavingCase("takeover")
+})
+
+test("an installer that cannot write its replacement leaves the running app's lease untouched", async () => {
+  await takeoverInterleavingCase("write-failure")
+})
+
 async function launcherFixture() {
   const root = await fixture()
   await mkdir(root, {recursive: true})

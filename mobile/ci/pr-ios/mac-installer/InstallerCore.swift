@@ -345,24 +345,38 @@ final class AppOwnershipLease {
             throw InstallerError.invalid("Another app owner is acquiring the lock; stop all runs before recovering \(guardPath).")
         }
         defer { Darwin.rmdir(guardPath) }
-        var descriptor = Darwin.open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        let record = try JSONSerialization.data(withJSONObject: ["pid": getpid(), "token": token, "retainOnExit": true])
+        let descriptor = Darwin.open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        if descriptor >= 0 {
+            let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? file.close() }
+            try file.write(contentsOf: record)
+            try file.synchronize()
+            return
+        }
         // Mentra opened by an installer holds the lock with its own PID (handOff). It is the app, not a test or
         // installation, so a new installer takes it over, as mobile/scripts/app-ownership.mjs does. Nothing else is
-        // ever reclaimed here.
-        if descriptor < 0, errno == EEXIST, let launched = Self.launchedAppPID(path) {
-            adopted = launched
-            guard Darwin.unlink(path.path) == 0 else {
-                throw InstallerError.invalid("Cannot take over Mentra's app lock at \(path.path).")
-            }
-            descriptor = Darwin.open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
-        }
-        guard descriptor >= 0 else {
+        // ever reclaimed here. The record is written privately and renamed over the app's lease, so readers see one
+        // owner or the other, never an absent lock; on any failure the app keeps its lease untouched.
+        guard errno == EEXIST, let launched = Self.launchedAppPID(path) else {
             throw InstallerError.invalid("Mentra is owned by a test or installation. Finish it or recover its retained lease before installing: \(path.path).")
         }
-        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-        defer { try? file.close() }
-        try file.write(contentsOf: JSONSerialization.data(withJSONObject: ["pid": getpid(), "token": token, "retainOnExit": true]))
-        try file.synchronize()
+        let next = path.path + ".\(token).takeover"
+        let temporary = Darwin.open(next, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard temporary >= 0 else {
+            throw InstallerError.invalid("Cannot take over Mentra's app lock at \(path.path); it is unchanged.")
+        }
+        do {
+            let file = FileHandle(fileDescriptor: temporary, closeOnDealloc: true)
+            try file.write(contentsOf: record)
+            try file.synchronize()
+            try file.close()
+            guard Darwin.rename(next, path.path) == 0 else { throw InstallerError.invalid("rename failed") }
+        } catch {
+            Darwin.unlink(next)
+            throw InstallerError.invalid("Cannot take over Mentra's app lock at \(path.path); it is unchanged.")
+        }
+        adopted = launched
     }
 
     /// The PID of a valid launched-app record: {pid, token, launchedApp: true}, with neither retention nor a reservation.

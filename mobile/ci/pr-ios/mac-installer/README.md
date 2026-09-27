@@ -65,7 +65,9 @@ returns. The lease has neither retention nor a reservation, so every owner treat
 it as held while that process runs, and as free once it exits. Only a later
 installer adopts a running app's lease. It holds its own broad lease (no
 reservation) while it quits that app normally, then hands off to the next app
-or releases. If it ends without quitting the app, for example after a failed
+or releases. It replaces the running app's lease with a single rename, so a
+concurrent reader never sees the lease missing, and a failed replacement leaves
+the app's lease untouched. If it ends without quitting the app, for example after a failed
 installation, it hands the lease back to that app. A test or harness run is refused while the app runs ("quit Mentra
 normally, or run the installer with --no-launch"). So it can never narrow the
 lease to one pair of glasses while the old app may still be connected to another.
