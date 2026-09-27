@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isOriginalCandidate, type ContinuationCandidate, type ContinuationGrant } from "../types/test-continuation.types";
 import type { TestBuildQuery } from "../types/test-dispatch.types";
-import { TestDispatchError, readTestMetadata } from "./test-builds.service";
+import { TestDispatchError, UnsupportedReplayError, readTestMetadata } from "./test-builds.service";
 import { TestRunGithubApp } from "./test-run-github-app";
 import type { TestRunService } from "./test-run.service";
 
@@ -42,10 +42,17 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
   }
   async target(packet: FailurePacket, grant: ContinuationGrant, routineId: string): Promise<ContinuationTarget> {
     const source = packet.source;
-    ensure(source?.repository === PUBLIC && source.channel !== "local", "Published app source provenance is required");
+    ensure(source?.repository === PUBLIC, "Recorded app source provenance is required");
     const candidate = grant.candidate;
-    if (isOriginalCandidate(candidate)) return this.original(packet, grant, candidate, routineId);
     const harness = candidate.repository === HARNESS;
+    // An authenticated local run keeps its local provenance. Rerunning its exact tested app build (the
+    // original target, or a harness candidate on that build) needs an immutable published artifact and
+    // dispatch path, which a local run does not have. That is a capability limit, not a trust failure:
+    // investigation, fix PRs and app candidate CI verification on the recorded branch remain available.
+    if (source!.channel === "local" && (isOriginalCandidate(candidate) || harness))
+      throw new UnsupportedReplayError("Unsupported replay: a local run has no immutable published artifact or dispatch path "
+        + "for its exact tested build. Investigate from its evidence and verify app fixes on their own PR builds.");
+    if (isOriginalCandidate(candidate)) return this.original(packet, grant, candidate, routineId);
     const tested = harness ? packet.build.hashes.harnessSha ?? packet.build.hashes.harnessRevision : source!.headSha;
     ensure(typeof tested === "string" && /^[a-f0-9]{40}$/.test(tested), "The tested component revision is missing");
     // Only a shared harness candidate may name another same-case anchor as its owner;

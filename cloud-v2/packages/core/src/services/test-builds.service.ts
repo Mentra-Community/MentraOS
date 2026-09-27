@@ -37,6 +37,8 @@ type PrBase = typeof PR_BASES[number];
 const prSchema = z.object({ number: positive, state: z.string(), title: z.string(),
   head: z.object({ sha, ref: z.string(), repo: repositorySchema }), base: z.object({ ref: z.string() }) });
 type PullRequest = z.infer<typeof prSchema>;
+/** The PR a build must belong to: the current PR, or an authenticated original request's recorded PR. */
+type PrIdentity = { number: number; title: string; head: { sha: string }; base: { ref: string } };
 const artifactSchema = z.object({ id: positive, name: z.string(), expired: z.boolean(), size_in_bytes: positive,
   digest: z.string().regex(/^sha256:[a-f0-9]{64}$/), workflow_run: z.object({ id: positive, head_sha: sha }) });
 const requestFields = z.object({ kind: z.literal("mentra-routine-request"),
@@ -45,12 +47,27 @@ const requestFields = z.object({ kind: z.literal("mentra-routine-request"),
   trigger: z.object({ repository: z.literal(REPOSITORY), kind: z.literal("workflow_dispatch"), runId: positive, runAttempt: positive,
     sha, workflowSha: sha, ref: z.literal("refs/heads/dev"), workflow: z.literal(`.github/workflows/${REQUEST_WORKFLOW}`) }),
   selection: z.object({ platform: z.enum(["ios-on-mac", "android"]), archive: assetSchema, producer: z.object({ runId: positive, publicationAttempt: positive }) }).passthrough().nullable(),
+  pullRequest: z.object({ number: positive, headSha: sha, baseSha: sha, baseRef: z.enum(PR_BASES) }).passthrough().optional(),
+  // Present only on an exact replay of an earlier original request.
+  original: z.object({ requestId: z.string(), runId: positive, runAttempt: positive, artifactDigest: digest }).strict().optional(),
 });
 /** The exact build an original request selected, read from the issuer's immutable request artifact. */
-export interface OriginalSelection { source: TestBuildSource; archiveSha256: string; headSha: string }
+export interface OriginalSelection {
+  source: TestBuildSource; archiveSha256: string; headSha: string;
+  /** For a PR original: its recorded PR identity, which a replay keeps after the PR moves, closes or merges. */
+  pullRequest?: { number: number; headSha: string; baseSha: string; baseRef: PrBase };
+}
 
 export class TestDispatchError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 501 | 502 | 503, message: string) { super(message); }
+}
+/**
+ * An authenticated source whose exact original build has no immutable published artifact or
+ * dispatch path (for example a local run). A capability limit, not an invalid or untrusted source:
+ * investigation, fix PRs and candidate CI verification remain available.
+ */
+export class UnsupportedReplayError extends TestDispatchError {
+  constructor(message: string) { super(501, message); }
 }
 function requireThat(value: unknown, message: string): asserts value {
   if (!value) throw new TestDispatchError(409, message);
@@ -110,7 +127,8 @@ export interface RequestProgress {
 }
 export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
-  resolve(source: TestBuildSource, routineId?: TestRoutineId): Promise<TestBuild>;
+  /** With `originalRequestRunId`, a PR build is resolved for that original request's recorded PR identity. */
+  resolve(source: TestBuildSource, routineId?: TestRoutineId, originalRequestRunId?: number): Promise<TestBuild>;
   dispatch(input: TestDispatchInput): Promise<{ requestRunId: number; requestUrl: string }>;
   progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
   findExisting?(input: TestDispatchInput, since: string, excludeRequestRunIds?: number[]): Promise<{ requestRunId: number; requestUrl: string } | null>;
@@ -200,8 +218,24 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && (pr ? run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref
         : ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === channel);
   }
-  async resolve(source: TestBuildSource, routineId: TestRoutineId = "no-glasses"): Promise<TestBuild> {
+  async resolve(source: TestBuildSource, routineId: TestRoutineId = "no-glasses", originalRequestRunId?: number): Promise<TestBuild> {
     const platform = testRoutinePlatform(routineId);
+    if (originalRequestRunId !== undefined) {
+      // The exact build the original request selected, for that request's recorded PR head/base:
+      // never the current PR, which may have moved, closed or merged.
+      const original = await this.originalSelection(originalRequestRunId, routineId);
+      requireThat(source.channel === "pr" && original.pullRequest && isDeepStrictEqual(original.source, source),
+        "Build is not the original request's selection");
+      const pr = original.pullRequest;
+      const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
+      requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && run.repository.full_name === REPOSITORY
+        && run.head_repository.full_name === REPOSITORY && run.path === `.github/workflows/${prWorkflow(platform)}`
+        && run.event === "pull_request" && run.head_sha === pr.headSha, "Build does not match the original request's producer");
+      const identity: PrIdentity = { number: pr.number, title: `Original PR #${pr.number}`, head: { sha: pr.headSha }, base: { ref: pr.baseRef } };
+      const result = await this.describe(run, "pr", platform, identity, pr.baseSha, true);
+      requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
+      return result;
+    }
     const pr = source.channel === "pr" ? await this.pr(source.prNumber) : undefined;
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
     requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, platform, pr),
@@ -210,7 +244,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
   }
-  private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PullRequest, baseSha?: string, exact = false): Promise<TestBuild> {
+  private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PrIdentity, baseSha?: string, exact = false): Promise<TestBuild> {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
       : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
     const build: TestBuild = { source, platform, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
@@ -235,7 +269,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       return { ...build, reason: error instanceof TestDispatchError ? error.message : "Published metadata does not match this build" };
     }
   }
-  private async prArtifacts(run: GithubRun, pr: PullRequest, baseSha: string) {
+  private async prArtifacts(run: GithubRun, pr: PrIdentity, baseSha: string) {
     const attempts = publication(run, await this.jobs(run.id));
     requireThat(attempts, "Build or Mac publication has not succeeded");
     const suffix = `pr-${pr.number}-${pr.head.sha}-${run.id}-${attempts.publish}`;
@@ -261,7 +295,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return { attempt: attempts.publish, tag: "pr-builds", archive: data.artifacts.mac,
       result: { receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
   }
-  private async androidPrArtifacts(run: GithubRun, pr: PullRequest, baseSha: string) {
+  private async androidPrArtifacts(run: GithubRun, pr: PrIdentity, baseSha: string) {
     const jobs = await this.jobs(run.id);
     const builds = jobs.filter(job => job.name === "build" && job.run_attempt <= run.run_attempt);
     const latest = Math.max(0, ...builds.map(job => job.run_attempt));
@@ -387,8 +421,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   async dispatch(input: TestDispatchInput) {
     const source = input.source;
+    // An original replay names only its original request; the trusted issuer re-reads that request's selection.
+    requireThat(input.originalRequestRunId === undefined || source.channel === "pr", "Only a PR original is replayed by its request");
     const inputs = { routine: input.routineId, request_origin: "workflow-dispatch",
-      source_build_run_id: String(source.buildRunId), source_publication_attempt: String(source.publicationAttempt),
+      ...(input.originalRequestRunId !== undefined ? { original_request_run_id: String(input.originalRequestRunId) }
+        : { source_build_run_id: String(source.buildRunId), source_publication_attempt: String(source.publicationAttempt) }),
       ...(source.channel === "pr" ? { pr: String(source.prNumber) } : { channel: source.channel }) };
     const data = z.object({ workflow_run_id: positive, html_url: z.string(), run_url: z.string() }).parse(await this.api(
       `${REPOSITORY}/actions/workflows/${REQUEST_WORKFLOW}/dispatches`, { method: "POST",
@@ -406,19 +443,25 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const { request } = await this.publishedRequest(requestRunId);
     requireThat(request, "The original request did not complete successfully");
     const suffix = request.schemaVersion === 1 ? /^routine-[1-9]\d*-1-([1-9]\d*)-/.exec(request.requestId)?.[1] : request.source.channel;
-    requireThat(request.status === "ready" && request.selection && request.routine.id === routineId
+    requireThat(request.status === "ready" && request.selection && request.routine.id === routineId && request.original === undefined
       && request.selection.platform === testRoutinePlatform(routineId)
       && request.requestId === `routine-${requestRunId}-1-${suffix}-${routineId}`, "The original request did not select a published build for this routine");
     const selection = request.selection, producer = selection.producer;
-    const build = z.object({ headSha: sha.optional(), sourceCommit: sha.optional() }).passthrough().parse(selection.build ?? {});
-    const headSha = request.schemaVersion === 1 ? build.headSha : build.sourceCommit;
+    const recorded = z.object({ headSha: sha.optional(), baseSha: sha.optional(), sourceCommit: sha.optional() }).passthrough().safeParse(selection.build ?? {});
+    requireThat(recorded.success, "The original request did not record its selected source");
+    const build = recorded.data, headSha = request.schemaVersion === 1 ? build.headSha : build.sourceCommit;
     requireThat(headSha, "The original request did not record its selected source");
     if (request.schemaVersion === 2) requireThat(request.source.buildRunId === producer.runId
       && request.source.publicationAttempt === producer.publicationAttempt, "The original request source differs from its producer");
     const source: TestBuildSource = request.schemaVersion === 1
       ? { channel: "pr", prNumber: Number(suffix), buildRunId: producer.runId, publicationAttempt: producer.publicationAttempt }
       : { channel: request.source.channel, buildRunId: producer.runId, publicationAttempt: producer.publicationAttempt };
-    return { source, archiveSha256: selection.archive.sha256, headSha };
+    if (request.schemaVersion === 2) return { source, archiveSha256: selection.archive.sha256, headSha };
+    const pr = request.pullRequest;
+    requireThat(pr && pr.number === Number(suffix) && pr.headSha === headSha && build.baseSha !== undefined && pr.baseSha === build.baseSha,
+      "The original request's PR identity differs from its selected build");
+    return { source, archiveSha256: selection.archive.sha256, headSha,
+      pullRequest: { number: pr.number, headSha: pr.headSha, baseSha: pr.baseSha, baseRef: pr.baseRef } };
   }
   /** One authenticated immutable request generation; `request` is null until its workflow succeeded. */
   private async publishedRequest(requestRunId: number) {
@@ -462,8 +505,8 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         && request.source.buildRunId === input.source.buildRunId
         && request.source.publicationAttempt === input.source.publicationAttempt, "Published request source differs");
     const suffix = input.source.channel === "pr" ? input.source.prNumber : input.source.channel;
-    requireThat(request.requestId === `routine-${requestRunId}-1-${suffix}-${input.routineId}` && request.routine.id === input.routineId,
-      "Published request identity differs");
+    requireThat(request.requestId === `routine-${requestRunId}-1-${suffix}-${input.routineId}` && request.routine.id === input.routineId
+      && request.original?.runId === input.originalRequestRunId, "Published request identity differs");
     if (request.status === "no-artifact") return { state: "unavailable", requestId: request.requestId, message: request.reason };
     requireThat(request.selection?.platform === testRoutinePlatform(input.routineId) && request.selection.archive.sha256 === input.archiveSha256 && request.selection.producer.runId === input.source.buildRunId
       && request.selection.producer.publicationAttempt === input.source.publicationAttempt, "Request selected a different app publication");

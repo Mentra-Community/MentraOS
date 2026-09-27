@@ -90,8 +90,14 @@ repair to unlock a rerun.
   recorded source, channel, archive and routine, no PR. State why in the
   request. It uses the normal execution budget. It requires no state change,
   and it never substitutes a newer head, a rebuilt artifact or another
-  environment's build. A local-only original cannot be rerun this way. If the
-  controller refuses the rerun, record the refusal; do not work around it.
+  environment's build. A PR original replays from its recorded request even
+  after the PR was pushed, retargeted, closed or merged; a dev or staging
+  original uses its exact retained build. If the controller refuses the rerun,
+  record the refusal; do not work around it.
+- **Local original.** A local run has no published build to replay, so the
+  rerun returns `unsupported_replay`. That is a capability limit, not a bad
+  source: keep investigating from its evidence, and open and verify fixes on
+  their own PR builds as usual.
 - **State-only repair.** When the machine or fixture state is wrong, request
   the controller's registered repair: one of the named owned recovery
   operations for that routine. Each is sent at most once. An in-flight or
@@ -107,9 +113,10 @@ If a source change would stop the state problem from recurring, make it a normal
 fix PR, classified, reviewed and rerun like any other.
 
 A repair or rerun never changes the original failure. Report each result with
-its evidence. A pass of the original artifact after a completed repair supports
-a state cause; report both results rather than claiming more. If it still
-fails, return to investigation.
+its evidence. A state-only correction qualifies only with a completed, checked
+repair followed by a passing rerun of the exact original. That supports a state
+cause; report both results rather than claiming more. If it still fails,
+return to investigation.
 
 ## Retest and resume
 

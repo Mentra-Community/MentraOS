@@ -521,3 +521,46 @@ test("failed or cancelled request producers cannot be adopted even if they retai
     expect(f.calls).toHaveLength(1);
   }
 });
+
+test("a replay request's progress is bound to its original request marker, and an ordinary request never matches a replay", async () => {
+  const replayInput: TestDispatchInput = { ...input, originalRequestRunId: 60 };
+  for (const [marker, selected, ok] of [[{ requestId: "routine-60-1-12-no-glasses", runId: 60, runAttempt: 1, artifactDigest: HASH }, replayInput, true],
+    [{ requestId: "routine-61-1-12-no-glasses", runId: 61, runAttempt: 1, artifactDigest: HASH }, replayInput, false],
+    [undefined, replayInput, false], [{ requestId: "routine-60-1-12-no-glasses", runId: 60, runAttempt: 1, artifactDigest: HASH }, input, false],
+    [undefined, input, true]] as const) {
+    const f = fixture();
+    f.rows.set(`${API}/actions/runs/70/attempts/1`, run({ id: 70, event: "workflow_dispatch", head_branch: "dev", path: ".github/workflows/request-e2e-routine.yml" }));
+    const request = { schemaVersion: 1, kind: "mentra-routine-request", requestId: "routine-70-1-12-no-glasses", status: "ready", reason: "Replay",
+      routine: { id: "no-glasses", authorization: "workflow-dispatch" },
+      trigger: { repository: REPO, kind: "workflow_dispatch", runId: 70, runAttempt: 1, sha: HEAD, workflowSha: HEAD, ref: "refs/heads/dev", workflow: ".github/workflows/request-e2e-routine.yml" },
+      pullRequest: { number: 12, headSha: HEAD, baseSha: BASE, baseRef: "dev" }, ...(marker ? { original: marker } : {}),
+      selection: { platform: "ios-on-mac", archive: f.receipt.artifacts.mac, producer: { runId: 50, publicationAttempt: 1 } } };
+    const bytes = zipSync({ "request.json": strToU8(JSON.stringify(request)) });
+    f.rows.set(`${API}/actions/runs/70/artifacts?per_page=100`, { artifacts: [{ id: 80, name: "mentra-routine-request-70-1", expired: false,
+      size_in_bytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, workflow_run: { id: 70, head_sha: HEAD } }] });
+    f.rows.set(`${API}/actions/artifacts/80/zip`, new Response(null, { status: 302, headers: { location: "https://test.blob.core.windows.net/request.zip?signature=synthetic" } }));
+    f.rows.set("https://test.blob.core.windows.net/request.zip?signature=synthetic", new Response(bytes));
+    if (ok) expect((await f.gateway.progress(70, selected)).state).toBe("requesting");
+    else await expect(f.gateway.progress(70, selected)).rejects.toThrow("Published request identity differs");
+  }
+});
+
+test("dispatch sends an original replay by its request run only, and refuses a non-PR replay", async () => {
+  const f = fixture(), bodies: unknown[] = [];
+  const fetch = (async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") { bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ workflow_run_id: 90, html_url: `https://github.com/${REPO}/actions/runs/90`, run_url: `${API}/actions/runs/90` }); }
+    return f.fetch(url, init);
+  }) as typeof globalThis.fetch;
+  const gateway = new GithubTestBuildGateway({ token: "test-only-token", fetch });
+  await gateway.dispatch({ ...input, originalRequestRunId: 60 });
+  await gateway.dispatch(input);
+  expect(bodies).toEqual([
+    { ref: "dev", return_run_details: true, inputs: { routine: "no-glasses", request_origin: "workflow-dispatch", original_request_run_id: "60", pr: "12" } },
+    { ref: "dev", return_run_details: true, inputs: { routine: "no-glasses", request_origin: "workflow-dispatch", source_build_run_id: "50",
+      source_publication_attempt: "1", pr: "12" } }]);
+  await expect(gateway.dispatch({ ...input, source: { channel: "dev", buildRunId: 50, publicationAttempt: 1 }, originalRequestRunId: 60 }))
+    .rejects.toThrow("Only a PR original");
+  // Admin input cannot carry an original replay.
+  expect(testDispatchInputSchema.safeParse({ ...input, originalRequestRunId: 60 }).success).toBe(false);
+});

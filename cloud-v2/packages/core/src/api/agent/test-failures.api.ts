@@ -4,7 +4,7 @@ import { TestRunError, TestRunService } from "../../services/test-run.service";
 import { TestContinuationService } from "../../services/test-continuation.service";
 import { TestRepairService } from "../../services/test-repair.service";
 import { TestFailureIncidentService } from "../../services/test-failure-incident.service";
-import { TestDispatchError } from "../../services/test-builds.service";
+import { TestDispatchError, UnsupportedReplayError } from "../../services/test-builds.service";
 import { ZodError } from "zod";
 import type { ContinuationGrant } from "../../types/test-continuation.types";
 import type { AppEnv } from "../../types/hono.types";
@@ -38,6 +38,8 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
   };
   app.onError((error, c) => {
     if (error instanceof ZodError) return c.json({ error: "invalid_request", error_description: "Invalid continuation request" }, 400);
+    // An authenticated source without a replayable exact build: a capability limit, not a refusal of the source.
+    if (error instanceof UnsupportedReplayError) return c.json({ error: "unsupported_replay", error_description: error.message }, 501);
     if (error instanceof TestDispatchError) return c.json({ error: "test_continuation_error", error_description: error.message }, error.status);
     if (error instanceof TestRunError) return c.json({ error: "test_failure_error", error_description: error.message }, error.status);
     throw error;

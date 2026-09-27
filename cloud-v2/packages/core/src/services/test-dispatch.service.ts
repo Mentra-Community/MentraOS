@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
-import { testDispatchInputSchema, type TestDispatchReceipt, type TestDispatchView } from "../types/test-dispatch.types";
+import { continuationDispatchInputSchema, testDispatchInputSchema, type TestDispatchInput, type TestDispatchReceipt, type TestDispatchView } from "../types/test-dispatch.types";
 import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
 import type { TestContinuationBinding } from "../types/test-continuation.types";
 import type { TestRunClaimClosure } from "../types/test-run-claim.types";
@@ -73,9 +73,11 @@ export class TestDispatchService {
 
   async create(input: unknown, requestedBy: string, continuation?: TestContinuationBinding,
     adopt?: { requestRunId: number; requestUrl: string }, admit?: () => Promise<void>): Promise<TestDispatchView> {
-    const parsed = testDispatchInputSchema.safeParse(input);
-    if (!parsed.success || !requestedBy) throw new TestDispatchError(400, "Invalid routine dispatch request");
-    const data = parsed.data;
+    // Admin input is unchanged; only a continuation for an original target may replay an original request.
+    const parsed = (continuation ? continuationDispatchInputSchema : testDispatchInputSchema).safeParse(input);
+    const data: TestDispatchInput | undefined = parsed.success ? parsed.data : undefined;
+    if (!data || !requestedBy || (data.originalRequestRunId !== undefined && !("target" in (continuation?.candidate ?? {}))))
+      throw new TestDispatchError(400, "Invalid routine dispatch request");
     const inputSha256 = createHash("sha256").update(JSON.stringify({ input: data, requestedBy, ...(continuation ? { continuation } : {}) })).digest("hex");
     const dispatchId = data.idempotencyKey;
     const replay = (stored: StoredDispatch) => {
@@ -86,7 +88,7 @@ export class TestDispatchService {
     if (before) return replay(before);
     let rejectionReason: string | undefined;
     try {
-      const build = await this.github.resolve(data.source, data.routineId);
+      const build = await this.github.resolve(data.source, data.routineId, data.originalRequestRunId);
       if (build.availability !== "available" || build.archive?.sha256 !== data.archiveSha256)
         throw new TestDispatchError(409, build.reason ?? "Selected build changed or is unavailable; refresh the build list");
       if (continuation && build.headSha !== continuation.expectedHeadSha)

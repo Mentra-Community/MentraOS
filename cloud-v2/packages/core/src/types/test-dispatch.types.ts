@@ -14,6 +14,16 @@ export const testDispatchInputSchema = z.object({
   archiveSha256: z.string().regex(/^[a-f0-9]{64}$/),
   idempotencyKey: z.string().uuid(),
 }).strict();
+/**
+ * Continuation-only: an original PR target replays its recorded request by run ID through the
+ * trusted issuer. Admin and callers cannot supply it; Core sets it from the authenticated packet.
+ */
+export const continuationDispatchInputSchema = testDispatchInputSchema.extend({
+  originalRequestRunId: positive.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.originalRequestRunId !== undefined && value.source.channel !== "pr")
+    ctx.addIssue({ code: "custom", message: "Only a PR original is replayed by its request" });
+});
 export const testBuildQuerySchema = z.object({
   channel: z.enum(["pr", "dev", "staging"]),
   pr: z.coerce.number().int().positive().safe().optional(),
@@ -24,7 +34,7 @@ export const testBuildQuerySchema = z.object({
 });
 
 export type TestBuildSource = z.infer<typeof testBuildSourceSchema>;
-export type TestDispatchInput = z.infer<typeof testDispatchInputSchema>;
+export type TestDispatchInput = z.infer<typeof continuationDispatchInputSchema>;
 export type TestBuildQuery = z.infer<typeof testBuildQuerySchema>;
 export type TestRoutineId = z.infer<typeof testRoutineIdSchema>;
 export type TestBuildPlatform = "ios-on-mac" | "android";

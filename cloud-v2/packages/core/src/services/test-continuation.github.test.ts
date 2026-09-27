@@ -183,3 +183,23 @@ test("original target resolves only the occurrence's recorded source, channel, r
     expect(f.calls).toEqual([]);
   }
 });
+
+test("an authenticated local source is an unsupported replay, not an invalid source, and app fix PRs still verify", async () => {
+  const local = (f: ReturnType<typeof fixture>) => {
+    f.packet.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: "dev", headSha: tested };
+    (f.packet as { requestId: string }).requestId = "local-run-1";
+  };
+  // Original target and harness candidate would rerun the exact local build: 501, before any GitHub lookup.
+  const original = fixture(); local(original);
+  const originalGrant = { ...original.grant, candidate: { repository: PUB, headSha: tested, target: "original" as const } } as ContinuationGrant;
+  await expect(original.gateway.target(original.packet, originalGrant, "no-glasses")).rejects.toMatchObject({ status: 501 });
+  const harness = fixture(true); local(harness);
+  await expect(harness.gateway.target(harness.packet, harness.grant, "no-glasses")).rejects.toMatchObject({ status: 501 });
+  expect([...original.calls, ...harness.calls]).toEqual([]);
+  // An app fix PR for the recorded local branch is verified on its own PR build, as for published sources.
+  const app = fixture(); local(app); app.pr.head.ref = "codex/routine-run_123";
+  expect(await app.gateway.target(app.packet, app.grant, "no-glasses")).toMatchObject({ query: { channel: "pr", pr: 12 }, expectedHeadSha: head });
+  // Untrusted provenance remains a refusal (409), never the capability result.
+  const other = fixture(); other.packet.source = { ...other.packet.source!, repository: "someone/else" as typeof PUB };
+  await expect(other.gateway.target(other.packet, other.grant, "no-glasses")).rejects.toMatchObject({ status: 409 });
+});

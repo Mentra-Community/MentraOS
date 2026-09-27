@@ -85,7 +85,7 @@ export class TestContinuationService {
     if (target.original) {
       // Exactly the recorded build, however old: never the newest listing or a current head.
       const selection = await this.originalSelection(target, routineId);
-      const build = await this.originalBuild(selection.source, routineId);
+      const build = await this.originalBuild(selection.source, routineId, selection.source.channel === "pr" ? target.original.requestRunId : undefined);
       return { candidate: grant.candidate, builds: [build].filter(item => item.headSha === target.expectedHeadSha
           && item.archive?.sha256 === selection.archiveSha256), expectedHeadSha: target.expectedHeadSha };
     }
@@ -102,11 +102,11 @@ export class TestContinuationService {
       fail("The original request differs from the recorded result");
     return selection;
   }
-  /** The exact recorded build through the normal gateway. The trusted request workflow dispatches a PR
-   * build only while the PR is open on that head and base, so a moved or closed PR is refused here. */
-  private async originalBuild(source: TestBuildSource, routineId: TestRoutineId): Promise<TestBuild> {
+  /** The exact recorded build. A PR original resolves for its original request's recorded PR head/base,
+   * so a later push, base advance, close or merge does not prevent its exact replay. */
+  private async originalBuild(source: TestBuildSource, routineId: TestRoutineId, originalRequestRunId?: number): Promise<TestBuild> {
     let build: TestBuild;
-    try { build = await this.builds.resolve(source, routineId); }
+    try { build = await this.builds.resolve(source, routineId, originalRequestRunId); }
     catch (error) {
       if (error instanceof TestDispatchError && error.status < 500) fail(`The original build can no longer be dispatched: ${error.message}`);
       throw error;
@@ -121,7 +121,9 @@ export class TestContinuationService {
     const saved = await this.dispatch.receipt(idempotencyKey);
     if (saved) {
       this.bound(grant, saved);
-      if (!same(saved.input, { ...data, idempotencyKey }) || saved.continuation?.executionAttempt !== executionAttempt
+      // The original request run is derived by Core from the bound packet, never supplied by the caller.
+      const { originalRequestRunId: _derived, ...savedInput } = saved.input;
+      if (!same(savedInput, { ...data, idempotencyKey }) || saved.continuation?.executionAttempt !== executionAttempt
         || saved.continuation.retryReason !== retryReason) fail("This candidate/routine already owns a different build request; reconcile it");
       return this.acknowledgement(grant, idempotencyKey);
     }
@@ -142,13 +144,15 @@ export class TestContinuationService {
       const selection = await this.originalSelection(target, routineId);
       if (!same(data.source, selection.source) || data.archiveSha256 !== selection.archiveSha256) fail("Build is not the original recorded artifact");
     }
-    const build = target.original ? await this.originalBuild(data.source, routineId) : await this.builds.resolve(data.source, routineId);
+    // A PR original is replayed by its request run through the trusted issuer, for its recorded PR identity.
+    const originalRequestRunId = target.original && data.source.channel === "pr" ? target.original.requestRunId : undefined;
+    const build = target.original ? await this.originalBuild(data.source, routineId, originalRequestRunId) : await this.builds.resolve(data.source, routineId);
     if (build.headSha !== target.expectedHeadSha || build.archive?.sha256 !== data.archiveSha256 || build.availability !== "available")
       fail("Published build does not match the candidate");
     const binding: TestContinuationBinding = { occurrenceId: grant.occurrenceId, agentRunId: grant.agentRunId,
       candidate: grant.candidate, ...(grant.caseBinding ? { caseBinding: grant.caseBinding } : {}), executionAttempt, ...(retryReason ? { retryReason } : {}), expectedHeadSha: target.expectedHeadSha,
       ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
-    const request: TestDispatchInput = { ...data, idempotencyKey };
+    const request: TestDispatchInput = { ...data, idempotencyKey, ...(originalRequestRunId !== undefined ? { originalRequestRunId } : {}) };
     if (!this.builds.findExisting) throw new TestDispatchError(503, "Trusted request reconciliation is unavailable");
     const since = target.requestNotBefore && Date.parse(target.requestNotBefore) > Date.parse(build.createdAt)
       ? target.requestNotBefore : build.createdAt;
