@@ -363,12 +363,56 @@ final class AppOwnershipLease {
     }
 }
 
-func withAppOwnership<T>(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+/// Same rule as `heldGlassesLeases` in mobile/scripts/app-ownership.mjs. Each physical pair of glasses has its own
+/// lease at `.cache/mentra-e2e/glasses/<unit>/com.mentra.mentra.lock`. Only a missing lock, or a valid lock with no
+/// reservation or retention whose process has exited, is free. Anything else (retained, reserved, live, malformed,
+/// unreadable or changing) is held. A regular file is never a lease folder. Nothing is changed.
+func heldGlassesLeases(homeDirectory: URL) throws -> [String] {
+    let root = homeDirectory.appendingPathComponent(".cache/mentra-e2e/glasses")
+    var info = stat()
+    if lstat(root.path, &info) != 0 {
+        if errno == ENOENT { return [] }
+        throw InstallerError.invalid("Cannot read the glasses leases at \(root.path).")
+    }
+    return try InstallerFiles.manager.contentsOfDirectory(atPath: root.path).sorted().filter { name in
+        var entry = stat()
+        let folder = root.appendingPathComponent(name)
+        if lstat(folder.path, &entry) == 0, entry.st_mode & S_IFMT == S_IFREG { return false }
+        return !glassesLeaseIsFree(folder.appendingPathComponent("com.mentra.mentra.lock"))
+    }
+}
+
+private func glassesLeaseIsFree(_ path: URL) -> Bool {
+    var info = stat()
+    if lstat(path.path, &info) != 0 { return errno == ENOENT }
+    guard let before = try? Data(contentsOf: path),
+          let owner = (try? JSONSerialization.jsonObject(with: before, options: [.fragmentsAllowed])) as? [String: Any],
+          let pid = owner["pid"] as? NSNumber, CFGetTypeID(pid) != CFBooleanGetTypeID(),
+          pid.doubleValue == Double(pid.int32Value), pid.int32Value > 0,
+          (owner["token"] as? String)?.isEmpty == false,
+          owner["reservation"] == nil
+    else { return false }
+    if let retain = owner["retainOnExit"] {
+        guard let flag = retain as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID(), !flag.boolValue else { return false }
+    }
+    guard kill(pid.int32Value, 0) == -1, errno == ESRCH else { return false }
+    return (try? Data(contentsOf: path)) == before
+}
+
+/// `opensApp` is false only for a file-only install (--no-launch). Opening Mentra may connect it to whichever glasses
+/// it is paired with, and this installer proves none. So after writing its lease it does not open the app while
+/// another owner holds any physical glasses lease; that owner reads this lease and refuses in turn.
+func withAppOwnership<T>(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser, opensApp: Bool = true,
                          operation: () async throws -> T) async throws -> T
 {
     let lease = try AppOwnershipLease(homeDirectory: homeDirectory)
     let result: T
-    do { result = try await operation() }
+    do {
+        if opensApp, let held = try heldGlassesLeases(homeDirectory: homeDirectory).first {
+            throw InstallerError.invalid("Physical glasses are held by a test (\(held)). Finish or recover it before opening Mentra, or install with --no-launch.")
+        }
+        result = try await operation()
+    }
     catch {
         if case InstallerError.recovery = error { throw error }
         try lease.release()
@@ -379,9 +423,9 @@ func withAppOwnership<T>(homeDirectory: URL = FileManager.default.homeDirectoryF
 }
 
 func install(_ verified: VerifiedBuild, homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-             quit: () async throws -> Void, launch: (URL) async throws -> Void = { _ in }) async throws -> URL
+             opensApp: Bool = true, quit: () async throws -> Void, launch: (URL) async throws -> Void = { _ in }) async throws -> URL
 {
-    try await withAppOwnership(homeDirectory: homeDirectory) {
+    try await withAppOwnership(homeDirectory: homeDirectory, opensApp: opensApp) {
         try await installOwned(verified, homeDirectory: homeDirectory, quit: quit, launch: launch)
     }
 }

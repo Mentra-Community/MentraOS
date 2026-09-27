@@ -18,7 +18,7 @@ import {homedir} from "node:os"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {parseArgs} from "node:util"
-import {acquireAppOwnership} from "./app-ownership.mjs"
+import {acquireAppOwnership, glassesLeaseRoot, heldGlassesLeases} from "./app-ownership.mjs"
 
 const scripts = path.dirname(fileURLToPath(import.meta.url))
 const owner = "mentra-ios-mac-v1"
@@ -228,6 +228,17 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
   const releaseApp = await acquireAppOwnership(undefined, {installer: true})
   let preserveRecovery = false
   try {
+    // Launching starts the Mac app, which may connect to whichever glasses it is paired with. This installer proves
+    // none, so after taking the app lock it does not start while any physical glasses lease is held; a glasses owner
+    // reading the lock refuses this installer in turn. A file-only install (--no-launch) starts nothing.
+    if (launch) {
+      const held = await heldGlassesLeases(glassesLeaseRoot())
+      if (held.length > 0)
+        throw new Error(
+          `Physical glasses are held under ${path.join(glassesLeaseRoot(), held[0])}; installing without --no-launch ` +
+            "would start Mentra, which cannot establish its glasses. Finish or recover that owner, or use --no-launch",
+        )
+    }
     return await installOwnedBuild(manifestPath, {
       manifest,
       portablePackage,

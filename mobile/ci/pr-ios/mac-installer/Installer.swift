@@ -112,7 +112,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                         defer { setReplacing(false) }
                         let launch = options.launch
                         let destination = try await Task.detached {
-                            try await install(candidate, quit: { try await quitMentraNormally() }, launch: { destination in
+                            try await install(candidate, opensApp: launch, quit: { try await quitMentraNormally() }, launch: { destination in
                                 if launch { try await openMentra(destination) }
                             })
                         }.value

@@ -48,6 +48,16 @@ an abandoned `.reclaim` guard is not automatically removed either. Explicit reco
 must reconcile the app, installed manifest and retained transaction files before
 clearing these records. Releasing ownership removes only the matching PID/token.
 
+The harness also gives each physical pair of glasses its own lease under
+`~/.cache/mentra-e2e/glasses/`. Opening Mentra may connect it to whichever glasses
+it is paired with, and the installer proves none. So **Install & Open**, **Open
+Mentra**, link installs and `--package` without `--no-launch` refuse while any
+glasses lease is held. The check follows `heldGlassesLeases` in
+`mobile/scripts/app-ownership.mjs`: a malformed, live or retained lease is never
+free. It runs after the installer's own lease is written, and a glasses owner
+reads that lease and refuses in turn. A `--no-launch` install opens nothing and is
+not checked.
+
 Downloads use an owned private cache instead of Downloads. Successful runs and
 ordinary failed installs remove their request directories; an unfinished tool's
 recovery files are retained. The downloader prunes old owned request directories

@@ -1,5 +1,5 @@
 import {randomUUID} from "node:crypto"
-import {mkdir, open, readFile, rmdir, unlink} from "node:fs/promises"
+import {mkdir, open, readdir, readFile, rmdir, unlink} from "node:fs/promises"
 import {homedir} from "node:os"
 import {isAbsolute, join, resolve} from "node:path"
 import {isDeepStrictEqual} from "node:util"
@@ -26,6 +26,81 @@ async function syncDirectory(path) {
   } finally {
     await directory.close()
   }
+}
+
+/** Read only: the retained lifecycle reservation that holds the app lock, or undefined when none does (no lock, or a
+ * lock held without a retained reservation). It never acquires, waits for, removes or changes the lock; a lock that
+ * cannot be verified is an error, never taken as free. */
+export async function retainedAppReservation(folder = join(homedir(), ".cache/mentra-e2e")) {
+  let owner
+  try {
+    owner = JSON.parse(await readFile(join(folder, "com.mentra.mentra.lock"), "utf8"))
+  } catch (error) {
+    if (error.code === "ENOENT") return undefined
+    throw error
+  }
+  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.token !== "string" || !owner.token)
+    throw new Error("Cannot verify the app lock owner")
+  if (owner.retainOnExit !== undefined && typeof owner.retainOnExit !== "boolean")
+    throw new Error("Cannot verify the retained app lock")
+  if (owner.reservation === undefined) return undefined
+  validateReservation(owner.reservation)
+  if (owner.retainOnExit !== true) throw new Error("Cannot verify the retained app reservation")
+  return owner.reservation
+}
+
+/** Per-glasses leases live in the shared app folder's `glasses` directory, one lock folder per physical unit. Other
+ * lock folders, such as an Android phone's, have none. */
+export const glassesLeaseRoot = (folder = join(homedir(), ".cache/mentra-e2e")) => join(folder, "glasses")
+
+/** As the lock primitive: an unverifiable PID is never treated as exited. */
+function processAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code !== "ESRCH"
+  }
+}
+
+/** Read only: one lock folder's state, validated by retainedAppReservation (PID, token, retention flag and
+ * reservation). A missing lock file is `absent`; a valid reservation-less, non-retained lock whose process has exited
+ * is `reclaimable`, as acquireAppOwnership treats it; every other valid lock is `held`. Any other content (JSON null,
+ * false, 0, a malformed PID, token or retention flag), or a lock that changes while it is read, throws: it is never
+ * free. Nothing is acquired, changed or removed. */
+export async function readLockState(folder) {
+  const path = join(folder, "com.mentra.mentra.lock")
+  const read = () =>
+    readFile(path, "utf8").catch((error) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
+  const before = await read()
+  if (before === undefined) return {state: "absent"}
+  const reservation = await retainedAppReservation(folder)
+  if ((await read()) !== before) throw new Error(`The lock in ${folder} changed while it was verified`)
+  const owner = JSON.parse(before)
+  if (reservation === undefined && owner.retainOnExit !== true && !processAlive(owner.pid)) return {state: "reclaimable"}
+  return {state: "held", pid: owner.pid, ...(reservation ? {reservation} : {})}
+}
+
+/** Read only: the per-glasses lease folders under `root` that are held. Only an absent or `reclaimable` lock is free;
+ * an unverifiable lock or an unreadable directory is held. A regular file is never a lease folder. */
+export async function heldGlassesLeases(root) {
+  let names
+  try {
+    names = (await readdir(root, {withFileTypes: true})).filter((entry) => !entry.isFile()).map((entry) => entry.name)
+  } catch (error) {
+    if (error.code === "ENOENT") return []
+    throw error
+  }
+  const held = []
+  for (const name of names.sort()) {
+    const lease = await readLockState(join(root, name)).catch(() => ({state: "held"}))
+    if (lease.state === "held") held.push(name)
+  }
+  return held
 }
 
 /** Shared with the native installer's AppOwnershipLease. Retained lifecycle

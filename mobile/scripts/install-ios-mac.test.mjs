@@ -61,6 +61,93 @@ test(
   },
 )
 
+// Isolate HOME and replace every installer subprocess before importing it. Only temporary fixture files change; no
+// signing, installer or launcher runs. An Android run's retained glasses lease is written by the shared module.
+async function glassesAdmissionCase(mode) {
+  const root = await fixture()
+  const home = await realpath(path.dirname(path.dirname(root)))
+  const program = String.raw`
+    import assert from "node:assert/strict";
+    import childProcess from "node:child_process";
+    import {syncBuiltinESMExports} from "node:module";
+    import {createHash} from "node:crypto";
+    import {cpSync} from "node:fs";
+    import {access, mkdir, readFile, writeFile} from "node:fs/promises";
+    import path from "node:path";
+    const [installerURL, ownershipURL, mode] = process.argv.slice(1);
+    Object.defineProperty(process, "platform", {value: "darwin"});
+    const home = process.env.HOME;
+    const root = path.join(home, "Applications/Mentra E2E");
+    const folder = path.join(home, ".cache/mentra-e2e");
+    const calls = [];
+    const launcherPath = path.join(home, "pinned-launcher");
+    childProcess.execFileSync = (name, args) => {
+      calls.push({name, args});
+      if (name === "/usr/libexec/PlistBuddy") return args[1].includes("CFBundleIdentifier") ? "com.mentra.mentra" : "Mentra";
+      if (name === "/usr/bin/codesign") return "verified fixture signature";
+      if (name === "/usr/bin/security") return "fixture provisioning profile";
+      if (name === "/usr/bin/plutil") return args[1] === "ExpirationDate" ? "2999-01-01T00:00:00Z" : '["fixture-mac"]';
+      if (name === "/usr/sbin/system_profiler") return JSON.stringify({SPHardwareDataType: [{provisioning_UDID: "fixture-mac"}]});
+      if (name === "/bin/cp") {
+        cpSync(args[1], args[2], {recursive: true});
+        return "";
+      }
+      if (name === launcherPath) return "fixture launcher";
+      throw new Error("Unexpected real command: " + name);
+    };
+    syncBuiltinESMExports();
+    const {installBuild} = await import(installerURL);
+    const {acquireAppOwnership} = await import(ownershipURL);
+    const app = path.join(home, "download/Mentra.app");
+    await mkdir(app, {recursive: true});
+    await writeFile(path.join(app, "Mentra"), "fixture executable");
+    await writeFile(path.join(app, "Info.plist"), "fixture plist");
+    await writeFile(launcherPath, "fixture pinned launcher");
+    const digest = (value) => createHash("sha256").update(value).digest("hex");
+    const manifestPath = path.join(home, "download/build.json");
+    await writeFile(manifestPath, JSON.stringify({app: "Mentra.app", bundleId: "com.mentra.mentra",
+      executableSha256: digest("fixture executable"), macPackageVersion: 2, macInstaller: "Install Mentra.app"}));
+    const launch = mode.startsWith("launch");
+    const options = {launcherPath, launcherSha256: digest("fixture pinned launcher"), launch};
+    const glassesLease = path.join(folder, "glasses/unit-060b/com.mentra.mentra.lock");
+    if (mode.endsWith("-held"))
+      await acquireAppOwnership(path.dirname(glassesLease), {reservation: {runID: "android-060b",
+        runDirectory: path.join(home, "android-run"), fixtureID: "android-060b"}});
+    const heldLease = mode.endsWith("-held") ? await readFile(glassesLease, "utf8") : undefined;
+    if (mode === "launch-held") {
+      await assert.rejects(installBuild(manifestPath, options), /Physical glasses are held/);
+      assert.equal(calls.length, 0); // nothing quit, verified, replaced or launched
+      await assert.rejects(access(path.join(root, "Mentra.app")), {code: "ENOENT"});
+    } else {
+      await installBuild(manifestPath, options);
+      assert.deepEqual(calls.filter((call) => call.name === launcherPath).map((call) => call.args[0]),
+        launch ? ["--quit", path.join(root, "Mentra.app")] : ["--quit"]);
+      assert.equal(await readFile(path.join(root, "Mentra.app/Wrapper/Mentra.app/Mentra"), "utf8"), "fixture executable");
+    }
+    await assert.rejects(access(path.join(folder, "com.mentra.mentra.lock")), {code: "ENOENT"});
+    if (heldLease) assert.equal(await readFile(glassesLease, "utf8"), heldLease);
+  `
+  await promisify(execFile)(
+    process.execPath,
+    ["--input-type=module", "--eval", program,
+      new URL("./install-ios-mac.mjs", import.meta.url).href,
+      new URL("./app-ownership.mjs", import.meta.url).href, mode],
+    {env: {...process.env, HOME: home}, timeout: 10000},
+  )
+}
+
+test("a launching installation refuses while a physical glasses lease is held, before touching the app", async () => {
+  await glassesAdmissionCase("launch-held")
+})
+
+test("a file-only installation needs no glasses and proceeds beside a held glasses lease", async () => {
+  await glassesAdmissionCase("no-launch-held")
+})
+
+test("a launching installation launches normally when no glasses lease is held", async () => {
+  await glassesAdmissionCase("launch")
+})
+
 async function launcherFixture() {
   const root = await fixture()
   await mkdir(root, {recursive: true})
