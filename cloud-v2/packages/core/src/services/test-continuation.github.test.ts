@@ -150,3 +150,31 @@ test("harness candidates and adopted owners admit the exact codex or legacy owne
     await expect(f.gateway.target(f.packet, { ...f.grant, agentRunId: "run_sibling", caseBinding }, "no-glasses")).rejects.toThrow("branch");
   }
 });
+
+test("original target resolves only the occurrence's recorded source, channel, routine and artifact, with no GitHub lookup", async () => {
+  const archiveSha256 = "d".repeat(64);
+  const setup = () => {
+    const f = fixture();
+    const grant = { ...f.grant, candidate: { repository: PUB, headSha: tested, target: "original" as const } } as ContinuationGrant;
+    const packet = { ...f.packet, routine: { id: "no-glasses", version: "1" }, build: { hashes: { archiveSha256 } } } as unknown as FailurePacket;
+    return { ...f, grant, packet };
+  };
+  const pr = setup();
+  expect(await pr.gateway.target(pr.packet, pr.grant, "no-glasses")).toEqual({ query: { channel: "pr", pr: 12 }, expectedHeadSha: tested,
+    automaticExpected: false, original: { archiveSha256 } });
+  expect(pr.calls).toEqual([]);
+  // A dev occurrence stays on dev: its recorded channel is kept, never promoted or rebuilt.
+  const dev = setup(); dev.packet.source = { schemaVersion: 1, trigger: "nightly", channel: "dev", repository: PUB, branch: "dev", headSha: tested };
+  expect((await dev.gateway.target(dev.packet, dev.grant, "no-glasses")).query).toEqual({ channel: "dev" });
+  for (const mismatch of ["head", "repository", "routine", "archive", "local", "shared"]) {
+    const f = setup(); let routineId = "no-glasses";
+    if (mismatch === "head") f.grant.candidate.headSha = head;
+    if (mismatch === "repository") f.grant.candidate.repository = HARNESS;
+    if (mismatch === "routine") routineId = "day1-ota";
+    if (mismatch === "archive") (f.packet.build.hashes as Record<string, string>) = {};
+    if (mismatch === "local") f.packet.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: "candidate", headSha: tested };
+    if (mismatch === "shared") f.grant.caseBinding = { caseId: "mfc_" + "5".repeat(64), candidateOwnerRunId: "run_owner" };
+    await expect(f.gateway.target(f.packet, f.grant, routineId)).rejects.toThrow();
+    expect(f.calls).toEqual([]);
+  }
+});

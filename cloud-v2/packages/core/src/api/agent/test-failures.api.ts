@@ -2,6 +2,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { testFailureEnvironment, verifyTestFailureReadGrant, verifyTestContinuationGrant } from "../../services/test-failure-auth";
 import { TestRunError, TestRunService } from "../../services/test-run.service";
 import { TestContinuationService } from "../../services/test-continuation.service";
+import { TestRepairService } from "../../services/test-repair.service";
 import { TestFailureIncidentService } from "../../services/test-failure-incident.service";
 import { TestDispatchError } from "../../services/test-builds.service";
 import { ZodError } from "zod";
@@ -13,10 +14,11 @@ import type { AppEnv } from "../../types/hono.types";
  * Incident routes expose only the occurrence's recorded incident IDs, as reviewed diagnostics.
  */
 export function createTestFailureAgentApi(service = new TestRunService(), continuation = new TestContinuationService(),
-  incidents: Pick<TestFailureIncidentService, "metadata" | "artifact"> = new TestFailureIncidentService(service)) {
+  incidents: Pick<TestFailureIncidentService, "metadata" | "artifact"> = new TestFailureIncidentService(service),
+  repairs: Pick<TestRepairService, "request" | "detail"> = new TestRepairService(service)) {
   type Env = AppEnv & { Variables: AppEnv["Variables"] & { continuationGrant: ContinuationGrant } };
   const app = new Hono<Env>();
-  const capability = (action: "request-routine" | "read-results"): MiddlewareHandler<Env> => async (c, next) => {
+  const capability = (action: ContinuationGrant["actions"][number]): MiddlewareHandler<Env> => async (c, next) => {
     const token = (c.req.header("authorization") ?? "").replace(/^Bearer /, "");
     const grant = verifyTestContinuationGrant(token, c.req.param("occurrenceId") ?? "",
       process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET ?? "", testFailureEnvironment());
@@ -63,6 +65,15 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
   app.on(["GET", "HEAD"], "/:occurrenceId/reruns/:operationId/failures/:failureId/incidents/:reportId/artifacts/:artifactId", capability("read-results"), c =>
     continuation.incidentArtifact(c.get("continuationGrant"), c.req.param("operationId"), c.req.param("failureId"),
       c.req.param("reportId"), c.req.param("artifactId"), c.req.raw));
+  // A registered state repair: POST sends it at most once; its status needs read-results.
+  app.post("/:occurrenceId/repairs", capability("repair-state"), async c => {
+    const text = await c.req.text();
+    if (text.length > 4096) return c.json({ error: "invalid_request" }, 400);
+    let input; try { input = JSON.parse(text); } catch { return c.json({ error: "invalid_request" }, 400); }
+    return c.json(await repairs.request(c.get("continuationGrant"), input), 202);
+  });
+  app.get("/:occurrenceId/repairs/:operationId", capability("read-results"), c =>
+    repairs.detail(c.get("continuationGrant"), c.req.param("operationId")).then(value => c.json(value)));
   app.get("/:occurrenceId", authorize, c => service.failureDetail(c.req.param("occurrenceId")).then(value => c.json(value)));
   app.on(["GET", "HEAD"], "/:occurrenceId/assets/:assetId", authorize, c =>
     service.failureMedia(c.req.param("occurrenceId"), c.req.param("assetId"), c.req.raw));

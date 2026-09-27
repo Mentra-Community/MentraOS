@@ -4,7 +4,7 @@ import { TestRunModel } from "../models/test-run.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import type { TestRunClaim } from "../types/test-run-claim.types";
-import { continuationRequestSchema, type ContinuationGrant, type TestContinuationBinding } from "../types/test-continuation.types";
+import { continuationRequestSchema, isOriginalCandidate, type ContinuationGrant, type TestContinuationBinding } from "../types/test-continuation.types";
 import { testRoutineIdSchema, type TestDispatchReceipt, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
 import { TestDispatchService } from "./test-dispatch.service";
 import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
@@ -32,21 +32,37 @@ class MongoContinuationRepository implements ContinuationRepository {
     return rows.map(row => row.runId);
   }
   async list(grant: ContinuationGrant) {
+    const candidate = grant.candidate;
     const rows = await TestDispatchModel.find({ "receipt.continuation.occurrenceId": grant.occurrenceId,
       "receipt.continuation.agentRunId": grant.agentRunId,
-      "receipt.continuation.candidate.repository": grant.candidate.repository,
-      "receipt.continuation.candidate.pullRequest": grant.candidate.pullRequest,
-      "receipt.continuation.candidate.headSha": grant.candidate.headSha }).sort({ "receipt.createdAt": 1, dispatchId: 1 }).limit(100).lean();
+      "receipt.continuation.candidate.repository": candidate.repository,
+      ...(isOriginalCandidate(candidate) ? { "receipt.continuation.candidate.target": "original" }
+        : { "receipt.continuation.candidate.pullRequest": candidate.pullRequest }),
+      "receipt.continuation.candidate.headSha": candidate.headSha }).sort({ "receipt.createdAt": 1, dispatchId: 1 }).limit(100).lean();
     return rows.map(row => row.receipt as TestDispatchReceipt);
   }
 }
-export function continuationOperationId(grant: ContinuationGrant, routineId: TestRoutineId): string {
-  const digest = createHash("sha256").update(JSON.stringify([grant.occurrenceId, grant.agentRunId, grant.candidate.repository,
-    grant.candidate.pullRequest, grant.candidate.headSha, routineId, grant.executionAttempt])).digest("hex");
+/** Deterministic UUID-shaped identity; a registered replay recomputes the same ID. */
+function operationUuid(parts: unknown[]): string {
+  const digest = createHash("sha256").update(JSON.stringify(parts)).digest("hex");
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+/** Existing PR operation IDs are unchanged; the original target uses "original" in place of a PR number. */
+export function continuationOperationId(grant: ContinuationGrant, routineId: TestRoutineId): string {
+  const candidate = grant.candidate;
+  return operationUuid([grant.occurrenceId, grant.agentRunId, candidate.repository,
+    isOriginalCandidate(candidate) ? "original" : candidate.pullRequest, candidate.headSha, routineId, grant.executionAttempt]);
 }
 const fail = (message: string): never => { throw new TestDispatchError(409, message); };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** The grant's occurrence, with recorded source, acknowledged to this exact case anchor. */
+export async function acknowledgedCase(runs: Pick<Runs, "failureDetail">, grant: ContinuationGrant) {
+  const packet = await runs.failureDetail(grant.occurrenceId);
+  if (packet.occurrenceId !== grant.occurrenceId || packet.sourceStatus !== "recorded" || !packet.source
+    || packet.delivery.state !== "acknowledged" || packet.delivery.agentRunId !== grant.agentRunId)
+    fail("Recorded source and acknowledged case ownership are required");
+  return packet;
+}
 
 /** Case-bound continuation over the existing dispatcher/claims. This is not a queue. */
 export class TestContinuationService {
@@ -57,13 +73,7 @@ export class TestContinuationService {
     private readonly repository: ContinuationRepository = new MongoContinuationRepository(),
     private readonly checkLease = requireContinuationLease,
     private readonly incidents: Incidents = new TestFailureIncidentService(runs)) {}
-  private async case(grant: ContinuationGrant) {
-    const packet = await this.runs.failureDetail(grant.occurrenceId);
-    if (packet.occurrenceId !== grant.occurrenceId || packet.sourceStatus !== "recorded" || !packet.source
-      || packet.delivery.state !== "acknowledged" || packet.delivery.agentRunId !== grant.agentRunId)
-      fail("Recorded source and acknowledged case ownership are required");
-    return packet;
-  }
+  private case(grant: ContinuationGrant) { return acknowledgedCase(this.runs, grant); }
   private routine(grant: ContinuationGrant, routine: unknown): TestRoutineId {
     const id = testRoutineIdSchema.parse(routine);
     if (!grant.routineIds.includes(id)) fail("Routine is outside this capability");
@@ -73,7 +83,8 @@ export class TestContinuationService {
     const routineId = this.routine(grant, routine), packet = await this.case(grant);
     const target = await this.source.target(packet, grant, routineId);
     const builds = await this.builds.inventory({ ...target.query, routineId });
-    return { candidate: grant.candidate, builds: builds.filter(build => build.headSha === target.expectedHeadSha),
+    return { candidate: grant.candidate, builds: builds.filter(build => build.headSha === target.expectedHeadSha
+        && (!target.original || build.archive?.sha256 === target.original.archiveSha256)),
       expectedHeadSha: target.expectedHeadSha, ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
   }
   async request(grant: ContinuationGrant, input: unknown) {
@@ -98,6 +109,8 @@ export class TestContinuationService {
     const target = await this.source.target(packet, grant, routineId);
     if (data.source.channel !== target.query.channel
       || (data.source.channel === "pr" && data.source.prNumber !== target.query.pr)) fail("Build is outside the candidate source");
+    // The original target admits only the exact recorded artifact, never a rebuilt or newer one.
+    if (target.original && data.archiveSha256 !== target.original.archiveSha256) fail("Build is not the original recorded artifact");
     const build = await this.builds.resolve(data.source, routineId);
     if (build.headSha !== target.expectedHeadSha || build.archive?.sha256 !== data.archiveSha256 || build.availability !== "available")
       fail("Published build does not match the candidate");
@@ -108,7 +121,9 @@ export class TestContinuationService {
     if (!this.builds.findExisting) throw new TestDispatchError(503, "Trusted request reconciliation is unavailable");
     const since = target.requestNotBefore && Date.parse(target.requestNotBefore) > Date.parse(build.createdAt)
       ? target.requestNotBefore : build.createdAt;
-    const existing = await this.builds.findExisting(request, since, excludeRequestRunIds);
+    // An original-target rerun is a fresh execution of the recorded artifact: adopting an
+    // existing request could return the original (pre-repair) run as its own result.
+    const existing = target.original ? null : await this.builds.findExisting(request, since, excludeRequestRunIds);
     if (!existing && target.automaticExpected && executionAttempt === 1)
       throw new TestDispatchError(503, "Waiting for the existing automatic request; no duplicate was sent");
     await this.dispatch.create(request, `routine-fixer:${grant.agentRunId}`, binding, existing ?? undefined, () => this.checkLease(grant, routineId));

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ContinuationGrant } from "../types/test-continuation.types";
+import { isOriginalCandidate, type ContinuationCandidate, type ContinuationGrant } from "../types/test-continuation.types";
 import type { TestBuildQuery } from "../types/test-dispatch.types";
 import { TestDispatchError, readTestMetadata } from "./test-builds.service";
 import { TestRunGithubApp } from "./test-run-github-app";
@@ -12,6 +12,9 @@ export interface ContinuationTarget {
   expectedHarnessSha?: string;
   automaticExpected: boolean;
   requestNotBefore?: string;
+  /** Original target only: the exact recorded artifact. Its requests are never adopted,
+   * so the original (or any earlier) request cannot stand in for the rerun. */
+  original?: { archiveSha256: string };
 }
 export interface ContinuationSourceGateway {
   target(packet: FailurePacket, grant: ContinuationGrant, routineId: string): Promise<ContinuationTarget>;
@@ -40,7 +43,9 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
   async target(packet: FailurePacket, grant: ContinuationGrant, routineId: string): Promise<ContinuationTarget> {
     const source = packet.source;
     ensure(source?.repository === PUBLIC && source.channel !== "local", "Published app source provenance is required");
-    const candidate = grant.candidate, harness = candidate.repository === HARNESS;
+    const candidate = grant.candidate;
+    if (isOriginalCandidate(candidate)) return this.original(packet, grant, candidate, routineId);
+    const harness = candidate.repository === HARNESS;
     const tested = harness ? packet.build.hashes.harnessSha ?? packet.build.hashes.harnessRevision : source!.headSha;
     ensure(typeof tested === "string" && /^[a-f0-9]{40}$/.test(tested), "The tested component revision is missing");
     // Only a shared harness candidate may name another same-case anchor as its owner;
@@ -81,5 +86,17 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     // its merge to the PR's current base tip and its app to that base's backend.
     return { query: { channel: "pr", pr: pr.number }, expectedHeadSha: candidate.headSha,
       automaticExpected: pr.labels.some(label => label.name === `routine:${routineId}`) };
+  }
+  /** The occurrence's own recorded source, channel, routine and artifact. Nothing is looked
+   * up by branch or PR, so a newer head or another environment's build cannot substitute. */
+  private original(packet: FailurePacket, grant: ContinuationGrant, candidate: ContinuationCandidate, routineId: string): ContinuationTarget {
+    const source = packet.source!, archiveSha256 = packet.build.hashes.archiveSha256;
+    ensure(candidate.repository === source.repository && candidate.headSha === source.headSha,
+      "The original target is the occurrence's exact recorded source");
+    ensure(!grant.caseBinding, "The original target belongs to its own occurrence, not a shared candidate");
+    ensure(packet.routine.id === routineId, "The original target reruns only the recorded routine");
+    ensure(typeof archiveSha256 === "string" && /^[a-f0-9]{64}$/.test(archiveSha256), "The original artifact identity was not recorded");
+    return { query: source.channel === "pr" ? { channel: "pr", pr: source.pullRequest!.number } : { channel: source.channel as "dev" | "staging" },
+      expectedHeadSha: source.headSha, automaticExpected: false, original: { archiveSha256: archiveSha256! } };
   }
 }

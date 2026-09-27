@@ -41,7 +41,7 @@ const artifactSchema = z.object({ id: positive, name: z.string(), expired: z.boo
   digest: z.string().regex(/^sha256:[a-f0-9]{64}$/), workflow_run: z.object({ id: positive, head_sha: sha }) });
 
 export class TestDispatchError extends Error {
-  constructor(readonly status: 400 | 404 | 409 | 502 | 503, message: string) { super(message); }
+  constructor(readonly status: 400 | 404 | 409 | 501 | 502 | 503, message: string) { super(message); }
 }
 function requireThat(value: unknown, message: string): asserts value {
   if (!value) throw new TestDispatchError(409, message);
