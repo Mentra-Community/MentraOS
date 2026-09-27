@@ -28,7 +28,7 @@ import type {AudioChunkData, BlobMeta, BlobWriter, MiniappSession, UnsubscribeFn
 
 import type {Channels} from "../../shared/channels"
 import type {RecorderStatus, RecordingItem, Usage} from "../../shared/types"
-import {buildInfoChunk, buildWavHeader, pcmDurationMs, pcmPeakLevel, WAV_HEADER_BYTES} from "../wav"
+import {buildInfoChunk, buildWavHeader, pcmDurationMs, pcmPeakLevel, pcmRmsLevel, WAV_HEADER_BYTES} from "../wav"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
@@ -43,13 +43,6 @@ const WAV_SOFTWARE = "Mentra Recorder"
 const FLUSH_BYTES = 48 * 1024
 /** Throttle UI status pushes to ~5/sec (keyed off captured audio ms, not a timer). */
 const PROGRESS_MS = 200
-/**
- * Keep accepting PCM briefly after the user taps stop. Glasses audio crosses
- * BLE and two JS/native bridges, so the newest frames can still be in flight
- * when the UI command reaches this controller. Unsubscribing immediately drops
- * that tail even though it was spoken before the tap.
- */
-const STOP_TAIL_DRAIN_MS = 1500
 
 export class RecorderController {
   private started = false
@@ -65,6 +58,7 @@ export class RecorderController {
   private chunks: Uint8Array[] = []
   private bufBytes = 0
   private pcmBytes = 0
+  private capturedBytes = 0
   private sampleRate = DEFAULT_SAMPLE_RATE
   private lastLevel = 0
   private lastEmitMs = 0
@@ -97,12 +91,15 @@ export class RecorderController {
   private playingId: string | null = null
   /** Monotonic playback token — only the latest play() owns the UI playing state. */
   private playSeq = 0
+  private playStartedAt = 0
+  private playPositionMs = 0
   private recordings: RecordingItem[] = []
   private usage: Usage = EMPTY_USAGE
 
   constructor(
     private readonly session: MiniappSession,
-    private readonly stopTailDrainMs = STOP_TAIL_DRAIN_MS,
+    private readonly minimumSavingMs = 1000,
+    private readonly stopTailDrainMs = 1500,
   ) {}
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -178,7 +175,7 @@ export class RecorderController {
     this.unsubs.push(this.ui.on("rec:pause", () => this.pauseRecording()))
     this.unsubs.push(this.ui.on("rec:resume", () => this.resumeRecording()))
 
-    this.unsubs.push(this.ui.on("rec:play", ({id}) => void this.play(id)))
+    this.unsubs.push(this.ui.on("rec:play", ({id, positionMs}) => void this.play(id, positionMs)))
     this.unsubs.push(this.ui.on("rec:stop-play", () => this.stopPlay()))
     this.unsubs.push(this.ui.on("rec:export", ({id}) => void this.exportRecording(id)))
     this.unsubs.push(this.ui.on("rec:export-transcript", ({id}) => void this.exportTranscript(id)))
@@ -202,6 +199,7 @@ export class RecorderController {
       recordings: this.recordings,
       usage: this.usage,
       playingId: this.playingId,
+      playPositionMs: this.playingId ? this.playPositionMs + Date.now() - this.playStartedAt : 0,
       hasMic: this.session.mic.hasPermission,
       // Restore the in-progress transcript so a WebView reopened mid-capture
       // shows what's been transcribed so far (not just text from new speech).
@@ -285,6 +283,7 @@ export class RecorderController {
       this.chunks = []
       this.bufBytes = 0
       this.pcmBytes = 0
+      this.capturedBytes = 0
       this.sampleRate = DEFAULT_SAMPLE_RATE
       this.lastLevel = 0
       this.lastEmitMs = 0
@@ -330,6 +329,10 @@ export class RecorderController {
     this.chunks.push(bytes)
     this.bufBytes += bytes.length
     this.lastLevel = pcmPeakLevel(bytes)
+    this.capturedBytes += bytes.length
+    if (!this.finalizing) {
+      this.ui.send("rec:waveform", {ms: pcmDurationMs(this.capturedBytes, this.sampleRate), level: pcmRmsLevel(bytes)})
+    }
     this.maybeEmitProgress()
     if (this.bufBytes >= FLUSH_BYTES) this.scheduleDrain()
   }
@@ -373,7 +376,9 @@ export class RecorderController {
   }
 
   private maybeEmitProgress(): void {
-    const captured = this.pcmBytes + this.bufBytes
+    // Tail audio is still saved, but the displayed timer freezes at Stop.
+    if (this.finalizing) return
+    const captured = this.capturedBytes
     const ms = pcmDurationMs(captured, this.sampleRate)
     if (ms - this.lastEmitMs < PROGRESS_MS) return
     this.lastEmitMs = ms
@@ -393,7 +398,7 @@ export class RecorderController {
 
   /** Suspend the mic + transcription feeds; the partial blob stays open. */
   private pauseRecording(): void {
-    if (!this.recordingId || this.paused) return
+    if (!this.recordingId || this.finalizing || this.paused) return
     // Set paused first so any mic/transcription event that fires during the
     // teardown window below is dropped (onChunk + onTranscript both bail on
     // paused) — no audio-less words or trailing PCM after the pause edge.
@@ -422,7 +427,7 @@ export class RecorderController {
 
   /** Re-arm the mic + transcription feeds and continue appending. */
   private resumeRecording(): void {
-    if (!this.recordingId || !this.paused) return
+    if (!this.recordingId || this.finalizing || !this.paused) return
     this.paused = false
     this.micUnsub = this.session.mic.onAudioChunk((d) => this.onChunk(d))
     this.subscribeTranscription()
@@ -432,7 +437,7 @@ export class RecorderController {
   /** Push the current capture state to the UI (used on pause/resume edges). */
   private emitStatus(): void {
     if (!this.recordingId) return
-    const captured = this.pcmBytes + this.bufBytes
+    const captured = this.capturedBytes
     this.lastStatus = {
       recordingId: this.recordingId,
       startedAt: this.captureStartedAt,
@@ -489,9 +494,10 @@ export class RecorderController {
     if (!this.recordingId || !this.writer) return Promise.resolve()
 
     this.finalizingRecordingId = this.recordingId
-    // Acknowledge the tap before the tail-drain/save work begins so the UI can
-    // stop animating immediately without sacrificing in-flight audio frames.
+    // Freeze visible progress immediately while preserving the audio tail drain.
+    this.finalizing = true
     this.ui.send("rec:stopping", {})
+    this.renderHud()
     const stop = this.finalizeRecording()
     this.stopPromise = stop.finally(() => {
       this.stopPromise = null
@@ -506,11 +512,12 @@ export class RecorderController {
     // `finalizing` blocks a new start from racing this recording's capture state
     // (pcmBytes/sampleRate/buffers) while we flush + write the header.
     this.finalizing = true
+    const savingFeedback = new Promise<void>((resolve) => setTimeout(resolve, this.minimumSavingMs))
     try {
-      // Audio spoken just before the tap may still be crossing BLE/native
-      // bridges. Keep the subscriptions alive for a short tail-drain window so
-      // those frames land before we freeze and finalize the WAV.
-      await delay(this.stopTailDrainMs)
+      // Preserve the existing window for audio still crossing BLE/native bridges.
+      // No status updates are emitted during this window.
+      if (this.stopTailDrainMs > 0) await new Promise((resolve) => setTimeout(resolve, this.stopTailDrainMs))
+      this.paused = true
       try {
         this.micUnsub?.()
       } catch {
@@ -522,9 +529,7 @@ export class RecorderController {
       // Snapshot title/date before resetCapture() clears them below.
       const title = this.captureTitle
       const startedAt = this.captureStartedAt
-      this.recordingId = null
-      this.lastStatus = null
-      this.ui.send("rec:stopped", {})
+      // Keep the frozen status for snapshots while the file is saving.
 
       try {
         await this.drainChain // queued writes
@@ -564,15 +569,18 @@ export class RecorderController {
           /* ignore */
         }
       }
-      await this.resetCapture(false)
       await this.refreshList()
+      await savingFeedback
+      await this.resetCapture(false)
       this.renderHud()
     } finally {
       this.finalizing = false
+      this.ui.send("rec:stopped", {})
     }
   }
 
   private async cancelRecording(): Promise<void> {
+    if (this.finalizing) return this.stopPromise ?? undefined
     const writer = this.writer
     if (!this.recordingId || !writer) return
     this.finalizing = true
@@ -624,6 +632,7 @@ export class RecorderController {
     this.chunks = []
     this.bufBytes = 0
     this.pcmBytes = 0
+    this.capturedBytes = 0
     this.writeErrored = false
     this.captureStartedAt = 0
     this.captureTitle = ""
@@ -672,22 +681,25 @@ export class RecorderController {
 
   // ── Playback ─────────────────────────────────────────────────────────────
 
-  private async play(id: string): Promise<void> {
+  private async play(id: string, positionMs = 0): Promise<void> {
+    const seq = ++this.playSeq
     let meta: BlobMeta | null = null
     try {
       meta = await this.session.blob.get(id)
     } catch {
       meta = null
     }
+    if (seq !== this.playSeq) return
     if (!meta) {
       // Stored audio is gone/unreadable — tell the UI instead of a dead tap.
       this.ui.send("rec:audio-missing", {id})
       return
     }
-    const seq = ++this.playSeq
-    this.setPlaying(id)
+    const durationMs = Number(meta.meta?.durationMs ?? 0)
+    const startPositionMs = Number.isFinite(positionMs) ? Math.max(0, Math.min(positionMs, durationMs)) : 0
+    this.setPlaying(id, startPositionMs)
     try {
-      await this.session.speaker.play({audioUrl: meta.uri, stopOtherAudio: true})
+      await this.session.speaker.play({audioUrl: meta.uri, stopOtherAudio: true, startPositionMs})
     } catch (err) {
       console.log("Recorder: playback failed", err)
     } finally {
@@ -699,6 +711,7 @@ export class RecorderController {
   }
 
   private stopPlay(): void {
+    ++this.playSeq
     try {
       this.session.speaker.stop()
     } catch {
@@ -707,10 +720,11 @@ export class RecorderController {
     this.setPlaying(null)
   }
 
-  private setPlaying(id: string | null): void {
-    if (this.playingId === id) return
+  private setPlaying(id: string | null, positionMs = 0): void {
     this.playingId = id
-    this.ui.send("rec:playback", {playingId: id})
+    this.playPositionMs = positionMs
+    this.playStartedAt = Date.now()
+    this.ui.send("rec:playback", {playingId: id, positionMs})
   }
 
   // ── Export ───────────────────────────────────────────────────────────────
@@ -744,7 +758,7 @@ export class RecorderController {
     }
     const transcript = typeof meta?.meta?.transcript === "string" ? meta.meta.transcript : ""
     if (!transcript.trim()) return
-    const title = typeof meta?.meta?.title === "string" ? meta.meta.title : (meta?.name ?? id)
+    const title = typeof meta?.meta?.title === "string" ? meta.meta.title : meta?.name ?? id
     const durationMs = Number(meta?.meta?.durationMs ?? 0)
     const createdAt = meta?.createdAt ?? Date.now()
     const body = `${title}\n${fmtClock(durationMs)} · ${new Date(createdAt).toLocaleString()}\n\n${transcript}\n`
@@ -765,7 +779,9 @@ export class RecorderController {
   private renderHud(): void {
     const text =
       this.recordingId && this.lastStatus
-        ? `${this.lastStatus.paused ? "❚❚ PAUSED" : "● REC"}   ${fmtClock(this.lastStatus.ms)}`
+        ? `${this.finalizing ? "Saving…" : this.lastStatus.paused ? "❚❚ PAUSED" : "● REC"}   ${fmtClock(
+            this.lastStatus.ms,
+          )}`
         : "Recorder ready"
     // Full-canvas text element with a stable id — the ticking clock updates in
     // place on the glasses. render() never throws; on a displayless device it
@@ -866,8 +882,4 @@ function fmtClock(ms: number): string {
   const m = Math.floor(s / 60)
   const r = s % 60
   return `${m}:${r.toString().padStart(2, "0")}`
-}
-
-function delay(ms: number): Promise<void> {
-  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve()
 }
