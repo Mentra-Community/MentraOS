@@ -5,10 +5,10 @@ import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import type { TestRunClaim } from "../types/test-run-claim.types";
 import { continuationRequestSchema, isOriginalCandidate, type ContinuationGrant, type TestContinuationBinding } from "../types/test-continuation.types";
-import { testRoutineIdSchema, type TestDispatchReceipt, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
+import { testRoutineIdSchema, type TestBuild, type TestBuildSource, type TestDispatchReceipt, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
 import { TestDispatchService } from "./test-dispatch.service";
 import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
-import { GithubContinuationSource, type ContinuationSourceGateway } from "./test-continuation.github";
+import { GithubContinuationSource, type ContinuationSourceGateway, type ContinuationTarget } from "./test-continuation.github";
 import { requireContinuationLease } from "./test-continuation-lease";
 import { TestRunService } from "./test-run.service";
 import { TestFailureIncidentService } from "./test-failure-incident.service";
@@ -82,10 +82,37 @@ export class TestContinuationService {
   async inventory(grant: ContinuationGrant, routine: unknown) {
     const routineId = this.routine(grant, routine), packet = await this.case(grant);
     const target = await this.source.target(packet, grant, routineId);
+    if (target.original) {
+      // Exactly the recorded build, however old: never the newest listing or a current head.
+      const selection = await this.originalSelection(target, routineId);
+      const build = await this.originalBuild(selection.source, routineId);
+      return { candidate: grant.candidate, builds: [build].filter(item => item.headSha === target.expectedHeadSha
+          && item.archive?.sha256 === selection.archiveSha256), expectedHeadSha: target.expectedHeadSha };
+    }
     const builds = await this.builds.inventory({ ...target.query, routineId });
-    return { candidate: grant.candidate, builds: builds.filter(build => build.headSha === target.expectedHeadSha
-        && (!target.original || build.archive?.sha256 === target.original.archiveSha256)),
+    return { candidate: grant.candidate, builds: builds.filter(build => build.headSha === target.expectedHeadSha),
       expectedHeadSha: target.expectedHeadSha, ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
+  }
+  /** The issuer's immutable selection for the original request, cross-checked with the recorded result. */
+  private async originalSelection(target: ContinuationTarget, routineId: TestRoutineId) {
+    if (!this.builds.originalSelection) throw new TestDispatchError(503, "Original build verification is unavailable");
+    const selection = await this.builds.originalSelection(target.original!.requestRunId, routineId);
+    if (selection.archiveSha256 !== target.original!.archiveSha256 || selection.headSha !== target.expectedHeadSha
+      || selection.source.channel !== target.query.channel || (selection.source.channel === "pr" && selection.source.prNumber !== target.query.pr))
+      fail("The original request differs from the recorded result");
+    return selection;
+  }
+  /** The exact recorded build through the normal gateway. The trusted request workflow dispatches a PR
+   * build only while the PR is open on that head and base, so a moved or closed PR is refused here. */
+  private async originalBuild(source: TestBuildSource, routineId: TestRoutineId): Promise<TestBuild> {
+    let build: TestBuild;
+    try { build = await this.builds.resolve(source, routineId); }
+    catch (error) {
+      if (error instanceof TestDispatchError && error.status < 500) fail(`The original build can no longer be dispatched: ${error.message}`);
+      throw error;
+    }
+    if (build.availability !== "available") fail(`The original build can no longer be dispatched: ${build.reason ?? "it is unavailable"}`);
+    return build;
   }
   async request(grant: ContinuationGrant, input: unknown) {
     const { executionAttempt, retryReason, ...data } = continuationRequestSchema.parse(input), routineId = this.routine(grant, data.routineId);
@@ -109,9 +136,13 @@ export class TestContinuationService {
     const target = await this.source.target(packet, grant, routineId);
     if (data.source.channel !== target.query.channel
       || (data.source.channel === "pr" && data.source.prNumber !== target.query.pr)) fail("Build is outside the candidate source");
-    // The original target admits only the exact recorded artifact, never a rebuilt or newer one.
-    if (target.original && data.archiveSha256 !== target.original.archiveSha256) fail("Build is not the original recorded artifact");
-    const build = await this.builds.resolve(data.source, routineId);
+    // The original target admits only the build its recorded request selected, never a caller-named,
+    // rebuilt or newer one.
+    if (target.original) {
+      const selection = await this.originalSelection(target, routineId);
+      if (!same(data.source, selection.source) || data.archiveSha256 !== selection.archiveSha256) fail("Build is not the original recorded artifact");
+    }
+    const build = target.original ? await this.originalBuild(data.source, routineId) : await this.builds.resolve(data.source, routineId);
     if (build.headSha !== target.expectedHeadSha || build.archive?.sha256 !== data.archiveSha256 || build.availability !== "available")
       fail("Published build does not match the candidate");
     const binding: TestContinuationBinding = { occurrenceId: grant.occurrenceId, agentRunId: grant.agentRunId,

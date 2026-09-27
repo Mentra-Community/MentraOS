@@ -32,8 +32,10 @@ export const testRepairEvidenceSchema = z.object({
   before: z.unknown(), action: z.unknown(), result: z.unknown(),
   check: z.object({ passed: z.boolean() }).passthrough(),
 }).strict();
-/** An executor's answer about one accepted operation. */
+/** An executor's answer about one registered operation, naming that exact operation. */
 export const testRepairStatusSchema = z.object({
+  repairId: z.string().uuid(),
+  operation: testRepairOperationSchema,
   state: z.enum(["accepted", "running", "unknown", "completed", "failed", "rejected"]),
   owner: z.object({ workerId: identity, fixtureId: identity }).strict().optional(),
   evidence: testRepairEvidenceSchema.optional(),
@@ -48,11 +50,13 @@ export interface TestRepairReceipt {
   createdAt: string;
   sendState: "sending" | "accepted" | "unknown" | "rejected";
   rejectionReason?: string;
+  /** Set when an uncertain send was settled by the executor's own answer, never by a resend. */
+  reconciledAt?: string;
 }
 export interface TestRepairView {
   repairId: string;
   operation: TestRepairOperation;
-  state: "sending" | TestRepairStatus["state"];
+  state: "sending" | TestRepairReceipt["sendState"] | TestRepairStatus["state"];
   owner?: TestRepairStatus["owner"];
   evidence?: TestRepairStatus["evidence"];
   message: string;

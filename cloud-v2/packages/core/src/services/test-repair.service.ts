@@ -3,7 +3,7 @@ import { z } from "zod";
 import { TestRepairModel } from "../models/test-repair.model";
 import { isOriginalCandidate, type ContinuationGrant } from "../types/test-continuation.types";
 import { TEST_REPAIR_OPERATIONS, testRepairRequestSchema, testRepairStatusSchema, type TestRepairOperation,
-  type TestRepairReceipt, type TestRepairView } from "../types/test-repair.types";
+  type TestRepairReceipt, type TestRepairStatus, type TestRepairView } from "../types/test-repair.types";
 import { TestDispatchError } from "./test-builds.service";
 import { requireContinuationLease } from "./test-continuation-lease";
 import { acknowledgedCase } from "./test-continuation.service";
@@ -16,6 +16,8 @@ export interface TestRepairRepository {
   insert(value: StoredRepair): Promise<{ stored: StoredRepair; created: boolean }>;
   /** Settles only a `sending` receipt; null records an unknown send outcome. */
   acknowledge(repairId: string, outcome: SendOutcome | null): Promise<TestRepairReceipt>;
+  /** Marks an uncertain (`sending`/`unknown`) send accepted after the executor itself reported this operation. */
+  reconcile(repairId: string): Promise<TestRepairReceipt>;
 }
 const writeConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
 const stored = (row: { inputSha256: string; receipt: unknown }): StoredRepair => ({ inputSha256: row.inputSha256, receipt: row.receipt as TestRepairReceipt });
@@ -39,8 +41,19 @@ export class MongoTestRepairRepository implements TestRepairRepository {
     const row = await TestRepairModel.findOneAndUpdate({ repairId, "receipt.sendState": "sending" }, { $set: {
       "receipt.sendState": outcome?.state ?? "unknown", ...(outcome?.state === "rejected" ? { "receipt.rejectionReason": outcome.reason } : {}),
     } }, { new: true, writeConcern }).lean();
-    if (!row) throw new TestDispatchError(503, "Repair acknowledgement was not saved; reconcile before requesting another repair");
-    return stored(row).receipt;
+    if (row) return stored(row).receipt;
+    // A concurrent read may already have settled this send from the executor's own answer.
+    const existing = await this.get(repairId);
+    if (!existing || existing.receipt.sendState === "sending")
+      throw new TestDispatchError(503, "Repair acknowledgement was not saved; reconcile before requesting another repair");
+    return existing.receipt;
+  }
+  async reconcile(repairId: string) {
+    const row = await TestRepairModel.findOneAndUpdate({ repairId, "receipt.sendState": { $in: ["sending", "unknown"] } },
+      { $set: { "receipt.sendState": "accepted", "receipt.reconciledAt": new Date().toISOString() } }, { new: true, writeConcern }).lean();
+    const value = row ? stored(row) : await this.get(repairId);
+    if (!value) throw new TestDispatchError(404, "Registered repair not found");
+    return value.receipt;
   }
 }
 
@@ -52,6 +65,8 @@ export interface TestRepairExecutor {
   supports(operation: TestRepairOperation): boolean;
   /** At most one send per receipt. A throw leaves the outcome unknown; it is never resent. */
   submit(receipt: TestRepairReceipt): Promise<SendOutcome>;
+  /** Read-only. Must name the exact `repairId` and `operation`, and report `unknown` or throw for an
+   * operation it never received; only such an answer can settle an uncertain send. */
   status(receipt: TestRepairReceipt): Promise<unknown>;
 }
 /**
@@ -123,21 +138,33 @@ export class TestRepairService {
       throw new TestDispatchError(404, "Registered repair not found");
   }
 
+  /** The executor's read-only answer about exactly this registered operation, or why it is not trusted. */
+  private async observe(receipt: TestRepairReceipt): Promise<{ status: TestRepairStatus } | { problem: "unavailable" | "invalid" }> {
+    let raw: unknown;
+    try { raw = await this.executor.status(receipt); } catch { return { problem: "unavailable" }; }
+    const parsed = testRepairStatusSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.repairId !== receipt.repairId || parsed.data.operation !== receipt.request.operation) return { problem: "invalid" };
+    // Only the executor's own passing check makes a repair complete. Nothing is inferred or filled in here.
+    if (parsed.data.state === "completed" && (!parsed.data.owner || parsed.data.evidence?.check.passed !== true)) return { problem: "invalid" };
+    return { status: parsed.data };
+  }
+
   private async present(receipt: TestRepairReceipt): Promise<TestRepairView> {
     const base = { repairId: receipt.repairId, operation: receipt.request.operation };
     if (receipt.sendState === "rejected") return { ...base, state: "rejected",
       message: `The executor rejected this repair: ${receipt.rejectionReason ?? "no reason was given"}. Nothing ran.` };
-    if (receipt.sendState !== "accepted") return { ...base, state: receipt.sendState,
-      message: "The send outcome is not confirmed. It is never resent; keep this operation ID and reconcile before any other repair." };
-    let raw: unknown;
-    try { raw = await this.executor.status(receipt); }
-    catch { return { ...base, state: "accepted", message: "Accepted; the executor's current status is unavailable. Refresh later." }; }
-    const parsed = testRepairStatusSchema.safeParse(raw);
-    if (!parsed.success) throw new TestDispatchError(502, "Repair executor status is malformed");
-    const status = parsed.data;
-    // Only the executor's own passing check makes a repair complete. Nothing is inferred or filled in here.
-    if (status.state === "completed" && (!status.owner || status.evidence?.check.passed !== true))
-      throw new TestDispatchError(502, "Repair executor reported completion without its owner and a passing check");
+    const observed = await this.observe(receipt);
+    if (receipt.sendState !== "accepted") {
+      // An uncertain send is settled only by the executor naming this exact operation. It is never resent.
+      if (!("status" in observed) || observed.status.state === "unknown") return { ...base, state: receipt.sendState,
+        message: "The send outcome is not confirmed. It is never resent; keep this operation ID and reconcile before any other repair." };
+      await this.repository.reconcile(receipt.repairId);
+    }
+    if ("problem" in observed) {
+      if (observed.problem === "unavailable") return { ...base, state: "accepted", message: "Accepted; the executor's current status is unavailable. Refresh later." };
+      throw new TestDispatchError(502, "Repair executor status is malformed, names another operation, or claims completion without its owner and a passing check");
+    }
+    const status = observed.status;
     return { ...base, ...status, message: status.state === "completed" ? "Completed with the executor's passing check."
       : ["failed", "rejected"].includes(status.state) ? "Ended without a repaired state. The original failure is unchanged."
       : "Not finished. Another repair must wait until this one is resolved." };

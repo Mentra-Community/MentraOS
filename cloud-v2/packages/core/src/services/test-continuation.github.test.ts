@@ -156,17 +156,18 @@ test("original target resolves only the occurrence's recorded source, channel, r
   const setup = () => {
     const f = fixture();
     const grant = { ...f.grant, candidate: { repository: PUB, headSha: tested, target: "original" as const } } as ContinuationGrant;
-    const packet = { ...f.packet, routine: { id: "no-glasses", version: "1" }, build: { hashes: { archiveSha256 } } } as unknown as FailurePacket;
+    const packet = { ...f.packet, requestId: "routine-70-1-12-no-glasses", routine: { id: "no-glasses", version: "1" }, build: { hashes: { archiveSha256 } } } as unknown as FailurePacket;
     return { ...f, grant, packet };
   };
   const pr = setup();
   expect(await pr.gateway.target(pr.packet, pr.grant, "no-glasses")).toEqual({ query: { channel: "pr", pr: 12 }, expectedHeadSha: tested,
-    automaticExpected: false, original: { archiveSha256 } });
+    automaticExpected: false, original: { archiveSha256, requestRunId: 70 } });
   expect(pr.calls).toEqual([]);
   // A dev occurrence stays on dev: its recorded channel is kept, never promoted or rebuilt.
   const dev = setup(); dev.packet.source = { schemaVersion: 1, trigger: "nightly", channel: "dev", repository: PUB, branch: "dev", headSha: tested };
-  expect((await dev.gateway.target(dev.packet, dev.grant, "no-glasses")).query).toEqual({ channel: "dev" });
-  for (const mismatch of ["head", "repository", "routine", "archive", "local", "shared"]) {
+  (dev.packet as { requestId: string }).requestId = "routine-71-1-dev-no-glasses";
+  expect(await dev.gateway.target(dev.packet, dev.grant, "no-glasses")).toMatchObject({ query: { channel: "dev" }, original: { requestRunId: 71 } });
+  for (const mismatch of ["head", "repository", "routine", "archive", "local", "shared", "request", "request-channel", "request-attempt"]) {
     const f = setup(); let routineId = "no-glasses";
     if (mismatch === "head") f.grant.candidate.headSha = head;
     if (mismatch === "repository") f.grant.candidate.repository = HARNESS;
@@ -174,6 +175,10 @@ test("original target resolves only the occurrence's recorded source, channel, r
     if (mismatch === "archive") (f.packet.build.hashes as Record<string, string>) = {};
     if (mismatch === "local") f.packet.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: "candidate", headSha: tested };
     if (mismatch === "shared") f.grant.caseBinding = { caseId: "mfc_" + "5".repeat(64), candidateOwnerRunId: "run_owner" };
+    // The recorded request must be the trusted issuer's first generation for this exact PR/channel and routine.
+    if (mismatch === "request") (f.packet as { requestId: string }).requestId = "local-2026-09-27";
+    if (mismatch === "request-channel") (f.packet as { requestId: string }).requestId = "routine-70-1-dev-no-glasses";
+    if (mismatch === "request-attempt") (f.packet as { requestId: string }).requestId = "routine-70-2-12-no-glasses";
     await expect(f.gateway.target(f.packet, f.grant, routineId)).rejects.toThrow();
     expect(f.calls).toEqual([]);
   }

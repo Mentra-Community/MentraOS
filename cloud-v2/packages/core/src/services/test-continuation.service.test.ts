@@ -44,6 +44,8 @@ function fixture(incidents?: IncidentReportStore) {
     dispatch: async () => { sends++; return { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; },
     progress: async () => ({ state: "running", requestId: "routine-90-1-44-no-glasses", message: "Running" }),
     findExisting: async (_, value) => { since = value; return existing; },
+    // The original request's immutable selection (the real gateway reads it from GitHub).
+    originalSelection: async () => ({ source: input.source, archiveSha256, headSha }),
   };
   let ids: string[] = [], extraResults: typeof result[] = [];
   // Core acknowledges each linked occurrence to its stable branch anchor.
@@ -340,7 +342,7 @@ test("existing PR operation IDs are unchanged; the original target has its own a
 });
 
 test("an original-target diagnostic rerun sends the recorded artifact once, needs no repair and adopts no earlier request", async () => {
-  const f = fixture(); f.target({ original: { archiveSha256 } }); f.existing();
+  const f = fixture(); f.target({ original: { archiveSha256, requestRunId: 70 } }); f.existing();
   const sent = await f.service.request(original, input);
   expect(sent).toMatchObject({ dispatchId: continuationOperationId(original, "no-glasses"), sendState: "accepted" });
   expect(sent.adopted).toBeUndefined(); expect(f.sends()).toBe(1); expect(f.since()).toBe("");
@@ -357,10 +359,10 @@ test("an original-target diagnostic rerun sends the recorded artifact once, need
 });
 
 test("an original-target request with another artifact, head, channel, attempt, routine or lease sends nothing", async () => {
-  const expected: Record<string, string> = { archive: "original recorded artifact", head: "does not match", channel: "outside the candidate source",
+  const expected: Record<string, string> = { archive: "original recorded artifact", head: "differs from the recorded result", channel: "outside the candidate source",
     attempt: "Execution attempt differs", routine: "outside this capability", lease: "Stale lease" };
   for (const mismatch of Object.keys(expected)) {
-    const f = fixture(); f.target({ original: { archiveSha256 } });
+    const f = fixture(); f.target({ original: { archiveSha256, requestRunId: 70 } });
     let request: Record<string, unknown> = input;
     if (mismatch === "archive") request = { ...input, archiveSha256: "e".repeat(64) };
     if (mismatch === "head") f.target({ expectedHeadSha: "f".repeat(40) });

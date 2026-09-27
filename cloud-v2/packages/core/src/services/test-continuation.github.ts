@@ -12,9 +12,9 @@ export interface ContinuationTarget {
   expectedHarnessSha?: string;
   automaticExpected: boolean;
   requestNotBefore?: string;
-  /** Original target only: the exact recorded artifact. Its requests are never adopted,
-   * so the original (or any earlier) request cannot stand in for the rerun. */
-  original?: { archiveSha256: string };
+  /** Original target only: the exact recorded artifact and the request that selected it.
+   * Requests are never adopted, so the original (or any earlier) one cannot stand in for the rerun. */
+  original?: { archiveSha256: string; requestRunId: number };
 }
 export interface ContinuationSourceGateway {
   target(packet: FailurePacket, grant: ContinuationGrant, routineId: string): Promise<ContinuationTarget>;
@@ -96,7 +96,12 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     ensure(!grant.caseBinding, "The original target belongs to its own occurrence, not a shared candidate");
     ensure(packet.routine.id === routineId, "The original target reruns only the recorded routine");
     ensure(typeof archiveSha256 === "string" && /^[a-f0-9]{64}$/.test(archiveSha256), "The original artifact identity was not recorded");
+    // The trusted issuer's request that selected this exact build; its immutable artifact,
+    // not the caller, later names the build run and publication attempt.
+    const suffix = source.channel === "pr" ? String(source.pullRequest!.number) : source.channel;
+    const request = new RegExp(`^routine-([1-9]\\d*)-1-${suffix}-${routineId}$`).exec(packet.requestId);
+    ensure(request, "The original request identity was not recorded");
     return { query: source.channel === "pr" ? { channel: "pr", pr: source.pullRequest!.number } : { channel: source.channel as "dev" | "staging" },
-      expectedHeadSha: source.headSha, automaticExpected: false, original: { archiveSha256: archiveSha256! } };
+      expectedHeadSha: source.headSha, automaticExpected: false, original: { archiveSha256: archiveSha256!, requestRunId: Number(request![1]) } };
   }
 }

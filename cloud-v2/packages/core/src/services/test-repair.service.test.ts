@@ -15,6 +15,8 @@ const grant: ContinuationGrant = { purpose: "mentra-routine-fixer-continuation-v
 const request = { operationId: "11111111-2222-4333-a444-555555555555", operation: "day1.recovery", routineId: "day1-ota", reason: "Fixture firmware was left on the candidate build" };
 const owner = { workerId: "mini", fixtureId: "glasses-03be" };
 const evidence = (passed: boolean) => ({ before: { observationId: "obs-1" }, action: { journalId: "j-1" }, result: { terminalId: "t-1" }, check: { passed, returnVerification: passed ? "passed" : "failed" } });
+/** An executor answer about the registered operation. */
+const about = (extra: Record<string, unknown>) => ({ repairId: request.operationId, operation: "day1.recovery", ...extra });
 
 function fixture(executor?: Partial<TestRepairExecutor>) {
   const packet = { occurrenceId, sourceStatus: "recorded", source: { repository: "Mentra-Community/MentraOS", headSha },
@@ -24,12 +26,18 @@ function fixture(executor?: Partial<TestRepairExecutor>) {
     get: async id => rows.get(id) ?? null,
     insert: async value => { const before = rows.get(value.receipt.repairId); if (before) return { stored: before, created: false };
       rows.set(value.receipt.repairId, value); return { stored: value, created: true }; },
+    // Mirrors the Mongo compare-and-set: only `sending` is acknowledged; a reconciled receipt is returned as is.
     acknowledge: async (id, outcome) => { const value = rows.get(id)!.receipt;
-      Object.assign(value, { sendState: outcome?.state ?? "unknown", ...(outcome?.state === "rejected" ? { rejectionReason: outcome.reason } : {}) }); return value; },
+      if (value.sendState === "sending") Object.assign(value, { sendState: outcome?.state ?? "unknown", ...(outcome?.state === "rejected" ? { rejectionReason: outcome.reason } : {}) });
+      return value; },
+    reconcile: async id => { const value = rows.get(id)!.receipt;
+      if (["sending", "unknown"].includes(value.sendState)) Object.assign(value, { sendState: "accepted", reconciledAt: "2026-09-27T00:00:00Z" });
+      return value; },
   };
-  let sends = 0, status: unknown = { state: "running", owner };
+  let sends = 0, status: unknown = about({ state: "running", owner });
   const leases: (ContinuationLeaseRepair | undefined)[] = []; let reserved = true;
-  const broker: TestRepairExecutor = { supports: () => true, submit: async () => { sends++; return { state: "accepted" }; }, status: async () => status, ...executor };
+  const broker: TestRepairExecutor = { supports: () => true, submit: async () => { sends++; return { state: "accepted" }; },
+    status: async () => { if (status instanceof Error) throw status; return status; }, ...executor };
   const runs = { failureDetail: async () => packet } as unknown as TestRunService;
   const service = new TestRepairService(runs, broker, repository, async (_grant, _routine, _send, repair) => {
     leases.push(repair); if (!reserved) throw new Error("Mini lease changed or this state repair was not reserved"); });
@@ -43,7 +51,8 @@ test("without an owned executor nothing is sent or recorded, and the registered 
   // Only an authenticated reservation learns that the capability is absent.
   expect(f.leases).toEqual([{ operation: "day1.recovery", operationId: request.operationId }]);
   const production = new TestRepairService(f.runs, absentTestRepairExecutor, { get: async () => null,
-    insert: async () => { throw new Error("must not persist"); }, acknowledge: async () => { throw new Error("must not persist"); } }, async () => {});
+    insert: async () => { throw new Error("must not persist"); }, acknowledge: async () => { throw new Error("must not persist"); },
+    reconcile: async () => { throw new Error("must not persist"); } }, async () => {});
   await expect(production.request(grant, request)).rejects.toThrow("No owned executor accepts this state repair; nothing was sent");
 });
 
@@ -74,12 +83,51 @@ test("concurrent replays send once; a different repair cannot reuse the operatio
   expect(f.sends()).toBe(1);
 });
 
-test("an uncertain send stays unknown and is never resent; an executor rejection is terminal and ran nothing", async () => {
-  const unknown = fixture({ submit: async () => { throw new Error("socket closed"); } });
-  expect((await unknown.service.request(grant, request)).state).toBe("unknown");
-  expect((await unknown.service.request(grant, request)).state).toBe("unknown");
-  expect((await unknown.service.detail(grant, request.operationId)).state).toBe("unknown");
-  expect(unknown.leases).toHaveLength(1);
+test("an uncertain send is reconciled read-only from the executor's answer about the same operation, never resent", async () => {
+  // The executor started the operation, then the reply was lost and its status is briefly unavailable.
+  let submits = 0;
+  const f = fixture({ submit: async () => { submits++; throw new Error("socket closed after the executor started"); } });
+  f.status(new Error("offline"));
+  expect((await f.service.request(grant, request)).state).toBe("unknown");
+  expect((await f.service.detail(grant, request.operationId)).state).toBe("unknown");
+  expect(f.rows.get(request.operationId)!.receipt.sendState).toBe("unknown");
+  // Missing, malformed, other-operation, executor-uncertain or unproven-completion answers settle nothing.
+  const answers: unknown[] = [null, { state: "running", owner }, about({ state: "running", repairId: "99999999-2222-4333-a444-555555555555" }),
+    about({ state: "running", operation: "android.sign-in-recovery" }), about({ state: "unknown" }),
+    about({ state: "completed", owner, evidence: evidence(false) }), about({ state: "completed", evidence: evidence(true) })];
+  for (const answer of answers) {
+    f.status(answer);
+    expect((await f.service.detail(grant, request.operationId)).state).toBe("unknown");
+    expect((await f.service.request(grant, request)).state).toBe("unknown");
+  }
+  expect(f.rows.get(request.operationId)!.receipt.sendState).toBe("unknown");
+  // The executor then reports this exact operation: repeated reads advance the recorded truth.
+  f.status(about({ state: "running", owner }));
+  expect(await f.service.detail(grant, request.operationId)).toMatchObject({ state: "running", owner });
+  expect(f.rows.get(request.operationId)!.receipt).toMatchObject({ sendState: "accepted", reconciledAt: "2026-09-27T00:00:00Z" });
+  f.status(about({ state: "completed", owner, evidence: evidence(true) }));
+  expect(await f.service.request(grant, request)).toMatchObject({ state: "completed", owner, evidence: evidence(true) });
+  expect(await f.service.detail(grant, request.operationId)).toMatchObject({ state: "completed" });
+  // One send in total; the lease authorized it once; no new operation ID.
+  expect(submits).toBe(1); expect(f.leases).toHaveLength(1);
+  expect([...f.rows.keys()]).toEqual([request.operationId]);
+});
+
+test("a send interrupted before its acknowledgement reconciles from the executor, and replays never submit", async () => {
+  const f = fixture();
+  // A crash between the durable send fence and the executor reply leaves `sending`.
+  f.rows.set(request.operationId, { inputSha256: "", receipt: { repairId: request.operationId, request: request as TestRepairReceipt["request"],
+    binding: { occurrenceId, agentRunId: "run_123", candidate: grant.candidate }, createdAt: "2026-09-27T00:00:00Z", sendState: "sending" } });
+  f.status(new Error("offline"));
+  const view = await f.service.detail(grant, request.operationId);
+  expect(view.state).toBe("sending");
+  f.status(about({ state: "failed", owner, evidence: evidence(false) }));
+  expect(await f.service.detail(grant, request.operationId)).toMatchObject({ state: "failed", evidence: evidence(false) });
+  expect(f.rows.get(request.operationId)!.receipt.sendState).toBe("accepted");
+  expect(f.sends()).toBe(0);
+});
+
+test("an executor rejection is terminal and ran nothing", async () => {
   let rejected = 0;
   const refusal = fixture({ submit: async () => { rejected++; return { state: "rejected", reason: "Fixture is owned by another run" }; } });
   expect(await refusal.service.request(grant, request)).toMatchObject({ state: "rejected" });
@@ -88,12 +136,13 @@ test("an uncertain send stays unknown and is never resent; an executor rejection
 
 test("completed requires the executor's owner and passing check; failures and malformed status are never promoted", async () => {
   const f = fixture(); await f.service.request(grant, request);
-  f.status({ state: "completed", owner, evidence: evidence(true) });
+  f.status(about({ state: "completed", owner, evidence: evidence(true) }));
   expect(await f.service.detail(grant, request.operationId)).toMatchObject({ state: "completed", owner, evidence: evidence(true) });
-  f.status({ state: "failed", owner, evidence: evidence(false) });
+  f.status(about({ state: "failed", owner, evidence: evidence(false) }));
   expect(await f.service.detail(grant, request.operationId)).toMatchObject({ state: "failed", evidence: evidence(false) });
-  for (const value of [{ state: "completed", owner, evidence: evidence(false) }, { state: "completed", evidence: evidence(true) },
-    { state: "completed", owner }, { state: "done", owner }, { state: "completed", owner, evidence: evidence(true), shell: "extra" }]) {
+  for (const value of [about({ state: "completed", owner, evidence: evidence(false) }), about({ state: "completed", evidence: evidence(true) }),
+    about({ state: "completed", owner }), about({ state: "done", owner }), about({ state: "completed", owner, evidence: evidence(true), shell: "extra" }),
+    { state: "completed", owner, evidence: evidence(true) }, about({ state: "completed", owner, evidence: evidence(true), operation: "android.sign-in-recovery" })]) {
     f.status(value); await expect(f.service.detail(grant, request.operationId)).rejects.toMatchObject({ status: 502 });
   }
   const offline = fixture({ status: async () => { throw new Error("offline"); } }); await offline.service.request(grant, request);
