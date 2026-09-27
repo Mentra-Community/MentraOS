@@ -72,7 +72,7 @@ async function glassesAdmissionCase(mode) {
     import {syncBuiltinESMExports} from "node:module";
     import {createHash} from "node:crypto";
     import {cpSync} from "node:fs";
-    import {access, mkdir, readFile, writeFile} from "node:fs/promises";
+    import {access, mkdir, readFile, readlink, symlink, writeFile} from "node:fs/promises";
     import path from "node:path";
     const [installerURL, ownershipURL, mode] = process.argv.slice(1);
     Object.defineProperty(process, "platform", {value: "darwin"});
@@ -114,7 +114,13 @@ async function glassesAdmissionCase(mode) {
       await acquireAppOwnership(path.dirname(glassesLease), {reservation: {runID: "android-060b",
         runDirectory: path.join(home, "android-run"), fixtureID: "android-060b"}});
     const heldLease = mode.endsWith("-held") ? await readFile(glassesLease, "utf8") : undefined;
-    if (mode === "launch-held") {
+    // A lease entry that is a dangling symlink exists; only a missing entry is an absent lease.
+    const danglingTarget = path.join(home, "missing-lease-target");
+    if (mode.endsWith("-dangling")) {
+      await mkdir(path.dirname(glassesLease), {recursive: true});
+      await symlink(danglingTarget, glassesLease);
+    }
+    if (mode === "launch-held" || mode === "launch-dangling") {
       await assert.rejects(installBuild(manifestPath, options), /Physical glasses are held/);
       assert.equal(calls.length, 0); // nothing quit, verified, replaced or launched
       await assert.rejects(access(path.join(root, "Mentra.app")), {code: "ENOENT"});
@@ -126,6 +132,7 @@ async function glassesAdmissionCase(mode) {
     }
     await assert.rejects(access(path.join(folder, "com.mentra.mentra.lock")), {code: "ENOENT"});
     if (heldLease) assert.equal(await readFile(glassesLease, "utf8"), heldLease);
+    if (mode.endsWith("-dangling")) assert.equal(await readlink(glassesLease), danglingTarget);
   `
   await promisify(execFile)(
     process.execPath,
@@ -146,6 +153,11 @@ test("a file-only installation needs no glasses and proceeds beside a held glass
 
 test("a launching installation launches normally when no glasses lease is held", async () => {
   await glassesAdmissionCase("launch")
+})
+
+test("a dangling symlink as a glasses lease is held: launching refuses, a file-only install proceeds", async () => {
+  await glassesAdmissionCase("launch-dangling")
+  await glassesAdmissionCase("no-launch-dangling")
 })
 
 async function launcherFixture() {

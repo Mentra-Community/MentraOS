@@ -298,6 +298,25 @@ private struct InstallerCoreTests {
                 }
             }
             try InstallerFiles.manager.removeItem(at: glassesLease)
+            try InstallerFiles.manager.createSymbolicLink(atPath: glassesLease.path,
+                                                          withDestinationPath: fixture.temporary.appendingPathComponent("missing-target").path)
+            do {
+                try await withAppOwnership(homeDirectory: fixture.temporary) { opened = true }
+                throw TestFailure(description: "Open Mentra ignored a dangling glasses lease")
+            } catch let error as InstallerError {
+                try expect(error.localizedDescription.contains("Physical glasses are held"), "Unexpected refusal: \(error)")
+            }
+            do {
+                _ = try await install(candidate, homeDirectory: fixture.temporary, opensApp: false, quit: { quit = true })
+                throw TestFailure(description: "The synthetic package unexpectedly verified")
+            } catch {
+                try test("a dangling glasses lease symlink refuses Open; a file-only install still reaches verification") {
+                    try expect(!opened, "Open entered its launch closure")
+                    try expect(!error.localizedDescription.contains("Physical glasses"), "File-only install was refused for glasses")
+                    try expect(!InstallerFiles.exists(appLock), "Installer kept its app lease")
+                }
+            }
+            try InstallerFiles.manager.removeItem(at: glassesLease)
             try await withAppOwnership(homeDirectory: fixture.temporary) { opened = true }
             try test("Open proceeds once no glasses lease is held") { try expect(opened, "Open did not run") }
         }
@@ -338,10 +357,14 @@ private struct InstallerCoreTests {
                 try InstallerFiles.manager.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
                 try contents.write(to: root.appendingPathComponent("\(name)/com.mentra.mentra.lock"))
             }
+            // A lease entry that is a dangling symlink exists and is held; only a missing entry ("acquiring") is absent.
+            try InstallerFiles.manager.createDirectory(at: root.appendingPathComponent("dangling"), withIntermediateDirectories: true)
+            try InstallerFiles.manager.createSymbolicLink(atPath: root.appendingPathComponent("dangling/com.mentra.mentra.lock").path,
+                                                          withDestinationPath: root.appendingPathComponent("missing-target").path)
             try InstallerFiles.manager.createDirectory(at: root.appendingPathComponent("acquiring"), withIntermediateDirectories: true)
             try Data().write(to: root.appendingPathComponent(".DS_Store"))
             let native = try heldGlassesLeases(homeDirectory: fixture.temporary)
-            try expect(native == cases.map(\.0).filter { !$0.hasPrefix("exited") }.sorted(), "Unexpected held leases: \(native)")
+            try expect(native == (cases.map(\.0).filter { !$0.hasPrefix("exited") } + ["dangling"]).sorted(), "Unexpected held leases: \(native)")
             let probe = """
             const {heldGlassesLeases} = await import(process.argv[1]);
             process.stdout.write(JSON.stringify(await heldGlassesLeases(process.argv[2] + "/glasses")));

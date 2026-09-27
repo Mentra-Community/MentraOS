@@ -1,5 +1,5 @@
 import {randomUUID} from "node:crypto"
-import {mkdir, open, readdir, readFile, rmdir, unlink} from "node:fs/promises"
+import {lstat, mkdir, open, readdir, readFile, rmdir, unlink} from "node:fs/promises"
 import {homedir} from "node:os"
 import {isAbsolute, join, resolve} from "node:path"
 import {isDeepStrictEqual} from "node:util"
@@ -65,15 +65,16 @@ function processAlive(pid) {
 }
 
 /** Read only: one lock folder's state, validated by retainedAppReservation (PID, token, retention flag and
- * reservation). A missing lock file is `absent`; a valid reservation-less, non-retained lock whose process has exited
- * is `reclaimable`, as acquireAppOwnership treats it; every other valid lock is `held`. Any other content (JSON null,
- * false, 0, a malformed PID, token or retention flag), or a lock that changes while it is read, throws: it is never
- * free. Nothing is acquired, changed or removed. */
+ * reservation). A lock with no directory entry is `absent`; a dangling symlink is an entry and is never free. A valid
+ * reservation-less, non-retained lock whose process has exited is `reclaimable`, as acquireAppOwnership treats it;
+ * every other valid lock is `held`. Any other content (JSON null, false, 0, a malformed PID, token or retention flag),
+ * or a lock that changes while it is read, throws: it is never free. Nothing is acquired, changed or removed. */
 export async function readLockState(folder) {
   const path = join(folder, "com.mentra.mentra.lock")
   const read = () =>
-    readFile(path, "utf8").catch((error) => {
-      if (error.code === "ENOENT") return undefined
+    readFile(path, "utf8").catch(async (error) => {
+      if (error.code === "ENOENT" && (await lstat(path).then(() => false, (entry) => entry.code === "ENOENT")))
+        return undefined
       throw error
     })
   const before = await read()
