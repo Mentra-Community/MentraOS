@@ -236,6 +236,19 @@ function RunReference({ id, item, onResult }: { id: string; item: OverviewResour
   return item.publishedRunIds.includes(id) ? <button className="text-[#087d50] underline" onClick={() => onResult(id)}>{id}</button>
     : <span className="break-all">{id}</span>;
 }
+/**
+ * Fixed wording for the glasses scope the shared guard owner reported in this observation. It describes that
+ * observation only (a stale one stays stale), never a current admission decision. An absent scope is an older host's
+ * report and is treated as unknown; nothing infers none. A verified none only says which pairs this guard did not
+ * exclude: it is not readiness, a released hold, recovery or a free pair.
+ */
+function glassesScopeText(owner: { glassesScope?: "none" | "identified" | "unknown" } | undefined) {
+  if (owner?.glassesScope === "none") return "Reported glasses scope (at this observation): verified none. This guard does not exclude other glasses pairs; each still needs its own lease. Mac UI, audio and recorder custody stay with this owner.";
+  if (owner?.glassesScope === "identified") return "Reported glasses scope (at this observation): one identified pair, held by its own lease. Other pairs still need their own leases.";
+  if (owner?.glassesScope === "unknown") return "Reported glasses scope (at this observation): unknown, so every glasses pair is excluded.";
+  if (owner) return "Glasses scope not reported by this host: treated as unknown, so every glasses pair is excluded.";
+  return "Glasses scope unknown: every glasses pair is excluded.";
+}
 const fixtureStatusNames = { ready: "recorded ready", busy: "recorded busy", "recovery-required": "recorded recovery required", uncommissioned: "recorded uncommissioned" } as const;
 function ResourceRow({ item, now, onResult }: { item: OverviewResourceObservation; now: number; onResult: (id: string) => void }) {
   const { observation: value, progress } = item;
@@ -245,7 +258,7 @@ function ResourceRow({ item, now, onResult }: { item: OverviewResourceObservatio
   return <tr className="border-t border-[#eceeeb] align-top">
     <td className="px-4 py-3"><span className={"inline-block rounded-md px-2 py-1 text-[11px] font-medium " + status.colors}>{status.badge}</span></td>
     <td className="max-w-[210px] break-words px-4 py-3"><p>{item.hostId}</p>
-      <p className="mt-1 text-[11px] text-[#68746d]">{item.resourceKey === "shared" ? "Shared guard: Mac UI, Mac audio and all glasses pairs"
+      <p className="mt-1 text-[11px] text-[#68746d]">{item.resourceKey === "shared" ? "Shared guard: Mac UI and Mac audio; its owner's glasses scope decides which glasses pairs it excludes"
         : "Android phone " + item.resourceKey.slice("android-".length) + " only; independent of the shared guard"}</p></td>
     <td className="max-w-[240px] break-words px-4 py-3 text-[11px]">
       {!value.owner ? <p>{value.guard.lock === "unreadable" ? "Guard unreadable" : "No guard owner"}</p>
@@ -254,6 +267,7 @@ function ResourceRow({ item, now, onResult }: { item: OverviewResourceObservatio
           {owner.retainOnExit ? <p className="mt-1">{owner.reservation ? "Retains the guard for its run on exit" : "Retains the guard without a lifecycle reservation"}</p> : null}
           {owner.reservation ? <><p className="mt-1">Run: <RunReference id={owner.reservation.runID} item={item} onResult={onResult} /></p>
             <p className="mt-1 text-[#68746d]">Reserved fixture: {owner.reservation.fixtureID}</p></> : null}</>}
+      {item.resourceKey === "shared" && value.guard.lock !== "absent" ? <p className="mt-1">{glassesScopeText(owner)}</p> : null}
       {value.guard.reclaimMarker !== "absent" ? <p className="mt-1 text-[#805619]">Reclaim marker {value.guard.reclaimMarker}</p> : null}</td>
     <td className="min-w-[230px] max-w-[320px] px-4 py-3 text-[11px]">
       {checkpoint ? <><p>{checkpoint.mode === "complete" ? "Completed checkpoint" : checkpoint.mode === "recovering" ? "Recovery checkpoint" : "Running checkpoint"} · {checkpoint.phase}</p>
