@@ -98,24 +98,99 @@ test("planner selects exact publications per routine and reports missing combine
   assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
 })
 
-test("planned Livestreamer stays unavailable on both channels until its worker is registered", async () => {
+const PLANNED = ["account-miniapps", "connected-glasses", "livestreamer"]
+
+test("planned targets are catalogued but stay unavailable on both channels, with their exact pending reason", async () => {
   assert.deepEqual(NIGHTLY_TARGETS.at(-1), {routine: "livestreamer", platform: "ios-on-mac"})
-  assert.equal(Object.hasOwn(DEVICE_ROUTINES, "livestreamer"), false)
+  assert.equal(DEVICE_ROUTINES.livestreamer.worker, null)
   const f = fixture(), result = await planNightlyRequests(f.options)
-  const livestreamer = result.unavailable.filter(row => row.routine === "livestreamer")
-  assert.deepEqual(livestreamer.map(({channel, platform}) => ({channel, platform})),
-    [{channel: "dev", platform: "ios-on-mac"}, {channel: "staging", platform: "ios-on-mac"}])
-  assert.ok(livestreamer.every(row => /no compatible registered worker/.test(row.reason) && row.sourceRunId === undefined))
-  assert.equal(result.requests.some(row => row.routine === "livestreamer"), false)
+  for (const routine of PLANNED) {
+    assert.ok(DEVICE_ROUTINES[routine].pending)
+    const rows = result.unavailable.filter(row => row.routine === routine)
+    assert.deepEqual(rows.map(({channel, platform}) => ({channel, platform})), ["dev", "staging"].map(channel =>
+      ({channel, platform: routine === "connected-glasses" ? "android" : "ios-on-mac"})))
+    assert.ok(rows.every(row => row.pending === DEVICE_ROUTINES[routine].pending && row.sourceRunId === undefined))
+    assert.equal(result.requests.some(row => row.routine === routine), false)
+  }
   assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
 })
 
-test("an ordinary send rejects the unregistered Livestreamer target before reading history or dispatching", async () => {
-  const f = fixture(), livestreamerPlan = {...plan, routine: "livestreamer"}
-  f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName(livestreamerPlan)})])
-  await assert.rejects(sendNightlyRequest({...f.options, plan: livestreamerPlan}), /Invalid nightly/)
-  assert.deepEqual(f.state.calls, [])
+test("an ordinary send rejects each planned target before reading history or dispatching", async () => {
+  for (const target of NIGHTLY_TARGETS.filter(target => PLANNED.includes(target.routine))) {
+    const f = fixture(), memberPlan = {...plan, ...target}
+    f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName(memberPlan)})])
+    await assert.rejects(sendNightlyRequest({...f.options, plan: memberPlan}), /Invalid nightly/)
+    assert.deepEqual(f.state.calls, [])
+  }
 })
+
+// TEST MODEL of a future completed registration: the production catalog with `pending` removed. It models only the
+// public registration; no worker or host is implemented or faked, and a pass here qualifies nothing.
+const completedRegistrationModel = Object.freeze(Object.fromEntries(Object.entries(DEVICE_ROUTINES).map(([id, routine]) => {
+  const {pending, ...registered} = routine
+  return [id, Object.freeze(registered)]
+})))
+
+test("the legacy marker and the per-build default stay unchanged, even for a modelled completed registration", async () => {
+  const f = await markerFixture()
+  for (const routine of PLANNED) {
+    const marked = structuredClone(f.request)
+    marked.routine.id = routine; marked.sequence = {...marked.sequence, member: routine}
+    assert.deepEqual(validateNightlyMarker(marked), marked.sequence)
+    assert.throws(() => validateNightlyMarker({...marked, sequence: {...marked.sequence, kind: "nightly-ota-call"}}), /Invalid nightly/)
+  }
+  for (const routine of [...PLANNED, "day1-ota", "mentra-call"])
+    await assert.rejects(createRoutineRequest({...f.dev.options, routine, requestOrigin: "successful-build",
+      routineCatalog: completedRegistrationModel}), /Unsupported coordinated routine authorization/)
+})
+
+for (const channel of ["dev", "staging"]) for (const target of NIGHTLY_TARGETS)
+  test(`nightly ${channel} ${target.routine} runs send -> marked request -> private callback only once registered`, async () => {
+    const f = fixture(), source = channel === "dev" ? f.dev : f.staging, sourceRunId = channel === "dev" ? 100 : 200
+    const memberPlan = {...plan, ...target, channel, sourceRunId, releaseIdentity: source.state.plan.releaseIdentity ?? plan.releaseIdentity}
+    const planned = PLANNED.includes(target.routine)
+    f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName(memberPlan)})])
+    const github = {...f.options.github, rest: {...f.options.github.rest, git: source.options.github.rest.git, repos: source.options.github.rest.repos}}
+    const produce = routineCatalog => createRoutineRequest({...source.options, github, context: {...source.options.context, runId: 9000},
+      routine: target.routine, sourceBuildRunId: String(sourceRunId), nightlyRunId: current.id, nightlyRunAttempt: 1,
+      nightlyMode: "independent", routineCatalog})
+    const catalogs = planned ? [undefined, completedRegistrationModel] : [undefined]
+    // Production: a planned target refuses at every public entry before any request or dispatch.
+    if (planned) {
+      await assert.rejects(sendNightlyRequest({...f.options, plan: memberPlan}), /Invalid nightly/)
+      await assert.rejects(produce(undefined), /planned but not registered/)
+      assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
+    }
+    const routineCatalog = catalogs.at(-1)
+    // Connected glasses is an Android routine: a Mac coordinate never sends.
+    const crossed = {...memberPlan, platform: target.platform === "android" ? "ios-on-mac" : "android"}
+    await assert.rejects(sendNightlyRequest({...f.options, plan: crossed, routineCatalog}), /Invalid nightly/)
+    const sent = await sendNightlyRequest({...f.options, plan: memberPlan, routineCatalog})
+    assert.equal(sent.status, "request-dispatched")
+    assert.deepEqual(f.state.calls.filter(([kind]) => kind === "dispatch").map(([, input]) => input.inputs),
+      [{channel, routine: target.routine, request_origin: "workflow-dispatch", source_build_run_id: String(sourceRunId),
+        source_publication_attempt: "2", nightly_run_id: "5000", nightly_run_attempt: "1", nightly_mode: "independent"}])
+    const request = await produce(routineCatalog)
+    assert.equal(request.status, "ready")
+    assert.equal(request.selection.platform, target.platform)
+    assert.equal(request.source.channel, channel)
+    assert.deepEqual(request.sequence, {kind: "nightly-routine", runId: 5000, runAttempt: 1, member: target.routine})
+    const privateCalls = [], privateGithub = {rest: {actions: {createWorkflowDispatch: async input => { privateCalls.push(input); return {status: 204} }}}}
+    const callback = {...f.options, github, privateGithub, routineCatalog,
+      plan: {mode: "dispatch", runId: 9000, runAttempt: 1, sourceSha: sha}, bytes: Buffer.from(JSON.stringify(request))}
+    // Hash, attempt and platform mismatches never reach the private workflow.
+    for (const mutate of [r => r.selection.archive.sha256 = "0".repeat(64), r => r.selection.otaManifest.sha256 = "0".repeat(64),
+      r => r.trigger.runAttempt = 2, r => r.sequence.runAttempt = 2, r => r.source.publicationAttempt = 1,
+      r => r.selection.platform = crossed.platform]) {
+      const changed = structuredClone(request); mutate(changed)
+      await assert.rejects(dispatchReadyRequest({...callback, bytes: Buffer.from(JSON.stringify(changed))}))
+    }
+    if (planned) await assert.rejects(dispatchReadyRequest({...callback, routineCatalog: undefined}), /planned but not registered/)
+    assert.deepEqual(privateCalls, [])
+    assert.equal((await dispatchReadyRequest(callback)).status, "private-job-requested")
+    assert.deepEqual(privateCalls, [{owner: "Mentra-Community", repo: "Mentra-Automated-Testing", workflow_id: "device-routine.yml",
+      ref: "main", inputs: {source_repository: repository, request_run_id: "9000", request_attempt: "1", routine_id: target.routine}}])
+  })
 
 test("registered five-routine coverage resolves Mac and Android archives from the same publication", async () => {
   const f = fixture(), routineCatalog = {...DEVICE_ROUTINES, "account-miniapps": {platform: "ios-on-mac"},

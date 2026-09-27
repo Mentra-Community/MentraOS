@@ -439,6 +439,15 @@ for (const routine of ["no-glasses", "mentra-call"]) test(`automatic ${routine} 
   }
 })
 
+test("planned routines refuse PR requests, labelled or explicit, with their pending reason", async () => {
+  for (const routine of ["account-miniapps", "connected-glasses", "livestreamer"]) for (const manual of [false, true]) {
+    const f = fixture()
+    if (manual) f.manual()
+    f.state.pr.labels = [{name: `routine:${routine}`}]
+    await assert.rejects(f.resolve({routine}), /planned but not registered/)
+  }
+})
+
 test("explicit opt-in cannot weaken artifact/current-PR checks or originate from PR code", async () => {
   for (const change of [f => {f.state.pr.state = "closed"}, f => {f.state.changeOnReread = true},
     f => {f.state.changeBaseOnReread = true}, f => {f.state.missingArchive = true},

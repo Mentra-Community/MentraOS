@@ -1,6 +1,6 @@
 import {isDeepStrictEqual} from "node:util"
 import {downloadNames, validateDownloads} from "./coordinated-install-downloads.mjs"
-import {deviceRoutine} from "./device-routines.mjs"
+import {deviceRoutine, registeredRoutine} from "./device-routines.mjs"
 import {jsonArtifact, REQUEST_WORKFLOW, sourcePublication} from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {ANDROID_MAX_VERSION_CODE, androidBuildNumberOf} from "./release-family.mjs"
@@ -158,8 +158,10 @@ export async function resolveCoordinatedSelection({github, context, source, plat
 }
 
 export async function createCoordinatedRoutineRequest({github, context, number, channel, routine = "no-glasses",
-  requestOrigin = "workflow-dispatch", source, sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode = "ordered", fetchImpl = fetch, now = () => new Date()}) {
-  const registered = deviceRoutine(routine)
+  requestOrigin = "workflow-dispatch", source, sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode = "ordered", fetchImpl = fetch, now = () => new Date(),
+  routineCatalog}) {
+  // A planned routine without a registered automatic worker refuses before any request is created.
+  const registered = registeredRoutine(routine, routineCatalog)
   const selected = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
   requireThat(!number && selected && ["dev", "staging"].includes(channel), "Coordinated requests require an exact run/attempt and no PR number")
   requireThat(requestOrigin === "workflow-dispatch" || (requestOrigin === "successful-build" && ["no-glasses", "no-glasses-android"].includes(routine)),
@@ -184,7 +186,7 @@ export async function createCoordinatedRoutineRequest({github, context, number, 
     await authenticateNightlyMarker({github, context, request})
   }
   try {
-    request.selection = await resolveCoordinatedSelection({github, context, source: request.source, platform: deviceRoutine(request.routine.id).platform, fetchImpl})
+    request.selection = await resolveCoordinatedSelection({github, context, source: request.source, platform: registered.platform, fetchImpl})
     request.status = "ready"
     request.reason = `Verified exact coordinated run, channel ancestry, immutable release plan, ${registered.platform === "android" ? "Android" : "Mac"} receipt and OTA pin`
   } catch (error) {

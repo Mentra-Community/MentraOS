@@ -85,6 +85,12 @@ Deployment must include `no-glasses-android` in `TEST_RUN_DISPATCH_ROUTINES` onl
 after its private worker lane is enrolled; `TEST_RUN_DISPATCH_CHANNELS` still
 controls PR/dev/staging availability. This code does not enable a new lane by itself.
 
+The planned nightly routines `account-miniapps` (Mac), `connected-glasses` (Android)
+and `livestreamer` (Mac) are listed so their state is visible, but each carries a
+`planned` reason in `TEST_ROUTINES`. They stay unavailable, and dispatch refuses them,
+even if a deployment adds them to `TEST_RUN_DISPATCH_ROUTINES`. Only the reviewed
+change that registers the routine's automatic worker removes `planned`.
+
 Existing `adminAuth` protects all three routes using the admin console session:
 
 - `GET /api/admin/test-runs/` returns `{runs, nextCursor}`. Filters: `pr`,

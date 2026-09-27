@@ -440,6 +440,24 @@ test("all routine labels create independent fenced generations for one exact pub
   ])
 })
 
+test("planned routine labels never become automatic requests or private callbacks", async () => {
+  const planned = ["account-miniapps", "connected-glasses", "livestreamer"]
+  const pull = {...pr, labels: [...planned, "day1-ota"].map(routine => ({name: `routine:${routine}`}))}
+  const f = fake({pull, callbackJobs: {[callback.id]: [{...publicationJob, name: publicationJobName(123, 2, "day1-ota")}]}})
+  const plans = await planDeviceDispatches({...f, context})
+  assert.deepEqual(plans.filter(plan => plan.mode === "request").map(plan => plan.routine), ["day1-ota"])
+  assert.ok(plans.every(plan => !planned.includes(plan.routine)))
+  for (const routine of planned) {
+    await assert.rejects(planDeviceDispatch({...f, context, routine}), /planned but not registered/)
+    await assert.rejects(requestAfterPublication({...f, context, plan: {...plans[0], routine}}), /planned but not registered/)
+    const remote = fake(), plan = await planDeviceDispatch({...fake({run: producer}), context})
+    const value = {...request, requestId: `routine-123-2-42-${routine}`, routine: {...request.routine, id: routine}}
+    await assert.rejects(dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(value)}), /planned but not registered/)
+    assert.equal(remote.calls.length, 0)
+  }
+  assert.equal(f.calls.filter(([kind]) => kind === "dispatch").length, 0)
+})
+
 test("a previous day-one send does not consume no-glasses, and no-glasses replay remains fenced", async () => {
   const pull = {...pr, labels: [{name: "routine:no-glasses"}]}
   const noGlassesJob = {...publicationJob, name: publicationJobName(123, 2, "no-glasses")}

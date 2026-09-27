@@ -16,7 +16,9 @@ on:
       routine:
         description: Requested device routine
         type: choice
-        options: [day1-ota, no-glasses, no-glasses-android, mentra-call]
+        # Planned routines (account-miniapps, connected-glasses, livestreamer) refuse until their automatic worker is
+        # registered in device-routines.mjs; only then add their labels to the pull_request routing below.
+        options: [day1-ota, no-glasses, no-glasses-android, mentra-call, account-miniapps, connected-glasses, livestreamer]
         default: day1-ota
         required: true
       request_origin:

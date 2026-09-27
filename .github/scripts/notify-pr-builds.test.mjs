@@ -714,6 +714,17 @@ test("no-glasses and day-one labels link their own exact build results without a
   }
 })
 
+test("planned routine labels say no test was requested instead of linking results", async () => {
+  const labels = ["routine:account-miniapps", "routine:connected-glasses", "routine:livestreamer", "routine:day1-ota"]
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: labels.map(name => ({name}))}})
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
+  const links = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]).searchParams.get("routineId"))
+  assert.deepEqual(links, ["day1-ota"])
+  assert.equal((text.match(/Planned routine: no automatic worker is registered yet, so no test was requested\./g) ?? []).length, 3)
+  for (const name of ["Account and miniapps", "Connected glasses \\(Android\\)", "Livestreamer"]) assert.match(text, new RegExp(name))
+})
+
 test("Mentra Call opt-in adds its exact results link without posting again on retry", async () => {
   const h = harness({files: [{filename: "mobile/app.config.ts"}],
     currentPr: {...pr, labels: [{name: "routine:mentra-call"}]}})

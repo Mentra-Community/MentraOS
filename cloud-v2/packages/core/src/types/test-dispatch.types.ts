@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { TestContinuationBinding } from "./test-continuation.types";
 
 const positive = z.number().int().positive().safe();
-export const testRoutineIdSchema = z.enum(["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"]);
+export const testRoutineIdSchema = z.enum(["no-glasses", "no-glasses-android", "day1-ota", "mentra-call",
+  "account-miniapps", "connected-glasses", "livestreamer"]);
 export const testBuildSourceSchema = z.discriminatedUnion("channel", [
   z.object({ channel: z.literal("pr"), prNumber: positive, buildRunId: positive, publicationAttempt: positive }).strict(),
   z.object({ channel: z.literal("dev"), buildRunId: positive, publicationAttempt: positive }).strict(),
@@ -39,13 +40,21 @@ export type TestBuildQuery = z.infer<typeof testBuildQuerySchema>;
 export type TestRoutineId = z.infer<typeof testRoutineIdSchema>;
 export type TestBuildPlatform = "ios-on-mac" | "android";
 export const testRoutinePlatform = (id: TestRoutineId = "no-glasses"): TestBuildPlatform =>
-  id === "no-glasses-android" ? "android" : "ios-on-mac";
+  id === "no-glasses-android" || id === "connected-glasses" ? "android" : "ios-on-mac";
 export const TEST_ROUTINES = [
   { id: "no-glasses" as const, name: "UI walkthrough without glasses (Mac)", description: "Open the app and verify navigation, settings and account screens." },
   { id: "no-glasses-android" as const, name: "UI walkthrough without glasses (Android)", description: "Verify app navigation on the dedicated Android phone with no glasses paired." },
   { id: "day1-ota" as const, name: "Day-one OTA update", description: "Prepare day-one firmware, update it, then verify and restore the selected build's firmware." },
   { id: "mentra-call" as const, name: "Mentra Call", description: "Join a call with the glasses and a browser peer, recording both views and checking the connection." },
-];
+  // Planned nightly targets: listed so their unavailability is visible. `planned` keeps them unavailable even if a
+  // deployment enables them, until the reviewed change that registers their automatic worker removes it.
+  { id: "account-miniapps" as const, name: "Account and miniapps (Mac)", description: "One combined paired-account routine: email, export, Google SSO, feedback, miniapps and incompatible tiles.",
+    planned: "Planned routine: its automatic worker is not registered yet" },
+  { id: "connected-glasses" as const, name: "Connected glasses (Android)", description: "One combined Android routine with paired glasses: pairing, Bluetooth, camera, Wi-Fi, gallery and audio.",
+    planned: "Planned routine: its automatic worker is not registered yet" },
+  { id: "livestreamer" as const, name: "Livestreamer (Mac)", description: "Stream here and local RTMP from the Mentra app, observed by an owned receiver.",
+    planned: "Planned routine: its automatic worker is not registered yet" },
+] satisfies { id: TestRoutineId; name: string; description: string; planned?: string }[];
 
 export interface TestBuild {
   source: TestBuildSource;
