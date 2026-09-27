@@ -206,3 +206,37 @@ describe("compare-and-set and progress ordering", () => {
     expect([...store.rows.values()].map(row => row.revision)).toEqual([1, 1, 1]);
   });
 });
+
+describe("shared guard glasses scope", () => {
+  const scoped = (glassesScope: unknown, observation: TestResourceObservation = retained(discovery, 4242)) =>
+    ({ ...observation, owner: { ...observation.owner!, glassesScope } }) as TestResourceObservation;
+  const installer = { state: "retained-recovery-required", reason: "dead-retained-unclassified-installation",
+    guard: { lock: "present", reclaimMarker: "absent" }, fixture: { checked: false },
+    owner: { valid: true, pid: 4242, liveness: "dead", retainOnExit: true, reservation: null, retainedReason: "unclassified-installation" } } as TestResourceObservation;
+  const accepted = (value: TestResourceObservationPut) => testResourceObservationPutSchema.safeParse(value).success;
+
+  test("the existing enum is accepted on the shared guard, and an older producer's owner without it stays valid", () => {
+    for (const scope of ["none", "identified", "unknown"]) expect(accepted(put(retained(discovery, 4242, scope as "none"), 0))).toBe(true);
+    expect(accepted(put(retained(), 0))).toBe(true);
+    expect(accepted(put(scoped("unknown", installer), 0))).toBe(true);
+  });
+
+  test("any other value, a phone guard, a verified scope without a reservation or an invalid owner's scope is rejected", () => {
+    for (const value of [put(scoped("maybe"), 0), put(scoped(null), 0), put(scoped(""), 0),
+      put(scoped("none"), 0, {}, "mini-03be", "android-0123456789ab"),
+      put(scoped("none", installer), 0), put(scoped("identified", installer), 0),
+      put({ state: "unknown", reason: "owner-unverifiable", guard: { lock: "present", reclaimMarker: "absent" },
+        owner: { valid: false, glassesScope: "none" }, fixture: { checked: false } } as unknown as TestResourceObservation, 0)])
+      expect(accepted(value)).toBe(false);
+  });
+
+  test("Core stores and returns the reported scope unchanged and never adds one to an older producer's observation", async () => {
+    const repository = new MemoryObservations(), service = new TestResourceObservationService(repository, () => new Date(start));
+    await service.put("mini-03be", "shared", put(retained(discovery, 4242, "none"), 0));
+    expect((await service.get("mini-03be", "shared")).observation?.owner).toMatchObject({ valid: true, glassesScope: "none" });
+    await service.put("mini-02", "shared", put(retained(discovery, 4242), 0, {}, "mini-02"));
+    const legacy = (await service.get("mini-02", "shared")).observation!;
+    expect(legacy.owner).not.toHaveProperty("glassesScope");
+    expect(legacy).toEqual(retained(discovery, 4242));
+  });
+});

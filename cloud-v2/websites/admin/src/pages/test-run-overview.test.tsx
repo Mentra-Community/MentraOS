@@ -4,6 +4,7 @@ import { aliveObservation, noOwnerObservation, resourceProgress, retainedObserva
 import type { TestResourceObservation } from "../../../../packages/core/src/types/test-resource-observation.types";
 import type { OverviewJob, OverviewResourceObservation, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import { TestRunOverviewService, type OverviewClaimRecord, type TestRunOverviewRepository } from "../../../../packages/core/src/services/test-run-overview.service";
+import { TestResourceObservationService, type StoredTestResourceObservation } from "../../../../packages/core/src/services/test-resource-observation.service";
 import { elapsed, resourceStatus, TestRunOverviewView } from "./test-run-overview";
 
 const stamp = "2026-09-24T20:00:00.000Z";
@@ -256,7 +257,9 @@ describe("local resource observations", () => {
     expect(section).toContain("Kept until this host reports a newer observation");
     expect(section).toContain("Responsible: Test runner / operator");
     expect(section).toContain("Next: Resume this run&#x27;s recovery through its original owner and publish verified return evidence.");
-    expect(section).toContain("Shared guard: Mac UI, Mac audio and all glasses pairs");
+    expect(section).toContain("Shared guard: Mac UI and Mac audio; its owner&#x27;s glasses scope decides which glasses pairs it excludes");
+    // This older-producer example reports no scope: it is shown as unknown, never as none.
+    expect(section).toContain("Glasses scope not reported by this host: treated as unknown, so every glasses pair is excluded.");
     // No published result: the run ID is plain text, not a link.
     expect(section).toContain("Run: <span class=\"break-all\">" + discovery + "</span>"); expect(section).not.toContain("<button");
   });
@@ -440,6 +443,90 @@ describe("Core refresh and cached aging agree on stale worker activity", () => {
       expect(html).not.toContain("Worker checkpoint no longer recent");
       expect(html).not.toContain(">unknown</span>");
       expect(html).not.toContain(">running</span>");
+    }
+  });
+});
+
+describe("shared guard glasses scope", () => {
+  const run = "routine-2-1-staging-no-glasses", at = Date.parse("2026-09-27T20:00:00.000Z");
+  /** Reports through the real Core service, then renders the real overview composition and Admin view. */
+  const composed = async (reports: { hostId: string; resourceKey?: string; observation: TestResourceObservation }[]) => {
+    const rows = new Map<string, StoredTestResourceObservation>();
+    const service = new TestResourceObservationService({
+      get: async (hostId, resourceKey) => structuredClone(rows.get(hostId + "/" + resourceKey) ?? null),
+      insert: async value => { const key = value.hostId + "/" + value.resourceKey; if (rows.has(key)) return false; rows.set(key, structuredClone(value)); return true; },
+      replace: async (revision, value) => { const key = value.hostId + "/" + value.resourceKey; if (rows.get(key)?.revision !== revision) return false; rows.set(key, structuredClone(value)); return true; },
+    }, () => new Date(at));
+    for (const { hostId, resourceKey = "shared", observation } of reports)
+      await service.put(hostId, resourceKey, { schemaVersion: 1, hostId, resourceKey, expectedRevision: 0, observation });
+    const overview: TestRunOverview = JSON.parse(JSON.stringify(await new TestRunOverviewService({
+      claims: async () => ({ claims: [], truncated: false }), latestFixtureClaims: async () => [], results: async () => [], adminRequests: async () => [],
+      resourceObservations: async () => ({ rows: [...rows.values()], truncated: false }), publishedRunIds: async () => [],
+    }, { activity: async () => ({ jobs: [], warnings: [] }) }, () => new Date(at + 10_000)).overview()));
+    const html = renderToStaticMarkup(<TestRunOverviewView data={overview} now={at + 10_000} onResult={() => {}} />);
+    const start = html.indexOf('aria-label="Local resource observations"');
+    const section = html.slice(start, html.indexOf("</section>", start));
+    const row = (hostId: string) => {
+      const host = section.indexOf(">" + hostId + "</p>");
+      return section.slice(section.lastIndexOf("<tr", host), section.indexOf("</tr>", host));
+    };
+    return { overview, section, row };
+  };
+
+  test("a retained verified-none owner is shown distinctly, still as a retained hold whose recovery remains required", async () => {
+    const { overview, row } = await composed([
+      { hostId: "mini-none", observation: retainedObservation(run, 4242, "none") },
+      { hostId: "mini-legacy", observation: retainedObservation(run, 4343) },
+    ]);
+    expect(overview.resourceObservations!.items.map(item => [item.hostId, item.observation.owner?.valid && item.observation.owner.glassesScope]))
+      .toEqual([["mini-legacy", undefined], ["mini-none", "none"]]);
+    const none = row("mini-none"), legacy = row("mini-legacy");
+    expect(none).toContain("Reported glasses scope (at this observation): verified none. This guard does not exclude other glasses pairs; each still needs its own lease. Mac UI, audio and recorder custody stay with this owner.");
+    // The scope never turns the hold into readiness, a release or completed recovery.
+    expect(none).toContain(">retained hold<"); expect(none).toContain("A dead PID or completed checkpoint does not release this hold.");
+    expect(none).toContain("Next: Resume this run&#x27;s recovery through its original owner and publish verified return evidence.");
+    expect(none).not.toMatch(/>ready<|released|recovered|available to|free to use|pair is free/i);
+    // An older host's report without the field is unknown, never none.
+    expect(legacy).toContain("Glasses scope not reported by this host: treated as unknown, so every glasses pair is excluded.");
+    expect(legacy).not.toContain("verified none");
+  });
+
+  test("identified, unknown and invalid owners, and phone guards, keep their own honest wording", async () => {
+    const invalid = { state: "unknown", reason: "owner-unverifiable", guard: { lock: "present", reclaimMarker: "absent" }, owner: { valid: false },
+      fixture: { checked: false } } as TestResourceObservation;
+    const { row, section } = await composed([
+      { hostId: "mini-identified", observation: aliveObservation(run, 5000, "identified") },
+      { hostId: "mini-unknown", observation: aliveObservation(run, 5001, "unknown") },
+      { hostId: "mini-invalid", observation: invalid },
+      { hostId: "mini-phone", resourceKey: "android-0123456789ab", observation: aliveObservation("phone-run", 5002) },
+      { hostId: "mini-idle", observation: noOwnerObservation() },
+    ]);
+    expect(row("mini-identified")).toContain("Reported glasses scope (at this observation): one identified pair, held by its own lease. Other pairs still need their own leases.");
+    expect(row("mini-unknown")).toContain("Reported glasses scope (at this observation): unknown, so every glasses pair is excluded.");
+    expect(row("mini-invalid")).toContain("Owner record invalid"); expect(row("mini-invalid")).toContain("Glasses scope unknown: every glasses pair is excluded.");
+    // A phone-only guard never shows a glasses scope, and an absent guard has no owner scope to report.
+    expect(row("mini-phone")).toContain("Android phone 0123456789ab only; independent of the shared guard");
+    expect(row("mini-phone")).not.toContain("Glasses scope"); expect(row("mini-idle")).not.toContain("Glasses scope");
+    expect(section.match(/Reported glasses scope|Glasses scope unknown|Glasses scope not reported/g)).toHaveLength(3);
+  });
+
+  test("a stale verified-none observation stays bound to that observation: still a retained hold or an unconfirmed owner", async () => {
+    const { section } = await composed([
+      { hostId: "mini-retained", observation: retainedObservation(run, 4242, "none") },
+      { hostId: "mini-live", observation: aliveObservation("run-live", 5000, "none") },
+    ]);
+    // Re-render the same Core overview a day later: the observation is no longer current.
+    const stale = renderToStaticMarkup(<TestRunOverviewView data={JSON.parse(JSON.stringify((await composed([
+      { hostId: "mini-retained", observation: retainedObservation(run, 4242, "none") },
+      { hostId: "mini-live", observation: aliveObservation("run-live", 5000, "none") },
+    ])).overview))} now={at + 86_400_000} onResult={() => {}} />);
+    expect(section).toContain(">owner alive<");
+    const row = (hostId: string) => { const host = stale.indexOf(">" + hostId + "</p>"); return stale.slice(stale.lastIndexOf("<tr", host), stale.indexOf("</tr>", host)); };
+    expect(row("mini-retained")).toContain(">retained hold<"); expect(row("mini-retained")).toContain("Kept until this host reports a newer observation");
+    expect(row("mini-live")).toContain(">unconfirmed<"); expect(row("mini-live")).toContain("Not current");
+    for (const host of ["mini-retained", "mini-live"]) {
+      expect(row(host)).toContain("Reported glasses scope (at this observation): verified none.");
+      expect(row(host)).not.toMatch(/>ready<|released|recovered|available to|free to use|>owner alive</i);
     }
   });
 });

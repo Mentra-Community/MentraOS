@@ -35,12 +35,22 @@ cross-contract fixtures for the producer.
 - `guard` lock and reclaim-marker status
 - owner validity, PID, liveness, `retainOnExit`, reservation `{runID, fixtureID}` and
   `retainedReason`
+- for the `shared` guard only, the valid owner's optional `glassesScope`: `none` (a verified
+  no-physical claim), `identified` (the owner holds its own pair lease) or `unknown` (every
+  glasses pair is excluded). `none` and `identified` require the owner's reservation. Older
+  producers omit it; Core stores their observation unchanged and Admin shows it as unknown,
+  never as `none`. A retained `none` owner still holds Mac UI, audio and recorder custody
+  and may still require recovery; the scope admits and releases nothing
 - last checkpoint run ID, mode, phase, pending operation and pending reconciliation
 - recorded fixture `checked`, `record`, `status`, `fixtureID` and `lastRunID`
 
 Unavailable, malformed, unreadable and unknown forms are kept. The schema also rejects
 contradictions that `readLaneStatus` cannot produce, such as an owner without a guard or
 a reason that doesn't fit its liveness or fixture record.
+
+Deploy a Core that accepts `glassesScope` before any producer sends it: the earlier
+strict schema rejects the unknown key, so a newer producer's PUT to an older Core is
+refused (400) and stored nowhere. Older producers keep working against the newer Core.
 
 These are rejected: `scopeCovers`, checkpoint `note`, `caveats`, any extra key, paths,
 tokens, environment, raw logs, errors, free text and device timestamps. Admin supplies fixed

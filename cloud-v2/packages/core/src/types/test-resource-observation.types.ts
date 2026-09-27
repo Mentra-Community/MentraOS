@@ -19,7 +19,9 @@ export const laneIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/
 /** Explicitly configured reporting host ID; never derived from a fixture alias or hostname. */
 export const testResourceHostIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/);
 /**
- * `shared`: the Mac app guard covering Mac UI, Mac audio and all glasses pairs.
+ * `shared`: the Mac app guard covering Mac UI and Mac audio. Its owner's reported
+ * `glassesScope` says which glasses pairs it also excludes: every pair unless it
+ * reports `none` (verified no physical glasses) or `identified` (its own pair lease).
  * `android-<12 hex>`: one phone-only Android guard, keyed by the existing redacted
  * serial digest (`sha256:<12 hex>` in lane status). Independent of `shared`.
  */
@@ -82,6 +84,14 @@ export const testResourceObservationSchema = z.object({
       retainOnExit: z.boolean(),
       reservation: reservation.nullable(),
       retainedReason: z.enum(["lifecycle-reservation", "unclassified-installation"]).optional(),
+      /**
+       * Shared guard only: the holder's physical-glasses scope as admission reads it
+       * (`none`: a verified no-physical claim, `identified`: its own pair lease,
+       * `unknown`: every pair excluded). Absent from older producers, which means
+       * unknown; nothing infers `none`. Reporting only: a retained `none` owner still
+       * holds Mac UI, audio and recorder custody and may still require recovery.
+       */
+      glassesScope: z.enum(["none", "identified", "unknown"]).optional(),
     }).strict(),
   ]).optional(),
   lastCheckpoint: z.discriminatedUnion("available", [
@@ -127,6 +137,9 @@ export const testResourceObservationSchema = z.object({
     if (owner.reservation && !owner.retainOnExit) problem("a reservation requires retainOnExit");
     const retained = owner.retainOnExit ? owner.reservation ? "lifecycle-reservation" : "unclassified-installation" : undefined;
     if (owner.retainedReason !== retained) problem("retainedReason does not match the owner record");
+    // Lane status derives a verified scope only from the owner's lifecycle reservation.
+    if ((owner.glassesScope === "none" || owner.glassesScope === "identified") && !owner.reservation)
+      problem("a verified glasses scope requires the owner's reservation");
   }
   // A checkpoint is only read from the valid owner's reservation.
   if (value.lastCheckpoint && !owner?.reservation) problem("checkpoint requires an owner reservation");
@@ -161,6 +174,8 @@ export const testResourceObservationPutSchema = z.object({
   const owner = value.observation.owner?.valid ? value.observation.owner : undefined;
   if (value.progress && value.progress.runId !== owner?.reservation?.runID)
     ctx.addIssue({ code: "custom", message: "progress must belong to the observed owner's reservation" });
+  if (owner?.glassesScope !== undefined && value.resourceKey !== "shared")
+    ctx.addIssue({ code: "custom", message: "a glasses scope is reported only for the shared guard" });
 });
 
 export type TestResourceObservation = z.infer<typeof testResourceObservationSchema>;
