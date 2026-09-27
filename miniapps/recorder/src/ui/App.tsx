@@ -129,6 +129,7 @@ export function App() {
                     shareFailed={rec.shareFailedId === item.id}
                     onPlay={() => rec.play(item.id)}
                     onStopPlay={rec.stopPlay}
+                    onSeek={(positionMs) => rec.play(item.id, positionMs)}
                     onExport={() => rec.exportRecording(item.id)}
                     onExportTranscript={() => rec.exportTranscript(item.id)}
                     onDelete={() => setPendingDelete(item)}

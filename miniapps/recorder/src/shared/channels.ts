@@ -15,6 +15,8 @@ export interface Channels {
   "rec:snapshot": RecorderSnapshot
   /** Live capture status (while recording). */
   "rec:status": RecorderStatus
+  /** Raw PCM peak for each received audio slice, positioned in capture time. */
+  "rec:waveform": {ms: number; level: number}
   /** Stop was accepted and the capture is being finalized. */
   "rec:stopping": Record<string, never>
   /** Recording ended — clears the live status. */
@@ -22,7 +24,7 @@ export interface Channels {
   /** Updated recordings list + usage (after save/delete/clear). */
   "rec:list": {recordings: RecordingItem[]; usage: Usage}
   /** Which recording (if any) is currently playing back. */
-  "rec:playback": {playingId: string | null}
+  "rec:playback": {playingId: string | null; positionMs: number}
   /** A recording's stored audio couldn't be read back (e.g. legacy/corrupt blob). */
   "rec:audio-missing": {id: string}
   /** The OS rejected a recording share for a reason other than cancellation. */
@@ -36,7 +38,7 @@ export interface Channels {
   "rec:cancel": Record<string, never>
   "rec:pause": Record<string, never>
   "rec:resume": Record<string, never>
-  "rec:play": {id: string}
+  "rec:play": {id: string; positionMs?: number}
   "rec:stop-play": Record<string, never>
   "rec:export": {id: string}
   "rec:export-transcript": {id: string}

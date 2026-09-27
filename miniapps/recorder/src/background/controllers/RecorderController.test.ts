@@ -3,10 +3,11 @@ import {describe, expect, it, mock} from "bun:test"
 import {RecorderController} from "./RecorderController"
 
 function makeHarness(
-  stopTailDrainMs = 0,
   hasMic = true,
   closeMs = 0,
   shareResult: {success: boolean; cancelled?: boolean} = {success: true},
+  minimumSavingMs = 0,
+  stopTailDrainMs = 0,
 ) {
   const writes: Uint8Array[] = []
   let committed = false
@@ -16,14 +17,14 @@ function makeHarness(
     write: mock(async (bytes: Uint8Array) => {
       writes.push(bytes)
     }),
-    writeAt: mock(async () => {}),
+    writeAt: mock(async (_offset: number, _bytes: Uint8Array) => {}),
     close: mock(async () => {
       if (closeMs > 0) await new Promise((resolve) => setTimeout(resolve, closeMs))
       committed = true
     }),
     abort: mock(async () => {}),
   }
-  const send = mock(() => {})
+  const send = mock((_channel: string, _payload: unknown) => {})
   const speakerStop = mock(() => {})
   const actionHandlers = new Map<string, () => Promise<unknown>>()
   const session = {
@@ -63,7 +64,7 @@ function makeHarness(
     speaker: {stop: speakerStop},
     display: {render: mock(async () => ({status: "rendered"}))},
   }
-  const controller = new RecorderController(session as never, stopTailDrainMs)
+  const controller = new RecorderController(session as never, minimumSavingMs, stopTailDrainMs)
   ;(controller as unknown as {ui: {send: typeof send}}).ui = {send}
 
   return {
@@ -91,7 +92,24 @@ describe("RecorderController recording edges", () => {
     await h.controller.startRecording()
 
     expect(h.speakerStop).toHaveBeenCalledTimes(1)
-    expect(h.send).toHaveBeenCalledWith("rec:playback", {playingId: null})
+    expect(h.send).toHaveBeenCalledWith("rec:playback", {playingId: null, positionMs: 0})
+  })
+
+  it("timestamps raw waveform slices even while a blob write is pending", async () => {
+    const h = makeHarness()
+    await h.controller.startRecording()
+    let finishWrite!: () => void
+    h.writer.write.mockImplementationOnce(() => new Promise<void>((resolve) => {finishWrite = resolve}))
+    const audio = h.getAudioHandler()!
+    audio({data: Buffer.alloc(49152).toString("base64"), sampleRate: 16000})
+    await Promise.resolve()
+    audio({data: Buffer.alloc(1600, Buffer.from([0, 64])).toString("base64"), sampleRate: 16000})
+    const events = h.send.mock.calls.filter(([channel]) => channel === "rec:waveform")
+    expect(events).toHaveLength(2)
+    expect(events[0][1]).toEqual({ms: 1536, level: 0})
+    expect(events[1][1]).toEqual({ms: 1586, level: 0.5})
+    finishWrite()
+    await h.controller.stopRecording()
   })
 
   it("coalesces duplicate starts onto one writer", async () => {
@@ -102,34 +120,67 @@ describe("RecorderController recording edges", () => {
     expect(h.writes).toHaveLength(1)
   })
 
-  it("accepts audio arriving during the stop tail-drain window", async () => {
-    const h = makeHarness(20)
+  it("stops capture immediately, preserves buffered PCM, and rejects late frames", async () => {
+    const h = makeHarness(true, 20)
     await h.controller.startRecording()
+    const audio = h.getAudioHandler()!
+    audio({data: "AQIDBA==", sampleRate: 16000})
 
     const stopping = h.controller.stopRecording()
-    await new Promise((resolve) => setTimeout(resolve, 5))
-    h.getAudioHandler()?.({data: "AQIDBA==", sampleRate: 16000})
+    const statusCount = h.send.mock.calls.filter(([channel]) => channel === "rec:status").length
+    audio({data: Buffer.alloc(6400, 9).toString("base64"), sampleRate: 16000})
+
+    expect(h.send).toHaveBeenCalledWith("rec:stopping", {})
+    expect(h.send.mock.calls.filter(([channel]) => channel === "rec:status")).toHaveLength(statusCount)
     await stopping
 
-    expect(h.writes.some((bytes) => Array.from(bytes).join(",") === "1,2,3,4")).toBe(true)
+    expect(h.writes[1]).toEqual(new Uint8Array([1, 2, 3, 4]))
+    expect(h.writer.writeAt.mock.calls[0][1].byteLength).toBe(44)
+    const header = h.writer.writeAt.mock.calls[0][1] as Uint8Array
+    expect(new DataView(header.buffer, header.byteOffset).getUint32(40, true)).toBe(4)
     expect(h.writer.close).toHaveBeenCalledTimes(1)
   })
 
-  it("acknowledges stop before the tail-drain finishes", async () => {
-    const h = makeHarness(20)
+  it("keeps saving visible until the committed recording is in the list", async () => {
+    const h = makeHarness(true, 20)
     await h.controller.startRecording()
-
     const stopping = h.controller.stopRecording()
 
-    expect(h.send).toHaveBeenCalledWith("rec:stopping", {})
-    expect(h.writer.close).not.toHaveBeenCalled()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(h.writer.close).toHaveBeenCalledTimes(1)
+    expect(h.send).not.toHaveBeenCalledWith("rec:stopped", {})
+    await stopping
+    const channels = h.send.mock.calls.map(([channel]) => channel)
+    expect(channels.indexOf("rec:list")).toBeLessThan(channels.indexOf("rec:stopped"))
+  })
 
+  it("keeps the timer frozen during the minimum saving feedback", async () => {
+    const h = makeHarness(true, 0, {success: true}, 40)
+    await h.controller.startRecording()
+    const stopping = h.controller.stopRecording()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(h.writer.close).toHaveBeenCalledTimes(1)
+    expect(h.send).not.toHaveBeenCalledWith("rec:stopped", {})
+    const count = h.send.mock.calls.filter(([channel]) => channel === "rec:status").length
+    h.getAudioHandler()?.({data: Buffer.alloc(6400).toString("base64"), sampleRate: 16000})
+    expect(h.send.mock.calls.filter(([channel]) => channel === "rec:status")).toHaveLength(count)
     await stopping
     expect(h.send).toHaveBeenCalledWith("rec:stopped", {})
   })
 
+  it("preserves tail audio without advancing the saving timer", async () => {
+    const h = makeHarness(true, 0, {success: true}, 0, 20)
+    await h.controller.startRecording()
+    const stopping = h.controller.stopRecording()
+    const count = h.send.mock.calls.filter(([channel]) => channel === "rec:status").length
+    h.getAudioHandler()?.({data: Buffer.alloc(6400, 7).toString("base64"), sampleRate: 16000})
+    expect(h.send.mock.calls.filter(([channel]) => channel === "rec:status")).toHaveLength(count)
+    await stopping
+    expect(h.writes[1]).toEqual(new Uint8Array(6400).fill(7))
+  })
+
   it("coalesces duplicate stops onto one finalization", async () => {
-    const h = makeHarness(20)
+    const h = makeHarness(true, 20)
     await h.controller.startRecording()
 
     await Promise.all([h.controller.stopRecording(), h.controller.stopRecording()])
@@ -172,7 +223,7 @@ describe("RecorderController recording edges", () => {
   })
 
   it("coalesces duplicate stop actions while the recording is being saved", async () => {
-    const h = makeHarness(0, true, 20)
+    const h = makeHarness(true, 20)
     await h.controller.startRecordingAction()
 
     const firstStop = h.controller.stopRecordingAction()
@@ -195,14 +246,14 @@ describe("RecorderController recording edges", () => {
   })
 
   it("rejects a start action without microphone permission", async () => {
-    const h = makeHarness(0, false)
+    const h = makeHarness(false)
 
     await expect(h.controller.startRecordingAction()).rejects.toThrow("Microphone permission is required")
     expect(h.writes).toEqual([])
   })
 
   it("surfaces a non-cancelled share failure", async () => {
-    const h = makeHarness(0, true, 0, {success: false})
+    const h = makeHarness(true, 0, {success: false})
 
     await h.controller.exportRecording("rec-test")
 
@@ -210,7 +261,7 @@ describe("RecorderController recording edges", () => {
   })
 
   it("does not surface share-sheet cancellation as an error", async () => {
-    const h = makeHarness(0, true, 0, {success: false, cancelled: true})
+    const h = makeHarness(true, 0, {success: false, cancelled: true})
 
     await h.controller.exportRecording("rec-test")
 

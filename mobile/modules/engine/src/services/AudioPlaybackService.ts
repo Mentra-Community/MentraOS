@@ -7,6 +7,7 @@ import {SILENT_AUDIO_SOURCE} from "./audioPlaybackAssets"
 const RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK = false
 
 interface AudioPlayRequest {
+  startPositionMs?: number
   requestId: string
   audioUrl: string
   appId?: string
@@ -32,6 +33,7 @@ type AudioPlaybackCompletion = (
 ) => void
 
 interface PlaybackState {
+  startPositionMs: number
   requestId: string
   audioUrl: string
   uplinkSuppressionId: string
@@ -43,6 +45,7 @@ interface PlaybackState {
 }
 
 interface PendingPlaybackState {
+  startPositionMs: number
   cancelled: boolean
   audioUrl: string
   appId?: string
@@ -330,18 +333,21 @@ class AudioPlaybackService {
    */
   public async play(request: AudioPlayRequest, onComplete: AudioPlaybackCompletion): Promise<void> {
     const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true, suppressCloudUplink = false} = request
+    const startPositionMs = Number.isFinite(request.startPositionMs) ? Math.max(0, request.startPositionMs!) : 0
     const now = Date.now()
     const activeDuplicate =
       this.currentPlayback &&
       !this.currentPlayback.completed &&
       this.currentPlayback.appId === appId &&
       this.currentPlayback.audioUrl === audioUrl &&
+      this.currentPlayback.startPositionMs === startPositionMs &&
       now - this.currentPlayback.startTime < AudioPlaybackService.DUPLICATE_PLAY_WINDOW_MS
     const pendingDuplicate = [...this.pendingPlaybacks.values()].some(
       (candidate) =>
         !candidate.cancelled &&
         candidate.appId === appId &&
         candidate.audioUrl === audioUrl &&
+        candidate.startPositionMs === startPositionMs &&
         now - candidate.createdAt < AudioPlaybackService.DUPLICATE_PLAY_WINDOW_MS,
     )
     if (activeDuplicate || pendingDuplicate) {
@@ -350,7 +356,7 @@ class AudioPlaybackService {
       return
     }
 
-    const pending: PendingPlaybackState = {cancelled: false, audioUrl, appId, createdAt: now}
+    const pending: PendingPlaybackState = {cancelled: false, audioUrl, appId, createdAt: now, startPositionMs}
     this.pendingPlaybacks.set(requestId, pending)
 
     console.log(`AUDIO: Play request ${requestId}${appId ? ` from ${appId}` : ""}: ${audioUrl}`)
@@ -392,6 +398,7 @@ class AudioPlaybackService {
 
       // Store the new playback state
       const playback: PlaybackState = {
+        startPositionMs,
         requestId,
         audioUrl,
         uplinkSuppressionId: `url:${requestId}`,
@@ -409,8 +416,12 @@ class AudioPlaybackService {
 
       // Replace the source and play
       // Using replace() reuses the existing ExoPlayer/AudioTrack instead of creating new ones
+      if (startPositionMs > 0) player.pause()
       player.replace({uri: audioUrl})
       this.loadedPlayback = playback
+      if (startPositionMs > 0) await player.seekTo(startPositionMs / 1000)
+      // A newer play/stop may have replaced this request while seeking.
+      if (this.currentPlayback !== playback || playback.completed) return
       player.play()
 
       // Mentra Live volume reads can block up to 5s when the glasses don't

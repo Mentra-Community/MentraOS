@@ -2178,7 +2178,14 @@ class LocalMiniappRuntime {
     this.cancelSpeech(packageName)
     this.setSpeakerState(packageName, "loading")
     audioPlaybackService.play(
-      {requestId: audioRequestId, audioUrl, appId: packageName, volume, stopOtherAudio},
+      {
+        requestId: audioRequestId,
+        audioUrl,
+        appId: packageName,
+        volume,
+        stopOtherAudio,
+        startPositionMs: typeof payload.startPositionMs === "number" ? payload.startPositionMs : 0,
+      },
       (_respId, success, error, duration) => {
         if (success) {
           this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
