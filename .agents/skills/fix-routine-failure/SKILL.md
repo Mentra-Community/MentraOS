@@ -162,3 +162,19 @@ on exhausted budget or missing required access/evidence, preserving the reason.
 The review process does not merge. Follow the task's existing merge authority and
 repository checks, then verify the relevant merged branch artifact before closing
 the case. A dev pass does not qualify a staging occurrence.
+
+Clean up completed review worktrees first using the review skill's
+[after-run guidance](../codex-pr-review/SKILL.md#after-the-run), then finished
+fixer worktrees only when no active or saved source, review, rerun or recovery
+continuation needs them. An idle process, CLI exit or `ready-for-policy` handoff
+does not retire a case. Keep interrupted, waiting and resumable case checkouts,
+including prior component checkouts; never erase saved case references to make
+a checkout appear unused. If the controller cannot establish that a saved
+checkout is retired, retain it.
+
+Before removing a finished Git worktree, preserve its commits/refs, case state,
+review results, reproductions and run/incident evidence outside it. Check active
+processes, incoming dependency symlinks and Git common-directory consumers;
+keep shared dependencies outside disposable worktrees. Use `git worktree remove`
+without `--force`; retain and report any checkout that remains needed or refuses
+removal.
