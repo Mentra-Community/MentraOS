@@ -98,8 +98,13 @@ async function glassesAdmissionCase(mode) {
       }
       if (name === launcherPath && args[0] !== "--quit" && mode !== "launch-no-pid") {
         launched = Number(shell("/bin/sleep 60 >/dev/null 2>&1 & echo $!"));
+        // The launcher may fail after asking macOS to open Mentra (e.g. its timeout on a pending permission prompt).
+        if (mode === "launch-timeout")
+          throw new Error("Launch did not finish within 30 seconds. Inspect macOS setup permissions.");
         return "Launched com.mentra.mentra pid=" + launched + " without requesting foreground activation.";
       }
+      if (name === "/usr/bin/codesign" && mode === "launch-prelaunch-failure")
+        throw new Error("fake invalid Apple signature");
       if (name === "/usr/bin/codesign" && mode === "launch-adopt-failure" && launched)
         throw new Error("fake invalid Apple signature");
       if (name === "/usr/libexec/PlistBuddy") return args[1].includes("CFBundleIdentifier") ? "com.mentra.mentra" : "Mentra";
@@ -148,6 +153,24 @@ async function glassesAdmissionCase(mode) {
       await assert.rejects(installBuild(manifestPath, options), /Physical glasses are held/);
       assert.equal(calls.length, 0); // nothing quit, verified, replaced or launched
       await assert.rejects(access(path.join(root, "Mentra.app")), {code: "ENOENT"});
+    } else if (mode === "launch-timeout") {
+      // The launch was attempted and its outcome is unknown: the broad installer lease stays held, nothing is retried.
+      const error = await installBuild(manifestPath, options).then(() => assert.fail("launch failure was hidden"), (error) => error);
+      assert.equal(alive(launched), true); // the app may well have opened; it is not assumed away
+      const kept = JSON.parse(await readFile(appLock, "utf8")); // the lease was not released
+      assert.deepEqual([kept.pid, kept.retainOnExit, kept.launchedApp, kept.reservation], [process.pid, true, undefined, undefined]);
+      assert.match(error.message, /whether Mentra opened is unknown/);
+      assert.match(error.cause.message, /Launch did not finish within 30 seconds/);
+      assert.deepEqual(await readLockState(folder), {state: "held", pid: process.pid});
+      await assert.rejects(acquireAppOwnership(folder, {reservation: {runID: "mac-03be", runDirectory: path.join(home, "run"),
+        fixtureID: "mac-03be"}}), /Mentra is owned by a test or installation/);
+      assert.equal(JSON.parse(await readFile(appLock, "utf8")).token, kept.token);
+      assert.deepEqual(calls.filter((call) => call.name === launcherPath && call.args[0] !== "--quit").length, 1);
+      process.exit(0);
+    } else if (mode === "launch-prelaunch-failure") {
+      // A failure before any launch attempt keeps its normal release.
+      await assert.rejects(installBuild(manifestPath, options), /fake invalid Apple signature/);
+      assert.equal(calls.some((call) => call.name === launcherPath), false);
     } else if (mode === "launch-no-pid") {
       // Mentra was launched but the launcher did not identify its process: the installer keeps its retained lease.
       await assert.rejects(installBuild(manifestPath, options), /launched Mentra process/);
@@ -229,6 +252,14 @@ test("an unidentified launched process leaves the installer's lease retained for
 
 test("an installation that adopts a running app but fails before quitting it hands the lock back to that app", async () => {
   await glassesAdmissionCase("launch-adopt-failure")
+})
+
+test("a launcher failure after the launch was attempted keeps the installer's lease; nothing is launched again", async () => {
+  await glassesAdmissionCase("launch-timeout")
+})
+
+test("a failure before any launch attempt still releases the installer's lease", async () => {
+  await glassesAdmissionCase("launch-prelaunch-failure")
 })
 
 test("a dangling symlink as a glasses lease is held: launching refuses, a file-only install proceeds", async () => {

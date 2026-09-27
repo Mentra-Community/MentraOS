@@ -353,7 +353,18 @@ async function installOwnedBuild(
     installedNew = true
     if (launch) {
       await verifyLauncherOverride(launcherPath, launcherSha256)
-      const output = command(launcher, [destination])
+      let output
+      try {
+        output = command(launcher, [destination])
+      } catch (error) {
+        // The launcher may fail after asking macOS to open Mentra (for example its timeout on a pending permission
+        // prompt), so the app may still open. Its outcome and PID are unknown: keep the lease for explicit recovery.
+        throw new LaunchedAppHandoffError(
+          `Mentra's launcher failed after the launch was attempted (${error.message}); whether Mentra opened is ` +
+            "unknown, so the installer's app lease is retained until recovered",
+          {cause: error},
+        )
+      }
       console.log(output)
       await afterLaunch(output)
     }

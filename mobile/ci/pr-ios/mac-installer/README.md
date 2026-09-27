@@ -71,7 +71,9 @@ normally, or run the installer with --no-launch"). So it can never narrow the
 lease to one pair of glasses while the old app may still be connected to another.
 If the opened process cannot be identified, the installer keeps its own retained
 lease for explicit recovery. The repository installer does the same with the PID
-its launcher prints.
+its launcher prints. It also keeps the lease when its launcher fails after the
+launch was attempted, for example on the launcher's timeout while a permission
+prompt is pending, because Mentra may still open.
 
 Downloads use an owned private cache instead of Downloads. Successful runs and
 ordinary failed installs remove their request directories; an unfinished tool's
