@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -18,7 +18,7 @@ import {
   testRunListPath,
   type TestRunDetail,
 } from "./test-runs-data";
-import { TestRunsPage, TestRunView } from "./test-runs";
+import { testRunDetailQuery, TestRunsPage, TestRunView } from "./test-runs";
 
 // Synthetic render fixture only; never uploaded or presented as a device result.
 const run: TestRunDetail = {
@@ -139,6 +139,61 @@ function expectSourceReference(markup: string, source: string) {
   expect(markup).not.toContain("/?testRun=");
   expect(markup).not.toContain("View original run");
 }
+
+/** Renders a run detail inside the admin query cache that its source lookup uses. */
+function renderRun(detail: TestRunDetail, client = new QueryClient()) {
+  return renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <TestRunView run={detail} onStep={() => {}} />
+    </QueryClientProvider>,
+  );
+}
+
+/** Source lookups this client has registered through the shared detail query. */
+function detailLookups(client: QueryClient) {
+  return client.getQueryCache().findAll({ queryKey: ["admin-test-run"] }).map((query) => query.queryKey[1]);
+}
+
+/** Resolves the existing admin detail lookup into the cache with one synthetic response. */
+async function lookUpDetail(client: QueryClient, runId: string, respond: () => Response | Promise<Response>) {
+  const fetched = spyOn(globalThis, "fetch").mockImplementation((async () => respond()) as unknown as typeof fetch);
+  try {
+    await client.prefetchQuery(testRunDetailQuery(runId));
+    return fetched.mock.calls.map(([input]) => String(input));
+  } finally {
+    fetched.mockRestore();
+  }
+}
+
+// Safe identifiers from a published development recovery and its published original.
+const NOTES_ORIGINAL = "notes-phone-f5caf093-76b9-46b4-9de9-7ffe47a1f1db";
+const developmentRecovery: TestRunDetail = {
+  ...run,
+  runId: "recovery-55e2eb0583fe7f68b4844f7cd938056a-2",
+  provenance: {
+    ...run.provenance,
+    executionMode: "development",
+    ciQualification: "false",
+    resultGeneration: "2",
+    originalRunId: NOTES_ORIGINAL,
+    previousResultRunId: NOTES_ORIGINAL,
+    terminalSnapshotSha256: "bd3ed846b87cef746d7b66fee7ea44a481e90b0cc4a8a9aee263ad638a452f81",
+    originalTerminalSnapshotSha256: "e52d77404f3f528f3f7f833f8c223a66d5f03d1c379fed97634cd7308af7225b",
+  },
+};
+const LOCAL_SOURCE = "account-fixed-export-authoring-28c679bd-0383-4978-bea8-d601970dc867";
+const localDevelopmentExport: TestRunDetail = {
+  ...run,
+  runId: "local-account-miniapps-fixed-export-20260926-28c679bd",
+  provenance: {
+    ...run.provenance,
+    executionMode: "development-exploration",
+    recoveryOnly: "false",
+    ciQualification: "false",
+    originalRunId: LOCAL_SOURCE,
+  },
+};
+const publishedDetail = (runId: string) => () => Response.json({ ...run, runId });
 
 describe("authenticated result navigation", () => {
   const buildQuery = new URLSearchParams({
@@ -471,7 +526,11 @@ describe("recording and chapter integrity", () => {
     expect(ciRecovery.provenance.recoveryRevisionSha256).toBeUndefined();
     expect(ciRecovery.provenance.recoveryHistorySha256).toBeUndefined();
     for (const recovery of [ciRecovery, amendedCiRecovery]) {
-      const markup = renderToStaticMarkup(<TestRunView run={recovery} onStep={() => {}} />);
+      const client = new QueryClient();
+      const markup = renderRun(recovery, client);
+      // Declared CI lineage links directly, exactly as before, without a publication lookup.
+      expect(detailLookups(client)).toEqual([]);
+      expect(markup).not.toContain("View source result");
       expect(relatedRun(recovery)).toEqual({ kind: "recovery", runId: "original_run-01" });
       expect(markup).toContain('aria-label="Recovery result"');
       expect(markup).toContain('href="/?testRun=original_run-01"');
@@ -510,25 +569,17 @@ describe("recording and chapter integrity", () => {
       expect(markup.match(/href="\/\?testRun=[^"]*"/g)).toEqual(['href="/?testRun=original_run-01"']);
     }
   });
-  test("development and unknown source IDs are shown as text without navigation or a recovery label", () => {
-    const development = {
-      ...run,
-      runId: "local-account-miniapps-fixed-export-20260926-28c679bd",
-      provenance: {
-        ...run.provenance,
-        executionMode: "development-exploration",
-        recoveryOnly: "false",
-        ciQualification: "false",
-        originalRunId: "account-fixed-export-authoring-28c679bd-0383-4978-bea8-d601970dc867",
-      },
-    };
+  test("unresolved development and unknown source IDs are shown as text without navigation or a recovery label", () => {
     const legacy = { ...run, provenance: { ...run.provenance, originalRunId: "recovery-legacy_run-2" } };
     for (const [linked, source] of [
-      [development, "account-fixed-export-authoring-28c679bd-0383-4978-bea8-d601970dc867"],
+      [localDevelopmentExport, LOCAL_SOURCE],
       [legacy, "recovery-legacy_run-2"],
     ] as const) {
-      const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
+      const client = new QueryClient();
+      const markup = renderRun(linked, client);
       expect(relatedRun(linked)).toEqual({ kind: "source", runId: source });
+      // Only the exact source is looked up; until it resolves the reference stays text.
+      expect(detailLookups(client)).toEqual([source]);
       expectSourceReference(markup, source);
       expect(markup).not.toContain("Recovery result");
       expect(markup).not.toContain("original test outcome");
@@ -551,30 +602,94 @@ describe("recording and chapter integrity", () => {
     ]) {
       const linked = { ...ciRecovery, provenance };
       expect(relatedRun(linked)).toEqual({ kind: "source", runId: "original_run-01" });
-      const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
+      const markup = renderRun(linked);
       expectSourceReference(markup, "original_run-01");
       expect(markup).not.toContain("Recovery result");
     }
   });
-  test("only valid distinct original run IDs produce a linked run", () => {
-    for (const base of [run, ciRecovery, amendedCiRecovery, coreRecovery]) {
-      for (const originalRunId of [
-        undefined,
-        base.runId,
-        "../other",
-        "https://elsewhere.invalid",
-        "one&testRun=two",
-        "\ud800",
-        "a".repeat(121),
-      ]) {
-        const linked = { ...base, provenance: { ...base.provenance, originalRunId } };
-        const markup = renderToStaticMarkup(<TestRunView run={linked} onStep={() => {}} />);
-        expect(relatedRun(linked)).toBeNull();
-        expect(markup).not.toContain('aria-label="Recovery result"');
-        expect(markup).not.toContain('aria-label="Source reference"');
-        expect(markup).not.toContain("View original run");
-        expect(markup).not.toContain("/?testRun=");
+  test("a published development original links through the existing detail lookup", async () => {
+    expect(relatedRun(developmentRecovery)).toEqual({ kind: "source", runId: NOTES_ORIGINAL });
+    const client = new QueryClient();
+    expectSourceReference(renderRun(developmentRecovery, client), NOTES_ORIGINAL);
+    expect(detailLookups(client)).toEqual([NOTES_ORIGINAL]);
+
+    const requests = await lookUpDetail(client, NOTES_ORIGINAL, publishedDetail(NOTES_ORIGINAL));
+    expect(requests).toEqual([`/api/admin/test-runs/${NOTES_ORIGINAL}`]);
+    const markup = renderRun(developmentRecovery, client);
+    const aside = markup.match(/<aside aria-label="Source reference"[^>]*>([\s\S]*?)<\/aside>/)?.[1];
+    expect(aside).toContain(`<code class="break-all font-mono text-xs">${NOTES_ORIGINAL}</code>`);
+    expect(aside).toContain(`<a href="/?testRun=${NOTES_ORIGINAL}"`);
+    expect(aside).toContain(">View source result</a>");
+    expect(aside).not.toContain("It may not be a published result.");
+    expect(markup.match(/href="\/\?testRun=[^"]*"/g)).toEqual([`href="/?testRun=${NOTES_ORIGINAL}"`]);
+    // The development result stays a neutral source reference with its own recorded outcomes.
+    expect(markup).not.toContain("Recovery result");
+    expect(markup).not.toContain("View original run");
+    expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
+    expect(markup).toMatch(/>teardown<\/p>[\s\S]*?>passed<\/span>/);
+    expect(markup).toContain("<dt class=\"text-xs font-medium text-[#747780]\">executionMode</dt>");
+  });
+  test("an unpublished or unavailable source stays text and its lookup error does not reach the page", async () => {
+    for (const respond of [
+      () => Response.json({ message: "Test run not found" }, { status: 404, statusText: "Not Found" }),
+      () => Response.json({ message: "Upstream unavailable" }, { status: 503, statusText: "Service Unavailable" }),
+      () => Promise.reject(new TypeError("Network request failed")),
+      // A response for another run is not a resolution of this source.
+      publishedDetail("different-run"),
+    ]) {
+      const client = new QueryClient();
+      expect(await lookUpDetail(client, LOCAL_SOURCE, respond)).toEqual([`/api/admin/test-runs/${LOCAL_SOURCE}`]);
+      const markup = renderRun(localDevelopmentExport, client);
+      expectSourceReference(markup, LOCAL_SOURCE);
+      for (const leaked of ["not found", "Upstream unavailable", "Network request failed", "different-run", 'role="alert"'])
+        expect(markup).not.toContain(leaked);
+      expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
+    }
+  });
+  test("a resolved target for another source or result cannot appear as a stale link", async () => {
+    const client = new QueryClient();
+    await lookUpDetail(client, NOTES_ORIGINAL, publishedDetail(NOTES_ORIGINAL));
+    // Switching to a result with a different, unresolved source must not reuse the published target.
+    const local = renderRun(localDevelopmentExport, client);
+    expectSourceReference(local, LOCAL_SOURCE);
+    expect(local).not.toContain(NOTES_ORIGINAL);
+    // A cache entry whose record is another run cannot link this source either.
+    client.setQueryData(testRunDetailQuery(LOCAL_SOURCE).queryKey, { ...run, runId: NOTES_ORIGINAL });
+    const mismatched = renderRun(localDevelopmentExport, client);
+    expectSourceReference(mismatched, LOCAL_SOURCE);
+    expect(mismatched).not.toContain(NOTES_ORIGINAL);
+    // Returning to the published source links only that exact target.
+    const published = renderRun(developmentRecovery, client);
+    expect(published.match(/href="\/\?testRun=[^"]*"/g)).toEqual([`href="/?testRun=${NOTES_ORIGINAL}"`]);
+    expect(detailLookups(client).sort()).toEqual([LOCAL_SOURCE, NOTES_ORIGINAL].sort());
+  });
+  test("only valid distinct original run IDs produce a linked run or a lookup", () => {
+    const fetched = spyOn(globalThis, "fetch");
+    try {
+      for (const base of [run, ciRecovery, amendedCiRecovery, coreRecovery, developmentRecovery]) {
+        for (const originalRunId of [
+          undefined,
+          base.runId,
+          "../other",
+          "https://elsewhere.invalid",
+          "one&testRun=two",
+          "\ud800",
+          "a".repeat(121),
+        ]) {
+          const linked = { ...base, provenance: { ...base.provenance, originalRunId } };
+          const client = new QueryClient();
+          const markup = renderRun(linked, client);
+          expect(relatedRun(linked)).toBeNull();
+          expect(detailLookups(client)).toEqual([]);
+          expect(markup).not.toContain('aria-label="Recovery result"');
+          expect(markup).not.toContain('aria-label="Source reference"');
+          expect(markup).not.toContain("View original run");
+          expect(markup).not.toContain("/?testRun=");
+        }
       }
+      expect(fetched).not.toHaveBeenCalled();
+    } finally {
+      fetched.mockRestore();
     }
   });
   test("incomplete media gets explicit text and is never requested as a playable recording", () => {

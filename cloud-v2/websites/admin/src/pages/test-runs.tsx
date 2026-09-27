@@ -287,6 +287,14 @@ export function TestRunsPage({
   );
 }
 
+/** The existing admin detail lookup, shared so a source link and its destination use one cache entry. */
+export function testRunDetailQuery(runId: string) {
+  return {
+    queryKey: ["admin-test-run", runId],
+    queryFn: () => api<TestRunDetail>(`/api/admin/test-runs/${encodeURIComponent(runId)}`),
+  };
+}
+
 function TestRunDetailPage({
   runId,
   stepId,
@@ -298,10 +306,7 @@ function TestRunDetailPage({
   onBack: () => void;
   onStep: (id: string) => void;
 }) {
-  const detail = useQuery({
-    queryKey: ["admin-test-run", runId],
-    queryFn: () => api<TestRunDetail>(`/api/admin/test-runs/${encodeURIComponent(runId)}`),
-  });
+  const detail = useQuery(testRunDetailQuery(runId));
   return (
     <div className="space-y-5">
       <div className="flex justify-between gap-3">
@@ -412,12 +417,7 @@ export function TestRunView({
             </a>
           </aside>
         ) : related ? (
-          // A source reference can be a local authoring ID that was never published, so it is not a link.
-          <aside aria-label="Source reference" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
-            <span className="font-semibold">Source reference.</span> This result records source ID{" "}
-            <code className="break-all font-mono text-xs">{related.runId}</code>. It may not be a published
-            result.
-          </aside>
+          <SourceReference key={related.runId} runId={related.runId} />
         ) : null}
         <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
           {Object.entries(run.outcomes).map(([label, value]) => (
@@ -663,6 +663,29 @@ export function TestRunView({
         )}
       </section>
     </>
+  );
+}
+
+/**
+ * A source reference can be a local authoring ID that was never published. Link it only
+ * after the existing detail lookup returns that exact run; otherwise keep the ID as text.
+ * Lookup failures are not shown here: they describe the source, not this result.
+ */
+function SourceReference({ runId }: { runId: string }) {
+  const target = useQuery({ ...testRunDetailQuery(runId), retry: false });
+  const published = target.data?.runId === runId;
+  return (
+    <aside aria-label="Source reference" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
+      <span className="font-semibold">Source reference.</span> This result records source ID{" "}
+      <code className="break-all font-mono text-xs">{runId}</code>.{" "}
+      {published ? (
+        <a href={`/?testRun=${encodeURIComponent(runId)}`} className="font-semibold text-[#087d50] underline">
+          View source result
+        </a>
+      ) : (
+        "It may not be a published result."
+      )}
+    </aside>
   );
 }
 
