@@ -332,6 +332,8 @@ final class AppOwnershipLease {
     private let path: URL
     private let token = UUID().uuidString
     private var released = false
+    /// The PID of a running launched app this installer adopted; it gets the lease back unless it was terminated.
+    private var adopted: pid_t?
 
     init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) throws {
         let folder = homeDirectory.appendingPathComponent(".cache/mentra-e2e")
@@ -343,7 +345,17 @@ final class AppOwnershipLease {
             throw InstallerError.invalid("Another app owner is acquiring the lock; stop all runs before recovering \(guardPath).")
         }
         defer { Darwin.rmdir(guardPath) }
-        let descriptor = Darwin.open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        var descriptor = Darwin.open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        // Mentra opened by an installer holds the lock with its own PID (handOff). It is the app, not a test or
+        // installation, so a new installer takes it over, as mobile/scripts/app-ownership.mjs does. Nothing else is
+        // ever reclaimed here.
+        if descriptor < 0, errno == EEXIST, let launched = Self.launchedAppPID(path) {
+            adopted = launched
+            guard Darwin.unlink(path.path) == 0 else {
+                throw InstallerError.invalid("Cannot take over Mentra's app lock at \(path.path).")
+            }
+            descriptor = Darwin.open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        }
         guard descriptor >= 0 else {
             throw InstallerError.invalid("Mentra is owned by a test or installation. Finish it or recover its retained lease before installing: \(path.path).")
         }
@@ -353,10 +365,56 @@ final class AppOwnershipLease {
         try file.synchronize()
     }
 
+    /// The PID of a valid launched-app record: {pid, token, launchedApp: true}, with neither retention nor a reservation.
+    private static func launchedAppPID(_ path: URL) -> pid_t? {
+        guard let owner = try? InstallerFiles.dictionary(InstallerFiles.read(path)),
+              let launched = owner["launchedApp"] as? NSNumber, CFGetTypeID(launched) == CFBooleanGetTypeID(), launched.boolValue,
+              let pid = owner["pid"] as? NSNumber, CFGetTypeID(pid) != CFBooleanGetTypeID(),
+              pid.doubleValue == Double(pid.int32Value), pid.int32Value > 0,
+              (owner["token"] as? String)?.isEmpty == false,
+              owner["retainOnExit"] == nil, owner["reservation"] == nil
+        else { return nil }
+        return pid.int32Value
+    }
+
+    /// Transfer this lease to the Mentra process that was just opened, instead of releasing it. The app keeps the
+    /// lock under its own PID for its whole lifetime; once that process exits the lock is reclaimable. A failure keeps
+    /// the installer's retained lease for explicit recovery.
+    func handOff(to pid: pid_t) throws {
+        guard pid > 0, pid != getpid() else {
+            throw InstallerError.recovery("Mentra opened without an identifiable process. The app lease is retained at \(path.path).")
+        }
+        let guardPath = path.path + ".reclaim"
+        guard Darwin.mkdir(guardPath, 0o700) == 0 else {
+            throw InstallerError.recovery("Another app owner is acquiring the lock during Mentra's hand-off; the lease is retained at \(path.path).")
+        }
+        defer { Darwin.rmdir(guardPath) }
+        let owner = try InstallerFiles.dictionary(InstallerFiles.read(path))
+        guard owner["token"] as? String == token, owner["pid"] as? Int == Int(getpid()) else {
+            throw InstallerError.recovery("The app lock changed before its hand-off to Mentra: \(path.path).")
+        }
+        let next = path.path + ".\(token).handoff"
+        let descriptor = Darwin.open(next, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard descriptor >= 0 else { throw InstallerError.recovery("Cannot hand the app lease to Mentra; it is retained at \(path.path).") }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        do {
+            try file.write(contentsOf: JSONSerialization.data(withJSONObject: ["pid": Int(pid), "token": token, "launchedApp": true]))
+            try file.synchronize()
+            try file.close()
+            guard Darwin.rename(next, path.path) == 0 else { throw InstallerError.invalid("rename failed") }
+        } catch {
+            Darwin.unlink(next)
+            throw InstallerError.recovery("Cannot hand the app lease to Mentra; it is retained at \(path.path).")
+        }
+        released = true
+    }
+
     func release() throws {
         guard !released else { return }
         let owner = try InstallerFiles.dictionary(InstallerFiles.read(path))
         if owner["token"] as? String == token, owner["pid"] as? Int == Int(getpid()) {
+            // An adopted app that was not terminated (for example after a failed installation) keeps the lease.
+            if let adopted, kill(adopted, 0) == 0 || errno != ESRCH { return try handOff(to: adopted) }
             try InstallerFiles.manager.removeItem(at: path)
         }
         released = true
@@ -403,7 +461,7 @@ private func glassesLeaseIsFree(_ path: URL) -> Bool {
 /// it is paired with, and this installer proves none. So after writing its lease it does not open the app while
 /// another owner holds any physical glasses lease; that owner reads this lease and refuses in turn.
 func withAppOwnership<T>(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser, opensApp: Bool = true,
-                         operation: () async throws -> T) async throws -> T
+                         operation: (AppOwnershipLease) async throws -> T) async throws -> T
 {
     let lease = try AppOwnershipLease(homeDirectory: homeDirectory)
     let result: T
@@ -411,7 +469,7 @@ func withAppOwnership<T>(homeDirectory: URL = FileManager.default.homeDirectoryF
         if opensApp, let held = try heldGlassesLeases(homeDirectory: homeDirectory).first {
             throw InstallerError.invalid("Physical glasses are held by a test (\(held)). Finish or recover it before opening Mentra, or install with --no-launch.")
         }
-        result = try await operation()
+        result = try await operation(lease)
     }
     catch {
         if case InstallerError.recovery = error { throw error }
@@ -422,16 +480,17 @@ func withAppOwnership<T>(homeDirectory: URL = FileManager.default.homeDirectoryF
     return result
 }
 
+/// `launch` returns the PID of the Mentra process it opened, or nil when it opened nothing.
 func install(_ verified: VerifiedBuild, homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-             opensApp: Bool = true, quit: () async throws -> Void, launch: (URL) async throws -> Void = { _ in }) async throws -> URL
+             opensApp: Bool = true, quit: () async throws -> Void, launch: (URL) async throws -> pid_t? = { _ in nil }) async throws -> URL
 {
-    try await withAppOwnership(homeDirectory: homeDirectory, opensApp: opensApp) {
-        try await installOwned(verified, homeDirectory: homeDirectory, quit: quit, launch: launch)
+    try await withAppOwnership(homeDirectory: homeDirectory, opensApp: opensApp) { lease in
+        try await installOwned(verified, homeDirectory: homeDirectory, lease: lease, quit: quit, launch: launch)
     }
 }
 
-private func installOwned(_ verified: VerifiedBuild, homeDirectory: URL,
-                          quit: () async throws -> Void, launch: (URL) async throws -> Void) async throws -> URL
+private func installOwned(_ verified: VerifiedBuild, homeDirectory: URL, lease: AppOwnershipLease,
+                          quit: () async throws -> Void, launch: (URL) async throws -> pid_t?) async throws -> URL
 {
     let root = homeDirectory.appendingPathComponent("Applications/Mentra E2E")
     try InstallerFiles.claim(root)
@@ -488,8 +547,10 @@ private func installOwned(_ verified: VerifiedBuild, homeDirectory: URL,
         try InstallerFiles.writeJSON(installed, to: staging.appendingPathComponent("installed-build.json"))
         try await quit()
         try InstallerFiles.commit(root: root, staging: staging, lock: lock)
-        try await launch(destination)
+        let launched = try await launch(destination)
         try cleanup()
+        // The opened Mentra keeps running after this returns: it keeps the app lock under its own PID.
+        if let launched { try lease.handOff(to: launched) }
         return destination
     } catch {
         if case InstallerError.recovery = error { throw error }

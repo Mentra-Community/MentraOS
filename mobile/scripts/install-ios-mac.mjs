@@ -185,6 +185,8 @@ export async function claimInstallation(root, bundleId) {
 }
 
 export class InstallationRollbackError extends AggregateError {}
+/** Mentra was opened, but its ownership could not be handed to its own process: the installer's lease is retained. */
+export class LaunchedAppHandoffError extends Error {}
 
 /** Commit an already verified wrapper and its staged manifest as one recoverable replacement. */
 export async function commitStagedInstallation({root, staging, lock}, move = rename) {
@@ -239,16 +241,26 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
             "would start Mentra, which cannot establish its glasses. Finish or recover that owner, or use --no-launch",
         )
     }
-    return await installOwnedBuild(manifestPath, {
-      manifest,
-      portablePackage,
-      preinstalledLauncher,
-      launch,
-      launcherPath,
-      launcherSha256,
-    })
+    // The launcher returns after opening Mentra, which keeps running. Hand the app lock to that process, identified
+    // by the NSRunningApplication PID the launcher reports, so it stays held until the app itself exits.
+    const handOff = async (output) => {
+      const pid = Number(/\bpid=(\d+)\b/.exec(output)?.[1])
+      try {
+        await releaseApp.handOff(pid)
+      } catch (error) {
+        throw new LaunchedAppHandoffError(
+          `Mentra was launched, but the launched Mentra process could not take over the app lease (${error.message}); ` +
+            "the installer's lease is retained until recovered",
+        )
+      }
+    }
+    return await installOwnedBuild(
+      manifestPath,
+      {manifest, portablePackage, preinstalledLauncher, launch, launcherPath, launcherSha256},
+      handOff,
+    )
   } catch (error) {
-    preserveRecovery = error instanceof InstallationRollbackError
+    preserveRecovery = error instanceof InstallationRollbackError || error instanceof LaunchedAppHandoffError
     throw error
   } finally {
     if (!preserveRecovery) await releaseApp()
@@ -258,6 +270,7 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
 async function installOwnedBuild(
   manifestPath,
   {manifest, portablePackage, preinstalledLauncher, launch, launcherPath, launcherSha256},
+  afterLaunch = async () => {},
 ) {
   const root = installationRoot()
   const destination = path.join(root, "Mentra.app")
@@ -340,7 +353,9 @@ async function installOwnedBuild(
     installedNew = true
     if (launch) {
       await verifyLauncherOverride(launcherPath, launcherSha256)
-      console.log(command(launcher, [destination]))
+      const output = command(launcher, [destination])
+      console.log(output)
+      await afterLaunch(output)
     }
     console.log(`Installed app: ${destination}\nInstalled evidence: ${path.join(root, "installed-build.json")}`)
     return installed

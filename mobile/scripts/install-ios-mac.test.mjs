@@ -71,7 +71,7 @@ async function glassesAdmissionCase(mode) {
     import childProcess from "node:child_process";
     import {syncBuiltinESMExports} from "node:module";
     import {createHash} from "node:crypto";
-    import {cpSync} from "node:fs";
+    import {cpSync, writeFileSync} from "node:fs";
     import {access, mkdir, readFile, readlink, symlink, writeFile} from "node:fs/promises";
     import path from "node:path";
     const [installerURL, ownershipURL, mode] = process.argv.slice(1);
@@ -81,8 +81,27 @@ async function glassesAdmissionCase(mode) {
     const folder = path.join(home, ".cache/mentra-e2e");
     const calls = [];
     const launcherPath = path.join(home, "pinned-launcher");
+    const appLock = path.join(folder, "com.mentra.mentra.lock");
+    // Stands in for the launched Mentra: a real temporary process that outlives the launcher, as the app does. It is
+    // detached (reparented, so it is reaped on exit) so that a normal quit really ends it.
+    const realExecFileSync = childProcess.execFileSync;
+    const shell = (script) => realExecFileSync("/bin/sh", ["-c", script], {encoding: "utf8"}).trim();
+    const alive = (pid) => { try { process.kill(pid, 0); return true } catch { return false } };
+    const quit = (pid) => shell("kill " + pid + "; while kill -0 " + pid + " 2>/dev/null; do sleep 0.05; done");
+    let launched;
+    process.on("exit", () => { if (launched && alive(launched)) process.kill(launched) }); // never outlives this test
     childProcess.execFileSync = (name, args) => {
       calls.push({name, args});
+      if (name === launcherPath && args[0] === "--quit" && launched && alive(launched)) {
+        quit(launched); // the launcher's normal termination of the running app
+        return "Stopped com.mentra.mentra through normal application termination.";
+      }
+      if (name === launcherPath && args[0] !== "--quit" && mode !== "launch-no-pid") {
+        launched = Number(shell("/bin/sleep 60 >/dev/null 2>&1 & echo $!"));
+        return "Launched com.mentra.mentra pid=" + launched + " without requesting foreground activation.";
+      }
+      if (name === "/usr/bin/codesign" && mode === "launch-adopt-failure" && launched)
+        throw new Error("fake invalid Apple signature");
       if (name === "/usr/libexec/PlistBuddy") return args[1].includes("CFBundleIdentifier") ? "com.mentra.mentra" : "Mentra";
       if (name === "/usr/bin/codesign") return "verified fixture signature";
       if (name === "/usr/bin/security") return "fixture provisioning profile";
@@ -92,12 +111,17 @@ async function glassesAdmissionCase(mode) {
         cpSync(args[1], args[2], {recursive: true});
         return "";
       }
+      if (name === "/usr/bin/ditto" && args[0] === "-c") {
+        writeFileSync(args.at(-1), "fixture backup of the previous installation");
+        return "";
+      }
+      if (name === "/usr/bin/unzip") return "";
       if (name === launcherPath) return "fixture launcher";
       throw new Error("Unexpected real command: " + name);
     };
     syncBuiltinESMExports();
     const {installBuild} = await import(installerURL);
-    const {acquireAppOwnership} = await import(ownershipURL);
+    const {acquireAppOwnership, readLockState} = await import(ownershipURL);
     const app = path.join(home, "download/Mentra.app");
     await mkdir(app, {recursive: true});
     await writeFile(path.join(app, "Mentra"), "fixture executable");
@@ -124,13 +148,53 @@ async function glassesAdmissionCase(mode) {
       await assert.rejects(installBuild(manifestPath, options), /Physical glasses are held/);
       assert.equal(calls.length, 0); // nothing quit, verified, replaced or launched
       await assert.rejects(access(path.join(root, "Mentra.app")), {code: "ENOENT"});
+    } else if (mode === "launch-no-pid") {
+      // Mentra was launched but the launcher did not identify its process: the installer keeps its retained lease.
+      await assert.rejects(installBuild(manifestPath, options), /launched Mentra process/);
+      const kept = JSON.parse(await readFile(appLock, "utf8"));
+      assert.equal(kept.pid, process.pid);
+      assert.equal(kept.retainOnExit, true);
+      assert.equal(kept.launchedApp, undefined);
+      process.exit(0);
     } else {
       await installBuild(manifestPath, options);
       assert.deepEqual(calls.filter((call) => call.name === launcherPath).map((call) => call.args[0]),
         launch ? ["--quit", path.join(root, "Mentra.app")] : ["--quit"]);
       assert.equal(await readFile(path.join(root, "Mentra.app/Wrapper/Mentra.app/Mentra"), "utf8"), "fixture executable");
     }
-    await assert.rejects(access(path.join(folder, "com.mentra.mentra.lock")), {code: "ENOENT"});
+    if (launched) {
+      // After the launcher returned, the app lock belongs to the launched app's own process: held while it runs.
+      const opened = await readFile(appLock, "utf8");
+      const owner = JSON.parse(opened);
+      assert.deepEqual([owner.pid, owner.launchedApp, owner.retainOnExit, owner.reservation], [launched, true, undefined, undefined]);
+      assert.deepEqual(await readLockState(folder), {state: "held", pid: launched});
+      // A test owner, which may narrow to one pair of glasses, is refused while the app runs.
+      await assert.rejects(acquireAppOwnership(folder, {reservation: {runID: "mac-03be", runDirectory: path.join(home, "run"),
+        fixtureID: "mac-03be"}}), /quit Mentra normally/);
+      assert.equal(await readFile(appLock, "utf8"), opened);
+      if (mode === "launch-takeover") {
+        // A later file-only installation adopts the running app under broad custody, quits it normally, then releases.
+        calls.length = 0;
+        await installBuild(manifestPath, {...options, launch: false});
+        assert.deepEqual(calls.filter((call) => call.name === launcherPath).map((call) => call.args[0]), ["--quit"]);
+        assert.equal(alive(launched), false);
+      } else if (mode === "launch-adopt-failure") {
+        // An installation that adopts the running app but fails before quitting it hands the lock back to that app.
+        await assert.rejects(installBuild(manifestPath, {...options, launch: false}), /fake invalid Apple signature/);
+        assert.equal(alive(launched), true);
+        assert.deepEqual(await readLockState(folder), {state: "held", pid: launched});
+        assert.equal(JSON.parse(await readFile(appLock, "utf8")).launchedApp, true);
+        quit(launched);
+        assert.deepEqual(await readLockState(folder), {state: "reclaimable"});
+        await (await acquireAppOwnership(folder))();
+      } else {
+        // Normal release: once the app's own process has exited, the lock is reclaimable by the next owner.
+        quit(launched);
+        assert.deepEqual(await readLockState(folder), {state: "reclaimable"});
+        await (await acquireAppOwnership(folder))();
+      }
+    }
+    await assert.rejects(access(appLock), {code: "ENOENT"});
     if (heldLease) assert.equal(await readFile(glassesLease, "utf8"), heldLease);
     if (mode.endsWith("-dangling")) assert.equal(await readlink(glassesLease), danglingTarget);
   `
@@ -151,8 +215,20 @@ test("a file-only installation needs no glasses and proceeds beside a held glass
   await glassesAdmissionCase("no-launch-held")
 })
 
-test("a launching installation launches normally when no glasses lease is held", async () => {
+test("a launched app owns the app lock after the launcher returns, until its own process exits", async () => {
   await glassesAdmissionCase("launch")
+})
+
+test("a later installation takes over a running launched app's lock", async () => {
+  await glassesAdmissionCase("launch-takeover")
+})
+
+test("an unidentified launched process leaves the installer's lease retained for recovery", async () => {
+  await glassesAdmissionCase("launch-no-pid")
+})
+
+test("an installation that adopts a running app but fails before quitting it hands the lock back to that app", async () => {
+  await glassesAdmissionCase("launch-adopt-failure")
 })
 
 test("a dangling symlink as a glasses lease is held: launching refuses, a file-only install proceeds", async () => {

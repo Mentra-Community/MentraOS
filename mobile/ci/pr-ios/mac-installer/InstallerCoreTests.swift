@@ -127,7 +127,7 @@ private struct InstallerCoreTests {
             let candidate = VerifiedBuild(directory: fixture.temporary, manifest: manifest, codeRequirement: "test")
             var quit = false, launch = false
             do {
-                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true })
+                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true; return nil })
                 throw TestFailure(description: "Installer took an active worker's app")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Mentra is owned"), "Did not reject at the app ownership boundary")
@@ -162,7 +162,7 @@ private struct InstallerCoreTests {
             let fixture = try Fixture()
             defer { fixture.clean() }
             let path = fixture.temporary.appendingPathComponent(".cache/mentra-e2e/com.mentra.mentra.lock")
-            try await withAppOwnership(homeDirectory: fixture.temporary) {
+            try await withAppOwnership(homeDirectory: fixture.temporary) { _ in
                 // Simulates awaiting the normal NSWorkspace launch completion.
                 await Task.yield()
                 try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
@@ -171,7 +171,7 @@ private struct InstallerCoreTests {
                 try expect(!InstallerFiles.exists(path), "Completed launch retained ownership")
             }
             do {
-                try await withAppOwnership(homeDirectory: fixture.temporary) {
+                try await withAppOwnership(homeDirectory: fixture.temporary) { _ in
                     throw InstallerError.recovery("rollback or transaction cleanup failed")
                 }
             } catch let error as InstallerError {
@@ -220,7 +220,7 @@ private struct InstallerCoreTests {
             var opened = false
             do {
                 // Open Mentra uses this same wrapper around its launch closure.
-                try await withAppOwnership(homeDirectory: fixture.temporary) { opened = true }
+                try await withAppOwnership(homeDirectory: fixture.temporary) { _ in opened = true }
                 throw TestFailure(description: "Open took a retained lifecycle reservation")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Mentra is owned"), "Open bypassed retained app ownership")
@@ -232,7 +232,7 @@ private struct InstallerCoreTests {
             let candidate = VerifiedBuild(directory: fixture.temporary, manifest: manifest, codeRequirement: "test")
             var quit = false, launch = false
             do {
-                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true })
+                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true; return nil })
                 throw TestFailure(description: "Installer took a retained lifecycle reservation")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Mentra is owned"), "Install bypassed retained app ownership")
@@ -269,13 +269,13 @@ private struct InstallerCoreTests {
             let candidate = VerifiedBuild(directory: fixture.temporary, manifest: manifest, codeRequirement: "test")
             var quit = false, launch = false, opened = false
             do {
-                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true })
+                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true; return nil })
                 throw TestFailure(description: "Install & Open ignored a held glasses lease")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Physical glasses are held"), "Unexpected refusal: \(error)")
             }
             do {
-                try await withAppOwnership(homeDirectory: fixture.temporary) { opened = true }
+                try await withAppOwnership(homeDirectory: fixture.temporary) { _ in opened = true }
                 throw TestFailure(description: "Open Mentra ignored a held glasses lease")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Physical glasses are held"), "Unexpected refusal: \(error)")
@@ -301,7 +301,7 @@ private struct InstallerCoreTests {
             try InstallerFiles.manager.createSymbolicLink(atPath: glassesLease.path,
                                                           withDestinationPath: fixture.temporary.appendingPathComponent("missing-target").path)
             do {
-                try await withAppOwnership(homeDirectory: fixture.temporary) { opened = true }
+                try await withAppOwnership(homeDirectory: fixture.temporary) { _ in opened = true }
                 throw TestFailure(description: "Open Mentra ignored a dangling glasses lease")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Physical glasses are held"), "Unexpected refusal: \(error)")
@@ -317,8 +317,114 @@ private struct InstallerCoreTests {
                 }
             }
             try InstallerFiles.manager.removeItem(at: glassesLease)
-            try await withAppOwnership(homeDirectory: fixture.temporary) { opened = true }
+            try await withAppOwnership(homeDirectory: fixture.temporary) { _ in opened = true }
             try test("Open proceeds once no glasses lease is held") { try expect(opened, "Open did not run") }
+        }
+        do {
+            // Stands in for the opened Mentra: a real temporary process that outlives the installer's open call.
+            func launchedApp() throws -> Process {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+                process.arguments = ["60"]
+                try process.run()
+                return process
+            }
+            func sharedState(_ fixture: Fixture) throws -> String {
+                let probe = """
+                const {readLockState} = await import(process.argv[1]);
+                process.stdout.write(JSON.stringify(await readLockState(process.argv[2])));
+                """
+                let (process, output) = try node(probe, fixture.temporary)
+                process.waitUntilExit()
+                return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            }
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let path = fixture.temporary.appendingPathComponent(".cache/mentra-e2e/com.mentra.mentra.lock")
+            let app = try launchedApp()
+            defer { if app.isRunning { app.terminate() } }
+            try await withAppOwnership(homeDirectory: fixture.temporary) { lease in try lease.handOff(to: app.processIdentifier) }
+            let owner = try InstallerFiles.dictionary(InstallerFiles.read(path))
+            try test("Open hands the app lease to the opened process, which holds it after the installer returns") {
+                try expect(owner["pid"] as? Int == Int(app.processIdentifier) && owner["launchedApp"] as? Bool == true, "Lease not handed to the app: \(owner)")
+                try expect(owner["retainOnExit"] == nil && owner["reservation"] == nil, "Handed-off lease is retained or reserved")
+                try expect(try sharedState(fixture) == "{\"state\":\"held\",\"pid\":\(app.processIdentifier)}", "A glasses owner would not see the app lease held")
+            }
+            try test("a test owner cannot take over the running app's lease; it must wait for a normal quit") {
+                let probe = """
+                import assert from "node:assert/strict";
+                const {acquireAppOwnership} = await import(process.argv[1]);
+                await assert.rejects(acquireAppOwnership(process.argv[2], {reservation: {runID: "mac-03be",
+                  runDirectory: process.argv[2] + "/run", fixtureID: "mac-03be"}}), /quit Mentra normally/);
+                """
+                let (process, _) = try node(probe, fixture.temporary)
+                process.waitUntilExit()
+                try expect(process.terminationStatus == 0, "A test owner took over a running launched app")
+                try expect(InstallerFiles.dictionary(InstallerFiles.read(path))["pid"] as? Int == Int(app.processIdentifier), "The app's lease changed")
+            }
+            app.terminate()
+            app.waitUntilExit()
+            try test("the app lease is released normally once the opened process exits") {
+                try expect(try sharedState(fixture) == "{\"state\":\"reclaimable\"}", "Exited app still holds the lease")
+                let probe = """
+                const {acquireAppOwnership} = await import(process.argv[1]);
+                await (await acquireAppOwnership(process.argv[2]))();
+                """
+                let (process, _) = try node(probe, fixture.temporary)
+                process.waitUntilExit()
+                try expect(process.terminationStatus == 0 && !InstallerFiles.exists(path), "The next owner could not take the released lease")
+            }
+            let running = try launchedApp()
+            defer { if running.isRunning { running.terminate() } }
+            try await withAppOwnership(homeDirectory: fixture.temporary) { lease in try lease.handOff(to: running.processIdentifier) }
+            try test("a new installer adopts a running launched app under broad custody and hands it back if it was not quit") {
+                let successor = try AppOwnershipLease(homeDirectory: fixture.temporary)
+                let adopting = try InstallerFiles.dictionary(InstallerFiles.read(path))
+                try expect(adopting["pid"] as? Int == Int(getpid()) && adopting["retainOnExit"] as? Bool == true && adopting["reservation"] == nil, "Installer did not adopt with broad custody")
+                try successor.release()
+                let restored = try InstallerFiles.dictionary(InstallerFiles.read(path))
+                try expect(restored["pid"] as? Int == Int(running.processIdentifier) && restored["launchedApp"] as? Bool == true, "Running app lost its lease: \(restored)")
+            }
+            do {
+                try await withAppOwnership(homeDirectory: fixture.temporary, opensApp: false) { _ in throw InstallerError.invalid("fake failed installation") }
+            } catch let error as InstallerError {
+                guard case .invalid = error else { throw error }
+            }
+            try test("an installation that adopts a running app and fails before quitting it hands the lease back") {
+                try expect(InstallerFiles.dictionary(InstallerFiles.read(path))["pid"] as? Int == Int(running.processIdentifier), "Running app lost its lease")
+            }
+            running.terminate()
+            running.waitUntilExit()
+            try test("once the adopted app has quit, the installer releases the lease normally") {
+                let successor = try AppOwnershipLease(homeDirectory: fixture.temporary)
+                try successor.release()
+                try expect(!InstallerFiles.exists(path), "Lease of an exited app was not released")
+            }
+            do {
+                try await withAppOwnership(homeDirectory: fixture.temporary) { lease in try lease.handOff(to: getpid()) }
+                throw TestFailure(description: "A hand-off to the installer itself was accepted")
+            } catch let error as InstallerError {
+                guard case .recovery = error else { throw error }
+            }
+            try test("a hand-off that cannot identify the opened process retains the installer's lease for recovery") {
+                let kept = try InstallerFiles.dictionary(InstallerFiles.read(path))
+                try expect(kept["pid"] as? Int == Int(getpid()) && kept["retainOnExit"] as? Bool == true && kept["launchedApp"] == nil, "Lease was not retained: \(kept)")
+                try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
+            }
+            try InstallerFiles.manager.removeItem(at: path)
+            let reservation = ["runID": "x", "runDirectory": "/tmp/x", "fixtureID": "x"]
+            for record: [String: Any] in [["pid": 99_999_999, "token": "t", "launchedApp": "yes"],
+                                          ["pid": 99_999_999, "token": "t", "launchedApp": true, "retainOnExit": true],
+                                          ["pid": 99_999_999, "token": "t", "launchedApp": true, "retainOnExit": true, "reservation": reservation],
+                                          ["pid": 99_999_999, "launchedApp": true]] {
+                let contents = try encode(record)
+                try contents.write(to: path)
+                try test("an invalid launched-app record is never taken over: \(record.keys.sorted())") {
+                    try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
+                    try expect(InstallerFiles.read(path) == contents, "Invalid record changed")
+                }
+                try InstallerFiles.manager.removeItem(at: path)
+            }
         }
         try test("installer first: a glasses owner reading the native lease finds an owner without a reservation") {
             let fixture = try Fixture()

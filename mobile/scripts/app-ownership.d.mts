@@ -12,4 +12,4 @@ export function heldGlassesLeases(root: string): Promise<string[]>
 export function acquireAppOwnership(
   folder?: string,
   options?: {installer?: boolean; reservation?: AppReservation; recovering?: boolean},
-): Promise<() => Promise<void>>
+): Promise<(() => Promise<void>) & {handOff?(pid: number): Promise<void>}>
