@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { createTestFailureAgentApi } from "../api/agent/test-failures.api";
 import type { ContinuationGrant } from "../types/test-continuation.types";
-import type { TestRepairReceipt } from "../types/test-repair.types";
+import { testRepairEvidenceSchema, type TestRepairReceipt } from "../types/test-repair.types";
 import type { ContinuationLeaseRepair } from "./test-continuation-lease";
 import { TestContinuationService } from "./test-continuation.service";
 import { signTestContinuationGrant } from "./test-failure-auth";
@@ -189,4 +189,46 @@ test("repair routes need repair-state to send and read-results to read; a missin
     .request(base, { method: "POST", headers: auth(["repair-state"]), body: JSON.stringify(request) });
   expect(unavailable.status).toBe(501); expect(absent.sends()).toBe(0);
   expect(await unavailable.json()).toMatchObject({ error: "test_continuation_error" });
+});
+
+test("the evidence schema requires every existing slot present; explicit null is still a value", () => {
+  const full = evidence(true);
+  expect(testRepairEvidenceSchema.safeParse(full).success).toBe(true);
+  expect(testRepairEvidenceSchema.safeParse({ before: null, action: null, result: null, check: { passed: true } }).success).toBe(true);
+  for (const slot of ["before", "action", "result"] as const) {
+    const { [slot]: _omitted, ...partial } = full;
+    expect(testRepairEvidenceSchema.safeParse(partial).success).toBe(false);
+  }
+  expect(testRepairEvidenceSchema.safeParse({ check: { passed: true } }).success).toBe(false);
+  // The shape stays small and strict.
+  expect(testRepairEvidenceSchema.safeParse({ ...full, extra: 1 }).success).toBe(false);
+});
+
+test("a completed status with omitted evidence slots is a 502 in every pending state and changes nothing", async () => {
+  const full = evidence(true);
+  const omitted = [...(["before", "action", "result"] as const).map(slot => { const { [slot]: _omitted, ...partial } = full; return partial; }),
+    { check: { passed: true } }];
+  const states = [["sending", undefined], ["unknown", undefined], ["accepted", undefined], ["accepted", "2026-09-27T00:00:00Z"]] as const;
+  for (const [sendState, reconciledAt] of states) {
+    // The one real send records the operation receipt and its input digest; then the pending state under test.
+    const f = fixture();
+    await f.service.request(grant, request);
+    const receipt = f.rows.get(request.operationId)!.receipt;
+    Object.assign(receipt, { sendState }, reconciledAt ? { reconciledAt } : {});
+    const before = structuredClone(f.rows.get(request.operationId));
+    for (const partial of omitted) {
+      f.status(about({ state: "completed", owner, evidence: partial }));
+      await expect(f.service.detail(grant, request.operationId), `${sendState}: ${Object.keys(partial)}`).rejects.toMatchObject({ status: 502 });
+      await expect(f.service.request(grant, request)).rejects.toMatchObject({ status: 502 });
+      // The original receipt, send state and reconciliation metadata are untouched; nothing is resubmitted.
+      expect(f.rows.get(request.operationId)).toEqual(before!);
+      expect(f.sends()).toBe(1); expect(f.leases).toHaveLength(1);
+    }
+    // Full evidence, and explicit null slots with the executor's passing check, still complete.
+    for (const complete of [full, { before: null, action: null, result: null, check: { passed: true } }]) {
+      f.status(about({ state: "completed", owner, evidence: complete }));
+      expect(await f.service.detail(grant, request.operationId)).toMatchObject({ state: "completed", owner, evidence: complete });
+    }
+    expect(f.sends()).toBe(1); expect(f.leases).toHaveLength(1);
+  }
 });

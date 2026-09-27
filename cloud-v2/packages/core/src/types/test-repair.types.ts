@@ -28,8 +28,10 @@ export type TestRepairRequest = z.infer<typeof testRepairRequestSchema>;
 
 const identity = z.string().regex(/^[A-Za-z0-9._:-]{1,100}$/);
 /** Existing durable worker evidence, relayed as the executor reported it; Core never fabricates a slot. */
+// Each existing slot must be present (an omitted key is not evidence); an explicit null remains a value.
+const evidenceSlot = z.unknown().refine(value => value !== undefined, "Evidence slot is required");
 export const testRepairEvidenceSchema = z.object({
-  before: z.unknown(), action: z.unknown(), result: z.unknown(),
+  before: evidenceSlot, action: evidenceSlot, result: evidenceSlot,
   check: z.object({ passed: z.boolean() }).passthrough(),
 }).strict();
 /** An executor's answer about one registered operation, naming that exact operation. */
