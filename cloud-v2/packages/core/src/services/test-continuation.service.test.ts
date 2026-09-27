@@ -44,6 +44,8 @@ function fixture(incidents?: IncidentReportStore) {
     dispatch: async () => { sends++; return { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; },
     progress: async () => ({ state: "running", requestId: "routine-90-1-44-no-glasses", message: "Running" }),
     findExisting: async (_, value) => { since = value; return existing; },
+    // The original request's immutable selection (the real gateway reads it from GitHub).
+    originalSelection: async () => ({ source: input.source, archiveSha256, headSha }),
   };
   let ids: string[] = [], extraResults: typeof result[] = [];
   // Core acknowledges each linked occurrence to its stable branch anchor.
@@ -327,6 +329,57 @@ test("signed grants carry the optional case binding and reject malformed ones", 
   expect(verifyTestContinuationGrant(token, devOccurrence, secret, "dev")).toEqual(value);
   expect(() => signTestContinuationGrant({ ...value, caseBinding: { caseId: "case", candidateOwnerRunId: "run_owner" } }, secret)).toThrow();
   expect(() => signTestContinuationGrant({ ...value, caseBinding: { ...value.caseBinding!, extra: true } as never }, secret)).toThrow();
+});
+
+const original: ContinuationGrant = { ...grant, candidate: { repository: "Mentra-Community/MentraOS", headSha, target: "original" } };
+const uuid = (parts: unknown[]) => { const d = createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+  return `${d.slice(0, 8)}-${d.slice(8, 12)}-4${d.slice(13, 16)}-a${d.slice(17, 20)}-${d.slice(20, 32)}`; };
+
+test("existing PR operation IDs are unchanged; the original target has its own attempt-bound ID", () => {
+  expect(continuationOperationId(grant, "no-glasses")).toBe(uuid([occurrenceId, "run_123", "Mentra-Community/MentraOS", 44, headSha, "no-glasses", 1]));
+  expect(continuationOperationId(original, "no-glasses")).toBe(uuid([occurrenceId, "run_123", "Mentra-Community/MentraOS", "original", headSha, "no-glasses", 1]));
+  expect(continuationOperationId({ ...original, executionAttempt: 2 }, "no-glasses")).not.toBe(continuationOperationId(original, "no-glasses"));
+});
+
+test("an original-target diagnostic rerun sends the recorded artifact once, needs no repair and adopts no earlier request", async () => {
+  const f = fixture(); f.target({ original: { archiveSha256, requestRunId: 70 } }); f.existing();
+  const sent = await f.service.request(original, input);
+  expect(sent).toMatchObject({ dispatchId: continuationOperationId(original, "no-glasses"), sendState: "accepted" });
+  expect(sent.adopted).toBeUndefined(); expect(f.sends()).toBe(1); expect(f.since()).toBe("");
+  expect(f.rows.get(sent.dispatchId)!.receipt.continuation).toMatchObject({ candidate: original.candidate, expectedHeadSha: headSha, executionAttempt: 1 });
+  expect(f.leaseChecks).toEqual([original, original]);
+  await f.service.request(original, input); expect(f.sends()).toBe(1);
+  // The original target and a PR candidate never list or read each other's operations.
+  expect((await f.service.list(original)).reruns.map(item => item.dispatchId)).toEqual([sent.dispatchId]);
+  expect((await f.service.list(grant)).reruns).toEqual([]);
+  await expect(f.service.detail(grant, sent.dispatchId)).rejects.toThrow("not found");
+  // Results stay bound to the recorded head and archive.
+  f.results(); f.result.provenance.archiveSha256 = "e".repeat(64);
+  await expect(f.service.detail(original, sent.dispatchId)).rejects.toThrow("differs");
+});
+
+test("an original-target request with another artifact, head, channel, attempt, routine or lease sends nothing", async () => {
+  const expected: Record<string, string> = { archive: "original recorded artifact", head: "differs from the recorded result", channel: "outside the candidate source",
+    attempt: "Execution attempt differs", routine: "outside this capability", lease: "Stale lease" };
+  for (const mismatch of Object.keys(expected)) {
+    const f = fixture(); f.target({ original: { archiveSha256, requestRunId: 70 } });
+    let request: Record<string, unknown> = input;
+    if (mismatch === "archive") request = { ...input, archiveSha256: "e".repeat(64) };
+    if (mismatch === "head") f.target({ expectedHeadSha: "f".repeat(40) });
+    if (mismatch === "channel") request = { ...input, source: { channel: "dev", buildRunId: 80, publicationAttempt: 1 } };
+    if (mismatch === "attempt") request = { ...input, executionAttempt: 2, retryReason: "Reproduce the failure" };
+    if (mismatch === "routine") request = { ...input, routineId: "day1-ota" };
+    if (mismatch === "lease") f.loseLease();
+    await expect(f.service.request(original, request)).rejects.toThrow(expected[mismatch]);
+    expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+  }
+});
+
+test("signed grants admit the original target and repair action, never a hybrid or unknown target", () => {
+  const value: ContinuationGrant = { ...original, actions: ["repair-state", "read-results"] };
+  expect(verifyTestContinuationGrant(signTestContinuationGrant(value, secret), occurrenceId, secret, "dev")).toEqual(value);
+  expect(() => signTestContinuationGrant({ ...grant, candidate: { ...grant.candidate, target: "original" } } as never, secret)).toThrow();
+  expect(() => signTestContinuationGrant({ ...original, candidate: { repository: "Mentra-Community/MentraOS", headSha, target: "latest" } } as never, secret)).toThrow();
 });
 
 test("registered rerun incidents require the exact result binding before the incident membership guard", async () => {

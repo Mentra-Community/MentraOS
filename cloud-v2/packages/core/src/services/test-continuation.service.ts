@@ -4,11 +4,11 @@ import { TestRunModel } from "../models/test-run.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import type { TestRunClaim } from "../types/test-run-claim.types";
-import { continuationRequestSchema, type ContinuationGrant, type TestContinuationBinding } from "../types/test-continuation.types";
-import { testRoutineIdSchema, type TestDispatchReceipt, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
+import { continuationRequestSchema, isOriginalCandidate, type ContinuationGrant, type TestContinuationBinding } from "../types/test-continuation.types";
+import { testRoutineIdSchema, type TestBuild, type TestBuildSource, type TestDispatchReceipt, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
 import { TestDispatchService } from "./test-dispatch.service";
 import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
-import { GithubContinuationSource, type ContinuationSourceGateway } from "./test-continuation.github";
+import { GithubContinuationSource, type ContinuationSourceGateway, type ContinuationTarget } from "./test-continuation.github";
 import { requireContinuationLease } from "./test-continuation-lease";
 import { TestRunService } from "./test-run.service";
 import { TestFailureIncidentService } from "./test-failure-incident.service";
@@ -32,21 +32,37 @@ class MongoContinuationRepository implements ContinuationRepository {
     return rows.map(row => row.runId);
   }
   async list(grant: ContinuationGrant) {
+    const candidate = grant.candidate;
     const rows = await TestDispatchModel.find({ "receipt.continuation.occurrenceId": grant.occurrenceId,
       "receipt.continuation.agentRunId": grant.agentRunId,
-      "receipt.continuation.candidate.repository": grant.candidate.repository,
-      "receipt.continuation.candidate.pullRequest": grant.candidate.pullRequest,
-      "receipt.continuation.candidate.headSha": grant.candidate.headSha }).sort({ "receipt.createdAt": 1, dispatchId: 1 }).limit(100).lean();
+      "receipt.continuation.candidate.repository": candidate.repository,
+      ...(isOriginalCandidate(candidate) ? { "receipt.continuation.candidate.target": "original" }
+        : { "receipt.continuation.candidate.pullRequest": candidate.pullRequest }),
+      "receipt.continuation.candidate.headSha": candidate.headSha }).sort({ "receipt.createdAt": 1, dispatchId: 1 }).limit(100).lean();
     return rows.map(row => row.receipt as TestDispatchReceipt);
   }
 }
-export function continuationOperationId(grant: ContinuationGrant, routineId: TestRoutineId): string {
-  const digest = createHash("sha256").update(JSON.stringify([grant.occurrenceId, grant.agentRunId, grant.candidate.repository,
-    grant.candidate.pullRequest, grant.candidate.headSha, routineId, grant.executionAttempt])).digest("hex");
+/** Deterministic UUID-shaped identity; a registered replay recomputes the same ID. */
+function operationUuid(parts: unknown[]): string {
+  const digest = createHash("sha256").update(JSON.stringify(parts)).digest("hex");
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+/** Existing PR operation IDs are unchanged; the original target uses "original" in place of a PR number. */
+export function continuationOperationId(grant: ContinuationGrant, routineId: TestRoutineId): string {
+  const candidate = grant.candidate;
+  return operationUuid([grant.occurrenceId, grant.agentRunId, candidate.repository,
+    isOriginalCandidate(candidate) ? "original" : candidate.pullRequest, candidate.headSha, routineId, grant.executionAttempt]);
 }
 const fail = (message: string): never => { throw new TestDispatchError(409, message); };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** The grant's occurrence, with recorded source, acknowledged to this exact case anchor. */
+export async function acknowledgedCase(runs: Pick<Runs, "failureDetail">, grant: ContinuationGrant) {
+  const packet = await runs.failureDetail(grant.occurrenceId);
+  if (packet.occurrenceId !== grant.occurrenceId || packet.sourceStatus !== "recorded" || !packet.source
+    || packet.delivery.state !== "acknowledged" || packet.delivery.agentRunId !== grant.agentRunId)
+    fail("Recorded source and acknowledged case ownership are required");
+  return packet;
+}
 
 /** Case-bound continuation over the existing dispatcher/claims. This is not a queue. */
 export class TestContinuationService {
@@ -57,13 +73,7 @@ export class TestContinuationService {
     private readonly repository: ContinuationRepository = new MongoContinuationRepository(),
     private readonly checkLease = requireContinuationLease,
     private readonly incidents: Incidents = new TestFailureIncidentService(runs)) {}
-  private async case(grant: ContinuationGrant) {
-    const packet = await this.runs.failureDetail(grant.occurrenceId);
-    if (packet.occurrenceId !== grant.occurrenceId || packet.sourceStatus !== "recorded" || !packet.source
-      || packet.delivery.state !== "acknowledged" || packet.delivery.agentRunId !== grant.agentRunId)
-      fail("Recorded source and acknowledged case ownership are required");
-    return packet;
-  }
+  private case(grant: ContinuationGrant) { return acknowledgedCase(this.runs, grant); }
   private routine(grant: ContinuationGrant, routine: unknown): TestRoutineId {
     const id = testRoutineIdSchema.parse(routine);
     if (!grant.routineIds.includes(id)) fail("Routine is outside this capability");
@@ -72,9 +82,37 @@ export class TestContinuationService {
   async inventory(grant: ContinuationGrant, routine: unknown) {
     const routineId = this.routine(grant, routine), packet = await this.case(grant);
     const target = await this.source.target(packet, grant, routineId);
+    if (target.original) {
+      // Exactly the recorded build, however old: never the newest listing or a current head.
+      const selection = await this.originalSelection(target, routineId);
+      const build = await this.originalBuild(selection.source, routineId, selection.source.channel === "pr" ? target.original.requestRunId : undefined);
+      return { candidate: grant.candidate, builds: [build].filter(item => item.headSha === target.expectedHeadSha
+          && item.archive?.sha256 === selection.archiveSha256), expectedHeadSha: target.expectedHeadSha };
+    }
     const builds = await this.builds.inventory({ ...target.query, routineId });
     return { candidate: grant.candidate, builds: builds.filter(build => build.headSha === target.expectedHeadSha),
       expectedHeadSha: target.expectedHeadSha, ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
+  }
+  /** The issuer's immutable selection for the original request, cross-checked with the recorded result. */
+  private async originalSelection(target: ContinuationTarget, routineId: TestRoutineId) {
+    if (!this.builds.originalSelection) throw new TestDispatchError(503, "Original build verification is unavailable");
+    const selection = await this.builds.originalSelection(target.original!.requestRunId, routineId);
+    if (selection.archiveSha256 !== target.original!.archiveSha256 || selection.headSha !== target.expectedHeadSha
+      || selection.source.channel !== target.query.channel || (selection.source.channel === "pr" && selection.source.prNumber !== target.query.pr))
+      fail("The original request differs from the recorded result");
+    return selection;
+  }
+  /** The exact recorded build. A PR original resolves for its original request's recorded PR head/base,
+   * so a later push, base advance, close or merge does not prevent its exact replay. */
+  private async originalBuild(source: TestBuildSource, routineId: TestRoutineId, originalRequestRunId?: number): Promise<TestBuild> {
+    let build: TestBuild;
+    try { build = await this.builds.resolve(source, routineId, originalRequestRunId); }
+    catch (error) {
+      if (error instanceof TestDispatchError && error.status < 500) fail(`The original build can no longer be dispatched: ${error.message}`);
+      throw error;
+    }
+    if (build.availability !== "available") fail(`The original build can no longer be dispatched: ${build.reason ?? "it is unavailable"}`);
+    return build;
   }
   async request(grant: ContinuationGrant, input: unknown) {
     const { executionAttempt, retryReason, ...data } = continuationRequestSchema.parse(input), routineId = this.routine(grant, data.routineId);
@@ -83,7 +121,9 @@ export class TestContinuationService {
     const saved = await this.dispatch.receipt(idempotencyKey);
     if (saved) {
       this.bound(grant, saved);
-      if (!same(saved.input, { ...data, idempotencyKey }) || saved.continuation?.executionAttempt !== executionAttempt
+      // The original request run is derived by Core from the bound packet, never supplied by the caller.
+      const { originalRequestRunId: _derived, ...savedInput } = saved.input;
+      if (!same(savedInput, { ...data, idempotencyKey }) || saved.continuation?.executionAttempt !== executionAttempt
         || saved.continuation.retryReason !== retryReason) fail("This candidate/routine already owns a different build request; reconcile it");
       return this.acknowledgement(grant, idempotencyKey);
     }
@@ -98,17 +138,27 @@ export class TestContinuationService {
     const target = await this.source.target(packet, grant, routineId);
     if (data.source.channel !== target.query.channel
       || (data.source.channel === "pr" && data.source.prNumber !== target.query.pr)) fail("Build is outside the candidate source");
-    const build = await this.builds.resolve(data.source, routineId);
+    // The original target admits only the build its recorded request selected, never a caller-named,
+    // rebuilt or newer one.
+    if (target.original) {
+      const selection = await this.originalSelection(target, routineId);
+      if (!same(data.source, selection.source) || data.archiveSha256 !== selection.archiveSha256) fail("Build is not the original recorded artifact");
+    }
+    // A PR original is replayed by its request run through the trusted issuer, for its recorded PR identity.
+    const originalRequestRunId = target.original && data.source.channel === "pr" ? target.original.requestRunId : undefined;
+    const build = target.original ? await this.originalBuild(data.source, routineId, originalRequestRunId) : await this.builds.resolve(data.source, routineId);
     if (build.headSha !== target.expectedHeadSha || build.archive?.sha256 !== data.archiveSha256 || build.availability !== "available")
       fail("Published build does not match the candidate");
     const binding: TestContinuationBinding = { occurrenceId: grant.occurrenceId, agentRunId: grant.agentRunId,
       candidate: grant.candidate, ...(grant.caseBinding ? { caseBinding: grant.caseBinding } : {}), executionAttempt, ...(retryReason ? { retryReason } : {}), expectedHeadSha: target.expectedHeadSha,
       ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
-    const request: TestDispatchInput = { ...data, idempotencyKey };
+    const request: TestDispatchInput = { ...data, idempotencyKey, ...(originalRequestRunId !== undefined ? { originalRequestRunId } : {}) };
     if (!this.builds.findExisting) throw new TestDispatchError(503, "Trusted request reconciliation is unavailable");
     const since = target.requestNotBefore && Date.parse(target.requestNotBefore) > Date.parse(build.createdAt)
       ? target.requestNotBefore : build.createdAt;
-    const existing = await this.builds.findExisting(request, since, excludeRequestRunIds);
+    // An original-target rerun is a fresh execution of the recorded artifact: adopting an
+    // existing request could return the original (pre-repair) run as its own result.
+    const existing = target.original ? null : await this.builds.findExisting(request, since, excludeRequestRunIds);
     if (!existing && target.automaticExpected && executionAttempt === 1)
       throw new TestDispatchError(503, "Waiting for the existing automatic request; no duplicate was sent");
     await this.dispatch.create(request, `routine-fixer:${grant.agentRunId}`, binding, existing ?? undefined, () => this.checkLease(grant, routineId));

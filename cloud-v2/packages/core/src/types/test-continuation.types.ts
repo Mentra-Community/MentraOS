@@ -2,11 +2,19 @@ import { z } from "zod";
 import { testFailureOccurrenceIdSchema } from "./test-failure.types";
 import { testDispatchInputSchema, testRoutineIdSchema } from "./test-dispatch.types";
 
-export const continuationCandidateSchema = z.object({
-  repository: z.enum(["Mentra-Community/MentraOS", "Mentra-Community/Mentra-Automated-Testing"]),
-  pullRequest: z.number().int().positive().safe(),
-  headSha: z.string().regex(/^[a-f0-9]{40}$/),
-}).strict();
+const candidateRepository = z.enum(["Mentra-Community/MentraOS", "Mentra-Community/Mentra-Automated-Testing"]);
+const candidateHead = z.string().regex(/^[a-f0-9]{40}$/);
+/**
+ * A reviewed PR candidate, or `target: "original"`: the occurrence's exact recorded
+ * source and published artifact, for a diagnostic/reproduction rerun or a rerun
+ * after a state-only repair. The original target never names a PR or a newer head.
+ */
+export const continuationCandidateSchema = z.union([
+  z.object({ repository: candidateRepository, pullRequest: z.number().int().positive().safe(), headSha: candidateHead }).strict(),
+  z.object({ repository: candidateRepository, headSha: candidateHead, target: z.literal("original") }).strict(),
+]);
+export const isOriginalCandidate = (candidate: ContinuationCandidate): candidate is Extract<ContinuationCandidate, { target: "original" }> =>
+  "target" in candidate;
 /**
  * Same-case adoption of a shared, reviewed harness candidate. The controller signs it
  * only from its own case record; the lease callback re-verifies case membership,
@@ -27,7 +35,7 @@ export const continuationGrantSchema = z.object({
   leaseGeneration: z.number().int().positive().safe(),
   leaseTokenSha256: z.string().regex(/^[a-f0-9]{64}$/),
   routineIds: z.array(testRoutineIdSchema).min(1).max(4).refine(ids => new Set(ids).size === ids.length),
-  actions: z.array(z.enum(["request-routine", "read-results"])).min(1).max(2).refine(ids => new Set(ids).size === ids.length),
+  actions: z.array(z.enum(["request-routine", "read-results", "repair-state"])).min(1).max(3).refine(ids => new Set(ids).size === ids.length),
   expires: z.number().int().positive().safe(),
 }).strict();
 export type ContinuationGrant = z.infer<typeof continuationGrantSchema>;

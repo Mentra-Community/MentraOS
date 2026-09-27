@@ -128,11 +128,12 @@ function prIdentity(pr, baseSha) {
 }
 
 function verifiedApp(receipt, pr, attempts, otaManifestUrl) {
+  // `pr` is the fixed identity {number, headSha} the build must belong to.
   const app = receipt.app
   if (
     !app ||
     app.pr !== pr.number ||
-    app.headSha !== pr.head.sha ||
+    app.headSha !== pr.headSha ||
     app.buildSha !== receipt.buildSha ||
     app.runId !== receipt.runId ||
     app.runAttempt !== attempts.buildAttempt ||
@@ -177,6 +178,77 @@ function verifiedApp(receipt, pr, attempts, otaManifestUrl) {
   )
 }
 
+/**
+ * Verify one exact published PR build for a fixed PR identity {number, headSha, baseSha, baseRef}:
+ * producer run, publication attempt, receipt, backend, merge commit, archive availability and OTA pin.
+ * The caller chooses the identity: the current PR for ordinary requests, or an authenticated
+ * original request for an exact replay. Returns {selection} or {skip: reason}; throws on mismatch.
+ */
+export async function verifyPublishedPrBuild({github, context, routine, pr, run, fetchImpl, publicationAttempt}) {
+  const repository = `${context.repo.owner}/${context.repo.repo}`
+  const registered = deviceRoutine(routine)
+  const android = registered.platform === "android"
+  const producer = routineProducer(routine)
+  const platformName = android ? "Android" : "Mac"
+  const {number, headSha, baseSha, baseRef} = pr
+  if (run.path !== `.github/workflows/${producer}` || !positive(run.id))
+    throw new Error(`Unexpected ${platformName} producer identity`)
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo,
+    run_id: run.id,
+    filter: "all",
+    per_page: 100,
+  })
+  const attempts = successfulRoutinePublication(routine, run, jobs)
+  if (!attempts) return {skip: "Build/publication has not completed successfully"}
+  if (publicationAttempt && attempts.publicationAttempt !== publicationAttempt)
+    return {skip: "Selected attempt retained another publication; no substitute was selected"}
+  const receiptUrl = artifactUrl(
+    repository,
+    "pr-builds",
+    (android ? androidReceiptName : iosReceiptName)(number, headSha, run.id, attempts.publicationAttempt),
+  )
+  const receipt = await jsonArtifact(receiptUrl, fetchImpl)
+  const assets = (android ? validateAndroidReceipt : validateIosReceipt)(receipt.value, {
+    pr: number,
+    sha: headSha,
+    runId: run.id,
+    attempt: attempts.publicationAttempt,
+  })
+  const otaUrl = artifactUrl(repository, "pr-builds", `ota-pr-${number}-${headSha}.json`)
+  const app = android ? receipt.value.app : verifiedApp(receipt.value, {number, headSha}, attempts, otaUrl)
+  if (app.backend !== baseRef) throw new Error(`${platformName} app backend differs from its PR base`)
+  if (android && receipt.value.baseSha !== baseSha) throw new Error("Android receipt base is no longer current")
+  const commit = (await github.rest.repos.getCommit({...context.repo, ref: receipt.value.buildSha})).data
+  if (
+    commit.sha !== receipt.value.buildSha ||
+    commit.parents?.length !== 2 ||
+    commit.parents[0].sha !== baseSha ||
+    commit.parents[1].sha !== headSha
+  )
+    throw new Error(`${platformName} build is not the current PR head merged with its current base`)
+  const asset = android ? assets.android : assets.mac
+  const archive = {url: artifactUrl(repository, "pr-builds", asset.name), ...asset}
+  const available = await fetchImpl(archive.url, {
+    method: "HEAD",
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!available.ok || Number(available.headers.get("content-length")) !== archive.size)
+    throw new Error(`Published ${platformName} archive is missing or its size differs from the receipt`)
+  const ota = await jsonArtifact(otaUrl, fetchImpl)
+  readOtaTargets(ota.value, number, headSha)
+  return {selection: {
+    platform: registered.platform,
+    producer: {workflow: `.github/workflows/${producer}`, runId: run.id, ...attempts, url: run.html_url},
+    receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size},
+    app,
+    archive,
+    otaManifest: {url: ota.url, sha256: ota.sha256, size: ota.size},
+    build: {headSha, baseSha, buildSha: receipt.value.buildSha},
+  }}
+}
+
 /** Resolve only. This never downloads/executes a PR archive, sends a comment, or controls hardware. */
 export async function createRoutineRequest({
   github,
@@ -189,10 +261,15 @@ export async function createRoutineRequest({
   source,
   sourceBuildRunId,
   sourcePublicationAttempt,
+  originalRequestRunId,
   fetchImpl = fetch,
   now = () => new Date(),
+  readZip,
 }) {
   if (channel !== "pr") {
+    // Coordinated originals are already selected by their exact historical source run and attempt.
+    if (originalRequestRunId !== undefined && originalRequestRunId !== "")
+      throw new Error("Original request replay applies to PR requests; select a coordinated original by its exact source")
     const {createCoordinatedRoutineRequest} = await import("./coordinated-routine-request.mjs")
     return createCoordinatedRoutineRequest({github, context, number, channel, routine, requestOrigin, source,
       sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode, fetchImpl, now})
@@ -224,6 +301,14 @@ export async function createRoutineRequest({
     throw new Error("Stable manual requests must use the trusted dev workflow")
   if (selectedSource && context.eventName !== "workflow_dispatch")
     throw new Error("Source publication selectors require the trusted dev workflow dispatch")
+  const {originalRequestRun, createOriginalReplayRequest} = await import("./original-routine-request.mjs")
+  const originalRun = originalRequestRun(originalRequestRunId)
+  if (originalRun) {
+    // An exact original replay: only an explicit trusted dev dispatch, never a label or bootstrap event.
+    if (context.eventName !== "workflow_dispatch" || authorization !== "workflow-dispatch" || selectedSource)
+      throw new Error("An original replay requires an explicit trusted dev workflow_dispatch without a build selector")
+    return createOriginalReplayRequest({github, context, number, routine, source, requestRunId: originalRun, fetchImpl, now, readZip})
+  }
   if (
     context.eventName === "pull_request" &&
     (source.ref !== `refs/pull/${number}/merge` || context.payload.pull_request?.number !== number)
@@ -307,64 +392,13 @@ export async function createRoutineRequest({
     const candidate = {runId: run.id, reason: "Build/publication has not completed successfully"}
     request.attempts.push(candidate)
     try {
-      if (run.path !== `.github/workflows/${producer}` || !positive(run.id))
-        throw new Error(`Unexpected ${platformName} producer identity`)
-      const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-        ...context.repo,
-        run_id: run.id,
-        filter: "all",
-        per_page: 100,
-      })
-      const attempts = successfulRoutinePublication(routine, run, jobs)
-      if (!attempts) continue
-      if (selectedSource && attempts.publicationAttempt !== selectedSource.publicationAttempt) {
-        candidate.reason = "Selected attempt retained another publication; no substitute was selected"
+      const verified = await verifyPublishedPrBuild({github, context, routine, run, fetchImpl,
+        pr: {number, headSha: pr.head.sha, baseSha, baseRef: pr.base.ref}, publicationAttempt: selectedSource?.publicationAttempt})
+      if (verified.skip) {
+        candidate.reason = verified.skip
         continue
       }
-      const receiptUrl = artifactUrl(
-        repository,
-        "pr-builds",
-        (android ? androidReceiptName : iosReceiptName)(number, pr.head.sha, run.id, attempts.publicationAttempt),
-      )
-      const receipt = await jsonArtifact(receiptUrl, fetchImpl)
-      const assets = (android ? validateAndroidReceipt : validateIosReceipt)(receipt.value, {
-        pr: number,
-        sha: pr.head.sha,
-        runId: run.id,
-        attempt: attempts.publicationAttempt,
-      })
-      const otaUrl = artifactUrl(repository, "pr-builds", `ota-pr-${number}-${pr.head.sha}.json`)
-      const app = android ? receipt.value.app : verifiedApp(receipt.value, pr, attempts, otaUrl)
-      if (app.backend !== pr.base.ref) throw new Error(`${platformName} app backend differs from its PR base`)
-      if (android && receipt.value.baseSha !== baseSha) throw new Error("Android receipt base is no longer current")
-      const commit = (await github.rest.repos.getCommit({...context.repo, ref: receipt.value.buildSha})).data
-      if (
-        commit.sha !== receipt.value.buildSha ||
-        commit.parents?.length !== 2 ||
-        commit.parents[0].sha !== baseSha ||
-        commit.parents[1].sha !== pr.head.sha
-      )
-        throw new Error(`${platformName} build is not the current PR head merged with its current base`)
-      const asset = android ? assets.android : assets.mac
-      const archive = {url: artifactUrl(repository, "pr-builds", asset.name), ...asset}
-      const available = await fetchImpl(archive.url, {
-        method: "HEAD",
-        redirect: "error",
-        signal: AbortSignal.timeout(30_000),
-      })
-      if (!available.ok || Number(available.headers.get("content-length")) !== archive.size)
-        throw new Error(`Published ${platformName} archive is missing or its size differs from the receipt`)
-      const ota = await jsonArtifact(otaUrl, fetchImpl)
-      readOtaTargets(ota.value, number, pr.head.sha)
-      request.selection = {
-        platform: registered.platform,
-        producer: {workflow: `.github/workflows/${producer}`, runId: run.id, ...attempts, url: run.html_url},
-        receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size},
-        app,
-        archive,
-        otaManifest: {url: ota.url, sha256: ota.sha256, size: ota.size},
-        build: {headSha: pr.head.sha, baseSha, buildSha: receipt.value.buildSha},
-      }
+      request.selection = verified.selection
       candidate.reason = `Verified published ${platformName} receipt, archive availability, OTA pin and merge provenance`
       break
     } catch (error) {

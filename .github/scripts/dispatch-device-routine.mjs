@@ -269,10 +269,16 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
     // Every schema 1 request records its PR base and selected app backend; they must agree.
     const baseRef = request.pullRequest.baseRef
     requireThat(admittedPrBase(baseRef) && request.selection.app?.backend === baseRef, "Ready selection destination is not admitted")
-    const pr = await currentPr(github, context, request.pullRequest.number, request.pullRequest.headSha,
-      request.routine.id, request.routine.authorization !== "workflow-dispatch")
-    if (!pr || pr.base.ref !== baseRef || await currentBaseSha(github, context, baseRef) !== request.pullRequest.baseSha)
-      return {status: "not-dispatched", reason: "Request was superseded, retargeted or PR opt-in was removed"}
+    if (request.original !== undefined) {
+      // An exact replay is bound to its re-read original request and published build, not to today's PR.
+      const {verifyOriginalReplay} = await import("./original-routine-request.mjs")
+      await verifyOriginalReplay({github, context, request, fetchImpl})
+    } else {
+      const pr = await currentPr(github, context, request.pullRequest.number, request.pullRequest.headSha,
+        request.routine.id, request.routine.authorization !== "workflow-dispatch")
+      if (!pr || pr.base.ref !== baseRef || await currentBaseSha(github, context, baseRef) !== request.pullRequest.baseSha)
+        return {status: "not-dispatched", reason: "Request was superseded, retargeted or PR opt-in was removed"}
+    }
   }
   requireThat(privateGithub, "Missing short-lived GitHub App dispatch token")
   await privateGithub.rest.actions.createWorkflowDispatch({owner: context.repo.owner, repo: PRIVATE_REPOSITORY,

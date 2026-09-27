@@ -44,9 +44,15 @@ do not substitute `dev`. Do not create staging commits just to test this system.
 
 ## Fix, publish and review
 
-1. Classify the failure before editing: product bug, harness bug, infrastructure,
-   or insufficient evidence. Fix the owning component and read its `AGENTS.md`.
-   Do not weaken assertions or add arbitrary delays to turn a failure green.
+1. Classify the failure before editing: app bug, harness bug, machine or fixture
+   state, or unknown cause. An unknown cause is permission to investigate, not a
+   verdict. Authentication failures, the wrong model or session, a malformed
+   execution result and actual tool or policy denials are stops: report them and
+   never relabel them as an app bug or an unknown cause to keep going. Fix the
+   owning component and read its `AGENTS.md`. Do not weaken assertions or add
+   arbitrary delays to turn a failure green. State-only problems follow
+   [Original-source reruns and state repairs](#original-source-reruns-and-state-repairs);
+   they need no PR.
 2. Make the smallest coherent change and run relevant regression checks. Preserve
    the original failure and explain the causal evidence in the PR, with its
    recording/screenshot/log links and any unverified behavior.
@@ -57,7 +63,12 @@ do not substitute `dev`. Do not create staging commits just to test this system.
    committer or workflow actor. Never add AI attribution trailers.
 4. Use [select-pr-routines](../select-pr-routines/SKILL.md): retain the failed
    routine's applicable `routine:<id>` label and select any additional relevant
-   coverage. Preserve existing labels and state gaps. Private harness fixes need
+   coverage. Preserve existing labels and state gaps. Label each fix PR for the
+   component it actually fixes: `bug:app` or `bug:harness`, both only when that
+   PR fixes both. Base this on the PR's diagnosis, not its repository: a MentraOS
+   change to Core, CI, request tooling or this skill can be a harness fix.
+   Record the classification through the controller before it reconciles
+   labels. Private harness fixes need
    a trusted merged-worker rerun; a label is not permission to execute unmerged
    worker code or exceed hardware/Call limits.
 5. **After every PR creation or push**, run the preloaded
@@ -70,6 +81,49 @@ do not substitute `dev`. Do not create staging commits just to test this system.
    disagreement on the PR, push, and request another Codex review. Repeat within
    the assigned budget. A failed review command or unknown verdict is not a pass;
    an approval of an earlier commit does not cover a later push.
+
+## Original-source reruns and state repairs
+
+Not every failure needs a code change. Never open a placeholder PR or invent a
+repair to unlock a rerun.
+
+- **Diagnostic or reproduction rerun.** When the evidence is not enough, rerun
+  the exact original artifact through the controller's original target: same
+  recorded source, channel, archive and routine, no PR. State why in the
+  request. It uses the normal execution budget. It requires no state change,
+  and it never substitutes a newer head, a rebuilt artifact or another
+  environment's build. A PR original replays from its recorded request even
+  after the PR was pushed, retargeted, closed or merged; a dev or staging
+  original uses its exact retained build. If the controller refuses the rerun,
+  record the refusal; do not work around it.
+- **Local original.** A local run keeps its recorded local provenance and
+  branch. It has no immutable published build to replay, so an original rerun
+  returns `unsupported_replay`. That is a capability limit, not a bad source:
+  keep investigating from its evidence, and open and verify fixes on their own
+  PR builds as usual.
+- **State-only repair.** When the machine or fixture state is wrong, request
+  the controller's registered repair: one of the named owned recovery
+  operations for that routine. Each is sent at most once. An in-flight or
+  unknown repair blocks the next one until it is reconciled. Only a completed
+  repair with the worker's owner and passing check counts as a repair. Its
+  before, action, result and check evidence come from the worker; never write
+  or reconstruct them yourself.
+- **Accepted or pending repair.** An admitted repair runs after your turn ends.
+  Record its state and end the turn through the existing continuation; read its
+  status on a later turn. Do not poll it in a loop within the same turn.
+- **No executor.** Only operations with an enrolled host adapter are available.
+  If the repair capability is absent or refused, record that and stop. Never use
+  SSH, delete locks, edit fixture files or run another script instead.
+
+If a source change would stop the state problem from recurring, make it a normal
+fix PR, classified, reviewed and rerun like any other.
+
+A repair or rerun never changes the original failure. Report each result with
+its evidence. A completed repair is not a passing test. A state-only correction
+qualifies only with a completed, checked repair followed by a passing rerun of
+the exact original. That supports a state
+cause; report both results rather than claiming more. If it still fails,
+return to investigation.
 
 ## Retest and resume
 

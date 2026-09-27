@@ -293,3 +293,23 @@ test("Admin inventory forwards the optional routine selector and rejects arbitra
   const routines = await (await api.request("/test-routines")).json() as { routines: { id: string }[] };
   expect(routines.routines.some(routine => routine.id === "no-glasses-android")).toBe(true);
 });
+
+test("only an original-target continuation may carry an original request replay; Admin input never can", async () => {
+  const replay = { ...input, originalRequestRunId: 60 };
+  const binding = (candidate: TestContinuationBinding["candidate"]) => ({ occurrenceId: "tfo_" + "a".repeat(64), agentRunId: "run_1",
+    candidate, executionAttempt: 1, expectedHeadSha: "a".repeat(40) });
+  const admin = fixture();
+  await expect(admin.service.create(replay, "admin@example.test")).rejects.toThrow("Invalid routine dispatch request");
+  const candidate = fixture();
+  await expect(candidate.service.create(replay, "routine-fixer:run_1",
+    binding({ repository: "Mentra-Community/MentraOS", pullRequest: 12, headSha: "a".repeat(40) }))).rejects.toThrow("Invalid routine dispatch request");
+  expect(admin.sends() + candidate.sends()).toBe(0);
+  const original = fixture();
+  const seen: unknown[] = [];
+  original.github.resolve = async (source, routineId, requestRunId) => { seen.push(requestRunId);
+    return { source, title: "Original", headSha: "a".repeat(40), buildUrl: "https://github.com/test", createdAt: new Date().toISOString(),
+      availability: "available", archive: { name: "o.zip", sha256: input.archiveSha256, size: 100 }, routines: [{ id: "no-glasses", available: true }] }; };
+  await original.service.create(replay, "routine-fixer:run_1", binding({ repository: "Mentra-Community/MentraOS", headSha: "a".repeat(40), target: "original" }));
+  // The dispatcher re-resolves the same original request, then sends once.
+  expect(seen).toEqual([60]); expect(original.sends()).toBe(1);
+});

@@ -150,3 +150,56 @@ test("harness candidates and adopted owners admit the exact codex or legacy owne
     await expect(f.gateway.target(f.packet, { ...f.grant, agentRunId: "run_sibling", caseBinding }, "no-glasses")).rejects.toThrow("branch");
   }
 });
+
+test("original target resolves only the occurrence's recorded source, channel, routine and artifact, with no GitHub lookup", async () => {
+  const archiveSha256 = "d".repeat(64);
+  const setup = () => {
+    const f = fixture();
+    const grant = { ...f.grant, candidate: { repository: PUB, headSha: tested, target: "original" as const } } as ContinuationGrant;
+    const packet = { ...f.packet, requestId: "routine-70-1-12-no-glasses", routine: { id: "no-glasses", version: "1" }, build: { hashes: { archiveSha256 } } } as unknown as FailurePacket;
+    return { ...f, grant, packet };
+  };
+  const pr = setup();
+  expect(await pr.gateway.target(pr.packet, pr.grant, "no-glasses")).toEqual({ query: { channel: "pr", pr: 12 }, expectedHeadSha: tested,
+    automaticExpected: false, original: { archiveSha256, requestRunId: 70 } });
+  expect(pr.calls).toEqual([]);
+  // A dev occurrence stays on dev: its recorded channel is kept, never promoted or rebuilt.
+  const dev = setup(); dev.packet.source = { schemaVersion: 1, trigger: "nightly", channel: "dev", repository: PUB, branch: "dev", headSha: tested };
+  (dev.packet as { requestId: string }).requestId = "routine-71-1-dev-no-glasses";
+  expect(await dev.gateway.target(dev.packet, dev.grant, "no-glasses")).toMatchObject({ query: { channel: "dev" }, original: { requestRunId: 71 } });
+  for (const mismatch of ["head", "repository", "routine", "archive", "local", "shared", "request", "request-channel", "request-attempt"]) {
+    const f = setup(); let routineId = "no-glasses";
+    if (mismatch === "head") f.grant.candidate.headSha = head;
+    if (mismatch === "repository") f.grant.candidate.repository = HARNESS;
+    if (mismatch === "routine") routineId = "day1-ota";
+    if (mismatch === "archive") (f.packet.build.hashes as Record<string, string>) = {};
+    if (mismatch === "local") f.packet.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: "candidate", headSha: tested };
+    if (mismatch === "shared") f.grant.caseBinding = { caseId: "mfc_" + "5".repeat(64), candidateOwnerRunId: "run_owner" };
+    // The recorded request must be the trusted issuer's first generation for this exact PR/channel and routine.
+    if (mismatch === "request") (f.packet as { requestId: string }).requestId = "local-2026-09-27";
+    if (mismatch === "request-channel") (f.packet as { requestId: string }).requestId = "routine-70-1-dev-no-glasses";
+    if (mismatch === "request-attempt") (f.packet as { requestId: string }).requestId = "routine-70-2-12-no-glasses";
+    await expect(f.gateway.target(f.packet, f.grant, routineId)).rejects.toThrow();
+    expect(f.calls).toEqual([]);
+  }
+});
+
+test("an authenticated local source is an unsupported replay, not an invalid source, and app fix PRs still verify", async () => {
+  const local = (f: ReturnType<typeof fixture>) => {
+    f.packet.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: "dev", headSha: tested };
+    (f.packet as { requestId: string }).requestId = "local-run-1";
+  };
+  // Original target and harness candidate would rerun the exact local build: 501, before any GitHub lookup.
+  const original = fixture(); local(original);
+  const originalGrant = { ...original.grant, candidate: { repository: PUB, headSha: tested, target: "original" as const } } as ContinuationGrant;
+  await expect(original.gateway.target(original.packet, originalGrant, "no-glasses")).rejects.toMatchObject({ status: 501 });
+  const harness = fixture(true); local(harness);
+  await expect(harness.gateway.target(harness.packet, harness.grant, "no-glasses")).rejects.toMatchObject({ status: 501 });
+  expect([...original.calls, ...harness.calls]).toEqual([]);
+  // An app fix PR for the recorded local branch is verified on its own PR build, as for published sources.
+  const app = fixture(); local(app); app.pr.head.ref = "codex/routine-run_123";
+  expect(await app.gateway.target(app.packet, app.grant, "no-glasses")).toMatchObject({ query: { channel: "pr", pr: 12 }, expectedHeadSha: head });
+  // Untrusted provenance remains a refusal (409), never the capability result.
+  const other = fixture(); other.packet.source = { ...other.packet.source!, repository: "someone/else" as typeof PUB };
+  await expect(other.gateway.target(other.packet, other.grant, "no-glasses")).rejects.toMatchObject({ status: 409 });
+});

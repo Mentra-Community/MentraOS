@@ -39,3 +39,21 @@ test("lease callback forwards an adopted case binding for controller verificatio
     return Response.json({ schemaVersion: 1, valid: true, agentRunId: "run-123", leaseGeneration: 3 }); }) as unknown as typeof fetch);
   expect("caseBinding" in body).toBe(false);
 });
+test("a state repair forwards its registered operation for the controller to authenticate; a rerun sends none", async () => {
+  process.env.CLOUD_REPORT_AGENT_URL = "https://agent.example.test";
+  process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = "fixture-signing-key-".repeat(3);
+  const grant = { agentRunId: "run-123", environment: "dev", occurrenceId: "tfo_" + "a".repeat(64),
+    candidate: { repository: "Mentra-Community/MentraOS", headSha: "b".repeat(40), target: "original" },
+    executionAttempt: 1, leaseGeneration: 3, leaseTokenSha256: "c".repeat(64) } as ContinuationGrant;
+  const repair = { operation: "day1.recovery", operationId: "11111111-2222-4333-a444-555555555555" };
+  let body: Record<string, unknown> = {};
+  const accept = (async (_: URL, init: RequestInit) => { body = JSON.parse(String(init.body));
+    return Response.json({ schemaVersion: 1, valid: true, agentRunId: "run-123", leaseGeneration: 3 }); }) as unknown as typeof fetch;
+  await requireContinuationLease(grant, "day1-ota", accept, repair);
+  expect(body).toMatchObject({ candidate: grant.candidate, routineId: "day1-ota", repair });
+  await requireContinuationLease(grant, "day1-ota", accept);
+  expect("repair" in body).toBe(false);
+  // An unregistered reservation is refused by the controller, never assumed.
+  await expect(requireContinuationLease(grant, "day1-ota", (async () => new Response(null, { status: 409 })) as unknown as typeof fetch, repair))
+    .rejects.toThrow("state repair was not reserved");
+});

@@ -1,7 +1,7 @@
 import { z } from "zod";
-import type { ContinuationGrant } from "../types/test-continuation.types";
+import { isOriginalCandidate, type ContinuationCandidate, type ContinuationGrant } from "../types/test-continuation.types";
 import type { TestBuildQuery } from "../types/test-dispatch.types";
-import { TestDispatchError, readTestMetadata } from "./test-builds.service";
+import { TestDispatchError, UnsupportedReplayError, readTestMetadata } from "./test-builds.service";
 import { TestRunGithubApp } from "./test-run-github-app";
 import type { TestRunService } from "./test-run.service";
 
@@ -12,6 +12,9 @@ export interface ContinuationTarget {
   expectedHarnessSha?: string;
   automaticExpected: boolean;
   requestNotBefore?: string;
+  /** Original target only: the exact recorded artifact and the request that selected it.
+   * Requests are never adopted, so the original (or any earlier) one cannot stand in for the rerun. */
+  original?: { archiveSha256: string; requestRunId: number };
 }
 export interface ContinuationSourceGateway {
   target(packet: FailurePacket, grant: ContinuationGrant, routineId: string): Promise<ContinuationTarget>;
@@ -39,8 +42,17 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
   }
   async target(packet: FailurePacket, grant: ContinuationGrant, routineId: string): Promise<ContinuationTarget> {
     const source = packet.source;
-    ensure(source?.repository === PUBLIC && source.channel !== "local", "Published app source provenance is required");
-    const candidate = grant.candidate, harness = candidate.repository === HARNESS;
+    ensure(source?.repository === PUBLIC, "Recorded app source provenance is required");
+    const candidate = grant.candidate;
+    const harness = candidate.repository === HARNESS;
+    // An authenticated local run keeps its local provenance. Rerunning its exact tested app build (the
+    // original target, or a harness candidate on that build) needs an immutable published artifact and
+    // dispatch path, which a local run does not have. That is a capability limit, not a trust failure:
+    // investigation, fix PRs and app candidate CI verification on the recorded branch remain available.
+    if (source!.channel === "local" && (isOriginalCandidate(candidate) || harness))
+      throw new UnsupportedReplayError("Unsupported replay: a local run has no immutable published artifact or dispatch path "
+        + "for its exact tested build. Investigate from its evidence and verify app fixes on their own PR builds.");
+    if (isOriginalCandidate(candidate)) return this.original(packet, grant, candidate, routineId);
     const tested = harness ? packet.build.hashes.harnessSha ?? packet.build.hashes.harnessRevision : source!.headSha;
     ensure(typeof tested === "string" && /^[a-f0-9]{40}$/.test(tested), "The tested component revision is missing");
     // Only a shared harness candidate may name another same-case anchor as its owner;
@@ -81,5 +93,22 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     // its merge to the PR's current base tip and its app to that base's backend.
     return { query: { channel: "pr", pr: pr.number }, expectedHeadSha: candidate.headSha,
       automaticExpected: pr.labels.some(label => label.name === `routine:${routineId}`) };
+  }
+  /** The occurrence's own recorded source, channel, routine and artifact. Nothing is looked
+   * up by branch or PR, so a newer head or another environment's build cannot substitute. */
+  private original(packet: FailurePacket, grant: ContinuationGrant, candidate: ContinuationCandidate, routineId: string): ContinuationTarget {
+    const source = packet.source!, archiveSha256 = packet.build.hashes.archiveSha256;
+    ensure(candidate.repository === source.repository && candidate.headSha === source.headSha,
+      "The original target is the occurrence's exact recorded source");
+    ensure(!grant.caseBinding, "The original target belongs to its own occurrence, not a shared candidate");
+    ensure(packet.routine.id === routineId, "The original target reruns only the recorded routine");
+    ensure(typeof archiveSha256 === "string" && /^[a-f0-9]{64}$/.test(archiveSha256), "The original artifact identity was not recorded");
+    // The trusted issuer's request that selected this exact build; its immutable artifact,
+    // not the caller, later names the build run and publication attempt.
+    const suffix = source.channel === "pr" ? String(source.pullRequest!.number) : source.channel;
+    const request = new RegExp(`^routine-([1-9]\\d*)-1-${suffix}-${routineId}$`).exec(packet.requestId);
+    ensure(request, "The original request identity was not recorded");
+    return { query: source.channel === "pr" ? { channel: "pr", pr: source.pullRequest!.number } : { channel: source.channel as "dev" | "staging" },
+      expectedHeadSha: source.headSha, automaticExpected: false, original: { archiveSha256: archiveSha256!, requestRunId: Number(request![1]) } };
   }
 }
