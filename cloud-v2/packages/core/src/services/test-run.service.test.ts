@@ -930,6 +930,34 @@ describe("reviewed provenance correction of an existing source-null occurrence",
     expect((await service.failureDetail(over.id)).failure.assetIds).toHaveLength(100);
   });
 
+  const COMPILED = "c".repeat(40);
+  const headVariant = (runId: string, provenance: Record<string, string>) => { const run = localRun(); run.runId = runId;
+    run.provenance = { repository: "Mentra-Community/MentraOS", ...provenance }; return run; };
+  const proposing = (p: { run: TestRun; id: string; payloadSha256: string }, headSha: string) => ({ source: { ...request(p).source, headSha } });
+
+  test("requested head binding: a reused compilation with a different mobileSourceCommit is accepted and retained separately", async () => {
+    // Ingest accepts this shape: the requested head and the (reused) mobile compilation commit legitimately differ.
+    const reused = await published(headVariant("synthetic-local-reused", { headSha: HEAD, mobileSourceCommit: COMPILED }));
+    const accepted = await submit(adminApp(), reused.run.runId, reused.id, request(reused));
+    expect(accepted.status).toBe(201);
+    expect((await accepted.json() as TestFailureProvenanceCorrection).review.corroborated).toContain("headSha");
+    expect(await service.failureDetail(reused.id)).toMatchObject({ source: { headSha: HEAD },
+      build: { hashes: { headSha: HEAD, mobileSourceCommit: COMPILED } } });
+  });
+
+  test("requested head binding: a head matching only the compilation commit contradicts the authoritative requested head", async () => {
+    const other = await published(headVariant("synthetic-local-reused-b", { headSha: HEAD, mobileSourceCommit: COMPILED }));
+    expect((await submit(adminApp(), other.run.runId, other.id, request(other, proposing(other, COMPILED)))).status).toBe(400);
+    expect(repository.runs.get(other.run.runId)!.provenanceCorrections).toBeUndefined();
+  });
+
+  test("requested head binding: without a recorded requested head, a compilation commit is not an accepted fallback", async () => {
+    const compiledOnly = await published(headVariant("synthetic-local-compiled-only", { mobileSourceCommit: COMPILED }));
+    for (const headSha of [COMPILED, HEAD])
+      expect((await submit(adminApp(), compiledOnly.run.runId, compiledOnly.id, request(compiledOnly, proposing(compiledOnly, headSha)))).status).toBe(400);
+    expect(repository.runs.get(compiledOnly.run.runId)!.provenanceCorrections).toBeUndefined();
+  });
+
   test("the correction route sits behind the existing admin gate", async () => {
     const gated = new Hono(); gated.use("*", adminAuth); gated.route("/", adminApp(null));
     const p = await published();

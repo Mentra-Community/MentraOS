@@ -15,9 +15,13 @@ export function corroborateCorrectionSource(run: TestRun, source: TestFailureSou
   const bad = (message: string): never => { throw new TestRunError(400, message); };
   if (source.channel !== run.channel) bad("source channel contradicts the accepted result");
   if (source.repository !== run.provenance.repository) bad("source repository contradicts the accepted result");
-  const heads = (["headSha", "mobileSourceCommit"] as const).map(key => run.provenance[key]).filter((value): value is string => value !== undefined);
-  if (!heads.length) bad("insufficient evidence: the accepted result records no tested head commit to corroborate the source");
-  if (heads.some(head => head !== source.headSha)) bad("source head contradicts the accepted result");
+  // The authoritative requested (tested) head is provenance.headSha: ingest binds a published source to it and continuation
+  // reads it as the tested head. mobileSourceCommit is an independent compilation identity (a reused app keeps its original
+  // compilation commit), so it is neither required to match nor accepted as a stand-in for a missing requested head.
+  const requested = run.provenance.headSha;
+  if (requested === undefined)
+    bad("insufficient evidence: the accepted result records no requested head (provenance.headSha); a compilation commit is not a source head");
+  if (requested !== source.headSha) bad("source head contradicts the accepted result's requested head");
   const corroborated = ["repository", "channel", "headSha"], asserted: string[] = [];
   if (source.pullRequest) {
     if (source.pullRequest.number !== run.prNumber) bad("source pull request contradicts the accepted result");
