@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
+import android.os.Build
 
 /**
  * Binder callbacks only capture their arguments. Session validation and all callback effects run
@@ -45,6 +46,10 @@ internal abstract class SerializedGattCallback(
     final override fun onCharacteristicChanged(
         gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
     ) {
+        // Android 13 introduced the value callback; some framework versions also call
+        // this deprecated overload for the same notification. Decoding both replays
+        // each LC3 packet and doubles recorded audio. Older Android uses this path.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
         val value = characteristic.value?.copyOf() ?: return
         dispatch(gatt) { handleCharacteristicChanged(gatt, characteristic, value) }
     }
