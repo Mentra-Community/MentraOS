@@ -13,6 +13,9 @@ const schema = new Schema({
   // Canonical occurrences and the delivery outbox share the accepted metadata
   // insert. This is not an analysis execution queue; the dev-agent owns that.
   failureOccurrences: { type: [Schema.Types.Mixed], default: undefined },
+  // Admin-reviewed provenance corrections of existing occurrences (at most one each), with
+  // their own delivery receipts. They never replace the payload, its digest or an occurrence.
+  provenanceCorrections: { type: [Schema.Types.Mixed], default: undefined },
 }, { collection: "test_runs", timestamps: true });
 schema.index({ startedAt: -1, runId: -1 });
 schema.index({ "payload.prNumber": 1, startedAt: -1 });
@@ -22,6 +25,7 @@ schema.index({ outcome: 1, startedAt: -1 });
 // phase/step pairs. Empty arrays on passing runs need no unique multikey index.
 schema.index({ "failureOccurrences.occurrenceId": 1 }, { sparse: true });
 schema.index({ "failureOccurrences.delivery.state": 1, startedAt: 1 });
+schema.index({ "provenanceCorrections.delivery.state": 1 }, { sparse: true });
 
 const assetSchema = new Schema({
   runId: { type: String, required: true },

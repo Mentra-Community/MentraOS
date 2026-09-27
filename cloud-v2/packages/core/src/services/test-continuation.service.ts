@@ -55,10 +55,10 @@ export function continuationOperationId(grant: ContinuationGrant, routineId: Tes
 }
 const fail = (message: string): never => { throw new TestDispatchError(409, message); };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-/** The grant's occurrence, with recorded source, acknowledged to this exact case anchor. */
+/** The grant's occurrence, with a recorded or admin-reviewed corrected source, acknowledged to this exact case anchor. */
 export async function acknowledgedCase(runs: Pick<Runs, "failureDetail">, grant: ContinuationGrant) {
   const packet = await runs.failureDetail(grant.occurrenceId);
-  if (packet.occurrenceId !== grant.occurrenceId || packet.sourceStatus !== "recorded" || !packet.source
+  if (packet.occurrenceId !== grant.occurrenceId || !["recorded", "corrected"].includes(packet.sourceStatus) || !packet.source
     || packet.delivery.state !== "acknowledged" || packet.delivery.agentRunId !== grant.agentRunId)
     fail("Recorded source and acknowledged case ownership are required");
   return packet;

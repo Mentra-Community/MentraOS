@@ -97,6 +97,50 @@ Only this matched durable acknowledgment clears pending delivery:
 
 An acknowledgment means the existing agent queue retained the reference. It does **not** mean the Mini accepted execution, a fix exists, a test passed or a case is resolved. A dropped acknowledgment is retried with the same identity and must return the same agentRunId. Conflicting acknowledgments are rejected. No retest or device command is issued by this code.
 
+## Reviewed provenance correction of an existing occurrence
+
+A result published without `source` stays exactly as accepted: its payload bytes, `payloadSha256`, occurrence identity, generic failure and delivery receipt are never rewritten, and Core never infers a source or backfills history. When an admin has reviewed immutable evidence that establishes the missing source, one explicit correction per occurrence can add **only** the missing source and missing diagnostic bindings, stored separately in `provenanceCorrections`.
+
+```text
+POST /api/admin/test-runs/:runId/failures/:occurrenceId/provenance-correction   (application/json, 16 KiB)
+GET  /api/admin/test-runs/:runId/failures/:occurrenceId/provenance-correction   (read-only)
+```
+
+The GET returns the exact binding a reviewer must echo — `payloadSha256`, `occurrenceRevision`, the occurrence's `delivery` receipt (its acknowledged `agentRunId`), `publishedSource` — and the stored `correction` or `null`. It never writes.
+
+```json
+{
+  "schemaVersion": 1, "confirmation": "add-reviewed-provenance", "environment": "dev",
+  "runId": "<run>", "payloadSha256": "<accepted digest>", "occurrenceId": "tfo_…", "occurrenceRevision": 1,
+  "agentRunId": "<the occurrence's acknowledged controller run>",
+  "reason": "What was reviewed and why it establishes the source (20–2000 characters).",
+  "source": { "schemaVersion": 1, "trigger": "local", "repository": "Mentra-Community/MentraOS", "channel": "local", "headSha": "<40 hex>", "branch": "dev" },
+  "diagnostics": { "assets": [{ "assetId": "<recording>", "sha256": "<declared>", "chapterId": "<non-passing chapter>" }],
+    "redaction": { "policy": "<the redaction actually reviewed for these files>", "confirmation": "reviewed-redacted-for-occurrence-access" } },
+  "review": { "evidence": [{ "assetId": "<reviewed immutable asset>", "sha256": "<declared>" }] }
+}
+```
+
+**Authorization.** The route uses the existing `adminAuth` gate (a Mentra console session whose email is on `CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`) and records that admin's `developerId` as `reviewedBy`. That proves who reviewed it, not that the source is right; the ingest token, occurrence read grants, continuation grants and the controller signing secret cannot call it, and the Mini never holds an admin session. An approval flag is not part of the schema: any unknown key is rejected.
+
+**What Core checks before storing it** (otherwise 400/404/409, nothing written):
+
+- `environment` is this Core's; `runId`, `payloadSha256`, `occurrenceId`/revision and `agentRunId` are exactly the accepted result and the occurrence's **acknowledged** delivery receipt.
+- The accepted payload has no `source` (a recorded source, even an identical one, is never replaced) and the occurrence has no correction. An identical retry returns the stored record (200); any different correction is 409.
+- `source` passes `testFailureSourceSchema` and agrees with the immutable result: channel, repository, PR number/base, and a recorded tested head (`provenance.headSha` or `mobileSourceCommit`, which must exist), plus recorded `provenance.branch`/`trigger` when present. A local run therefore stays trigger/channel `local`; it can never be relabeled as CI, Admin or a dev-channel run. The record lists `review.corroborated` fields (matched to immutable records) separately from `review.asserted` fields (for example a local run's branch), which rest on the reviewer's cited evidence.
+- Every `review.evidence` asset and every added diagnostic asset is declared by the result with that SHA-256 and uploaded with the declared size and digest. An added asset must be the video or screenshot of the named **non-passing** chapter of this run, so arbitrary assets (raw logs, passing chapters) cannot be assigned. `diagnostics` is optional, but when present it needs at least one asset and an explicit `redaction` attestation for exactly those files; a Core-generated placeholder policy (`core-generated-summary-v1`, `lifecycle-allowlist-v1`) cannot attest them, and the original failure's `redactionPolicy` is kept unchanged for its original bindings. The effective failure must bind at least one diagnostic.
+- Incident IDs cannot be added. Reports carry no authenticated association with a run or occurrence (a matching time window is not identity), so a correction never exposes an incident through an occurrence capability. Incidents the publisher assigned stay exactly as they were.
+
+**Reads.** Without a correction every response is unchanged. With a pending or acknowledged correction the occurrence-scoped packet returns the reviewed `source`, `sourceStatus: "corrected"`, effective `failure.assetIds` (original first; `incidentIds` and `redactionPolicy` unchanged), a retained `source` missing-evidence item explaining that the publisher never recorded it, and `provenanceCorrection` (ID, digest, reason, original snapshot, additions with their redaction attestation, corroborated/asserted fields, evidence references and delivery state; no reviewer identity). `evidence.complete` stays false: a correction is not a pass or full qualification. The asset route follows the effective asset list; incident routes stay limited to the original incidents. Continuation accepts a `corrected` source under the same acknowledged-anchor check. Admin run detail lists `provenanceCorrections` separately from `failureOccurrences`.
+
+**Delivery.** The existing delivery pass also sends pending corrections to the same controller origin, with the same secret, as `POST /internal/routine-failure-corrections`, `Content-Type: application/vnd.mentra.routine-failure-correction+json`, signed over `mentra-routine-failure-correction-v1\n${expires}\n${body}`:
+
+```text
+{schemaVersion:1, environment, occurrenceId, revision:1, testRunId, payloadSha256, agentRunId, correctionId, correctionSha256, source}
+```
+
+Only `{schemaVersion:1, occurrenceId, revision:1, correctionId, agentRunId, status:"accepted"}` naming the same correction and the original `agentRunId` acknowledges it. A controller 409 is recorded as a terminal `refused` state and reads fall back to the original packet; other failures stay pending with the same identity. The controller admits it on the existing row and anchor only while its source-required outcome is untouched; it never creates another occurrence, row, anchor or case.
+
 ## Validation
 
 ```sh
@@ -107,6 +151,6 @@ bunx tsc -b packages/core --pretty false
 TEST_FAILURE_MONGO_URI=mongodb://127.0.0.1:27017 bun test packages/core/src/services/test-failure.mongo.test.ts
 ```
 
-Coverage includes AI-offline persistence, metadata-plus-intent atomic insertion, legacy replay reconciliation, unchanged failed verdicts, all trigger branch mappings, invalid provenance, scoped asset reads, dropped acknowledgments and idempotent queue delivery. Physical devices and a running model are not needed.
+Coverage includes AI-offline persistence, metadata-plus-intent atomic insertion, legacy replay reconciliation, unchanged failed verdicts, all trigger branch mappings, invalid provenance, scoped asset reads, dropped acknowledgments and idempotent queue delivery, plus reviewed provenance corrections: unchanged originals, idempotent/conflicting submissions, identity/source/evidence/attestation/state refusals, refused incident additions, preserved original incidents, the admin gate, the distinct delivery signature, lost and mismatched correction acknowledgments and terminal refusal. Physical devices and a running model are not needed.
 
-The real Mongo suite checks concurrent metadata ingestion, competing acknowledgments, passing runs with no occurrence and reconciliation after a prior accepted row. It refuses non-loopback URLs and always uses its own database.
+The real Mongo suite checks concurrent metadata ingestion, competing acknowledgments, passing runs with no occurrence, reconciliation after a prior accepted row, and concurrent competing corrections resolving to one conditional append beside the untouched payload and occurrence. It refuses non-loopback URLs and always uses its own database.

@@ -13,6 +13,11 @@ export function signTestFailureDelivery(body: string, expires: number, secret: s
   return createHmac("sha256", secret).update(`mentra-routine-failure-v1\n${expires}\n${body}`).digest("hex");
 }
 
+/** Same secret and transport as occurrence delivery, under its own purpose so neither body can stand in for the other. */
+export function signTestFailureCorrectionDelivery(body: string, expires: number, secret: string): string {
+  return createHmac("sha256", secret).update(`mentra-routine-failure-correction-v1\n${expires}\n${body}`).digest("hex");
+}
+
 const readGrantSchema = z.object({
   purpose: z.literal("mentra-test-failure-read-v1"),
   environment: z.enum(["dev", "staging", "prod"]), occurrenceId: testFailureOccurrenceIdSchema,

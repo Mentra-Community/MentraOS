@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import { TestRunModel } from "../models/test-run.model";
 import type { TestRun } from "../types/test-run.types";
 import { MongoTestRunRepository, TestRunService } from "./test-run.service";
+import { TestFailureCorrectionService } from "./test-failure-correction.service";
 
 // Optional real Mongo proof; never use an existing database or non-loopback host.
 const uri = process.env.TEST_FAILURE_MONGO_URI;
@@ -64,5 +65,56 @@ describe.skipIf(!uri)("Mongo failure occurrence durability", () => {
     const pending = await repository.pendingFailures(10);
     expect(pending.flatMap(item => item.failureOccurrences ?? []).find(item => item.occurrenceId === id)?.delivery)
       .toMatchObject({ state: "pending", lastAttemptAt: expect.any(String) });
+  });
+
+  test("a reviewed correction is one conditional append beside the untouched acceptance, and settles only to its anchor", async () => {
+    const head = "d".repeat(40), video = "a".repeat(64), meta = "b".repeat(64);
+    const run: TestRun = { ...fixture("correction"), channel: "local", outcome: "blocked", provenance: { repository: "Mentra-Community/MentraOS", headSha: head },
+      chapters: [{ id: "gate", instruction: "Press Back", phase: "test", status: "failed", videoAssetId: "gate-video" }],
+      assets: [{ assetId: "gate-video", kind: "video", contentType: "video/mp4", filename: "gate.mp4", sizeBytes: 10, sha256: video },
+        { assetId: "meta", kind: "metadata", contentType: "application/json", filename: "meta.json", sizeBytes: 5, sha256: meta }] };
+    const ingested = await new TestRunService().ingest(run), id = ingested.occurrenceIds[0]!;
+    const repository = new MongoTestRunRepository();
+    for (const asset of run.assets) await repository.insertAsset({ runId: run.runId, assetId: asset.assetId, storageKey: `k/${asset.assetId}`,
+      sizeBytes: asset.sizeBytes, sha256: asset.sha256 });
+    await new TestRunService().acknowledgeFailure(id, "anchor_run");
+    const before = await TestRunModel.findOne({ runId: run.runId }).lean();
+    const request = (reason: string) => ({ schemaVersion: 1, confirmation: "add-reviewed-provenance", environment: "dev", runId: run.runId,
+      payloadSha256: ingested.payloadSha256, occurrenceId: id, occurrenceRevision: 1, agentRunId: "anchor_run", reason,
+      source: { schemaVersion: 1, trigger: "local", repository: "Mentra-Community/MentraOS", channel: "local", headSha: head, branch: "dev" },
+      diagnostics: { assets: [{ assetId: "gate-video", sha256: video, chapterId: "gate" }],
+        redaction: { policy: "routine-diagnostics-v1", confirmation: "reviewed-redacted-for-occurrence-access" } },
+      review: { evidence: [{ assetId: "meta", sha256: meta }] } });
+    const service = () => new TestFailureCorrectionService(new MongoTestRunRepository(), () => "dev" as const);
+    const results = await Promise.allSettled([
+      ...Array.from({ length: 6 }, () => service().submit(run.runId, id, request("Reviewed launcher metadata for this local run."), "admin_a")),
+      ...Array.from({ length: 3 }, (_, index) => service().submit(run.runId, id, request(`A competing, different review conclusion ${index}.`), "admin_b")),
+    ]);
+    const kept = (await TestRunModel.findOne({ runId: run.runId }).lean())!;
+    expect(kept.provenanceCorrections).toHaveLength(1);
+    const winner = (kept.provenanceCorrections as Array<{ correctionSha256: string; reason: string }>)[0]!;
+    for (const result of results) {
+      if (result.status === "fulfilled") expect(result.value.correction.correctionSha256).toBe(winner.correctionSha256);
+      else expect(result.reason).toMatchObject({ status: 409 });
+    }
+    expect({ payload: kept.payload, payloadSha256: kept.payloadSha256, failureOccurrences: kept.failureOccurrences })
+      .toEqual({ payload: before!.payload, payloadSha256: before!.payloadSha256, failureOccurrences: before!.failureOccurrences });
+    const correctionId = `tpc_${winner.correctionSha256}`;
+    await repository.noteProvenanceCorrectionAttempt(correctionId);
+    expect((await repository.pendingProvenanceCorrections(10)).find(item => item.correctionId === correctionId)?.delivery)
+      .toMatchObject({ state: "pending", lastAttemptAt: expect.any(String) });
+    await expect(new TestRunService().acknowledgeProvenanceCorrection(correctionId, "other_run")).rejects.toMatchObject({ status: 409 });
+    await new TestRunService().acknowledgeProvenanceCorrection(correctionId, "anchor_run");
+    await new TestRunService().acknowledgeProvenanceCorrection(correctionId, "anchor_run");
+    await new TestRunService().refuseProvenanceCorrection(correctionId); // Settled receipts never change.
+    const packet = await new TestRunService().failureDetail(id);
+    expect(packet).toMatchObject({ sourceStatus: "corrected", source: request("x").source, delivery: { state: "acknowledged", agentRunId: "anchor_run" },
+      provenanceCorrection: { correctionId, delivery: { state: "acknowledged" } }, failure: { assetIds: ["gate-video"] } });
+    // An exact replay of the accepted result leaves the correction and receipts untouched.
+    const settled = (await TestRunModel.findOne({ runId: run.runId }).lean())!;
+    await new TestRunService().ingest(run);
+    const replayed = (await TestRunModel.findOne({ runId: run.runId }).lean())!;
+    expect({ corrections: replayed.provenanceCorrections, occurrences: replayed.failureOccurrences, payload: replayed.payload })
+      .toEqual({ corrections: settled.provenanceCorrections, occurrences: settled.failureOccurrences, payload: before!.payload });
   });
 });
