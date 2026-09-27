@@ -7,6 +7,7 @@ import { TEST_REPAIR_OPERATIONS, testRepairRequestSchema, testRepairStatusSchema
 import { TestDispatchError } from "./test-builds.service";
 import { requireContinuationLease } from "./test-continuation-lease";
 import { acknowledgedCase } from "./test-continuation.service";
+import { configuredTestRepairExecutor } from "./test-repair.http";
 import { TestRunService } from "./test-run.service";
 
 interface StoredRepair { inputSha256: string; receipt: TestRepairReceipt }
@@ -70,9 +71,9 @@ export interface TestRepairExecutor {
   status(receipt: TestRepairReceipt): Promise<unknown>;
 }
 /**
- * No remotely invocable executor exists yet. Each private recovery is an operator-run
- * worker command with host-local run paths, and Day1 recovery additionally requires
- * isolated host maintenance. A private broker companion must provide this interface.
+ * The default when no executor is configured: nothing is sent and every repair is 501.
+ * The signed HTTP executor (test-repair.http.ts) replaces it only when configured with an
+ * explicit, enrolled operation allowlist.
  */
 export const absentTestRepairExecutor: TestRepairExecutor = {
   supports: () => false,
@@ -86,13 +87,15 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 /** Registered state repairs for one case occurrence: authenticated, deduplicated sends and executor status. Not a queue. */
 export class TestRepairService {
   constructor(private readonly runs: Pick<TestRunService, "failureDetail"> = new TestRunService(),
-    private readonly executor: TestRepairExecutor = absentTestRepairExecutor,
+    // The configured signed HTTP executor, or absent (501) unless explicitly configured and allowlisted.
+    private readonly executor: TestRepairExecutor = configuredTestRepairExecutor() ?? absentTestRepairExecutor,
     private readonly repository: TestRepairRepository = new MongoTestRepairRepository(),
     private readonly checkLease: typeof requireContinuationLease = requireContinuationLease) {}
 
   async request(grant: ContinuationGrant, input: unknown): Promise<TestRepairView> {
     const request = testRepairRequestSchema.parse(input), candidate = grant.candidate;
     if (!isOriginalCandidate(candidate)) fail("A state repair is bound to the occurrence's original target");
+    if (grant.executionAttempt !== 1) fail("A state repair is bound to execution attempt 1");
     if (!grant.routineIds.includes(request.routineId)) fail("Routine is outside this capability");
     if (TEST_REPAIR_OPERATIONS[request.operation].routineId !== request.routineId) fail("This repair does not belong to the routine");
     const source = (await acknowledgedCase(this.runs, grant)).source!;
@@ -112,7 +115,10 @@ export class TestRepairService {
     // A missing capability sends nothing and does not burn the registered operation ID.
     if (!this.executor.supports(request.operation))
       throw new TestDispatchError(501, "No owned executor accepts this state repair; nothing was sent");
-    const receipt: TestRepairReceipt = { repairId: request.operationId, request, binding, createdAt: new Date().toISOString(), sendState: "sending" };
+    // The verified lease travels with the one send so the executor can prove it at acceptance.
+    const lease: TestRepairReceipt["lease"] = { environment: grant.environment, executionAttempt: 1,
+      leaseGeneration: grant.leaseGeneration, leaseTokenSha256: grant.leaseTokenSha256 };
+    const receipt: TestRepairReceipt = { repairId: request.operationId, request, binding, lease, createdAt: new Date().toISOString(), sendState: "sending" };
     const inserted = await this.repository.insert({ inputSha256, receipt });
     if (!inserted.created) return replay(inserted.stored);
     let outcome: SendOutcome | null;
@@ -154,16 +160,17 @@ export class TestRepairService {
     if (receipt.sendState === "rejected") return { ...base, state: "rejected",
       message: `The executor rejected this repair: ${receipt.rejectionReason ?? "no reason was given"}. Nothing ran.` };
     const observed = await this.observe(receipt);
+    // A malformed, other-operation or inconsistent answer is a refusal in every state, including an
+    // uncertain send: it neither settles the send nor proves anything, and the receipt is unchanged.
+    if ("problem" in observed && observed.problem === "invalid")
+      throw new TestDispatchError(502, "Repair executor status is malformed, names another operation, or claims completion without its owner and a passing check");
     if (receipt.sendState !== "accepted") {
       // An uncertain send is settled only by the executor naming this exact operation. It is never resent.
-      if (!("status" in observed) || observed.status.state === "unknown") return { ...base, state: receipt.sendState,
+      if ("problem" in observed || observed.status.state === "unknown") return { ...base, state: receipt.sendState,
         message: "The send outcome is not confirmed. It is never resent; keep this operation ID and reconcile before any other repair." };
       await this.repository.reconcile(receipt.repairId);
     }
-    if ("problem" in observed) {
-      if (observed.problem === "unavailable") return { ...base, state: "accepted", message: "Accepted; the executor's current status is unavailable. Refresh later." };
-      throw new TestDispatchError(502, "Repair executor status is malformed, names another operation, or claims completion without its owner and a passing check");
-    }
+    if ("problem" in observed) return { ...base, state: "accepted", message: "Accepted; the executor's current status is unavailable. Refresh later." };
     const status = observed.status;
     return { ...base, ...status, message: status.state === "completed" ? "Completed with the executor's passing check."
       : ["failed", "rejected"].includes(status.state) ? "Ended without a repaired state. The original failure is unchanged."

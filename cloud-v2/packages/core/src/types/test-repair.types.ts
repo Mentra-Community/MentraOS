@@ -47,6 +47,12 @@ export interface TestRepairReceipt {
   repairId: string;
   request: TestRepairRequest;
   binding: { occurrenceId: string; agentRunId: string; candidate: ContinuationCandidate; caseBinding?: ContinuationCaseBinding };
+  /**
+   * The verified grant's lease at request time, so the executor can prove the same live lease at
+   * acceptance. Not part of the stable input digest or the bound identity: replays under a renewed
+   * lease still reach the same operation, and only the original send carries it.
+   */
+  lease: { environment: "dev" | "staging" | "prod"; executionAttempt: 1; leaseGeneration: number; leaseTokenSha256: string };
   createdAt: string;
   sendState: "sending" | "accepted" | "unknown" | "rejected";
   rejectionReason?: string;

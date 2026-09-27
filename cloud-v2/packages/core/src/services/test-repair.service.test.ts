@@ -91,16 +91,22 @@ test("an uncertain send is reconciled read-only from the executor's answer about
   expect((await f.service.request(grant, request)).state).toBe("unknown");
   expect((await f.service.detail(grant, request.operationId)).state).toBe("unknown");
   expect(f.rows.get(request.operationId)!.receipt.sendState).toBe("unknown");
-  // Missing, malformed, other-operation, executor-uncertain or unproven-completion answers settle nothing.
+  // An executor that itself does not know the operation settles nothing.
+  f.status(about({ state: "unknown" }));
+  expect((await f.service.detail(grant, request.operationId)).state).toBe("unknown");
+  expect((await f.service.request(grant, request)).state).toBe("unknown");
+  // Missing, malformed, other-operation or unproven-completion answers are a 502 refusal even while the
+  // send is uncertain; they neither settle nor prove anything, and the receipt stays unknown.
   const answers: unknown[] = [null, { state: "running", owner }, about({ state: "running", repairId: "99999999-2222-4333-a444-555555555555" }),
-    about({ state: "running", operation: "android.sign-in-recovery" }), about({ state: "unknown" }),
+    about({ state: "running", operation: "android.sign-in-recovery" }),
     about({ state: "completed", owner, evidence: evidence(false) }), about({ state: "completed", evidence: evidence(true) })];
   for (const answer of answers) {
     f.status(answer);
-    expect((await f.service.detail(grant, request.operationId)).state).toBe("unknown");
-    expect((await f.service.request(grant, request)).state).toBe("unknown");
+    await expect(f.service.detail(grant, request.operationId)).rejects.toMatchObject({ status: 502 });
+    await expect(f.service.request(grant, request)).rejects.toMatchObject({ status: 502 });
   }
   expect(f.rows.get(request.operationId)!.receipt.sendState).toBe("unknown");
+  expect(f.rows.get(request.operationId)!.receipt.reconciledAt).toBeUndefined();
   // The executor then reports this exact operation: repeated reads advance the recorded truth.
   f.status(about({ state: "running", owner }));
   expect(await f.service.detail(grant, request.operationId)).toMatchObject({ state: "running", owner });
@@ -117,7 +123,9 @@ test("a send interrupted before its acknowledgement reconciles from the executor
   const f = fixture();
   // A crash between the durable send fence and the executor reply leaves `sending`.
   f.rows.set(request.operationId, { inputSha256: "", receipt: { repairId: request.operationId, request: request as TestRepairReceipt["request"],
-    binding: { occurrenceId, agentRunId: "run_123", candidate: grant.candidate }, createdAt: "2026-09-27T00:00:00Z", sendState: "sending" } });
+    binding: { occurrenceId, agentRunId: "run_123", candidate: grant.candidate },
+    lease: { environment: "dev", executionAttempt: 1, leaseGeneration: 1, leaseTokenSha256: "e".repeat(64) },
+    createdAt: "2026-09-27T00:00:00Z", sendState: "sending" } });
   f.status(new Error("offline"));
   const view = await f.service.detail(grant, request.operationId);
   expect(view.state).toBe("sending");
