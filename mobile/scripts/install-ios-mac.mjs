@@ -280,6 +280,8 @@ async function installOwnedBuild(
   let staging
   let installedNew = false
   let preserveRecovery = false
+  let installed
+  let launchOutput
   const previous = path.join(lock, "previous.app")
   try {
     staging = await mkdtemp(path.join(root, ".staging-"))
@@ -339,7 +341,7 @@ async function installOwnedBuild(
       path: launcher,
       sha256: await hash(launcher),
     }
-    const installed = {
+    installed = {
       ...manifest,
       ...identity,
       installationLauncher,
@@ -366,10 +368,9 @@ async function installOwnedBuild(
         )
       }
       console.log(output)
-      await afterLaunch(output)
+      launchOutput = output
     }
     console.log(`Installed app: ${destination}\nInstalled evidence: ${path.join(root, "installed-build.json")}`)
-    return installed
   } catch (error) {
     // Roll back a failed filesystem replacement. If launching the verified new
     // app times out on a permission prompt, leave it installed for the user.
@@ -389,6 +390,10 @@ async function installOwnedBuild(
       }
     }
   }
+  // Hand the lease to the launched app only after cleanup succeeded; until then the installer keeps its retained
+  // lease, so a cleanup failure leaves recoverable custody. The launcher's single output is reused, never relaunched.
+  if (launchOutput !== undefined) await afterLaunch(launchOutput)
+  return installed
 }
 
 if (import.meta.main) {

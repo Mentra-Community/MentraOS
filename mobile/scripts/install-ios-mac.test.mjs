@@ -72,7 +72,7 @@ async function glassesAdmissionCase(mode) {
     import {syncBuiltinESMExports} from "node:module";
     import {createHash} from "node:crypto";
     import {cpSync, writeFileSync} from "node:fs";
-    import {access, mkdir, readFile, readlink, symlink, writeFile} from "node:fs/promises";
+    import fsp, {access, mkdir, readFile, readlink, symlink, writeFile} from "node:fs/promises";
     import path from "node:path";
     const [installerURL, ownershipURL, mode] = process.argv.slice(1);
     Object.defineProperty(process, "platform", {value: "darwin"});
@@ -124,6 +124,14 @@ async function glassesAdmissionCase(mode) {
       if (name === launcherPath) return "fixture launcher";
       throw new Error("Unexpected real command: " + name);
     };
+    // Cleanup of the installation's transaction lock fails after a successful launch.
+    if (mode === "launch-cleanup-failure") {
+      const {rm} = fsp;
+      fsp.rm = async (file, options) => {
+        if (String(file).endsWith("/.install-lock")) throw new Error("fake cleanup failure");
+        return rm(file, options);
+      };
+    }
     syncBuiltinESMExports();
     const {installBuild} = await import(installerURL);
     const {acquireAppOwnership, readLockState} = await import(ownershipURL);
@@ -166,6 +174,22 @@ async function glassesAdmissionCase(mode) {
         fixtureID: "mac-03be"}}), /Mentra is owned by a test or installation/);
       assert.equal(JSON.parse(await readFile(appLock, "utf8")).token, kept.token);
       assert.deepEqual(calls.filter((call) => call.name === launcherPath && call.args[0] !== "--quit").length, 1);
+      process.exit(0);
+    } else if (mode === "launch-cleanup-failure") {
+      // The app was launched once, but installation cleanup failed: the installer keeps its retained lease, which
+      // was not handed to the app, so it stays held even after that app exits.
+      await assert.rejects(installBuild(manifestPath, options), /Installation cleanup failed/);
+      assert.equal(calls.filter((call) => call.name === launcherPath && call.args[0] !== "--quit").length, 1);
+      const kept = await readFile(appLock, "utf8");
+      quit(launched); // the app exits; a different process then tries to take the app lock
+      const other = shell(JSON.stringify(process.execPath) + " --input-type=module --eval " + JSON.stringify(
+        "const {acquireAppOwnership} = await import(process.argv[1]); " +
+        "await acquireAppOwnership(process.argv[2]).then(() => console.log('ACQUIRED'), (error) => console.log('REFUSED ' + error.message));") +
+        " " + JSON.stringify(ownershipURL) + " " + JSON.stringify(folder));
+      assert.match(other, /^REFUSED Mentra is owned by a test or installation/);
+      assert.equal(await readFile(appLock, "utf8"), kept);
+      const owner = JSON.parse(kept);
+      assert.deepEqual([owner.pid, owner.retainOnExit, owner.launchedApp, owner.reservation], [process.pid, true, undefined, undefined]);
       process.exit(0);
     } else if (mode === "launch-prelaunch-failure") {
       // A failure before any launch attempt keeps its normal release.
@@ -260,6 +284,10 @@ test("a launcher failure after the launch was attempted keeps the installer's le
 
 test("a failure before any launch attempt still releases the installer's lease", async () => {
   await glassesAdmissionCase("launch-prelaunch-failure")
+})
+
+test("a cleanup failure after a successful launch keeps the installer's retained lease, not the app's", async () => {
+  await glassesAdmissionCase("launch-cleanup-failure")
 })
 
 test("a dangling symlink as a glasses lease is held: launching refuses, a file-only install proceeds", async () => {
