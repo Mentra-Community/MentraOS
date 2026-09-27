@@ -157,3 +157,12 @@ comment; let Codex weigh comments itself.
 - If the PR belongs to someone else, report only; do not rework unless asked.
 - On `codex-pr-review: FAILED`, read `runner.log`, report the failure, and do not claim a review
   was posted.
+- Remove completed review worktrees first, before finished fixer worktrees, once
+  the canonical outcome and needed reproduction material are preserved outside
+  the checkout. Wait for the wrapper, runner and their children to exit; keep a
+  checkout still needed by active or saved review follow-up.
+- Before removal, check process use, incoming dependency symlinks and Git
+  common-directory consumers. Preserve source commits/refs, review receipts,
+  logs, evidence and shared dependencies. Use `git worktree remove`, never
+  `--force`; if the checkout is still needed or removal refuses, keep it and
+  report why. Store shared dependencies outside disposable review worktrees.
