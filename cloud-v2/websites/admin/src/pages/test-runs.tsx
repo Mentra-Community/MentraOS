@@ -681,9 +681,10 @@ function FailureDetails({ run }: { run: TestRunDetail }) {
       <h3 className="font-semibold">Failure details</h3>
       {stop ? (
         <p className="mt-3 text-sm leading-6 text-[#4f5d54]">
-          {/* Neutral: only the claim label below, from an exact recorded status/claim pair, speaks about the claim. */}
+          {/* Only recorded facts: the stage, the not-run test, the worker's hardware record and the exact-pair claim label.
+              The fixture outcome and firmware checks are shown as recorded by the outcome grid and firmware table. */}
           <span className="font-semibold">The worker stopped at intake stage {stop.stage}.</span> The test did not
-          run and the worker recorded that hardware was not started. {stop.claimed}; no fixture state was observed.
+          run and the worker recorded that hardware was not started. {stop.claimed}.
           {stop.request ? (
             <>
               {" "}

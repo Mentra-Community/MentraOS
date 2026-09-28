@@ -814,7 +814,7 @@ describe("worker preparation failures", () => {
     expect(markup).toContain("Failure details");
     expect(markup).toContain("The worker stopped at intake stage fixture-readiness.");
     expect(markup).toContain("recorded that hardware was not started");
-    expect(markup).toContain("No claim requested; no fixture state was observed.");
+    expect(markup).toContain("No claim requested.");
     expect(markup).toContain("Ready fixture lacks its original completed return-verification journal");
     expect(markup).toContain("fixture-return-verification-missing");
     expect(markup).toContain("Preflight · Worker intake stage: fixture-readiness");
@@ -830,7 +830,7 @@ describe("worker preparation failures", () => {
     });
     expect(acknowledged).toContain("Delivered for investigation");
     expect(renderRun({ ...stopped, provenance: { ...stopped.provenance, claim: "not-granted", intakeStatus: "claim-blocked" } }))
-      .toContain("Claim not granted; no fixture state was observed.");
+      .toContain("Claim not granted.");
   });
 
   test("names the claim only from the recorded value that matches its intake status", () => {
@@ -843,7 +843,7 @@ describe("worker preparation failures", () => {
       ["claim-blocked", "not-granted", "Claim not granted"]] as const) {
       const markup = claimText(intakeStatus, claim);
       expect(markup).toContain("The worker stopped at intake stage fixture-readiness.");
-      expect(markup).toContain(`${label}; no fixture state was observed.`);
+      expect(markup).toContain(`${label}.`);
       expect(markup).not.toContain("before any claim");
     }
     // Missing, unrecognized or mismatched provenance proves neither.
@@ -855,11 +855,32 @@ describe("worker preparation failures", () => {
       const markup = claimText(intakeStatus, claim);
       // A neutral heading from the recorded stage only: no claim is asserted anywhere in the summary.
       expect(markup).toContain("The worker stopped at intake stage fixture-readiness.");
-      expect(markup).toContain("Claim state not recorded; no fixture state was observed.");
+      expect(markup).toContain("Claim state not recorded.");
       expect(markup).not.toContain("before any claim");
       expect(markup).not.toContain("No claim requested");
       expect(markup).not.toContain("Claim not granted");
     }
+  });
+
+  test("the stop summary asserts nothing about the fixture; recorded fixture and firmware observations still render", () => {
+    // Schema-valid results whose fixture outcome and firmware checks were recorded: the summary must not contradict them.
+    for (const fixtureOutcome of ["ready", "unavailable"] as const) {
+      const markup = renderRun({
+        ...stopped,
+        outcomes: { ...stopped.outcomes, fixture: fixtureOutcome },
+        firmwareAssertions: [{ component: "MTK", expected: "20260921.0", actual: "20260113.0", status: "failed", phase: "preflight" }],
+      });
+      expect(markup).not.toContain("no fixture state");
+      expect(markup).not.toContain("fixture state was observed");
+      expect(markup).toContain("The worker stopped at intake stage fixture-readiness.");
+      expect(markup).toContain("No claim requested.");
+      // The existing outcome grid and firmware table show what was recorded.
+      expect(markup).toMatch(new RegExp(`>fixture</p><span[^>]*>${fixtureOutcome}</span>`));
+      expect(markup).toContain(">MTK</th>");
+      expect(markup).toContain("20260921.0");
+      expect(markup).toContain("20260113.0");
+    }
+    expect(renderRun(stopped)).not.toContain("no fixture state");
   });
 
   test("never builds links from unvalidated values and never infers a stop the worker did not record", () => {
