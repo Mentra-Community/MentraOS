@@ -435,12 +435,14 @@ describe("optional backend deployment projection", () => {
   const projectionText = readFileSync(join(import.meta.dir, "test-run-backend-deployment.fixture.json"), "utf8");
   const projection = () => JSON.parse(projectionText) as TestRunBackendDeployment;
   const metadata = Buffer.from(JSON.stringify({ kind: "notes-backend-deployment", observations: ["before", "after"] }));
-  /** A result whose projection binds this run, its claim hash, its uploaded metadata asset and its interval. */
+  // The exporter's immutable claim document hash and the registered request hash are deliberately different.
+  const requestSha256 = "7".repeat(64);
+  /** A result whose projection binds this run, its claim document hash, its uploaded metadata asset and its interval. */
   const backendRun = (patch: Partial<TestRunBackendDeployment> = {}): TestRun => {
     const run = fixture(), value = projection();
     run.runId = value.runId; run.requestId = value.requestId; run.channel = "dev"; delete run.prNumber;
     run.startedAt = "2026-09-28T06:00:00.000Z"; run.finishedAt = "2026-09-28T06:00:05.000Z";
-    run.provenance.requestSha256 = value.claimSha256;
+    run.provenance.claimSha256 = value.claimSha256; run.provenance.requestSha256 = requestSha256;
     run.assets.push({ assetId: value.evidence.assetId, kind: "metadata", contentType: "application/json",
       filename: "notes-backend-deployment.json", sizeBytes: metadata.length, sha256: sha256(metadata) });
     return { ...run, backendDeployment: { ...value, evidence: { ...value.evidence, sha256: sha256(metadata) }, ...patch } };
@@ -451,6 +453,7 @@ describe("optional backend deployment projection", () => {
   });
   test("a bound projection ingests, stays immutable and is returned with its uploaded metadata asset", async () => {
     const run = backendRun();
+    expect(run.provenance.claimSha256).toBe(projection().claimSha256); expect(run.provenance.requestSha256).not.toBe(run.provenance.claimSha256);
     expect(boundBackendDeployment(run)).toEqual({ proof: run.backendDeployment! });
     expect((await post(run)).status).toBe(201);
     expect((await post(run)).status).toBe(200);
@@ -477,7 +480,11 @@ describe("optional backend deployment projection", () => {
       { observedBefore: "yesterday" }, { evidence: { assetId: "notes-backend-deployment", sha256: "4".repeat(64), path: "/tmp/x" } }, { token: "secret" }];
     const bindings: [string, Partial<TestRunBackendDeployment> | ((run: TestRun) => void)][] = [
       ["other run", { runId: "routine-124-1-dev-notes-phone" }], ["other request", { requestId: "routine-124-1-dev-notes-phone" }],
-      ["other claim", { claimSha256: "6".repeat(64) }], ["no claim provenance", run => { delete run.provenance.requestSha256; }],
+      ["other claim", { claimSha256: "6".repeat(64) }], ["no claim provenance", run => { delete run.provenance.claimSha256; }],
+      ["request hash as claim hash", { claimSha256: requestSha256 }],
+      ["request hash substituted for a missing document hash", run => { delete run.provenance.claimSha256;
+        run.backendDeployment = { ...run.backendDeployment!, claimSha256: requestSha256 }; }],
+      ["claim document hash in the request field only", run => { run.provenance.requestSha256 = run.provenance.claimSha256!; delete run.provenance.claimSha256; }],
       ["undeclared asset", { evidence: { assetId: "missing", sha256: sha256(metadata) } }],
       ["asset hash", { evidence: { assetId: "notes-backend-deployment", sha256: "6".repeat(64) } }],
       ["non-metadata asset", { evidence: { assetId: "video-1", sha256: sha256(video) } }],

@@ -49,7 +49,9 @@ function backendVerdict(requirement: NonNullable<BackendRequirement>, result: Te
     "This result carries no run-bound backend deployment observation; a merge, ZIP, request text or current deployment read is not accepted.");
   if ("problem" in bound) return unverified("backend-proof-invalid", `Backend proof is refused: ${bound.problem}.`);
   const proof = bound.proof;
-  if (proof.runId !== result.runId || proof.requestId !== claim.requestId || proof.claimSha256 !== claim.requestSha256)
+  // The proof's claim document hash is bound to the result above; the result's request hash must be
+  // the registered claim's. The two hashes are distinct and never compared with each other.
+  if (proof.runId !== result.runId || proof.requestId !== claim.requestId || result.provenance.requestSha256 !== claim.requestSha256)
     return unverified("backend-proof-invalid", "Backend proof is refused: it does not bind this request's registered claim.");
   if (proof.repository !== requirement.repository || proof.commitSha !== requirement.mergeCommitSha)
     return unverified("backend-commit-mismatch",

@@ -50,8 +50,8 @@ export type TestRunBackendDeployment = z.infer<typeof testRunBackendDeploymentSc
 type BackendDeploymentRun = { runId: string; requestId: string; startedAt: string; finishedAt: string;
   provenance: Record<string, string | undefined>; assets: { assetId: string; kind: string; sha256: string }[]; backendDeployment?: unknown };
 /**
- * The projection bound to its own run: the same run and request, the claim's request hash that the
- * run's provenance carries, exactly one declared metadata asset with the evidence hash, and
+ * The projection bound to its own run: the same run and request, the claim document hash that the
+ * run's provenance carries (`provenance.claimSha256`), exactly one declared metadata asset with the evidence hash, and
  * run start <= observedBefore <= exerciseStartedAt <= exerciseFinishedAt <= observedAfter <= run finish.
  * Null when absent. Ingestion and the existing-work verdict both use this one check.
  */
@@ -61,7 +61,9 @@ export function boundBackendDeployment(run: BackendDeploymentRun): { proof: Test
   if (!parsed.success) return { problem: "backend deployment projection is malformed" };
   const proof = parsed.data;
   if (proof.runId !== run.runId || proof.requestId !== run.requestId) return { problem: "backend deployment projection belongs to another run or request" };
-  if (!run.provenance.requestSha256 || proof.claimSha256 !== run.provenance.requestSha256)
+  // The worker's immutable claim document hash, as its exporter records it. The request hash is
+  // a different value and never stands in for a missing document hash.
+  if (!run.provenance.claimSha256 || proof.claimSha256 !== run.provenance.claimSha256)
     return { problem: "backend deployment projection belongs to another claim" };
   const assets = run.assets.filter(asset => asset.assetId === proof.evidence.assetId);
   if (assets.length !== 1 || assets[0]!.kind !== "metadata" || assets[0]!.sha256 !== proof.evidence.sha256)
