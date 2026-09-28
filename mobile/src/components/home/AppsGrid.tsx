@@ -746,15 +746,16 @@ export function AppsGrid({
             }
           },
         },
-        showAllApps && {
-          label: translate("appInfo:addToHome"),
-          icon: "plus",
-          onPress: () => {
-            if (liveSelectedApp) {
-              placeAppOnHome(liveSelectedApp)
-            }
+        showAllApps &&
+          liveSelectedApp?.hidden && {
+            label: translate("appInfo:addToHome"),
+            icon: "plus",
+            onPress: () => {
+              if (liveSelectedApp) {
+                placeAppOnHome(liveSelectedApp)
+              }
+            },
           },
-        },
         !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
           label: translate("appInfo:uninstall"),
           icon: "trash",
