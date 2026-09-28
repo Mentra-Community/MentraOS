@@ -158,6 +158,39 @@ describe("admin reports auth gate", () => {
 });
 
 describe("admin reports read surface", () => {
+  test("separates harness reports by their existing source without changing stored kinds", async () => {
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test";
+    directoryUsers = [{ id: "internal-fixture-harness", email: "admin@company.test" }];
+    await UserModel.create({ mentraUserId: "mu_harness_admin", tenantId: "mentra", tenantUserId: "internal-fixture-harness" });
+    const fixtures = [
+      { reportId: "rep_harness_old", kind: "automatic", source: "mentra_automated_testing", status: "ready", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_harness_bug", kind: "bug", source: "mentra_automated_testing", status: "closed", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_harness_new", kind: "automatic", source: "mentra_automated_testing", status: "ready", mentraUserId: "mu_harness_customer" },
+      { reportId: "rep_runtime", kind: "automatic", source: "runtime", status: "ready", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_untagged", kind: "automatic", source: undefined, status: "ready", mentraUserId: "mu_harness_customer" },
+      { reportId: "rep_human", kind: "bug", source: "feedback_screen", status: "ready", mentraUserId: "mu_harness_admin" },
+    ];
+    for (const [i, fixture] of fixtures.entries()) {
+      const { source, ...row } = fixture;
+      await ReportModel.create({ ...row, trigger: source ? { type: row.kind === "bug" ? "manual" : "automatic", source, reason: "test" } : null,
+        context: { source: "mentra_automated_testing" }, createdAt: new Date(1_700_000_000_000 + i * 1000) });
+    }
+    const testing = await listed("kind=testing");
+    expect(testing.map(row => row.reportId)).toEqual(["rep_harness_new", "rep_harness_bug", "rep_harness_old"]);
+    expect(testing.map(row => row.kind)).toEqual(["automatic", "bug", "automatic"]);
+    expect((await listed("kind=automatic")).map(row => row.reportId)).toEqual(["rep_untagged", "rep_runtime"]);
+    expect((await listed("kind=internal")).map(row => row.reportId)).toEqual(["rep_human"]);
+    expect(await listed("kind=bug")).toEqual([]);
+    expect((await listed("kind=testing&status=ready&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_new"]);
+    expect((await listed("kind=testing&before=2023-11-14T22:13:21.500Z&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_bug"]);
+    expect(await listed("")).toHaveLength(fixtures.length);
+    directoryFailure = true;
+    directoryRequests = 0;
+    expect(await listed("kind=testing")).toHaveLength(3);
+    expect(await listed("kind=automatic")).toHaveLength(2);
+    expect(directoryRequests).toBe(0);
+  });
+
   test("separates historical human admin submissions while keeping automatic reports together", async () => {
     const fixtures = [
       { id: "internal-fixture-named", email: "NAMED@personal.test", internal: true },
