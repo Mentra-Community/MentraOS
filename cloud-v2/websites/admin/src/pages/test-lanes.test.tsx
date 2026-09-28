@@ -93,12 +93,13 @@ describe("lane cards from actual host reports", () => {
     expect(mac.visible).toContain("mentra-mac-mini · Mac UI lane Recovery required");
     expect(mac.visible).toContain("Work no-glasses · staging build");
     expect(mac.visible).toContain("Status The run holding this lane stopped before its cleanup finished. The lane stays held until that run is recovered.");
-    expect(mac.visible).toContain("Last report 9m 0s ago; the hold stays until the host reports again");
+    expect(mac.visible).toContain("Last report 9m 0s ago; not current. The lane stays held until its recovery is verified.");
     expect(mac.visible).toContain("Responsible Test runner / operator");
-    expect(mac.visible).toContain("Next Recover the original run and publish its verified return before the lane takes new work.");
+    expect(mac.visible).toContain("Next Recover the original run through its owner, starting with its recorded pending step teardown / recover-account-home, and publish its verified return before the lane takes new work.");
     expect(mac.visible).toContain("Queue 2 queued iOS-on-Mac requests. GitHub assigns runners; this lane is not confirmed for them.");
     // Raw guard mechanics stay in the lane's details.
-    expect(mac.visible).not.toMatch(/PID|28126|routine-36283320299|recover-account-home|Glasses|checkpoint|lane-status/);
+    // The recorded pending step is the one recovery detail shown in Next; other mechanics stay in details.
+    expect(mac.visible).not.toMatch(/PID|28126|routine-36283320299|Glasses|checkpoint|lane-status/);
     expect(mac.details).toContain("Run " + retainedRun); expect(mac.details).toContain("Worker mentra-device-mini-1");
     expect(mac.details).toContain("Owner PID 28126, not running at the last report");
     expect(mac.details).toContain("Glasses scope at that report: unknown, so every pair is excluded.");
@@ -322,5 +323,44 @@ describe("host ownership freshness and journal order decide a running lane", () 
     expect(card.visible).toContain("Reserved, idle"); expect(card.visible).toContain("Held by a CI run with no step reported for 5m 0s.");
     expect(card.visible).not.toMatch(/>Running<|Open Settings/);
     expect(card.details).toContain("Last reported step: Open Settings · Testing, received 5m 0s ago");
+  });
+});
+
+describe("who holds a lane is stated only as reported", () => {
+  const liveNoRun = (): TestResourceObservation => ({ state: "busy", reason: "owner-process-alive", guard: { lock: "present", reclaimMarker: "absent" },
+    owner: { valid: true, pid: 5100, liveness: "alive", retainOnExit: false, reservation: null },
+    fixture: { checked: true, record: "valid", fixtureID: "mini-ui-unpaired", status: "ready", lastRunID: "routine-36283320299-1-staging-no-glasses" } });
+
+  test("a live owner that reported no run is not a CI run or a local session, and gets host-operator guidance", async () => {
+    const html = render(await overview([{ hostId: "mentra-mac-mini", observation: liveNoRun(), ago: 5_000 }], { jobs: [dev441()] }));
+    const card = parts(html, "mentra-mac-mini");
+    expect(card.visible).toContain("Reserved, idle");
+    expect(card.visible).toContain("Status Held by a live process that reported no run.");
+    expect(card.visible).toContain("Responsible Host operator");
+    expect(card.visible).toContain("Next Identify the process holding this lane on the host. The lane frees only when that process releases it.");
+    expect(card.visible).not.toMatch(/CI run|local session|Owning test runner|Session owner|Work /);
+    expect(card.details).toContain("Owner PID 5100, alive at the last report"); expect(card.details).not.toContain("Run ");
+    // Stale, it is unknown and still names no run.
+    const stale = parts(render(await overview([{ hostId: "mentra-mac-mini", observation: liveNoRun(), ago: minutes(10) }], { jobs: [dev441()] })), "mentra-mac-mini");
+    expect(stale.visible).toContain("Offline or unknown"); expect(stale.visible).not.toMatch(/CI run|local session/);
+  });
+
+  test("a retained owner that reported no run is recovery required without inventing a run", async () => {
+    const unclassified: TestResourceObservation = { state: "retained-recovery-required", reason: "dead-retained-unclassified-installation",
+      guard: { lock: "present", reclaimMarker: "absent" }, owner: { valid: true, pid: 5200, liveness: "dead", retainOnExit: true, reservation: null,
+        retainedReason: "unclassified-installation" }, fixture: { checked: true, record: "valid", fixtureID: "mini-ui-unpaired", status: "busy", lastRunID: "routine-7-1-dev-no-glasses" } };
+    const card = parts(render(await overview([{ hostId: "mentra-mac-mini", observation: unclassified, ago: minutes(3) }])), "mentra-mac-mini");
+    expect(card.visible).toContain("Recovery required");
+    expect(card.visible).toContain("Status A process that reported no run stopped while holding this lane. The lane stays held until it is recovered.");
+    expect(card.visible).toContain("Next Identify the retained installation and recover it through its original owner.");
+    expect(card.visible).not.toMatch(/The run holding|Recover the original run|Work /);
+  });
+
+  test("top-level copy states no implementation mechanics and never implies a report clears a hold", async () => {
+    const html = render(await overview([{ hostId: "mentra-mac-mini", observation: macRetained(), ago: minutes(9) }]));
+    const lanes = text(section(html, "Test lanes")), visible = parts(html, "mentra-mac-mini").visible;
+    expect(lanes).not.toContain("Nothing here admits"); expect(lanes).toContain("Hosts that have not reported are not listed.");
+    expect(visible).not.toMatch(/reports again|until the host reports/);
+    expect(visible).toContain("The lane stays held until its recovery is verified.");
   });
 });

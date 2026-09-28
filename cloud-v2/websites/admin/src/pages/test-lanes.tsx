@@ -138,31 +138,40 @@ export function laneCard(data: TestRunOverview, item: OverviewResourceObservatio
   const guidance = resourceGuidance[observation.reason], guard = [guidance.summary + " " + guidance.next];
   // A CI lane is one whose own guard or fixture record names a CI request; only those list the platform queue.
   const lastRun = observation.fixture.checked && observation.fixture.record === "valid" ? observation.fixture.lastRunID : undefined;
-  const ci = [runId, lastRun].some(id => id && ciRequestId.test(id)), local = Boolean(runId && !ciRequestId.test(runId));
+  const ci = [runId, lastRun].some(id => id && ciRequestId.test(id));
+  // Who holds the lane, only as the owner reported it: a CI request, a local run, or no reported run at all.
+  const holder: "ci" | "local" | "none" = !runId ? "none" : ciRequestId.test(runId) ? "ci" : "local";
+  const holderName = { ci: "a CI run", local: "a local session", none: "a live process that reported no run" }[holder];
   const queue = ci ? data.jobs.filter(job => ["queued", "waiting"].includes(displayState(job, now))).flatMap(job => job.requests
     .filter(request => request.platform === platformOf(item.resourceKey)).map(request => ({ job, request }))) : undefined;
   const base = { item, fresh, active, ...(runId ? { runId } : {}), ...(matched ? { matched } : {}), ...(progress ? { progress } : {}), ...(queue ? { queue } : {}) };
   const card = (state: LaneState, summary: string, responsible: string, next: string, technical = guard): LaneCard =>
     ({ ...base, state, summary, responsible, next, technical });
-  const owning = local ? "Session owner" : "Owning test runner";
+  const owning = { ci: "Owning test runner", local: "Session owner", none: "Host operator" }[holder];
   const offline = [...guard, heartbeatCommand(item)];
   // A retained hold is never cleared by age, a dead PID or a completed checkpoint.
   if (observation.state === "retained-recovery-required") {
+    // The recorded pending lifecycle step is the only recovery detail the observation carries.
     const pending = observation.lastCheckpoint?.available ? observation.lastCheckpoint.pendingReconciliation ?? observation.lastCheckpoint.pendingOperation : null;
+    if (holder === "none") return card("recovery", "A process that reported no run stopped while holding this lane. The lane stays held until it is recovered.",
+      guidance.responsible, guidance.next);
     return card("recovery", "The run holding this lane stopped before its cleanup finished. The lane stays held until that run is recovered.",
-      guidance.responsible, "Recover the original run and publish its verified return before the lane takes new work.",
+      guidance.responsible, "Recover the original run through its owner" + (pending ? ", starting with its recorded pending step " + pending.phase + " / " + pending.stepID : "")
+        + ", and publish its verified return before the lane takes new work.",
       [...guard, ...pending ? ["Pending lifecycle step: " + pending.phase + " / " + pending.stepID + "."] : []]);
   }
   if (observation.state === "busy") {
     // Only this host's current report shows who holds the lane; CI progress or GitHub state never refreshes it.
     if (!fresh) return card("unknown", "The last report, " + elapsed(item.receivedAt, now) + " ago, showed a live owner. Whether it is still running is unknown."
-      + (active && progress ? " Its CI run reported a step " + elapsed(progress.receivedAt, now) + " ago; that does not confirm this host's lane." : ""),
+      + (active && progress ? " Its " + (holder === "local" ? "local session" : "CI run") + " reported a step " + elapsed(progress.receivedAt, now) + " ago; that does not confirm this host's lane." : ""),
       "Host operator", "Confirm the host is online and reporting. Until it reports, treat the lane as in use.", offline);
     // A completed latest step ends the lifecycle's activity even while GitHub still runs the job.
     if (active || progress?.mode !== "complete" && matched?.job.workflow?.status === "in_progress")
-      return card("running", "Running " + (local ? "a local session" : "this routine") + ".", owning, "Nothing needed; follow the run for its result.");
-    return card("reserved", "Held by " + (local ? "a local session" : "a CI run") + " with no step reported" + (progress ? " for " + elapsed(progress.receivedAt, now) : "") + ".",
-      owning, local ? "Ask the session owner to finish or stop the session." : "Wait for the run to continue, or ask its test runner to stop it.");
+      return card("running", "Running " + (holder === "local" ? "a local session" : "this routine") + ".", owning, "Nothing needed; follow the run for its result.");
+    if (holder === "none") return card("reserved", "Held by " + holderName + ".", owning,
+      "Identify the process holding this lane on the host. The lane frees only when that process releases it.");
+    return card("reserved", "Held by " + holderName + " with no step reported" + (progress ? " for " + elapsed(progress.receivedAt, now) : "") + ".",
+      owning, holder === "local" ? "Ask the session owner to finish or stop the session." : "Wait for the run to continue, or ask its test runner to stop it.");
   }
   if (!fresh) return card("unknown", "No report for " + elapsed(item.receivedAt, now) + ", so the lane's current state is unknown.", "Host operator",
     "Confirm the host is online and reporting. Until it reports, do not treat the lane as free.", offline);
@@ -213,7 +222,7 @@ function Lane({ card, now, onResult }: { card: LaneCard; now: number; onResult: 
       {work ? row("Work", <>{work}{state === "running" && card.active && progress ? <span className="block">{stepText(progress)}</span> : null}</>) : null}
       {row("Status", card.summary)}
       {row("Last report", <span className={card.fresh ? "" : "text-[#805619]"}>{elapsed(item.receivedAt, now)} ago{card.fresh ? ""
-        : value.state === "retained-recovery-required" ? "; the hold stays until the host reports again" : "; not current"}</span>)}
+        : value.state === "retained-recovery-required" ? "; not current. The lane stays held until its recovery is verified." : "; not current"}</span>)}
       {state !== "available" && state !== "running" ? <>{row("Responsible", card.responsible)}{row("Next", card.next)}</> : null}
       {row("Queue", !card.queue ? "No CI run was seen on this lane, so no CI queue is shown."
         : !card.queue.length ? "No queued " + platform + " requests."
@@ -241,7 +250,7 @@ export function LaneOverview({ data, now, onResult }: { data: TestRunOverview; n
   const unmatched = data.jobs.filter(job => ["queued", "waiting"].includes(displayState(job, now))).flatMap(job => job.requests.filter(request => !request.platform)).length;
   return <section className="mt-3" aria-label="Test lanes">
     <h4 className="text-sm font-semibold">Test lanes</h4>
-    <p className="mt-1 text-xs text-[#68746d]">One card per lane a host has reported. Hosts that have not reported are not listed. Nothing here admits, releases or recovers a lane.</p>
+    <p className="mt-1 text-xs text-[#68746d]">One card per lane a host has reported. Hosts that have not reported are not listed.</p>
     {!feed ? <p className="mt-2 text-xs text-[#805619]">Lane state was not reported by Core. Do not treat any lane as free.</p>
       : !feed.available ? <p className="mt-2 text-xs text-[#805619]">Lane state could not be loaded. Do not treat any lane as free.</p>
       : !cards.length ? <p className="mt-2 text-xs text-[#805619]">No host has reported a lane yet.</p>

@@ -95,7 +95,7 @@ card from the overview response Core already returns; the API is unchanged.
 
 | Card state | When |
 | --- | --- |
-| Recovery required | A retained guard (any age: a dead PID or completed checkpoint never clears it), or a current report whose fixture record is `recovery-required` or `busy` without an owner. |
+| Recovery required | A retained guard (any age: a dead PID, a completed checkpoint or a newer report never clears it; only the owner's verified recovery releases it), or a current report whose fixture record is `recovery-required` or `busy` without an owner. |
 | Running | A live owner in a report from the last 2 minutes, and either its run's latest step is unfinished and was received within 2 minutes, or its exact reserved request is a GitHub job in progress and the latest step has not completed. The latest step is the highest journal sequence from host or CI claim progress, never the latest arrival; a repeated sequence keeps its first receipt time. |
 | Reserved, idle | A current report of a live owner without recent step progress. |
 | Available | A current report with no owner and a fixture recorded ready. Admission still runs its normal checks. |
@@ -111,6 +111,13 @@ details** hold the resource key, run ID, worker and GitHub run link, owner PID a
 liveness, glasses scope, the last reported step with its own receipt age, the last
 lifecycle checkpoint (labelled historical; a newer report never makes it current), the
 fixed guard wording and the host heartbeat command.
+
+The holder is named only as reported: a CI run when the owner's reservation is a CI request ID,
+a local session for any other reserved run ID, and "a live process that reported no run"
+(host operator) when the owner has no reservation. A recovery card's next action names the
+recorded pending lifecycle step (`pendingReconciliation`, else `pendingOperation`) when the
+observation carries one. The observation carries no other recovery detail, so a manual
+action outside the lifecycle (for example a host permission check) is not shown.
 
 The queue counts queued or waiting CI requests of the lane's platform (`shared`: iOS on
 Mac, `android-*`: Android) on lanes whose own guard or fixture record names a CI request.
