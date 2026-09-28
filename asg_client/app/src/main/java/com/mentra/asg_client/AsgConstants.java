@@ -496,7 +496,7 @@ public class AsgConstants {
      * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE
      * PHOTO]}. Keep false in production.
      */
-    public static final boolean ENABLE_PHOTO_TIMING_LOGS = false;
+    public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
     /** Opt-in SDK preview: preserve aspect ratio, never upscale. */
     public static final int PHOTO_THUMBNAIL_LONG_EDGE = 500;
