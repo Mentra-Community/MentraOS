@@ -136,6 +136,10 @@ class MentraLive : SGCManager() {
         // BLOCK_AUDIO_DUPLEX: When true, suspends LC3 mic while phone is playing audio via A2DP
         // to avoid overloading the MCU. Set to false to allow simultaneous A2DP + LC3 mic.
         private const val BLOCK_AUDIO_DUPLEX = false
+        // Temporary mitigation for rep_01M3MW4ZQ0C90AVRZ703EHJ0YR: keep the GX8002
+        // hardware gate off, including saved settings and miniapp overrides.
+        // Keep in sync with iOS MentraLive.FORCE_DISABLE_VAD.
+        private const val FORCE_DISABLE_VAD = true
 
         // LC3 frame size for Mentra Live
         private const val LC3_FRAME_SIZE = 40
@@ -5907,6 +5911,7 @@ class MentraLive : SGCManager() {
     }
 
     private fun isVoiceActivityDetectionEnabled(): Boolean {
+        if (FORCE_DISABLE_VAD) return false
         val value = DeviceStore.get("bluetooth", "voice_activity_detection_enabled")
         return !(value is Boolean) || value
     }
@@ -11060,9 +11065,10 @@ class MentraLive : SGCManager() {
 
     override fun sendVoiceActivityDetectionSetting() {
         val value = DeviceStore.get("bluetooth", "voice_activity_detection_enabled")
-        val enabled =
+        val requestedEnabled =
                 if (value is Boolean) value
                 else BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+        val enabled = !FORCE_DISABLE_VAD && requestedEnabled
 
         Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: " + enabled)
 

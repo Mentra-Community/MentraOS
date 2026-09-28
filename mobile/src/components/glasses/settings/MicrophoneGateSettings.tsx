@@ -8,25 +8,16 @@ import {translate} from "@/i18n"
 
 /**
  * Mentra Live glasses-mic gates:
- * - VAD: cs_swit type 8 (GX8002)
+ * VAD is temporarily forced off by both Mentra Live SGCs; restore its toggle
+ * when their FORCE_DISABLE_VAD flags are removed.
  * - Barrier: cs_swit type 10 (center-mic loudness / RMS)
  */
 export function MicrophoneGateSettings() {
-  const [vadEnabled, setVadEnabled] = useSetting<boolean>(SETTINGS.voice_activity_detection_enabled.key)
   const [loudnessGate, setLoudnessGate] = useSetting<boolean>(SETTINGS.loudness_gate_enabled.key)
 
   return (
     <View className="gap-3">
       <Text tx="microphoneSettings:glassesMicGates" className="text-text text-base font-semibold" />
-      <ToggleSetting
-        label={translate("microphoneSettings:vadLabel")}
-        subtitle={translate("microphoneSettings:vadSubtitle")}
-        value={vadEnabled}
-        onValueChange={(enabled) => {
-          void setVadEnabled(enabled)
-        }}
-        isFirst
-      />
       <ToggleSetting
         label={translate("microphoneSettings:barrierLabel")}
         subtitle={translate("microphoneSettings:barrierSubtitle")}
@@ -34,6 +25,7 @@ export function MicrophoneGateSettings() {
         onValueChange={(enabled) => {
           void setLoudnessGate(enabled)
         }}
+        isFirst
         isLast
       />
     </View>

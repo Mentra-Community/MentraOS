@@ -1412,6 +1412,10 @@ class MentraLive: NSObject, SGCManager {
     // BLOCK_AUDIO_DUPLEX: When true, suspends LC3 mic while phone is playing audio via A2DP
     // to avoid overloading the MCU. Set to false to allow simultaneous A2DP + LC3 mic.
     private let BLOCK_AUDIO_DUPLEX = false
+    // Temporary mitigation for rep_01M3MW4ZQ0C90AVRZ703EHJ0YR: keep the GX8002
+    // hardware gate off, including saved settings and miniapp overrides.
+    // Keep in sync with Android MentraLive.FORCE_DISABLE_VAD.
+    private static let FORCE_DISABLE_VAD = true
     private static let voiceActivityDetectionSwitchType = 8
     private static let loudnessGateSwitchType = 10
     private static let autoPowerOffSwitchType = 11
@@ -5529,7 +5533,7 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func handleSpeakingStatus(speaking: Bool) {
-        guard voiceActivityDetectionEnabled else {
+        guard !Self.FORCE_DISABLE_VAD, voiceActivityDetectionEnabled else {
             Bridge.log("LIVE: Ignoring speaking status because Voice Activity Detection is disabled")
             return
         }
@@ -7061,8 +7065,9 @@ extension MentraLive {
     }
 
     func sendVoiceActivityDetectionSetting() {
-        let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool
+        let requestedEnabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool
             ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
+        let enabled = !Self.FORCE_DISABLE_VAD && requestedEnabled
         Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: \(enabled)")
 
         guard connectedPeripheral != nil, txCharacteristic != nil else {
