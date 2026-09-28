@@ -4,7 +4,7 @@ import { existingWorkRequestSchema, testExistingWorkBindingSchema, type Existing
   type TestExistingWorkBinding } from "../types/test-existing-work.types";
 import { testBuildSourceSchema, testRoutineIdSchema, type TestBuild, type TestBuildSource, type TestDispatchReceipt,
   type TestDispatchView, type TestRoutineId } from "../types/test-dispatch.types";
-import type { TestRun } from "../types/test-run.types";
+import { boundBackendDeployment, type TestRun } from "../types/test-run.types";
 import type { TestRunClaim } from "../types/test-run-claim.types";
 import { GithubTestBuildGateway, TestDispatchError, type ExistingWorkBundleEvidence, type TestBuildGateway } from "./test-builds.service";
 import { acknowledgedCase, operationUuid } from "./test-continuation.service";
@@ -31,16 +31,37 @@ export function existingWorkOperationId(bindingSha256: string, source: TestBuild
 }
 
 type Resolution = Awaited<ReturnType<typeof registeredResults>>["verifiedRecovery"];
+type BackendRequirement = TestExistingWorkBinding["backendRequirement"];
 export const MISSING_BACKEND_PROVENANCE = "missing-backend-provenance";
+/**
+ * A backend requirement is verified only by the `backendDeployment` projection of the exact result
+ * that already passed the client gates below (this request's claimed, first-generation terminal
+ * result), bound to that run, request and claim, and observing exactly the required repository
+ * and merge commit. Request text, a merge, a ZIP, another result or a later deployment read never
+ * qualify; a later descendant commit stays unverified in this first narrow producer.
+ */
+function backendVerdict(requirement: NonNullable<BackendRequirement>, result: TestRun | undefined, claim: TestRunClaim | null) {
+  const unverified = (reason: string, message: string) => ({ required: true as const, requirement, state: "unverified" as const, reason, message });
+  if (!result || !claim) return unverified("client-not-verified",
+    "Backend proof is read only from this request's verified passing first-generation result.");
+  const bound = boundBackendDeployment(result);
+  if (!bound) return unverified(MISSING_BACKEND_PROVENANCE,
+    "This result carries no run-bound backend deployment observation; a merge, ZIP, request text or current deployment read is not accepted.");
+  if ("problem" in bound) return unverified("backend-proof-invalid", `Backend proof is refused: ${bound.problem}.`);
+  const proof = bound.proof;
+  if (proof.runId !== result.runId || proof.requestId !== claim.requestId || proof.claimSha256 !== claim.requestSha256)
+    return unverified("backend-proof-invalid", "Backend proof is refused: it does not bind this request's registered claim.");
+  if (proof.repository !== requirement.repository || proof.commitSha !== requirement.mergeCommitSha)
+    return unverified("backend-commit-mismatch",
+      "The observed backend is not exactly the required repository and merge commit; a different or later commit is not verified.");
+  return { required: true as const, requirement, state: "verified" as const, resultRunId: result.runId, proof };
+}
 /**
  * Whether one registered request verified the existing fix. Only the claim's own terminal
  * result can pass, and only with a passing test, complete evidence and a verified return of
  * that first generation. A recovery generation, a retained fixture, a later result or any
- * other request never verifies. A backend requirement stays unverified: no result records a
- * trusted run-bound backend revision, and nothing else is accepted in its place. The smallest
- * next producer is the worker itself: during this claimed run it would record, in the result's
- * immutable provenance, the backend deployment revision it observed from an authenticated
- * deployment receipt, so this verdict could compare it with the requirement's merge commit.
+ * other request never verifies. A backend requirement is verified only by that same result's
+ * bound backend deployment projection; absent or legacy producers stay unverified.
  */
 export function existingWorkVerification(view: Pick<TestDispatchView, "sendState" | "state">, results: TestRun[],
   claim: TestRunClaim | null, verifiedRecovery: Resolution, backendRequirement: TestExistingWorkBinding["backendRequirement"]) {
@@ -57,10 +78,9 @@ export function existingWorkVerification(view: Pick<TestDispatchView, "sendState
       ? { state: "not-verified" as const, reason: "The fixture return after this result was not verified" }
     : { state: "passed" as const, resultRunId: result.runId };
   const backend = backendRequirement === null ? { required: false as const }
-    : { required: true as const, requirement: backendRequirement, state: "unverified" as const, reason: MISSING_BACKEND_PROVENANCE,
-      message: "No trusted run-bound record identifies the backend revision this run exercised; a merge, ZIP, request text or current deployment read is not accepted." };
+    : backendVerdict(backendRequirement, client.state === "passed" ? result : undefined, claim);
   const state = client.state === "pending" ? "pending" as const
-    : client.state === "passed" && !backend.required ? "verified" as const : "unverified" as const;
+    : client.state === "passed" && (!backend.required || backend.state === "verified") ? "verified" as const : "unverified" as const;
   return { state, client, backend };
 }
 
