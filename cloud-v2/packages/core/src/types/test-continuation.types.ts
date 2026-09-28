@@ -24,6 +24,22 @@ export const continuationCaseBindingSchema = z.object({
   caseId: z.string().regex(/^mfc_[a-f0-9]{64}$/),
   candidateOwnerRunId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/),
 }).strict();
+/**
+ * Where an app candidate for a local feature-branch source is verified. A local build of a branch that is not
+ * itself a destination has no base of its own; the controller proves the pull request it came from and saves
+ * that route. It signs this projection only from its saved route, never from model text, and Core re-verifies
+ * the whole relationship with the provider. Absent for every other source, candidate and target.
+ */
+export const continuationExecutionDestinationSchema = z.object({
+  repository: z.literal("Mentra-Community/MentraOS"),
+  baseBranch: z.enum(["dev", "staging"]),
+  sourceOrigin: z.discriminatedUnion("state", [
+    // The originating PR is the route itself; if that same PR later merges, its merged-candidate path applies.
+    z.object({ pullRequest: z.number().int().positive().safe(), state: z.literal("open") }).strict(),
+    // A merged origin takes no more commits: a new anchor fix PR into the same base carries the fix.
+    z.object({ pullRequest: z.number().int().positive().safe(), state: z.literal("merged"), mergeCommitSha: candidateHead }).strict(),
+  ]),
+}).strict();
 export const continuationGrantSchema = z.object({
   purpose: z.literal("mentra-routine-fixer-continuation-v1"),
   environment: z.enum(["dev", "staging", "prod"]),
@@ -31,6 +47,7 @@ export const continuationGrantSchema = z.object({
   agentRunId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/),
   candidate: continuationCandidateSchema,
   caseBinding: continuationCaseBindingSchema.optional(),
+  executionDestination: continuationExecutionDestinationSchema.optional(),
   executionAttempt: z.number().int().min(1).max(2),
   leaseGeneration: z.number().int().positive().safe(),
   leaseTokenSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -41,11 +58,13 @@ export const continuationGrantSchema = z.object({
 export type ContinuationGrant = z.infer<typeof continuationGrantSchema>;
 export type ContinuationCandidate = z.infer<typeof continuationCandidateSchema>;
 export type ContinuationCaseBinding = z.infer<typeof continuationCaseBindingSchema>;
+export type ContinuationExecutionDestination = z.infer<typeof continuationExecutionDestinationSchema>;
 export interface TestContinuationBinding {
   occurrenceId: string;
   agentRunId: string;
   candidate: ContinuationCandidate;
   caseBinding?: ContinuationCaseBinding;
+  executionDestination?: ContinuationExecutionDestination;
   executionAttempt: number;
   retryReason?: string;
   expectedHeadSha: string;

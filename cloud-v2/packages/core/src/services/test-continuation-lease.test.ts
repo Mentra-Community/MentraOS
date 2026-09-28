@@ -57,3 +57,21 @@ test("a state repair forwards its registered operation for the controller to aut
   await expect(requireContinuationLease(grant, "day1-ota", (async () => new Response(null, { status: 409 })) as unknown as typeof fetch, repair))
     .rejects.toThrow("state repair was not reserved");
 });
+test("lease callback forwards a local feature-branch source's execution destination for the controller to compare", async () => {
+  process.env.CLOUD_REPORT_AGENT_URL = "https://agent.example.test";
+  process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = "fixture-signing-key-".repeat(3);
+  const executionDestination = { repository: "Mentra-Community/MentraOS" as const, baseBranch: "dev" as const,
+    sourceOrigin: { pullRequest: 4277, state: "merged" as const, mergeCommitSha: "d".repeat(40) } };
+  const grant = { agentRunId: "run-123", environment: "dev", occurrenceId: "tfo_" + "a".repeat(64), executionDestination,
+    candidate: { repository: "Mentra-Community/MentraOS", pullRequest: 4300, headSha: "b".repeat(40) },
+    executionAttempt: 1, leaseGeneration: 3, leaseTokenSha256: "c".repeat(64) } as ContinuationGrant;
+  let body: Record<string, unknown> = {};
+  const accept = (async (_: URL, init: RequestInit) => { body = JSON.parse(String(init.body));
+    return Response.json({ schemaVersion: 1, valid: true, agentRunId: "run-123", leaseGeneration: 3 }); }) as unknown as typeof fetch;
+  await requireContinuationLease(grant, "notes-phone", accept);
+  expect(body).toMatchObject({ candidate: grant.candidate, routineId: "notes-phone", executionDestination });
+  await requireContinuationLease({ ...grant, executionDestination: undefined }, "notes-phone", accept);
+  expect("executionDestination" in body).toBe(false);
+  // A destination the controller's stored route no longer holds is refused like a changed candidate.
+  await expect(requireContinuationLease(grant, "notes-phone", (async () => new Response(null, { status: 409 })) as unknown as typeof fetch)).rejects.toThrow("lease changed");
+});

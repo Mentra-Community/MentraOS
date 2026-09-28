@@ -18,6 +18,8 @@ export async function requireContinuationLease(grant: ContinuationGrant, routine
   if (url.protocol !== "https:" || url.username || url.password) throw new TestDispatchError(503, "Invalid lease validator origin");
   const body = JSON.stringify({ schemaVersion: 1, environment: grant.environment, occurrenceId: grant.occurrenceId,
     agentRunId: grant.agentRunId, candidate: grant.candidate, ...(grant.caseBinding ? { caseBinding: grant.caseBinding } : {}),
+    // The controller compares it with its current stored route, as it does the candidate and reservation.
+    ...(grant.executionDestination ? { executionDestination: grant.executionDestination } : {}),
     executionAttempt: grant.executionAttempt, leaseGeneration: grant.leaseGeneration,
     leaseTokenSha256: grant.leaseTokenSha256, routineId,
     ...(repair ? { repair: { operation: repair.operation, operationId: repair.operationId } } : {}) });
