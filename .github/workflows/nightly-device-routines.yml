@@ -2,10 +2,10 @@ name: Nightly device routines
 
 on:
   schedule:
-    # Los Angeles midnight is 07:00 UTC in summer and 08:00 UTC in winter.
+    # 03:00 America/Los_Angeles is 10:00 UTC in summer and 11:00 UTC in winter.
     # The planner selects the applicable trigger, including DST transition days.
-    - cron: '0 7 * * *'
-    - cron: '0 8 * * *'
+    - cron: '0 10 * * *'
+    - cron: '0 11 * * *'
 
 permissions:
   contents: read
@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Select verified publications for local midnight
+      - name: Select verified publications for 03:00 Pacific
         id: plan
         uses: actions/github-script@v7
         with:
@@ -40,7 +40,15 @@ jobs:
             core.setOutput('matrix', JSON.stringify({include: plan.requests}));
             core.setOutput('has-work', String(plan.requests.length > 0));
             core.setOutput('unavailable', JSON.stringify(plan.unavailable));
-            await core.summary.addCodeBlock(JSON.stringify(plan, null, 2), 'json').write();
+            const cell = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+            await core.summary.addHeading('Nightly test plan — 03:00 Pacific')
+              .addRaw('Each eligible routine runs independently. Request dispatch is not a passing test. Open a member job for its request and recorded-result links.\n\n')
+              .addTable([
+                ['Channel', 'Routine', 'Build', 'Status', 'Reason'].map(data => ({data, header: true})),
+                ...plan.requests.map(row => [row.channel, row.routine, row.releaseIdentity, 'Ready to request', ''].map(cell)),
+                ...plan.unavailable.map(row => [row.channel, row.routine, row.releaseIdentity, 'Unavailable', row.reason].map(cell)),
+              ])
+              .addDetails('Exact build coordinates', `<pre>${cell(JSON.stringify(plan, null, 2))}</pre>`).write();
 
   availability:
     needs: plan
@@ -102,4 +110,11 @@ jobs:
             const result = await sendNightlyRequest({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
               plan: JSON.parse(process.env.NIGHTLY_PLAN)});
             core.setOutput('sent', JSON.stringify(result));
-            await core.summary.addCodeBlock(JSON.stringify(result, null, 2), 'json').write();
+            const resultId = `routine-${result.runId}-${result.runAttempt}-${result.channel}-${result.routine}`;
+            await core.summary.addHeading(`${result.channel} / ${result.routine}`)
+              .addRaw('Request dispatched. The device verdict is pending; this workflow does not wait for it.\n\n')
+              .addLink('Request workflow', `https://github.com/Mentra-Community/MentraOS/actions/runs/${result.runId}`)
+              .addRaw(' · ')
+              .addLink('Recording and device result', `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(resultId)}`)
+              .addRaw('\n\nThe recorded result appears after the worker publishes it. If the request or worker cannot start, inspect the request workflow and Admin Live activity.\n\n')
+              .addCodeBlock(JSON.stringify(result, null, 2), 'json').write();

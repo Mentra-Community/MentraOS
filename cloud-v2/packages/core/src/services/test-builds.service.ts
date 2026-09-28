@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { unzipSync } from "fflate";
 import { z } from "zod";
 import { TEST_ROUTINES, testRoutinePlatform, type TestBuildPlatform, type TestRoutineId, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
+import type { ExistingWorkBundleTarget } from "../types/test-existing-work.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPOSITORY = "Mentra-Community/MentraOS";
@@ -133,6 +134,16 @@ export interface TestBuildGateway {
   progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
   findExisting?(input: TestDispatchInput, since: string, excludeRequestRunIds?: number[]): Promise<{ requestRunId: number; requestUrl: string } | null>;
   originalSelection?(requestRunId: number, routineId: TestRoutineId): Promise<OriginalSelection>;
+  existingWorkBundle?(bundle: ExistingWorkBundleTarget, headShas: string[]): Promise<ExistingWorkBundleEvidence>;
+}
+/**
+ * Source facts for a reviewed bundling PR: whether GitHub records that PR as merged into its
+ * base at the signed merge commit, and for each published head whether it contains that merge
+ * and which blob it carries at the artifact path (null when absent).
+ */
+export interface ExistingWorkBundleEvidence {
+  merged: boolean;
+  heads: Record<string, { containsMerge: boolean; artifactBlobSha: string | null }>;
 }
 
 export class GithubTestBuildGateway implements TestBuildGateway {
@@ -421,6 +432,30 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     }
     requireThat(found.length <= 1, "Multiple requests already selected this build; reconcile before sending");
     return found[0] ?? null;
+  }
+  /** Read-only source-scope App reads with validated identities; no caller URL or ref text. */
+  async existingWorkBundle(bundle: ExistingWorkBundleTarget, headShas: string[]): Promise<ExistingWorkBundleEvidence> {
+    const missing = <T>(fallback: T) => (error: unknown) => {
+      if (error instanceof TestDispatchError && error.status === 404) return fallback;
+      throw error;
+    };
+    const pr = await this.api(`${REPOSITORY}/pulls/${bundle.pullRequest}`).then(value => z.object({ number: positive, merged: z.boolean(),
+      merge_commit_sha: sha.nullable(), base: z.object({ ref: z.string(), repo: repositorySchema }) }).parse(value)).catch(missing(null));
+    const merged = !!pr && pr.number === bundle.pullRequest && pr.merged && pr.merge_commit_sha === bundle.mergeCommitSha
+      && pr.base.ref === bundle.baseBranch && pr.base.repo.full_name === REPOSITORY;
+    const directory = bundle.artifactPath.slice(0, bundle.artifactPath.lastIndexOf("/"));
+    const heads: ExistingWorkBundleEvidence["heads"] = {};
+    for (const headSha of new Set(headShas)) {
+      requireThat(sha.safeParse(headSha).success, "Invalid publication head");
+      const comparison = await this.api(`${REPOSITORY}/compare/${bundle.mergeCommitSha}...${headSha}?per_page=1`)
+        .then(value => z.object({ status: z.enum(["ahead", "identical", "behind", "diverged"]) }).parse(value).status).catch(missing(null));
+      const listing = await this.api(`${REPOSITORY}/contents/${directory}?ref=${headSha}`)
+        .then(value => z.array(z.object({ path: z.string(), type: z.string(), sha })).parse(value)).catch(missing([]));
+      const entries = listing.filter(item => item.path === bundle.artifactPath && item.type === "file");
+      heads[headSha] = { containsMerge: comparison === "ahead" || comparison === "identical",
+        artifactBlobSha: entries.length === 1 ? entries[0]!.sha : null };
+    }
+    return { merged, heads };
   }
   async dispatch(input: TestDispatchInput) {
     const source = input.source;

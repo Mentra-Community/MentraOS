@@ -1,12 +1,14 @@
 import { Hono, type MiddlewareHandler } from "hono";
-import { testFailureEnvironment, verifyTestFailureReadGrant, verifyTestContinuationGrant } from "../../services/test-failure-auth";
+import { testFailureEnvironment, verifyTestFailureReadGrant, verifyTestContinuationGrant, verifyTestExistingWorkGrant } from "../../services/test-failure-auth";
 import { TestRunError, TestRunService } from "../../services/test-run.service";
 import { TestContinuationService } from "../../services/test-continuation.service";
+import { TestExistingWorkService } from "../../services/test-existing-work.service";
 import { TestRepairService } from "../../services/test-repair.service";
 import { TestFailureIncidentService } from "../../services/test-failure-incident.service";
 import { TestDispatchError, UnsupportedReplayError } from "../../services/test-builds.service";
 import { ZodError } from "zod";
 import type { ContinuationGrant } from "../../types/test-continuation.types";
+import type { ExistingWorkGrant } from "../../types/test-existing-work.types";
 import type { AppEnv } from "../../types/hono.types";
 
 /**
@@ -15,9 +17,19 @@ import type { AppEnv } from "../../types/hono.types";
  */
 export function createTestFailureAgentApi(service = new TestRunService(), continuation = new TestContinuationService(),
   incidents: Pick<TestFailureIncidentService, "metadata" | "artifact"> = new TestFailureIncidentService(service),
-  repairs: Pick<TestRepairService, "request" | "detail"> = new TestRepairService(service)) {
-  type Env = AppEnv & { Variables: AppEnv["Variables"] & { continuationGrant: ContinuationGrant } };
+  repairs: Pick<TestRepairService, "request" | "detail"> = new TestRepairService(service),
+  existingWork: Pick<TestExistingWorkService, "inventory" | "request" | "detail"> = new TestExistingWorkService(service)) {
+  type Env = AppEnv & { Variables: AppEnv["Variables"] & { continuationGrant: ContinuationGrant; existingWorkGrant: ExistingWorkGrant } };
   const app = new Hono<Env>();
+  // Purpose-separated: neither the read nor the continuation grant reaches these routes, and this grant reaches only them.
+  const verification = (action: ExistingWorkGrant["actions"][number]): MiddlewareHandler<Env> => async (c, next) => {
+    const token = (c.req.header("authorization") ?? "").replace(/^Bearer /, "");
+    const grant = verifyTestExistingWorkGrant(token, c.req.param("occurrenceId") ?? "",
+      process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET ?? "", testFailureEnvironment());
+    if (!grant || !grant.actions.includes(action)) return c.json({ error: "unauthorized", error_description: "existing-work verification grant required" }, 401);
+    c.set("existingWorkGrant", grant); c.header("Cache-Control", "private, no-store");
+    return next();
+  };
   const capability = (action: ContinuationGrant["actions"][number]): MiddlewareHandler<Env> => async (c, next) => {
     const token = (c.req.header("authorization") ?? "").replace(/^Bearer /, "");
     const grant = verifyTestContinuationGrant(token, c.req.param("occurrenceId") ?? "",
@@ -76,6 +88,17 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
   });
   app.get("/:occurrenceId/repairs/:operationId", capability("read-results"), c =>
     repairs.detail(c.get("continuationGrant"), c.req.param("operationId")).then(value => c.json(value)));
+  // Verification of an existing reviewed fix: merged dev/staging publications only in this leg.
+  app.get("/:occurrenceId/existing-work/builds", verification("read-results"), c =>
+    existingWork.inventory(c.get("existingWorkGrant")).then(value => c.json(value)));
+  app.post("/:occurrenceId/existing-work/requests", verification("request-routine"), async c => {
+    const text = await c.req.text();
+    if (text.length > 4096) return c.json({ error: "invalid_request" }, 400);
+    let input; try { input = JSON.parse(text); } catch { return c.json({ error: "invalid_request" }, 400); }
+    return c.json(await existingWork.request(c.get("existingWorkGrant"), input), 202);
+  });
+  app.get("/:occurrenceId/existing-work/requests/:operationId", verification("read-results"), c =>
+    existingWork.detail(c.get("existingWorkGrant"), c.req.param("operationId")).then(value => c.json(value)));
   app.get("/:occurrenceId", authorize, c => service.failureDetail(c.req.param("occurrenceId")).then(value => c.json(value)));
   app.on(["GET", "HEAD"], "/:occurrenceId/assets/:assetId", authorize, c =>
     service.failureMedia(c.req.param("occurrenceId"), c.req.param("assetId"), c.req.raw));

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { continuationGrantSchema, type ContinuationGrant } from "../types/test-continuation.types";
+import { existingWorkGrantSchema, type ExistingWorkGrant } from "../types/test-existing-work.types";
 import { testFailureOccurrenceIdSchema } from "../types/test-failure.types";
 
 export function testFailureEnvironment(): "dev" | "staging" | "prod" | null {
@@ -46,23 +47,42 @@ export function verifyTestFailureReadGrant(token: string, occurrenceId: string, 
   } catch { return false; }
 }
 
-export function signTestContinuationGrant(grant: ContinuationGrant, secret: string): string {
-  const value = continuationGrantSchema.parse(grant);
-  if (secret.length < 32) throw new Error("continuation signing is not configured");
+type ScopedGrant = { environment: string; occurrenceId: string; expires: number };
+function signGrant<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, grant: T, secret: string, name: string): string {
+  const value = schema.parse(grant);
+  if (secret.length < 32) throw new Error(`${name} signing is not configured`);
   const encoded = Buffer.from(JSON.stringify(value)).toString("base64url");
   return `${encoded}.${createHmac("sha256", secret).update(encoded).digest("hex")}`;
 }
-
-export function verifyTestContinuationGrant(token: string, occurrenceId: string, secret: string,
-  environment: string | null, now = Date.now()): ContinuationGrant | null {
+/** One HMAC envelope; each strict schema's purpose literal keeps grants from standing in for each other. */
+function verifyGrant<T extends ScopedGrant>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, token: string, occurrenceId: string, secret: string,
+  environment: string | null, now: number): T | null {
   if (secret.length < 32 || !environment || token.length > 4000) return null;
   const parts = token.split(".");
   if (parts.length !== 2 || !/^[A-Za-z0-9_-]+$/.test(parts[0]!) || !/^[a-f0-9]{64}$/.test(parts[1]!)) return null;
   if (!timingSafeEqual(createHmac("sha256", secret).update(parts[0]!).digest(), Buffer.from(parts[1]!, "hex"))) return null;
   try {
-    const grant = continuationGrantSchema.parse(JSON.parse(Buffer.from(parts[0]!, "base64url").toString("utf8")));
+    const grant = schema.parse(JSON.parse(Buffer.from(parts[0]!, "base64url").toString("utf8")));
     const seconds = Math.floor(now / 1000);
     return grant.environment === environment && grant.occurrenceId === occurrenceId
       && grant.expires > seconds && grant.expires <= seconds + 15 * 60 ? grant : null;
   } catch { return null; }
+}
+
+export function signTestContinuationGrant(grant: ContinuationGrant, secret: string): string {
+  return signGrant(continuationGrantSchema, grant, secret, "continuation");
+}
+
+export function verifyTestContinuationGrant(token: string, occurrenceId: string, secret: string,
+  environment: string | null, now = Date.now()): ContinuationGrant | null {
+  return verifyGrant(continuationGrantSchema, token, occurrenceId, secret, environment, now);
+}
+
+export function signTestExistingWorkGrant(grant: ExistingWorkGrant, secret: string): string {
+  return signGrant(existingWorkGrantSchema, grant, secret, "existing-work");
+}
+
+export function verifyTestExistingWorkGrant(token: string, occurrenceId: string, secret: string,
+  environment: string | null, now = Date.now()): ExistingWorkGrant | null {
+  return verifyGrant(existingWorkGrantSchema, token, occurrenceId, secret, environment, now);
 }

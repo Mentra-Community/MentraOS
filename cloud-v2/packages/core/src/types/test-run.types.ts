@@ -22,6 +22,58 @@ export const testAssetSchema = z.object({
   if (!matches) ctx.addIssue({ code: "custom", message: "asset kind/contentType mismatch" });
 });
 
+/** The only backend this first producer observes: the Notes production deployment. */
+export const NOTES_BACKEND_DEPLOYMENT = { repository: "Mentra-Community/Mentra-Notes-Miniapp",
+  origin: "https://mentra-notes-miniapp-prod.mentraglass.com" } as const;
+/**
+ * Optional projection of the backend deployment a claimed worker observed around its replay. Only
+ * the claimed Notes Phone worker's reviewed observation path produces it; its normal metadata asset
+ * holds the two authenticated observations. Absent means unknown, never a failure of the test.
+ */
+export const testRunBackendDeploymentSchema = z.object({
+  schemaVersion: z.literal(1),
+  repository: z.literal(NOTES_BACKEND_DEPLOYMENT.repository),
+  origin: z.literal(NOTES_BACKEND_DEPLOYMENT.origin),
+  runId: testRunIdSchema,
+  requestId: testRunIdSchema,
+  claimSha256: sha256,
+  commitSha: z.string().regex(/^[a-f0-9]{40}$/),
+  imageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  deployment: z.object({ uid: z.string().min(1).max(200), generation: z.number().int().positive().safe() }).strict(),
+  observedBefore: z.string().datetime({ offset: true }),
+  exerciseStartedAt: z.string().datetime({ offset: true }),
+  exerciseFinishedAt: z.string().datetime({ offset: true }),
+  observedAfter: z.string().datetime({ offset: true }),
+  evidence: z.object({ assetId: testRunIdSchema, sha256 }).strict(),
+}).strict();
+export type TestRunBackendDeployment = z.infer<typeof testRunBackendDeploymentSchema>;
+type BackendDeploymentRun = { runId: string; requestId: string; startedAt: string; finishedAt: string;
+  provenance: Record<string, string | undefined>; assets: { assetId: string; kind: string; sha256: string }[]; backendDeployment?: unknown };
+/**
+ * The projection bound to its own run: the same run and request, the claim document hash that the
+ * run's provenance carries (`provenance.claimSha256`), exactly one declared metadata asset with the evidence hash, and
+ * run start <= observedBefore <= exerciseStartedAt <= exerciseFinishedAt <= observedAfter <= run finish.
+ * Null when absent. Ingestion and the existing-work verdict both use this one check.
+ */
+export function boundBackendDeployment(run: BackendDeploymentRun): { proof: TestRunBackendDeployment } | { problem: string } | null {
+  if (run.backendDeployment === undefined) return null;
+  const parsed = testRunBackendDeploymentSchema.safeParse(run.backendDeployment);
+  if (!parsed.success) return { problem: "backend deployment projection is malformed" };
+  const proof = parsed.data;
+  if (proof.runId !== run.runId || proof.requestId !== run.requestId) return { problem: "backend deployment projection belongs to another run or request" };
+  // The worker's immutable claim document hash, as its exporter records it. The request hash is
+  // a different value and never stands in for a missing document hash.
+  if (!run.provenance.claimSha256 || proof.claimSha256 !== run.provenance.claimSha256)
+    return { problem: "backend deployment projection belongs to another claim" };
+  const assets = run.assets.filter(asset => asset.assetId === proof.evidence.assetId);
+  if (assets.length !== 1 || assets[0]!.kind !== "metadata" || assets[0]!.sha256 !== proof.evidence.sha256)
+    return { problem: "backend deployment evidence is not this run's declared metadata asset" };
+  const times = [run.startedAt, proof.observedBefore, proof.exerciseStartedAt, proof.exerciseFinishedAt, proof.observedAfter, run.finishedAt].map(Date.parse);
+  if (times.some((time, index) => !Number.isFinite(time) || (index > 0 && time < times[index - 1]!)))
+    return { problem: "backend deployment observations do not enclose the exercise within the run" };
+  return { proof };
+}
+
 export const testRunSchema = z.object({
   runId: testRunIdSchema,
   requestId: testRunIdSchema,
@@ -55,8 +107,11 @@ export const testRunSchema = z.object({
   }).strict()).max(2000),
   assets: z.array(testAssetSchema).max(2000),
   notes: z.string().max(20000).optional(),
+  backendDeployment: testRunBackendDeploymentSchema.optional(),
 }).strict().superRefine((run, ctx) => {
   const problem = (message: string) => ctx.addIssue({ code: "custom", message });
+  const backend = boundBackendDeployment(run);
+  if (backend && "problem" in backend) problem(backend.problem);
   if (Date.parse(run.finishedAt) < Date.parse(run.startedAt)) problem("finishedAt precedes startedAt");
   if (run.channel === "pr" && !run.prNumber) problem("PR run requires prNumber");
   if (run.failures && run.outcome === "passed") problem("passed result cannot contain failures");

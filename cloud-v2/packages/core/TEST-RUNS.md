@@ -14,6 +14,21 @@ unqualified routine uses `outcome: "blocked"`, test/teardown `"not-run"`, fixtur
 `"unknown"` and a concrete explanation in `notes`; empty chapters, assets and
 firmware assertions are valid. Do not fabricate device identities or versions.
 
+### Optional backend deployment projection
+
+`backendDeployment` is optional; every existing producer may omit it, and absence
+means the exercised backend is unknown, never a test failure. Only the claimed Notes
+Phone worker's reviewed observation path produces it, for the fixed Notes production
+repository and origin. Ingestion requires the projection to name this run and
+request, carry the worker's immutable claim document hash (`claimSha256` equals
+the exporter's `provenance.claimSha256`; the registered request hash
+`provenance.requestSha256` is a different value and never substitutes for it),
+point at exactly one declared `metadata` asset with the
+same SHA256, and satisfy `startedAt <= observedBefore <= exerciseStartedAt <=
+exerciseFinishedAt <= observedAfter <= finishedAt`. The metadata asset holds the two
+authenticated observations; it never contains tokens, account identifiers, config
+paths or raw logs. A merge, client ZIP or later deployment read is not a substitute.
+
 ## Worker API
 
 Set a separate, random `TEST_RUN_INGEST_TOKEN` of at least 32 characters. The
