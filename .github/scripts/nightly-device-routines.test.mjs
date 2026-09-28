@@ -6,22 +6,22 @@ import {dispatchReadyRequest} from "./dispatch-device-routine.mjs"
 import {coordinatedFixture, coordinatedAndroidFixture} from "./coordinated-routine-fixture.mjs"
 import {COORDINATED_WORKFLOW, COORDINATED_FINALIZE_JOB, COORDINATED_PUBLISH_STEP} from "./coordinated-routine-request.mjs"
 import {DEVICE_ROUTINES} from "./device-routines.mjs"
-import {NIGHTLY_SEND_STEP, NIGHTLY_WORKFLOW, NIGHTLY_TARGETS,
-  nightlyDate, nightlyJobName, planNightlyRequests, sendNightlyRequest, validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
+import {NIGHTLY_CRONS, NIGHTLY_SCHEDULE_GENERATIONS, NIGHTLY_SEND_STEP, NIGHTLY_WORKFLOW, NIGHTLY_TARGETS,
+  nightlyDate, nightlySenderDate, nightlyJobName, planNightlyRequests, sendNightlyRequest, validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 
 const repository = "Mentra-Community/MentraOS", sha = "b".repeat(40)
 const plan = {routine: "day1-ota", platform: "ios-on-mac", date: "2026-09-23", channel: "dev", sourceRunId: 100,
   publicationAttempt: 2, releaseIdentity: "3.3.0-dev.223"}
 const current = {id: 5000, run_attempt: 1, event: "schedule", path: NIGHTLY_WORKFLOW,
-  head_branch: "dev", head_sha: sha, created_at: "2026-09-23T10:17:00Z",
+  head_branch: "dev", head_sha: sha, created_at: "2026-09-23T11:17:00Z",
   repository: {full_name: repository}, head_repository: {full_name: repository}}
 const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "schedule",
-  runId: current.id, sha, payload: {schedule: "0 10 * * *"}}
+  runId: current.id, sha, payload: {schedule: "0 11 * * *"}}
 const publicationJob = (id, attempt = 2) => ({id, name: COORDINATED_FINALIZE_JOB, run_attempt: attempt,
   status: "completed", conclusion: "success", steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "success"}]})
 const sendJob = (id, overrides = {}) => ({id, name: nightlyJobName(plan), run_attempt: 1,
   status: "in_progress", conclusion: null, steps: [{name: NIGHTLY_SEND_STEP, status: "in_progress",
-    conclusion: null, started_at: "2026-09-23T10:18:00Z"}], ...overrides})
+    conclusion: null, started_at: "2026-09-23T11:18:00Z"}], ...overrides})
 
 function fixture() {
   const dev = coordinatedAndroidFixture(), staging = coordinatedAndroidFixture("staging")
@@ -72,23 +72,68 @@ function fixture() {
   return {state, options, dev, staging, publications}
 }
 
-test("only one UTC trigger covers 03:00 LA, including both DST transition dates", () => {
-  for (const [day, active] of [["2026-01-13", 11], ["2026-09-23", 10],
-    ["2026-03-08", 10], ["2026-03-09", 10], ["2026-11-01", 11], ["2026-11-02", 11]]) {
-    for (const hour of [10, 11]) assert.equal(nightlyDate(`0 ${hour} * * *`, `${day}T${hour}:17:00Z`), hour === active ? day : null)
+const [CURRENT_04, HISTORICAL_03, HISTORICAL_MIDNIGHT] = NIGHTLY_SCHEDULE_GENERATIONS
+
+test("only one UTC trigger covers 04:00 LA, including both DST transition dates", () => {
+  assert.deepEqual(NIGHTLY_CRONS, ["0 11 * * *", "0 12 * * *"])
+  // Summer (PDT) is 11:00 UTC, winter (PST) 12:00 UTC; the transition Sundays and the days around them are included.
+  for (const [day, active] of [["2026-01-13", 12], ["2026-09-23", 11], ["2026-03-07", 12], ["2026-03-08", 11],
+    ["2026-03-09", 11], ["2026-10-31", 11], ["2026-11-01", 12], ["2026-11-02", 12]]) {
+    for (const hour of [11, 12]) assert.equal(nightlyDate(`0 ${hour} * * *`, `${day}T${hour}:17:00Z`), hour === active ? day : null)
   }
 })
 
 test("delayed triggers retain intended local date but cannot drift past the bounded delivery window", () => {
-  assert.equal(nightlyDate("0 10 * * *", "2026-09-23T15:59:59Z"), "2026-09-23")
-  assert.equal(nightlyDate("0 11 * * *", "2026-01-13T16:59:59Z"), "2026-01-13")
-  for (const value of ["2026-09-23T09:59:59Z", "2026-09-23T16:00:00Z", "invalid"])
-    assert.throws(() => nightlyDate("0 10 * * *", value))
+  assert.equal(nightlyDate("0 11 * * *", "2026-09-23T16:59:59Z"), "2026-09-23")
+  assert.equal(nightlyDate("0 12 * * *", "2026-01-13T17:59:59Z"), "2026-01-13")
+  for (const value of ["2026-09-23T10:59:59Z", "2026-09-23T17:00:00Z", "invalid"])
+    assert.throws(() => nightlyDate("0 11 * * *", value))
   assert.throws(() => nightlyDate("0 0 * * *", current.created_at))
 })
 
-test("old midnight schedules cannot start new requests", async () => {
-  for (const cron of ["0 7 * * *", "0 8 * * *"]) {
+test("schedule generations are explicit: each pairs its own triggers with its own intended Pacific hour", () => {
+  assert.deepEqual(NIGHTLY_SCHEDULE_GENERATIONS.map(({localHour, crons, current}) => ({localHour, crons, current})), [
+    {localHour: "04", crons: ["0 11 * * *", "0 12 * * *"], current: true},
+    {localHour: "03", crons: ["0 10 * * *", "0 11 * * *"], current: false},
+    {localHour: "00", crons: ["0 7 * * *", "0 8 * * *"], current: false}])
+  assert.equal(CURRENT_04.crons, NIGHTLY_CRONS)
+  // 11:00 UTC is shared: 04:00 in summer for the current generation, 03:00 in winter for the historical one.
+  assert.equal(nightlyDate("0 11 * * *", "2026-09-23T11:17:00Z"), "2026-09-23")
+  assert.equal(nightlyDate("0 11 * * *", "2026-09-23T11:17:00Z", HISTORICAL_03), null)
+  assert.equal(nightlyDate("0 11 * * *", "2026-01-13T11:17:00Z"), null)
+  assert.equal(nightlyDate("0 11 * * *", "2026-01-13T11:17:00Z", HISTORICAL_03), "2026-01-13")
+  assert.equal(nightlyDate("0 10 * * *", "2026-09-23T10:17:00Z", HISTORICAL_03), "2026-09-23")
+  assert.equal(nightlyDate("0 7 * * *", "2026-09-23T07:17:00Z", HISTORICAL_MIDNIGHT), "2026-09-23")
+  assert.equal(nightlyDate("0 8 * * *", "2026-01-13T08:17:00Z", HISTORICAL_MIDNIGHT), "2026-01-13")
+  // A trigger is read only by its own generation: obsolete triggers are never current, and 03:00 triggers are never
+  // read with the midnight hour.
+  for (const cron of ["0 7 * * *", "0 8 * * *", "0 10 * * *"]) assert.throws(() => nightlyDate(cron, "2026-09-23T10:17:00Z"), /Unexpected/)
+  for (const cron of ["0 10 * * *", "0 11 * * *"]) assert.throws(() => nightlyDate(cron, "2026-09-23T11:17:00Z", HISTORICAL_MIDNIGHT), /Unexpected/)
+  assert.throws(() => nightlyDate("0 12 * * *", "2026-01-13T12:17:00Z", HISTORICAL_03), /Unexpected/)
+  assert.throws(() => nightlyDate("0 11 * * *", "2026-09-23T11:17:00Z", {...CURRENT_04}), /Unexpected/)
+})
+
+test("every generation's sender reading agrees on one local date through both DST transitions", () => {
+  // Each day of 2026, each generation's trigger delivered on time, after 17 minutes or at the end of its window.
+  let checked = 0
+  for (let day = Date.UTC(2026, 0, 1); day < Date.UTC(2027, 0, 1); day += 86400_000)
+    for (const generation of NIGHTLY_SCHEDULE_GENERATIONS) for (const cron of generation.crons)
+      for (const delay of [0, 17 * 60_000, 6 * 3600_000 - 1000]) {
+        const createdAt = new Date(day + Number(cron.split(" ")[1]) * 3600_000 + delay).toISOString()
+        const date = nightlyDate(cron, createdAt, generation)
+        if (!date) continue
+        assert.equal(nightlySenderDate(createdAt), date, `${generation.name} ${cron} ${createdAt}`)
+        checked++
+      }
+  // Every generation fires exactly once per local date (365 each), at three delivery delays.
+  assert.equal(checked, 3 * 365 * 3)
+  for (const createdAt of ["2026-09-23T06:59:59Z", "2026-09-23T18:00:00Z", "invalid"])
+    assert.throws(() => nightlySenderDate(createdAt), /no valid local nightly date/)
+})
+
+test("old midnight and 03:00 schedules cannot start new requests", async () => {
+  // 11:00 UTC is also an old 03:00 trigger; its winter reading is covered by the no-op test below.
+  for (const cron of ["0 7 * * *", "0 8 * * *", "0 10 * * *"]) {
     const f = fixture()
     await assert.rejects(planNightlyRequests({...f.options, context: {...context, payload: {schedule: cron}}}), /Unexpected nightly schedule/)
     await assert.rejects(sendNightlyRequest({...f.options, context: {...context, payload: {schedule: cron}}, plan}), /Unexpected nightly schedule/)
@@ -276,12 +321,22 @@ test("one unavailable or unreadable channel preserves the other channel requests
 })
 
 test("wrong UTC trigger is a no-op; reruns and untrusted workflow identities cannot plan sends", async () => {
-  const f = fixture()
-  f.state.run.created_at = "2026-09-23T11:00:00Z"
-  const skipped = await planNightlyRequests({...f.options, context: {...context, payload: {schedule: "0 11 * * *"}}})
-  assert.deepEqual(skipped.requests, [])
-  assert.deepEqual(skipped.unavailable, [])
-  assert.equal(f.state.calls.length, 0)
+  // Summer 12:00 UTC is 05:00 PDT; winter 11:00 UTC is 03:00 PST, the old schedule's hour, never a current producer.
+  for (const [createdAt, schedule, date] of [["2026-09-23T12:00:00Z", "0 12 * * *", "2026-09-23"],
+    ["2026-01-13T11:00:00Z", "0 11 * * *", "2026-01-13"]]) {
+    const f = fixture()
+    f.state.run.created_at = createdAt
+    const skipped = await planNightlyRequests({...f.options, context: {...context, payload: {schedule}}})
+    assert.deepEqual(skipped.requests, [])
+    assert.deepEqual(skipped.unavailable, [])
+    assert.match(skipped.reason, /04:00 America\/Los_Angeles/)
+    assert.equal(f.state.calls.length, 0)
+    const send = fixture()
+    send.state.run.created_at = createdAt
+    await assert.rejects(sendNightlyRequest({...send.options, context: {...context, payload: {schedule}}, plan: {...plan, date}}),
+      /Invalid nightly request coordinates/)
+    assert.equal(send.state.calls.length, 0)
+  }
   for (const patch of [{event: "workflow_dispatch"}, {head_branch: "staging"}, {head_sha: "c".repeat(40)},
     {path: ".github/workflows/untrusted.yml"}, {repository: {full_name: "fork/MentraOS"}}]) {
     const bad = fixture(); Object.assign(bad.state.run, patch)
@@ -391,8 +446,10 @@ test("the current send can be found on a later complete job page", async () => {
 test("workflow keeps nightly opt-in, ordinary callbacks and independent matrix members", async () => {
   const workflow = await readFile(new URL("../workflows/nightly-device-routines.yml", import.meta.url), "utf8")
   assert.match(workflow, /vars\.DEVICE_ROUTINE_NIGHTLY_ENABLED == 'true'/)
-  assert.match(workflow, /cron: '0 10 \* \* \*'/)
-  assert.match(workflow, /cron: '0 11 \* \* \*'/)
+  assert.deepEqual([...workflow.matchAll(/cron: '([^']+)'/g)].map(match => match[1]), NIGHTLY_CRONS)
+  assert.match(workflow, /Select verified publications for 04:00 Pacific/)
+  assert.match(workflow, /Nightly test plan — 04:00 Pacific/)
+  assert.doesNotMatch(workflow, /03:00 Pacific/)
   assert.match(workflow, /availability:\n    needs: plan/)
   assert.match(workflow, /core\.setFailed\('Some required routines or platform publications are unavailable/)
   assert.match(workflow, /request:\n    needs: plan/)
@@ -561,10 +618,48 @@ test("rerunning an independent request cannot create a second generation outside
   assert.equal(f.privateCalls.length, 0)
 })
 
-for (const createdAt of ["2026-09-23T07:17:00Z", "2026-09-23T10:17:00Z", "2026-09-23T15:59:59Z"])
-  test(`callback retains historical midnight and current 03:00 sender authentication at ${createdAt}`, async () => {
+// Summer and winter senders of every generation, on time and delayed: midnight, historical 03:00 and current 04:00.
+for (const [createdAt, date] of [["2026-09-23T07:17:00Z", "2026-09-23"], ["2026-09-23T10:17:00Z", "2026-09-23"],
+  ["2026-09-23T15:59:59Z", "2026-09-23"], ["2026-09-23T11:17:00Z", "2026-09-23"], ["2026-09-23T16:59:59Z", "2026-09-23"],
+  ["2026-01-13T08:17:00Z", "2026-01-13"], ["2026-01-13T11:17:00Z", "2026-01-13"], ["2026-01-13T12:17:00Z", "2026-01-13"],
+  ["2026-11-01T11:17:00Z", "2026-11-01"], ["2026-03-08T10:17:00Z", "2026-03-08"]])
+  test(`callback retains historical midnight, historical 03:00 and current 04:00 sender authentication at ${createdAt}`, async () => {
     const f = await markerFixture()
     f.state.run.created_at = createdAt
+    f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName({...plan, date})})])
     await authenticateNightlyMarker({...f.options, request: f.request})
     assert.equal((await dispatchReadyRequest(f.callback)).status, "private-job-requested")
+    // The sender's date is its own: a send recorded under another local date does not authenticate it.
+    f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName({...plan, date: "2026-09-22"})})])
+    await assert.rejects(authenticateNightlyMarker({...f.options, request: f.request}), /absent or ambiguous/)
   })
+
+for (const createdAt of ["2026-09-23T06:59:59Z", "2026-09-23T18:00:00Z"])
+  test(`a sender outside every generation's delivery window cannot authenticate (${createdAt})`, async () => {
+    const f = await markerFixture()
+    f.state.run.created_at = createdAt
+    await assert.rejects(authenticateNightlyMarker({...f.options, request: f.request}), /no valid local nightly date/)
+    await assert.rejects(dispatchReadyRequest(f.callback))
+    assert.equal(f.privateCalls.length, 0)
+  })
+
+test("an earlier generation's same-local-date member send blocks the current 04:00 send", async () => {
+  // Summer: 00:00 and 03:00 PDT senders precede the 04:00 run; winter: 03:00 PST precedes 04:00 PST (11:00 then 12:00 UTC).
+  for (const [priorAt, currentAt, schedule, date] of [["2026-09-23T07:17:00Z", "2026-09-23T11:17:00Z", "0 11 * * *", "2026-09-23"],
+    ["2026-09-23T10:17:00Z", "2026-09-23T11:17:00Z", "0 11 * * *", "2026-09-23"],
+    ["2026-01-13T11:17:00Z", "2026-01-13T12:17:00Z", "0 12 * * *", "2026-01-13"]]) {
+    for (const priorSent of [true, false]) {
+      const f = fixture(), memberPlan = {...plan, date}
+      f.state.run.created_at = currentAt
+      f.state.history = [{...current, created_at: currentAt}, {...current, id: 4999, created_at: priorAt}]
+      f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName(memberPlan)})])
+      f.state.jobs.set(4999, [sendJob(49991, {name: nightlyJobName(priorSent ? memberPlan : {...memberPlan, routine: "mentra-call"}),
+        status: "completed", conclusion: "success"})])
+      const options = {...f.options, context: {...context, payload: {schedule}}, plan: memberPlan}
+      if (priorSent) {
+        await assert.rejects(sendNightlyRequest(options), /earlier nightly owns/)
+        assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
+      } else assert.equal((await sendNightlyRequest(options)).status, "request-dispatched")
+    }
+  }
+})

@@ -4,8 +4,17 @@ import {DEVICE_ROUTINES, isRegisteredRoutine} from "./device-routines.mjs"
 
 export const NIGHTLY_WORKFLOW = ".github/workflows/nightly-device-routines.yml"
 
-export const NIGHTLY_CRONS = Object.freeze(["0 10 * * *", "0 11 * * *"])
-const LEGACY_CRONS = ["0 7 * * *", "0 8 * * *"]
+/** 04:00 America/Los_Angeles is 11:00 UTC in summer and 12:00 UTC in winter. Only these triggers plan or send. */
+export const NIGHTLY_CRONS = Object.freeze(["0 11 * * *", "0 12 * * *"])
+/** Every schedule generation whose entered sends remain verifiable, each with its own UTC triggers and intended Pacific
+ * hour. A cron alone never identifies the hour: 11:00 UTC is 04:00 in summer for the current generation but was 03:00 in
+ * winter for the historical one. Only the current generation plans or sends; the others only authenticate earlier sends. */
+export const NIGHTLY_SCHEDULE_GENERATIONS = Object.freeze([
+  {name: "04:00 Pacific", localHour: "04", crons: NIGHTLY_CRONS, current: true},
+  {name: "historical 03:00 Pacific", localHour: "03", crons: Object.freeze(["0 10 * * *", "0 11 * * *"]), current: false},
+  {name: "historical midnight Pacific", localHour: "00", crons: Object.freeze(["0 7 * * *", "0 8 * * *"]), current: false},
+].map(Object.freeze))
+const CURRENT_GENERATION = NIGHTLY_SCHEDULE_GENERATIONS[0]
 
 export const NIGHTLY_SEND_STEP = "Send the nightly routine request"
 const LEGACY_SEND_STEP = "Send the nightly routine sequence"
@@ -51,10 +60,11 @@ const jobsFor = (github, context, runId) => completePages(page => github.rest.ac
   ...context.repo, run_id: runId, filter: "all", per_page: 100, page,
 }), "jobs")
 
-/** Two UTC triggers cover DST. Use the intended trigger, allowing queue delays. */
-export function nightlyDate(cron, createdAt) {
-  const hour = {"0 7 * * *": 7, "0 8 * * *": 8, "0 10 * * *": 10, "0 11 * * *": 11}[cron]
-  requireThat(hour !== undefined, "Unexpected nightly schedule")
+/** Two UTC triggers cover DST. Use the intended trigger, allowing queue delays. The generation defaults to the current
+ * schedule; a historical generation is evaluated only to authenticate an earlier send, with its own intended hour. */
+export function nightlyDate(cron, createdAt, generation = CURRENT_GENERATION) {
+  requireThat(NIGHTLY_SCHEDULE_GENERATIONS.includes(generation) && generation.crons.includes(cron), "Unexpected nightly schedule")
+  const hour = Number(cron.split(" ")[1])
   const created = new Date(createdAt)
   requireThat(Number.isFinite(created.getTime()), "Invalid nightly creation time")
   const scheduled = new Date(Date.UTC(created.getUTCFullYear(), created.getUTCMonth(), created.getUTCDate(), hour))
@@ -62,8 +72,17 @@ export function nightlyDate(cron, createdAt) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {timeZone: "America/Los_Angeles",
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"})
     .formatToParts(scheduled).map(part => [part.type, part.value]))
-  const localHour = LEGACY_CRONS.includes(cron) ? "00" : "03"
-  return parts.hour === localHour ? `${parts.year}-${parts.month}-${parts.day}` : null
+  return parts.hour === generation.localHour ? `${parts.year}-${parts.month}-${parts.day}` : null
+}
+
+/** The one local nightly date of an authenticated scheduled sender from any generation. Every generation and trigger
+ * reading its creation time must agree; none or several dates cannot authenticate a send. */
+export function nightlySenderDate(createdAt) {
+  const dates = [...new Set(NIGHTLY_SCHEDULE_GENERATIONS.flatMap(generation => generation.crons.flatMap(cron => {
+    try { const date = nightlyDate(cron, createdAt, generation); return date ? [date] : [] } catch { return [] }
+  })))]
+  requireThat(dates.length === 1, "Nightly sequence source has no valid local nightly date")
+  return dates[0]
 }
 
 async function scheduledRun(github, context, attempt) {
@@ -80,7 +99,7 @@ async function scheduledRun(github, context, attempt) {
 
 export async function planNightlyRequests({github, context, attempt, fetchImpl = fetch, routineCatalog = DEVICE_ROUTINES}) {
   const {run, date} = await scheduledRun(github, context, attempt)
-  if (!date) return {requests: [], unavailable: [], reason: "The other UTC trigger covers 03:00 America/Los_Angeles today"}
+  if (!date) return {requests: [], unavailable: [], reason: "The other UTC trigger covers 04:00 America/Los_Angeles today"}
   requireThat(attempt === 1, "Nightly reruns require reconciliation; do not repeat physical routines automatically")
   const requests = [], unavailable = []
   for (const channel of ["dev", "staging"]) {
@@ -214,15 +233,12 @@ export async function authenticateNightlyMarker({github, context, request}) {
     run.path === NIGHTLY_WORKFLOW && run.head_branch === "dev" && SHA.test(run.head_sha ?? "") &&
     run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
   "Nightly sequence source is not an authenticated scheduled workflow")
-  // Historical midnight requests remain verifiable after the schedule moves.
-  // Both schedule generations can identify the same date after a queue delay.
-  const dates = [...new Set([...NIGHTLY_CRONS, ...LEGACY_CRONS].flatMap(cron => {
-    try { const date = nightlyDate(cron, run.created_at); return date ? [date] : [] } catch { return [] }
-  }))]
-  requireThat(dates.length === 1, "Nightly sequence source has no valid local nightly date")
+  // Historical midnight and 03:00 requests remain verifiable after the schedule moved to 04:00; every generation
+  // reads the sender's creation time with its own intended hour and all readings must name one date.
+  const date = nightlySenderDate(run.created_at)
   const jobs = await jobsFor(github, context, run.id)
   const legacy = marker.kind === "nightly-ota-call"
-  const expected = {date: dates[0], channel: request.source.channel, routine: marker.member}
+  const expected = {date, channel: request.source.channel, routine: marker.member}
   const matches = jobs.filter(job => job.name === (legacy ? legacyJobName(expected) : nightlyJobName(expected)) &&
     job.run_attempt === marker.runAttempt && job.steps?.some(step => step.name === (legacy ? LEGACY_SEND_STEP : NIGHTLY_SEND_STEP) &&
       ["in_progress", "completed"].includes(step.status) && step.conclusion !== "skipped" &&

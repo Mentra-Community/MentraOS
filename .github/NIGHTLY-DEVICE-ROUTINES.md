@@ -52,10 +52,19 @@ lifecycle instead of `worker/planned-routine-intake.ts`, and add its label to
 
 ## Schedule and exact selection
 
-Nightly starts at **03:00 America/Los_Angeles**. The 10:00 and 11:00 UTC triggers cover daylight
+Nightly starts at **04:00 America/Los_Angeles**. The 11:00 and 12:00 UTC triggers cover daylight
 saving time; only the applicable trigger proceeds, including transition dates.
 GitHub delivery can be delayed for at most six hours. Later delivery fails rather
 than silently changing the night.
+
+The schedule moved from 03:00 (10:00 and 11:00 UTC) and, before that, from midnight
+(07:00 and 08:00 UTC). Only the 04:00 triggers plan or send; any other trigger is
+refused, and an 11:00 UTC trigger in winter (03:00 Pacific) is a no-op. Sends from the
+03:00 and midnight generations stay verifiable: each generation reads a sender's
+creation time with its own intended Pacific hour, since 11:00 UTC was 03:00 in winter
+but is 04:00 in summer, and all readings must name one local date. The date/channel/routine
+send fence spans generations, so a member already sent on a local date by an earlier
+generation is never sent again that date.
 
 For each channel, inspect the latest 20 successful coordinated runs, newest first.
 A candidate needs the successful immutable-publication step, its retained Actions
