@@ -435,8 +435,9 @@ class AcsMeetingModule : Module() {
         promise.reject("NO_MEETING", "No active meeting", null)
       } else {
         val bytes = imageBase64?.let { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }
-        val handed = meeting.setOutgoingHold(kind, bytes)
-        if (handed) promise.resolve(null) else promise.reject("HOLD_FAILED", "The outgoing card was not sent", null)
+        meeting.setOutgoingHold(kind, bytes) { handed ->
+          if (handed) promise.resolve(null) else promise.reject("HOLD_FAILED", "The outgoing card was not sent", null)
+        }
       }
     }
 

@@ -138,8 +138,10 @@ class AcsMeetingSession(
   private val frameSender = AcsFrameSender(stats, avSync)
   private val outgoingHold = OutgoingVideoHold(
     send = { planes -> frameSender.sendPlanes(planes) },
-    width = { profile.width },
-    height = { profile.height },
+    // The negotiated size, not the profile ceiling: ACS renegotiates below the ceiling under load,
+    // and sendPlanes drops any hold frame whose dimensions differ from the negotiated format.
+    width = { frameSender.negotiatedSize()?.width ?: profile.width },
+    height = { frameSender.negotiatedSize()?.height ?: profile.height },
   )
   private var profile = VideoProfile.DEFAULT
   private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm, config ->
@@ -893,15 +895,19 @@ class AcsMeetingSession(
   }
 
   /**
-   * Ignore glasses frames and send a card or still instead. Returns once one replacement
-   * frame has been handed to the sender, so the caller can stop the camera after that.
+   * Ignore glasses frames and send a card or still instead. Reports through [onResult] once one
+   * replacement frame has been handed to the sender, so the caller can stop the camera after that.
+   *
+   * Asynchronous: the hold does its own off-thread wait for the first frame rather than blocking
+   * the caller, so the RN module thread never stalls (and risks an ANR) inside this call.
    */
-  fun setOutgoingHold(kind: String, imageBytes: ByteArray?): Boolean {
+  fun setOutgoingHold(kind: String, imageBytes: ByteArray?, onResult: (Boolean) -> Unit) {
     if (kind == "live") {
       outgoingHold.stop()
-      return true
+      onResult(true)
+      return
     }
-    return outgoingHold.start(kind, imageBytes)
+    outgoingHold.start(kind, imageBytes, onResult)
   }
 
   private fun forwardGlassesPlanes(planes: I420Planes) {

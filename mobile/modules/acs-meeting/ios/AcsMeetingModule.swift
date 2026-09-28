@@ -839,7 +839,10 @@ final class AcsMeetingSession {
             return true
         }
         stopOutgoingHold()
-        guard let buffer = outgoingHoldPixelBuffer(kind: kind, imageBase64: imageBase64, width: 1280, height: 720) else {
+        // Render at the size ACS negotiated, not the profile ceiling: ACS renegotiates below the
+        // ceiling under load, and a hold frame built at 1280x720 would be dropped for a mismatch.
+        let size = frameSender.negotiatedSize() ?? (width: AcsOutgoingVideo.hd.width, height: AcsOutgoingVideo.hd.height)
+        guard let buffer = outgoingHoldPixelBuffer(kind: kind, imageBase64: imageBase64, width: size.width, height: size.height) else {
             return false
         }
         holdBuffer = buffer
