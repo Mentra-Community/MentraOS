@@ -6,6 +6,9 @@ import { failedStepFlow, fixFlowHref, readFixFlowLink } from "../lib/fix-flow-li
 import { filterFixFlowGroups, groupFixFlows, FLOW_STAGES, FLOW_STATUSES } from "../lib/fix-flow-groups";
 import { FixFlowDetail, FixFlowsPage, FixFlowOverview } from "./fix-flows";
 import type { TestRunDetail } from "./test-runs-data";
+import { projectFixFlow } from "../../../../packages/core/src/services/fix-flow.service";
+import type { StoredTestRun } from "../../../../packages/core/src/services/test-run.service";
+import type { TestFailureOccurrence } from "../../../../packages/core/src/types/test-failure.types";
 
 const id = `tfo_${"a".repeat(64)}`;
 const flow: FixFlow = {
@@ -91,6 +94,28 @@ describe("Fix flows navigation and recorded states", () => {
   test("legacy broad active responses are unverified, never Running", () => {
     const result = groupFixFlows([{ ...flow, state: "active", pipelineStage: undefined }]);
     expect(result[0]?.status).toBe("unknown"); expect(result[0]?.stage).toBe("unknown");
+  });
+  test("blocked original and linked triage reach the attention filter with exact grouped counts", () => {
+    const stored = { run: { runId: "triage-run", routineId: "notes-phone", channel: "dev", finishedAt: flow.startedAt, release: "dev.synthetic" } } as StoredTestRun;
+    const blocked = ["rejected", "linked-owner"].flatMap((state, index) => [false, true].map((linked, member) => {
+      const occurrenceId = `tfo_${String(index * 2 + member + 4).repeat(64)}`;
+      const owner = `owner-${index}`;
+      const occurrence: TestFailureOccurrence = { occurrenceId, revision: 1,
+        failure: { phase: "test", step: null, code: state, message: "Synthetic triage outcome", incidentIds: [], assetIds: [], missingEvidence: [], redactionPolicy: "synthetic-reviewed" },
+        delivery: { state: "acknowledged", agentRunId: owner, acknowledgedAt: flow.startedAt } };
+      const triage = { state, nextAction: "Reconcile the recorded owner." };
+      return projectFixFlow(stored, occurrence, { runId: linked ? `observer-${index}` : owner, executor: "mini-claude", environment: "dev", taskKind: "routine-failure",
+        status: linked ? "mini_linked" : "awaiting_executor", createdAt: flow.startedAt, updatedAt: flow.updatedAt,
+        routineFailure: { intake: { occurrenceId, testRunId: stored.run.runId } }, routineCase: { caseId: `mfc_${String(index).repeat(64)}`, anchorRunId: owner },
+        ...(linked ? { executionOwnerRunId: owner, executionOwnerStatus: "awaiting_executor", executionOwnerTriage: triage } : { miniTriage: triage }) }, "available", []);
+    }));
+    const groups = groupFixFlows(blocked);
+    expect(groups).toHaveLength(2); expect(groups.map(group => group.occurrences.length)).toEqual([2, 2]);
+    expect(filterFixFlowGroups(groups, { kind: "status", value: "attention" })).toHaveLength(2);
+    expect(filterFixFlowGroups(groups, { kind: "status", value: "waiting" })).toHaveLength(0);
+    const html = renderToStaticMarkup(<FixFlowOverview data={{ flows: blocked, activity: "available", refreshedAt: flow.updatedAt, limited: false }} filter={{ kind: "status", value: "attention" }} onFilter={() => {}} onSelect={() => {}} />);
+    expect(html).toContain("Needs attention · 2"); expect(html).toContain("4 failures");
+    for (const occurrence of blocked) expect(html).toContain(`?fixFlow=${occurrence.occurrenceId}`);
   });
   test("linked occurrence labels its execution owner separately", () => {
     const html = renderToStaticMarkup(<FixFlowDetail flow={{ ...flow, agent: { ...flow.agent!, status: "mini_linked",

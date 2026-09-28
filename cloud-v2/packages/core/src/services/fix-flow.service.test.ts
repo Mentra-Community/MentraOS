@@ -65,6 +65,24 @@ describe("exact failure-to-fixer projection", () => {
     expect(oldController.state).toBe("unknown"); expect(oldController.stage).toBe("Worker execution unconfirmed");
     expect(projectFixFlow(stored, occurrence, activity, "available", [], now).state).toBe("running");
   });
+  test("blocked triage is attention for both original and acknowledged execution owners", () => {
+    for (const state of ["needs-evidence", "held", "rejected", "linked-owner"]) {
+      const triage = { state, reason: "reconciliation-required", nextAction: "Reconcile this recorded owner before execution." };
+      const own = { ...activity, status: "awaiting_executor", miniTriage: triage, miniExecution: undefined };
+      const linked: FixActivity = { ...own, runId: "22222222-2222-4222-8222-222222222222", status: "mini_linked",
+        acknowledgedAgentRunId: agentId, executionOwnerRunId: agentId, executionOwnerStatus: "awaiting_executor",
+        executionOwnerTriage: triage, miniTriage: { state: "admitted", nextAction: "Historical own admission" } };
+      for (const row of [own, linked]) {
+        expect(matchingFixActivity(stored, occurrence, row, "dev")).toEqual(row);
+        const result = projectFixFlow(stored, occurrence, row, "available", []);
+        expect(result.state).toBe("attention");
+        expect(result.nextAction).toBe(row === linked ? `This failure is linked to the recorded case. ${triage.nextAction}` : triage.nextAction);
+        expect(result.pipelineStage).toBe("intake");
+      }
+    }
+    for (const state of ["pending", "waiting-evidence", "existing-work"])
+      expect(projectFixFlow(stored, occurrence, { ...activity, status: "awaiting_executor", miniTriage: { state }, miniExecution: undefined }, "available", []).state).toBe("waiting");
+  });
   test("linked execution uses the acknowledged owner's lease, never the observation's lease", () => {
     const linked = { ...activity, executionOwnerRunId: agentId, executionOwnerStatus: "mini_running" };
     expect(projectFixFlow(stored, occurrence, linked, "available", []).state).toBe("unknown");

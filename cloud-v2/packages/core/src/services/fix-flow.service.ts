@@ -35,6 +35,7 @@ const words = (value: string) => value.replaceAll("-", " ").replaceAll("_", " ")
 const prUrl = (repository: string, number: number) => `https://github.com/${repository}/pull/${number}`;
 const completedStatuses = new Set(["cancelled", "no_fix_needed", "third_party_out_of_scope"]);
 const attentionStatuses = new Set(["mini_needs_input", "needs_more_info", "needs_product_decision", "needs_human_engineer", "ready_for_human_test", "failed"]);
+const attentionTriageStates = new Set(["needs-evidence", "held", "rejected", "linked-owner"]);
 const executionActions: Record<string, string> = {
   "source-investigation": "The fixer is investigating the recorded source and evidence.",
   "review-pending": "Waiting for a reviewer to assess the recorded PR head.",
@@ -101,7 +102,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
       nextAction = `Recorded ${words(activity.miniTurnFailure.kind)}. A recovery owner and next action have not been recorded.`;
     }
     if (!completedStatuses.has(status!) && !cancelled) {
-      if (triage?.state === "needs-evidence" || triage?.state === "held") state = "attention";
+      if (triage && attentionTriageStates.has(triage.state)) state = "attention";
       if (turn?.stage === "needs-input" && !currentlyLeased) state = "attention";
       if (turn?.stage === "continue" && state === "waiting") stage = "Awaiting next agent turn";
       if (status === "mini_running") {
