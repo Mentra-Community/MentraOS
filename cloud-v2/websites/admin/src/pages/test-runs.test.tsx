@@ -812,7 +812,7 @@ describe("worker preparation failures", () => {
   test("shows the stage, not-run test, recorded hardware state, evidence gaps, delivery and exact links", () => {
     const markup = renderRun(stopped);
     expect(markup).toContain("Failure details");
-    expect(markup).toContain("The worker stopped before any claim, at stage fixture-readiness.");
+    expect(markup).toContain("The worker stopped at intake stage fixture-readiness.");
     expect(markup).toContain("recorded that hardware was not started");
     expect(markup).toContain("No claim requested; no fixture state was observed.");
     expect(markup).toContain("Ready fixture lacks its original completed return-verification journal");
@@ -838,9 +838,14 @@ describe("worker preparation failures", () => {
       const { claim: _omit, ...rest } = stopped.provenance;
       return renderRun({ ...stopped, provenance: { ...rest, intakeStatus, ...(claim === undefined ? {} : { claim }) } });
     };
-    // The producer's two explicit pairs keep their known labels.
-    expect(claimText("preparation-blocked", "not-attempted")).toContain("No claim requested; no fixture state was observed.");
-    expect(claimText("claim-blocked", "not-granted")).toContain("Claim not granted; no fixture state was observed.");
+    // The producer's two explicit pairs keep their known labels; only that label speaks about the claim.
+    for (const [intakeStatus, claim, label] of [["preparation-blocked", "not-attempted", "No claim requested"],
+      ["claim-blocked", "not-granted", "Claim not granted"]] as const) {
+      const markup = claimText(intakeStatus, claim);
+      expect(markup).toContain("The worker stopped at intake stage fixture-readiness.");
+      expect(markup).toContain(`${label}; no fixture state was observed.`);
+      expect(markup).not.toContain("before any claim");
+    }
     // Missing, unrecognized or mismatched provenance proves neither.
     for (const [intakeStatus, claim] of [
       ["preparation-blocked", undefined], ["claim-blocked", undefined],
@@ -848,8 +853,10 @@ describe("worker preparation failures", () => {
       ["preparation-blocked", "not-granted"], ["claim-blocked", "not-attempted"],
     ] as const) {
       const markup = claimText(intakeStatus, claim);
-      expect(markup).toContain("The worker stopped before any claim");
+      // A neutral heading from the recorded stage only: no claim is asserted anywhere in the summary.
+      expect(markup).toContain("The worker stopped at intake stage fixture-readiness.");
       expect(markup).toContain("Claim state not recorded; no fixture state was observed.");
+      expect(markup).not.toContain("before any claim");
       expect(markup).not.toContain("No claim requested");
       expect(markup).not.toContain("Claim not granted");
     }
@@ -867,11 +874,11 @@ describe("worker preparation failures", () => {
     expect(unsafe).not.toContain("Worker attempt");
     for (const change of [{ hardwareStarted: undefined }, { hardwareStarted: "true" }, { intakeStatus: "terminal" }, { intakeStage: "Bad Stage" }]) {
       const markup = renderRun({ ...stopped, provenance: { ...stopped.provenance, ...change } });
-      expect(markup).not.toContain("The worker stopped before any claim");
+      expect(markup).not.toContain("The worker stopped at intake stage");
       // The failure itself stays visible.
       expect(markup).toContain("fixture-return-verification-missing");
     }
-    expect(renderRun({ ...stopped, outcomes: { ...stopped.outcomes, test: "failed" } })).not.toContain("The worker stopped before any claim");
+    expect(renderRun({ ...stopped, outcomes: { ...stopped.outcomes, test: "failed" } })).not.toContain("The worker stopped at intake stage");
   });
 
   test("legacy results render unchanged or with failures but no invented delivery state", () => {
@@ -879,6 +886,6 @@ describe("worker preparation failures", () => {
     const legacy = renderRun({ ...run, failures: [failure] });
     expect(legacy).toContain("Failure details");
     expect(legacy).toContain("No delivery state recorded");
-    expect(legacy).not.toContain("The worker stopped before any claim");
+    expect(legacy).not.toContain("The worker stopped at intake stage");
   });
 });

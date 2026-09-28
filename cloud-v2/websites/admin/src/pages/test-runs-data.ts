@@ -134,8 +134,9 @@ const POSITIVE = /^[1-9]\d{0,15}$/;
 const PRIVATE_WORKER_REPOSITORY = "Mentra-Community/Mentra-Automated-Testing";
 
 /**
- * A not-run result that the private worker published when it stopped before any claim. Shown only when the worker
- * recorded every fact here itself; the request and worker links are rebuilt from validated identifiers.
+ * A not-run result that the private worker published when it stopped during intake. Shown only when the worker
+ * recorded every fact here itself; the claim is named only from an exact recorded status/claim pair, and the request
+ * and worker links are rebuilt from validated identifiers.
  */
 export function preparationStop(run: Pick<TestRunDetail, "outcome" | "outcomes" | "provenance">) {
   const p = run.provenance;
