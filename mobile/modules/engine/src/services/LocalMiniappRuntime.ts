@@ -1500,6 +1500,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MEETING_SHOW_IMAGE:
         void this.handleMeetingShowImage(packageName, payload, requestId)
         break
+      case MiniappRequestType.MEETING_SHOW_LIVE:
+        void this.handleMeetingShowLive(packageName, requestId)
+        break
       case MiniappRequestType.PHONE_IS_WIFI_ENABLED:
       case MiniappRequestType.PHONE_REQUEST_WIFI_ENABLE:
         void this.handlePhoneWifiRequest(packageName, payload, requestId)
@@ -5489,6 +5492,25 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Could not show the photo",
+      })
+    }
+  }
+
+  private async handleMeetingShowLive(packageName: string, requestId?: string): Promise<void> {
+    if (!acsMeetingService.meetingAcceptsPhoto(packageName)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "The meeting has already ended",
+      })
+      return
+    }
+    try {
+      await acsMeetingService.holdOutgoing("live")
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Could not return to live video",
       })
     }
   }

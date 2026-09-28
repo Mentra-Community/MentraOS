@@ -579,6 +579,15 @@ export class MeetingModule {
     }
   }
 
+  /** The caller's `durationMs` has elapsed. Glasses frames may reach the tile again. */
+  async showLive(): Promise<void> {
+    try {
+      await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_SHOW_LIVE})
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
   async end(): Promise<void> {
     try {
       await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_END}, {timeoutMs: 0})

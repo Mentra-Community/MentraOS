@@ -249,6 +249,8 @@ export enum MiniappRequestType {
   MEETING_SHOW_CARD = "miniapp_meeting_show_card",
   /** Replace the card with a still. `durationMs` is counted by the caller from `shownAt`. */
   MEETING_SHOW_IMAGE = "miniapp_meeting_show_image",
+  /** Stop holding a card or still so glasses frames reach Teams again. */
+  MEETING_SHOW_LIVE = "miniapp_meeting_show_live",
 }
 
 // ============================================================================

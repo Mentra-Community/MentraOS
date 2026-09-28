@@ -68,6 +68,7 @@ describe("MiniappRequestType wire values", () => {
     expect(MiniappRequestType.MEETING_RESUME_VIDEO_PUBLISHER).toBe("miniapp_meeting_resume_video_publisher"))
   test("MEETING_SHOW_CARD", () => expect(MiniappRequestType.MEETING_SHOW_CARD).toBe("miniapp_meeting_show_card"))
   test("MEETING_SHOW_IMAGE", () => expect(MiniappRequestType.MEETING_SHOW_IMAGE).toBe("miniapp_meeting_show_image"))
+  test("MEETING_SHOW_LIVE", () => expect(MiniappRequestType.MEETING_SHOW_LIVE).toBe("miniapp_meeting_show_live"))
 })
 
 describe("MiniappResponseType wire values", () => {
