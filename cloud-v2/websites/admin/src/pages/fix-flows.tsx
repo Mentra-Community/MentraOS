@@ -2,6 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, CheckCircle2, Circle, ExternalLink, GitPullRequest, Loader2, RefreshCcw } from "lucide-react";
 import { useState } from "react";
 import type { FixFlow, FixFlowList } from "../../../../packages/core/src/types/fix-flow.types";
+import { FixFlowBot } from "../components/fix-flow-bot";
+import { FLOW_STAGES, FLOW_STATUSES, filterFixFlowGroups, flowStatus, groupFixFlows, type FixFlowGroup, type FlowFilter } from "../lib/fix-flow-groups";
+import "./fix-flows.css";
 import { Button } from "../components/ui/button";
 import { api } from "../lib/api";
 import { fixFlowApiPath, fixFlowHref, type FixFlowLink } from "../lib/fix-flow-links";
@@ -11,23 +14,21 @@ const LINK = "font-medium text-[#087d50] underline underline-offset-2";
 type PendingFlow = { pending: true; runId: string; chapterId: string; message: string };
 type FlowChoices = { runId: string; chapterId: string; choices: Array<{ occurrenceId: string; phase: string; code: string; message: string }> };
 const date = (value: string) => new Date(value).toLocaleString();
-const stateLabels = { active: "In progress", attention: "Needs attention", completed: "Completed", unknown: "Status unavailable" };
-const stateColors = { active: "bg-[#e8f4eb] text-[#087d50]", attention: "bg-[#fff0e9] text-[#a64235]",
+const stateLabels = { active: "Status unavailable", running: "Running", waiting: "Waiting", attention: "Needs attention", completed: "Completed", unknown: "Status unavailable" };
+const stateColors = { active: "bg-[#fff7da] text-[#80651a]", running: "bg-[#e8f4eb] text-[#087d50]", waiting: "bg-[#eef0f3] text-[#4f5965]", attention: "bg-[#fff0e9] text-[#a64235]",
   completed: "bg-[#eef0f3] text-[#4f5965]", unknown: "bg-[#fff7da] text-[#80651a]" };
 
 export function FixFlowsPage({ selection, onSelect }: { selection: FixFlowLink | null; onSelect: (value: FixFlowLink | null) => void }) {
-  const [history, setHistory] = useState(false);
+  const [filter, setFilter] = useState<FlowFilter>(null);
   const list = useQuery({ queryKey: ["admin-fix-flows"], queryFn: () => api<FixFlowList>("/api/admin/fix-flows"),
     enabled: !selection, refetchInterval: 15_000 });
   const detail = useQuery({ queryKey: ["admin-fix-flow", selection],
     queryFn: () => api<FixFlow | PendingFlow | FlowChoices>(fixFlowApiPath(selection!)), enabled: !!selection, refetchInterval: 15_000 });
   const current = selection ? detail : list;
-  const active = list.data?.flows.filter(flow => flow.state !== "completed") ?? [];
-  const completed = list.data?.flows.filter(flow => flow.state === "completed") ?? [];
   return <div className="space-y-5">
     <div className="flex items-center justify-between gap-3">
       {selection ? <Button variant="ghost" onClick={() => onSelect(null)}><ArrowLeft className="size-4" /> All fix flows</Button>
-        : <p className="text-sm text-[#68746d]">Active work first · refreshes every 15 seconds</p>}
+        : <p className="text-sm text-[#68746d]">Needs attention first · refreshes every 15 seconds</p>}
       <Button variant="outline" onClick={() => current.refetch()} disabled={current.isFetching}>
         <RefreshCcw className={`size-4 ${current.isFetching ? "animate-spin" : ""}`} /> Refresh
       </Button>
@@ -49,18 +50,65 @@ export function FixFlowsPage({ selection, onSelect }: { selection: FixFlowLink |
           {list.data.activity === "not-configured" ? "Agent activity is not configured for this environment." : "Agent activity could not refresh."}
           {" "}Recorded failures and delivery receipts remain visible; an accepted failure does not prove the agent is running.
         </p> : null}
-        <section className={PANEL}>
-          <div className="flex items-center justify-between border-b border-[#eceeeb] p-5"><h2 className="text-lg font-bold">In progress <span className="ml-2 text-[#68746d]">{active.length}</span></h2>
-            <span className="text-xs text-[#68746d]">Updated {date(list.data.refreshedAt)}</span></div>
-          {active.length ? <div className="divide-y divide-[#eceeeb]">{active.map(flow => <FixFlowCard key={flow.occurrenceId} flow={flow} onSelect={onSelect} />)}</div>
-            : <p className="p-6 text-sm text-[#68746d]">No active flows in the available records.</p>}
-        </section>
-        <section className={PANEL}><button className="flex w-full items-center justify-between p-5 text-left font-semibold" onClick={() => setHistory(!history)} aria-expanded={history}>
-          Completed history <span className="text-sm font-normal text-[#68746d]">{completed.length} · {history ? "Hide" : "Show"}</span>
-        </button>{history ? <div className="divide-y divide-[#eceeeb] border-t border-[#eceeeb]">{completed.length ? completed.map(flow => <FixFlowCard key={flow.occurrenceId} flow={flow} onSelect={onSelect} />)
-          : <p className="p-5 text-sm text-[#68746d]">No completed flows in the available records.</p>}</div> : null}</section>
+        <FixFlowOverview data={list.data} filter={filter} onFilter={setFilter} onSelect={onSelect} />
         {list.data.limited ? <p className="text-xs text-[#68746d]">This view includes a bounded recent history. Open a failed step to look up its exact flow even when it is not listed here.</p> : null}
       </> : null}
+  </div>;
+}
+
+export function FixFlowOverview({ data, filter, onFilter, onSelect }: {
+  data: FixFlowList; filter: FlowFilter; onFilter: (filter: FlowFilter) => void; onSelect: (value: FixFlowLink) => void;
+}) {
+  const groups = groupFixFlows(data.flows), visible = filterFixFlowGroups(groups, filter);
+  const filterLabel = filter?.kind === "status" ? FLOW_STATUSES.find(item => item.id === filter.value)?.label
+    : filter?.kind === "stage" ? FLOW_STAGES.find(item => item.id === filter.value)?.label : "All flows";
+  return <>
+    <section className={`${PANEL} overflow-hidden`} aria-label="Fix pipeline">
+      <div className="flex items-center gap-5 bg-gradient-to-r from-[#edf6ef] to-white p-5"><FixFlowBot /><div>
+        <h2 className="text-xl font-semibold">From failure to fix</h2>
+        <p className="mt-1 text-sm text-[#4f5d54]">{groups.length} flows · {data.flows.length} failures</p>
+        <p className="mt-1 text-xs text-[#68746d]">Repeated failures are grouped. Open a flow to see its recorded progress and next action.</p>
+      </div></div>
+      <ol className="fix-flow-track" aria-label="Filter by recorded lifecycle stage">{FLOW_STAGES.filter(item => !["closed", "unknown"].includes(item.id)).map(item => {
+        const count = groups.filter(group => group.stage === item.id).length;
+        return <li key={item.id}><button aria-label={`${item.label}: ${count} flow groups`} aria-pressed={filter?.kind === "stage" && filter.value === item.id}
+          onClick={() => onFilter({ kind: "stage", value: item.id })}><span className="fix-flow-node">{count}</span><span>{item.label}</span></button></li>;
+      })}</ol>
+      <div className="flex flex-wrap items-center gap-2 border-t border-[#eceeeb] px-5 py-3">
+        <p className="mr-auto text-xs text-[#68746d]">Each flow appears once at its latest recorded stage.</p>
+        {FLOW_STAGES.filter(item => ["closed", "unknown"].includes(item.id)).map(item => <Button key={item.id} variant={filter?.kind === "stage" && filter.value === item.id ? "default" : "outline"}
+          aria-pressed={filter?.kind === "stage" && filter.value === item.id} onClick={() => onFilter({ kind: "stage", value: item.id })}>
+          {item.label} · {groups.filter(group => group.stage === item.id).length}</Button>)}
+      </div>
+    </section>
+    <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by worker status">
+      <Button variant={filter === null ? "default" : "outline"} aria-pressed={filter === null} onClick={() => onFilter(null)}>All flows · {groups.length}</Button>
+      {FLOW_STATUSES.map(item => <Button key={item.id} variant={filter?.kind === "status" && filter.value === item.id ? "default" : "outline"}
+        aria-pressed={filter?.kind === "status" && filter.value === item.id} onClick={() => onFilter({ kind: "status", value: item.id })}>
+        {item.label} · {groups.filter(group => group.status === item.id).length}</Button>)}
+    </div>
+    <p className="text-xs text-[#68746d]">Counts are flows, not agents. Running means a worker currently holds the task and may be preparing or executing. Choose one status or lifecycle stage; All flows resets the filter.</p>
+    <section className={PANEL} aria-label="Filtered fix flows">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#eceeeb] p-5"><h2 className="text-lg font-bold">{filterLabel} <span className="ml-2 text-[#68746d]">{visible.length}</span></h2>
+        <span className="text-xs text-[#68746d]">{visible.reduce((n, group) => n + group.occurrences.length, 0)} failure occurrences · Updated {date(data.refreshedAt)}</span></div>
+      {visible.length ? <div className="divide-y divide-[#eceeeb]">{visible.map(group => <FixFlowGroupCard key={group.key} group={group} onSelect={onSelect} />)}</div>
+        : <p className="p-6 text-sm text-[#68746d]">No flow groups match this filter.</p>}
+    </section>
+  </>;
+}
+
+function FixFlowGroupCard({ group, onSelect }: { group: FixFlowGroup; onSelect: (value: FixFlowLink) => void }) {
+  return <div><FixFlowCard flow={group.flow} onSelect={onSelect} />
+    {group.occurrences.length > 1 ? <details className="mx-5 mb-5 rounded-xl border border-[#e0e4de] bg-[#f8faf7] p-4">
+      <summary className="cursor-pointer text-sm font-semibold text-[#087d50]">{group.occurrences.length} related failure occurrences · show each run</summary>
+      <p className="mt-2 text-xs text-[#68746d]">Repeated failures handled together. Each link keeps its own incident, recording and verification results.</p>
+      <ul className="mt-3 space-y-3">{group.occurrences.map(flow => <li key={flow.occurrenceId ?? flow.runId}>
+        <a className={`${LINK} text-sm`} href={fixFlowHref({ occurrenceId: flow.occurrenceId! })} onClick={event => {
+          if (!event.metaKey && !event.ctrlKey) { event.preventDefault(); onSelect({ occurrenceId: flow.occurrenceId! }); }
+        }}>{flow.routineId} · {flow.step?.id ?? flow.failure.code} · {flow.build}</a>
+        <p className="mt-1 break-all text-xs text-[#68746d]">{flow.runId} · {stateLabels[flowStatus(flow)]} · {date(flow.startedAt)}</p>
+      </li>)}</ul>
+    </details> : null}
   </div>;
 }
 
