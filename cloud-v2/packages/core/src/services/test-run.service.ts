@@ -21,6 +21,7 @@ export interface TestRunRepository {
   get(runId: string): Promise<StoredTestRun | null>;
   insert(run: TestRun, payloadSha256: string): Promise<{ stored: StoredTestRun; created: boolean }>;
   list(query: TestRunQuery): Promise<StoredTestRun[]>;
+  recent(): Promise<StoredTestRun[]>;
   assets(runId: string): Promise<StoredTestAsset[]>;
   insertAsset(asset: StoredTestAsset): Promise<StoredTestAsset>;
   markUploadsComplete(run: TestRun): Promise<void>;
@@ -95,6 +96,19 @@ export class MongoTestRunRepository implements TestRunRepository {
         { startedAt: new Date(cursor.startedAt), runId: { $lt: cursor.runId } }];
     }
     const rows = await TestRunModel.find(filter).sort({ startedAt: -1, runId: -1 }).limit(query.limit + 1).lean();
+    return rows.map(row => this.stored(row));
+  }
+  async recent(): Promise<StoredTestRun[]> {
+    // Read the immutable completion time, including older rows without a denormalized date.
+    // Convert before sorting: ISO strings with different offsets are not chronologically ordered.
+    const rows = await TestRunModel.aggregate([
+      { $match: { "payload.finishedAt": { $type: "string" } } },
+      { $set: { completedAt: { $convert: { input: "$payload.finishedAt", to: "date", onError: null, onNull: null } } } },
+      { $match: { completedAt: { $ne: null } } },
+      { $sort: { completedAt: -1, runId: -1 } },
+      { $limit: 6 },
+      { $project: { payload: 1, payloadSha256: 1, failureOccurrences: 1, provenanceCorrections: 1 } },
+    ]).read("primary").readConcern("majority").option({ maxTimeMS: 5_000 });
     return rows.map(row => this.stored(row));
   }
   async assets(runId: string): Promise<StoredTestAsset[]> {
@@ -267,15 +281,21 @@ export class TestRunService {
       assets: run.assets.map(asset => ({ ...asset, uploaded: uploaded.has(asset.assetId) })) };
   }
 
+  private async summary(row: StoredTestRun) {
+    const { chapters, assets, firmwareAssertions, notes, failures, failureOccurrences, provenanceCorrections: _corrections, ...summary } = await this.present(row);
+    return { ...summary, failureOccurrences: failureOccurrences.map(item => ({ occurrenceId: item.occurrenceId,
+      phase: item.failure.phase, step: item.failure.step, delivery: item.delivery })) };
+  }
+
+  async recent() {
+    return { runs: await Promise.all((await this.repository.recent()).map(row => this.summary(row))) };
+  }
+
   async list(query: TestRunQuery) {
     if (query.cursor) decodeCursor(query.cursor);
     const rows = await this.repository.list(query);
     const page = rows.slice(0, query.limit);
-    const runs = await Promise.all(page.map(async row => {
-      const { chapters, assets, firmwareAssertions, notes, failures, failureOccurrences, provenanceCorrections: _corrections, ...summary } = await this.present(row);
-      return { ...summary, failureOccurrences: failureOccurrences.map(item => ({ occurrenceId: item.occurrenceId,
-        phase: item.failure.phase, step: item.failure.step, delivery: item.delivery })) };
-    }));
+    const runs = await Promise.all(page.map(row => this.summary(row)));
     const last = page.at(-1)?.run;
     return { runs, nextCursor: rows.length > query.limit && last ? Buffer.from(JSON.stringify({
       startedAt: new Date(last.startedAt).toISOString(), runId: last.runId,

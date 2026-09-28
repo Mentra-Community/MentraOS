@@ -38,6 +38,8 @@ class MemoryRepository implements TestRunRepository {
   async list(query: TestRunQuery) { return [...this.runs.values()].filter(row =>
     (!query.outcome || this.outcomes.get(row.run.runId) === query.outcome)
     && (!query.occurrenceId || row.failureOccurrences?.some(item => item.occurrenceId === query.occurrenceId))); }
+  async recent() { return [...this.runs.values()].filter(row => Number.isFinite(Date.parse(row.run.finishedAt)))
+    .sort((a, b) => Date.parse(b.run.finishedAt) - Date.parse(a.run.finishedAt) || b.run.runId.localeCompare(a.run.runId)).slice(0, 6); }
   async assets(runId: string) { return [...this.objects.values()].filter(asset => asset.runId === runId); }
   async insertAsset(asset: StoredTestAsset) {
     const key = `${asset.runId}/${asset.assetId}`;
@@ -140,6 +142,48 @@ test("history and detail show the export's release identity without rewriting it
   expect(repository.runs.get(run.runId)?.run.release).toBeUndefined();
 });
 
+test("recent completion cards use the same evidence-aware summaries and do not expose detail artifacts", async () => {
+  const run = fixture();
+  run.provenance.releaseIdentity = "3.3.0-dev.351";
+  run.notes = "Private diagnostic notes";
+  await service.ingest(run);
+  // An older record without occurrence projection remains readable without a reconciliation write.
+  delete repository.runs.get(run.runId)!.failureOccurrences;
+  const before = structuredClone(repository.runs.get(run.runId));
+  const response = await admin.request("/recent");
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  const payload = await response.json() as Awaited<ReturnType<TestRunService["recent"]>>;
+  expect(Object.keys(payload)).toEqual(["runs"]);
+  expect(payload.runs).toHaveLength(1);
+  expect(payload.runs[0]).toMatchObject({ runId: run.runId, release: "3.3.0-dev.351", outcome: "blocked",
+    finishedAt: run.finishedAt, outcomes: { evidence: "incomplete" }, failureOccurrences: [] });
+  for (const key of ["chapters", "assets", "firmwareAssertions", "notes", "failures", "provenanceCorrections", "payloadSha256"])
+    expect(payload.runs[0]).not.toHaveProperty(key);
+  expect(repository.runs.get(run.runId)).toEqual(before);
+  // A refused upload is not evidence of a passing run.
+  expect((await put(Buffer.from("invalid upload"))).status).toBe(400);
+  expect((await service.recent()).runs[0]?.outcome).toBe("blocked");
+  expect((await put()).status).toBe(201);
+  expect((await service.recent()).runs[0]?.outcome).toBe("passed");
+  expect((await service.recent()).runs[0]).toEqual((await service.list({ limit: 25 })).runs[0]);
+});
+
+test("recent route is global and fixed at six even when history filters are supplied", async () => {
+  expect(await (await admin.request("/recent")).json()).toEqual({ runs: [] });
+  for (let index = 0; index < 8; index++) {
+    const run = fixture();
+    run.runId = `recent-${index}`;
+    run.finishedAt = `2026-09-21T00:${String(10 + index).padStart(2, "0")}:00Z`;
+    run.channel = index % 2 === 0 ? "dev" : "staging";
+    await repository.insert(run, "a".repeat(64));
+  }
+  const response = await admin.request("/recent?limit=1&channel=pr&cursor=not-a-history-cursor");
+  expect(response.status).toBe(200);
+  expect((await response.json() as Awaited<ReturnType<TestRunService["recent"]>>).runs.map(run => run.runId))
+    .toEqual(["recent-7", "recent-6", "recent-5", "recent-4", "recent-3", "recent-2"]);
+});
+
 test("build-scoped list links reach Mongo as exact provenance filters and reject malformed hashes", async () => {
   const query = {repository: "Mentra-Community/MentraOS", pr: "4136", headSha: "a".repeat(40),
     archiveSha256: "b".repeat(64), routineId: "day1-ota", platform: "ios-mac", channel: "pr"};
@@ -170,6 +214,8 @@ describe("test run authentication and immutable ingestion", () => {
     gated.use("*", adminAuth);
     gated.route("/", admin);
     expect((await gated.request("/", { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(401);
+    expect((await gated.request("/recent")).status).toBe(401);
+    expect((await gated.request("/recent", { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(401);
     expect((await gated.request("/run-example-1/assets/video-1", { method: "HEAD" })).status).toBe(401);
   });
   test("replays identical metadata but rejects changed provenance or outcomes", async () => {

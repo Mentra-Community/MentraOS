@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest,
   OverviewResourceObservation, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import { api } from "../lib/api";
+import { TestRunFlow } from "./test-run-flow";
+import type { TestRunSummary } from "./test-runs-data";
 import { checkpointIsFresh, displayState, elapsed, LaneOverview, phaseNames, resourceGuidance, resourceIsFresh, type ResourceGuidance } from "./test-lanes";
 
 export { displayState, elapsed };
@@ -261,16 +263,18 @@ function ResourceObservations({ data, now, onResult }: { data: TestRunOverview; 
   </section>;
 }
 
-export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: TestRunOverview; now: number; onResult: (id: string) => void; onCancel?: (id: string) => Promise<void> }) {
+export function TestRunOverviewView({ data, now, onResult, onCancel, recentRuns, recentState }: { data: TestRunOverview; now: number; onResult: (id: string) => void; onCancel?: (id: string) => Promise<void>; recentRuns?: TestRunSummary[]; recentState?: "loading" | "ready" | "error" }) {
   const states = ["running", "queued", "waiting", "blocked", "unknown"] as const;
   return <>
     <p className="mt-2 text-[11px] text-[#68746d]">View refreshed {elapsed(data.observedAt, now)} ago.</p>
+    {data.warnings.length ? <div role="status" className="mt-3 space-y-1 rounded-lg bg-[#fff5df] p-3 text-xs text-[#805619]">{data.warnings.map(message => <p key={message}>{message}</p>)}</div> : null}
+    <TestRunFlow data={data} now={now} onResult={onResult} recentRuns={recentRuns} recentState={recentState} />
+    <details className="mt-5"><summary className="cursor-pointer text-sm font-semibold">Lane and CI request details</summary>
     <LaneOverview data={data} now={now} onResult={onResult} />
     <h4 className="mt-5 text-sm font-semibold">CI requests</h4>
     <div className="mt-3 flex flex-wrap gap-2 text-xs">{states.map(state => <span key={state} className="rounded-md bg-[#f1f4ef] px-2 py-1">
       <strong>{data.jobs.filter(job => displayState(job, now) === state).length}</strong> {state}</span>)}</div>
-    {data.warnings.length ? <div role="status" className="mt-3 space-y-1 rounded-lg bg-[#fff5df] p-3 text-xs text-[#805619]">{data.warnings.map(message => <p key={message}>{message}</p>)}</div> : null}
-    {data.jobs.length ? <div className="mt-3 overflow-x-auto rounded-xl border border-[#e0e4de]"><table className="w-full text-left text-xs">
+    {data.jobs.length ? <div className="mt-3 overflow-x-auto rounded-xl border border-[#e0e4de]"><table aria-label="CI requests" className="w-full text-left text-xs">
       <thead className="bg-[#f7f9f5] text-[11px] text-[#68746d]"><tr>{["Status", "Build / routine", "Worker / fixture", "Last recorded progress", "Elapsed / update"].map(title => <th key={title} className="px-4 py-2 font-medium">{title}</th>)}</tr></thead>
       <tbody>{data.jobs.map(job => <JobRow key={job.id} job={job} now={now} onResult={onResult} onCancel={onCancel} />)}</tbody>
     </table></div> : <p className="mt-3 text-sm text-[#68746d]">{data.warnings.length ? "No activity could be confirmed from the available sources."
@@ -291,6 +295,7 @@ export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: T
         {" · "}{job.workflow!.conclusion ?? "unknown"}{" · "}{job.workerName ?? "Worker unavailable"}{" · "}{elapsed(job.workflow!.updatedAt, now)} ago
       </li>)}</ul></details> : null}
     </details>
+    </details>
   </>;
 }
 
@@ -299,12 +304,14 @@ export function TestRunOverviewPanel({ onResult }: { onResult: (id: string) => v
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   const query = useQuery({ queryKey: ["admin-test-run-overview"], queryFn: () => api<TestRunOverview>("/api/admin/test-runs/overview"),
     refetchInterval: 15_000, retry: false });
+  const recent = useQuery({ queryKey: ["admin-test-runs-recent"], queryFn: () => api<{ runs: TestRunSummary[] }>("/api/admin/test-runs/recent"),
+    refetchInterval: 15_000, retry: false });
   return <section className="border-b border-[#eceeeb] p-5" aria-label="Live test activity">
     <div className="flex items-start justify-between gap-4"><div><h3 className="font-semibold">Live activity</h3>
-      <p className="mt-1 text-xs text-[#68746d]">All builds and triggers. Running jobs first; waiting requests oldest first. Execution order depends on GitHub and available workers.</p></div>
-      <button className="text-xs text-[#087d50] underline" disabled={query.isFetching} onClick={() => query.refetch()}>{query.isFetching ? "Refreshing…" : "Refresh"}</button></div>
+      <p className="mt-1 text-xs text-[#68746d]">Follow requests into execution lanes and their recorded results. All builds and triggers; refreshes every 15 seconds.</p></div>
+      <button className="text-xs text-[#087d50] underline" disabled={query.isFetching} onClick={() => { void query.refetch(); void recent.refetch(); }}>{query.isFetching ? "Refreshing…" : "Refresh"}</button></div>
     {query.error ? <p role="alert" className="mt-3 text-xs text-[#a64235]">Live activity could not refresh. {query.data ? "The last view remains below." : "Try Refresh."}</p> : null}
-    {query.data ? <TestRunOverviewView data={query.data} now={now} onResult={onResult} onCancel={async id => {
+    {query.data ? <TestRunOverviewView data={query.data} now={now} onResult={onResult} recentRuns={recent.data?.runs} recentState={recent.isError ? "error" : recent.data ? "ready" : "loading"} onCancel={async id => {
       await api("/api/admin/test-runs/claims/" + encodeURIComponent(id) + "/cancel-follow-up", { method: "POST", body: { confirmation: "cancel-follow-up" } });
       await query.refetch();
     }} /> : query.isPending ? <p className="mt-3 text-sm text-[#68746d]">Loading worker activity…</p> : null}
