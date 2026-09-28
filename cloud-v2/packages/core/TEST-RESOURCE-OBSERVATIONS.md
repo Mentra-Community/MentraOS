@@ -21,8 +21,10 @@ new account, grant or configuration is involved. Responses are `Cache-Control: n
   `{schemaVersion: 1, hostId, resourceKey, expectedRevision, observation, progress?}`.
 
 `hostId` is an explicitly configured ID (1–80 of `A-Za-z0-9_-`). It is never derived
-from a fixture alias. `resourceKey` is `shared` or `android-<12 lowercase hex>`, using the
-existing redacted serial digest. Body identity must equal the path.
+from a fixture alias. `resourceKey` is `shared`, `android-<12 lowercase hex>` (the
+existing redacted serial digest), or `glasses-<12 lowercase hex>`: one physical glasses
+pair's lease, keyed by the first 12 hex of its existing lease key (sha256 of its eMMC CID).
+A pair lease names its run, never a phone. Body identity must equal the path.
 
 ### Schema
 
@@ -42,6 +44,11 @@ cross-contract fixtures for the producer.
   producers omit it; Core stores their observation unchanged and Admin shows it as unknown,
   never as `none`. A retained `none` owner still holds Mac UI, audio and recorder custody
   and may still require recovery; the scope admits and releases nothing
+- for the `shared` guard only, optional `glassesLeases`: the per-glasses leases that host's
+  shared app acquisition refuses on, read with the same reader at this observation —
+  `none`, `held` (`pairs`: up to 16 sorted unique 12-hex lease digests, `others`: the count
+  of further held entries) or `unreadable`. It is exclusion only and names no owner, run or
+  phone. Older producers omit it, which means not reported
 - last checkpoint run ID, mode, phase, pending operation and pending reconciliation
 - recorded fixture `checked`, `record`, `status`, `fixtureID` and `lastRunID`
 
@@ -52,6 +59,8 @@ a reason that doesn't fit its liveness or fixture record.
 Deploy a Core that accepts `glassesScope` before any producer sends it: the earlier
 strict schema rejects the unknown key, so a newer producer's PUT to an older Core is
 refused (400) and stored nowhere. Older producers keep working against the newer Core.
+The same order applies to `glasses-*` resource keys and `glassesLeases`: deploy this Core
+and Admin first, then the producer that reports them.
 
 These are rejected: `scopeCovers`, checkpoint `note`, `caveats`, any extra key, paths,
 tokens, environment, raw logs, errors, free text and device timestamps. Admin supplies fixed
@@ -98,9 +107,17 @@ card from the overview response Core already returns; the API is unchanged.
 | Recovery required | A retained guard (any age: a dead PID, a completed checkpoint or a newer report never clears it; only the owner's verified recovery releases it), or a current report whose fixture record is `recovery-required` or `busy` without an owner. |
 | Running | A live owner in a report from the last 2 minutes, and either its run's latest step is unfinished and was received within 2 minutes, or its exact reserved request is a GitHub job in progress and the latest step has not completed. The latest step is the highest journal sequence from host or CI claim progress, never the latest arrival; a repeated sequence keeps its first receipt time. |
 | Reserved, idle | A current report of a live owner without recent step progress. |
-| Available | A current report with no owner and a fixture recorded ready. Admission still runs its normal checks. |
+| Blocked | A current Mac lane report with no shared owner whose `glassesLeases` are held: the shared acquisition refuses until those pair leases are released. A recorded `recovery-required` or `busy` fixture stays Recovery required with its own action; held or unreadable pair leases are then stated beside it. |
+| Available | A current report with no owner and a fixture recorded ready, or a glasses pair with no lease (its readiness is separate). Admission still runs its normal checks. |
 | Not ready | A current report with no owner whose fixture record is uncommissioned, missing, malformed, unreadable or not checked. |
-| Offline or unknown | Any other state, and every report older than 2 minutes that is not a retained guard. Fresh CI progress never refreshes a stale host report; it is shown as separate CI activity. |
+| Offline or unknown | Any other state (including unreadable `glassesLeases`), and every report older than 2 minutes that is not a retained guard. Fresh CI progress never refreshes a stale host report; it is shown as separate CI activity. |
+
+Glasses pair cards follow the same rules for their own lease. A phone and a pair on the
+same host are shown together only when both current reports show live owners with the
+identical reservation run and fixture, as one lifecycle holds both. Otherwise a phone card
+says a held pair on its host is not reported as used with it, and a held pair says no phone
+is reported with it. A phone's own lock is taken per command, so between commands the phone
+card is truthfully free while the pair and Mac lane cards show the hold.
 
 The card itself stays short: host and lane, state, the work holding the lane (routine and
 build, taken only from the CI job or claim with the owner's exact reserved request ID, else
