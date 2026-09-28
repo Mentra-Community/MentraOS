@@ -20,6 +20,8 @@ jest.mock("@/components/diagnostics/IncidentReportRequest", () => ({
     return <Pressable testID="incident-report-done" onPress={(props as {onDismiss: () => void}).onDismiss} />
   },
 }))
+const mockCompleteSignupVerification = jest.fn()
+let mockPendingRoute: string | null = null
 
 jest.mock("expo-linking", () => ({
   addEventListener: jest.fn(() => ({remove: jest.fn()})),
@@ -40,6 +42,7 @@ jest.mock("@/stores/navigation", () => ({
       setAnimation: jest.fn(),
       push: mockPush,
       setPendingRoute: mockSetPendingRoute,
+      getPendingRoute: () => mockPendingRoute,
     }),
   },
 }))
@@ -48,6 +51,7 @@ jest.mock("@/utils/auth/authClient", () => ({
   default: {
     getSession: (...args: unknown[]) => mockGetSession(...args),
     completeOAuthHandoff: (...args: unknown[]) => mockCompleteOAuthHandoff(...args),
+    completeSignupVerification: (...args: unknown[]) => mockCompleteSignupVerification(...args),
   },
 }))
 
@@ -64,6 +68,12 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockCompleteOAuthHandoff.mockResolvedValue({is_error: () => false})
   mockGetSession.mockResolvedValue({is_error: () => false, value: {token: undefined}})
+  mockCompleteSignupVerification.mockResolvedValue({is_error: () => false})
+  mockPendingRoute = null
+  mockSetPendingRoute.mockImplementation((url: string) => {
+    mockPendingRoute = url
+  })
+  jest.mocked(Linking.getInitialURL).mockResolvedValue(null)
 })
 
 afterEach(() => jest.useRealTimers())
@@ -198,4 +208,79 @@ it("shows a dismissible authenticated incident modal without changing the existi
   expect(mockReplaceAll).not.toHaveBeenCalled()
   fireEvent.press(tree.getByTestId("incident-report-done"))
   expect(tree.queryByTestId("incident-report-done")).toBeNull()
+})
+
+const signupCallback = "com.mentra://auth/callback#access_token=signup-token&refresh_token=provider-refresh&type=signup"
+
+it("waits for signup sign-in before navigating and ignores duplicate callbacks", async () => {
+  let finish!: (result: {is_error: () => boolean}) => void
+  mockCompleteSignupVerification.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve
+    }),
+  )
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  let processing!: Promise<void>
+  await act(async () => {
+    processing = processUrl(signupCallback)
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token")
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  await act(async () => {
+    finish({is_error: () => false})
+    await processing
+    await processUrl(signupCallback)
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledTimes(1)
+  expect(mockReplaceAll).toHaveBeenCalledWith("/")
+  expect(mockSetSplashEnabled).toHaveBeenLastCalledWith(false)
+})
+
+it("completes a signup link that launches the app", async () => {
+  jest.mocked(Linking.getInitialURL).mockResolvedValue(signupCallback)
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await Promise.resolve()
+  })
+  await act(async () => {
+    await jest.runAllTimersAsync()
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token")
+  expect(mockReplaceAll).toHaveBeenCalledWith("/")
+})
+
+it("shows a login error when signup exchange fails", async () => {
+  mockCompleteSignupVerification.mockResolvedValue({is_error: () => true, error: new Error("expired")})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(signupCallback)
+  })
+  expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=invalid_grant")
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockSetSplashEnabled).toHaveBeenLastCalledWith(false)
+})
+
+it("does not exchange an expired confirmation link", async () => {
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl("com.mentra://auth/callback#error=access_denied&error_code=otp_expired&type=signup")
+  })
+  expect(mockCompleteSignupVerification).not.toHaveBeenCalled()
+  expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=otp_expired")
 })

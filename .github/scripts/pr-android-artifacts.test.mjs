@@ -3,7 +3,7 @@ import test from "node:test"
 import {mkdtemp, mkdir, readFile, rm, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
-import {androidAppIdentity, androidReceiptName, publishAndroidArtifacts, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
+import {ANDROID_PUBLICATION_STEP, androidAppIdentity, androidReceiptName, publishAndroidArtifacts, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), fingerprint = "d".repeat(64)
@@ -93,4 +93,17 @@ test("a failed APK publication never publishes a receipt", async () => {
     await assert.rejects(publishAndroidArtifacts(apk, env, {exec}), /APK upload failed/)
     assert.equal(calls.length, 1); assert.ok(calls[0].endsWith(".apk"))
   }, true)
+})
+
+test("the named PR publication step commits the receipt for the exact signed package before its alias", async () => {
+  const workflow = await readFile(new URL("../workflows/mentra-app-android-build.yml", import.meta.url), "utf8")
+  const producer = "node .github/scripts/pr-android-artifacts.mjs mobile/android/app/build/outputs/apk/release/app-release.apk"
+  const start = workflow.indexOf(`      - name: ${ANDROID_PUBLICATION_STEP}\n        if: github.event_name == 'pull_request'\n`)
+  const end = workflow.indexOf("\n      - name: ", start + 1)
+  const step = workflow.slice(start, end)
+  assert.ok(start > 0 && workflow.indexOf(producer) === workflow.lastIndexOf(producer))
+  // Requesters accept an Android attempt only after this step succeeds, so a failed receipt fails the step.
+  assert.ok(step.includes("set -euo pipefail\n          " + producer) && step.indexOf(producer) < step.indexOf("publish-immutable-release-asset.mjs"))
+  for (const earlier of ["      - name: Package this PR's configuration and sign", "      - name: Verify release signature (not debug)"])
+    assert.ok(workflow.indexOf(earlier) > 0 && workflow.indexOf(earlier) < start)
 })

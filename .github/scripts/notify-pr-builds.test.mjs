@@ -1012,3 +1012,20 @@ for (const filename of [".github/scripts/ios-xcodebuild-attempt.sh", ".github/ac
     assert.match(h.written[0].body, /Download Mac app/)
   })
 }
+
+test("a staging PR with a missing Android receipt stays idempotent and keeps its Mac routine links", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true},
+    currentPr: {...pr, base: {ref: "staging"}, labels: [{name: "routine:no-glasses"}]},
+    receipt: {...iosReceipt, app: {backend: "staging"}}})
+  await notifyPrBuilds(h.args)
+  const text = slack(h.posts[0])
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.match(text, /Backend: \*Staging\* \(Android not verified\)/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  const results = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(results.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
+  assert.equal(results.searchParams.get("platform"), "ios-mac")
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.equal(h.written.length, 1)
+})

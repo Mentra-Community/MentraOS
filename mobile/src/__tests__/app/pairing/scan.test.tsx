@@ -116,8 +116,8 @@ jest.mock("@/components/ignite", () => {
   function MockIcon() {
     return <View />
   }
-  function MockHeader() {
-    return <View />
+  function MockHeader({onLeftPress}: {onLeftPress: () => void}) {
+    return <TouchableOpacity accessibilityLabel="common:back" onPress={onLeftPress} />
   }
   function MockScreen({children}: {children: ReactNode}) {
     return <View>{children}</View>
@@ -241,10 +241,9 @@ describe("pairing scan screen", () => {
     // No entry snapshot: the abandon decision must come from the LIVE
     // default-device read, because a pairing can promote while the flow is
     // open - an entry snapshot would forget that brand-new pairing.
-    render(<SelectGlassesBluetoothScreen />)
-
-    const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
-    backHandler({actionType: "GO_BACK"})
+    const screen = render(<SelectGlassesBluetoothScreen />)
+    expect(screen.queryByText("common:cancel")).toBeNull()
+    fireEvent.press(screen.getByLabelText("common:back"))
 
     await waitFor(() => {
       expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith()

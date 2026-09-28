@@ -6,7 +6,7 @@ import {AppState, Platform} from "react-native"
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
 import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
-import { useNavigationStore } from "@/stores/navigation"
+import {useNavigationStore} from "@/stores/navigation"
 import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
 
 /**
@@ -237,6 +237,23 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         console.log("[LOGIN DEBUG] Error in auth callback:", authParams.error_code, authParams.error_description)
         // Navigate to login with the error code so login screen can show the message
         nav.replace(`/auth/start?authError=${authParams.error_code || authParams.error}`)
+        return
+      }
+
+      if (authParams?.type === "signup" && authParams.access_token) {
+        const res = await mentraAuth.completeSignupVerification(authParams.access_token)
+        try {
+          WebBrowser.dismissBrowser()
+        } catch {
+          // The confirmation link may have opened outside an in-app browser.
+        }
+        if (res.is_error()) {
+          console.error("Email verification sign-in failed:", res.error)
+          nav.replace("/auth/start?authError=invalid_grant")
+          return
+        }
+        nav.setAnimation("none")
+        nav.replaceAll("/")
         return
       }
 
