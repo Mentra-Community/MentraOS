@@ -156,7 +156,14 @@ export function preparationStop(run: Pick<TestRunDetail, "outcome" | "outcomes" 
   )
     ? p.requestUrl!
     : null;
-  return { stage: p.intakeStage!, claimed: p.claim === "not-granted" ? "Claim not granted" : "No claim requested", worker, request };
+  // The worker records exactly one claim value per status; anything else proves neither label.
+  const claimed =
+    p.intakeStatus === "preparation-blocked" && p.claim === "not-attempted"
+      ? "No claim requested"
+      : p.intakeStatus === "claim-blocked" && p.claim === "not-granted"
+        ? "Claim not granted"
+        : "Claim state not recorded";
+  return { stage: p.intakeStage!, claimed, worker, request };
 }
 
 export interface TestRunFilters {

@@ -833,6 +833,28 @@ describe("worker preparation failures", () => {
       .toContain("Claim not granted; no fixture state was observed.");
   });
 
+  test("names the claim only from the recorded value that matches its intake status", () => {
+    const claimText = (intakeStatus: string, claim?: string) => {
+      const { claim: _omit, ...rest } = stopped.provenance;
+      return renderRun({ ...stopped, provenance: { ...rest, intakeStatus, ...(claim === undefined ? {} : { claim }) } });
+    };
+    // The producer's two explicit pairs keep their known labels.
+    expect(claimText("preparation-blocked", "not-attempted")).toContain("No claim requested; no fixture state was observed.");
+    expect(claimText("claim-blocked", "not-granted")).toContain("Claim not granted; no fixture state was observed.");
+    // Missing, unrecognized or mismatched provenance proves neither.
+    for (const [intakeStatus, claim] of [
+      ["preparation-blocked", undefined], ["claim-blocked", undefined],
+      ["preparation-blocked", "granted"], ["claim-blocked", "unknown-value"],
+      ["preparation-blocked", "not-granted"], ["claim-blocked", "not-attempted"],
+    ] as const) {
+      const markup = claimText(intakeStatus, claim);
+      expect(markup).toContain("The worker stopped before any claim");
+      expect(markup).toContain("Claim state not recorded; no fixture state was observed.");
+      expect(markup).not.toContain("No claim requested");
+      expect(markup).not.toContain("Claim not granted");
+    }
+  });
+
   test("never builds links from unvalidated values and never infers a stop the worker did not record", () => {
     const unsafe = renderRun({
       ...stopped,
