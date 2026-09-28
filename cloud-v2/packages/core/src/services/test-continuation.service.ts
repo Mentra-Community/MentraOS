@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { TestRunModel } from "../models/test-run.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
-import { TestRunClaimModel } from "../models/test-run-claim.model";
-import type { TestRunClaim } from "../types/test-run-claim.types";
 import { continuationRequestSchema, isOriginalCandidate, type ContinuationGrant, type TestContinuationBinding } from "../types/test-continuation.types";
 import { testRoutineIdSchema, type TestBuild, type TestBuildSource, type TestDispatchReceipt, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
 import { TestDispatchService } from "./test-dispatch.service";
@@ -12,25 +9,14 @@ import { GithubContinuationSource, type ContinuationSourceGateway, type Continua
 import { requireContinuationLease } from "./test-continuation-lease";
 import { TestRunService } from "./test-run.service";
 import { TestFailureIncidentService } from "./test-failure-incident.service";
-import { recoveredClaim } from "./test-run-overview.service";
+import { MongoRegisteredResultRepository, registeredResults, type RegisteredResultRepository } from "./test-registered-results";
 
 type Runs = Pick<TestRunService, "failureDetail" | "detail" | "failureMedia">;
 type Incidents = Pick<TestFailureIncidentService, "metadata" | "artifact">;
-export interface ContinuationRepository {
+export interface ContinuationRepository extends RegisteredResultRepository {
   list(grant: ContinuationGrant): Promise<TestDispatchReceipt[]>;
-  results(requestId: string): Promise<string[]>;
-  claim(requestId: string): Promise<TestRunClaim | null>;
 }
-class MongoContinuationRepository implements ContinuationRepository {
-  async claim(requestId: string) {
-    const row = await TestRunClaimModel.findOne({ requestId }).select({ claim: 1 }).lean();
-    return row ? row.claim as TestRunClaim : null;
-  }
-  async results(requestId: string) {
-    const rows = await TestRunModel.find({ requestId }).sort({ startedAt: 1, runId: 1 }).limit(21).select({ runId: 1 }).lean();
-    if (rows.length > 20) throw new TestDispatchError(409, "Recorded result history exceeds the continuation bound");
-    return rows.map(row => row.runId);
-  }
+class MongoContinuationRepository extends MongoRegisteredResultRepository implements ContinuationRepository {
   async list(grant: ContinuationGrant) {
     const candidate = grant.candidate;
     const rows = await TestDispatchModel.find({ "receipt.continuation.occurrenceId": grant.occurrenceId,
@@ -43,7 +29,7 @@ class MongoContinuationRepository implements ContinuationRepository {
   }
 }
 /** Deterministic UUID-shaped identity; a registered replay recomputes the same ID. */
-function operationUuid(parts: unknown[]): string {
+export function operationUuid(parts: unknown[]): string {
   const digest = createHash("sha256").update(JSON.stringify(parts)).digest("hex");
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }
@@ -55,8 +41,9 @@ export function continuationOperationId(grant: ContinuationGrant, routineId: Tes
 }
 const fail = (message: string): never => { throw new TestDispatchError(409, message); };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-/** The grant's occurrence, with a recorded or admin-reviewed corrected source, acknowledged to this exact case anchor. */
-export async function acknowledgedCase(runs: Pick<Runs, "failureDetail">, grant: ContinuationGrant) {
+/** The grant's occurrence, with a recorded or admin-reviewed corrected source, acknowledged to this exact
+ * case anchor. Any grant naming one occurrence and agent run (continuation or existing work) uses it. */
+export async function acknowledgedCase(runs: Pick<Runs, "failureDetail">, grant: Pick<ContinuationGrant, "occurrenceId" | "agentRunId">) {
   const packet = await runs.failureDetail(grant.occurrenceId);
   if (packet.occurrenceId !== grant.occurrenceId || !["recorded", "corrected"].includes(packet.sourceStatus) || !packet.source
     || packet.delivery.state !== "acknowledged" || packet.delivery.agentRunId !== grant.agentRunId)
@@ -198,26 +185,9 @@ export class TestContinuationService {
     if (!receipt) throw new TestDispatchError(404, "Registered routine request not found");
     const binding = this.bound(grant, receipt);
     const view = await this.dispatch.detail(operationId);
-    const ids = view.requestId ? await this.repository.results(view.requestId) : [];
-    if (view.result && !ids.includes(view.result.runId)) ids.push(view.result.runId);
-    const results = await Promise.all(ids.map(async id => {
-      const result = await this.runs.detail(id);
-      if (result.requestId !== view.requestId || result.routineId !== receipt.input.routineId
-        || result.provenance.archiveSha256 !== receipt.input.archiveSha256
-        || (result.source?.headSha ?? result.provenance.headSha) !== binding.expectedHeadSha
-        || (binding.expectedHarnessSha && (result.provenance.harnessSha ?? result.provenance.harnessRevision) !== binding.expectedHarnessSha))
-        fail("Recorded result differs from the registered candidate, archive, routine or worker revision");
-      return result;
-    }));
-    const claim = view.requestId ? await this.repository.claim(view.requestId) : null;
-    const resolution = claim && claim.state !== "claimed" ? recoveredClaim(claim, results) : null;
-    const verifiedRecovery = resolution && results.find(result => result.runId === resolution.recoveryRunId)?.outcomes.evidence === "complete"
-      ? resolution : null;
-    const recordedResults = results.map(result => ({ runId: result.runId, outcome: result.outcome, outcomes: result.outcomes,
-        reportPath: `/?testRun=${result.runId}`, source: result.source ?? null, provenance: {
-          headSha: binding.expectedHeadSha, archiveSha256: receipt.input.archiveSha256,
-          ...(binding.expectedHarnessSha ? { harnessSha: binding.expectedHarnessSha } : {}) },
-        failureOccurrenceIds: (result.failureOccurrences ?? []).map(item => item.occurrenceId) }));
+    const { recordedResults, verifiedRecovery } = await registeredResults(view, { routineId: receipt.input.routineId,
+      archiveSha256: receipt.input.archiveSha256, expectedHeadSha: binding.expectedHeadSha,
+      ...(binding.expectedHarnessSha ? { expectedHarnessSha: binding.expectedHarnessSha } : {}) }, this.repository, this.runs);
     // A retained fixture can publish useful failed evidence. Preserve its
     // recovery-required state while returning every authenticated recorded result.
     return { ...view, recordedResults, verifiedRecovery };
