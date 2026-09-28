@@ -4,6 +4,7 @@ const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testin
 const androidDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58483a6c729018dc9955122dd071ecefbfb8ae92/"
 const pendingDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/754d527a3d6aac8ac971c600998aece203015394/"
 const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/69ffd29cba268d9ef2a67ee5d1b33edb2c547b90/"
+const connectedDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/e075ae89b99e2497a72338563851381e93769ff0/"
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",
@@ -45,9 +46,9 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${definitions}tools/mentra-e2e/runner/call-routine.ts`,
     worker: `${definitions}worker/CALL-RECIPE.md`,
   }),
-  // Planned nightly targets. Their names, labels, platforms and result rows are wired end to end, but each is
-  // `pending`: it has no registered automatic worker, so every request, dispatch and nightly path refuses it with
-  // this exact reason. Remove `pending` only in the reviewed change that registers its qualified worker, and add its
+  // Planned nightly targets (account-miniapps, livestreamer). Their names, labels, platforms and result rows are wired
+  // end to end, but each is `pending`: it has no registered automatic worker, so every request, dispatch and nightly path
+  // refuses it with this exact reason. Remove `pending` only in the reviewed change that registers its worker, and add its
   // label to request-e2e-routine.yml's pull_request trigger and explicit REQUEST_ROUTINE chain in that same change.
   "account-miniapps": Object.freeze({
     label: "routine:account-miniapps", name: "Account and miniapps", platform: "ios-on-mac",
@@ -60,16 +61,19 @@ export const DEVICE_ROUTINES = Object.freeze({
     worker: `${pendingDefinitions}worker/account-miniapps.ts`,
     pending: "No automatic worker: the existing host's admitAccountMiniappsRun refuses (safari-google-provider), and no exported automatic preparation binds the request's selected Mac build and claim-bound recording evidence (the host installs its static build and records development evidence only)",
   }),
+  // Registered Android nightly target: its automatic worker (worker/connected-glasses.ts, configuration kind
+  // automatic-connected-glasses-worker) authenticates the request, verifies its exact selected APK and OTA manifest and
+  // runs the full definition in one claimed lifecycle with claim-bound segmented recording, export and settlement.
+  // Registration permits an honest attempted run; it is not qualification.
   "connected-glasses": Object.freeze({
     label: "routine:connected-glasses", name: "Connected glasses (Android)", platform: "android",
-    coverage: "One combined Android routine with paired glasses: disconnect/unpair/reconnect, Bluetooth, camera settings, Wi-Fi connect, gallery delivery and YouTube audio, returning the original account and pairing.",
+    coverage: "One combined Android routine with paired glasses on the request's selected APK: disconnect/unpair/reconnect, Bluetooth, battery report, camera settings, Wi-Fi scan and connect (C14, the observed path with the protected entry omitted between owned recording segments), gallery delivery (C9) and YouTube audio (C8), returning the original account and pairing.",
     relatedPaths: ["mobile/modules/bluetooth-sdk/**", "mobile/modules/**/android/**", "mobile/src/app/**", "mobile/src/services/**"],
-    prerequisites: "CI signed Android APK and immutable OTA manifest; enrolled Android phone with its paired glasses and existing account.",
-    exclusions: "Never relabelled as the Android no-glasses walkthrough; no Mac, OTA or Call coverage.",
-    definition: `${pendingDefinitions}docs/routines/connected-glasses-brief.md`,
-    implementation: `${pendingDefinitions}tools/mentra-e2e/runner/connected-glasses-routine.ts`,
-    worker: `${pendingDefinitions}worker/connected-glasses.ts`,
-    pending: "No automatic worker: the existing host's admitConnectedGlassesRun refuses, its Wi-Fi connect, gallery delivery and YouTube audio sections are still pending, and no exported automatic preparation binds the request's selected APK and claim-bound recording evidence",
+    prerequisites: "CI signed Android APK and immutable OTA manifest verified against the claimed request; an enrolled Android phone with its paired glasses and existing account, and the private worker's own fixture, tool and ownership prerequisites.",
+    exclusions: "Never relabelled as the Android no-glasses walkthrough; no Mac, OTA or Call coverage. C8 and C9 have no controllers yet: their steps fail by name before any input, and later unvisited steps stay not-run. C3's physical report evidence, C8 route/reference/audio and C9 capture/sync remain unverified. Registered in source; not qualified.",
+    definition: `${connectedDefinitions}docs/routines/connected-glasses-brief.md`,
+    implementation: `${connectedDefinitions}tools/mentra-e2e/runner/connected-glasses-routine.ts`,
+    worker: `${connectedDefinitions}worker/connected-glasses.ts`,
   }),
   livestreamer: Object.freeze({
     label: "routine:livestreamer", name: "Livestreamer", platform: "ios-on-mac",

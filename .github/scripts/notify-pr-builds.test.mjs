@@ -719,9 +719,14 @@ test("planned routine labels say no test was requested instead of linking result
   const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: labels.map(name => ({name}))}})
   await notifyPrBuilds(h.args)
   const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
-  const links = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]).searchParams.get("routineId"))
-  assert.deepEqual(links, ["day1-ota"])
-  assert.equal((text.match(/Planned routine: no automatic worker is registered yet, so no test was requested\./g) ?? []).length, 3)
+  const urls = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]).searchParams)
+  // connected-glasses is registered: it links results for its own Android APK, never the Mac archive; only the two
+  // planned routines say nothing was requested.
+  assert.deepEqual(urls.map(params => params.get("routineId")).sort(), ["connected-glasses", "day1-ota"])
+  const [android, mac] = ["connected-glasses", "day1-ota"].map(id => urls.find(params => params.get("routineId") === id))
+  assert.deepEqual([android.get("platform"), mac.get("platform")], ["android", "ios-mac"])
+  assert.notEqual(android.get("archiveSha256"), mac.get("archiveSha256"))
+  assert.equal((text.match(/Planned routine: no automatic worker is registered yet, so no test was requested\./g) ?? []).length, 2)
   for (const name of ["Account and miniapps", "Connected glasses \\(Android\\)", "Livestreamer"]) assert.match(text, new RegExp(name))
 })
 

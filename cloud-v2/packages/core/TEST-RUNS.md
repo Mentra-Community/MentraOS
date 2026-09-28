@@ -100,11 +100,18 @@ Deployment must include `no-glasses-android` in `TEST_RUN_DISPATCH_ROUTINES` onl
 after its private worker lane is enrolled; `TEST_RUN_DISPATCH_CHANNELS` still
 controls PR/dev/staging availability. This code does not enable a new lane by itself.
 
-The planned nightly routines `account-miniapps` (Mac), `connected-glasses` (Android)
-and `livestreamer` (Mac) are listed so their state is visible, but each carries a
-`planned` reason in `TEST_ROUTINES`. They stay unavailable, and dispatch refuses them,
-even if a deployment adds them to `TEST_RUN_DISPATCH_ROUTINES`. Only the reviewed
-change that registers the routine's automatic worker removes `planned`.
+The planned nightly routines `account-miniapps` (Mac) and `livestreamer` (Mac) are
+listed so their state is visible, but each carries a `planned` reason in
+`TEST_ROUTINES`. They stay unavailable, and dispatch refuses them, even if a deployment
+adds them to `TEST_RUN_DISPATCH_ROUTINES`. Only the reviewed change that registers the
+routine's automatic worker removes `planned`.
+
+`connected-glasses` (Android) is registered: its private worker verifies the request's
+exact selected APK and OTA manifest and exports claim-bound segmented CI evidence, and
+it is a nightly target. Like `no-glasses-android`, it needs a published Android APK
+and becomes requestable only once a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES`
+after its worker lane is enrolled. Its C8 and C9 sections have no controllers yet and
+fail by name; its live CI qualification is still pending.
 
 `captions-phone` and `notes-phone` (Mac, simulated glasses in Phone mode) are
 registered: their private worker installs the selected Mac build and exports

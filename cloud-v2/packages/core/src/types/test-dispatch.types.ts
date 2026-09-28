@@ -47,12 +47,13 @@ export const TEST_ROUTINES = [
   { id: "no-glasses-android" as const, name: "UI walkthrough without glasses (Android)", description: "Verify app navigation on the dedicated Android phone with no glasses paired." },
   { id: "day1-ota" as const, name: "Day-one OTA update", description: "Prepare day-one firmware, update it, then verify and restore the selected build's firmware." },
   { id: "mentra-call" as const, name: "Mentra Call", description: "Join a call with the glasses and a browser peer, recording both views and checking the connection." },
-  // Planned nightly targets: listed so their unavailability is visible. `planned` keeps them unavailable even if a
-  // deployment enables them, until the reviewed change that registers their automatic worker removes it.
+  // Planned nightly targets (account-miniapps, livestreamer): listed so their unavailability is visible. `planned` keeps
+  // them unavailable even if a deployment enables them, until the reviewed change that registers their automatic worker
+  // removes it.
   { id: "account-miniapps" as const, name: "Account and miniapps (Mac)", description: "One combined paired-account routine: email, export, Google SSO, feedback, miniapps and incompatible tiles.",
     planned: "Planned routine: its automatic worker is not registered yet" },
-  { id: "connected-glasses" as const, name: "Connected glasses (Android)", description: "One combined Android routine with paired glasses: pairing, Bluetooth, camera, Wi-Fi, gallery and audio.",
-    planned: "Planned routine: its automatic worker is not registered yet" },
+  // Registered Android nightly target; a deployment enables it through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.
+  { id: "connected-glasses" as const, name: "Connected glasses (Android)", description: "One combined Android routine with paired glasses: pairing, Bluetooth, camera, Wi-Fi, gallery and audio." },
   { id: "livestreamer" as const, name: "Livestreamer (Mac)", description: "Stream here and local RTMP from the Mentra app, observed by an owned receiver.",
     planned: "Planned routine: its automatic worker is not registered yet" },
   // Registered Mac Phone mode routines; a deployment enables each through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.

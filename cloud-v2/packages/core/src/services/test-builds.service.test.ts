@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { zipSync, strToU8 } from "fflate";
 import { GithubTestBuildGateway, readRequestZip, readTestMetadata } from "./test-builds.service";
-import { testBuildQuerySchema, testDispatchInputSchema, testRoutinePlatform, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
+import { TEST_ROUTINES, testBuildQuerySchema, testDispatchInputSchema, testRoutinePlatform, type TestDispatchInput, type TestRoutineId } from "../types/test-dispatch.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPO = "Mentra-Community/MentraOS";
@@ -231,7 +231,7 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} lists planne
   expect((["no-glasses", "day1-ota", "mentra-call"] as const).every(id => row(id).available)).toBe(true);
   for (const id of ["account-miniapps", "livestreamer"] as const) expect(row(id)).toEqual({ id, available: false,
     reason: "Planned routine: its automatic worker is not registered yet" });
-  // Connected glasses is an Android routine: a Mac build reports the platform first, never a Mac run.
+  // Connected glasses is a registered Android routine: a Mac build reports the platform first, never a Mac run.
   expect(testRoutinePlatform("connected-glasses")).toBe("android");
   expect(row("connected-glasses").available).toBe(false);
   expect(row("connected-glasses").reason).toContain("published Android APK");
@@ -416,6 +416,26 @@ test("Android PR inventory validates its own signed APK receipt without needing 
   }
   expect(f.calls.some(call => call.url.includes("mentra-ios") || call.url.includes("apple-downloads"))).toBe(false);
   await expect(f.gateway.resolve(input.source, "no-glasses")).rejects.toThrow("selected source");
+});
+
+test("registered connected-glasses is listed on an Android APK only, available only once a deployment enables it", async () => {
+  expect(testRoutinePlatform("connected-glasses")).toBe("android");
+  expect(TEST_ROUTINES.find(routine => routine.id === "connected-glasses")).not.toHaveProperty("planned");
+  expect(testDispatchInputSchema.parse({ ...input, routineId: "connected-glasses" }).routineId).toBe("connected-glasses");
+  const f = androidPrFixture();
+  // Source registration is not deployment enablement: the default workers keep the ordinary enablement reason.
+  const defaults = (await f.gateway.inventory({ channel: "pr", pr: 12, routineId: "connected-glasses" }))[0]!;
+  expect(defaults.platform).toBe("android");
+  expect(defaults.archive).toEqual(f.receipt.artifacts.android);
+  expect(defaults.routines.find(routine => routine.id === "connected-glasses")).toEqual({ id: "connected-glasses", available: false,
+    reason: "This routine is not enabled on the test workers yet" });
+  const enrolled = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, routines: ["no-glasses-android", "connected-glasses"] });
+  const build = (await enrolled.inventory({ channel: "pr", pr: 12, routineId: "connected-glasses" }))[0]!;
+  expect(build.routines.filter(routine => routine.available).map(routine => routine.id)).toEqual(["no-glasses-android", "connected-glasses"]);
+  // The planned routines stay unavailable on the same APK even when enabled.
+  const planned = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, routines: ["connected-glasses", "account-miniapps", "livestreamer"] });
+  const rows = (await planned.inventory({ channel: "pr", pr: 12, routineId: "connected-glasses" }))[0]!.routines;
+  expect(rows.filter(routine => routine.available).map(routine => routine.id)).toEqual(["connected-glasses"]);
 });
 
 test("Android PR rejects stale revisions, unsafe metadata, missing publication and wrong APK bytes", async () => {
