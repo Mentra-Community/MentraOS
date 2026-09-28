@@ -8,7 +8,7 @@ import GlassesPairingLoadingScreen from "@/app/pairing/loading"
 // The glasses store is private to the local engine workspace and has no public test export.
 // eslint-disable-next-line no-restricted-imports
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
-import {SETTINGS, useSettingsStore} from "../../../../modules/engine/src/stores/settings"
+import {SETTINGS, useSettingsStore} from "@mentra/engine-host-internal"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -152,6 +152,19 @@ describe("pairing loading screen", () => {
     void useSettingsStore.getState().setSetting(SETTINGS.default_controller.key, model, false)
     void useSettingsStore.getState().setSetting(SETTINGS.controller_device_name.key, name, false)
   }
+
+  it.each(["errors:g2LeftArmUnavailable", "errors:g2RightArmUnavailable"])(
+    "preserves the arm-specific timeout explanation: %s",
+    async (error) => {
+      ;(useRoute as jest.Mock).mockReturnValue({params: makeRouteParams("Even Realities G2", "test-pair")})
+      render(<GlassesPairingLoadingScreen />)
+      await startPairingKickoff()
+      await act(async () => {
+        emitBluetoothSdkEvent("pair_failure", {error})
+      })
+      expect(replace).toHaveBeenCalledWith("/pairing/failure", expect.objectContaining({error}))
+    },
+  )
 
   it("shows booting after glasses_not_ready and routes pair failures to the failure screen", async () => {
     const {getByText} = render(<GlassesPairingLoadingScreen />)

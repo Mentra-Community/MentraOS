@@ -28,6 +28,7 @@ function projectStatus() {
   return {
     state: s.connection.state,
     fullyBooted: isGlassesReady(s.connection),
+    g2MissingArm: s.g2MissingArm ?? null,
     battery: s.batteryLevel,
     charging: s.charging,
     case: {battery: s.caseBatteryLevel, charging: s.caseCharging, open: s.caseOpen, removed: s.caseRemoved},

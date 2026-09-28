@@ -17,7 +17,8 @@ const en = {
     recommended: "Recommended",
     autoBrightness: "Auto brightness",
     autoPowerOff: "Turn off automatically",
-    autoPowerOffSubtitle: "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
+    autoPowerOffSubtitle:
+      "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
     brightness: "Brightness",
     display: "Display",
     disconnectGlasses: "Disconnect glasses",
@@ -82,7 +83,8 @@ const en = {
       "ADC codec_adc_vol index. Default 15 is +32 dB. Lower if it clips. Changing gain rescales every threshold below to match.",
     tuningThresholds: "Loudness gate",
     tuningOpen: "Open threshold",
-    tuningOpenSubtitle: "RMS loudness that opens the gate. Measured after gain. Raising it past the speaker open lifts that too.",
+    tuningOpenSubtitle:
+      "RMS loudness that opens the gate. Measured after gain. Raising it past the speaker open lifts that too.",
     tuningClose: "Close threshold",
     tuningCloseSubtitle: "Percent of open. Firmware refuses close ≥ open, so this stays a ratio.",
     tuningAttack: "Attack (ms)",
@@ -93,7 +95,8 @@ const en = {
     tuningSpeakerOpen: "Open threshold",
     tuningSpeakerOpenSubtitle: "RMS that opens the gate while the speaker is playing.",
     tuningSpeakerClose: "Close threshold",
-    tuningSpeakerCloseSubtitle: "Percent of the speaker open threshold. Kept as a ratio so the firmware never rewrites it.",
+    tuningSpeakerCloseSubtitle:
+      "Percent of the speaker open threshold. Kept as a ratio so the firmware never rewrites it.",
     tuningSpeakerHold: "Hold-off (ms)",
     tuningSpeakerHoldSubtitle: "Keep using these elevated thresholds after the speaker stops (10 ms frames).",
     tuningApplied: "On glasses",
@@ -157,6 +160,8 @@ const en = {
     pairing: "Pairing",
     needMoreHelp: "I need more help",
     glassesBooting: "Glasses are booting up…",
+    g2WaitingForLeft: "Right arm connected. Waiting for left arm…",
+    g2WaitingForRight: "Left arm connected. Waiting for right arm…",
     simulatedGlassesDescription: "Simulated Glasses allows you to run MentraOS without physical smart glasses.",
     permissionRequired: "Permission Required",
     bluetoothPermissionRequiredTitle: "Permission Required",
@@ -415,7 +420,8 @@ const en = {
     enterNetworkManually: "Enter network manually",
     enterNetworkDetails: "Enter network details",
     addNetwork: "Add your Wi-Fi network",
-    addNetworkDescription: "Add your Wi-Fi network to sync photos and videos and install software updates on your Mentra Live.",
+    addNetworkDescription:
+      "Add your Wi-Fi network to sync photos and videos and install software updates on your Mentra Live.",
     rememberPassword: "Remember password",
     rememberPasswordDescription: "",
     wifiPassword: "Wi-Fi password",
@@ -1175,6 +1181,12 @@ const en = {
     invalidEmail: "Invalid email address.",
     pairNeedDisconnect:
       "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
+    g2LeftArmUnavailable:
+      "The right arm connected, but the left arm didn't. Put your G2s in their case, close it for 10 seconds, then take them out and try again.",
+    g2RightArmUnavailable:
+      "The left arm connected, but the right arm didn't. Put your G2s in their case, close it for 10 seconds, then take them out and try again.",
+    g2ConnectionTimedOut:
+      "Couldn't finish connecting both G2 arms. Put your G2s in their case, close it for 10 seconds, then take them out and try again.",
     pairingCouldNotStart:
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
@@ -1192,8 +1204,7 @@ const en = {
     stillOffTitle: "Wi-Fi is still off",
     stillOffAndroid:
       "Wi-Fi is still off. Tap Turn on Wi-Fi again to open the panel, turn the switch on, tap Done, and return to Mentra.",
-    stillOffIos:
-      "Wi-Fi is still off. Tap Open Settings again, go to Wi-Fi, turn it on, then return to Mentra.",
+    stillOffIos: "Wi-Fi is still off. Tap Open Settings again, go to Wi-Fi, turn it on, then return to Mentra.",
     onTitle: "Wi-Fi is on",
     onMessage: "Continuing the call.",
   },
