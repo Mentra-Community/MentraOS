@@ -6,7 +6,7 @@ const noGlassesDefinitions = "https://github.com/Mentra-Community/Mentra-Automat
 const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/69ffd29cba268d9ef2a67ee5d1b33edb2c547b90/"
 const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
 const connectedDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
-const accountDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
+const accountDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/11b98bed9efb2b414ad912074888c58aeea2e6df/"
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",

@@ -181,7 +181,7 @@ test("the production catalog registers account-miniapps as its existing Mac nigh
   assert.equal(routine.pending, undefined)
   assert.equal(routine.platform, "ios-on-mac")
   assert.equal(routine.label, "routine:account-miniapps")
-  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
+  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/11b98bed9efb2b414ad912074888c58aeea2e6df/"
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/ACCOUNT-MINIAPPS-ROUTINE.md",
     "tools/mentra-e2e/runner/account-miniapps-routine.ts", "worker/account-miniapps.ts"].map(path => `${source}${path}`))
   // Registration is not qualification: the catalog states the unqualified provider observations.
