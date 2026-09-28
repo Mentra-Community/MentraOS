@@ -162,6 +162,7 @@ const en = {
     glassesBooting: "Glasses are booting up…",
     g2WaitingForLeft: "Right arm connected. Waiting for left arm…",
     g2WaitingForRight: "Left arm connected. Waiting for right arm…",
+    g2ReconnectTitle: "Reconnect your G2s",
     simulatedGlassesDescription: "Simulated Glasses allows you to run MentraOS without physical smart glasses.",
     permissionRequired: "Permission Required",
     bluetoothPermissionRequiredTitle: "Permission Required",

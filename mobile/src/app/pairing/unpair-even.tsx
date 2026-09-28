@@ -1,6 +1,6 @@
+import {DeviceTypes, engine} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
 import {View} from "react-native"
-import {engine} from "@mentra/engine"
 
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
@@ -8,10 +8,12 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
+import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
 
 export default function UnpairEvenScreen() {
   const route = useRoute()
-  const {deviceModel} = route.params as {deviceModel: string}
+  const {deviceModel, error} = route.params as {deviceModel: string; error?: string}
+  const recoveryError = deviceModel === DeviceTypes.G2 && isG2RecoveryError(error) ? error : undefined
   const {clearHistory, replace} = useNavigationStore.getState()
 
   focusEffectPreventBack()
@@ -35,11 +37,14 @@ export default function UnpairEvenScreen() {
   const steps: OnboardingStep[] = [
     {
       type: "image",
-      source: require("@assets/onboarding/os/thumbnails/unpair_even.png"),
+      source: recoveryError
+        ? require("@assets/glasses/even_realities_g2/even_realities_g2.png")
+        : require("@assets/onboarding/os/thumbnails/unpair_even.png"),
       name: "Unpair Even",
       transition: false,
-      title: translate("onboarding:unpairEvenTitle"),
-      subtitle: translate("onboarding:unpairEvenSubtitle"),
+      compactHeader: Boolean(recoveryError),
+      title: translate(recoveryError ? "pairing:g2ReconnectTitle" : "onboarding:unpairEvenTitle"),
+      subtitle: translate(recoveryError ?? "onboarding:unpairEvenSubtitle"),
     },
   ]
 
@@ -49,13 +54,17 @@ export default function UnpairEvenScreen() {
         steps={steps}
         autoStart={true}
         showCloseButton={false}
-        endButtonText={translate("onboarding:openSettings")}
-        endButtonFn={handleOpenSettings}
+        endButtonText={translate(recoveryError ? "onboarding:unpairEvenTryAgain" : "onboarding:openSettings")}
+        endButtonFn={recoveryError ? handleTryAgain : handleOpenSettings}
         showSkipButton={false}
       />
 
       <View className="absolute bottom-16 w-full">
-        <Button text={translate("onboarding:unpairEvenTryAgain")} preset="secondary" onPress={handleTryAgain} />
+        <Button
+          text={translate(recoveryError ? "onboarding:openSettings" : "onboarding:unpairEvenTryAgain")}
+          preset="secondary"
+          onPress={recoveryError ? handleOpenSettings : handleTryAgain}
+        />
       </View>
     </Screen>
   )

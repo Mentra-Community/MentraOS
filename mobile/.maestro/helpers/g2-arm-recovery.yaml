@@ -1,0 +1,18 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Opt-in physical G2 check. Start with a real pairing attempt in progress and
+# exactly one arm available. Set G2_RECOVERY_MESSAGE to the full expected error
+# for the missing arm. Do not launch/reset the app or modify Bluetooth bonds.
+- extendedWaitUntil:
+    visible: "Reconnect your G2s"
+    timeout: 20000
+- assertVisible: "${G2_RECOVERY_MESSAGE}"
+- assertNotVisible: "Pairing Failed"
+- assertVisible: "Open Settings"
+- assertVisible: "Try Again"
+- takeScreenshot: "g2-arm-recovery"
+- tapOn: "Try Again"
+- assertVisible: "2. Place your G2 in the charging case."
+- assertNotVisible: "Select Model"
+- assertNotVisible: "Pairing Failed"
+- takeScreenshot: "g2-retry-preserves-model"
