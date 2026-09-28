@@ -153,8 +153,8 @@ describe("pairing loading screen", () => {
     void useSettingsStore.getState().setSetting(SETTINGS.controller_device_name.key, name, false)
   }
 
-  it.each(["errors:g2LeftArmUnavailable", "errors:g2RightArmUnavailable"])(
-    "preserves the arm-specific timeout explanation: %s",
+  it.each(["errors:g2LeftArmUnavailable", "errors:g2RightArmUnavailable", "errors:g2ConnectionTimedOut"])(
+    "routes G2 recovery through the existing Even guide: %s",
     async (error) => {
       ;(useRoute as jest.Mock).mockReturnValue({params: makeRouteParams("Even Realities G2", "test-pair")})
       render(<GlassesPairingLoadingScreen />)
@@ -162,7 +162,24 @@ describe("pairing loading screen", () => {
       await act(async () => {
         emitBluetoothSdkEvent("pair_failure", {error})
       })
-      expect(replace).toHaveBeenCalledWith("/pairing/failure", expect.objectContaining({error}))
+      expect(replace).toHaveBeenCalledWith("/pairing/unpair-even", {deviceModel: "Even Realities G2", error})
+      expect(replace).not.toHaveBeenCalledWith("/pairing/failure", expect.anything())
+    },
+  )
+
+  it.each(["Even Realities G1", "Even Realities G2"])(
+    "keeps the Bluetooth-unpair error on the existing Even guide for %s",
+    async (deviceModel) => {
+      ;(useRoute as jest.Mock).mockReturnValue({params: makeRouteParams(deviceModel, "test-pair")})
+      render(<GlassesPairingLoadingScreen />)
+      await startPairingKickoff()
+      await act(async () => {
+        emitBluetoothSdkEvent("pair_failure", {error: "errors:pairNeedDisconnect"})
+      })
+      expect(replace).toHaveBeenCalledWith("/pairing/unpair-even", {
+        deviceModel,
+        error: "errors:pairNeedDisconnect",
+      })
     },
   )
 

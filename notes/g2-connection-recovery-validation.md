@@ -15,7 +15,9 @@ retired setup and timeout generations, partial serial-scoped caches, refusal of
 unrelated nearby arms, and the captured system-exit payload in the actual driver.
 They also cover the three-second grace period in both directions, peer arrival,
 reset, and status serialization. Mobile tests cover Home notices and preservation
-of side-specific timeout messages on the failure screen.
+of side-specific timeout messages on the existing Even recovery guide. They also
+verify case-cycle guidance, the selected-model retry, the Bluetooth settings
+action, and unchanged unpair instructions for bond errors.
 The Apple SDK export check also compiles the changed code for native macOS and iOS.
 
 ## Physical iPhone path (requires a G2 fixture)
@@ -36,7 +38,10 @@ pair; keep other nearby G2s out of the selection. Preserve bonds and app data.
    rebuild loop. Repeat with only the left arm available. During the first three
    seconds with just one arm connected, show no arm warning. After three seconds,
    both the pairing screen and Home card must identify the connected and waiting
-   arms. The timeout explanation must name the missing arm.
+   arms. The timeout must open the existing Even guide with “Reconnect your G2s”
+   and name the missing arm, without opening the generic “Pairing Failed” page.
+   “Try Again” must return to G2 preparation rather than model selection. Bond
+   errors must still show the original unpair instructions and settings action.
 2. Relaunch with only one arm's serial-scoped UUID cached and that arm still
    system-connected. Confirm the SDK reacquires that arm without needing its
    advertisement, and continues scanning for the other arm. An unrelated G2 with
@@ -57,6 +62,14 @@ pair; keep other nearby G2s out of the selection. Preserve bonds and app data.
 Evidence: retain app build/commit, native ready/disconnected and auth logs, both
 arm identifiers, heartbeat timestamps, and phone/on-glasses observations. An SDK
 build or local test pass alone does not qualify this physical path.
+
+For step 1, the opt-in Maestro helper
+`mobile/.maestro/helpers/g2-arm-recovery.yaml` captures the recovery UI and checks
+the retry destination. Start it while the real partial pairing is in progress,
+passing `MAESTRO_APP_ID` and the full expected English `G2_RECOVERY_MESSAGE` from
+`errors.g2LeftArmUnavailable` or `errors.g2RightArmUnavailable` in `en.ts`. Run once
+per direction. It does not create the physical fault, reset app data, or change
+Bluetooth bonds. It remains outside the default no-hardware suite.
 
 Teardown: stop test miniapps and restore the recorded app/connection state. Stop
 after one attempt per failure direction and one recovery attempt; retain logs if
