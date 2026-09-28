@@ -13,7 +13,8 @@ export interface FixFlow {
   stage: string;
   nextAction: string;
   agent: { runId: string; executor: string; status: string; caseId: string | null; anchorRunId: string | null;
-    repository: string | null; branch: string | null; heartbeatAt: string | null } | null;
+    repository: string | null; branch: string | null; heartbeatAt: string | null;
+    executionOwner: { runId: string; status: string } | null } | null;
   incidents: Array<{ reportId: string; status: string }>;
   pullRequests: Array<{ repository: string; number: number; headSha: string; state: "open" | "closed" | "merged" | "unknown";
     url: string; mergedAt: string | null }>;

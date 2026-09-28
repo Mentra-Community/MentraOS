@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FixFlowService, matchingFixActivity, projectFixFlow, type FixFlowRepository } from "./fix-flow.service";
-import { fixActivitySchema, HttpFixActivityReader, type FixActivity } from "./fix-flow-activity";
+import { fixActivitySchema, HttpFixActivityReader, type FixActivity, type FixActivityBinding } from "./fix-flow-activity";
 import type { StoredTestRun } from "./test-run.service";
 import type { TestFailureOccurrence } from "../types/test-failure.types";
 import { createFixFlowAdminApi } from "../api/admin/fix-flows.api";
@@ -27,7 +27,8 @@ const repository = (rows = [stored]): FixFlowRepository => ({ recent: async () =
   run: async id => rows.find(row => row.run.runId === id) ?? null,
   incidents: async ids => ids.includes("rep_synthetic") ? [{ reportId: "rep_synthetic", status: "ready" }] : [] });
 const reader = (runs: FixActivity[] = [activity]) => ({ list: async () => ({ runs, state: "available" as const, limited: false }),
-  detail: async (id: string) => runs.find(run => run.runId === id) ?? null });
+  detail: async (id: string, binding: FixActivityBinding) => runs.find(run => (run.acknowledgedAgentRunId ?? run.runId) === id
+    && run.routineFailure.intake.occurrenceId === binding.occurrenceId && run.routineFailure.intake.testRunId === binding.testRunId) ?? null });
 
 describe("exact failure-to-fixer projection", () => {
   test("requires the acknowledgement, occurrence, run and environment together", () => {
@@ -41,6 +42,37 @@ describe("exact failure-to-fixer projection", () => {
   test("pending delivery never claims an agent is running", () => {
     const result = projectFixFlow(stored, { ...occurrence, delivery: { state: "pending" } }, null, "pending", []);
     expect(result.stage).toBe("Awaiting fixer intake"); expect(result.agent).toBeNull(); expect(result.state).toBe("active");
+  });
+  test("two runs linked to one case retain distinct occurrence identities and shared owner progress", async () => {
+    const linkedId = "22222222-2222-4222-8222-222222222222", linkedOccurrenceId = `tfo_${"e".repeat(64)}`;
+    const linkedOccurrence = { ...occurrence, occurrenceId: linkedOccurrenceId };
+    const linkedStored = { ...stored, run: { ...stored.run, runId: "second-notes-run" }, failureOccurrences: [linkedOccurrence] };
+    const linkedActivity: FixActivity = { ...activity, runId: linkedId, status: "mini_linked", acknowledgedAgentRunId: agentId,
+      executionOwnerRunId: agentId, executionOwnerStatus: "mini_waiting", executionOwnerStatusLabel: "Waiting for review",
+      executionOwnerUpdatedAt: "2026-09-28T19:00:00.000Z",
+      routineFailure: { intake: { occurrenceId: linkedOccurrenceId, testRunId: linkedStored.run.runId } },
+      miniExecution: { ...activity.miniExecution!, stage: { stage: "waiting-for-review", reason: "review-pending" }, checkpoints: [
+        { action: "record-pr", repository: "Mentra-Community/MentraOS", pullRequest: 42, headSha: "a".repeat(40) },
+        { action: "reserve-dispatch", intentId: "anchor-rerun", occurrence: { agentRunId: agentId, occurrenceId } },
+        { action: "consume-result", intentId: "anchor-rerun", resultId: "anchor-only", outcome: "passed" },
+        { action: "reserve-dispatch", intentId: "own-rerun", occurrence: { agentRunId: linkedId, occurrenceId: linkedOccurrenceId } },
+        { action: "consume-result", intentId: "own-rerun", resultId: "linked-result", outcome: "failed" },
+      ] } };
+    const service = new FixFlowService(repository([stored, linkedStored]), reader([activity, linkedActivity]), "dev");
+    const flows = (await service.list()).flows;
+    expect(flows).toHaveLength(2);
+    const linked = flows.find(flow => flow.occurrenceId === linkedOccurrenceId)!;
+    expect(linked.stage).toBe("Linked case · Waiting for review");
+    expect(linked.agent).toMatchObject({ runId: linkedId, status: "mini_linked", executionOwner: { runId: agentId, status: "mini_waiting" } });
+    expect(linked.updatedAt).toBe(linkedActivity.executionOwnerUpdatedAt!);
+    expect(linked.pullRequests[0].number).toBe(42);
+    expect(linked.timeline.filter(event => event.stage === "consume-result").map(event => event.detail)).toEqual(["linked-result"]);
+    expect(await service.detail(linkedOccurrenceId)).toEqual(linked);
+    expect(matchingFixActivity(linkedStored, linkedOccurrence, activity, "dev")).toBeNull();
+    for (const bad of [{ ...linkedActivity, acknowledgedAgentRunId: linkedId }, { ...linkedActivity, executionOwnerRunId: linkedId },
+      { ...linkedActivity, executionOwnerStatus: undefined }, { ...linkedActivity, routineCase: undefined },
+      { ...linkedActivity, routineFailure: activity.routineFailure }])
+      expect(matchingFixActivity(linkedStored, linkedOccurrence, bad, "dev")).toBeNull();
   });
   test("controller outage keeps exact failure and incident available", async () => {
     const service = new FixFlowService(repository(), { list: async () => ({ runs: [], state: "unavailable", limited: false }), detail: async () => null }, "dev");
@@ -83,7 +115,17 @@ describe("exact failure-to-fixer projection", () => {
   test("an actual blocked controller remains visible even after its PR merged", () => {
     const result = projectFixFlow(stored, occurrence, { ...activity, status: "mini_needs_input", miniLastTurn: { stage: "needs-input", reason: "budget-exhausted" },
       pullRequests: [{ repository: "Mentra-Community/MentraOS", pullRequestNumber: 42, headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] }, "available", []);
-    expect(result.state).toBe("attention"); expect(result.nextAction).toBe("budget exhausted");
+    expect(result.state).toBe("attention"); expect(result.nextAction).toContain("execution budget is exhausted");
+  });
+  test("admitted triage cannot mask the current review wait or access blocker", () => {
+    for (const reason of ["review-pending", "access-required"]) {
+      const result = projectFixFlow(stored, occurrence, { ...activity, status: "mini_waiting",
+        miniTriage: { state: "admitted", nextAction: "Old admission text" },
+        miniExecution: { ...activity.miniExecution!, stage: { stage: reason === "review-pending" ? "waiting-for-review" : "needs-input", reason } },
+      }, "available", []);
+      expect(result.nextAction).not.toContain("Old admission");
+      expect(result.nextAction).toContain(reason === "review-pending" ? "reviewer" : "Required access");
+    }
   });
   test("another occurrence's rerun cannot appear as this flow's verification", () => {
     const checkpoints = [{ action: "reserve-dispatch", intentId: "dispatch", occurrence: { agentRunId: agentId, occurrenceId: `tfo_${"d".repeat(64)}` } },
@@ -130,6 +172,21 @@ describe("bounded authenticated activity reader", () => {
     const result = await new HttpFixActivityReader(env, send as unknown as typeof fetch).list();
     expect(calls).toBe(2); expect(result.limited).toBe(false);
     expect((await new HttpFixActivityReader(env, (async () => Response.json([activity])) as unknown as typeof fetch).list()).limited).toBe(true);
+  });
+  test("detail supplies both exact occurrence identifiers to the acknowledged owner lookup", async () => {
+    let calls = 0;
+    const send = async (input: unknown) => {
+      calls++;
+      const url = new URL(String(input));
+      expect(url.pathname).toBe(`/internal/activity/runs/${agentId}`);
+      expect(url.searchParams.get("occurrenceId")).toBe(occurrenceId);
+      expect(url.searchParams.get("testRunId")).toBe(stored.run.runId);
+      return Response.json(activity);
+    };
+    const client = new HttpFixActivityReader(env, send as unknown as typeof fetch);
+    expect(await client.detail(agentId, { occurrenceId, testRunId: stored.run.runId })).toEqual(fixActivitySchema.parse(activity));
+    expect(await client.detail(agentId, { occurrenceId: "not-an-occurrence", testRunId: stored.run.runId })).toBeNull();
+    expect(calls).toBe(1);
   });
   test("does not call an invalid origin and does not echo remote error text", async () => {
     let calls = 0; const send = async () => { calls++; return new Response("private diagnostic", { status: 503 }); };

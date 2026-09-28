@@ -97,7 +97,8 @@ export function FixFlowDetail({ flow }: { flow: FixFlow }) {
       </div>
       {!flow.incidents.length ? <p className="mt-3 text-sm text-[#68746d]">No incident is recorded for this failure yet. The routine evidence remains available above.</p> : null}
       <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2"><div><dt className="text-[#68746d]">Tested build</dt><dd>{flow.channel} · {flow.build}</dd></div>
-        <div><dt className="text-[#68746d]">Agent</dt><dd>{flow.agent ? `${flow.agent.executor} · ${flow.agent.status}` : "Not confirmed"}</dd></div>
+        <div><dt className="text-[#68746d]">Agent</dt><dd>{flow.agent ? `${flow.agent.executor} · ${flow.agent.status}` : "Not confirmed"}</dd>
+          {flow.agent?.executionOwner ? <dd className="mt-1 text-[#68746d]">Linked case owner: {flow.agent.executionOwner.status}</dd> : null}</div>
         {flow.agent?.repository ? <div><dt className="text-[#68746d]">Fix destination</dt><dd className="break-all">{flow.agent.repository} · {flow.agent.branch}</dd></div> : null}
         {flow.agent?.caseId ? <div><dt className="text-[#68746d]">Recorded case</dt><dd className="break-all font-mono text-xs">{flow.agent.caseId}</dd></div> : null}
       </dl>

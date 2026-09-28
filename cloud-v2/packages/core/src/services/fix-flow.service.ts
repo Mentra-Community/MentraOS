@@ -35,33 +35,63 @@ const words = (value: string) => value.replaceAll("-", " ").replaceAll("_", " ")
 const prUrl = (repository: string, number: number) => `https://github.com/${repository}/pull/${number}`;
 const completedStatuses = new Set(["cancelled", "no_fix_needed", "third_party_out_of_scope"]);
 const attentionStatuses = new Set(["mini_needs_input", "needs_more_info", "needs_product_decision", "needs_human_engineer", "failed"]);
+const executionActions: Record<string, string> = {
+  "source-investigation": "The fixer is investigating the recorded source and evidence.",
+  "review-pending": "Waiting for a reviewer to assess the recorded PR head.",
+  "build-pending": "Waiting for the build system to publish the reviewed fix.",
+  "routine-pending": "Waiting for the routine worker to publish its verification result.",
+  "missing-evidence": "More evidence is required. The record does not identify who must supply it.",
+  "source-unavailable": "The required source is unavailable. The responsible owner is not recorded.",
+  "budget-exhausted": "The execution budget is exhausted. A recovery owner and next action have not been recorded.",
+  "access-required": "Required access is missing. The record does not identify who can restore it.",
+  infrastructure: "An infrastructure issue stopped progress. A recovery owner and next action have not been recorded.",
+  "repository-policy": "Repository routing needs clarification. The responsible owner is not recorded.",
+  "occurrence-verification-required": "Waiting for verification bound to this exact failure occurrence.",
+};
+const executionStages: Record<string, string> = { continue: "Investigating", "waiting-for-review": "Waiting for review",
+  "waiting-for-build": "Waiting for a build", "waiting-for-routine": "Waiting for routine verification",
+  "needs-input": "Needs input", "ready-for-policy": "Ready for merge policy" };
 
 /** The delivery receipt identifies the executor. A matching signature/case alone never identifies this occurrence. */
 export function matchingFixActivity(stored: StoredTestRun, occurrence: TestFailureOccurrence, activity: FixActivity | null,
   environment: string | null): FixActivity | null {
-  return activity && environment && activity.environment === environment && occurrence.delivery.state === "acknowledged"
-    && activity.runId === occurrence.delivery.agentRunId && activity.routineFailure.intake.occurrenceId === occurrence.occurrenceId
-    && activity.routineFailure.intake.testRunId === stored.run.runId ? activity : null;
+  if (!activity || !environment || activity.environment !== environment || occurrence.delivery.state !== "acknowledged"
+    || activity.routineFailure.intake.occurrenceId !== occurrence.occurrenceId
+    || activity.routineFailure.intake.testRunId !== stored.run.runId) return null;
+  const acknowledged = activity.acknowledgedAgentRunId ?? activity.runId;
+  if (acknowledged !== occurrence.delivery.agentRunId) return null;
+  // Linked rows keep their own intake identity. Only the controller's durable observation proof can attach the acknowledged owner.
+  if (!activity.executionOwnerRunId && (activity.executionOwnerStatus || activity.executionOwnerStatusLabel
+    || activity.executionOwnerUpdatedAt || activity.executionOwnerHeartbeatAt)) return null;
+  if (activity.executionOwnerRunId && (activity.executionOwnerRunId !== acknowledged || !activity.executionOwnerStatus)) return null;
+  if (activity.runId !== acknowledged && (!activity.executionOwnerRunId || !activity.routineCase
+    || activity.routineCase.anchorRunId !== acknowledged)) return null;
+  return activity;
 }
 
 export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOccurrence, activity: FixActivity | null,
   activityState: FixFlow["activity"], incidents: FixFlow["incidents"]): FixFlow {
   const run = stored.run, failure = occurrence.failure;
   const turn = activity?.miniExecution?.stage ?? activity?.miniLastTurn;
+  const status = activity?.executionOwnerStatus ?? activity?.status;
+  const linked = !!activity?.executionOwnerRunId && activity.executionOwnerRunId !== activity.runId;
   let state: FixFlow["state"] = occurrence.delivery.state === "pending" ? "active" : "unknown";
   let stage = occurrence.delivery.state === "pending" ? "Awaiting fixer intake" : "Fixer status unavailable";
   let nextAction = occurrence.delivery.state === "pending"
     ? "Core has recorded this failure. Waiting for the controller to acknowledge this exact occurrence."
     : "The failure was accepted. Current agent progress could not be verified; refresh to try again.";
   if (activity) {
-    state = completedStatuses.has(activity.status) ? "completed" : attentionStatuses.has(activity.status) ? "attention" : "active";
-    stage = activity.statusLabel ?? words(activity.status);
-    nextAction = activity.miniTriage?.nextAction ?? (turn ? words(turn.reason) : "Waiting for the next recorded agent update.");
-    if (turn) stage = words(turn.stage);
-    if (activity.miniTurnFailure && !["mini_running", "investigating"].includes(activity.status)) {
+    state = completedStatuses.has(status!) ? "completed" : attentionStatuses.has(status!) ? "attention" : "active";
+    stage = activity.executionOwnerStatusLabel ?? activity.statusLabel ?? words(status!);
+    // Admission is historical once the case has started; its old nextAction cannot mask a later review or input wait.
+    nextAction = activity.miniTriage?.state !== "admitted" && activity.miniTriage?.nextAction
+      ? activity.miniTriage.nextAction : turn ? executionActions[turn.reason] ?? "The next action is not recorded."
+        : "Waiting for the next recorded agent update.";
+    if (turn) stage = executionStages[turn.stage] ?? words(turn.stage);
+    if (activity.miniTurnFailure && !["mini_running", "investigating"].includes(status!)) {
       state = "attention";
       stage = `Agent stopped during ${activity.miniTurnFailure.phase}`;
-      nextAction = `Recorded ${words(activity.miniTurnFailure.kind)}; the controller must reconcile or resume this execution.`;
+      nextAction = `Recorded ${words(activity.miniTurnFailure.kind)}. A recovery owner and next action have not been recorded.`;
     }
   }
   const prs = new Map<string, FixFlow["pullRequests"][number]>();
@@ -123,15 +153,21 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
     title: `PR #${pr.number} merged`, detail: pr.repository, at: pr.mergedAt, url: pr.url });
   if (activity?.miniTurnFailure) timeline.push({ id: "last-stop", stage: "agent-stop", title: "Last recorded agent stop",
     detail: `${words(activity.miniTurnFailure.kind)} during ${activity.miniTurnFailure.phase}`, at: activity.miniTurnFailure.at, url: null });
+  if (linked) {
+    stage = `Linked case · ${stage}`;
+    nextAction = `This failure is linked to the recorded case. ${nextAction}`;
+  }
   return { occurrenceId: occurrence.occurrenceId, runId: run.runId, routineId: run.routineId, channel: run.channel,
     build: run.prNumber ? `PR #${run.prNumber}` : run.release ?? run.provenance.buildSha?.slice(0, 10) ?? "Build not recorded",
     step: failure.step, failure: { code: failure.code, message: failure.message, ...(failure.expected ? { expected: failure.expected } : {}) },
-    startedAt: run.finishedAt, updatedAt: activity?.updatedAt ?? (occurrence.delivery.state === "acknowledged" ? occurrence.delivery.acknowledgedAt : run.finishedAt),
+    startedAt: run.finishedAt, updatedAt: activity ? [activity.updatedAt, activity.executionOwnerUpdatedAt ?? activity.updatedAt].sort().at(-1)!
+      : occurrence.delivery.state === "acknowledged" ? occurrence.delivery.acknowledgedAt : run.finishedAt,
     state, stage, nextAction, activity: occurrence.delivery.state === "pending" ? "pending" : activity ? "available" : activityState,
     agent: activity ? { runId: activity.runId, executor: activity.executor, status: activity.status,
       caseId: activity.routineCase?.caseId ?? null, anchorRunId: activity.routineCase?.anchorRunId ?? null,
       repository: activity.miniExecution?.route.repository ?? null, branch: activity.miniExecution?.route.branch ?? null,
-      heartbeatAt: activity.heartbeatAt ?? null } : null,
+      heartbeatAt: activity.executionOwnerHeartbeatAt ?? activity.heartbeatAt ?? null,
+      executionOwner: linked ? { runId: activity.executionOwnerRunId!, status: activity.executionOwnerStatus! } : null } : null,
     incidents, pullRequests: [...prs.values()], timeline };
 }
 
@@ -158,12 +194,12 @@ export class FixFlowService {
         }
       }));
     }
-    const byId = new Map(candidates.map(row => [row.runId, row]));
+    const byOccurrence = new Map(candidates.map(row => [row.routineFailure.intake.occurrenceId, row]));
     const flows: FixFlow[] = [];
     const reports = await this.repository.incidents([...new Set([...rows.values()].flatMap(row =>
       (row.failureOccurrences ?? []).flatMap(occurrence => occurrence.failure.incidentIds)))]);
     for (const row of rows.values()) for (const occurrence of row.failureOccurrences ?? []) {
-      const agent = occurrence.delivery.state === "acknowledged" ? byId.get(occurrence.delivery.agentRunId) ?? null : null;
+      const agent = occurrence.delivery.state === "acknowledged" ? byOccurrence.get(occurrence.occurrenceId) ?? null : null;
       flows.push(await this.project(row, occurrence, agent, activity.state === "available" ? "unavailable" : activity.state, reports));
     }
     const rank = { active: 0, attention: 1, unknown: 2, completed: 3 };
@@ -175,7 +211,8 @@ export class FixFlowService {
     if (!/^tfo_[a-f0-9]{64}$/.test(id)) throw new TestRunError(400, "invalid fix flow identifier");
     const stored = await this.repository.failure(id), occurrence = stored?.failureOccurrences?.find(item => item.occurrenceId === id);
     if (!stored || !occurrence) throw new TestRunError(404, "This failure occurrence has not been recorded.");
-    const activity = occurrence.delivery.state === "acknowledged" ? await this.reader.detail(occurrence.delivery.agentRunId) : null;
+    const activity = occurrence.delivery.state === "acknowledged" ? await this.reader.detail(occurrence.delivery.agentRunId,
+      { occurrenceId: id, testRunId: stored.run.runId }) : null;
     return this.project(stored, occurrence, activity, "unavailable");
   }
   async chapter(runId: string, chapterId: string) {

@@ -15,6 +15,9 @@ const checkpoint = z.object({ action: text, intentId: text.optional(), repositor
 export const fixActivitySchema = z.object({
   runId: z.string().uuid(), environment: z.enum(["dev", "staging", "prod"]), taskKind: z.literal("routine-failure"),
   executor: text, status: text, statusLabel: text.optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime(), heartbeatAt: stamp,
+  acknowledgedAgentRunId: z.string().uuid().optional(),
+  executionOwnerRunId: z.string().uuid().optional(), executionOwnerStatus: text.optional(), executionOwnerStatusLabel: text.optional(),
+  executionOwnerUpdatedAt: z.string().datetime().optional(), executionOwnerHeartbeatAt: stamp,
   routineFailure: z.object({ intake: z.object({ occurrenceId: z.string().regex(/^tfo_[a-f0-9]{64}$/),
     testRunId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/) }) }),
   routineCase: z.object({ caseId: z.string().regex(/^mfc_[a-f0-9]{64}$/), anchorRunId: z.string().uuid() }).optional(),
@@ -28,9 +31,10 @@ export const fixActivitySchema = z.object({
   pullRequests: z.array(pr).max(30).optional(),
 });
 export type FixActivity = z.infer<typeof fixActivitySchema>;
+export interface FixActivityBinding { occurrenceId: string; testRunId: string }
 export interface FixActivityReader {
   list(): Promise<{ runs: FixActivity[]; state: "available" | "unavailable" | "not-configured"; limited: boolean }>;
-  detail(id: string): Promise<FixActivity | null>;
+  detail(id: string, binding: FixActivityBinding): Promise<FixActivity | null>;
 }
 
 export class HttpFixActivityReader implements FixActivityReader {
@@ -72,8 +76,9 @@ export class HttpFixActivityReader implements FixActivityReader {
       return { runs, state: "available" as const, limited };
     } catch { return { runs: [], state: "unavailable" as const, limited: false }; }
   }
-  async detail(id: string) {
-    if (!z.string().uuid().safeParse(id).success) return null;
-    try { return fixActivitySchema.parse(await this.read(`/internal/activity/runs/${id}`)); } catch { return null; }
+  async detail(id: string, binding: FixActivityBinding) {
+    if (!z.string().uuid().safeParse(id).success || !fixActivitySchema.shape.routineFailure.shape.intake.safeParse(binding).success) return null;
+    const query = new URLSearchParams({ occurrenceId: binding.occurrenceId, testRunId: binding.testRunId });
+    try { return fixActivitySchema.parse(await this.read(`/internal/activity/runs/${id}?${query}`)); } catch { return null; }
   }
 }

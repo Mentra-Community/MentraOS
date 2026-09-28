@@ -27,6 +27,15 @@ before a final agent result. Core reads at most ten pages and labels truncated
 history. Older controllers remain readable but the UI identifies their bounded
 recent view. Exact occurrence links always use the direct activity detail route.
 
+For a linked occurrence, the controller retains its own intake and status and
+adds `acknowledgedAgentRunId` plus the recorded execution owner's identity,
+status and timestamps. The owner must equal the Core acknowledgement. The
+controller verifies the occurrence against its durable case observation list,
+including released branch history, before projecting that owner's progress.
+The direct lookup passes both `occurrenceId` and `testRunId`; it never substitutes
+the anchor's first failure. Admin labels shared progress **Linked case** and
+keeps the occurrence's status distinct from its execution owner's status.
+
 The join requires the Core acknowledgement's agent run ID, test run ID,
 occurrence ID and environment to agree. Prompts, lease tokens, raw stderr,
 local paths and credentials are excluded from the Admin projection. Recorded
@@ -39,6 +48,10 @@ The page refreshes every 15 seconds. A failed controller lookup leaves the
 recorded failure and incident links available with **Status unavailable**;
 an acknowledgement alone is not displayed as a running agent. Unconfigured
 environments explicitly say that agent activity is not configured.
+Historical admitted-triage instructions do not override a later execution
+stage or blocker. When a stop record does not identify the recovery owner or
+next action, the page says so rather than assuming action is required from
+the person viewing Admin.
 
 ## Validation
 

@@ -12,7 +12,7 @@ const flow: FixFlow = {
   step: { id: "NOTES-08", label: "Expand the note" }, failure: { code: "blank", message: "The note content is blank <script>bad()</script>" },
   startedAt: "2026-09-28T18:00:00Z", updatedAt: "2026-09-28T18:05:00Z", state: "attention", stage: "Review requested changes",
   nextAction: "Address the review and request another review", activity: "available", agent: { runId: "synthetic-agent", executor: "mini-claude",
-    status: "mini_waiting", caseId: `mfc_${"b".repeat(64)}`, anchorRunId: "synthetic-agent", repository: "Mentra-Community/MentraOS", branch: "fix/synthetic", heartbeatAt: null },
+    status: "mini_waiting", caseId: `mfc_${"b".repeat(64)}`, anchorRunId: "synthetic-agent", repository: "Mentra-Community/MentraOS", branch: "fix/synthetic", heartbeatAt: null, executionOwner: null },
   incidents: [{ reportId: "rep_synthetic", status: "ready" }], pullRequests: [], timeline: [
     { id: "failure", stage: "test", title: "Routine failed", detail: "Blank note", at: "2026-09-28T18:00:00Z", url: "/?testRun=synthetic-notes&step=NOTES-08" },
     { id: "review", stage: "record-review", title: "Review requested changes", detail: "a".repeat(40), at: null, url: "https://github.com/Mentra-Community/MentraOS/pull/42#pullrequestreview-13" },
@@ -46,6 +46,12 @@ describe("Fix flows navigation and recorded states", () => {
     const html = renderToStaticMarkup(<QueryClientProvider client={qc}><FixFlowsPage selection={null} onSelect={() => {}} /></QueryClientProvider>);
     expect(html).toContain("notes-phone"); expect(html).toContain("In progress"); expect(html).toContain("Completed history");
     expect(html).not.toContain("finished-routine"); expect(html).toContain("Address the review");
+  });
+  test("linked occurrence labels its execution owner separately", () => {
+    const html = renderToStaticMarkup(<FixFlowDetail flow={{ ...flow, agent: { ...flow.agent!, status: "mini_linked",
+      executionOwner: { runId: "case-owner", status: "mini_waiting" } } }} />);
+    expect(html).toContain("mini-claude · mini_linked");
+    expect(html).toContain("Linked case owner: mini_waiting");
   });
   test("unpublished step gets an explanation and a return link", () => {
     const selection = { runId: "synthetic-notes", stepId: "NOTES-08" };
