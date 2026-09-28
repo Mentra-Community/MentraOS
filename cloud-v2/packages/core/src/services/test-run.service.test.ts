@@ -646,6 +646,7 @@ describe("canonical failure occurrences and existing agent queue delivery", () =
       const result = await new MongoTestRunRepository().insert(run, "c".repeat(64));
       expect(create).toHaveBeenCalledTimes(1);
       expect(create.mock.calls[0]?.[0]).toMatchObject([{ payload: run, payloadSha256: "c".repeat(64),
+        completedAt: new Date(run.finishedAt), completionProjectionVersion: 1,
         failureOccurrences: [{ occurrenceId: result.stored.failureOccurrences?.[0]?.occurrenceId, delivery: { state: "pending" } }] }]);
       expect(create.mock.calls[0]?.[1]).toEqual({ writeConcern: { w: "majority", j: true, wtimeout: 10_000 } });
     } finally { create.mockRestore(); }

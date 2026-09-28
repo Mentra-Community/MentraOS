@@ -3,7 +3,7 @@ import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { TestAssetModel, TestRunModel } from "../models/test-run.model";
+import { TEST_RUN_COMPLETION_INDEX, TestAssetModel, TestRunModel } from "../models/test-run.model";
 import { testFailureOccurrenceIdSchema, type TestFailureOccurrence, type TestFailureProvenanceCorrection } from "../types/test-failure.types";
 import { testRunIdSchema, testRunSchema, type TestAsset, type TestRun, type TestRunQuery } from "../types/test-run.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
@@ -11,7 +11,7 @@ import { createStorageService, type StorageService } from "./storage/storage.ser
 import { ByteRangeError, parseSingleByteRange } from "./storage/byte-range";
 
 export class TestRunError extends Error {
-  constructor(readonly status: 400 | 404 | 409 | 413 | 416, message: string) { super(message); }
+  constructor(readonly status: 400 | 404 | 409 | 413 | 416 | 503, message: string) { super(message); }
 }
 export interface StoredTestRun { run: TestRun; payloadSha256: string; failureOccurrences?: TestFailureOccurrence[];
   provenanceCorrections?: TestFailureProvenanceCorrection[] }
@@ -65,7 +65,8 @@ export class MongoTestRunRepository implements TestRunRepository {
   async insert(run: TestRun, payloadSha256: string) {
     const failureOccurrences = createTestFailureOccurrences(run);
     try {
-      await TestRunModel.create([{ runId: run.runId, requestId: run.requestId, startedAt: new Date(run.startedAt), payloadSha256, payload: run,
+      await TestRunModel.create([{ runId: run.runId, requestId: run.requestId, startedAt: new Date(run.startedAt),
+        completedAt: new Date(run.finishedAt), completionProjectionVersion: 1, payloadSha256, payload: run,
         failureOccurrences,
         uploadsComplete: run.assets.length === 0, outcome: run.outcome === "passed" && run.assets.length > 0 ? "blocked" : run.outcome }],
       { writeConcern: failureWriteConcern });
@@ -99,16 +100,14 @@ export class MongoTestRunRepository implements TestRunRepository {
     return rows.map(row => this.stored(row));
   }
   async recent(): Promise<StoredTestRun[]> {
-    // Read the immutable completion time, including older rows without a denormalized date.
-    // Convert before sorting: ISO strings with different offsets are not chronologically ordered.
-    const rows = await TestRunModel.aggregate([
-      { $match: { "payload.finishedAt": { $type: "string" } } },
-      { $set: { completedAt: { $convert: { input: "$payload.finishedAt", to: "date", onError: null, onNull: null } } } },
-      { $match: { completedAt: { $ne: null } } },
-      { $sort: { completedAt: -1, runId: -1 } },
-      { $limit: 6 },
-      { $project: { payload: 1, payloadSha256: 1, failureOccurrences: 1, provenanceCorrections: 1 } },
-    ]).read("primary").readConcern("majority").option({ maxTimeMS: 5_000 });
+    // Startup backfills old rows. An old writer during a rolling deployment must not
+    // make history silently disappear; rerun the explicit migration after it retires.
+    const unprojected = await TestRunModel.findOne({ completionProjectionVersion: { $ne: 1 } }).select({ _id: 1 })
+      .hint(TEST_RUN_COMPLETION_INDEX).read("primary").readConcern("majority").maxTimeMS(5_000).lean();
+    if (unprojected) throw new TestRunError(503, "Recent runs await completion-date migration; retry after deployment finishes");
+    const rows = await TestRunModel.find({ completionProjectionVersion: 1, completedAt: { $type: "date" } })
+      .sort({ completedAt: -1, runId: -1 }).limit(6).hint(TEST_RUN_COMPLETION_INDEX)
+      .read("primary").readConcern("majority").maxTimeMS(5_000).lean();
     return rows.map(row => this.stored(row));
   }
   async assets(runId: string): Promise<StoredTestAsset[]> {
