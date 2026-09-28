@@ -39,7 +39,7 @@ function serviceKey(): string {
 
 async function gotrue(
   path: string,
-  init: { method: string; body?: unknown; admin?: boolean; query?: Record<string, string> },
+  init: { method: string; body?: unknown; admin?: boolean; query?: Record<string, string>; signal?: AbortSignal },
 ): Promise<{ status: number; body: any }> {
   const key = init.admin ? serviceKey() : anonKey();
   const qs = init.query ? `?${new URLSearchParams(init.query)}` : "";
@@ -51,6 +51,7 @@ async function gotrue(
       "content-type": "application/json",
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    signal: init.signal,
   });
   const text = await res.text();
   let body: any = null;
@@ -154,6 +155,35 @@ export async function getUserById(userId: string): Promise<GotrueIdentity | null
   const { status, body } = await gotrue(`/admin/users/${userId}`, { method: "GET", admin: true });
   if (status !== 200 || !body?.id) return null;
   return identityFrom(body);
+}
+
+/**
+ * Candidates for email/domain allowlists. GoTrue's filter is only a search
+ * hint; callers must match the returned identities against their own policy.
+ * Never return a partial directory as though it were complete.
+ */
+export async function findUsersByEmailFilters(filters: string[]): Promise<GotrueIdentity[]> {
+  const identities = new Map<string, GotrueIdentity>();
+  const signal = AbortSignal.timeout(10_000);
+  const perPage = 200;
+  for (const filter of new Set(filters)) {
+    for (let page = 1; ; page++) {
+      if (page > 20) throw new AccountError("server_error", "account directory search exceeded page limit", 502);
+      const { status, body } = await gotrue("/admin/users", {
+        method: "GET", admin: true, signal,
+        query: { filter, page: String(page), per_page: String(perPage) },
+      });
+      if (status !== 200 || !Array.isArray(body?.users)) {
+        throw new AccountError("server_error", "account directory search failed", 502);
+      }
+      for (const user of body.users) {
+        if (typeof user.id !== "string" || typeof user.email !== "string") continue;
+        identities.set(user.id, identityFrom(user));
+      }
+      if (body.users.length < perPage) break;
+    }
+  }
+  return [...identities.values()];
 }
 
 export async function setPassword(userId: string, password: string): Promise<void> {

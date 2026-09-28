@@ -23,7 +23,7 @@ import { InvalidRequest } from "../../types/oauth.types";
 const app = new Hono<AppEnv>();
 
 const listQuerySchema = z.object({
-  kind: z.enum(["bug", "feedback", "automatic"]).optional(),
+  kind: z.enum(["bug", "feedback", "internal", "automatic"]).optional(),
   status: z.enum(["collecting", "ready", "closed"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   before: z.coerce.date().optional(),
