@@ -185,20 +185,26 @@ export function laneCard(data: TestRunOverview, item: OverviewResourceObservatio
     "Confirm the host is online and reporting. Until it reports, do not treat the lane as free.", offline);
   // The shared guard can be absent while its own acquisition refuses: another owner holds a glasses pair lease.
   const leases = kind === "shared" && observation.guard.lock === "absent" ? observation.glassesLeases : undefined;
-  if (leases?.state === "held") {
-    const count = leases.pairs.length + leases.others;
-    return card("blocked", "No Mac app owner, but " + plural(count, "glasses pair lease is", "glasses pair leases are") + " held. A Mac app routine cannot start until "
-      + (count === 1 ? "it is" : "they are") + " released.", "Holder of the glasses pair", "See the glasses pair's card. This lane frees when that lease is released or recovered.",
-      [...guard, "Held pair leases at this report: " + [...leases.pairs, ...leases.others ? [plural(leases.others, "other", "others")] : []].join(", ") + "."]);
-  }
+  const heldCount = leases?.state === "held" ? leases.pairs.length + leases.others : 0;
+  const leaseLines = leases?.state === "held" ? ["Held pair leases at this report: " + [...leases.pairs, ...leases.others ? [plural(leases.others, "other", "others")] : []].join(", ") + "."]
+    : leases?.state === "unreadable" ? ["The glasses pair leases could not be read at this report."] : [];
+  // A known fixture recovery stays the primary state and action. A pair exclusion is stated beside it, never as what
+  // frees the lane.
+  if (observation.reason === "recorded-fixture-recovery-required" || observation.reason === "recorded-fixture-busy")
+    return card("recovery", guidance.summary + (leases?.state === "held" ? " A Mac app routine also cannot start while "
+      + plural(heldCount, "glasses pair lease is", "glasses pair leases are") + " held."
+      : leases?.state === "unreadable" ? " The glasses pair leases could not be read either, so a Mac app routine may also be refused." : ""),
+    guidance.responsible, guidance.next, [...guard, ...leaseLines]);
+  if (leases?.state === "held")
+    return card("blocked", "No Mac app owner, but " + plural(heldCount, "glasses pair lease is", "glasses pair leases are") + " held. A Mac app routine cannot start until "
+      + (heldCount === 1 ? "it is" : "they are") + " released.", "Holder of the glasses pair", "See the glasses pair's card. This lane frees when that lease is released or recovered.",
+      [...guard, ...leaseLines]);
   if (leases?.state === "unreadable") return card("unknown", "The glasses pair leases could not be read, so whether a Mac app routine can start is unknown.",
     "Host operator", "Check the host's glasses lease folder with the read-only lane status, then refresh.");
   // A pair lease names only its run: with no lease held the pair is free at this report; its readiness is separate.
   if (kind === "glasses" && (observation.reason === "no-guard-fixture-not-supplied" || observation.state === "available-to-attempt"))
     return card("available", "No run held this pair at the last report.", "None", "Nothing needed.");
   if (observation.state === "available-to-attempt") return card("available", "Free at the last report. A routine still goes through normal admission.", "None", "Nothing needed.");
-  if (observation.reason === "recorded-fixture-recovery-required" || observation.reason === "recorded-fixture-busy")
-    return card("recovery", guidance.summary, guidance.responsible, guidance.next);
   if (observation.state.startsWith("idle-")) return card("not-ready", guidance.summary, guidance.responsible, guidance.next);
   return card("unknown", guidance.summary, guidance.responsible, guidance.next);
 }

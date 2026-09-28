@@ -443,6 +443,34 @@ describe("physical glasses pairs beside phones and the Mac lane", () => {
     expect(parts(independent, "macbook-dev", pairKey).visible).toContain("Reserved, idle");
   });
 
+  test("a known fixture recovery stays primary beside held or unreadable pair leases, with the exclusion stated alongside", async () => {
+    const recorded = (status: "busy" | "recovery-required", glassesLeases: TestResourceObservation["glassesLeases"]): TestResourceObservation => ({
+      state: "idle-prerequisite-blocked", reason: `recorded-fixture-${status}`, guard: { lock: "absent", reclaimMarker: "absent" }, glassesLeases,
+      fixture: { checked: true, record: "valid", fixtureID: "mini-ui-unpaired", status, lastRunID: "routine-36283320299-1-staging-no-glasses" } });
+    const next = { busy: "Next Reconcile the fixture record through its last run's recovery before routines use it.",
+      "recovery-required": "Next Recover the fixture and publish verified return evidence before routines use it." } as const;
+    for (const status of ["busy", "recovery-required"] as const) {
+      for (const [glassesLeases, alongside, detail] of [
+        [held(["0123456789ab", "54f6abd2d6d4"]), "A Mac app routine also cannot start while 2 glasses pair leases are held.", "Held pair leases at this report: 0123456789ab, 54f6abd2d6d4."],
+        [{ state: "unreadable" as const }, "The glasses pair leases could not be read either, so a Mac app routine may also be refused.",
+          "The glasses pair leases could not be read at this report."],
+      ] as const) {
+        const html = render(await overview([{ hostId: host, observation: recorded(status, glassesLeases), ago: 5_000 }]));
+        const mac = parts(html, host);
+        expect(mac.visible).toContain("mentra-mac-mini · Mac UI lane Recovery required");
+        expect(mac.visible).toContain(alongside);
+        expect(mac.visible).toContain("Responsible Test runner / operator");
+        expect(mac.visible).toContain(next[status]);
+        // Releasing a pair lease is never offered as what frees the lane, and the known recovery is not demoted.
+        expect(mac.visible).not.toMatch(/Blocked|Offline or unknown|frees when that lease|Holder of the glasses pair/);
+        expect(mac.details).toContain(detail);
+        expect(text(section(html, "Test lanes"))).toContain("1 recovery required");
+      }
+    }
+    // With a ready fixture the lease exclusion itself remains the Mac lane's blocker.
+    expect(parts(render(await overview([{ hostId: host, observation: macFree(held(["54f6abd2d6d4"])), ago: 5_000 }])), host).visible).toContain("Blocked");
+  });
+
   test("stale, retained, unreadable and unreported physical state stays explicit", async () => {
     const html = render(await overview([
       { hostId: host, resourceKey: pairKey, observation: aliveObservation(run, 7002), ago: minutes(10) },
