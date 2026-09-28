@@ -888,7 +888,7 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
 }
 
 function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
-  const [kind, setKind] = useState<"all" | ReportKind | "internal">("all");
+  const [kind, setKind] = useState<"all" | ReportKind | "internal" | "testing">("all");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
   const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
@@ -911,14 +911,14 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
           <div>
             <h2 className="text-xl font-bold">User reports</h2>
             <p className="mt-1 text-sm text-[#68746d]">
-              Everything filed through the Mentra App reporting flow. Internal contains bugs and feedback from admin accounts; automatic reports stay in Automatic.
+              Internal contains bugs and feedback from admin accounts. Testing contains harness reports; other automatic reports stay in Automatic.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <FilterPills
               value={kind}
               onChange={setKind}
-              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["internal", "Internal"], ["automatic", "Automatic"]]}
+              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["internal", "Internal"], ["testing", "Testing"], ["automatic", "Automatic"]]}
             />
             <FilterPills
               value={status}
@@ -942,7 +942,7 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
         ) : reports.isError ? (
           <div className="p-5"><ErrorText error={reports.error} /></div>
         ) : rows.length === 0 ? (
-          <EmptyState title="No reports" body={kind === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : "Reports matching these filters will appear here."} />
+          <EmptyState title="No reports" body={kind === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : kind === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
         ) : (
           <div className="divide-y divide-[#eceeeb]">
             {rows.map(report => (

@@ -400,8 +400,8 @@ export interface AdminReportAsset {
 }
 
 export interface ListReportsFilter {
-  // Internal is a triage category, not a submitted/stored report kind.
-  kind?: ReportKind | "internal";
+  // Internal and Testing are triage categories, not submitted/stored report kinds.
+  kind?: ReportKind | "internal" | "testing";
   status?: ReportStatus;
   limit?: number;
   before?: Date;
@@ -409,9 +409,16 @@ export interface ListReportsFilter {
 
 export async function listReports(filter: ListReportsFilter = {}): Promise<AdminReportSummary[]> {
   const query: Record<string, unknown> = {};
+  if (filter.kind) {
+    // The incident automation contract uses this trigger source.
+    // Apply category membership before the database limit, including old reports.
+    query["trigger.source"] = filter.kind === "testing"
+      ? "mentra_automated_testing"
+      : { $ne: "mentra_automated_testing" };
+  }
   if (filter.kind === "automatic") {
     query.kind = "automatic";
-  } else if (filter.kind) {
+  } else if (filter.kind && filter.kind !== "testing") {
     const internalUserIds = await internalReporterIds();
     query.mentraUserId = filter.kind === "internal" ? { $in: internalUserIds } : { $nin: internalUserIds };
     query.kind = filter.kind === "internal" ? { $in: ["bug", "feedback"] } : filter.kind;
@@ -430,7 +437,7 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
 
 /** Resolve current admin accounts, including reporters of historical incidents.
  * The report's contact email/context are user supplied and cannot identify an admin.
- * All kinds, Automatic, and report detail remain available without a directory lookup.
+ * All kinds, Automatic, Testing, and detail remain available without a directory lookup.
  */
 async function internalReporterIds(): Promise<string[]> {
   const allowlist = getAdminEmailAllowlist();
