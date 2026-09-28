@@ -41,7 +41,10 @@ export function renderPrRoutineResult({request, terminal, row}) {
       ["Fixture ready", "fixture"], ["Result published", "publication"], ["Claim settled", "settlement"]]
       .map(([label, key]) => `| ${label} | ${terminal.checks[key] ? "Verified" : "Not verified"} |`),
     "", row.resultRunId
-      ? `[Recording and full result](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.resultRunId)})`
+      ? row.resultRunId === request.requestId
+        ? `[Recording and full result](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.resultRunId)})`
+        // terminalRow admits no other PR result ID than this attempt's preparation result.
+        : `[Preparation result](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.resultRunId)}) — the worker stopped before any claim; no device operation ran and there is no recording.`
       : "Recording/result publication is unavailable. The worker attempt retains its terminal receipt; this does not imply the test passed.",
     "", `[Request ${row.requestRunId}/${row.requestAttempt}](${source}) · [Worker ${row.privateRunId}/${row.privateAttempt}](${worker}) · [Build ${selection.producer.runId}/${selection.producer.publicationAttempt}](${build})`,
     "", "<details>", "<summary>Exact candidate and evidence identifiers</summary>", "",

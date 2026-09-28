@@ -95,8 +95,10 @@ export function applyRoutineResult(notification, row) {
     [CANCELLED]: "Cancelled before execution; no test result"}
   const lines = Object.keys(routineNames).filter(id => rows[id]).map(id => {
     const result = rows[id]
+    // A worker stopped before any claim links its attempt-bound preparation result, which has no recording.
+    const preparation = result.resultRunId?.endsWith(`-prep-${result.privateRunId}-${result.privateAttempt}`)
     const resultLink = result.resultRunId
-      ? ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(result.resultRunId)}|Recording and result>` : ""
+      ? ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(result.resultRunId)}|${preparation ? "Preparation result" : "Recording and result"}>` : ""
     return `${routineNames[id]} — *${labels[result.status]}*${resultLink} · <https://github.com/${REPOSITORY}/actions/runs/${result.requestRunId}/attempts/${result.requestAttempt}|Request>`
   })
   return {...notification, rows, payload: {...notification.payload, blocks: notification.payload.blocks.map(block =>

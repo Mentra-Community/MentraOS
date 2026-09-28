@@ -54,6 +54,9 @@ function assertRun(run, repo, paths, branch, completed = true) {
     "Workflow identity differs from trusted producer")
 }
 
+/** The private worker's not-run result ID for one request and one private attempt (worker/preparation-failure.ts). */
+export const preparationResultId = (request, run) => `${request.requestId}-prep-${run.id}-${run.run_attempt}`
+
 export function terminalRow(terminal, run, request) {
   requireThat(terminal?.schemaVersion === 1 && terminal.kind === "mentra-routine-terminal" &&
     terminal.privateRun?.repository === `${PRIVATE.owner}/${PRIVATE.repo}` && terminal.privateRun.runId === run.id &&
@@ -69,11 +72,16 @@ export function terminalRow(terminal, run, request) {
     request.sequence?.kind === "nightly-ota-call" && request.sequence.member === "mentra-call" &&
     terminal.status === "blocked" && terminal.testOutcome === "not-run" && terminal.checks?.test === false &&
     terminal.resultRunId === `${request.requestId}-intake`
+  // A worker stopped before any claim publishes a not-run result under an ID bound to this exact request and this
+  // private attempt (privateRun is already verified above). Nothing else is claimed: no test, return, fixture or settlement.
+  const preparation = terminal.resultRunId === preparationResultId(request, run) && terminal.status === "blocked" &&
+    terminal.testOutcome === "not-run" && terminal.checks?.publication === true &&
+    checks.filter(key => key !== "publication").every(key => terminal.checks[key] === false)
   requireThat(terminal.checks && checks.every(key => typeof terminal.checks[key] === "boolean") &&
     (terminal.testOutcome === undefined || ["passed", "failed", "not-run", "cancelled", "unknown"].includes(terminal.testOutcome)) &&
     (terminal.testOutcome === undefined || (terminal.testOutcome === "passed") === terminal.checks.test) &&
     (terminal.status !== "passed" || checks.every(key => terminal.checks[key]) && terminal.resultRunId === request.requestId) &&
-    (!terminal.resultRunId || terminal.checks.publication === true && (terminal.resultRunId === request.requestId || nightlyIntake)),
+    (!terminal.resultRunId || terminal.checks.publication === true && (terminal.resultRunId === request.requestId || nightlyIntake || preparation)),
     "Terminal outcome contradicts verification or publication")
   return {routineId: request.routine.id, requestRunId: request.trigger.runId, requestAttempt: request.trigger.runAttempt,
     privateRunId: run.id, privateAttempt: run.run_attempt, status: terminal.status,

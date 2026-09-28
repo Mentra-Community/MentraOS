@@ -236,3 +236,18 @@ test("each final nightly routine's PR result renders on the originating PR only 
     await assert.rejects(resolvePrRoutineResults(renamed.options))
   }
 })
+
+test("a worker stopped before any claim links its preparation result without implying a recording", async () => {
+  const f = fixture({outcome: "not-run", status: "blocked"})
+  f.terminal.resultRunId = `${f.request.requestId}-prep-200-1`
+  for (const key of ["test", "teardown", "returnVerification", "evidence", "fixture", "settlement"]) f.terminal.checks[key] = false
+  const [rendered] = await resolvePrRoutineResults(f.options)
+  assert.match(rendered.body, /\*\*Run result: Blocked\.\*\*/)
+  assert.match(rendered.body, /\| Customer test \| Not run \|/)
+  assert.ok(rendered.body.includes(`[Preparation result](https://admin.dev.mentraglass.com/?testRun=${f.request.requestId}-prep-200-1)` +
+    " — the worker stopped before any claim; no device operation ran and there is no recording."))
+  assert.ok(!rendered.body.includes("Recording and full result"))
+  // Any other result ID still refuses before rendering.
+  f.terminal.resultRunId = `${f.request.requestId}-prep-201-1`
+  await assert.rejects(resolvePrRoutineResults(f.options), /contradicts/)
+})

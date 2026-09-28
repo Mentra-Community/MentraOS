@@ -11,8 +11,11 @@ import { testRunAssetPath, type TestRunLink, type TestRunListScope } from "../li
 import {
   chapterSeekTime,
   EMPTY_FILTERS,
+  FAILURE_PHASE_LABELS,
+  failureRows,
   FIRMWARE_PHASE_LABELS,
   initialChapter,
+  preparationStop,
   relatedRun,
   runDuration,
   safeProducerUrl,
@@ -430,6 +433,8 @@ export function TestRunView({
         {run.notes ? <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[#4f5d54]">{run.notes}</p> : null}
       </section>
 
+      <FailureDetails run={run} />
+
       <section className={PANEL}>
         <div className="border-b border-[#eceeeb] px-5 py-4">
           <h3 className="font-semibold">Routine recording</h3>
@@ -663,6 +668,71 @@ export function TestRunView({
         )}
       </section>
     </>
+  );
+}
+
+/** Recorded failure packets, their evidence gaps and Core occurrence delivery. Nothing here is inferred. */
+function FailureDetails({ run }: { run: TestRunDetail }) {
+  const rows = failureRows(run);
+  const stop = preparationStop(run);
+  if (!rows.length && !stop) return null;
+  return (
+    <section aria-label="Failure details" className={`${PANEL} p-5`}>
+      <h3 className="font-semibold">Failure details</h3>
+      {stop ? (
+        <p className="mt-3 text-sm leading-6 text-[#4f5d54]">
+          <span className="font-semibold">The worker stopped before any claim, at stage {stop.stage}.</span> The test did not
+          run and the worker recorded that hardware was not started. {stop.claimed}; no fixture state was observed.
+          {stop.request ? (
+            <>
+              {" "}
+              <a href={stop.request} target="_blank" rel="noreferrer" className="font-semibold text-[#087d50] underline">
+                Request
+              </a>
+            </>
+          ) : null}
+          {stop.worker ? (
+            <>
+              {" "}
+              <a href={stop.worker} target="_blank" rel="noreferrer" className="font-semibold text-[#087d50] underline">
+                Worker attempt
+              </a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      <ul className="mt-3 space-y-3">
+        {rows.map(({ key, failure, delivery }) => (
+          <li key={key} className="rounded-xl bg-[#f5f7f4] p-3 text-sm">
+            <p className="font-medium">
+              {FAILURE_PHASE_LABELS[failure.phase] ?? failure.phase}
+              {failure.step ? ` · ${failure.step.label}` : ""}
+            </p>
+            <p className="mt-1 leading-6 text-[#4f5d54]">{failure.message}</p>
+            <p className="mt-1 font-mono text-xs text-[#747780]">{failure.code}</p>
+            <p className="mt-2 text-xs text-[#4f5d54]">
+              {delivery?.state === "acknowledged"
+                ? `Delivered for investigation (${date(delivery.acknowledgedAt)})`
+                : delivery?.state === "pending"
+                  ? "Delivery for investigation pending"
+                  : "No delivery state recorded"}
+            </p>
+            {failure.missingEvidence.length ? (
+              <details className="mt-2 text-xs text-[#4f5d54]">
+                <summary className="cursor-pointer font-semibold">Missing evidence ({failure.missingEvidence.length})</summary>
+                <ul className="mt-2 space-y-1">
+                  {failure.missingEvidence.map((item, index) => (
+                    <li key={`${item.kind}-${index}`}>
+                      <span className="font-semibold">{item.kind}:</span> {item.reason}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -766,3 +766,97 @@ describe("recorded run duration", () => {
     expect(reversed).not.toContain("NaN");
   });
 });
+
+describe("worker preparation failures", () => {
+  // Synthetic render fixture shaped as the private producer's not-run result as Core presents it.
+  const failure = {
+    phase: "preflight" as const,
+    step: { id: "intake-fixture-readiness", label: "Worker intake stage: fixture-readiness" },
+    code: "fixture-return-verification-missing",
+    message: "Ready fixture lacks its original completed return-verification journal",
+    assetIds: [],
+    incidentIds: [],
+    redactionPolicy: "reviewed-preparation-diagnostic-v1",
+    missingEvidence: [
+      { kind: "recording", reason: "No device operation ran, so no recording exists." },
+      { kind: "incident", reason: "No incident is filed for a worker preparation failure." },
+    ],
+  };
+  const stopped: TestRunDetail = {
+    ...run,
+    runId: "routine-200-1-dev-day1-ota-prep-36415118681-1",
+    requestId: "routine-200-1-dev-day1-ota",
+    routineId: "day1-ota",
+    channel: "dev",
+    outcome: "blocked",
+    outcomes: { test: "not-run", teardown: "not-run", fixture: "unknown", evidence: "incomplete" },
+    provenance: {
+      repository: "Mentra-Community/MentraOS",
+      intakeStatus: "preparation-blocked",
+      intakeStage: "fixture-readiness",
+      claim: "not-attempted",
+      hardwareStarted: "false",
+      privateRepository: "Mentra-Community/Mentra-Automated-Testing",
+      privateRunId: "36415118681",
+      privateRunAttempt: "1",
+      requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/36415005043/attempts/1",
+    },
+    fixture: { alias: "unallocated" },
+    firmwareAssertions: [],
+    chapters: [],
+    assets: [],
+    failures: [failure],
+    failureOccurrences: [{ occurrenceId: `tfo_${"a".repeat(64)}`, failure, delivery: { state: "pending" } }],
+  };
+
+  test("shows the stage, not-run test, recorded hardware state, evidence gaps, delivery and exact links", () => {
+    const markup = renderRun(stopped);
+    expect(markup).toContain("Failure details");
+    expect(markup).toContain("The worker stopped before any claim, at stage fixture-readiness.");
+    expect(markup).toContain("recorded that hardware was not started");
+    expect(markup).toContain("No claim requested; no fixture state was observed.");
+    expect(markup).toContain("Ready fixture lacks its original completed return-verification journal");
+    expect(markup).toContain("fixture-return-verification-missing");
+    expect(markup).toContain("Preflight · Worker intake stage: fixture-readiness");
+    expect(markup).toContain("Delivery for investigation pending");
+    expect(markup).toContain("Missing evidence (2)");
+    expect(markup).toContain("No device operation ran, so no recording exists.");
+    expect(markup).toContain('href="https://github.com/Mentra-Community/MentraOS/actions/runs/36415005043/attempts/1"');
+    expect(markup).toContain('href="https://github.com/Mentra-Community/Mentra-Automated-Testing/actions/runs/36415118681/attempts/1"');
+    const acknowledged = renderRun({
+      ...stopped,
+      failureOccurrences: [{ occurrenceId: `tfo_${"a".repeat(64)}`, failure,
+        delivery: { state: "acknowledged", agentRunId: "agent-1", acknowledgedAt: "2026-09-28T12:00:00Z" } }],
+    });
+    expect(acknowledged).toContain("Delivered for investigation");
+    expect(renderRun({ ...stopped, provenance: { ...stopped.provenance, claim: "not-granted", intakeStatus: "claim-blocked" } }))
+      .toContain("Claim not granted; no fixture state was observed.");
+  });
+
+  test("never builds links from unvalidated values and never infers a stop the worker did not record", () => {
+    const unsafe = renderRun({
+      ...stopped,
+      provenance: { ...stopped.provenance, requestUrl: "javascript:alert(1)", privateRunId: "1/../../x", privateRepository: "someone/else" },
+    });
+    // The provenance table still prints recorded values as text; no link is built from them.
+    expect(unsafe).not.toContain('href="javascript:');
+    expect(unsafe).not.toContain("someone/else/actions");
+    expect(unsafe).not.toMatch(/<a [^>]*>Request<\/a>/);
+    expect(unsafe).not.toContain("Worker attempt");
+    for (const change of [{ hardwareStarted: undefined }, { hardwareStarted: "true" }, { intakeStatus: "terminal" }, { intakeStage: "Bad Stage" }]) {
+      const markup = renderRun({ ...stopped, provenance: { ...stopped.provenance, ...change } });
+      expect(markup).not.toContain("The worker stopped before any claim");
+      // The failure itself stays visible.
+      expect(markup).toContain("fixture-return-verification-missing");
+    }
+    expect(renderRun({ ...stopped, outcomes: { ...stopped.outcomes, test: "failed" } })).not.toContain("The worker stopped before any claim");
+  });
+
+  test("legacy results render unchanged or with failures but no invented delivery state", () => {
+    expect(renderRun(run)).not.toContain("Failure details");
+    const legacy = renderRun({ ...run, failures: [failure] });
+    expect(legacy).toContain("Failure details");
+    expect(legacy).toContain("No delivery state recorded");
+    expect(legacy).not.toContain("The worker stopped before any claim");
+  });
+});

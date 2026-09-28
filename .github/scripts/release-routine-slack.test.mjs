@@ -116,6 +116,39 @@ test("skipped nightly Call retains its published intake result without weakening
     assert.throws(() => terminalRow(changed, worker, source), /contradicts/)
   }
 })
+test("a worker stopped before any claim links only its exact request- and attempt-bound preparation result", async () => {
+  const stopped = () => {
+    const value = terminal()
+    value.status = "blocked"
+    value.testOutcome = "not-run"
+    value.resultRunId = `${request.requestId}-prep-600-1`
+    for (const key of ["test", "teardown", "returnVerification", "evidence", "fixture", "settlement"]) value.checks[key] = false
+    return value
+  }
+  assert.deepEqual(terminalRow(stopped(), worker, request), {routineId: request.routine.id, requestRunId: 500, requestAttempt: 1,
+    privateRunId: 600, privateAttempt: 1, status: "blocked", resultRunId: `${request.requestId}-prep-600-1`})
+  const [resolved] = await resolveRoutineNotifications(resolver({terminal: stopped()}))
+  assert.equal(resolved.row.resultRunId, `${request.requestId}-prep-600-1`)
+  assert.match(JSON.stringify(applyRoutineResult(resolved.notification, resolved.row).payload),
+    new RegExp(`\\*Blocked\\* · <https://admin\\.dev\\.mentraglass\\.com/\\?testRun=${request.requestId}-prep-600-1\\|Preparation result>`))
+  for (const change of [
+    t => { t.resultRunId = `${request.requestId}-prep-601-1` }, t => { t.resultRunId = `${request.requestId}-prep-600-2` },
+    t => { t.resultRunId = `routine-499-1-dev-${request.routine.id}-prep-600-1` }, t => { t.resultRunId = "arbitrary-result" },
+    t => { t.resultRunId = `${request.requestId}-intake` }, t => { t.resultRunId = `${request.requestId}-prep-600-1-extra` },
+    t => { t.status = "failed" }, t => { t.status = "upload-incomplete" }, t => { t.testOutcome = "unknown" },
+    t => { delete t.testOutcome }, t => { t.checks.publication = false }, t => { t.checks.settlement = true },
+    t => { t.checks.fixture = true }, t => { t.checks.evidence = true }, t => { t.checks.teardown = true },
+    t => { t.status = "passed"; t.testOutcome = "passed"; for (const key of Object.keys(t.checks)) t.checks[key] = true },
+  ]) {
+    const changed = stopped(); change(changed)
+    assert.throws(() => terminalRow(changed, worker, request), /contradicts/)
+  }
+  // Identity checks still come first: another private attempt cannot present this result.
+  assert.throws(() => terminalRow(stopped(), {...worker, run_attempt: 2}, request), /does not match/)
+  // A later ordinary execution of the same request keeps its own request-ID result.
+  const later = terminal(); later.privateRun.runId = 601
+  assert.equal(terminalRow(later, {...worker, id: 601}, request).resultRunId, request.requestId)
+})
 test("webhook-era posts with no editable receipt are left alone", async () => {
   const options = resolver(); options.github.paginate = async () => []
   assert.deepEqual(await resolveRoutineNotifications(options), [])
