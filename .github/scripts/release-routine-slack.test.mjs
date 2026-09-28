@@ -66,6 +66,30 @@ test("passing requires every dimension and an actually published matching result
   assert.throws(() => terminalRow({...terminal(), resultRunId: "another-run"}, worker, request), /contradicts/)
   assert.throws(() => terminalRow({...terminal(), resultRunId: undefined}, worker, request), /contradicts/)
 })
+test("both registered Phone routines' terminal rows are accepted with their exact identity; unknown routines still refuse", () => {
+  for (const routine of ["captions-phone", "notes-phone"]) {
+    const source = {...structuredClone(request), routine: {...request.routine, id: routine}}
+    const phone = () => ({...terminal(), request: {...terminal().request, routineId: routine}})
+    assert.deepEqual(terminalRow(phone(), worker, source), {routineId: routine, requestRunId: source.trigger.runId,
+      requestAttempt: source.trigger.runAttempt, privateRunId: 600, privateAttempt: 1, status: "passed", resultRunId: source.requestId})
+    // Every existing identity and outcome refusal still applies to a Phone row.
+    for (const [change, message] of [
+      [value => { value.request.routineId = routine === "captions-phone" ? "notes-phone" : "captions-phone" }, /does not match/],
+      [value => { value.request.runAttempt = 2 }, /does not match/],
+      [value => { value.privateRun.revision = "d".repeat(40) }, /does not match/],
+      [value => { value.privateRun.runAttempt = 2 }, /does not match/],
+      [value => { value.checks.returnVerification = false }, /contradicts/],
+      [value => { value.resultRunId = "another-run" }, /contradicts/],
+    ]) {
+      const changed = phone(); change(changed)
+      assert.throws(() => terminalRow(changed, worker, source), message)
+    }
+  }
+  // A routine outside the shared catalog never becomes a row.
+  const unknown = {...structuredClone(request), routine: {...request.routine, id: "arbitrary-routine"}}
+  assert.throws(() => terminalRow({...terminal(), request: {...terminal().request, routineId: "arbitrary-routine"}}, worker, unknown), /does not match/)
+})
+
 test("skipped nightly Call retains its published intake result without weakening normal result identity", async () => {
   const call = structuredClone(request)
   call.routine.id = "mentra-call"
