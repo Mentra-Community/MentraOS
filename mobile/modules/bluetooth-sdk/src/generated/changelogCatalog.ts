@@ -11,7 +11,7 @@ export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
   },
   {
     "version": "3.2.0",
-    "markdown": "- Improved glasses connectivity and Wi-Fi setup."
+    "markdown": "- Improved glasses connectivity and Wi-Fi setup.\n\n- Breaking Bluetooth SDK change: `forgetWifiNetwork(ssid)` now returns `WifiForgetResult` instead of `WifiStatusChangeEvent`. Migrate status-only consumers to the semantic `outcome`; the requested network remains `ssid`, while optional post-command connectivity is reported by `connected`, `currentSsid`, and `localIp`."
   },
   {
     "version": "3.1.1",
