@@ -201,7 +201,25 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
   // Every enabled Mac routine is available; the planned Mac routines stay unavailable.
   expect(Object.fromEntries((await commissioned.inventory({ channel }))[0]!.routines
     .filter(routine => testRoutinePlatform(routine.id) === "ios-on-mac").map(routine => [routine.id, routine.available])))
-    .toEqual({ "no-glasses": true, "day1-ota": true, "mentra-call": true, "account-miniapps": false, livestreamer: false });
+    .toEqual({ "no-glasses": true, "day1-ota": true, "mentra-call": true, "account-miniapps": false, livestreamer: false,
+      "captions-phone": false, "notes-phone": false });
+});
+
+for (const channel of ["dev", "staging"] as const) test(`${channel} lists the registered Phone mode routines on Mac builds, available only once a deployment enables them`, async () => {
+  const f = releaseFixture(channel);
+  for (const routineId of ["captions-phone", "notes-phone"] as const) {
+    expect(testRoutinePlatform(routineId)).toBe("ios-on-mac");
+    expect(testDispatchInputSchema.parse({ ...input, source: { channel, buildRunId: 50, publicationAttempt: 1 }, routineId }).routineId).toBe(routineId);
+    expect(testBuildQuerySchema.parse({ channel, routineId }).routineId).toBe(routineId);
+  }
+  // The default deployment enables only no-glasses: both stay unavailable, with the ordinary enablement reason.
+  const defaults = (await new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel] }).inventory({ channel }))[0]!.routines;
+  for (const id of ["captions-phone", "notes-phone"] as const)
+    expect(defaults.find(routine => routine.id === id)).toEqual({ id, available: false, reason: "This routine is not enabled on the test workers yet" });
+  // Unlike a planned routine, a deployment that enrols them makes the Mac build requestable.
+  const enrolled = (await new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
+    routines: ["captions-phone", "notes-phone"] }).inventory({ channel }))[0]!.routines;
+  for (const id of ["captions-phone", "notes-phone"] as const) expect(enrolled.find(routine => routine.id === id)?.available).toBe(true);
 });
 
 for (const channel of ["dev", "staging"] as const) test(`${channel} lists planned routines as unavailable even when a deployment enables them`, async () => {

@@ -3,7 +3,7 @@ import type { TestContinuationBinding } from "./test-continuation.types";
 
 const positive = z.number().int().positive().safe();
 export const testRoutineIdSchema = z.enum(["no-glasses", "no-glasses-android", "day1-ota", "mentra-call",
-  "account-miniapps", "connected-glasses", "livestreamer"]);
+  "account-miniapps", "connected-glasses", "livestreamer", "captions-phone", "notes-phone"]);
 export const testBuildSourceSchema = z.discriminatedUnion("channel", [
   z.object({ channel: z.literal("pr"), prNumber: positive, buildRunId: positive, publicationAttempt: positive }).strict(),
   z.object({ channel: z.literal("dev"), buildRunId: positive, publicationAttempt: positive }).strict(),
@@ -54,6 +54,9 @@ export const TEST_ROUTINES = [
     planned: "Planned routine: its automatic worker is not registered yet" },
   { id: "livestreamer" as const, name: "Livestreamer (Mac)", description: "Stream here and local RTMP from the Mentra app, observed by an owned receiver.",
     planned: "Planned routine: its automatic worker is not registered yet" },
+  // Registered Mac Phone mode routines; a deployment enables each through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.
+  { id: "captions-phone" as const, name: "Captions with simulated glasses (Mac)", description: "Phone mode Captions transcribes one controlled speech fixture, then restores the microphone, Home and host audio." },
+  { id: "notes-phone" as const, name: "Notes with simulated glasses (Mac)", description: "Phone mode Notes transcribes a controlled discussion, then its one new note is edited, persisted and found by Search." },
 ] satisfies { id: TestRoutineId; name: string; description: string; planned?: string }[];
 
 export interface TestBuild {

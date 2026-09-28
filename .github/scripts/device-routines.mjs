@@ -3,6 +3,7 @@
 const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/90a70edfe2fa17fd766dda3d98977555d6608a05/"
 const androidDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58483a6c729018dc9955122dd071ecefbfb8ae92/"
 const pendingDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/754d527a3d6aac8ac971c600998aece203015394/"
+const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/43e235bf485c1bec26fdd2a73719f89ac6f65c54/"
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",
@@ -80,6 +81,29 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${pendingDefinitions}tools/mentra-e2e/runner/livestreamer-receiver.ts`,
     worker: null,
     pending: "No automatic worker: no editable Livestreamer flow, lifecycle routine or host exists yet (only media and receiver helpers)",
+  }),
+  // Registered Mac Phone mode routines: one shared automatic worker (worker/phone-mode.ts) authenticates the request,
+  // installs its selected Mac build and runs the complete flow with claim-bound CI evidence. Their live qualification is
+  // still pending; they are not in the nightly targets, successful-build requests or any per-build default.
+  "captions-phone": Object.freeze({
+    label: "routine:captions-phone", name: "Captions with simulated glasses", platform: "ios-on-mac",
+    coverage: "Phone mode (simulated glasses) Home and pinned-account Profile check, Phone microphone selection, Captions transcribing one controlled speech fixture played through the Mac, and restoration of Automatic, Home and the original host audio.",
+    relatedPaths: ["mobile/assets/miniapps/com.mentra.captions-*.zip", "mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/modules/engine/src/services/**"],
+    prerequisites: "CI Mac app; enrolled Mac fixture already at the pinned account's Phone mode Home (or its Log In form), with pinned speech, player and audio switch tools. The selected build is installed within the claimed run.",
+    exclusions: "No physical glasses, physical iPhone, Android, onboarding into Phone mode or quantitative acoustic qualification. Registered in source; live CI qualification is still pending.",
+    definition: `${phoneDefinitions}docs/routines/captions-phone.md`,
+    implementation: `${phoneDefinitions}tools/mentra-e2e/flows/captions-phone.ts`,
+    worker: `${phoneDefinitions}worker/phone-mode.ts`,
+  }),
+  "notes-phone": Object.freeze({
+    label: "routine:notes-phone", name: "Notes with simulated glasses", platform: "ios-on-mac",
+    coverage: "Phone mode transcription of one controlled, uniquely phrased discussion; exactly one new generated note found by list identity; exact title and body edits; persistence after reopening; and Search returning that note and the exact-phrase transcript.",
+    relatedPaths: ["mobile/assets/miniapps/com.mentra.notes-*.zip", "mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/modules/engine/src/services/**"],
+    prerequisites: "CI Mac app; enrolled Mac fixture at the pinned account's Phone mode Home, a fresh controlled Notes phrase, facts and speech asset for each execution, and the pinned audio tools.",
+    exclusions: "Preserves all transcript and note history; no deletion, physical glasses, physical iPhone, Android or onboarding into Phone mode. Registered in source; live CI qualification is still pending.",
+    definition: `${phoneDefinitions}docs/routines/notes-phone.md`,
+    implementation: `${phoneDefinitions}tools/mentra-e2e/flows/notes-phone.ts`,
+    worker: `${phoneDefinitions}worker/phone-mode.ts`,
   }),
 })
 

@@ -409,7 +409,7 @@ test("freezes original build attempt, retained publication and exact raw manifes
   assert.match(request.reason, /has not run/)
 })
 
-for (const routine of ["no-glasses", "mentra-call"]) test(`trusted explicit ${routine} requests need no label with latest or exact publication selection`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone"]) test(`trusted explicit ${routine} requests need no label with latest or exact publication selection`, async () => {
   for (const selection of [{}, {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}]) {
     const f = fixture()
     f.manual()
@@ -423,7 +423,7 @@ for (const routine of ["no-glasses", "mentra-call"]) test(`trusted explicit ${ro
   }
 })
 
-for (const routine of ["no-glasses", "mentra-call"]) test(`automatic ${routine} requests require their own current label before and after selection`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone"]) test(`automatic ${routine} requests require their own current label before and after selection`, async () => {
   for (const [labels, removed, ready] of [
     [[{name: `routine:${routine}`}], false, true], [[{name: REQUEST_LABEL}], false, false],
     [[{name: `routine:${routine}`}], true, false], [[], false, false],

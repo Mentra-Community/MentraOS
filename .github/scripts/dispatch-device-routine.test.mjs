@@ -440,6 +440,25 @@ test("all routine labels create independent fenced generations for one exact pub
   ])
 })
 
+test("registered Phone mode labels request the exact Mac publication, never a successful-build or nightly run", async () => {
+  const {NIGHTLY_ROUTINES} = await import("./nightly-device-routines.mjs")
+  const routines = ["captions-phone", "notes-phone"]
+  const pull = {...pr, labels: routines.map(routine => ({name: `routine:${routine}`}))}
+  const jobs = routines.map(routine => ({...publicationJob, name: publicationJobName(123, 2, routine)}))
+  const f = fake({pull, callbackJobs: {[callback.id]: jobs}})
+  const plans = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
+  assert.deepEqual(plans.map(plan => plan.routine), routines)
+  for (const plan of plans) assert.equal((await requestAfterPublication({...f, context, plan})).status, "request-dispatched")
+  assert.deepEqual(f.calls.filter(([kind]) => kind === "dispatch").map(([, call]) => call.inputs), routines.map(routine =>
+    ({pr: "42", routine, request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"})))
+  // A successful coordinated build keeps requesting only the no-glasses routines.
+  const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: "dev", pull_requests: []}
+  const coordinated = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: []}})
+  for (const routine of routines)
+    assert.equal((await planDeviceDispatch({...coordinated, context, routine})).mode, "skip")
+  assert.ok(routines.every(routine => !NIGHTLY_ROUTINES.includes(routine)))
+})
+
 test("planned routine labels never become automatic requests or private callbacks", async () => {
   const planned = ["account-miniapps", "connected-glasses", "livestreamer"]
   const pull = {...pr, labels: [...planned, "day1-ota"].map(routine => ({name: `routine:${routine}`}))}
