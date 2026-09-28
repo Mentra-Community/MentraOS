@@ -187,10 +187,10 @@ export default function Compositor() {
         .catch((error) => {
           console.warn(`Compositor: failed to stop ${packageName}`, error)
         })
-        .finally(() => {
-          const presentation = useMiniappPresentationStore.getState()
-          if (presentation.closingPackageName === packageName) presentation.setClosingPackageName(null)
-        })
+      // stop() clears running synchronously. The animation-only marker must
+      // end here so a relaunch remains visible while runtime teardown settles.
+      const presentation = useMiniappPresentationStore.getState()
+      if (presentation.closingPackageName === packageName) presentation.setClosingPackageName(null)
     } else {
       void request.persistScreenshot?.()
     }
