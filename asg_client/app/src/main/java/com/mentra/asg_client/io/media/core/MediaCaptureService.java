@@ -2737,6 +2737,329 @@ public class MediaCaptureService {
     }
 
     /**
+     * Full-size still during a WHIP call on the glasses hotspot, without ending the stream.
+     *
+     * <p>The live capturer lends Camera2 to this shot while substitute frames keep the WebRTC track
+     * flowing; the camera goes back to the stream as soon as the JPEG is in memory, before the
+     * upload. The JPEG is POSTed as {@code image/jpeg} to the phone's local {@code /photo/<id>}
+     * endpoint over the hotspot, unmodified (EXIF orientation preserved), and never touches
+     * storage. Terminal result is the usual {@code photo_response}, with {@code streamPhoto},
+     * {@code bytes} and per-phase timings on success.
+     *
+     * @param photoFilePath transient path CameraNeo may use; nothing is persisted there
+     * @param uploadUrl phone endpoint, already checked by {@link StreamPhotoTarget}
+     */
+    public boolean takePhotoForStreamUpload(
+            String photoFilePath,
+            String requestId,
+            String uploadUrl,
+            String size,
+            boolean enableSound,
+            PhotoCaptureSettings captureSettings) {
+        final PhotoCaptureSettings settings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
+        if (CameraRestartCooldown.isActive()) {
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            return false;
+        }
+        if (!acquirePhotoJob(requestId)) {
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
+            return false;
+        }
+        startCaptureSafetyTimeout(requestId);
+        final long acceptedAtMs = System.currentTimeMillis();
+        final AtomicBoolean cameraReturned = new AtomicBoolean(false);
+        final AtomicBoolean finished = new AtomicBoolean(false);
+        Log.i(
+                TAG,
+                "[STREAM_PHOTO] accepted requestId="
+                        + requestId
+                        + " size="
+                        + size
+                        + " uploadUrl="
+                        + uploadUrl);
+        sendPhotoStatus(requestId, "accepted");
+
+        Runnable returnCamera =
+                () -> {
+                    if (cameraReturned.compareAndSet(false, true)) {
+                        WhipStreamingService.resumeCameraAfterStill(requestId, "photo_done");
+                    }
+                };
+
+        WhipStreamingService.suspendCameraForStill(
+                requestId,
+                new WhipStreamingService.StillCameraCallback() {
+                    @Override
+                    public void onUnavailable(String errorCode, String message) {
+                        if (!finished.compareAndSet(false, true)) return;
+                        releasePhotoJob(requestId);
+                        sendPhotoErrorResponse(requestId, errorCode, message);
+                    }
+
+                    @Override
+                    public void onCameraReleased() {
+                        long cameraLentAtMs = System.currentTimeMillis();
+                        try {
+                            captureStreamStill(
+                                    photoFilePath,
+                                    requestId,
+                                    uploadUrl,
+                                    size,
+                                    enableSound,
+                                    settings,
+                                    acceptedAtMs,
+                                    cameraLentAtMs,
+                                    returnCamera,
+                                    finished);
+                        } catch (RuntimeException e) {
+                            Log.e(TAG, "[STREAM_PHOTO] capture could not start " + requestId, e);
+                            returnCamera.run();
+                            if (finished.compareAndSet(false, true)) {
+                                releasePhotoJob(requestId);
+                                sendPhotoErrorResponse(
+                                        requestId,
+                                        "CAMERA_CAPTURE_FAILED",
+                                        "Stream photo could not start: " + e.getMessage());
+                            }
+                        }
+                    }
+                });
+        return true;
+    }
+
+    private void captureStreamStill(
+            String photoFilePath,
+            String requestId,
+            String uploadUrl,
+            String size,
+            boolean enableSound,
+            PhotoCaptureSettings captureSettings,
+            long acceptedAtMs,
+            long cameraLentAtMs,
+            Runnable returnCamera,
+            AtomicBoolean finished) {
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token lightToken =
+                photoLightController.prepare(requestId, !suppressPhotoFeedback);
+        final PhotoFeedbackController.Token feedbackToken =
+                !suppressPhotoFeedback && enableSound
+                        ? startPhotoFeedback(requestId, size, true, null, captureSettings)
+                        : null;
+        CameraNeoService.enqueuePhotoRequest(
+                mContext,
+                photoFilePath,
+                size,
+                true,
+                true,
+                null,
+                null,
+                captureSettings,
+                true,
+                false,
+                new CameraNeoService.PhotoCaptureCallback() {
+                    @Override
+                    public void onPhotoCapturing(
+                            JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
+                        sendPhotoStatus(requestId, "capturing");
+                    }
+
+                    @Override
+                    public void onPhotoExposureStarted(
+                            long sensorTimestampNs, long estimatedExposureDurationNs) {
+                        photoLightController.onCaptureBoundary(
+                                lightToken, "sensor exposure", estimatedExposureDurationNs);
+                        photoFeedbackController.onExposureStarted(
+                                feedbackToken, sensorTimestampNs, estimatedExposureDurationNs);
+                    }
+
+                    @Override
+                    public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                        photoLightController.onCaptureBoundary(lightToken, "JPEG frame fallback");
+                        photoFeedbackController.playSnap(feedbackToken, "JPEG frame available");
+                    }
+
+                    @Override
+                    public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                        onPhotoCaptured(filePath, captureMetadata, null);
+                    }
+
+                    @Override
+                    public void onPhotoCaptured(
+                            String filePath,
+                            JSONObject captureMetadata,
+                            CapturedPhoto capturedPhoto) {
+                        long capturedAtMs = System.currentTimeMillis();
+                        photoLightController.onCaptureBoundary(
+                                lightToken, "photo completion fallback");
+                        photoFeedbackController.playSnap(feedbackToken, "photo completion fallback");
+                        // The stream needs the camera more than the upload does.
+                        returnCamera.run();
+                        byte[] jpeg = capturedPhoto != null ? capturedPhoto.jpegBytes : null;
+                        if (jpeg == null) jpeg = readStreamStillFile(filePath);
+                        final byte[] body = jpeg;
+                        sendPhotoStatus(requestId, "uploading");
+                        new Thread(
+                                        () ->
+                                                uploadStreamStill(
+                                                        requestId,
+                                                        uploadUrl,
+                                                        body,
+                                                        filePath,
+                                                        acceptedAtMs,
+                                                        cameraLentAtMs,
+                                                        capturedAtMs,
+                                                        finished),
+                                        "StreamPhotoUpload")
+                                .start();
+                    }
+
+                    @Override
+                    public void onPhotoFailureDetected() {
+                        photoLightController.finish(lightToken);
+                        photoFeedbackController.stopForFailure(feedbackToken);
+                    }
+
+                    @Override
+                    public void onPhotoError(String errorMessage) {
+                        onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                    }
+
+                    @Override
+                    public void onPhotoError(CameraOperationError error) {
+                        photoLightController.finish(lightToken);
+                        photoFeedbackController.stopForFailure(feedbackToken);
+                        returnCamera.run();
+                        Log.e(TAG, "[STREAM_PHOTO] capture failed " + requestId + ": " + error.message());
+                        if (!finished.compareAndSet(false, true)) return;
+                        releasePhotoJob(requestId);
+                        sendPhotoErrorResponse(requestId, error.code(), error.message());
+                    }
+                });
+    }
+
+    @Nullable
+    private static byte[] readStreamStillFile(String filePath) {
+        if (filePath == null) return null;
+        File file = new File(filePath);
+        if (!file.isFile()) return null;
+        try (FileInputStream input = new FileInputStream(file)) {
+            byte[] bytes = new byte[(int) file.length()];
+            int read = 0;
+            while (read < bytes.length) {
+                int count = input.read(bytes, read, bytes.length - read);
+                if (count < 0) break;
+                read += count;
+            }
+            return read == bytes.length ? bytes : null;
+        } catch (java.io.IOException e) {
+            Log.w(TAG, "[STREAM_PHOTO] could not read captured file " + filePath, e);
+            return null;
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+    }
+
+    private void uploadStreamStill(
+            String requestId,
+            String uploadUrl,
+            @Nullable byte[] jpeg,
+            String filePath,
+            long acceptedAtMs,
+            long cameraLentAtMs,
+            long capturedAtMs,
+            AtomicBoolean finished) {
+        if (filePath != null) {
+            //noinspection ResultOfMethodCallIgnored
+            new File(filePath).delete();
+        }
+        String errorCode = null;
+        String errorMessage = null;
+        int status = -1;
+        long uploadStartedAtMs = System.currentTimeMillis();
+        if (jpeg == null || jpeg.length == 0) {
+            errorCode = "PHOTO_SAVE_FAILED";
+            errorMessage = "Stream photo produced no JPEG";
+        } else {
+            java.net.HttpURLConnection connection = null;
+            try {
+                connection =
+                        (java.net.HttpURLConnection) new java.net.URL(uploadUrl).openConnection();
+                connection.setConnectTimeout(AsgConstants.STREAM_PHOTO_UPLOAD_CONNECT_TIMEOUT_MS);
+                connection.setReadTimeout(AsgConstants.STREAM_PHOTO_UPLOAD_IO_TIMEOUT_MS);
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setUseCaches(false);
+                connection.setFixedLengthStreamingMode(jpeg.length);
+                connection.setRequestProperty("Content-Type", "image/jpeg");
+                connection.setRequestProperty("X-Mentra-Request-Id", requestId);
+                try (java.io.OutputStream output = connection.getOutputStream()) {
+                    output.write(jpeg);
+                }
+                status = connection.getResponseCode();
+                if (status < 200 || status >= 300) {
+                    errorCode = "UPLOAD_FAILED";
+                    errorMessage = "Phone rejected the stream photo with HTTP " + status;
+                }
+            } catch (Exception e) {
+                errorCode = "UPLOAD_FAILED";
+                errorMessage = "Stream photo upload failed: " + e.getMessage();
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }
+        long doneAtMs = System.currentTimeMillis();
+        Log.i(
+                TAG,
+                "[STREAM_PHOTO] upload done requestId="
+                        + requestId
+                        + " status="
+                        + status
+                        + " bytes="
+                        + (jpeg != null ? jpeg.length : 0)
+                        + " cameraLendMs="
+                        + (cameraLentAtMs - acceptedAtMs)
+                        + " captureMs="
+                        + (capturedAtMs - cameraLentAtMs)
+                        + " uploadMs="
+                        + (doneAtMs - uploadStartedAtMs)
+                        + " totalMs="
+                        + (doneAtMs - acceptedAtMs)
+                        + (errorCode != null ? " error=" + errorCode : ""));
+        if (!finished.compareAndSet(false, true)) return;
+        releasePhotoJob(requestId);
+        if (errorCode != null) {
+            sendPhotoErrorResponse(requestId, errorCode, errorMessage);
+            return;
+        }
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "photo_response");
+            json.put("requestId", requestId);
+            json.put("state", "success");
+            json.put("success", true);
+            json.put("uploadUrl", uploadUrl);
+            json.put("streamPhoto", true);
+            json.put("bytes", jpeg.length);
+            JSONObject timings = new JSONObject();
+            timings.put("cameraLendMs", cameraLentAtMs - acceptedAtMs);
+            timings.put("captureMs", capturedAtMs - cameraLentAtMs);
+            timings.put("uploadMs", doneAtMs - uploadStartedAtMs);
+            timings.put("totalMs", doneAtMs - acceptedAtMs);
+            json.put("timings", timings);
+            json.put("timestamp", doneAtMs);
+            if (mServiceCallback != null) {
+                mServiceCallback.sendThroughBluetooth(json.toString().getBytes());
+            } else {
+                Log.e(TAG, "❌ Service callback not available for stream photo response");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "❌ Error creating stream photo response", e);
+        }
+    }
+
+    /**
      * Take a photo and upload it to the specified destination
      *
      * @param photoFilePath Local path where photo will be saved

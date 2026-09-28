@@ -2122,3 +2122,27 @@ describe("photo publisher pause", () => {
     expect(transport.isPublisherPaused()).toBe(false)
   })
 })
+
+describe("stream photo readiness", () => {
+  test("a live publisher can lend its camera; asking does not touch the sequence", async () => {
+    const {calls, transport} = recordingDeps()
+    expect(transport.stillCaptureReady()).toBe(false)
+    await transport.start()
+    calls.length = 0
+
+    expect(transport.stillCaptureReady()).toBe(true)
+    expect(calls).toEqual([])
+  })
+
+  test("a paused or ending publisher cannot", async () => {
+    const {transport} = recordingDeps()
+    await transport.start()
+    const {pauseId} = await transport.pauseVideoPublisher()
+    expect(transport.stillCaptureReady()).toBe(false)
+    await transport.resumeVideoPublisher(pauseId)
+    expect(transport.stillCaptureReady()).toBe(true)
+
+    await transport.stop()
+    expect(transport.stillCaptureReady()).toBe(false)
+  })
+})

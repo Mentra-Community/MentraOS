@@ -3,10 +3,13 @@ package com.mentra.acsmeeting.video
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import com.mentra.glassesmedia.source.I420Planes
+import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -90,9 +93,9 @@ class OutgoingVideoHold(
    * negotiated size the caller passed, or [send] drops it for a dimension mismatch.
    */
   private fun decode(bytes: ByteArray, width: Int, height: Int): HeldPlanes? {
-    val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
     val w = width.coerceAtLeast(16)
     val h = height.coerceAtLeast(16)
+    val decoded = decodeUpright(bytes, w, h) ?: return null
     val canvasBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(canvasBitmap)
     canvas.drawColor(Color.rgb(18, 18, 22))
@@ -108,6 +111,45 @@ class OutgoingVideoHold(
     canvas.drawBitmap(decoded, null, dst, Paint(Paint.FILTER_BITMAP_FLAG))
     decoded.recycle()
     return HeldPlanes(canvasBitmap)
+  }
+
+  /**
+   * Decode at no more than twice the frame size, with the EXIF orientation applied. Glasses JPEGs
+   * carry their rotation in EXIF rather than in the pixels, and a full 12 MP decode would allocate
+   * ~48 MB for a frame that is shown at 1280x720.
+   */
+  private fun decodeUpright(bytes: ByteArray, frameWidth: Int, frameHeight: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    val longEdge = maxOf(bounds.outWidth, bounds.outHeight)
+    val target = maxOf(frameWidth, frameHeight) * 2
+    var sample = 1
+    while (longEdge / (sample * 2) >= target) sample *= 2
+    val decoded = BitmapFactory.decodeByteArray(
+      bytes,
+      0,
+      bytes.size,
+      BitmapFactory.Options().apply { inSampleSize = sample },
+    ) ?: return null
+    val orientation = runCatching {
+      ExifInterface(ByteArrayInputStream(bytes))
+        .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+    val matrix = Matrix()
+    when (orientation) {
+      ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+      ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+      ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+      ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+      ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+      ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.postScale(-1f, 1f) }
+      ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(270f); matrix.postScale(-1f, 1f) }
+      else -> return decoded
+    }
+    val upright = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+    if (upright !== decoded) decoded.recycle()
+    return upright
   }
 
   companion object {

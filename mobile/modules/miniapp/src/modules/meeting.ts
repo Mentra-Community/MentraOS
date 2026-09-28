@@ -405,6 +405,75 @@ export interface MeetingVideoPublisherEvent {
   status: "expired"
 }
 
+/**
+ * Why [MeetingModule.captureStill] failed. `unsupported` means this host, build, or transport
+ * cannot do it at all (older Mentra App, iOS today, a non-Direct-link call): use the
+ * pause-based path instead. Everything else is a failed attempt of a supported one.
+ */
+export type MeetingStillFailure =
+  | "unsupported"
+  | "not_live"
+  | "busy"
+  | "glasses_rejected"
+  | "upload_timeout"
+  | "hold_failed"
+  | "cancelled"
+
+/** Rejection of [MeetingModule.captureStill]. */
+export interface MeetingStillError {
+  code: string
+  message: string
+  reason: MeetingStillFailure
+}
+
+/** `card` on the tile, glasses `uploading` the capture, still `shown` on the tile. */
+export type MeetingStillPhase = "card" | "uploading" | "shown"
+
+/** @internal Push correlated to one [MeetingModule.captureStill] call by `stillId`. */
+export interface MeetingStillProgressEvent {
+  stillId: string
+  phase: MeetingStillPhase
+}
+
+let stillSeq = 0
+
+function mintStillId(): string {
+  stillSeq = (stillSeq + 1) % 0xffff
+  return `still-${Date.now().toString(36)}-${stillSeq.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+export interface MeetingStillResult {
+  ok: true
+  requestId: string
+  /** Size of the JPEG the glasses delivered. */
+  bytes: number
+  /** Host clock when the first still frame reached the Teams sender. */
+  shownAt: number
+  timings: {cardMs: number; stillMs: number; heldMs: number; totalMs: number}
+}
+
+const STILL_FAILURES: ReadonlySet<string> = new Set<MeetingStillFailure>([
+  "unsupported",
+  "not_live",
+  "busy",
+  "glasses_rejected",
+  "upload_timeout",
+  "hold_failed",
+  "cancelled",
+])
+
+function toStillError(error: unknown): MeetingStillError {
+  const raw = (error && typeof error === "object" ? error : {}) as {code?: unknown; message?: unknown; reason?: unknown}
+  const code = typeof raw.code === "string" ? raw.code : MiniappErrorCode.INTERNAL
+  const message = typeof raw.message === "string" ? raw.message : String(error)
+  let reason: MeetingStillFailure
+  if (typeof raw.reason === "string" && STILL_FAILURES.has(raw.reason)) reason = raw.reason as MeetingStillFailure
+  else if (code === MiniappErrorCode.NOT_IMPLEMENTED) reason = "unsupported"
+  else if (code === MiniappErrorCode.REQUEST_ABORTED) reason = "cancelled"
+  else reason = "glasses_rejected"
+  return {code, message, reason}
+}
+
 function isMiniappRequestError(error: unknown): error is MiniappRequestError {
   return Boolean(error && typeof error === "object" && "code" in error)
 }
@@ -585,6 +654,41 @@ export class MeetingModule {
       await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_SHOW_LIVE})
     } catch (error) {
       mapHostError(error)
+    }
+  }
+
+  /**
+   * Share one full-size glasses photo on the outgoing video of a Direct link call, without
+   * stopping the glasses camera stream. The host shows the "Taking a photo" card, has the glasses
+   * shoot and upload straight to the phone, holds the still for `durationMs`, then returns to live
+   * video. Do not combine with [pauseVideoPublisher] or [showCard]/[showImage]; this replaces them.
+   *
+   * `onProgress` reports each phase as the host reaches it, so a caller can say "taking",
+   * "sharing" and "on the call" at the right moments; the promise itself settles after the hold.
+   *
+   * Rejects with a [MeetingStillError]. `reason: "unsupported"` means use the pause-based path.
+   */
+  async captureStill(options: {
+    durationMs: number
+    onProgress?: (phase: MeetingStillPhase) => void
+  }): Promise<MeetingStillResult> {
+    const stillId = mintStillId()
+    const onProgress = options.onProgress
+    const unsubscribe = onProgress
+      ? this.session.on("meetingStill", (event) => {
+          if (event.stillId === stillId) onProgress(event.phase)
+        })
+      : undefined
+    try {
+      return await this.session.sendRequest<MeetingStillResult>(
+        {type: MiniappRequestType.MEETING_CAPTURE_STILL, durationMs: options.durationMs, stillId},
+        // Capture, upload, and the hold itself; the host bounds each step.
+        {timeoutMs: options.durationMs + 75_000},
+      )
+    } catch (error) {
+      throw toStillError(error)
+    } finally {
+      unsubscribe?.()
     }
   }
 

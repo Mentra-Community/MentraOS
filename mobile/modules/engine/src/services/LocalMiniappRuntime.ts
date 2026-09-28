@@ -100,6 +100,7 @@ import {
   type MeetingIdentity,
 } from "./MeetingCredentials"
 import {loadOutgoingStill} from "./outgoingStill"
+import {MeetingStillError, STILL_MAX_DURATION_MS, type MeetingStillFailure} from "./MeetingStillController"
 import acsMeetingService, {
   parseAcsCallOrigin,
   parseAcsOutgoingVideo,
@@ -1502,6 +1503,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MEETING_SHOW_LIVE:
         void this.handleMeetingShowLive(packageName, requestId)
+        break
+      case MiniappRequestType.MEETING_CAPTURE_STILL:
+        void this.handleMeetingCaptureStill(packageName, payload, requestId)
         break
       case MiniappRequestType.PHONE_IS_WIFI_ENABLED:
       case MiniappRequestType.PHONE_REQUEST_WIFI_ENABLE:
@@ -5511,6 +5515,88 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Could not return to live video",
+      })
+    }
+  }
+
+  /**
+   * Direct link HD photo that never stops the glasses publisher: card, still, live, all host-side.
+   * `NOT_IMPLEMENTED` with `reason: "unsupported"` tells the miniapp to use its pause-based path.
+   */
+  private async handleMeetingCaptureStill(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const durationMs = payload.durationMs
+    if (
+      typeof durationMs !== "number" ||
+      !Number.isFinite(durationMs) ||
+      durationMs < 0 ||
+      durationMs > STILL_MAX_DURATION_MS
+    ) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: `durationMs must be between 0 and ${STILL_MAX_DURATION_MS}`,
+      })
+      return
+    }
+    const attempt = this.softapAttempt?.packageName === packageName ? this.softapAttempt : null
+    if (!attempt?.transport || !acsMeetingService.stillCaptureSupported()) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: attempt?.transport
+          ? "This Mentra App cannot share a Direct link photo without pausing the camera"
+          : "Only a Direct link call can capture a still without pausing the camera",
+        reason: "unsupported" satisfies MeetingStillFailure,
+      })
+      return
+    }
+    if (!attempt.transport.stillCaptureReady()) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: `The glasses camera is not live (${attempt.transport.currentPhase()})`,
+        reason: "not_live" satisfies MeetingStillFailure,
+      })
+      return
+    }
+    const startedAt = Date.now()
+    const stillId = typeof payload.stillId === "string" ? payload.stillId : ""
+    try {
+      const result = await acsMeetingService.captureStill(packageName, {
+        durationMs,
+        onProgress: (phase) => {
+          softapTrace("meeting_capture_still_progress", {packageName, phase, elapsedMs: Date.now() - startedAt})
+          if (stillId) this.sendToMiniapp(packageName, {type: MiniappResponseType.MEETING_STILL, stillId, phase})
+        },
+      })
+      softapTrace("meeting_capture_still", {
+        packageName,
+        requestId: result.requestId,
+        bytes: result.bytes,
+        cardMs: result.timings.cardMs,
+        stillMs: result.timings.stillMs,
+        heldMs: result.timings.heldMs,
+        totalMs: result.timings.totalMs,
+      })
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      const reason: MeetingStillFailure = err instanceof MeetingStillError ? err.reason : "glasses_rejected"
+      softapTraceFailure("meeting_capture_still", {
+        packageName,
+        reason,
+        message: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code:
+          reason === "unsupported"
+            ? MiniappErrorCode.NOT_IMPLEMENTED
+            : reason === "cancelled"
+              ? MiniappErrorCode.REQUEST_ABORTED
+              : MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Could not share the photo",
+        reason,
       })
     }
   }

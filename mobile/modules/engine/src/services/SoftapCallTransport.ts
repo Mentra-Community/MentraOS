@@ -431,6 +431,21 @@ export class SoftapCallTransport {
   }
 
   /**
+   * Whether the glasses can lend their camera to a still right now. The stream photo keeps this
+   * publisher running, so it needs a live one: not paused, not being rebuilt, not ending.
+   */
+  stillCaptureReady(): boolean {
+    return (
+      this.phase === "live" &&
+      !this.terminating &&
+      !this.photoPause.holding() &&
+      this.republishing === null &&
+      this.recovering === null &&
+      this.ingestUrl !== null
+    )
+  }
+
+  /**
    * Stop only the glasses publisher. The meeting, hotspot, scoped network, and ACS sender stay up.
    */
   pauseVideoPublisher(): Promise<{pauseId: string}> {

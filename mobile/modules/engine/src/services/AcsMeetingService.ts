@@ -20,6 +20,12 @@ import {softapTrace, softapTraceFailure, softapTraceId} from "../utils/softapTra
 import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 import type {SoftapProgress} from "./SoftapCallTransport"
 import {PhotoPauseController} from "./PhotoPauseController"
+import {
+  MeetingStillController,
+  MeetingStillError,
+  type MeetingStillPhase,
+  type MeetingStillResult,
+} from "./MeetingStillController"
 import {meetingCanSharePhoto} from "./outgoingStill"
 
 export {ACS_CALL_MIC}
@@ -412,6 +418,15 @@ type NativeModule = {
   setVideoEnabled?(enabled: boolean): Promise<MeetingState>
   /** Card or still on the outgoing tile. `live` returns to glasses frames. Absent on older natives. */
   holdOutgoingVideo?(kind: string, imageBase64?: string | null): Promise<void>
+  /**
+   * Direct link only: register a still the glasses will POST to the phone's ingest listener and
+   * return that URL. Absent on natives (and iOS) that predate the local still endpoint.
+   */
+  prepareGlassesStill?(requestId: string): Promise<{uploadUrl: string}>
+  /** Wait for a prepared still and hold it on the outgoing tile. Rejects `STILL_TIMEOUT`/`STILL_CANCELLED`. */
+  awaitGlassesStill?(requestId: string, timeoutMs: number): Promise<{bytes: number; shownAt: number}>
+  /** Drop one pending still, or all of them when [requestId] is null. */
+  cancelGlassesStill?(requestId: string | null): Promise<void>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
@@ -610,6 +625,42 @@ class AcsMeetingService {
     onExpired: (pauseId) => {
       this.clearPhotoPause(pauseId)
       this.photoPauseExpired?.(pauseId)
+    },
+  })
+  /** Direct link HD photo that keeps the glasses publisher running. */
+  private readonly still = new MeetingStillController({
+    holdOutgoing: (kind) => this.holdOutgoing(kind),
+    prepareStill: async (requestId) => {
+      const native = getNative()
+      if (!native?.prepareGlassesStill) throw new Error("no local still endpoint")
+      return native.prepareGlassesStill(requestId)
+    },
+    awaitStill: async (requestId, timeoutMs) => {
+      const native = getNative()
+      if (!native?.awaitGlassesStill) throw new Error("no local still endpoint")
+      return native.awaitGlassesStill(requestId, timeoutMs)
+    },
+    cancelStill: async (requestId) => {
+      await getNative()?.cancelGlassesStill?.(requestId)
+    },
+    requestGlassesPhoto: ({requestId, uploadUrl}) =>
+      BluetoothSdk.requestPhoto({
+        requestId,
+        size: "max",
+        mode: "photo",
+        // The glasses' hotspot has no internet, and a BLE fallback would relay a local URL.
+        transferMethod: "direct",
+        webhookUrl: uploadUrl,
+        authToken: null,
+        compress: "none",
+        save: false,
+        sound: false,
+      }),
+    onGlassesPhotoStatus: (requestId, listener) => {
+      const sub = BluetoothSdk.addListener("photo_status", (event: {requestId?: string; status?: string}) => {
+        if (event.requestId === requestId && typeof event.status === "string") listener(event.status)
+      })
+      return () => sub.remove()
     },
   })
   /** Mid-call republish waiters: live resolves true, leave/timeout resolves false. Failed is ignored. */
@@ -1235,8 +1286,38 @@ class AcsMeetingService {
   /** Leave, End, and a new join drop the pause and the card without waiting for a resume. */
   cancelPhotoOverlay(): void {
     this.cloudflarePause.cancel()
+    this.still.cancel()
     this.photoPauseId = null
     void this.holdOutgoing("live").catch(() => undefined)
+  }
+
+  /**
+   * Whether [captureStill] can run on this build for a Direct link call. False on natives (iOS
+   * today) without the local still endpoint; callers keep the publisher-pause path there.
+   */
+  stillCaptureSupported(): boolean {
+    const native = getNative()
+    return Boolean(native?.prepareGlassesStill && native.awaitGlassesStill && native.holdOutgoingVideo)
+  }
+
+  /**
+   * Full-size photo on the outgoing tile during a Direct link call, without stopping the glasses
+   * publisher. See [MeetingStillController] for the sequence.
+   */
+  async captureStill(
+    packageName: string,
+    options: {durationMs: number; onProgress?: (phase: MeetingStillPhase) => void},
+  ): Promise<MeetingStillResult> {
+    if (!this.stillCaptureSupported()) {
+      throw new MeetingStillError("unsupported", "This Mentra App cannot share a Direct link photo without pausing")
+    }
+    if (this.videoSource?.type !== "softap") {
+      throw new MeetingStillError("unsupported", "Only a Direct link call receives the photo on the phone")
+    }
+    if (!this.meetingAcceptsPhoto(packageName)) {
+      throw new MeetingStillError("not_live", "The meeting has already ended")
+    }
+    return this.still.capture(options)
   }
 
   setPhotoPauseExpiredHandler(handler: (pauseId: string) => void): void {

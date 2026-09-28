@@ -214,6 +214,7 @@ type SessionEmitterEvents = {
   speakerState: (event: import("./modules/speaker").SpeakerStateEvent) => void
   meetingState: (event: import("./modules/meeting").MeetingState) => void
   meetingVideoPublisher: (event: import("./modules/meeting").MeetingVideoPublisherEvent) => void
+  meetingStill: (event: import("./modules/meeting").MeetingStillProgressEvent) => void
   auth: (auth: MiniappAuthState) => void
 }
 
@@ -745,6 +746,14 @@ export class MiniappSession<TChannels extends object = any> {
         if (!pauseId || payload.status !== "expired") return
         const event = {pauseId, status: "expired" as const}
         this.emitter.emit("meetingVideoPublisher", event)
+        return
+      }
+
+      case MiniappResponseType.MEETING_STILL: {
+        const stillId = typeof payload.stillId === "string" ? payload.stillId : ""
+        const phase = payload.phase
+        if (!stillId || (phase !== "card" && phase !== "uploading" && phase !== "shown")) return
+        this.emitter.emit("meetingStill", {stillId, phase})
         return
       }
 

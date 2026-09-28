@@ -79,6 +79,8 @@ import com.mentra.glassesmedia.source.GlassesMediaSourceFactory
 import com.mentra.glassesmedia.source.LocalWhipIngestSource
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
 import com.mentra.glassesmedia.source.SourceConfig
+import com.mentra.glassesmedia.source.StillPhotoInbox
+import com.mentra.glassesmedia.source.WhipIngestProtocol
 import com.mentra.glassesmedia.source.SourceKind
 import com.mentra.glassesmedia.source.SourceState
 import com.mentra.glassesmedia.source.SyntheticI420Source
@@ -231,6 +233,9 @@ class AcsMeetingSession(
   // Health of the glasses WHEP feed, reported alongside the ACS phase so the host
   // can tell "call is up, glasses video is dead" from a healthy call.
   @Volatile private var mediaSource = SourceState.IDLE
+  /** Elapsed realtime when the last full-size still was handed to the Teams sender. 0 if none. */
+  @Volatile private var lastStillHeldAtMs = 0L
+  @Volatile private var lastStillBytes = 0
   // The transport of the active call. A SoftAP source must not be auto-rebuilt: its URL is an
   // output of binding, so a rebuild rebinds a new port and strands the glasses on the old one.
   @Volatile private var currentSourceKind = SourceKind.WHEP
@@ -775,6 +780,17 @@ class AcsMeetingSession(
   fun softApIngestUrl(): String? = media.ingestUrl
 
   /**
+   * Where the glasses upload a full-size still for [requestId] during this SoftAP call: the same
+   * listener, host and port as the WHIP endpoint. Null for other transports or before the bind.
+   */
+  fun softApStillUrl(requestId: String): String? {
+    if (!WhipIngestProtocol.isValidStillRequestId(requestId)) return null
+    val ingest = media.ingestUrl ?: return null
+    if (!ingest.endsWith(WhipIngestProtocol.BASE_PATH)) return null
+    return ingest.removeSuffix(WhipIngestProtocol.BASE_PATH) + WhipIngestProtocol.STILL_PATH + "/" + requestId
+  }
+
+  /**
    * Destroy the current SoftAP listener generation and bind a new one on the address the
    * scoped network reports *now* — the caller rejoins first, then asks for this.
    *
@@ -894,6 +910,12 @@ class AcsMeetingSession(
     mediaRestartAttempts = 0
   }
 
+  /** Remember a still that reached the Teams sender, so a later disconnect can be correlated with it. */
+  fun noteStillHeld(bytes: Int) {
+    lastStillHeldAtMs = SystemClock.elapsedRealtime()
+    lastStillBytes = bytes
+  }
+
   /**
    * Ignore glasses frames and send a card or still instead. Reports through [onResult] once one
    * replacement frame has been handed to the sender, so the caller can stop the camera after that.
@@ -982,6 +1004,7 @@ class AcsMeetingSession(
 
   fun leave() {
     outgoingHold.stop()
+    StillPhotoInbox.cancelAll()
     val submittedAt = SystemClock.elapsedRealtime()
     // Invalidate before queueing: leaveLocked cannot run until the executor finishes the current
     // join/hang-up, and without this bump a Cancel sits behind an unbounded ACS Future.
@@ -1259,10 +1282,36 @@ class AcsMeetingSession(
     val end = describeEndReason(call)
     // A failed connection is recoverable; do not tell the wearer the remote meeting ended.
     // Wait for DISCONNECTED because DISCONNECTING may not yet carry the final reason.
-    if (state == CallState.DISCONNECTED && (end["code"] as? Number)?.toInt()?.let { it != 0 } == true) {
+    val endCode = (end["code"] as? Number)?.toInt()
+    if (state == CallState.DISCONNECTED && endCode != null && endCode != 0) {
       phase = "error"
       lastError = "ACS_CONNECTION_LOST: The Teams connection was lost. Check mobile data and rejoin. " +
         "(code=${end["code"]}, subcode=${end["subcode"]})"
+      val sinceStillMs = if (lastStillHeldAtMs == 0L) -1L else SystemClock.elapsedRealtime() - lastStillHeldAtMs
+      val sinceConnectedMs = if (connectedAtMs == 0L) -1L else SystemClock.elapsedRealtime() - connectedAtMs
+      // 430/10065 has arrived with the glasses stream still live. These fields say whether a still
+      // was on the tile at that moment, so the next capture can separate a Teams network drop
+      // from the photo path.
+      Log.w(
+        TAG,
+        "ACS disconnect context code=$endCode subcode=${end["subcode"]} sinceConnectedMs=$sinceConnectedMs " +
+          "sinceStillMs=$sinceStillMs stillBytes=$lastStillBytes holdActive=${outgoingHold.isActive()} " +
+          "mediaSource=$mediaSource videoEnabled=$videoEnabled source=$currentSourceKind",
+      )
+      SoftApTrace.stage(
+        "acs_disconnect_context",
+        *diag(
+          "endCode" to endCode,
+          "endSubcode" to (end["subcode"] ?: -1),
+          "sinceConnectedMs" to sinceConnectedMs,
+          "sinceStillMs" to sinceStillMs,
+          "stillBytes" to lastStillBytes,
+          "holdActive" to outgoingHold.isActive(),
+          "mediaSource" to mediaSource.name.lowercase(),
+          "videoEnabled" to videoEnabled,
+          "source" to currentSourceKind.name.lowercase(),
+        ),
+      )
     }
     Log.i(TAG, "ACS call state=$state phase=$phase previous=$previous end=$end")
     if (callId.isEmpty()) callId = readCallId()
@@ -1968,6 +2017,7 @@ class AcsMeetingSession(
     failures: AtomicReference<Exception?>? = null,
   ) {
     outgoingHold.stop()
+    StillPhotoInbox.cancelAll()
     // Invalidate first: a bounded ACS operation still in flight has to find a stale generation
     // rather than attach an agent to a session that is being torn down.
     joinGeneration.incrementAndGet()

@@ -1,4 +1,8 @@
-export const PHOTO_PAUSE_CEILING_MS = 30_000
+/**
+ * Longer than a full-size photo over the glasses hotspot (upload has been seen at ~45s)
+ * plus the still hold. A shorter ceiling restarts the camera while the shutter still has it.
+ */
+export const PHOTO_PAUSE_CEILING_MS = 90_000
 
 let pauseSeq = 0
 

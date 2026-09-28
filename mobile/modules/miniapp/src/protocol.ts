@@ -251,6 +251,11 @@ export enum MiniappRequestType {
   MEETING_SHOW_IMAGE = "miniapp_meeting_show_image",
   /** Stop holding a card or still so glasses frames reach Teams again. */
   MEETING_SHOW_LIVE = "miniapp_meeting_show_live",
+  /**
+   * Direct link only: card, full-size glasses photo, still, and live again, all run by the host
+   * without stopping the glasses publisher. Resolves after the still has been held `durationMs`.
+   */
+  MEETING_CAPTURE_STILL = "miniapp_meeting_capture_still",
 }
 
 // ============================================================================
@@ -318,6 +323,13 @@ export enum MiniappResponseType {
    * Carries {pauseId, status: "expired"}. A resume the miniapp sends itself is not this event.
    */
   MEETING_VIDEO_PUBLISHER = "miniapp_meeting_video_publisher",
+
+  /**
+   * Push: progress of one `meeting.captureStill`. Carries {stillId, phase} with phase `card`
+   * (card on the tile), `uploading` (the glasses captured and are uploading), or `shown` (the
+   * still is on the tile). The request result still settles the call.
+   */
+  MEETING_STILL = "miniapp_meeting_still",
 
   /**
    * Push: a preview lease changed state. Carries {handleId, state: "held" | "ended", reason?}.
