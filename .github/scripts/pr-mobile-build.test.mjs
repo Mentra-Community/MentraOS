@@ -74,6 +74,10 @@ test("real git fingerprint inputs exclude glasses sources but include shared mob
     "cloud-v2/packages/protocol/src/index.ts",
     "android_core/lib.java",
     "package.json",
+    ".github/scripts/ios-xcodebuild-attempt.sh",
+    ".github/scripts/ios-build-summary.sh",
+    ".github/scripts/ios-build-timeline.py",
+    ".github/actions/disk-guard/action.yml",
   ]) {
     const before = tree()
     write(file, "new input")
@@ -169,7 +173,7 @@ test("every producer trigger path is a shared mobile PR path, and every shared p
     assert.deepEqual(MOBILE_PR_PATHS.filter(path => !triggers.includes(path)), [], `${name} misses shared paths`)
     assert.deepEqual(triggers, MOBILE_PR_PATHS)
   }
-  for (const path of [".github/scripts/pr-android-artifacts*", ".github/scripts/ensure-android-ndk*"])
+  for (const path of [".github/scripts/pr-android-artifacts*", ".github/scripts/ensure-android-ndk*", ".github/scripts/ios-*", ".github/actions/disk-guard/**"])
     assert.ok(MOBILE_PR_PATHS.includes(path))
 })
 

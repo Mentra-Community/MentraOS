@@ -468,6 +468,8 @@ test("iOS path applicability matches its filtered workflow", () => {
     ".github/scripts/pr-android-artifacts.mjs",
     ".github/scripts/pr-android-artifacts.test.mjs",
     ".github/scripts/ensure-android-ndk.mjs",
+    ".github/scripts/ios-xcodebuild-attempt.sh",
+    ".github/actions/disk-guard/action.yml",
   ])
     assert.equal(iosBuildRequired([{filename}]), true)
 })
@@ -995,3 +997,18 @@ test("an unavailable Android receipt keeps downloads but does not claim their ba
   assert.equal(h.posts.length, 2)
   assert.match(slack(h.posts[1]), /Backend: \*Dev\* · Android ARM64/)
 })
+
+for (const filename of [".github/scripts/ios-xcodebuild-attempt.sh", ".github/actions/disk-guard/action.yml"]) {
+  test(`${filename}-only PR waits for Apple publication and includes all downloads`, async () => {
+    const h = harness({files: [{filename}],
+      jobs: {3: [job("build"), {...job("publish"), status: "in_progress", conclusion: null}]}})
+    await reconcileFromWorkflow("mentra-app-android-build.yml", h, 2)
+    assert.equal(h.posts.length, 0)
+    h.state.jobs = {}
+    await reconcileFromWorkflow("mentra-app-ios-build.yml", h, 3)
+    assert.equal(h.posts.length, 1)
+    assert.match(h.written[0].body, /Download Android APK/)
+    assert.match(h.written[0].body, /Download iPhone IPA/)
+    assert.match(h.written[0].body, /Download Mac app/)
+  })
+}
