@@ -7,7 +7,7 @@ on each latest verified coordinated **dev** and **staging** publication:
 | --- | --- | --- |
 | `day1-ota` | iOS on Mac | Registered; needs qualified enrolled runtime and fixture |
 | `mentra-call` | iOS on Mac | Registered; needs independent Call media/audio/network qualification |
-| `account-miniapps` | iOS on Mac | Author-owned combined routine; unavailable until its real worker is registered and qualified |
+| `account-miniapps` | iOS on Mac | Registered in source; runs its full definition on the selected Mac build, where unobserved Safari Google provider cases fail or block by name; not qualified |
 | `connected-glasses` | Android | Registered in source; runs its full definition on the selected APK, where C8/C9 fail by name before input until their controllers exist; not qualified |
 | `livestreamer` | iOS on Mac | Registered in source (managed WebRTC **Stream here** and local RTMP); preparation refuses before any claim until its real enrollment and native/Share URL observations exist; not qualified |
 
@@ -23,14 +23,6 @@ it during preparation before any claim. Registration is not a passing device res
 either. No-glasses tests requested after each coordinated build remain unchanged
 and stay the only successful-build defaults. The scheduler creates no commits or
 builds.
-
-Each planned routine's remaining owner contract:
-
-- `account-miniapps`: the owner's `admitAccountMiniappsRun` still refuses
-  (`safari-google-provider`), and `worker/account-miniapps.ts` exports no automatic
-  preparation. Its `createAccountMiniappsHost` installs the host configuration's
-  static build and finalizes development evidence. The missing export must bind
-  the request's selected Mac build and claim-bound evidence.
 
 `livestreamer` is registered in source: `worker/livestreamer.ts` exports
 `prepareLivestreamerWorker`, which authenticates the request and binds its selected
@@ -50,6 +42,21 @@ before any input, and later unvisited steps stay not-run. C3's physical report
 evidence, C8 route/reference/audio and C9 capture/sync remain unverified, so an
 attempted run is honest but not qualification. Fixture access and other runtime
 prerequisites stay the private worker's decisions.
+
+`account-miniapps` is registered in source: `worker/account-miniapps.ts` exports
+`prepareAccountMiniappsWorker`, which authenticates dev and staging requests, verifies
+the exact selected Mac build and OTA manifest, and takes only the reviewed host of the
+selected app backend, whose feedback reader, Core origin and account identity must be
+that backend's. It runs the full definition in one claimed lifecycle with claim-bound
+recording, export and settlement. The recorded original account and paired fixture,
+the normal unpair, the customer account, SSO, pairing and miniapp sections and the
+original return all belong to that private lifecycle. The owned Safari Google provider
+completion, its Mentra callback and the selected provider window's close are
+unqualified, and no real eligible customer completion has been observed: missing
+observations yield failed or blocked results, so an attempted run is honest but not
+qualification. Registration adds no qualification gate before a requested run.
+Fixture access, credentials and other runtime prerequisites stay the private worker's
+decisions.
 
 Registering one is a single reviewed change: remove its `pending` (public) and
 `planned` (Core), route its private enrolled configuration to the owner's completed

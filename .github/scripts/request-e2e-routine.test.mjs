@@ -409,7 +409,7 @@ test("freezes original build attempt, retained publication and exact raw manifes
   assert.match(request.reason, /has not run/)
 })
 
-for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone", "livestreamer"]) test(`trusted explicit ${routine} requests need no label with latest or exact publication selection`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone", "livestreamer", "account-miniapps"]) test(`trusted explicit ${routine} requests need no label with latest or exact publication selection`, async () => {
   for (const selection of [{}, {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}]) {
     const f = fixture()
     f.manual()
@@ -423,7 +423,7 @@ for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-pho
   }
 })
 
-for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone", "livestreamer"]) test(`automatic ${routine} requests require their own current label before and after selection`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone", "livestreamer", "account-miniapps"]) test(`automatic ${routine} requests require their own current label before and after selection`, async () => {
   for (const [labels, removed, ready] of [
     [[{name: `routine:${routine}`}], false, true], [[{name: REQUEST_LABEL}], false, false],
     [[{name: `routine:${routine}`}], true, false], [[], false, false],
@@ -451,17 +451,81 @@ test("the workflow admits and selects exactly the registered routine labels; pla
   // mentra-call is the chain's final default rather than a label test.
   assert.deepEqual(labels(chain), registered.filter(id => id !== "mentra-call"))
   assert.match(chain, /\|\| 'mentra-call'\) \}\}$/)
-  assert.ok(["livestreamer", "connected-glasses"].every(id => registered.includes(id)))
-  for (const id of ["account-miniapps"]) assert.equal(isRegisteredRoutine(id), false)
+  assert.ok(["livestreamer", "connected-glasses", "account-miniapps"].every(id => registered.includes(id)))
+  // No catalogued routine is planned now, so every catalogued label is admitted and selected.
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES).filter(id => !isRegisteredRoutine(id)), [])
 })
 
 test("planned routines refuse PR requests, labelled or explicit, with their pending reason", async () => {
-  for (const routine of ["account-miniapps"]) for (const manual of [false, true]) {
+  const {DEVICE_ROUTINES, isRegisteredRoutine} = await import("./device-routines.mjs")
+  // Every catalogued routine is registered now; a synthetic planned model of the former planned routines keeps the refusal.
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES).filter(id => !isRegisteredRoutine(id)), [])
+  const routineCatalog = {...DEVICE_ROUTINES, ...Object.fromEntries(["account-miniapps", "connected-glasses", "livestreamer"].map(id =>
+    [id, {...DEVICE_ROUTINES[id], pending: "Synthetic planned model"}]))}
+  for (const routine of ["account-miniapps", "connected-glasses", "livestreamer"]) for (const manual of [false, true]) {
     const f = fixture()
     if (manual) f.manual()
     f.state.pr.labels = [{name: `routine:${routine}`}]
-    await assert.rejects(f.resolve({routine}), /planned but not registered/)
+    await assert.rejects(f.resolve({routine, routineCatalog}), /planned but not registered/)
   }
+  // An unknown routine ID is refused directly, labelled or explicit.
+  for (const manual of [false, true]) {
+    const f = fixture()
+    if (manual) f.manual()
+    f.state.pr.labels = [{name: "routine:synthetic-unregistered"}]
+    await assert.rejects(f.resolve({routine: "synthetic-unregistered"}), /Unsupported device routine/)
+  }
+})
+
+test("registered account-miniapps requests bind the exact selected Mac build and backend, on dev and staging", async () => {
+  const account = (destination, options = {}) => {
+    const f = fixture()
+    if (destination === "staging") f.staging()
+    f.manual()
+    f.state.pr.labels = [{name: "routine:account-miniapps"}]
+    return {f, resolve: () => f.resolve({...originalPublication, routine: "account-miniapps", ...options})}
+  }
+  for (const destination of ["dev", "staging"]) {
+    for (const options of [{}, {requestOrigin: "workflow-dispatch"}]) {
+      const {f, resolve} = account(destination, options)
+      if (options.requestOrigin) f.state.pr.labels = []
+      const request = await resolve()
+      assert.equal(request.status, "ready", request.reason)
+      assert.equal(request.routine.id, "account-miniapps")
+      assert.equal(request.routine.authorization, options.requestOrigin ?? "pr-label")
+      assert.equal(request.requestId, "routine-200-1-4136-account-miniapps")
+      assert.equal(request.selection.platform, "ios-on-mac")
+      assert.equal(request.pullRequest.baseRef, destination)
+      assert.equal(request.selection.app.backend, destination)
+      assert.deepEqual(request.selection.app, f.state.receipt.app)
+      assert.deepEqual(request.selection.build, {headSha: head, baseSha: base, buildSha: merge})
+      assert.deepEqual([request.selection.producer.buildAttempt, request.selection.producer.publicationAttempt], [1, 2])
+      assert.equal(request.selection.archive.sha256, digest)
+      assert.equal(request.selection.otaManifest.sha256,
+        createHash("sha256").update(JSON.stringify(f.state.manifest)).digest("hex"))
+    }
+  }
+  // The Mac route's own backend, identity, artifact and label checks apply unchanged.
+  for (const [destination, change, reason] of [
+    ["staging", f => { f.state.receipt.app.backend = "dev" }, /backend differs/],
+    ["dev", f => { f.state.receipt.app.backend = "staging" }, /backend differs/],
+    ["dev", f => { f.state.receipt.app.executableSha256 = "invalid" }, /identity or its packaged OTA pin disagrees/],
+    ["staging", f => { f.state.missingArchive = true }, /archive is missing/],
+    ["dev", f => { f.state.removeLabelOnReread = true }, /changed while resolving/],
+    ["staging", f => { f.state.pr.labels = [{name: "routine:no-glasses"}] }, /opt-in was removed/],
+    ["dev", f => { f.state.baseRef.object.sha = "e".repeat(40) }, /current base/]]) {
+    const {f, resolve} = account(destination)
+    change(f)
+    const request = await resolve()
+    assert.equal(request.status, "no-artifact")
+    assert.equal(request.selection, null)
+    assert.match(request.reason, reason)
+  }
+  // An Android publication never provides the Mac routine's archive.
+  const android = androidFixture(); android.manual(); android.state.pr.labels = [{name: "routine:account-miniapps"}]
+  const fromApk = await android.resolve({...originalPublication, routine: "account-miniapps"})
+  assert.equal(fromApk.status, "no-artifact")
+  assert.match(fromApk.reason, /Unexpected Mac producer identity/)
 })
 
 test("explicit opt-in cannot weaken artifact/current-PR checks or originate from PR code", async () => {

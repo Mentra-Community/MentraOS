@@ -42,15 +42,17 @@ export type TestRoutineId = z.infer<typeof testRoutineIdSchema>;
 export type TestBuildPlatform = "ios-on-mac" | "android";
 export const testRoutinePlatform = (id: TestRoutineId = "no-glasses"): TestBuildPlatform =>
   id === "no-glasses-android" || id === "connected-glasses" ? "android" : "ios-on-mac";
-export const TEST_ROUTINES = [
+/** One catalogued routine. `planned`, when present, is why a routine without a registered automatic worker stays
+ * unavailable even if a deployment enables it. Declared on every entry so the reason keeps its string type whether or
+ * not any entry currently carries one. */
+export interface TestRoutineEntry { id: TestRoutineId; name: string; description: string; planned?: string }
+export const TEST_ROUTINES: TestRoutineEntry[] = [
   { id: "no-glasses" as const, name: "UI walkthrough without glasses (Mac)", description: "Open the app and verify navigation, settings and account screens." },
   { id: "no-glasses-android" as const, name: "UI walkthrough without glasses (Android)", description: "Verify app navigation on the dedicated Android phone with no glasses paired." },
   { id: "day1-ota" as const, name: "Day-one OTA update", description: "Prepare day-one firmware, update it, then verify and restore the selected build's firmware." },
   { id: "mentra-call" as const, name: "Mentra Call", description: "Join a call with the glasses and a browser peer, recording both views and checking the connection." },
-  // Planned nightly target (account-miniapps): listed so its unavailability is visible. `planned` keeps it unavailable
-  // even if a deployment enables it, until the reviewed change that registers its automatic worker removes it.
-  { id: "account-miniapps" as const, name: "Account and miniapps (Mac)", description: "One combined paired-account routine: email, export, Google SSO, feedback, miniapps and incompatible tiles.",
-    planned: "Planned routine: its automatic worker is not registered yet" },
+  // Registered Mac nightly target; a deployment enables it through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.
+  { id: "account-miniapps" as const, name: "Account and miniapps (Mac)", description: "One combined paired-account routine: email, export, Google SSO, feedback, miniapps and incompatible tiles." },
   // Registered Android nightly target; a deployment enables it through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.
   { id: "connected-glasses" as const, name: "Connected glasses (Android)", description: "One combined Android routine with paired glasses: pairing, Bluetooth, camera, Wi-Fi, gallery and audio." },
   // Registered Mac nightly target; a deployment enables it through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.
@@ -58,7 +60,7 @@ export const TEST_ROUTINES = [
   // Registered Mac Phone mode routines; a deployment enables each through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.
   { id: "captions-phone" as const, name: "Captions with simulated glasses (Mac)", description: "Phone mode Captions transcribes one controlled speech fixture, then restores the microphone, Home and host audio." },
   { id: "notes-phone" as const, name: "Notes with simulated glasses (Mac)", description: "Phone mode Notes transcribes a controlled discussion, then its one new note is edited, persisted and found by Search." },
-] satisfies { id: TestRoutineId; name: string; description: string; planned?: string }[];
+];
 
 export interface TestBuild {
   source: TestBuildSource;

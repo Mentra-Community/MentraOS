@@ -198,8 +198,8 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} inventories 
   expect(available.routines.find(routine => routine.id === "mentra-call")?.available).toBe(false);
   const commissioned = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
     routines: ["no-glasses", "day1-ota", "mentra-call"] });
-  // Every enabled Mac routine is available; a planned Mac routine or a registered one this deployment does not enable
-  // (livestreamer and the Phone mode routines) stays unavailable.
+  // Every enabled Mac routine is available; a registered Mac routine this deployment does not enable (account-miniapps,
+  // livestreamer and the Phone mode routines) stays unavailable.
   expect(Object.fromEntries((await commissioned.inventory({ channel }))[0]!.routines
     .filter(routine => testRoutinePlatform(routine.id) === "ios-on-mac").map(routine => [routine.id, routine.available])))
     .toEqual({ "no-glasses": true, "day1-ota": true, "mentra-call": true, "account-miniapps": false, livestreamer: false,
@@ -239,19 +239,53 @@ for (const channel of ["dev", "staging"] as const) test(`${channel} lists the re
   expect(enrolled.find(routine => routine.id === "livestreamer")?.available).toBe(true);
 });
 
-for (const channel of ["dev", "staging"] as const) test(`${channel} lists planned routines as unavailable even when a deployment enables them`, async () => {
+for (const channel of ["dev", "staging"] as const) test(`${channel} has no planned routine left: enabled routines are available on their own platform, unknown IDs refused`, async () => {
+  // Every catalogued routine is registered now, so no `planned` reason remains to override deployment enablement.
+  expect(TEST_ROUTINES.filter(routine => "planned" in routine)).toEqual([]);
   const f = releaseFixture(channel);
   const gateway = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
-    routines: ["no-glasses", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses"] });
+    routines: ["no-glasses", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer"] });
   const routines = (await gateway.inventory({ channel }))[0]!.routines;
   const row = (id: TestRoutineId) => routines.find(routine => routine.id === id)!;
-  expect((["no-glasses", "day1-ota", "mentra-call"] as const).every(id => row(id).available)).toBe(true);
-  for (const id of ["account-miniapps"] as const) expect(row(id)).toEqual({ id, available: false,
-    reason: "Planned routine: its automatic worker is not registered yet" });
+  expect((["no-glasses", "day1-ota", "mentra-call", "account-miniapps", "livestreamer"] as const).every(id => row(id).available)).toBe(true);
+  // Unknown routine IDs are still refused before any inventory or dispatch.
+  for (const routineId of ["synthetic-unregistered", "shell"]) {
+    expect(testBuildQuerySchema.safeParse({ channel, routineId }).success).toBe(false);
+    expect(testDispatchInputSchema.safeParse({ ...input, source: { channel, buildRunId: 50, publicationAttempt: 1 }, routineId }).success).toBe(false);
+  }
   // Connected glasses is a registered Android routine: a Mac build reports the platform first, never a Mac run.
   expect(testRoutinePlatform("connected-glasses")).toBe("android");
   expect(row("connected-glasses").available).toBe(false);
   expect(row("connected-glasses").reason).toContain("published Android APK");
+});
+
+for (const channel of ["dev", "staging"] as const) test(`${channel} lists registered account-miniapps on its exact Mac build, available only once a deployment enables it`, async () => {
+  const f = releaseFixture(channel);
+  expect(testRoutinePlatform("account-miniapps")).toBe("ios-on-mac");
+  expect(TEST_ROUTINES.find(routine => routine.id === "account-miniapps")).not.toHaveProperty("planned");
+  expect(testDispatchInputSchema.parse({ ...input, source: { channel, buildRunId: 50, publicationAttempt: 1 }, routineId: "account-miniapps" }).routineId)
+    .toBe("account-miniapps");
+  expect(testBuildQuerySchema.parse({ channel, routineId: "account-miniapps" }).routineId).toBe("account-miniapps");
+  // Source registration is not deployment enablement: the default workers keep the ordinary enablement reason.
+  const defaults = (await new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel] })
+    .inventory({ channel, routineId: "account-miniapps" }))[0]!;
+  expect(defaults.source).toEqual({ channel, buildRunId: 50, publicationAttempt: 1 });
+  expect(defaults.routines.find(routine => routine.id === "account-miniapps")).toEqual({ id: "account-miniapps", available: false,
+    reason: "This routine is not enabled on the test workers yet" });
+  // An enrolled deployment makes the same exact Mac build requestable; the channel gate still applies.
+  const enrolled = (await new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
+    routines: ["account-miniapps"] }).inventory({ channel, routineId: "account-miniapps" }))[0]!;
+  expect(enrolled.platform).toBe("ios-on-mac");
+  expect(enrolled.release).toBe(f.identity);
+  expect(enrolled.routines.filter(routine => routine.available).map(routine => routine.id)).toEqual(["account-miniapps"]);
+  const otherChannel = (await new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: ["pr"],
+    routines: ["account-miniapps"] }).inventory({ channel, routineId: "account-miniapps" }))[0]!;
+  expect(otherChannel.routines.find(routine => routine.id === "account-miniapps")?.available).toBe(false);
+  // Enabled Livestreamer, also registered, is available on the same build; connected-glasses is an Android routine and
+  // stays unavailable on a Mac build even when enabled.
+  const others = (await new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
+    routines: ["account-miniapps", "livestreamer", "connected-glasses"] }).inventory({ channel }))[0]!.routines;
+  expect(others.filter(routine => routine.available).map(routine => routine.id)).toEqual(["account-miniapps", "livestreamer"]);
 });
 
 for (const channel of ["dev", "staging"] as const) test(`${channel} retained artifacts cannot qualify a non-publishing attempt`, async () => {
@@ -449,7 +483,7 @@ test("registered connected-glasses is listed on an Android APK only, available o
   const enrolled = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, routines: ["no-glasses-android", "connected-glasses"] });
   const build = (await enrolled.inventory({ channel: "pr", pr: 12, routineId: "connected-glasses" }))[0]!;
   expect(build.routines.filter(routine => routine.available).map(routine => routine.id)).toEqual(["no-glasses-android", "connected-glasses"]);
-  // Enabled Mac routines, planned (account-miniapps) or registered (livestreamer), stay unavailable on the same APK.
+  // Enabled Mac routines (account-miniapps, livestreamer) stay unavailable on the same APK.
   const planned = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, routines: ["connected-glasses", "account-miniapps", "livestreamer"] });
   const rows = (await planned.inventory({ channel: "pr", pr: 12, routineId: "connected-glasses" }))[0]!.routines;
   expect(rows.filter(routine => routine.available).map(routine => routine.id)).toEqual(["connected-glasses"]);
