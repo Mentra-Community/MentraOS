@@ -101,15 +101,27 @@ test("planner selects exact publications per routine and reports missing combine
   // The registered Android member resolves its APK from the same exact publication as the Mac members.
   assert.deepEqual(result.requests.map(({channel, routine, platform, sourceRunId, publicationAttempt}) =>
     ({channel, routine, platform, sourceRunId, publicationAttempt})), ["dev", "staging"].flatMap(channel =>
-    [["day1-ota", "ios-on-mac"], ["mentra-call", "ios-on-mac"], ["connected-glasses", "android"]].map(([routine, platform]) =>
-      ({channel, routine, platform, sourceRunId: channel === "dev" ? 100 : 200, publicationAttempt: 2}))))
+    [["day1-ota", "ios-on-mac"], ["mentra-call", "ios-on-mac"], ["connected-glasses", "android"], ["livestreamer", "ios-on-mac"]]
+      .map(([routine, platform]) => ({channel, routine, platform, sourceRunId: channel === "dev" ? 100 : 200, publicationAttempt: 2}))))
   assert.deepEqual(result.unavailable.map(({channel, routine}) => [channel, routine]), ["dev", "staging"].flatMap(channel =>
-    ["account-miniapps", "livestreamer"].map(routine => [channel, routine])))
+    ["account-miniapps"].map(routine => [channel, routine])))
   assert.ok(result.unavailable.every(row => /no compatible registered worker/.test(row.reason)))
   assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
 })
 
-const PLANNED = ["account-miniapps", "livestreamer"]
+const PLANNED = ["account-miniapps"]
+
+test("the production catalog registers Livestreamer as its existing Mac nightly target, with its private worker source", () => {
+  assert.deepEqual(NIGHTLY_TARGETS.at(-1), {routine: "livestreamer", platform: "ios-on-mac"})
+  const routine = DEVICE_ROUTINES.livestreamer
+  assert.equal(routine.pending, undefined)
+  assert.equal(routine.platform, "ios-on-mac")
+  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
+  assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/LIVESTREAMER-FULL-ROUTINE.md",
+    "tools/mentra-e2e/flows/livestreamer.ts", "worker/livestreamer.ts"].map(path => `${source}${path}`))
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
+    "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
+})
 
 test("the production catalog registers connected-glasses as its existing Android nightly target, with its private worker source", () => {
   assert.deepEqual(NIGHTLY_TARGETS.find(target => target.routine === "connected-glasses"), {routine: "connected-glasses", platform: "android"})
@@ -124,8 +136,6 @@ test("the production catalog registers connected-glasses as its existing Android
 })
 
 test("planned targets are catalogued but stay unavailable on both channels, with their exact pending reason", async () => {
-  assert.deepEqual(NIGHTLY_TARGETS.at(-1), {routine: "livestreamer", platform: "ios-on-mac"})
-  assert.equal(DEVICE_ROUTINES.livestreamer.worker, null)
   const f = fixture(), result = await planNightlyRequests(f.options)
   for (const routine of PLANNED) {
     assert.ok(DEVICE_ROUTINES[routine].pending)
@@ -156,16 +166,16 @@ const completedRegistrationModel = Object.freeze(Object.fromEntries(Object.entri
 
 test("the legacy marker and the per-build default stay unchanged, even for a modelled completed registration", async () => {
   const f = await markerFixture()
-  for (const routine of [...PLANNED, "connected-glasses"]) {
+  for (const routine of [...PLANNED, "livestreamer", "connected-glasses"]) {
     const marked = structuredClone(f.request)
     marked.routine.id = routine; marked.sequence = {...marked.sequence, member: routine}
     assert.deepEqual(validateNightlyMarker(marked), marked.sequence)
     assert.throws(() => validateNightlyMarker({...marked, sequence: {...marked.sequence, kind: "nightly-ota-call"}}), /Invalid nightly/)
   }
-  // Registration never widens the per-build default: registered members (now including connected-glasses) and modelled
-  // completed registrations are all still refused as successful-build requests.
-  for (const [routine, routineCatalog] of [...["connected-glasses", "day1-ota", "mentra-call"].map(routine => [routine, undefined]),
-    ...[...PLANNED, "connected-glasses", "day1-ota", "mentra-call"].map(routine => [routine, completedRegistrationModel])])
+  // Registration never widens the per-build default: registered members (now including Livestreamer and connected-glasses)
+  // and modelled completed registrations are all still refused as successful-build requests.
+  for (const [routine, routineCatalog] of [...["livestreamer", "connected-glasses", "day1-ota", "mentra-call"].map(routine => [routine, undefined]),
+    ...[...PLANNED, "livestreamer", "connected-glasses", "day1-ota", "mentra-call"].map(routine => [routine, completedRegistrationModel])])
     await assert.rejects(createRoutineRequest({...f.dev.options, routine, requestOrigin: "successful-build",
       routineCatalog}), /Unsupported coordinated routine authorization/)
 })
@@ -238,7 +248,8 @@ test("a missing platform archive cannot silently select another publication for 
   const f = fixture(), routineCatalog = {...DEVICE_ROUTINES, "connected-glasses": {platform: "android"}}
   f.dev.state.androidSize = 1
   const result = await planNightlyRequests({...f.options, routineCatalog})
-  assert.equal(result.requests.filter(row => row.channel === "dev").length, 2)
+  // The Mac members (day1-ota, mentra-call, livestreamer) keep the dev publication; only the Android member is missing.
+  assert.equal(result.requests.filter(row => row.channel === "dev").length, 3)
   const missing = result.unavailable.find(row => row.channel === "dev" && row.routine === "connected-glasses")
   assert.equal(missing.sourceRunId, 100)
   assert.equal(missing.publicationAttempt, 2)
@@ -263,16 +274,16 @@ test("a successful earlier attempt cannot qualify the selected publication retry
   const f = fixture()
   f.state.jobs.set(100, [publicationJob(1001, 1), {...publicationJob(1002), conclusion: "skipped"}])
   const result = await planNightlyRequests(f.options)
-  assert.deepEqual(result.unavailable.filter(row => !/registered worker/.test(row.reason)).map(row => row.channel), ["dev", "dev", "dev"])
-  assert.ok(result.requests.length === 3 && result.requests.every(row => row.channel === "staging"))
+  assert.deepEqual(result.unavailable.filter(row => !/registered worker/.test(row.reason)).map(row => row.channel), ["dev", "dev", "dev", "dev"])
+  assert.ok(result.requests.length === 4 && result.requests.every(row => row.channel === "staging"))
 })
 
 test("one unavailable or unreadable channel preserves the other channel requests", async () => {
   for (const candidates of [[], undefined]) {
     const f = fixture(); f.state.candidates.staging = candidates
     const result = await planNightlyRequests(f.options)
-    assert.deepEqual(result.unavailable.filter(row => !/registered worker/.test(row.reason)).map(row => row.channel), ["staging", "staging", "staging"])
-    assert.equal(result.requests.length, 3)
+    assert.deepEqual(result.unavailable.filter(row => !/registered worker/.test(row.reason)).map(row => row.channel), ["staging", "staging", "staging", "staging"])
+    assert.equal(result.requests.length, 4)
     assert.ok(result.requests.every(row => row.channel === "dev"))
   }
 })
@@ -509,8 +520,8 @@ for (const cloned of [false, true]) test(`nightly selects original publication f
   }
   const result = await planNightlyRequests(f.options)
   assert.deepEqual(result.requests.find(row => row.channel === "dev"), {...plan, publicationAttempt: 1})
-  // Only the planned targets (account-miniapps, livestreamer) are unavailable, on both channels.
-  assert.equal(result.unavailable.length, 4)
+  // Only the planned target (account-miniapps) is unavailable, on both channels.
+  assert.equal(result.unavailable.length, 2)
   const reads = f.state.calls.filter(([kind, input]) => kind === "attempt" && input.run_id === 100)
   assert.ok(reads.length >= 2)
   assert.ok(reads.every(([, input]) => input.attempt_number === 1))
@@ -528,7 +539,7 @@ test("nightly cannot fall back past a newer failed, skipped or ambiguous finaliz
     f.state.jobs.set(100, [publicationJob(1001, 1), ...replacement])
     const result = await planNightlyRequests(f.options)
     assert.equal(result.requests.some(row => row.channel === "dev"), false)
-    assert.deepEqual(result.unavailable.filter(row => !/registered worker/.test(row.reason)).map(row => row.channel), ["dev", "dev", "dev"])
+    assert.deepEqual(result.unavailable.filter(row => !/registered worker/.test(row.reason)).map(row => row.channel), ["dev", "dev", "dev", "dev"])
   }
 })
 

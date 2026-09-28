@@ -426,7 +426,7 @@ test("mismatched producer JSON and missing dispatch capability fail before priva
 })
 
 test("all routine labels create independent fenced generations for one exact publication", async () => {
-  const routines = ["day1-ota", "no-glasses", "mentra-call"]
+  const routines = ["day1-ota", "no-glasses", "mentra-call", "livestreamer"]
   const pull = {...pr, labels: routines.map(routine => ({name: `routine:${routine}`}))}
   const jobs = routines.map(routine => ({...publicationJob, name: publicationJobName(123, 2, routine)}))
   const f = fake({pull, callbackJobs: {[callback.id]: jobs}})
@@ -437,6 +437,7 @@ test("all routine labels create independent fenced generations for one exact pub
     {pr: "42", routine: "day1-ota", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
     {pr: "42", routine: "no-glasses", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
     {pr: "42", routine: "mentra-call", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
+    {pr: "42", routine: "livestreamer", request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"},
   ])
 })
 
@@ -460,7 +461,7 @@ test("registered Phone mode labels request the exact Mac publication, never a su
 })
 
 test("planned routine labels never become automatic requests or private callbacks", async () => {
-  const planned = ["account-miniapps", "livestreamer"]
+  const planned = ["account-miniapps"]
   const pull = {...pr, labels: [...planned, "day1-ota"].map(routine => ({name: `routine:${routine}`}))}
   const f = fake({pull, callbackJobs: {[callback.id]: [{...publicationJob, name: publicationJobName(123, 2, "day1-ota")}]}})
   const plans = await planDeviceDispatches({...f, context})

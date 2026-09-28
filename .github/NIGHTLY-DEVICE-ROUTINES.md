@@ -9,7 +9,7 @@ on each latest verified coordinated **dev** and **staging** publication:
 | `mentra-call` | iOS on Mac | Registered; needs independent Call media/audio/network qualification |
 | `account-miniapps` | iOS on Mac | Author-owned combined routine; unavailable until its real worker is registered and qualified |
 | `connected-glasses` | Android | Registered in source; runs its full definition on the selected APK, where C8/C9 fail by name before input until their controllers exist; not qualified |
-| `livestreamer` | iOS on Mac | Planned author-owned routine covering Livestreamer's WebRTC **Stream here** and local RTMP; unavailable until its real worker is registered and qualified |
+| `livestreamer` | iOS on Mac | Registered in source (managed WebRTC **Stream here** and local RTMP); preparation refuses before any claim until its real enrollment and native/Share URL observations exist; not qualified |
 
 Planning, registration and qualification are separate steps. A planned target is
 catalogued in [`device-routines.mjs`](scripts/device-routines.mjs) with its name,
@@ -31,10 +31,14 @@ Each planned routine's remaining owner contract:
   preparation. Its `createAccountMiniappsHost` installs the host configuration's
   static build and finalizes development evidence. The missing export must bind
   the request's selected Mac build and claim-bound evidence.
-- `livestreamer`: no host exists; the owner must add `worker/livestreamer.ts`
-  exporting `prepareLivestreamerWorker(configRef, mode, expectedRequest)` backed by
-  an editable Stream here and local RTMP flow with owned receiver and network
-  cleanup.
+
+`livestreamer` is registered in source: `worker/livestreamer.ts` exports
+`prepareLivestreamerWorker`, which authenticates the request and binds its selected
+Mac build for the managed Stream here and local RTMP flow with owned receiver and
+network cleanup. Its runtime is still pending: an enrolled worker lane and fixture,
+the recorded native state snapshots and an observed owned Stream here Share URL on
+the selected build. Until those exist its preparation refuses before any claim, and
+no run of it is qualified.
 
 `connected-glasses` is registered in source: `worker/connected-glasses.ts` exports
 `prepareConnectedGlassesWorker`, which authenticates dev and staging requests,
