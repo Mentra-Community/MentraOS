@@ -4,6 +4,9 @@ import {DEVICE_ROUTINES, isRegisteredRoutine} from "./device-routines.mjs"
 
 export const NIGHTLY_WORKFLOW = ".github/workflows/nightly-device-routines.yml"
 
+export const NIGHTLY_CRONS = Object.freeze(["0 10 * * *", "0 11 * * *"])
+const LEGACY_CRONS = ["0 7 * * *", "0 8 * * *"]
+
 export const NIGHTLY_SEND_STEP = "Send the nightly routine request"
 const LEGACY_SEND_STEP = "Send the nightly routine sequence"
 const LEGACY_ROUTINES = ["day1-ota", "mentra-call"]
@@ -50,7 +53,7 @@ const jobsFor = (github, context, runId) => completePages(page => github.rest.ac
 
 /** Two UTC triggers cover DST. Use the intended trigger, allowing queue delays. */
 export function nightlyDate(cron, createdAt) {
-  const hour = {"0 7 * * *": 7, "0 8 * * *": 8}[cron]
+  const hour = {"0 7 * * *": 7, "0 8 * * *": 8, "0 10 * * *": 10, "0 11 * * *": 11}[cron]
   requireThat(hour !== undefined, "Unexpected nightly schedule")
   const created = new Date(createdAt)
   requireThat(Number.isFinite(created.getTime()), "Invalid nightly creation time")
@@ -59,10 +62,12 @@ export function nightlyDate(cron, createdAt) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {timeZone: "America/Los_Angeles",
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"})
     .formatToParts(scheduled).map(part => [part.type, part.value]))
-  return parts.hour === "00" ? `${parts.year}-${parts.month}-${parts.day}` : null
+  const localHour = LEGACY_CRONS.includes(cron) ? "00" : "03"
+  return parts.hour === localHour ? `${parts.year}-${parts.month}-${parts.day}` : null
 }
 
 async function scheduledRun(github, context, attempt) {
+  requireThat(NIGHTLY_CRONS.includes(context.payload?.schedule), "Unexpected nightly schedule")
   requireThat(`${context.repo.owner}/${context.repo.repo}` === REPOSITORY && context.eventName === "schedule" &&
     positive(context.runId) && positive(attempt) && SHA.test(context.sha ?? ""), "Nightly must run in the trusted repository")
   const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: context.runId})
@@ -75,7 +80,7 @@ async function scheduledRun(github, context, attempt) {
 
 export async function planNightlyRequests({github, context, attempt, fetchImpl = fetch, routineCatalog = DEVICE_ROUTINES}) {
   const {run, date} = await scheduledRun(github, context, attempt)
-  if (!date) return {requests: [], unavailable: [], reason: "The other UTC trigger covers local midnight today"}
+  if (!date) return {requests: [], unavailable: [], reason: "The other UTC trigger covers 03:00 America/Los_Angeles today"}
   requireThat(attempt === 1, "Nightly reruns require reconciliation; do not repeat physical routines automatically")
   const requests = [], unavailable = []
   for (const channel of ["dev", "staging"]) {
@@ -209,10 +214,12 @@ export async function authenticateNightlyMarker({github, context, request}) {
     run.path === NIGHTLY_WORKFLOW && run.head_branch === "dev" && SHA.test(run.head_sha ?? "") &&
     run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
   "Nightly sequence source is not an authenticated scheduled workflow")
-  const dates = ["0 7 * * *", "0 8 * * *"].flatMap(cron => {
+  // Historical midnight requests remain verifiable after the schedule moves.
+  // Both schedule generations can identify the same date after a queue delay.
+  const dates = [...new Set([...NIGHTLY_CRONS, ...LEGACY_CRONS].flatMap(cron => {
     try { const date = nightlyDate(cron, run.created_at); return date ? [date] : [] } catch { return [] }
-  })
-  requireThat(dates.length === 1, "Nightly sequence source has no valid local-midnight date")
+  }))]
+  requireThat(dates.length === 1, "Nightly sequence source has no valid local nightly date")
   const jobs = await jobsFor(github, context, run.id)
   const legacy = marker.kind === "nightly-ota-call"
   const expected = {date: dates[0], channel: request.source.channel, routine: marker.member}
