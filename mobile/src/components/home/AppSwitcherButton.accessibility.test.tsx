@@ -3,6 +3,7 @@ import type {ClientApp} from "@mentra/engine"
 import type {SharedValue} from "react-native-reanimated"
 
 import AppSwitcherButton from "./AppSwitcherButtton"
+import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 
 let mockApps: ClientApp[] = []
 jest.mock("@mentra/engine", () => ({
@@ -27,7 +28,10 @@ jest.mock("@/stores/appSwitcher", () => ({
   SWIPE_DISTANCE_THRESHOLD: 100,
   SWIPE_PERCENT_THRESHOLD: 0.5,
 }))
-jest.mock("@/components/home/AppIcon", () => () => null)
+jest.mock("@/components/home/AppIcon", () => ({app}: {app: ClientApp}) => {
+  const {View} = require("react-native")
+  return <View testID={`trayIcon.${app.packageName}`} />
+})
 jest.mock("@/components/ui/GlassView", () => require("react-native").View)
 jest.mock("expo-blur", () => ({BlurView: require("react-native").View}))
 jest.mock("expo-linear-gradient", () => ({LinearGradient: require("react-native").View}))
@@ -49,6 +53,27 @@ jest.mock("react-native-gesture-handler", () => {
     Gesture: {Pan: gesture, Tap: gesture, Exclusive: jest.fn()},
     GestureDetector: ({children}: {children: React.ReactNode}) => children,
   }
+})
+
+beforeEach(() => {
+  useMiniappPresentationStore.setState({closingPackageName: null})
+})
+
+test("X-button close immediately removes its icon from the running tray", async () => {
+  mockApps = ["one", "two"].map((packageName) => ({packageName, name: packageName} as ClientApp))
+  render(
+    <AppSwitcherButton
+      swipeProgress={{value: 0} as SharedValue<number>}
+      onGridButtonPress={jest.fn()}
+      blurTargetRef={{current: null}}
+    />,
+  )
+  await act(async () => {})
+  expect(screen.getByTestId("trayIcon.one")).toBeTruthy()
+  act(() => useMiniappPresentationStore.getState().setClosingPackageName("one"))
+  expect(screen.queryByTestId("trayIcon.one")).toBeNull()
+  expect(screen.getByTestId("trayIcon.two")).toBeTruthy()
+  await act(async () => {})
 })
 
 test.each([false, true])("accessible activation opens the tray, populated=%s", async (populated) => {
