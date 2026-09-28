@@ -451,12 +451,12 @@ test("the workflow admits and selects exactly the registered routine labels; pla
   // mentra-call is the chain's final default rather than a label test.
   assert.deepEqual(labels(chain), registered.filter(id => id !== "mentra-call"))
   assert.match(chain, /\|\| 'mentra-call'\) \}\}$/)
-  assert.ok(registered.includes("livestreamer"))
-  for (const id of ["account-miniapps", "connected-glasses"]) assert.equal(isRegisteredRoutine(id), false)
+  assert.ok(["livestreamer", "connected-glasses"].every(id => registered.includes(id)))
+  for (const id of ["account-miniapps"]) assert.equal(isRegisteredRoutine(id), false)
 })
 
 test("planned routines refuse PR requests, labelled or explicit, with their pending reason", async () => {
-  for (const routine of ["account-miniapps", "connected-glasses"]) for (const manual of [false, true]) {
+  for (const routine of ["account-miniapps"]) for (const manual of [false, true]) {
     const f = fixture()
     if (manual) f.manual()
     f.state.pr.labels = [{name: `routine:${routine}`}]
@@ -660,6 +660,46 @@ test("Android rejects missing publication steps, mismatching APK identity and st
     const f = androidFixture(); change(f)
     assert.equal((await f.resolveAndroid()).status, "no-artifact")
   }
+})
+
+test("registered connected-glasses requests select the exact Android APK under their own label, on dev and staging", async () => {
+  const connected = f => { f.state.pr.labels = [{name: "routine:connected-glasses"}]; return overrides => f.resolve({routine: "connected-glasses", ...overrides}) }
+  for (const channel of ["dev", "staging"]) {
+    const f = androidFixture()
+    if (channel === "staging") { f.staging(); f.android.app.backend = "staging" }
+    const request = await connected(f)()
+    assert.equal(request.status, "ready", request.reason)
+    assert.equal(request.routine.id, "connected-glasses")
+    assert.equal(request.routine.authorization, "pr-label")
+    assert.ok(request.routine.reason.includes("routine:connected-glasses"))
+    assert.match(request.requestId, /-connected-glasses$/)
+    assert.equal(request.selection.platform, "android")
+    assert.equal(request.selection.producer.workflow, f.state.runs[0].path)
+    assert.deepEqual(request.selection.app, f.android.app)
+    assert.equal(request.selection.archive.name, f.android.artifacts.android.name)
+    assert.equal(request.pullRequest.baseRef, channel)
+  }
+  // An explicit trusted request needs no label; an automatic one needs this routine's own current label.
+  for (const selection of [{}, {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}]) {
+    const manual = androidFixture(); manual.manual(); manual.state.pr.labels = []
+    const explicit = await manual.resolve({routine: "connected-glasses", ...selection})
+    assert.equal(explicit.status, "ready", explicit.reason)
+    assert.equal(explicit.routine.authorization, "workflow-dispatch")
+    assert.equal(explicit.selection.archive.name, manual.android.artifacts.android.name)
+  }
+  for (const labels of [[{name: "routine:no-glasses-android"}], [{name: REQUEST_LABEL}], []]) {
+    const f = androidFixture(); f.manual(); f.state.pr.labels = labels
+    assert.equal((await f.resolve({routine: "connected-glasses", ...originalPublication})).status, "no-artifact")
+  }
+  // The exact APK identity, publication, backend and producer checks are the Android route's own.
+  for (const change of [f => f.android.app.packageId += ".other", f => f.android.runAttempt++, f => f.android.app.otaManifestUrl += "old",
+    f => f.state.jobs[0].steps = [], f => f.state.missingArchive = true, f => f.state.removeLabelOnReread = true,
+    f => f.state.runs[0].path = ".github/workflows/mentra-app-ios-build.yml"]) {
+    const f = androidFixture(); change(f)
+    assert.equal((await connected(f)()).status, "no-artifact")
+  }
+  const wrongBackend = androidFixture(); wrongBackend.staging(); wrongBackend.android.app.backend = "dev"
+  assert.equal((await connected(wrongBackend)()).status, "no-artifact")
 })
 
 test("Android retained build jobs select the first publication attempt and a failed newest build is not reused", () => {

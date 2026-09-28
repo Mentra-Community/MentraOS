@@ -461,7 +461,7 @@ test("registered Phone mode labels request the exact Mac publication, never a su
 })
 
 test("planned routine labels never become automatic requests or private callbacks", async () => {
-  const planned = ["account-miniapps", "connected-glasses"]
+  const planned = ["account-miniapps"]
   const pull = {...pr, labels: [...planned, "day1-ota"].map(routine => ({name: `routine:${routine}`}))}
   const f = fake({pull, callbackJobs: {[callback.id]: [{...publicationJob, name: publicationJobName(123, 2, "day1-ota")}]}})
   const plans = await planDeviceDispatches({...f, context})
@@ -781,6 +781,33 @@ test("automatic requests use a separate public-repository App token for the call
   assert.doesNotMatch(step("Queue the ready request in the private repository"), /request-token/)
 })
 
+
+test("a registered connected-glasses label requests only an Android publication, and private dispatch preserves its routine and platform", async () => {
+  const android = ["no-glasses-android", "connected-glasses"]
+  const pull = {...pr, labels: [...android, "no-glasses"].map(routine => ({name: `routine:${routine}`}))}
+  const run = {...build, path: ".github/workflows/mentra-app-android-build.yml"}
+  const jobs = [{...publishedJobs[0], steps: [{name: "Upload APK to the public artifact CDN", status: "completed", conclusion: "success"}]}]
+  const sends = android.map(routine => ({...publicationJob, name: publicationJobName(run.id, run.run_attempt, routine)}))
+  const f = fake({run, pull, jobs, callbackJobs: {[callback.id]: sends}})
+  const plans = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
+  assert.deepEqual(plans.map(plan => plan.routine), android)
+  for (const plan of plans) assert.equal((await requestAfterPublication({...f, context, plan})).status, "request-dispatched")
+  assert.deepEqual(f.calls.filter(([kind]) => kind === "dispatch").map(([, call]) => call.inputs), android.map(routine =>
+    ({pr: "42", routine, request_origin: "pr-label", source_build_run_id: String(run.id), source_publication_attempt: "2"})))
+  // A Mac publication never requests the Android routine.
+  const mac = fake({pull: {...pr, labels: [{name: "routine:connected-glasses"}]}, callbackJobs: {[callback.id]: []}})
+  assert.deepEqual((await planDeviceDispatches({...mac, context})).filter(plan => plan.mode === "request").map(plan => plan.routine), [])
+  const ready = structuredClone(request)
+  ready.routine.id = "connected-glasses"
+  ready.requestId = "routine-123-2-42-connected-glasses"
+  ready.selection.platform = "android"
+  const remote = fake({pull}), selected = {mode: "dispatch", runId: 123, runAttempt: 2, sourceSha: source}
+  await dispatchReadyRequest({...remote, privateGithub: remote.github, context, plan: selected, bytes: Buffer.from(JSON.stringify(ready))})
+  assert.equal(remote.calls.at(-1)[1].inputs.routine_id, "connected-glasses")
+  ready.selection.platform = "ios-on-mac"
+  await assert.rejects(dispatchReadyRequest({...remote, privateGithub: remote.github, context, plan: selected,
+    bytes: Buffer.from(JSON.stringify(ready))}), /Invalid ready selection/)
+})
 
 test("an Android producer callback requests only its matching Android label, and private dispatch preserves platform", async () => {
   const routine = "no-glasses-android"

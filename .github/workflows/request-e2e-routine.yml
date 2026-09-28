@@ -16,7 +16,7 @@ on:
       routine:
         description: Requested device routine
         type: choice
-        # Planned routines (account-miniapps, connected-glasses) refuse until their automatic worker is
+        # Planned routines (account-miniapps) refuse until their automatic worker is
         # registered in device-routines.mjs; only then add their labels to the pull_request routing below.
         options: [day1-ota, no-glasses, no-glasses-android, mentra-call, account-miniapps, connected-glasses, livestreamer, captions-phone, notes-phone]
         default: day1-ota
@@ -75,7 +75,8 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'routine:mentra-call') ||
         contains(github.event.pull_request.labels.*.name, 'routine:captions-phone') ||
         contains(github.event.pull_request.labels.*.name, 'routine:notes-phone') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:livestreamer')))
+        contains(github.event.pull_request.labels.*.name, 'routine:livestreamer') ||
+        contains(github.event.pull_request.labels.*.name, 'routine:connected-glasses')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -93,7 +94,7 @@ jobs:
         env:
           REQUEST_PR: ${{ inputs.pr || github.event.pull_request.number }}
           REQUEST_CHANNEL: ${{ inputs.channel || 'pr' }}
-          REQUEST_ROUTINE: ${{ inputs.routine || (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') && 'day1-ota' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') && 'no-glasses' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses-android') && 'no-glasses-android' || contains(github.event.pull_request.labels.*.name, 'routine:captions-phone') && 'captions-phone' || contains(github.event.pull_request.labels.*.name, 'routine:notes-phone') && 'notes-phone' || contains(github.event.pull_request.labels.*.name, 'routine:livestreamer') && 'livestreamer' || 'mentra-call') }}
+          REQUEST_ROUTINE: ${{ inputs.routine || (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') && 'day1-ota' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') && 'no-glasses' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses-android') && 'no-glasses-android' || contains(github.event.pull_request.labels.*.name, 'routine:captions-phone') && 'captions-phone' || contains(github.event.pull_request.labels.*.name, 'routine:notes-phone') && 'notes-phone' || contains(github.event.pull_request.labels.*.name, 'routine:livestreamer') && 'livestreamer' || contains(github.event.pull_request.labels.*.name, 'routine:connected-glasses') && 'connected-glasses' || 'mentra-call') }}
           REQUEST_ORIGIN: ${{ inputs.request_origin || 'pr-label' }}
           SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
           SOURCE_PUBLICATION_ATTEMPT: ${{ inputs.source_publication_attempt }}

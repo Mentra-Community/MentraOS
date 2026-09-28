@@ -8,7 +8,7 @@ on each latest verified coordinated **dev** and **staging** publication:
 | `day1-ota` | iOS on Mac | Registered; needs qualified enrolled runtime and fixture |
 | `mentra-call` | iOS on Mac | Registered; needs independent Call media/audio/network qualification |
 | `account-miniapps` | iOS on Mac | Author-owned combined routine; unavailable until its real worker is registered and qualified |
-| `connected-glasses` | Android | Author-owned combined routine; unavailable until its real worker is registered and qualified |
+| `connected-glasses` | Android | Registered in source; runs its full definition on the selected APK, where C8/C9 fail by name before input until their controllers exist; not qualified |
 | `livestreamer` | iOS on Mac | Registered in source (managed WebRTC **Stream here** and local RTMP); preparation refuses before any claim until its real enrollment and native/Share URL observations exist; not qualified |
 
 Planning, registration and qualification are separate steps. A planned target is
@@ -31,11 +31,6 @@ Each planned routine's remaining owner contract:
   preparation. Its `createAccountMiniappsHost` installs the host configuration's
   static build and finalizes development evidence. The missing export must bind
   the request's selected Mac build and claim-bound evidence.
-- `connected-glasses`: the owner's `admitConnectedGlassesRun` still refuses with
-  its observation blockers, and its Wi-Fi connect, gallery delivery and YouTube
-  audio sections are still pending. `worker/connected-glasses.ts` exports no
-  automatic preparation that verifies the request's APK through
-  `verifySelectedAndroidApk` and records claim-bound Android evidence.
 
 `livestreamer` is registered in source: `worker/livestreamer.ts` exports
 `prepareLivestreamerWorker`, which authenticates the request and binds its selected
@@ -44,6 +39,17 @@ network cleanup. Its runtime is still pending: an enrolled worker lane and fixtu
 the recorded native state snapshots and an observed owned Stream here Share URL on
 the selected build. Until those exist its preparation refuses before any claim, and
 no run of it is qualified.
+
+`connected-glasses` is registered in source: `worker/connected-glasses.ts` exports
+`prepareConnectedGlassesWorker`, which authenticates dev and staging requests,
+verifies the exact selected APK and OTA manifest, and runs the full definition in one
+claimed lifecycle with claim-bound segmented recording, export and settlement. C14
+follows the observed Wi-Fi path with its protected entry omitted between owned
+recording segments. C8 and C9 have no controllers yet: their steps fail by name
+before any input, and later unvisited steps stay not-run. C3's physical report
+evidence, C8 route/reference/audio and C9 capture/sync remain unverified, so an
+attempted run is honest but not qualification. Fixture access and other runtime
+prerequisites stay the private worker's decisions.
 
 Registering one is a single reviewed change: remove its `pending` (public) and
 `planned` (Core), route its private enrolled configuration to the owner's completed
