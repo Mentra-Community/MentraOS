@@ -3,15 +3,16 @@ import {execFileSync} from "node:child_process"
 import {writeFile} from "node:fs/promises"
 import {isDeepStrictEqual} from "node:util"
 import {publishedCoordinatedBuild, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
-import {deviceRoutine} from "./device-routines.mjs"
+import {DEVICE_ROUTINES, deviceRoutine} from "./device-routines.mjs"
 import {callbackRunName} from "./dispatch-device-routine.mjs"
 import {applyRoutineResult, assertNotification, positive, receiptName, REPOSITORY, requireThat, sha} from "./release-slack-message.mjs"
 
 export const WORKFLOW = ".github/workflows/notify-release-routine.yml"
 const PRIVATE = {owner: "Mentra-Community", repo: "Mentra-Automated-Testing"}
 const REQUEST = ".github/workflows/request-e2e-routine.yml"
-// Every catalogued device routine, including planned ones: a result exists only after a registered worker ran it.
-const routines = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer"]
+// Every catalogued device routine (the shared DEVICE_ROUTINES catalog), including planned ones: a result exists only
+// after a registered worker ran it, and each result is still bound to its exact request, attempt and filename below.
+const routines = Object.freeze(Object.keys(DEVICE_ROUTINES))
 export const jobName = plan => `Update release ${plan.notification.build.runId} / post ${plan.notification.producer.runAttempt} / ${plan.row.routineId}`
 export const stateName = (runId, attempt, routine) => `release-slack-state-${runId}-${attempt}-${routine}`
 

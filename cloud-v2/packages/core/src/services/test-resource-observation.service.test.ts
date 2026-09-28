@@ -240,3 +240,48 @@ describe("shared guard glasses scope", () => {
     expect(legacy).toEqual(retained(discovery, 4242));
   });
 });
+
+describe("physical glasses pairs", () => {
+  const accepted = (value: TestResourceObservationPut) => testResourceObservationPutSchema.safeParse(value).success;
+  const leases = (glassesLeases: unknown, observation: TestResourceObservation = noOwner()) => ({ ...observation, glassesLeases }) as TestResourceObservation;
+  const pairKey = "glasses-54f6abd2d6d4";
+  const free = { state: "idle-prerequisites-unchecked", reason: "no-guard-fixture-not-supplied", guard: { lock: "absent", reclaimMarker: "absent" },
+    fixture: { checked: false } } as TestResourceObservation;
+
+  test("a pair lease is its own resource with the existing owner forms; the shared guard may list held pair leases", () => {
+    for (const observation of [free, alive("connected-run-1"), retained("connected-run-1")])
+      expect(accepted(put(observation, 0, {}, "mini-03be", pairKey))).toBe(true);
+    for (const value of [{ state: "none" }, { state: "unreadable" }, { state: "held", pairs: ["54f6abd2d6d4"], others: 0 },
+      { state: "held", pairs: ["0123456789ab", "54f6abd2d6d4"], others: 2 }, { state: "held", pairs: [], others: 1 }])
+      expect(accepted(put(leases(value), 0))).toBe(true);
+    // Older producers omit the field; it stays valid and is never materialized.
+    expect(accepted(put(noOwner(), 0))).toBe(true);
+  });
+
+  test("malformed keys and lease lists, a lease list off the shared guard and a glasses scope on a pair are rejected", () => {
+    for (const key of ["glasses-54F6ABD2D6D4", "glasses-54f6abd2d6", "glasses-54f6abd2d6d4ff", "pair-54f6abd2d6d4"])
+      expect(accepted(put(free, 0, {}, "mini-03be", key))).toBe(false);
+    for (const value of [{ state: "held", pairs: [], others: 0 }, { state: "held", pairs: ["54f6abd2d6d4", "0123456789ab"], others: 0 },
+      { state: "held", pairs: ["54f6abd2d6d4", "54f6abd2d6d4"], others: 0 }, { state: "held", pairs: ["54f6abd2d6d4ff"], others: 0 },
+      { state: "held", pairs: Array.from({ length: 17 }, (_, index) => index.toString(16).padStart(12, "0")), others: 0 },
+      { state: "held", pairs: ["54f6abd2d6d4"] }, { state: "none", pairs: [] }, { state: "absent" }, null])
+      expect(accepted(put(leases(value), 0))).toBe(false);
+    expect(accepted(put(leases({ state: "none" }), 0, {}, "mini-03be", pairKey))).toBe(false);
+    expect(accepted(put(leases({ state: "none" }), 0, {}, "mini-03be", "android-0123456789ab"))).toBe(false);
+    expect(accepted(put(retained(discovery, 4242, "none"), 0, {}, "mini-03be", pairKey))).toBe(false);
+  });
+
+  test("Core keys pair observations independently and a later absent report replaces a held one", async () => {
+    const repository = new MemoryObservations();
+    let now = start;
+    const service = new TestResourceObservationService(repository, () => new Date(now));
+    await service.put("mini-03be", pairKey, put(alive("connected-run-1"), 0, {}, "mini-03be", pairKey));
+    await service.put("mini-03be", "glasses-0123456789ab", put(free, 0, {}, "mini-03be", "glasses-0123456789ab"));
+    await service.put("mini-03be", "shared", put(leases({ state: "held", pairs: ["54f6abd2d6d4"], others: 0 }), 0));
+    now += 60_000;
+    const returned = await service.put("mini-03be", pairKey, put(free, 1, {}, "mini-03be", pairKey));
+    expect(returned).toMatchObject({ revision: 2, receivedAt: new Date(now).toISOString(), observation: free });
+    expect((await service.get("mini-03be", "glasses-0123456789ab")).revision).toBe(1);
+    expect((await service.get("mini-03be", "shared")).observation?.glassesLeases).toEqual({ state: "held", pairs: ["54f6abd2d6d4"], others: 0 });
+  });
+});

@@ -203,6 +203,7 @@ function ResourceRow({ item, now, onResult }: { item: OverviewResourceObservatio
     <td className="px-4 py-3"><span className={"inline-block rounded-md px-2 py-1 text-[11px] font-medium " + status.colors}>{status.badge}</span></td>
     <td className="max-w-[210px] break-words px-4 py-3"><p>{item.hostId}</p>
       <p className="mt-1 text-[11px] text-[#68746d]">{item.resourceKey === "shared" ? "Shared guard: Mac UI and Mac audio; its owner's glasses scope decides which glasses pairs it excludes"
+        : item.resourceKey.startsWith("glasses-") ? "Glasses pair " + item.resourceKey.slice("glasses-".length) + " lease only; it names a run, not a phone"
         : "Android phone " + item.resourceKey.slice("android-".length) + " only; independent of the shared guard"}</p></td>
     <td className="max-w-[240px] break-words px-4 py-3 text-[11px]">
       {!value.owner ? <p>{value.guard.lock === "unreadable" ? "Guard unreadable" : "No guard owner"}</p>
