@@ -1,0 +1,23 @@
+BLE photo speed summary: 4 runs, 23 measured photos
+
+phone         os      cond size      n  ok  fail% retry  e2e_med  e2e_p10  e2e_min  uart_med  drain_ms  payloadKB  flag
+-----------------------------------------------------------------------------------------------------------------------
+iphone15      ios     A    medium   10   9  10.0%     0     75.0     72.9     72.9      87.0      1600      250.0  FLAG
+pixel8        android A    medium   10  10   0.0%     1     83.3     80.0     80.0      88.0       150      245.0
+iphone15      ios     D    medium    3   3   0.0%     1     52.6     50.0     50.0      61.0       850      200.0
+
+Speed floor (conditions A+B+C, p10 x 0.80, rounded down to 5 KB/s): 55 KB/s
+  limiting phone: iphone15
+  p10 iphone15     72.92 KB/s
+  p10 pixel8       80.00 KB/s
+Loaded (condition D): 40 KB/s
+
+Limiting leg:
+  iphone15       radio_limited      drain slope 6.000 ms/KB, uart median 87.00 KB/s
+  pixel8         serial_limited     drain slope 0.000 ms/KB, uart median 88.00 KB/s
+
+Runs:
+  20260928T080000Z-iphone15-A-medium transport=l2cap baud=1152000 photos=10
+  20260928T081000Z-pixel8-A-medium transport=l2cap baud=1152000 photos=10
+  20260928T082000Z-iphone15-D-medium transport=l2cap baud=1152000 photos=3
+  20260928T083000Z-pixel8-B-medium transport=unknown baud=460800 photos=0 ABORTED: UART is at 460800 baud, need 1152000

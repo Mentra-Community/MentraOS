@@ -1,0 +1,2 @@
+09-28 16:00:05.000  9001  9022 I Bridge  : LIVE: L2CAP: unavailable, staying on GATT (requires Android 10+)
+09-28 16:00:20.000  9001  9022 I Bridge  : LIVE: 📦 File transfer complete: I085113629.avif

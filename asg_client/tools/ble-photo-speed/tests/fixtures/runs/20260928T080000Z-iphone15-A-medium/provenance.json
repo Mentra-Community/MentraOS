@@ -1,0 +1,10 @@
+{
+  "run_id": "20260928T080000Z-iphone15-A-medium",
+  "aborted": null,
+  "glasses": {
+    "uart_baud": 1152000
+  },
+  "transport": {
+    "session_label": "l2cap"
+  }
+}

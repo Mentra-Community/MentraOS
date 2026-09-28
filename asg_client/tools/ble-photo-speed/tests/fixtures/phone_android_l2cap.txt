@@ -1,0 +1,4 @@
+2026-08-06 16:00:07.100 17468-17945 ReactNativeJS           com.mentra.mentra                    I  'CORE:', 'LIVE: Connected to glasses'
+2026-08-06 16:00:08.352 17468-17945 ReactNativeJS           com.mentra.mentra                    I  'CORE:', 'LIVE: L2CAP: channel open (PSM 0xC9)'
+2026-08-06 16:00:30.001 17468-17945 ReactNativeJS           com.mentra.mentra                    I  'CORE:', 'LIVE: 📦 Started new file transfer: I085113629.avif (204800 bytes, 256 packets)'
+2026-08-06 16:00:32.500 17468-17945 ReactNativeJS           com.mentra.mentra                    I  'CORE:', 'LIVE: 📦 File transfer complete: I085113629.avif'

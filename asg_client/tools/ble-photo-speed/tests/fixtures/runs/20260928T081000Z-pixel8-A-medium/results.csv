@@ -1,0 +1,12 @@
+run_id,phone,phone_os,condition,size,index,warmup,request_id,ble_img_id,outcome,failure_reason,busy_retries,transfer_retries,payload_bytes,uart_tx_ms,transfer_speed_kbps,phone_confirm_ms,phone_ack_wait_ms,last_packet_to_phone_ack_ms,e2e_kbps,transport,elapsed_s
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,0,True,bspd-fx-Amed-000,I100003200,finished,,0,0,204800,2272,88.0,2400,,150,83.33,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,1,False,bspd-fx-Amed-001,I100003201,finished,,0,0,153600,1704,88.0,1800,,150,83.33,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,2,False,bspd-fx-Amed-002,I100003202,finished,,0,0,184320,2045,88.0,2150,,150,83.72,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,3,False,bspd-fx-Amed-003,I100003203,finished,,0,0,204800,2272,88.0,2400,,150,83.33,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,4,False,bspd-fx-Amed-004,I100003204,finished,,1,0,225280,2500,88.0,2600,,150,84.62,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,5,False,bspd-fx-Amed-005,I100003205,finished,,0,0,256000,2840,88.0,3000,,150,83.33,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,6,False,bspd-fx-Amed-006,I100003206,finished,,0,0,286720,3181,88.0,3300,,150,84.85,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,7,False,bspd-fx-Amed-007,I100003207,finished,,0,0,307200,3409,88.0,3600,,150,83.33,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,8,False,bspd-fx-Amed-008,I100003208,finished,,0,0,327680,3636,88.0,3800,,150,84.21,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,9,False,bspd-fx-Amed-009,I100003209,finished,,0,0,358400,3977,88.0,4200,,150,83.33,l2cap,
+20260928T081000Z-pixel8-A-medium,pixel8,android,A,medium,10,False,bspd-fx-Amed-010,I100003210,finished,,0,0,204800,2272,88.0,2500,,150,80.0,l2cap,

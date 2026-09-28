@@ -1,0 +1,6 @@
+Sep 28 16:00:05.100 iPhone MentraOS(MentraBluetoothSDK)[512] <Notice>: LIVE: L2CAP: opening file channel (PSM 0xC9)
+Sep 28 16:00:05.400 iPhone MentraOS(MentraBluetoothSDK)[512] <Notice>: LIVE: L2CAP: channel open (PSM 0xC9)
+Sep 28 16:00:20.000 iPhone MentraOS(MentraBluetoothSDK)[512] <Notice>: LIVE: 📦 File transfer complete: I085113629.avif
+Sep 28 16:00:21.000 iPhone MentraOS(MentraBluetoothSDK)[512] <Notice>: 📊 Transfer rate: 81234 bytes/sec
+Sep 28 16:01:02.000 iPhone MentraOS(MentraBluetoothSDK)[512] <Notice>: LIVE: L2CAP: channel closed; using GATT fallback
+Sep 28 16:01:40.000 iPhone MentraOS(MentraBluetoothSDK)[512] <Notice>: LIVE: 📦 File transfer complete: I085113630.avif

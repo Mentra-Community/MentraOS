@@ -1,0 +1,174 @@
+{
+  "cells": [
+    {
+      "attempted": 10,
+      "condition": "A",
+      "drain_ms": {
+        "max": 2200.0,
+        "median": 1600.0,
+        "min": 1000.0,
+        "n": 9,
+        "p10": 1000.0
+      },
+      "e2e_kbps": {
+        "max": 75.76,
+        "median": 75.0,
+        "min": 72.92,
+        "n": 9,
+        "p10": 72.92
+      },
+      "failed": 1,
+      "failure_rate": 0.1,
+      "flagged": true,
+      "mean_payload_kb": 250.0,
+      "phone": "iphone15",
+      "phone_os": "ios",
+      "retried": 0,
+      "size": "medium",
+      "succeeded": 9,
+      "uart_kbps": {
+        "max": 87.0,
+        "median": 87.0,
+        "min": 87.0,
+        "n": 9,
+        "p10": 87.0
+      }
+    },
+    {
+      "attempted": 10,
+      "condition": "A",
+      "drain_ms": {
+        "max": 150.0,
+        "median": 150.0,
+        "min": 150.0,
+        "n": 10,
+        "p10": 150.0
+      },
+      "e2e_kbps": {
+        "max": 84.85,
+        "median": 83.33,
+        "min": 80.0,
+        "n": 10,
+        "p10": 80.0
+      },
+      "failed": 0,
+      "failure_rate": 0.0,
+      "flagged": false,
+      "mean_payload_kb": 245.0,
+      "phone": "pixel8",
+      "phone_os": "android",
+      "retried": 1,
+      "size": "medium",
+      "succeeded": 10,
+      "uart_kbps": {
+        "max": 88.0,
+        "median": 88.0,
+        "min": 88.0,
+        "n": 10,
+        "p10": 88.0
+      }
+    },
+    {
+      "attempted": 3,
+      "condition": "D",
+      "drain_ms": {
+        "max": 900.0,
+        "median": 850.0,
+        "min": 800.0,
+        "n": 3,
+        "p10": 800.0
+      },
+      "e2e_kbps": {
+        "max": 57.14,
+        "median": 52.63,
+        "min": 50.0,
+        "n": 3,
+        "p10": 50.0
+      },
+      "failed": 0,
+      "failure_rate": 0.0,
+      "flagged": false,
+      "mean_payload_kb": 200.0,
+      "phone": "iphone15",
+      "phone_os": "ios",
+      "retried": 1,
+      "size": "medium",
+      "succeeded": 3,
+      "uart_kbps": {
+        "max": 62.0,
+        "median": 61.0,
+        "min": 60.0,
+        "n": 3,
+        "p10": 60.0
+      }
+    }
+  ],
+  "floor": {
+    "conditions": [
+      "A",
+      "B",
+      "C"
+    ],
+    "floor_kbps": 55,
+    "limiting_phone": "iphone15",
+    "margin": 0.8,
+    "per_phone_p10_kbps": {
+      "iphone15": 72.92,
+      "pixel8": 80.0
+    },
+    "step_kbps": 5
+  },
+  "legs": [
+    {
+      "drain_slope_ms_per_kb": 6.0,
+      "phone": "iphone15",
+      "uart_matches_others": true,
+      "uart_median_kbps": 87.0,
+      "verdict": "radio_limited"
+    },
+    {
+      "drain_slope_ms_per_kb": 0.0,
+      "phone": "pixel8",
+      "uart_matches_others": true,
+      "uart_median_kbps": 88.0,
+      "verdict": "serial_limited"
+    }
+  ],
+  "loaded_condition_d": {
+    "floor_kbps": 40,
+    "limiting_phone": "iphone15",
+    "per_phone_p10_kbps": {
+      "iphone15": 50.0
+    }
+  },
+  "runs": [
+    {
+      "aborted": null,
+      "photos": 10,
+      "run_id": "20260928T080000Z-iphone15-A-medium",
+      "transport": "l2cap",
+      "uart_baud": 1152000
+    },
+    {
+      "aborted": null,
+      "photos": 10,
+      "run_id": "20260928T081000Z-pixel8-A-medium",
+      "transport": "l2cap",
+      "uart_baud": 1152000
+    },
+    {
+      "aborted": null,
+      "photos": 3,
+      "run_id": "20260928T082000Z-iphone15-D-medium",
+      "transport": "l2cap",
+      "uart_baud": 1152000
+    },
+    {
+      "aborted": "UART is at 460800 baud, need 1152000",
+      "photos": 0,
+      "run_id": "20260928T083000Z-pixel8-B-medium",
+      "transport": "unknown",
+      "uart_baud": 460800
+    }
+  ]
+}
