@@ -115,7 +115,7 @@ test("the production catalog registers Livestreamer as its existing Mac nightly 
   const routine = DEVICE_ROUTINES.livestreamer
   assert.equal(routine.pending, undefined)
   assert.equal(routine.platform, "ios-on-mac")
-  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/cab6f0148653d2339c53ca83836c12d5c6822207/"
+  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/LIVESTREAMER-FULL-ROUTINE.md",
     "tools/mentra-e2e/flows/livestreamer.ts", "worker/livestreamer.ts"].map(path => `${source}${path}`))
   assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",

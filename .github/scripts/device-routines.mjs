@@ -4,7 +4,7 @@ const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testin
 const androidDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58483a6c729018dc9955122dd071ecefbfb8ae92/"
 const pendingDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/754d527a3d6aac8ac971c600998aece203015394/"
 const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/69ffd29cba268d9ef2a67ee5d1b33edb2c547b90/"
-const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/cab6f0148653d2339c53ca83836c12d5c6822207/"
+const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",
