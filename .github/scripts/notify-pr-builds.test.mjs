@@ -720,8 +720,9 @@ test("planned routine labels say no test was requested instead of linking result
   await notifyPrBuilds(h.args)
   const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
   const links = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]).searchParams.get("routineId"))
-  assert.deepEqual(links, ["day1-ota"])
-  assert.equal((text.match(/Planned routine: no automatic worker is registered yet, so no test was requested\./g) ?? []).length, 3)
+  // Livestreamer is registered: like day1-ota it links its results; only the two planned routines say nothing was requested.
+  assert.deepEqual(links.sort(), ["day1-ota", "livestreamer"])
+  assert.equal((text.match(/Planned routine: no automatic worker is registered yet, so no test was requested\./g) ?? []).length, 2)
   for (const name of ["Account and miniapps", "Connected glasses \\(Android\\)", "Livestreamer"]) assert.match(text, new RegExp(name))
 })
 
