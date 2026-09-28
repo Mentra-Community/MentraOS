@@ -152,10 +152,9 @@ test("artifact digest is checked before JSON is read", async () => {
   await assert.rejects(readActionsJson(github, privateRepo, worker, "receipt", ["receipt.json"], options), /digest differs/)
 })
 
-function historyFixture({previousState, previousStep = "success", retained = true, previousAttempt = 1} = {}) {
-  const currentPlan = plan()
+function historyFixture({previousState, previousStep = "success", retained = true, previousAttempt = 1, currentPlan = plan()} = {}) {
   const previous = run(700), current = run(701, {status: "in_progress"})
-  const oldJob = {id: 70, name: jobName(currentPlan).replace("no-glasses", "day1-ota"), run_attempt: previousAttempt,
+  const oldJob = {id: 70, name: jobName({...currentPlan, row: {...currentPlan.row, routineId: "day1-ota"}}), run_attempt: previousAttempt,
     status: "completed", started_at: "2026-09-23T02:00:00Z", completed_at: "2026-09-23T02:01:00Z",
     steps: [{name: "Update original Slack message", started_at: "2026-09-23T02:00:30Z", conclusion: previousStep}]}
   const currentJob = {id: 71, name: jobName(currentPlan), run_attempt: 1, status: "in_progress", started_at: "2026-09-23T02:02:00Z"}
@@ -169,6 +168,50 @@ function historyFixture({previousState, previousStep = "success", retained = tru
       routineId: "day1-ota", requestRunId: 499, status: "failed", resultRunId: "routine-499-1-dev-day1-ota"})}),
     write: async (_path, contents) => { saved = JSON.parse(contents) }}, saved: () => saved, oldJob, currentJob}
 }
+test("both Phone routines resolve, apply, render and stay retained on their exact release post", async () => {
+  for (const [routineId, name] of [["captions-phone", "Captions with simulated glasses"], ["notes-phone", "Notes with simulated glasses"]]) {
+    const routineRequest = structuredClone(request)
+    routineRequest.routine.id = routineId
+    routineRequest.requestId = routineRequest.requestId.replace(/no-glasses$/, routineId)
+    const result = terminal(); result.request.routineId = routineId; result.resultRunId = routineRequest.requestId
+    const [resolved, ...others] = await resolveRoutineNotifications(resolver({request: routineRequest, terminal: result}))
+    assert.equal(others.length, 0)
+    assert.deepEqual(resolved.row, {routineId, requestRunId: 500, requestAttempt: 1, privateRunId: 600, privateAttempt: 1, status: "passed",
+      resultRunId: routineRequest.requestId})
+    assert.deepEqual([resolved.notification.build, resolved.notification.message], [notification().build, notification().message])
+    // The serialized update applies it over the retained earlier Day-one OTA row of the same post.
+    const fixture = historyFixture({currentPlan: resolved})
+    const state = await prepareRoutineUpdate(fixture.options)
+    assert.deepEqual(fixture.saved(), state)
+    assert.deepEqual([state.build, state.message], [notification().build, notification().message])
+    assert.deepEqual(Object.keys(state.rows).sort(), ["day1-ota", routineId].sort())
+    assert.equal(state.rows["day1-ota"].status, "failed")
+    const lines = state.payload.blocks.find(block => block.block_id === ROUTINE_BLOCK).text.text.split("\n")
+    assert.deepEqual(lines.slice(1, -1), [
+      "Day-one OTA — *Failed* · <https://admin.dev.mentraglass.com/?testRun=routine-499-1-dev-day1-ota|Recording and result> · " +
+        "<https://github.com/Mentra-Community/MentraOS/actions/runs/499/attempts/1|Request>",
+      `${name} — *Passed* · <https://admin.dev.mentraglass.com/?testRun=${routineRequest.requestId}|Recording and result> · ` +
+        "<https://github.com/Mentra-Community/MentraOS/actions/runs/500/attempts/1|Request>"])
+    assert.deepEqual(state.payload.blocks[0], notification().payload.blocks[0])
+    // A later update of another routine re-validates and keeps this retained Phone row.
+    const next = historyFixture({previousState: state})
+    const later = await prepareRoutineUpdate(next.options)
+    assert.deepEqual(later.rows[routineId], state.rows[routineId])
+    assert.equal(later.rows["no-glasses"].status, "passed")
+    // A late older attempt cannot regress the Phone row; a newer worker attempt replaces it.
+    assert.deepEqual(applyRoutineResult(state, {...resolved.row, requestRunId: 499, status: "failed"}), state)
+    assert.equal(applyRoutineResult(state, {...resolved.row, privateRunId: 601, status: "failed"}).rows[routineId].status, "failed")
+    // An unknown routine is refused as a row and as retained state; a retained state for another post never replaces it.
+    await assert.rejects(prepareRoutineUpdate(historyFixture({currentPlan: {...resolved, row: {...resolved.row, routineId: "arbitrary-routine"}}}).options),
+      /Invalid routine result row/)
+    await assert.rejects(prepareRoutineUpdate(historyFixture({currentPlan: resolved,
+      previousState: {...state, rows: {...state.rows, "arbitrary-routine": {...resolved.row, routineId: "arbitrary-routine"}}}}).options),
+    /Invalid retained release message/)
+    const elsewhere = structuredClone(state); elsewhere.message.ts = "900.123"
+    await assert.rejects(prepareRoutineUpdate(historyFixture({currentPlan: resolved, previousState: elsewhere}).options), /different release post/)
+  }
+})
+
 test("a previous failed Slack call still contributes its retained desired state", async () => {
   const fixture = historyFixture({previousStep: "failure"})
   const result = await prepareRoutineUpdate(fixture.options)
