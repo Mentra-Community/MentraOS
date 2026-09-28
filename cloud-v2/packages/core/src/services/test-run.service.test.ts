@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,7 +15,8 @@ import { TestFailureCorrectionService } from "./test-failure-correction.service"
 import { testFailureSchema, type TestFailureProvenanceCorrection } from "../types/test-failure.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
 import { TestFailureDeliveryService, startTestFailureDelivery } from "./test-failure-delivery.service";
-import { testRunQuerySchema, testRunSchema, type TestRun, type TestRunQuery } from "../types/test-run.types";
+import { boundBackendDeployment, testRunBackendDeploymentSchema, testRunQuerySchema, testRunSchema, type TestRun,
+  type TestRunBackendDeployment, type TestRunQuery } from "../types/test-run.types";
 import { StorageService } from "./storage/storage.service";
 import { LocalStorageProvider } from "./storage/providers/local-storage.provider";
 import { S3StorageProvider } from "./storage/providers/s3-storage.provider";
@@ -425,6 +427,83 @@ describe("verified media uploads and seeking", () => {
     const run = fixture(); run.outcome = "blocked"; run.outcomes.evidence = "incomplete";
     await post(run); await put();
     expect((await service.detail(run.runId)).outcomes.evidence).toBe("incomplete");
+  });
+});
+
+describe("optional backend deployment projection", () => {
+  // The synthetic shared contract fixture, byte-identical to the private producer's copy.
+  const projectionText = readFileSync(join(import.meta.dir, "test-run-backend-deployment.fixture.json"), "utf8");
+  const projection = () => JSON.parse(projectionText) as TestRunBackendDeployment;
+  const metadata = Buffer.from(JSON.stringify({ kind: "notes-backend-deployment", observations: ["before", "after"] }));
+  // The exporter's immutable claim document hash and the registered request hash are deliberately different.
+  const requestSha256 = "7".repeat(64);
+  /** A result whose projection binds this run, its claim document hash, its uploaded metadata asset and its interval. */
+  const backendRun = (patch: Partial<TestRunBackendDeployment> = {}): TestRun => {
+    const run = fixture(), value = projection();
+    run.runId = value.runId; run.requestId = value.requestId; run.channel = "dev"; delete run.prNumber;
+    run.startedAt = "2026-09-28T06:00:00.000Z"; run.finishedAt = "2026-09-28T06:00:05.000Z";
+    run.provenance.claimSha256 = value.claimSha256; run.provenance.requestSha256 = requestSha256;
+    run.assets.push({ assetId: value.evidence.assetId, kind: "metadata", contentType: "application/json",
+      filename: "notes-backend-deployment.json", sizeBytes: metadata.length, sha256: sha256(metadata) });
+    return { ...run, backendDeployment: { ...value, evidence: { ...value.evidence, sha256: sha256(metadata) }, ...patch } };
+  };
+  test("the shared fixture parses to the identical object with the source schema", () => {
+    expect(testRunBackendDeploymentSchema.parse(projection())).toEqual(projection());
+    expect(JSON.stringify(testRunBackendDeploymentSchema.parse(projection()))).toBe(JSON.stringify(JSON.parse(projectionText)));
+  });
+  test("a bound projection ingests, stays immutable and is returned with its uploaded metadata asset", async () => {
+    const run = backendRun();
+    expect(run.provenance.claimSha256).toBe(projection().claimSha256); expect(run.provenance.requestSha256).not.toBe(run.provenance.claimSha256);
+    expect(boundBackendDeployment(run)).toEqual({ proof: run.backendDeployment! });
+    expect((await post(run)).status).toBe(201);
+    expect((await post(run)).status).toBe(200);
+    expect((await post({ ...run, backendDeployment: { ...run.backendDeployment!, commitSha: "5".repeat(40) } })).status).toBe(409);
+    await ingest.request(`/${run.runId}/assets/video-1`, { method: "PUT", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "video/mp4" }, body: video });
+    const uploaded = await ingest.request(`/${run.runId}/assets/${run.backendDeployment!.evidence.assetId}`, { method: "PUT",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: metadata });
+    expect(uploaded.status).toBe(201);
+    const detail = await service.detail(run.runId);
+    expect(detail.backendDeployment).toEqual(run.backendDeployment);
+    expect(detail.outcomes.evidence).toBe("complete");
+  });
+  test("legacy producers without the projection are unchanged", async () => {
+    expect(boundBackendDeployment(fixture())).toBeNull();
+    expect((await post()).status).toBe(201);
+    expect("backendDeployment" in await service.detail("run-example-1")).toBe(false);
+  });
+  test("shape, fixed origin/repository, run/request/claim binding, metadata asset and interval are enforced", async () => {
+    const at = (second: number) => `2026-09-28T06:00:0${second}.000Z`;
+    const shapes: Record<string, unknown>[] = [{ schemaVersion: 2 }, { repository: "Mentra-Community/MentraOS" },
+      { origin: "https://example.com" }, { origin: "http://mentra-notes-miniapp-prod.mentraglass.com" }, { commitSha: "A".repeat(40) },
+      { commitSha: "b3a38baa" }, { imageDigest: "3".repeat(64) }, { claimSha256: "short" }, { deployment: { uid: "", generation: 53 } },
+      { deployment: { uid: "x", generation: 0 } }, { deployment: { uid: "x", generation: 1, name: "web" } }, { runId: "../escape" },
+      { observedBefore: "yesterday" }, { evidence: { assetId: "notes-backend-deployment", sha256: "4".repeat(64), path: "/tmp/x" } }, { token: "secret" }];
+    const bindings: [string, Partial<TestRunBackendDeployment> | ((run: TestRun) => void)][] = [
+      ["other run", { runId: "routine-124-1-dev-notes-phone" }], ["other request", { requestId: "routine-124-1-dev-notes-phone" }],
+      ["other claim", { claimSha256: "6".repeat(64) }], ["no claim provenance", run => { delete run.provenance.claimSha256; }],
+      ["request hash as claim hash", { claimSha256: requestSha256 }],
+      ["request hash substituted for a missing document hash", run => { delete run.provenance.claimSha256;
+        run.backendDeployment = { ...run.backendDeployment!, claimSha256: requestSha256 }; }],
+      ["claim document hash in the request field only", run => { run.provenance.requestSha256 = run.provenance.claimSha256!; delete run.provenance.claimSha256; }],
+      ["undeclared asset", { evidence: { assetId: "missing", sha256: sha256(metadata) } }],
+      ["asset hash", { evidence: { assetId: "notes-backend-deployment", sha256: "6".repeat(64) } }],
+      ["non-metadata asset", { evidence: { assetId: "video-1", sha256: sha256(video) } }],
+      ["before run start", { observedBefore: "2026-09-28T05:59:59.999Z" }], ["exercise before observation", { exerciseStartedAt: at(0) }],
+      ["reversed exercise", { exerciseFinishedAt: "2026-09-28T06:00:01.500Z" }], ["after observed early", { observedAfter: "2026-09-28T06:00:02.500Z" }],
+      ["after run finish", { observedAfter: "2026-09-28T06:00:05.001Z" }]];
+    for (const patch of shapes) expect((await post(backendRun(patch as Partial<TestRunBackendDeployment>))).status).toBe(400);
+    const { claimSha256: _, ...missing } = projection();
+    expect((await post({ ...backendRun(), backendDeployment: missing })).status).toBe(400);
+    for (const [name, patch] of bindings) {
+      const run = typeof patch === "function" ? backendRun() : backendRun(patch);
+      if (typeof patch === "function") patch(run);
+      expect(boundBackendDeployment(run), name).toMatchObject({ problem: expect.any(String) });
+      expect((await post(run)).status, name).toBe(400);
+    }
+    // Equal boundaries are allowed: the interval is inclusive.
+    expect((await post(backendRun({ observedBefore: "2026-09-28T06:00:00.000Z", exerciseStartedAt: "2026-09-28T06:00:00.000Z",
+      exerciseFinishedAt: "2026-09-28T06:00:05.000Z", observedAfter: "2026-09-28T06:00:05.000Z" }))).status).toBe(201);
+    expect(repository.runs.size).toBe(1);
   });
 });
 

@@ -7,6 +7,7 @@ import { existingWorkBindingDigest, existingWorkBindingOrdered, type ExistingWor
 import type { ContinuationGrant } from "../types/test-continuation.types";
 import type { TestBuild, TestDispatchReceipt } from "../types/test-dispatch.types";
 import type { TestRunClaim } from "../types/test-run-claim.types";
+import type { TestRunBackendDeployment } from "../types/test-run.types";
 import { GithubTestBuildGateway, type TestBuildGateway } from "./test-builds.service";
 import { TestContinuationService } from "./test-continuation.service";
 import { TestDispatchService, type TestDispatchRepository } from "./test-dispatch.service";
@@ -42,6 +43,9 @@ function fixture() {
     routine: { id: "no-glasses", version: "1" }, source: { repository: "Mentra-Community/MentraOS", channel: "local", headSha: "4".repeat(40) },
     delivery: { state: "acknowledged", agentRunId } } as unknown as Awaited<ReturnType<TestRunService["failureDetail"]>>;
   const result = { runId: requestId, requestId, routineId: "no-glasses", source: { headSha }, outcome: "passed",
+    startedAt: "2026-09-28T06:00:00.000Z", finishedAt: "2026-09-28T06:00:05.000Z",
+    assets: [] as { assetId: string; kind: string; contentType: string; filename: string; sizeBytes: number; sha256: string; uploaded?: boolean }[],
+    backendDeployment: undefined as TestRunBackendDeployment | undefined,
     outcomes: { test: "passed", teardown: "passed", fixture: "ready", evidence: "complete" }, fixture: { alias: "mac-01" },
     provenance: { repository: "Mentra-Community/MentraOS", archiveSha256: operation.archiveSha256, requestSha256: "9".repeat(64),
       executionMode: "ci-registered", requestRelationship: "consumed", resultGeneration: "1", terminalSnapshotSha256: "8".repeat(64),
@@ -413,6 +417,125 @@ describe("exact result lineage and verification verdict", () => {
     expect(verification.state).toBe("unverified"); expect(verification.client.state).toBe("passed");
     expect(verification.backend).toMatchObject({ required: true, state: "unverified", reason: "missing-backend-provenance",
       requirement: backend.backendRequirement });
+  });
+});
+
+describe("run-bound Notes backend deployment", () => {
+  // The same synthetic shared fixture the result schema suite parses; never a live receipt.
+  const projection = JSON.parse(readFileSync(join(import.meta.dir, "test-run-backend-deployment.fixture.json"), "utf8")) as TestRunBackendDeployment;
+  const requiredCommit = "102312a3f3d074b0cd9c4f1bc6ae891c2e0fed96";
+  const requirement = { repository: "Mentra-Community/Mentra-Notes-Miniapp", mergeCommitSha: requiredCommit };
+  const backendGrant: ExistingWorkGrant = { ...grant, backendRequirement: requirement };
+  // The worker's immutable claim document hash; deliberately different from the registered request hash ("9"s).
+  const claimDocumentSha256 = "c".repeat(64);
+  /** Attach a projection bound to the fixture's first-generation result, claim document hash and uploaded metadata asset. */
+  const prove = (f: ReturnType<typeof fixture>, patch: Partial<TestRunBackendDeployment> = {}) => {
+    const evidence = { assetId: projection.evidence.assetId, sha256: "5".repeat(64) };
+    f.result.assets.push({ assetId: evidence.assetId, kind: "metadata", contentType: "application/json", filename: "notes-backend.json",
+      sizeBytes: 120, sha256: evidence.sha256, uploaded: true });
+    f.result.provenance.claimSha256 = claimDocumentSha256;
+    f.result.backendDeployment = { ...projection, runId: requestId, requestId, claimSha256: claimDocumentSha256, commitSha: requiredCommit, evidence, ...patch };
+    return f.result.backendDeployment;
+  };
+  const settled = async (value: ExistingWorkGrant = backendGrant) => {
+    const f = fixture(); await f.service.request(value, input); f.terminal(); return f;
+  };
+  test("the exact passing first-generation result with a matching observation verifies a required backend", async () => {
+    const f = await settled(), proof = prove(f);
+    expect(proof.claimSha256).toBe(claimDocumentSha256); expect(f.result.provenance.requestSha256).toBe("9".repeat(64));
+    const { verification } = await f.service.detail(backendGrant, contract.operationId);
+    expect(verification).toEqual({ state: "verified", client: { state: "passed", resultRunId: requestId },
+      backend: { required: true, requirement, state: "verified", resultRunId: requestId, proof } });
+    // The agent API returns the exact projection object for the internal bridge to strict-parse.
+    const app = createTestFailureAgentApi(f.runs, new TestContinuationService(f.runs), undefined, undefined, f.service);
+    const response = await app.request(`/${occurrenceId}/existing-work/requests/${contract.operationId}`,
+      { headers: { authorization: `Bearer ${signTestExistingWorkGrant({ ...backendGrant, actions: ["read-results"] }, secret)}` } });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { verification: { backend: { proof: unknown } } };
+    expect(body.verification.backend.proof).toEqual(proof);
+    expect(Object.keys(body.verification.backend).sort()).toEqual(["proof", "required", "requirement", "resultRunId", "state"]);
+    expect(f.sends()).toBe(1);
+  });
+  test("a null requirement is unchanged by a present observation", async () => {
+    const f = await settled(grant); prove(f);
+    expect((await f.service.detail(grant, contract.operationId)).verification).toEqual({ state: "verified",
+      client: { state: "passed", resultRunId: requestId }, backend: { required: false } });
+  });
+  test("another commit or repository, and any unbound observation, leave the backend unverified", async () => {
+    const cases: Record<string, [string, (f: ReturnType<typeof fixture>) => void, ExistingWorkGrant?]> = {
+      "later descendant commit": ["backend-commit-mismatch", f => { prove(f, { commitSha: "7".repeat(40) }); }],
+      "historical PR9 commit": ["backend-commit-mismatch", f => { prove(f, { commitSha: "b3a38baa98ae3e030e7ee42678fd19c37c8bcb4e" }); }],
+      "other required repository": ["backend-commit-mismatch", f => { prove(f); },
+        { ...grant, backendRequirement: { repository: "Mentra-Community/Mentra-AI-Miniapp", mergeCommitSha: requiredCommit } }],
+      "other run": ["backend-proof-invalid", f => { prove(f, { runId: "routine-91-1-dev-no-glasses" }); }],
+      "other request": ["backend-proof-invalid", f => { prove(f, { requestId: "routine-91-1-dev-no-glasses" }); }],
+      "other claim hash": ["backend-proof-invalid", f => { prove(f, { claimSha256: "6".repeat(64) }); }],
+      "request hash as claim document hash": ["backend-proof-invalid", f => { prove(f, { claimSha256: "9".repeat(64) }); }],
+      "missing claim document hash": ["backend-proof-invalid", f => { prove(f); delete f.result.provenance.claimSha256; }],
+      "request hash substituted for a missing document hash": ["backend-proof-invalid", f => {
+        prove(f, { claimSha256: "9".repeat(64) }); delete f.result.provenance.claimSha256; }],
+      "evidence hash": ["backend-proof-invalid", f => { prove(f); f.result.assets[0]!.sha256 = "6".repeat(64); }],
+      "evidence asset missing": ["backend-proof-invalid", f => { prove(f); f.result.assets = []; }],
+      "outside the run": ["backend-proof-invalid", f => { prove(f, { observedAfter: "2026-09-28T06:00:06.000Z" }); }],
+      "exercise not enclosed": ["backend-proof-invalid", f => { prove(f, { exerciseStartedAt: "2026-09-28T06:00:00.500Z" }); }],
+      "malformed stored projection": ["backend-proof-invalid", f => { prove(f, { origin: "https://example.com" as never }); }],
+      "legacy producer": ["missing-backend-provenance", () => undefined],
+    };
+    for (const [name, [reason, mutate, value]] of Object.entries(cases)) {
+      const f = await settled(value); mutate(f);
+      const { verification } = await f.service.detail(value ?? backendGrant, contract.operationId);
+      expect(verification.client.state, name).toBe("passed");
+      expect(verification.state, name).toBe("unverified");
+      expect(verification.backend, name).toMatchObject({ required: true, state: "unverified", reason });
+      expect("proof" in verification.backend, name).toBe(false);
+    }
+  });
+  test("a valid observation never overrides failed, incomplete, unreturned, retained, recovery-only, pending or unknown results", async () => {
+    const cases: Record<string, (f: ReturnType<typeof fixture>) => void> = {
+      "failed test": f => { f.result.outcome = "failed"; f.result.outcomes.test = "failed"; },
+      "incomplete evidence": f => { f.result.outcomes.evidence = "incomplete"; },
+      "unverified return": f => { f.result.provenance.returnVerification = "failed"; },
+      "retained fixture": f => f.terminal(undefined, "recovery-required"),
+      "claim of another request hash": f => { f.result.provenance.requestSha256 = "6".repeat(64); },
+      "recovery only": f => {
+        f.result.outcomes.fixture = "unknown"; f.result.outcomes.teardown = "failed";
+        const recovery = structuredClone(f.result); recovery.runId = "recovery-2";
+        recovery.outcomes = { ...recovery.outcomes, fixture: "ready", teardown: "passed" };
+        recovery.provenance = { ...recovery.provenance, resultGeneration: "2", originalRunId: f.result.runId,
+          originalTerminalSnapshotSha256: f.result.provenance.terminalSnapshotSha256!, terminalSnapshotSha256: "7".repeat(64) };
+        recovery.backendDeployment = { ...recovery.backendDeployment!, runId: "recovery-2" };
+        f.extra([recovery]); },
+    };
+    for (const [name, mutate] of Object.entries(cases)) {
+      const f = await settled(); prove(f); mutate(f);
+      const { verification } = await f.service.detail(backendGrant, contract.operationId);
+      expect(verification.client.state, name).toBe("not-verified"); expect(verification.state, name).toBe("unverified");
+      expect(verification.backend, name).toMatchObject({ required: true, state: "unverified", reason: "client-not-verified" });
+    }
+    const pending = fixture(); await pending.service.request(backendGrant, input); prove(pending);
+    expect((await pending.service.detail(backendGrant, contract.operationId)).verification)
+      .toMatchObject({ state: "pending", backend: { state: "unverified", reason: "client-not-verified" } });
+    const unknown = fixture(); unknown.sendFails(); await unknown.service.request(backendGrant, input); prove(unknown); unknown.terminal();
+    expect((await unknown.service.detail(backendGrant, contract.operationId)).verification)
+      .toMatchObject({ state: "pending", backend: { state: "unverified", reason: "client-not-verified" } });
+  });
+  test("the verdict separately requires the result's request hash to be the registered claim's", async () => {
+    const f = await settled(); prove(f);
+    const claim = { requestId, requestSha256: "9".repeat(64), fixtureId: "mac-01", workerId: "mini", executionId: "execution",
+      claimedAt: "2026-09-27T08:00:00Z", settledAt: "2026-09-27T09:00:00Z", state: "terminal",
+      settlement: { state: "terminal", resultRunId: requestId } } as TestRunClaim;
+    const lateResult = { requestId, originalRunId: requestId, recoveryRunId: requestId, fixtureId: "mac-01", kind: "late-result" as const, originalAvailable: true };
+    const view = { sendState: "accepted" as const, state: "finished" as const };
+    expect(existingWorkVerification(view, [f.result as never], claim, lateResult, requirement).backend).toMatchObject({ state: "verified" });
+    // Even if a caller supplied a return resolution, a result for another registered request hash is refused.
+    const other = { ...f.result, provenance: { ...f.result.provenance, requestSha256: "6".repeat(64) } };
+    expect(existingWorkVerification(view, [other as never], claim, lateResult, requirement)).toMatchObject({ state: "unverified",
+      backend: { state: "unverified", reason: "backend-proof-invalid" } });
+  });
+  test("the operation identity is unchanged by the backend requirement", async () => {
+    const f = await settled();
+    expect(f.rows.get(contract.operationId)!.receipt.existingWork!.backendRequirement).toEqual(requirement);
+    expect([...f.rows.keys()]).toEqual([contract.operationId]);
   });
 });
 
