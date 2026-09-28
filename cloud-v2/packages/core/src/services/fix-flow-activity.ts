@@ -3,6 +3,8 @@ import { z } from "zod";
 const text = z.string().max(4000);
 const stamp = z.string().datetime().nullable().optional();
 const triage = z.object({ state: text, reason: text.optional(), nextAction: text.optional() });
+const workerLease = z.object({ state: z.enum(["active", "reconciliation-required", "inactive"]), expiresAt: z.string().datetime().optional() });
+const progressPhase = z.enum(["collecting_report", "inspecting_code", "implementing_fix", "running_tests", "reviewing_pr", "addressing_feedback"]);
 const pr = z.object({ repository: z.string().regex(/^Mentra-Community\/[A-Za-z0-9_.-]+$/),
   pullRequestNumber: z.number().int().positive(), headSha: z.string().regex(/^[a-f0-9]{40}$/),
   pullRequestLifecycle: z.object({ state: z.enum(["open", "closed", "merged"]), mergedAt: stamp }).optional() });
@@ -19,7 +21,8 @@ export const fixActivitySchema = z.object({
   acknowledgedAgentRunId: z.string().uuid().optional(),
   executionOwnerRunId: z.string().uuid().optional(), executionOwnerStatus: text.optional(), executionOwnerStatusLabel: text.optional(),
   executionOwnerUpdatedAt: z.string().datetime().optional(), executionOwnerHeartbeatAt: stamp,
-  executionOwnerTriage: triage.optional(),
+  executionOwnerTriage: triage.optional(), executionOwnerWorkerLease: workerLease.optional(),
+  executionOwnerProgressPhase: progressPhase.optional(), workerLease: workerLease.optional(), progressPhase: progressPhase.optional(),
   routineFailure: z.object({ intake: z.object({ occurrenceId: z.string().regex(/^tfo_[a-f0-9]{64}$/),
     testRunId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/) }) }),
   routineCase: z.object({ caseId: z.string().regex(/^mfc_[a-f0-9]{64}$/), anchorRunId: z.string().uuid() }).optional(),

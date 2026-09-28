@@ -18,6 +18,7 @@ const stored: StoredTestRun = { payloadSha256: "b".repeat(64), failureOccurrence
   fixture: { alias: "synthetic" }, firmwareAssertions: [], assets: [], chapters: [{ id: "NOTES-08", instruction: "Read expanded note", phase: "test", status: "failed" }],
 } };
 const activity: FixActivity = { runId: agentId, environment: "dev", taskKind: "routine-failure", executor: "mini-claude", status: "mini_running",
+  workerLease: { state: "active", expiresAt: "2099-09-28T18:05:00.000Z" },
   statusLabel: "Investigating", createdAt: at, updatedAt: at,
   routineFailure: { intake: { occurrenceId, testRunId: stored.run.runId } },
   routineCase: { caseId: `mfc_${"c".repeat(64)}`, anchorRunId: agentId },
@@ -41,7 +42,69 @@ describe("exact failure-to-fixer projection", () => {
   });
   test("pending delivery never claims an agent is running", () => {
     const result = projectFixFlow(stored, { ...occurrence, delivery: { state: "pending" } }, null, "pending", []);
-    expect(result.stage).toBe("Awaiting fixer intake"); expect(result.agent).toBeNull(); expect(result.state).toBe("active");
+    expect(result.stage).toBe("Awaiting fixer intake"); expect(result.agent).toBeNull(); expect(result.state).toBe("waiting");
+  });
+  test("waiting intake, missing source and evidence are distinct from running", () => {
+    for (const reason of ["source-required", "insufficient-evidence", "no-diagnostic-evidence"]) {
+      const result = projectFixFlow(stored, occurrence, { ...activity, status: "awaiting_executor", miniExecution: undefined,
+        miniTriage: { state: "needs-evidence", reason, nextAction: "Supply the missing evidence." } }, "available", []);
+      expect(result.state).toBe("attention"); expect(result.nextAction).toBe("Supply the missing evidence."); expect(result.pipelineStage).toBe("intake");
+    }
+    for (const status of ["awaiting_executor", "queued", "mini_waiting"]) {
+      expect(projectFixFlow(stored, occurrence, { ...activity, status }, "available", []).state).toBe("waiting");
+    }
+  });
+  test("only current structured worker custody can produce Running", () => {
+    const now = Date.parse(at);
+    const expired = { state: "active" as const, expiresAt: at };
+    for (const lease of [expired, { state: "reconciliation-required" as const }, { state: "inactive" as const }, { state: "active" as const }]) {
+      const result = projectFixFlow(stored, occurrence, { ...activity, workerLease: lease, heartbeatAt: at }, "available", [], now);
+      expect(result.state).toBe("attention"); expect(result.stage).toBe("Worker ownership needs reconciliation");
+    }
+    const oldController = projectFixFlow(stored, occurrence, { ...activity, workerLease: undefined, heartbeatAt: at }, "available", [], now);
+    expect(oldController.state).toBe("unknown"); expect(oldController.stage).toBe("Worker execution unconfirmed");
+    expect(projectFixFlow(stored, occurrence, activity, "available", [], now).state).toBe("running");
+  });
+  test("blocked triage is attention for both original and acknowledged execution owners", () => {
+    for (const state of ["needs-evidence", "held", "rejected", "linked-owner"]) {
+      const triage = { state, reason: "reconciliation-required", nextAction: "Reconcile this recorded owner before execution." };
+      const own = { ...activity, status: "awaiting_executor", miniTriage: triage, miniExecution: undefined };
+      const linked: FixActivity = { ...own, runId: "22222222-2222-4222-8222-222222222222", status: "mini_linked",
+        acknowledgedAgentRunId: agentId, executionOwnerRunId: agentId, executionOwnerStatus: "awaiting_executor",
+        executionOwnerTriage: triage, miniTriage: { state: "admitted", nextAction: "Historical own admission" } };
+      for (const row of [own, linked]) {
+        expect(matchingFixActivity(stored, occurrence, row, "dev")).toEqual(row);
+        const result = projectFixFlow(stored, occurrence, row, "available", []);
+        expect(result.state).toBe("attention");
+        expect(result.nextAction).toBe(row === linked ? `This failure is linked to the recorded case. ${triage.nextAction}` : triage.nextAction);
+        expect(result.pipelineStage).toBe("intake");
+      }
+    }
+    for (const state of ["pending", "waiting-evidence", "existing-work"])
+      expect(projectFixFlow(stored, occurrence, { ...activity, status: "awaiting_executor", miniTriage: { state }, miniExecution: undefined }, "available", []).state).toBe("waiting");
+  });
+  test("linked execution uses the acknowledged owner's lease, never the observation's lease", () => {
+    const linked = { ...activity, executionOwnerRunId: agentId, executionOwnerStatus: "mini_running" };
+    expect(projectFixFlow(stored, occurrence, linked, "available", []).state).toBe("unknown");
+    expect(projectFixFlow(stored, occurrence, { ...linked, executionOwnerWorkerLease: activity.workerLease }, "available", []).state).toBe("running");
+  });
+  test("lifecycle stages use structured phases and checkpoints, not status label prose", () => {
+    const intake = projectFixFlow(stored, occurrence, { ...activity, status: "awaiting_executor", statusLabel: "PR merged and review finished", miniExecution: undefined }, "available", []);
+    expect(intake.pipelineStage).toBe("intake");
+    expect(projectFixFlow(stored, occurrence, { ...activity, progressPhase: "implementing_fix" }, "available", []).pipelineStage).toBe("fix");
+    const review = projectFixFlow(stored, occurrence, { ...activity, status: "mini_waiting", progressPhase: "inspecting_code",
+      miniExecution: { ...activity.miniExecution!, stage: { stage: "waiting-for-review", reason: "review-pending" } } }, "available", []);
+    expect(review.pipelineStage).toBe("review"); expect(review.state).toBe("waiting");
+    const cancelled = projectFixFlow(stored, occurrence, { ...activity, miniTriage: { state: "cancelled" } }, "available", []);
+    expect(cancelled.pipelineStage).toBe("closed");
+  });
+  test("attention sorts ahead of a current worker and waiting intake", async () => {
+    const rows = ["a", "b", "c"].map(letter => ({ ...stored, run: { ...stored.run, runId: `run-${letter}` },
+      failureOccurrences: [{ ...occurrence, occurrenceId: `tfo_${letter.repeat(64)}` }] }));
+    const activities = rows.map((row, index) => ({ ...activity, status: ["mini_running", "awaiting_executor", "mini_needs_input"][index]!,
+      routineFailure: { intake: { occurrenceId: row.failureOccurrences[0]!.occurrenceId, testRunId: row.run.runId } } }));
+    const result = await new FixFlowService(repository(rows), reader(activities), "dev").list();
+    expect(result.flows.map(flow => flow.state)).toEqual(["attention", "running", "waiting"]);
   });
   test("recorded triage cancellation ends both original and linked placeholder activity without claiming a fix", () => {
     const cancelled = { state: "cancelled", reason: "reconciliation-required", nextAction: "This intake was cancelled after reconciliation." };
@@ -129,11 +192,25 @@ describe("exact failure-to-fixer projection", () => {
   test("a merged PR does not complete a still-running verification", () => {
     const result = projectFixFlow(stored, occurrence, { ...activity, pullRequests: [{ repository: "Mentra-Community/MentraOS", pullRequestNumber: 42,
       headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] }, "available", []);
-    expect(result.stage).toBe("Fix merged"); expect(result.state).toBe("active"); expect(result.nextAction).toContain("pending");
+    expect(result.stage).toBe("Fix merged"); expect(result.state).toBe("running"); expect(result.nextAction).toContain("pending");
+  });
+  test("no-fix terminal outcomes stay closed even when older PR metadata is merged", () => {
+    for (const status of ["no_fix_needed", "third_party_out_of_scope"]) {
+      const own: FixActivity = { ...activity, status, statusLabel: "No fix for this occurrence", miniExecution: undefined,
+        pullRequests: [{ repository: "Mentra-Community/MentraOS", pullRequestNumber: 42,
+          headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] };
+      const linked: FixActivity = { ...own, status: "mini_linked", executionOwnerRunId: agentId,
+        executionOwnerStatus: status, executionOwnerStatusLabel: own.statusLabel };
+      for (const row of [own, linked]) {
+        const result = projectFixFlow(stored, occurrence, row, "available", []);
+        expect(result.state).toBe("completed"); expect(result.pipelineStage).toBe("closed");
+        expect(result.stage).not.toContain("Fix merged"); expect(result.pullRequests[0]?.state).toBe("merged");
+      }
+    }
   });
   test("a historical stop does not override a currently running agent", () => {
     const result = projectFixFlow(stored, occurrence, { ...activity, miniTurnFailure: { kind: "process-exit", phase: "model", at } }, "available", []);
-    expect(result.state).toBe("active"); expect(result.stage).toBe("Investigating");
+    expect(result.state).toBe("running"); expect(result.stage).toBe("Mini worker active");
     expect(result.timeline.some(item => item.stage === "agent-stop")).toBe(true);
   });
   test("an actual blocked controller remains visible even after its PR merged", () => {

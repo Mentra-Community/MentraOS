@@ -9,7 +9,9 @@ export interface FixFlow {
   failure: { code: string; message: string; expected?: string };
   startedAt: string;
   updatedAt: string;
-  state: "active" | "attention" | "completed" | "unknown";
+  // active is accepted only for older Core responses during a rolling deployment.
+  state: "running" | "waiting" | "attention" | "completed" | "unknown" | "active";
+  pipelineStage?: "intake" | "investigation" | "fix" | "review" | "verification" | "merged" | "closed" | "unknown";
   stage: string;
   nextAction: string;
   agent: { runId: string; executor: string; status: string; caseId: string | null; anchorRunId: string | null;
