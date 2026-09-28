@@ -1,33 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { CHECKPOINT_FRESH_MS, type OverviewClaim, type OverviewFixtureSummary, type OverviewJob, type OverviewRecordedFailure, type OverviewRequest,
-  type OverviewResourceObservation, type TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
-import type { TestResourceReason } from "../../../../packages/core/src/types/test-resource-observation.types";
+import type { OverviewClaim, OverviewFixtureSummary, OverviewJob, OverviewRecordedFailure, OverviewRequest,
+  OverviewResourceObservation, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import { api } from "../lib/api";
+import { checkpointIsFresh, displayState, elapsed, LaneOverview, phaseNames, resourceGuidance, resourceIsFresh, type ResourceGuidance } from "./test-lanes";
+
+export { displayState, elapsed };
 
 const triggerNames: Record<OverviewRequest["trigger"], string> = {
   "pr-label": "PR label", "successful-build": "Automatic build", "workflow-dispatch": "Workflow dispatch",
   nightly: "Nightly", admin: "Admin", unknown: "Origin unavailable",
 };
 const platformName = (value?: OverviewRequest["platform"]) => value === "ios-on-mac" ? "iOS on Mac" : value === "ios" ? "iPhone" : value === "android" ? "Android" : "Platform not reported";
-const phaseNames = { preflight: "Checking prerequisites", setup: "Setting up", test: "Testing", "final-assertions": "Final checks",
-  teardown: "Cleaning up", "return-verification": "Verifying return state", evidence: "Saving evidence" };
-const checkpointIsFresh = (receivedAt: string, now: number) => now - Date.parse(receivedAt) <= CHECKPOINT_FRESH_MS;
-/**
- * Core shows a GitHub-queued job as running only from a fresh worker checkpoint.
- * The view keeps aging that checkpoint between refreshes: once it is no longer
- * recent, the activity is unconfirmed rather than running.
- */
-export function displayState(job: OverviewJob, now: number): OverviewJob["state"] {
-  return job.reportedActivity && !checkpointIsFresh(job.reportedActivity.receivedAt, now) ? "unknown" : job.state;
-}
-export function elapsed(since: string, now: number) {
-  const seconds = Math.max(0, Math.floor((now - Date.parse(since)) / 1000));
-  if (!Number.isFinite(seconds)) return "Unknown";
-  if (seconds < 60) return seconds + "s";
-  if (seconds < 3600) return Math.floor(seconds / 60) + "m " + seconds % 60 + "s";
-  return Math.floor(seconds / 3600) + "h " + Math.floor(seconds % 3600 / 60) + "m";
-}
 function RequestLabel({ request }: { request: OverviewRequest }) {
   return <div className="mb-2 last:mb-0">
     <div className="font-medium">{request.channel === "pr" ? "PR #" + request.prNumber : request.release ?? request.channel + " build"} · {request.routineId}</div>
@@ -172,51 +156,11 @@ function FixtureHistory({ data, now, onResult }: { data: TestRunOverview; now: n
   </section>;
 }
 
-/** Server receipt age after which a reported observation is no longer treated as current. */
-const RESOURCE_FRESH_MS = 120_000;
-type ResourceGuidance = { summary: string; responsible: "Owning test runner" | "Test runner / operator" | "Operator"; next: string };
-/** Fixed wording per reported reason. Observations carry no free text; only progress has bounded step/action labels. */
-const resourceGuidance: Record<TestResourceReason, ResourceGuidance> = {
-  "owner-process-alive": { summary: "The guard owner's PID answered a liveness probe.", responsible: "Owning test runner",
-    next: "Follow the owning run. A live PID is an observation, not proof of the owner's identity." },
-  "owner-liveness-unknown": { summary: "The guard owner's liveness could not be determined.", responsible: "Test runner / operator",
-    next: "Refresh this observation from the host. Do not assume the owner stopped." },
-  "owner-unverifiable": { summary: "A guard exists, but its owner record could not be read or validated.", responsible: "Test runner / operator",
-    next: "Inspect the guard with the host's read-only lane status. Only the owner's recovery or the normal acquisition may change it." },
-  "dead-retained-reservation": { summary: "The owner process is gone and the guard is retained for its run.", responsible: "Test runner / operator",
-    next: "Resume this run's recovery through its original owner and publish verified return evidence. A dead PID or completed checkpoint does not release this hold." },
-  "dead-retained-unclassified-installation": { summary: "The owner process is gone and the guard is retained without a lifecycle reservation.", responsible: "Test runner / operator",
-    next: "Identify the retained installation and recover it through its original owner. This view cannot release it." },
-  "dead-unretained-owner": { summary: "The owner process is gone and did not retain the guard.", responsible: "Test runner / operator",
-    next: "Only the next normal acquisition may reclaim this guard. Nothing here removes it." },
-  "reclaim-marker-present": { summary: "A reclaim was in progress during observation.", responsible: "Test runner / operator",
-    next: "Refresh this observation after the reclaim settles." },
-  "guard-changed-during-observation": { summary: "The guard changed while it was being observed.", responsible: "Test runner / operator",
-    next: "Refresh this observation." },
-  "reclaim-marker-unreadable": { summary: "The reclaim marker could not be read.", responsible: "Operator",
-    next: "Check the host's guard folder permissions with the read-only lane status, then refresh." },
-  "no-guard-fixture-not-supplied": { summary: "No owner observed. The fixture record was not checked.", responsible: "Test runner / operator",
-    next: "Nothing to recover from this observation. It checks no prerequisites and admits no routine." },
-  "no-guard-recorded-fixture-ready": { summary: "No owner observed.", responsible: "Test runner / operator",
-    next: "Nothing to recover from this observation. Recorded fixture state is context; a routine still needs the normal acquisition and prerequisite checks." },
-  "recorded-fixture-busy": { summary: "No owner observed, but the fixture record says busy.", responsible: "Test runner / operator",
-    next: "Reconcile the fixture record through its last run's recovery before routines use it." },
-  "recorded-fixture-recovery-required": { summary: "No owner observed; the fixture record requires recovery.", responsible: "Test runner / operator",
-    next: "Recover the fixture and publish verified return evidence before routines use it." },
-  "recorded-fixture-uncommissioned": { summary: "No owner observed; the fixture is recorded as uncommissioned.", responsible: "Operator",
-    next: "Commission this fixture before routines use it." },
-  "fixture-record-absent": { summary: "No owner observed; no fixture record exists.", responsible: "Operator",
-    next: "Commission this fixture before routines use it." },
-  "fixture-record-malformed": { summary: "No owner observed; the fixture record is malformed.", responsible: "Operator",
-    next: "Recommission this fixture before routines use it." },
-  "fixture-record-unreadable": { summary: "No owner observed; the fixture record could not be read.", responsible: "Operator",
-    next: "Check the fixture record's permissions on the host, then refresh." },
-};
 const noOwnerStates = new Set(["available-to-attempt", "idle-prerequisites-unchecked", "idle-prerequisite-blocked", "idle-prerequisite-unknown"]);
 const amber = "bg-[#fff5df] text-[#805619]", red = "bg-[#fff0e9] text-[#a64235]", neutral = "bg-[#f0f2ef] text-[#59655e]";
 /** Display state only. Age never clears a retained hold and never confirms a live owner. */
 export function resourceStatus(item: OverviewResourceObservation, now: number) {
-  const fresh = now - Date.parse(item.receivedAt) <= RESOURCE_FRESH_MS;
+  const fresh = resourceIsFresh(item, now);
   const { state } = item.observation;
   if (state === "retained-recovery-required") return { badge: "retained hold", colors: red, fresh, priority: 0 };
   if (state === "busy") return fresh ? { badge: "owner alive", colors: neutral, fresh, priority: 2 } : { badge: "unconfirmed", colors: amber, fresh, priority: 1 };
@@ -320,6 +264,8 @@ export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: T
   const states = ["running", "queued", "waiting", "blocked", "unknown"] as const;
   return <>
     <p className="mt-2 text-[11px] text-[#68746d]">View refreshed {elapsed(data.observedAt, now)} ago.</p>
+    <LaneOverview data={data} now={now} onResult={onResult} />
+    <h4 className="mt-5 text-sm font-semibold">CI requests</h4>
     <div className="mt-3 flex flex-wrap gap-2 text-xs">{states.map(state => <span key={state} className="rounded-md bg-[#f1f4ef] px-2 py-1">
       <strong>{data.jobs.filter(job => displayState(job, now) === state).length}</strong> {state}</span>)}</div>
     {data.warnings.length ? <div role="status" className="mt-3 space-y-1 rounded-lg bg-[#fff5df] p-3 text-xs text-[#805619]">{data.warnings.map(message => <p key={message}>{message}</p>)}</div> : null}
@@ -329,6 +275,7 @@ export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: T
     </table></div> : <p className="mt-3 text-sm text-[#68746d]">{data.warnings.length ? "No activity could be confirmed from the available sources."
       : data.fixtureAttention?.length ? unverifiedFixtures(data).length || !data.fixtureSummary?.length ? "No active jobs. Some CI return evidence below is not verified."
         : "No active jobs. Resolved follow-up history is below." : "No active jobs or unresolved claims were observed."}</p>}
+    <details className="mt-5 text-xs" aria-label="Technical details"><summary className="cursor-pointer text-sm font-semibold">Technical details: host guard observations and CI history</summary>
     <ResourceObservations data={data} now={now} onResult={onResult} />
     {data.fixtureAttention?.length ? <FixtureHistory data={data} now={now} onResult={onResult} /> : null}
     {data.resolvedRecoveries.length ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-[#68746d]">Verified return evidence ({data.resolvedRecoveries.length})</summary>
@@ -342,6 +289,7 @@ export function TestRunOverviewView({ data, now, onResult, onCancel }: { data: T
         <a className="text-[#087d50] underline" href={job.workflow!.url} target="_blank" rel="noreferrer">Maintenance {job.workflow!.runId}</a>
         {" · "}{job.workflow!.conclusion ?? "unknown"}{" · "}{job.workerName ?? "Worker unavailable"}{" · "}{elapsed(job.workflow!.updatedAt, now)} ago
       </li>)}</ul></details> : null}
+    </details>
   </>;
 }
 

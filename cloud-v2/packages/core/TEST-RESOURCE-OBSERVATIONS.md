@@ -2,8 +2,9 @@
 
 Hosts can report what the read-only lane status saw on their local guards: the shared
 Mac app guard and each phone-only Android guard. Core keeps the latest report for each
-host resource and Admin shows it in **Live activity → Local resource observations**. It
-sits beside CI jobs, claims and immutable results and is kept apart from them.
+host resource. Admin shows one card per reported lane at the top of **Live activity →
+Test lanes**, and the full guard wording under **Technical details**. It sits beside CI
+jobs, claims and immutable results and is kept apart from them.
 
 This is attributed reporting only. It is not a CI claim or execution grant, and it is not
 a lease, a readiness verdict or proof of hardware control. There is no API to clear, reclaim,
@@ -85,6 +86,53 @@ row per `{hostId, resourceKey}`, and startup creates its unique index before ser
 
 ## Admin display
 
+### Test lanes
+
+Every `{hostId, resourceKey}` that has reported is one card. The stored rows are the lane
+inventory: hosts are never hardcoded, and a host that has not reported (for example a
+development MacBook without `MENTRA_E2E_REPORT_HOST_ID`) is not shown. Admin derives each
+card from the overview response Core already returns; the API is unchanged.
+
+| Card state | When |
+| --- | --- |
+| Recovery required | A retained guard (any age: a dead PID, a completed checkpoint or a newer report never clears it; only the owner's verified recovery releases it), or a current report whose fixture record is `recovery-required` or `busy` without an owner. |
+| Running | A live owner in a report from the last 2 minutes, and either its run's latest step is unfinished and was received within 2 minutes, or its exact reserved request is a GitHub job in progress and the latest step has not completed. The latest step is the highest journal sequence from host or CI claim progress, never the latest arrival; a repeated sequence keeps its first receipt time. |
+| Reserved, idle | A current report of a live owner without recent step progress. |
+| Available | A current report with no owner and a fixture recorded ready. Admission still runs its normal checks. |
+| Not ready | A current report with no owner whose fixture record is uncommissioned, missing, malformed, unreadable or not checked. |
+| Offline or unknown | Any other state, and every report older than 2 minutes that is not a retained guard. Fresh CI progress never refreshes a stale host report; it is shown as separate CI activity. |
+
+The card itself stays short: host and lane, state, the work holding the lane (routine and
+build, taken only from the CI job or claim with the owner's exact reserved request ID, else
+parsed from that ID with "build details not reported"; other run IDs are local sessions),
+the current step only while its own progress is recent and unfinished, the last report age,
+a plain blocker, who is responsible, the next action, and the queue. Its closed **Lane
+details** hold the resource key, run ID, worker and GitHub run link, owner PID and
+liveness, glasses scope, the last reported step with its own receipt age, the last
+lifecycle checkpoint (labelled historical; a newer report never makes it current), the
+fixed guard wording and the host heartbeat command.
+
+The holder is named only as reported: a CI run when the owner's reservation is a CI request ID,
+a local session for any other reserved run ID, and "a live process that reported no run"
+(host operator) when the owner has no reservation. A recovery card's next action names the
+recorded pending lifecycle step (`pendingReconciliation`, else `pendingOperation`) when the
+observation carries one. The observation carries no other recovery detail, so a manual
+action outside the lifecycle (for example a host permission check) is not shown.
+
+The queue counts queued or waiting CI requests of the lane's platform (`shared`: iOS on
+Mac, `android-*`: Android) on lanes whose own guard or fixture record names a CI request.
+GitHub assigns runners, so the card does not claim the lane will take them. Requests
+without a platform are counted separately. A completed CI job, a GitHub job without the
+guard owner's exact request, an open app or a missing GitHub job never makes a lane
+running or available.
+
+An idle lane stays current only if its host keeps reporting. The private
+`lane-status.ts --publish --interval-seconds N` (10-60 s) repeats the normal report as a
+heartbeat. Without it, an idle lane shows as offline or unknown two minutes after its
+last report.
+
+### Technical details
+
 - Each row shows host, scope (shared Mac UI/audio/all glasses, or one independent Android
   phone), observed owner and run, liveness as observed, pending lifecycle step and
   progress, Core receipt age, and fixed reason, responsibility and next action.
@@ -109,7 +157,7 @@ From `cloud-v2`:
 ```bash
 bun test packages/core/src/services/test-resource-observation.service.test.ts \
   packages/core/src/services/test-run-overview.service.test.ts
-(cd websites/admin && bun test src/pages/test-run-overview.test.tsx)
+(cd websites/admin && bun test src/pages/test-run-overview.test.tsx src/pages/test-lanes.test.tsx)
 ```
 
 To run the real compare-and-set suite, point it at a plain loopback Mongo:
