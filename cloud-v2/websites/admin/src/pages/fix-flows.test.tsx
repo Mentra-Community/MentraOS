@@ -73,6 +73,21 @@ describe("Fix flows navigation and recorded states", () => {
     expect(html).toContain('aria-label="Merged: 0 flow groups"'); expect(html).toContain("All flows");
     expect(html).toContain(`?fixFlow=${flow.occurrenceId}`); expect(html).not.toContain(`?fixFlow=${waiting.occurrenceId}`);
   });
+  test("a completed occurrence cannot hide pending verification or attention in its case group", () => {
+    const completed: FixFlow = { ...flow, state: "completed", pipelineStage: "merged", updatedAt: "2026-09-28T19:00:00Z" };
+    const pending: FixFlow = { ...flow, occurrenceId: `tfo_${"2".repeat(64)}`, state: "waiting", pipelineStage: "verification" };
+    const attention: FixFlow = { ...flow, occurrenceId: `tfo_${"3".repeat(64)}`, pipelineStage: "review" };
+    const waitingGroups = groupFixFlows([completed, pending]);
+    expect(waitingGroups).toHaveLength(1);
+    expect(waitingGroups[0]?.status).toBe("waiting"); expect(waitingGroups[0]?.stage).toBe("verification");
+    expect(filterFixFlowGroups(waitingGroups, { kind: "stage", value: "merged" })).toHaveLength(0);
+    const attentionGroups = groupFixFlows([completed, pending, attention]);
+    expect(attentionGroups[0]?.status).toBe("attention"); expect(attentionGroups[0]?.stage).toBe("review");
+    const html = renderToStaticMarkup(<FixFlowOverview data={{ flows: [completed, pending, attention], activity: "available", refreshedAt: completed.updatedAt, limited: false }} filter={null} onFilter={() => {}} onSelect={() => {}} />);
+    expect(html).toContain("1 flows"); expect(html).toContain("3 failures");
+    for (const occurrence of [completed, pending, attention]) expect(html).toContain(`?fixFlow=${occurrence.occurrenceId}`);
+    expect(completed.state).toBe("completed"); expect(pending.state).toBe("waiting");
+  });
   test("legacy broad active responses are unverified, never Running", () => {
     const result = groupFixFlows([{ ...flow, state: "active", pipelineStage: undefined }]);
     expect(result[0]?.status).toBe("unknown"); expect(result[0]?.stage).toBe("unknown");
