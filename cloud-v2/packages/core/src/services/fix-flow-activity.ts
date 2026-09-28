@@ -7,7 +7,7 @@ const pr = z.object({ repository: z.string().regex(/^Mentra-Community\/[A-Za-z0-
   pullRequestLifecycle: z.object({ state: z.enum(["open", "closed", "merged"]), mergedAt: stamp }).optional() });
 const checkpoint = z.object({ action: text, intentId: text.optional(), repository: pr.shape.repository.optional(),
   pullRequest: pr.shape.pullRequestNumber.optional(), headSha: pr.shape.headSha.optional(),
-  reviewId: z.string().regex(/^\d+$/).optional(), verdict: text.optional(), summary: text.optional(), components: z.array(text).optional(),
+  reviewId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/).optional(), verdict: text.optional(), summary: text.optional(), components: z.array(text).optional(),
   state: text.optional(), routineId: text.optional(), outcome: text.optional(), resultId: text.optional(),
   requestRunId: z.number().int().positive().optional(), requestAttempt: z.number().int().positive().optional(),
   occurrence: z.object({ agentRunId: z.string().uuid(), occurrenceId: z.string().regex(/^tfo_[a-f0-9]{64}$/) }).optional(),

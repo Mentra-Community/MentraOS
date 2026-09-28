@@ -102,6 +102,14 @@ describe("exact failure-to-fixer projection", () => {
       miniExecution: { ...activity.miniExecution!, checkpoints: [{ action: "record-pr", repository: "Mentra-Community/MentraOS", pullRequest: 42, headSha: "b".repeat(40) }] } }, "available", []);
     expect(result.pullRequests[0].state).toBe("unknown"); expect(result.stage).not.toBe("Fix merged");
   });
+  test("an unavailable review marker remains visible without inventing a GitHub review URL", () => {
+    const unavailable = fixActivitySchema.parse({ ...activity, miniExecution: { ...activity.miniExecution!, checkpoints: [
+      { action: "record-review", repository: "Mentra-Community/MentraOS", pullRequest: 42, headSha: "a".repeat(40), reviewId: "unavailable_42", verdict: "unavailable" },
+    ] } });
+    const result = projectFixFlow(stored, occurrence, unavailable, "available", []);
+    expect(result.timeline.find(event => event.stage === "record-review")).toMatchObject({
+      title: "Review unavailable", url: "https://github.com/Mentra-Community/MentraOS/pull/42" });
+  });
   test("a merged PR does not complete a still-running verification", () => {
     const result = projectFixFlow(stored, occurrence, { ...activity, pullRequests: [{ repository: "Mentra-Community/MentraOS", pullRequestNumber: 42,
       headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] }, "available", []);

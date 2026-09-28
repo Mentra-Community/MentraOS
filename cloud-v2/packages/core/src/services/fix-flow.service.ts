@@ -140,7 +140,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
       case "record-pr": title = `Fix PR #${cp.pullRequest}`; detail = cp.headSha ?? null; break;
       case "start-review": title = `Review started for #${cp.pullRequest}`; detail = cp.headSha ?? null; break;
       case "record-review": title = cp.verdict === "changes-requested" ? "Review requested changes" : cp.verdict === "approved" ? "Review approved" : "Review unavailable";
-        detail = cp.headSha ?? null; if (url && cp.reviewId) link = `${url}#pullrequestreview-${cp.reviewId}`; break;
+        detail = cp.headSha ?? null; if (url && cp.reviewId && /^\d+$/.test(cp.reviewId)) link = `${url}#pullrequestreview-${cp.reviewId}`; break;
       case "record-dispatch": title = "Verification rerun requested"; detail = `Request ${cp.requestRunId}, attempt ${cp.requestAttempt}`;
         link = cp.requestRunId ? `https://github.com/Mentra-Community/MentraOS/actions/runs/${cp.requestRunId}` : null; break;
       case "consume-result": title = `Verification result: ${words(cp.outcome ?? "unknown")}`; detail = cp.resultId ?? null; break;
