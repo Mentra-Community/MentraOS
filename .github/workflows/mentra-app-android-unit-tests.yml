@@ -13,6 +13,7 @@ on:
       - "mobile/modules/frame-preview/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "scripts/softap-call-proof*.mjs"
+      - ".github/scripts/install-android-sdk*"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
   push:
     branches:
@@ -24,6 +25,7 @@ on:
       - "mobile/modules/frame-preview/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "scripts/softap-call-proof*.mjs"
+      - ".github/scripts/install-android-sdk*"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
   workflow_dispatch:
 
@@ -35,6 +37,7 @@ concurrency:
 jobs:
   unit-tests:
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -49,14 +52,16 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          # The retired `tools` package (the action's default) is no longer a
-          # valid download; name what the build needs, as the app build does.
-          packages: platform-tools build-tools;36.0.0 platforms;android-36
+          # Bootstrap sdkmanager and licenses only. Install packages with retries below.
+          packages: ""
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Test Android SDK download recovery
+        run: node --test .github/scripts/install-android-sdk.test.mjs
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -84,6 +89,9 @@ jobs:
       - name: Install dependencies
         working-directory: ./mobile
         run: bun install --frozen-lockfile
+
+      - name: Install Android toolchain with download retries
+        run: node .github/scripts/install-android-sdk.mjs --mobile mobile
 
       # app.config.ts reads mobile/.env, so prebuild needs one. Unit tests never
       # reach the network, so the dummy values in .env.example are sufficient.
