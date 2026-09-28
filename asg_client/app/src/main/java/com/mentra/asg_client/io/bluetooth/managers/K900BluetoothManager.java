@@ -12,6 +12,7 @@ import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
+import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
@@ -321,6 +322,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 onBesRecoveryFailed();
                             }
                         });
+        BesTraceTail.get().setSender(this::sendQuietCommand);
         comManager.registerListener(this);
         comManager.start();
     }
@@ -493,6 +495,23 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         && number <= Integer.MAX_VALUE
                 ? (int) number
                 : null;
+    }
+
+    /** BES TRACE delivery: the normal write safety path without per-frame logging. */
+    private boolean sendQuietCommand(String json) {
+        byte[] payload = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return transportCoordinator.runNormalWrite(() -> {
+            if (!linkState.isSerialOpen()) {
+                return false;
+            }
+            byte[] frame = BesWireFormat.packDataCommand(
+                    payload, BesWireFormat.CMD_TYPE_STRING, uartToBesEndian);
+            boolean sent = comManager.write(frame);
+            if (sent) {
+                BesLivenessMonitor.get().onOutboundWrite();
+            }
+            return sent;
+        });
     }
 
     private boolean sendMessageInternalLocked(byte[] data) {
@@ -1321,6 +1340,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         uartEvidenceInvalidatedAtElapsedMs = SystemClock.elapsedRealtime();
         framedPathProven = false;
         I2sReadyGate.invalidateLink();
+        BesTraceTail.get().setSupported(false);
     }
 
     private BesUartTransportCoordinator.SafetyPolicy currentBesOtaSafetyPolicy() {
@@ -1529,6 +1549,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 linkState.capsAdvertised(applyBesWireCaps(json));
                                 JSONObject caps = json.optJSONObject("wire_caps");
                                 I2sReadyGate.setSupported(caps != null && caps.optInt("i2s_ready", 0) == 1);
+                                BesTraceTail.get()
+                                        .setSupported(caps != null && caps.optInt("rlog_uart", 0) == 1);
                             });
             if (result == BesUartTransportCoordinator.SystemVersionResult.IGNORED) {
                 Log.i(TAG, "Ignoring sr_syvr from a retired UART session");
@@ -2219,6 +2241,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 for (byte[] message : completeMessages) {
                     if (!transportCoordinator.isCurrentSerialSession(receiveSession)) {
                         break;
+                    }
+                    // BES TRACE delivery frames bypass BleTrace and listener logging.
+                    if (BesWireFormat.isK900ProtocolFormat(message)
+                            && BesTraceTail.get()
+                                    .onUartPayload(BesWireFormat.extractPayloadAuto(message))) {
+                        BesLivenessMonitor.get().onInboundFrame();
+                        if (BesWireFormat.isValidLinkHealthFrame(message)) {
+                            onValidUartFrame(receiveSession);
+                        }
+                        continue;
                     }
                     BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
                     BesLivenessMonitor.get().onInboundFrame();

@@ -3,7 +3,10 @@ package com.mentra.asg_client.service.core.handlers;
 import android.content.Context;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
+import com.mentra.asg_client.io.bes.log.BesTraceStore;
+import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.McuEventParser;
@@ -170,6 +173,25 @@ public class K900CommandHandler {
             IConfigurationManager configManager,
             String apiBaseUrl,
             java.util.function.Consumer<String> relayFirmwareJson) {
+        // Firmware that delivers its TRACE ring continuously already put the last 30 minutes
+        // on disk; a fresh mh_logs dump would add only the last few seconds.
+        BesTraceTail tail = BesTraceTail.get();
+        if (tail.canServeIncidents()) {
+            BesLogManager session =
+                    (relayFirmwareJson != null)
+                            ? new BesLogManager(incidentId, context, configManager, relayFirmwareJson)
+                            : new BesLogManager(incidentId, context, configManager, apiBaseUrl);
+            java.util.List<BesTraceStore.Line> lines =
+                    relayFirmwareJson != null
+                            ? tail.store().readNewest(
+                                    AsgConstants.BES_TRACE_STORE_RETENTION_MS,
+                                    AsgConstants.BES_TRACE_BLE_RELAY_MAX_BYTES)
+                            : tail.store().readSince(AsgConstants.BES_TRACE_STORE_RETENTION_MS);
+            Log.i(TAG, "📋 BES logs for incident " + incidentId + " from the TRACE store ("
+                    + lines.size() + " lines)");
+            session.deliverStored(BesTraceStore.toEntries(lines));
+            return;
+        }
         Log.i(TAG, "📋 Requesting BES logs (mh_logs) for incident: " + incidentId);
 
         if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
@@ -225,56 +247,6 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
-        }
-    }
-
-    public boolean requestBesLogsForTrace(
-            Context context,
-            IConfigurationManager configManager,
-            java.util.function.Consumer<String> rawLogCallback) {
-        if (hasActiveBesLogSession()) {
-            Log.d(TAG, "Skipping BES trace poll because a BES log session is already active");
-            return false;
-        }
-
-        if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
-            Log.w(TAG, "⚠️ BluetoothManager unavailable — cannot request BES trace logs");
-            return false;
-        }
-
-        if (!serviceManager.getBluetoothManager().isConnected()) {
-            Log.w(TAG, "⚠️ UART not connected — cannot request BES trace logs");
-            return false;
-        }
-
-        mBesLogSession = BesLogManager.forRawLogCallback(context, configManager, rawLogCallback);
-        try {
-            JSONObject k900Command = new JSONObject();
-            k900Command.put("C", "mh_logs");
-            k900Command.put("V", 1);
-            k900Command.put("B", "");
-
-            String commandStr = k900Command.toString();
-            Log.d(TAG, "📤 Sending trace mh_logs: " + commandStr);
-
-            boolean sent =
-                    serviceManager
-                            .getBluetoothManager()
-                            .sendMessage(
-                                    commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-
-            if (sent) {
-                mBesLogSession.startTimeouts();
-                return true;
-            }
-
-            Log.e(TAG, "❌ Failed to send trace mh_logs");
-            mBesLogSession = null;
-            return false;
-        } catch (JSONException e) {
-            Log.e(TAG, "💥 Error building trace mh_logs command", e);
-            mBesLogSession = null;
-            return false;
         }
     }
 
