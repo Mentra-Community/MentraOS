@@ -21,8 +21,8 @@ export const flowStage = (flow: FixFlow): FlowStage => flow.pipelineStage ?? "un
 export function groupFixFlows(flows: FixFlow[]): FixFlowGroup[] {
   const groups = new Map<string, FixFlow[]>();
   for (const flow of flows) {
-    const owner = flow.agent?.executionOwner?.runId ?? flow.agent?.anchorRunId;
-    // A shared case alone is insufficient: a released owner must not borrow its replacement's work.
+    const owner = flow.agent?.executionOwner?.runId ?? flow.agent?.runId;
+    // Own rows are acknowledged to their runId; anchorRunId is the case founder, not a replacement worker.
     const key = flow.occurrenceId && flow.agent?.caseId && owner ? `case:${flow.agent.caseId}:${owner}`
       : `occurrence:${flow.occurrenceId ?? `${flow.runId}:${flow.step?.id ?? flow.failure.code}`}`;
     groups.set(key, [...groups.get(key) ?? [], flow]);

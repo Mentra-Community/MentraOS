@@ -142,7 +142,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
       url: prUrl(pr.repository, pr.pullRequestNumber), state: pr.pullRequestLifecycle?.state ?? "unknown",
       mergedAt: pr.pullRequestLifecycle?.mergedAt ?? null });
   }
-  if (prs.size && [...prs.values()].every(pr => pr.state === "merged") && !activity?.miniTurnFailure && !cancelled) {
+  if (prs.size && [...prs.values()].every(pr => pr.state === "merged") && !activity?.miniTurnFailure && !cancelled && !completedStatuses.has(status!)) {
     stage = "Fix merged";
     // A merged PR is not proof the routine passed; keep outstanding verification visible.
     if (state === "attention") {
@@ -208,7 +208,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
 /** Current recorded phase only. Neither prose labels nor earlier steps imply later progress. */
 function fixFlowPipelineStage(activity: FixActivity | null, state: FixFlow["state"], prs: FixFlow["pullRequests"]): NonNullable<FixFlow["pipelineStage"]> {
   if ((activity?.executionOwnerTriage ?? activity?.miniTriage)?.state === "cancelled"
-    || (activity?.executionOwnerStatus ?? activity?.status) === "cancelled") return "closed";
+    || completedStatuses.has((activity?.executionOwnerStatus ?? activity?.status)!)) return "closed";
   if (state === "completed") return prs.length && prs.every(pr => pr.state === "merged") ? "merged" : "closed";
   if (!activity) return state === "waiting" ? "intake" : "unknown";
   const phase = activity.executionOwnerRunId ? activity.executionOwnerProgressPhase : activity.progressPhase;

@@ -194,6 +194,20 @@ describe("exact failure-to-fixer projection", () => {
       headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] }, "available", []);
     expect(result.stage).toBe("Fix merged"); expect(result.state).toBe("running"); expect(result.nextAction).toContain("pending");
   });
+  test("no-fix terminal outcomes stay closed even when older PR metadata is merged", () => {
+    for (const status of ["no_fix_needed", "third_party_out_of_scope"]) {
+      const own: FixActivity = { ...activity, status, statusLabel: "No fix for this occurrence", miniExecution: undefined,
+        pullRequests: [{ repository: "Mentra-Community/MentraOS", pullRequestNumber: 42,
+          headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] };
+      const linked: FixActivity = { ...own, status: "mini_linked", executionOwnerRunId: agentId,
+        executionOwnerStatus: status, executionOwnerStatusLabel: own.statusLabel };
+      for (const row of [own, linked]) {
+        const result = projectFixFlow(stored, occurrence, row, "available", []);
+        expect(result.state).toBe("completed"); expect(result.pipelineStage).toBe("closed");
+        expect(result.stage).not.toContain("Fix merged"); expect(result.pullRequests[0]?.state).toBe("merged");
+      }
+    }
+  });
   test("a historical stop does not override a currently running agent", () => {
     const result = projectFixFlow(stored, occurrence, { ...activity, miniTurnFailure: { kind: "process-exit", phase: "model", at } }, "available", []);
     expect(result.state).toBe("running"); expect(result.stage).toBe("Mini worker active");

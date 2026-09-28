@@ -54,13 +54,17 @@ describe("Fix flows navigation and recorded states", () => {
   test("same case and owner groups related failures without losing their exact links", () => {
     const second = { ...flow, occurrenceId: `tfo_${"d".repeat(64)}`, runId: "second-run", agent: { ...flow.agent!,
       runId: "linked-observer", executionOwner: { runId: "synthetic-agent", status: "mini_waiting" } } };
-    const replacedOwner = { ...flow, occurrenceId: `tfo_${"e".repeat(64)}`, agent: { ...flow.agent!, anchorRunId: "replacement-owner" } };
+    const replacedOwner = { ...flow, occurrenceId: `tfo_${"e".repeat(64)}`, agent: { ...flow.agent!, runId: "replacement-owner" } };
+    const linkedReplacement = { ...flow, occurrenceId: `tfo_${"9".repeat(64)}`, agent: { ...flow.agent!, runId: "replacement-observer",
+      executionOwner: { runId: "replacement-owner", status: "mini_waiting" } } };
     const unassigned = { ...flow, occurrenceId: `tfo_${"f".repeat(64)}`, agent: null };
-    const data = { flows: [flow, second, replacedOwner, unassigned], activity: "available" as const, refreshedAt: flow.updatedAt, limited: false };
+    const data = { flows: [flow, second, replacedOwner, linkedReplacement, unassigned], activity: "available" as const, refreshedAt: flow.updatedAt, limited: false };
     const groups = groupFixFlows(data.flows);
     expect(groups).toHaveLength(3); expect(groups.find(group => group.occurrences.length === 2)?.occurrences).toHaveLength(2);
+    expect(groups.find(group => group.occurrences.includes(flow))?.occurrences).toEqual([flow, second]);
+    expect(groups.find(group => group.occurrences.includes(replacedOwner))?.occurrences).toEqual([replacedOwner, linkedReplacement]);
     const html = renderToStaticMarkup(<FixFlowOverview data={data} filter={null} onFilter={() => {}} onSelect={() => {}} />);
-    expect(html).toContain("3 flows"); expect(html).toContain("4 failures"); expect(html).toContain("2 related failure occurrences");
+    expect(html).toContain("3 flows"); expect(html).toContain("5 failures"); expect(html).toContain("2 related failure occurrences");
     for (const item of data.flows) expect(html).toContain(`?fixFlow=${item.occurrenceId}`);
   });
   test("pipeline and status filters have exact grouped counts, including zero and All reset", () => {
