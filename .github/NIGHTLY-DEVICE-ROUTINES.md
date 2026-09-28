@@ -48,7 +48,7 @@ lifecycle instead of `worker/planned-routine-intake.ts`, and add its label to
 
 ## Schedule and exact selection
 
-Midnight is `America/Los_Angeles`. The 07:00 and 08:00 UTC triggers cover daylight
+Nightly starts at **03:00 America/Los_Angeles**. The 10:00 and 11:00 UTC triggers cover daylight
 saving time; only the applicable trigger proceeds, including transition dates.
 GitHub delivery can be delayed for at most six hours. Later delivery fails rather
 than silently changing the night.
@@ -105,32 +105,24 @@ requests. New nightly requests use only the ordinary callback.
 
 ## Activation and results
 
-`DEVICE_ROUTINE_NIGHTLY_ENABLED` must equal `true` to schedule requests. This source
-change does not enable it. Before enabling:
+`DEVICE_ROUTINE_NIGHTLY_ENABLED=true` activates the existing schedule. Run eligible
+registered routines even while other routines are still being qualified. A missing
+worker, artifact or usable fixture must remain visibly unavailable or failed;
+it must not suppress unrelated routines or be reported as a passing test.
 
-1. Merge the private marker/intake support and enroll a clean reviewed runtime
-   containing it. Dispatcher and enrolled runtime revisions can differ; a newer
-   dispatcher does not make an older runtime understand the new marker.
-2. Merge the public producer/callback/scheduler and Core overview projection to
-   `dev`, the default branch. Complete the three author-owned routine registrations
-   (`account-miniapps`, `connected-glasses` and `livestreamer`) as described above.
-   Selectors, parsers, platform routing (`connected-glasses` is Android only),
-   enrollment keys and runner labels already exist; enrolling a planned routine
-   still ends in its preparation refusal.
-3. Qualify **each** full recorded routine, its setup/verified return, resource
-   transitions and actual queue-to-admin publication. Call qualification includes
-   the browser-peer recording, two-way audio, background operation and independent
-   internet route. Livestreamer qualification covers both WebRTC **Stream here**
-   and local RTMP. A partial development recording is not full qualification.
-4. Confirm existing scoped GitHub App dispatch/read configuration and separate
-   Core claim/upload capabilities. The scheduler mints a MentraOS-only Actions-write
-   App token so its request emits the downstream callback. That callback separately
-   mints the private dispatch token; the scheduler needs no private-repository credential.
-5. Enable the variable only after those gates. Verify the next applicable run's
-   ten member requests/results (five routines on each of two channels). Verify integration on dev; do not create staging
-   verification commits or manual staging qualification runs.
+Before activation, confirm the trusted producer/callback, private enrolled runtime,
+scoped GitHub App dispatch credentials and Core claim/upload capabilities. Routine
+registration and fixture preconditions still apply. Enabling the schedule does not
+waive them or certify a routine. Keep the default per-build no-glasses coverage.
 
-Authorized operator commands, after qualification:
+Review the next applicable run's table for all ten targets (five on each channel).
+Each member links to its request workflow and Admin recording/result. A request
+success is not a device verdict; the result link appears when the worker publishes
+it. An unavailable member is shown explicitly while eligible members proceed.
+Verify integration on dev; do not create staging verification commits or manual
+staging qualification runs. Normal scheduled staging coverage remains enabled.
+
+Operator commands:
 
 ```bash
 gh variable set DEVICE_ROUTINE_NIGHTLY_ENABLED --repo Mentra-Community/MentraOS --body true
