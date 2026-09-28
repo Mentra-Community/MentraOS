@@ -1,5 +1,6 @@
 import {writeFile} from "node:fs/promises"
 import {publishedCoordinatedBuild} from "./coordinated-routine-request.mjs"
+import {DEVICE_ROUTINES} from "./device-routines.mjs"
 
 export const ROUTINE_BLOCK = "mentra-release-routines"
 export const REPOSITORY = "Mentra-Community/MentraOS"
@@ -8,8 +9,12 @@ export const hash = value => /^[a-f0-9]{64}$/.test(value ?? "")
 export const positive = value => Number.isSafeInteger(value) && value > 0
 export const requireThat = (condition, message) => { if (!condition) throw new Error(message) }
 export const receiptName = (runId, attempt) => `release-slack-message-${runId}-${attempt}`
-const routineNames = {"no-glasses": "No-glasses UI", "no-glasses-android": "Android no-glasses UI", "day1-ota": "Day-one OTA", "mentra-call": "Mentra Call",
-  "account-miniapps": "Account and miniapps", "connected-glasses": "Connected glasses (Android)", "livestreamer": "Livestreamer"}
+// Every catalogued routine and its display name come from the shared DEVICE_ROUTINES catalog. `displayFirst` only keeps
+// the historical row order of existing posts; it is filtered by the catalog and never admits a routine by itself.
+const displayFirst = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"]
+const routineNames = Object.freeze(Object.fromEntries([...displayFirst, ...Object.keys(DEVICE_ROUTINES)]
+  .filter((id, index, ids) => Object.hasOwn(DEVICE_ROUTINES, id) && ids.indexOf(id) === index)
+  .map(id => [id, DEVICE_ROUTINES[id].name])))
 
 export function slackDestination(env) {
   const channel = env.BRANCH === "dev" ? env.SLACK_DEV_BUILDS_CHANNEL_ID
