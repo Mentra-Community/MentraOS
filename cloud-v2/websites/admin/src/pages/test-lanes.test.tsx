@@ -364,3 +364,100 @@ describe("who holds a lane is stated only as reported", () => {
     expect(visible).toContain("The lane stays held until its recovery is verified.");
   });
 });
+
+describe("physical glasses pairs beside phones and the Mac lane", () => {
+  const host = "mentra-mac-mini", pairKey = "glasses-54f6abd2d6d4", otherPair = "glasses-0123456789ab", run = "connected-run-1";
+  const free = (): TestResourceObservation => ({ state: "idle-prerequisites-unchecked", reason: "no-guard-fixture-not-supplied",
+    guard: { lock: "absent", reclaimMarker: "absent" }, fixture: { checked: false } });
+  const macFree = (glassesLeases?: TestResourceObservation["glassesLeases"]): TestResourceObservation =>
+    ({ ...noOwnerObservation("routine-1-1-dev-no-glasses"), ...glassesLeases ? { glassesLeases } : {} });
+  const held = (pairs: string[]) => ({ state: "held" as const, pairs, others: 0 });
+  const phoneIdleReport = (ago: number): Report => ({ hostId: host, resourceKey: phone, observation: phoneIdle(), ago });
+
+  test("a phone command held with its pair binds them; between commands the phone is free and the pair stays held; the normal return frees both", async () => {
+    // During a phone command: one run holds the phone lock and the pair lease with the identical reservation.
+    const during = render(await overview([
+      { hostId: host, observation: macFree(held(["54f6abd2d6d4"])), ago: 5_000 },
+      { hostId: host, resourceKey: phone, observation: aliveObservation(run, 7001), ago: 5_000 },
+      { hostId: host, resourceKey: pairKey, observation: aliveObservation(run, 7002), ago: 5_000 },
+    ]));
+    const pairDuring = parts(during, host, pairKey), phoneDuring = parts(during, host, phone), macDuring = parts(during, host);
+    expect(pairDuring.visible).toContain("mentra-mac-mini · Glasses pair 54f6abd2d6d4 (03BE) Reserved, idle");
+    expect(pairDuring.visible).toContain("Phone Held with Android phone lane 03BE by the same run at their last reports.");
+    expect(phoneDuring.visible).toContain("Glasses Held with glasses pair 54f6abd2d6d4 by the same run at their last reports.");
+    expect(macDuring.visible).toContain("Blocked");
+    expect(macDuring.visible).toContain("Status No Mac app owner, but 1 glasses pair lease is held. A Mac app routine cannot start until it is released.");
+    expect(macDuring.details).toContain("Held pair leases at this report: 54f6abd2d6d4.");
+
+    // Between commands: the phone lock is absent, so the phone card is free; the pair and the Mac exclusion stay held.
+    const between = render(await overview([
+      { hostId: host, observation: macFree(held(["54f6abd2d6d4"])), ago: 5_000 },
+      phoneIdleReport(5_000),
+      { hostId: host, resourceKey: pairKey, observation: aliveObservation(run, 7002), ago: 5_000 },
+    ]));
+    const phoneBetween = parts(between, host, phone), pairBetween = parts(between, host, pairKey);
+    expect(phoneBetween.visible).toContain("Available");
+    expect(phoneBetween.visible).toContain("Glasses A glasses pair on this host is held; whether it is used with this phone is not reported.");
+    expect(pairBetween.visible).toContain("Reserved, idle"); expect(pairBetween.visible).toContain("Phone Not reported. A pair lease names its run, not a phone.");
+    expect(pairBetween.visible).toContain("Queue CI requests are not queued per glasses pair.");
+    expect(parts(between, host).visible).toContain("Blocked");
+    expect(text(section(between, "Test lanes"))).not.toContain("3 available");
+
+    // Normal return: fresh absent reports replace the held rows.
+    const returned = render(await overview([
+      { hostId: host, observation: macFree(held(["54f6abd2d6d4"])), ago: minutes(2) - 10_000 },
+      { hostId: host, resourceKey: pairKey, observation: aliveObservation(run, 7002), ago: minutes(2) - 10_000 },
+      { hostId: host, observation: macFree({ state: "none" }), ago: 5_000 },
+      phoneIdleReport(5_000),
+      { hostId: host, resourceKey: pairKey, observation: free(), ago: 5_000 },
+    ]));
+    const pairReturned = parts(returned, host, pairKey);
+    expect(pairReturned.visible).toContain("Available"); expect(pairReturned.visible).toContain("Status No run held this pair at the last report.");
+    expect(pairReturned.visible).not.toContain("Phone ");
+    expect(parts(returned, host).visible).toContain("Available"); expect(parts(returned, host, phone).visible).not.toContain("Glasses ");
+    expect(text(section(returned, "Test lanes"))).toContain("3 available");
+  });
+
+  test("a different run or fixture never binds a phone to a pair, and an unrelated pair or host leaves a phone independent", async () => {
+    const mismatched = render(await overview([
+      { hostId: host, resourceKey: phone, observation: aliveObservation("phone-run-2", 7001), ago: 5_000 },
+      { hostId: host, resourceKey: pairKey, observation: aliveObservation(run, 7002), ago: 5_000 },
+    ]));
+    expect(parts(mismatched, host, phone).visible).toContain("Glasses A glasses pair on this host is held; whether it is used with this phone is not reported.");
+    expect(parts(mismatched, host, pairKey).visible).toContain("Phone Not reported.");
+    const otherFixture: TestResourceObservation = { ...aliveObservation(run, 7002),
+      owner: { ...aliveObservation(run, 7002).owner!, reservation: { runID: run, fixtureID: "mini-060b" } } } as TestResourceObservation;
+    const sameRunOtherFixture = render(await overview([
+      { hostId: host, resourceKey: phone, observation: aliveObservation(run, 7001), ago: 5_000 },
+      { hostId: host, resourceKey: pairKey, observation: otherFixture, ago: 5_000 },
+    ]));
+    expect(parts(sameRunOtherFixture, host, phone).visible).not.toContain("Held with glasses pair");
+    // A free pair on this host, and a held pair on another host, say nothing about this phone.
+    const independent = render(await overview([
+      phoneIdleReport(5_000),
+      { hostId: host, resourceKey: otherPair, observation: free(), ago: 5_000 },
+      { hostId: "macbook-dev", resourceKey: pairKey, observation: aliveObservation(run, 7003), ago: 5_000 },
+    ]));
+    expect(parts(independent, host, phone).visible).not.toContain("Glasses ");
+    expect(parts(independent, host, otherPair).visible).toContain("Available");
+    expect(parts(independent, "macbook-dev", pairKey).visible).toContain("Reserved, idle");
+  });
+
+  test("stale, retained, unreadable and unreported physical state stays explicit", async () => {
+    const html = render(await overview([
+      { hostId: host, resourceKey: pairKey, observation: aliveObservation(run, 7002), ago: minutes(10) },
+      { hostId: host, resourceKey: otherPair, observation: retainedObservation("dead-run-3", 7004), ago: minutes(10) },
+      { hostId: host, observation: macFree({ state: "unreadable" }), ago: 5_000 },
+      { hostId: "mini-legacy", observation: macFree(), ago: 5_000 },
+    ]));
+    expect(parts(html, host, pairKey).visible).toContain("Offline or unknown");
+    // A retained pair lease is recovery required at any age; it counts as held for the phone note only while retained.
+    expect(parts(html, host, otherPair).visible).toContain("Recovery required");
+    const mac = parts(html, host);
+    expect(mac.visible).toContain("Offline or unknown");
+    expect(mac.visible).toContain("The glasses pair leases could not be read, so whether a Mac app routine can start is unknown.");
+    // An older producer reports no pair leases: its behavior is unchanged and the gap is stated in the details.
+    const legacy = parts(html, "mini-legacy");
+    expect(legacy.visible).toContain("Available"); expect(legacy.details).toContain("Glasses pair leases were not reported by this host's version.");
+  });
+});

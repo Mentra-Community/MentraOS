@@ -71,16 +71,17 @@ export const resourceGuidance: Record<TestResourceReason, ResourceGuidance> = {
     next: "Check the fixture record's permissions on the host, then refresh." },
 };
 
-export type LaneState = "running" | "reserved" | "recovery" | "available" | "not-ready" | "unknown";
+export type LaneState = "running" | "reserved" | "blocked" | "recovery" | "available" | "not-ready" | "unknown";
 const laneStateText: Record<LaneState, { badge: string; colors: string }> = {
   running: { badge: "Running", colors: "bg-[#e6f5ed] text-[#087d50]" },
   reserved: { badge: "Reserved, idle", colors: "bg-[#fff5df] text-[#805619]" },
+  blocked: { badge: "Blocked", colors: "bg-[#fff5df] text-[#805619]" },
   recovery: { badge: "Recovery required", colors: "bg-[#fff0e9] text-[#a64235]" },
   available: { badge: "Available", colors: "bg-[#e6f5ed] text-[#087d50]" },
   "not-ready": { badge: "Not ready", colors: "bg-[#fff5df] text-[#805619]" },
   unknown: { badge: "Offline or unknown", colors: "bg-[#f0f2ef] text-[#59655e]" },
 };
-const laneStateOrder: LaneState[] = ["running", "reserved", "recovery", "not-ready", "unknown", "available"];
+const laneStateOrder: LaneState[] = ["running", "reserved", "blocked", "recovery", "not-ready", "unknown", "available"];
 /** A CI request ID, the only run ID form a CI claim or GitHub request carries. Anything else is a local run. */
 const ciRequestId = /^routine-([1-9]\d*)-([1-9]\d*)-(dev|staging|[1-9]\d*)-([a-z0-9-]+)$/;
 type Progress = Omit<TestResourceProgressCheckpoint, "runId">;
@@ -103,9 +104,15 @@ export interface LaneCard {
   technical: string[];
   /** Queued or waiting CI requests for this lane's platform. Undefined when no CI routine was observed on the lane. */
   queue?: { job: OverviewJob; request: OverviewRequest }[];
+  /** Phone and glasses lanes: what the current reports say about this lane's counterpart, set by `laneCards`. */
+  pairing?: string;
 }
 
-const platformOf = (resourceKey: string): NonNullable<OverviewRequest["platform"]> => resourceKey === "shared" ? "ios-on-mac" : "android";
+export type LaneKind = "shared" | "android" | "glasses";
+export const laneKind = (resourceKey: string): LaneKind =>
+  resourceKey === "shared" ? "shared" : resourceKey.startsWith("glasses-") ? "glasses" : "android";
+const platformOf = (kind: LaneKind): NonNullable<OverviewRequest["platform"]> => kind === "shared" ? "ios-on-mac" : "android";
+const plural = (count: number, one: string, many: string) => count + " " + (count === 1 ? one : many);
 /** The CI job or claim-only row for this exact request ID, active work first. Never matched by fixture alias. */
 function matchRun(data: TestRunOverview, runId: string): Matched | undefined {
   for (const job of [...data.jobs, ...data.fixtureAttention ?? []]) {
@@ -124,12 +131,13 @@ function currentProgress(item: OverviewResourceObservation, runId: string | unde
   return candidates.sort((a, b) => b.sequence - a.sequence || Date.parse(a.receivedAt) - Date.parse(b.receivedAt))[0];
 }
 function heartbeatCommand(item: OverviewResourceObservation) {
-  return "Host heartbeat: bun tools/mentra-e2e/lane-status.ts --resource " + (item.resourceKey === "shared" ? "shared" : "android --serial <this phone's serial>")
-    + " --fixture-directory <lane fixture> --publish --interval-seconds 60, with the host's existing reporting settings.";
+  const resource = { shared: "shared --fixture-directory <lane fixture>", android: "android --serial <this phone's serial> --fixture-directory <lane fixture>",
+    glasses: "glasses --cid <enrolled eMMC CID> --bluetooth <enrolled MAC>" }[laneKind(item.resourceKey)];
+  return "Host heartbeat: bun tools/mentra-e2e/lane-status.ts --resource " + resource + " --publish --interval-seconds 60, with the host's existing reporting settings.";
 }
 
 export function laneCard(data: TestRunOverview, item: OverviewResourceObservation, now: number): LaneCard {
-  const { observation } = item, fresh = resourceIsFresh(item, now);
+  const { observation } = item, fresh = resourceIsFresh(item, now), kind = laneKind(item.resourceKey);
   const owner = observation.owner?.valid ? observation.owner : undefined;
   const runId = owner?.reservation?.runID;
   const matched = runId ? matchRun(data, runId) : undefined;
@@ -138,12 +146,12 @@ export function laneCard(data: TestRunOverview, item: OverviewResourceObservatio
   const guidance = resourceGuidance[observation.reason], guard = [guidance.summary + " " + guidance.next];
   // A CI lane is one whose own guard or fixture record names a CI request; only those list the platform queue.
   const lastRun = observation.fixture.checked && observation.fixture.record === "valid" ? observation.fixture.lastRunID : undefined;
-  const ci = [runId, lastRun].some(id => id && ciRequestId.test(id));
+  const ci = kind !== "glasses" && [runId, lastRun].some(id => id && ciRequestId.test(id));
   // Who holds the lane, only as the owner reported it: a CI request, a local run, or no reported run at all.
   const holder: "ci" | "local" | "none" = !runId ? "none" : ciRequestId.test(runId) ? "ci" : "local";
   const holderName = { ci: "a CI run", local: "a local session", none: "a live process that reported no run" }[holder];
   const queue = ci ? data.jobs.filter(job => ["queued", "waiting"].includes(displayState(job, now))).flatMap(job => job.requests
-    .filter(request => request.platform === platformOf(item.resourceKey)).map(request => ({ job, request }))) : undefined;
+    .filter(request => request.platform === platformOf(kind)).map(request => ({ job, request }))) : undefined;
   const base = { item, fresh, active, ...(runId ? { runId } : {}), ...(matched ? { matched } : {}), ...(progress ? { progress } : {}), ...(queue ? { queue } : {}) };
   const card = (state: LaneState, summary: string, responsible: string, next: string, technical = guard): LaneCard =>
     ({ ...base, state, summary, responsible, next, technical });
@@ -175,6 +183,19 @@ export function laneCard(data: TestRunOverview, item: OverviewResourceObservatio
   }
   if (!fresh) return card("unknown", "No report for " + elapsed(item.receivedAt, now) + ", so the lane's current state is unknown.", "Host operator",
     "Confirm the host is online and reporting. Until it reports, do not treat the lane as free.", offline);
+  // The shared guard can be absent while its own acquisition refuses: another owner holds a glasses pair lease.
+  const leases = kind === "shared" && observation.guard.lock === "absent" ? observation.glassesLeases : undefined;
+  if (leases?.state === "held") {
+    const count = leases.pairs.length + leases.others;
+    return card("blocked", "No Mac app owner, but " + plural(count, "glasses pair lease is", "glasses pair leases are") + " held. A Mac app routine cannot start until "
+      + (count === 1 ? "it is" : "they are") + " released.", "Holder of the glasses pair", "See the glasses pair's card. This lane frees when that lease is released or recovered.",
+      [...guard, "Held pair leases at this report: " + [...leases.pairs, ...leases.others ? [plural(leases.others, "other", "others")] : []].join(", ") + "."]);
+  }
+  if (leases?.state === "unreadable") return card("unknown", "The glasses pair leases could not be read, so whether a Mac app routine can start is unknown.",
+    "Host operator", "Check the host's glasses lease folder with the read-only lane status, then refresh.");
+  // A pair lease names only its run: with no lease held the pair is free at this report; its readiness is separate.
+  if (kind === "glasses" && (observation.reason === "no-guard-fixture-not-supplied" || observation.state === "available-to-attempt"))
+    return card("available", "No run held this pair at the last report.", "None", "Nothing needed.");
   if (observation.state === "available-to-attempt") return card("available", "Free at the last report. A routine still goes through normal admission.", "None", "Nothing needed.");
   if (observation.reason === "recorded-fixture-recovery-required" || observation.reason === "recorded-fixture-busy")
     return card("recovery", guidance.summary, guidance.responsible, guidance.next);
@@ -182,11 +203,50 @@ export function laneCard(data: TestRunOverview, item: OverviewResourceObservatio
   return card("unknown", guidance.summary, guidance.responsible, guidance.next);
 }
 
-/** Lanes keep a stable inventory order: host, then its Mac lane, then its phones. */
+/** A live owner in this lane's current report, with its reservation: the only input that can pair a phone with glasses. */
+function liveReservation(card: LaneCard) {
+  const owner = card.item.observation.owner?.valid ? card.item.observation.owner : undefined;
+  return card.fresh && card.item.observation.state === "busy" && owner?.liveness === "alive" && owner.reservation ? owner.reservation : undefined;
+}
+const pairName = (card: LaneCard) => "glasses pair " + card.item.resourceKey.slice("glasses-".length);
+const phoneName = (card: LaneCard) => {
+  const fixture = card.item.observation.fixture;
+  return "Android phone lane " + (fixture.checked && fixture.record === "valid" ? fixture.fixtureID : card.item.resourceKey.slice("android-".length));
+};
+/**
+ * A phone and a glasses pair on the same host are shown together only when both current reports show live owners with
+ * the identical reservation (run and fixture), as one lifecycle holds both. Nothing else binds them: a pair lease names
+ * a run, never a phone, so a held pair beside an unbound phone is stated as unknown, never as the phone being in use.
+ */
+function describePairing(cards: LaneCard[]) {
+  for (const host of new Set(cards.map(card => card.item.hostId))) {
+    const lanes = cards.filter(card => card.item.hostId === host);
+    const phones = lanes.filter(card => laneKind(card.item.resourceKey) === "android"), pairs = lanes.filter(card => laneKind(card.item.resourceKey) === "glasses");
+    const same = (a: LaneCard, b: LaneCard) => {
+      const x = liveReservation(a), y = liveReservation(b);
+      return Boolean(x && y && x.runID === y.runID && x.fixtureID === y.fixtureID);
+    };
+    const held = pairs.filter(card => card.item.observation.guard.lock !== "absent" && (card.fresh || card.state === "recovery"));
+    for (const pair of pairs) {
+      const phone = phones.find(candidate => same(pair, candidate));
+      if (phone) pair.pairing = "Held with " + phoneName(phone) + " by the same run at their last reports.";
+      else if (held.includes(pair)) pair.pairing = "Not reported. A pair lease names its run, not a phone.";
+    }
+    for (const phone of phones) {
+      const pair = pairs.find(candidate => same(candidate, phone));
+      if (pair) phone.pairing = "Held with " + pairName(pair) + " by the same run at their last reports.";
+      else if (held.some(candidate => !phones.some(other => same(candidate, other))))
+        phone.pairing = "A glasses pair on this host is held; whether it is used with this phone is not reported.";
+    }
+  }
+  return cards;
+}
+
+/** Lanes keep a stable inventory order: host, then its Mac lane, then its phones, then its glasses pairs. */
 export function laneCards(data: TestRunOverview, now: number): LaneCard[] {
   const order = (key: string) => key === "shared" ? "" : key;
-  return (data.resourceObservations?.items ?? []).map(item => laneCard(data, item, now))
-    .sort((a, b) => a.item.hostId.localeCompare(b.item.hostId) || order(a.item.resourceKey).localeCompare(order(b.item.resourceKey)));
+  return describePairing((data.resourceObservations?.items ?? []).map(item => laneCard(data, item, now))
+    .sort((a, b) => a.item.hostId.localeCompare(b.item.hostId) || order(a.item.resourceKey).localeCompare(order(b.item.resourceKey))));
 }
 
 const buildText = (request: OverviewRequest) => (request.channel === "pr" ? "PR #" + request.prNumber : request.release ?? request.channel + " build")
@@ -212,11 +272,13 @@ function Lane({ card, now, onResult }: { card: LaneCard; now: number; onResult: 
   const { item, state, runId, matched, progress } = card, value = item.observation;
   const owner = value.owner?.valid ? value.owner : undefined, checkpoint = value.lastCheckpoint?.available ? value.lastCheckpoint : undefined;
   const fixture = value.fixture.checked && value.fixture.record === "valid" ? value.fixture : undefined;
-  const work = workText(card), platform = item.resourceKey === "shared" ? "iOS-on-Mac" : "Android";
+  const kind = laneKind(item.resourceKey), work = workText(card), platform = kind === "shared" ? "iOS-on-Mac" : "Android";
+  const title = { shared: "Mac UI lane", android: "Android phone lane", glasses: "Glasses pair " + item.resourceKey.slice("glasses-".length) }[kind];
+  const scope = { shared: " (Mac UI, audio and recorder)", android: " (this phone only)", glasses: " (this glasses pair only; it names a run, not a phone)" }[kind];
   const row = (label: string, content: ReactNode) => <div className="grid grid-cols-[76px_1fr] gap-2"><dt className="text-[#68746d]">{label}</dt><dd className="min-w-0 break-words">{content}</dd></div>;
   return <article className="rounded-xl border border-[#e0e4de] p-3 text-[11px]" aria-label={"Lane " + item.hostId + " " + item.resourceKey}>
     <div className="flex items-start justify-between gap-3">
-      <p className="min-w-0 break-words text-xs font-semibold">{item.hostId} · {item.resourceKey === "shared" ? "Mac UI lane" : "Android phone lane" + (fixture ? " (" + fixture.fixtureID + ")" : "")}</p>
+      <p className="min-w-0 break-words text-xs font-semibold">{item.hostId} · {title + (kind !== "shared" && fixture ? " (" + fixture.fixtureID + ")" : "")}</p>
       <span className={"shrink-0 rounded-md px-2 py-1 font-medium " + laneStateText[state].colors}>{laneStateText[state].badge}</span></div>
     <dl className="mt-2 space-y-1">
       {work ? row("Work", <>{work}{state === "running" && card.active && progress ? <span className="block">{stepText(progress)}</span> : null}</>) : null}
@@ -224,13 +286,16 @@ function Lane({ card, now, onResult }: { card: LaneCard; now: number; onResult: 
       {row("Last report", <span className={card.fresh ? "" : "text-[#805619]"}>{elapsed(item.receivedAt, now)} ago{card.fresh ? ""
         : value.state === "retained-recovery-required" ? "; not current. The lane stays held until its recovery is verified." : "; not current"}</span>)}
       {state !== "available" && state !== "running" ? <>{row("Responsible", card.responsible)}{row("Next", card.next)}</> : null}
-      {row("Queue", !card.queue ? "No CI run was seen on this lane, so no CI queue is shown."
+      {card.pairing ? row(kind === "glasses" ? "Phone" : "Glasses", card.pairing) : null}
+      {row("Queue", kind === "glasses" ? "CI requests are not queued per glasses pair."
+        : !card.queue ? "No CI run was seen on this lane, so no CI queue is shown."
         : !card.queue.length ? "No queued " + platform + " requests."
         : card.queue.length + " queued " + platform + " " + (card.queue.length === 1 ? "request" : "requests") + ". GitHub assigns runners; this lane is not confirmed for them.")}
     </dl>
     <details className="mt-2"><summary className="cursor-pointer text-[#68746d]">Lane details</summary>
       <div className="mt-1 space-y-1 text-[#59655e]">
-        <p>Resource {item.resourceKey}{item.resourceKey === "shared" ? " (Mac UI, audio and recorder)" : " (this phone only)"}{fixture ? " · fixture " + fixture.fixtureID + ", recorded " + fixture.status : ""}</p>
+        <p>Resource {item.resourceKey}{scope}{fixture ? " · fixture " + fixture.fixtureID + ", recorded " + fixture.status : ""}</p>
+        {kind === "shared" && !value.glassesLeases ? <p>Glasses pair leases were not reported by this host's version.</p> : null}
         {runId ? <p>Run {item.publishedRunIds.includes(runId) ? <button className="text-[#087d50] underline" onClick={() => onResult(runId)}>{runId}</button> : <span className="break-all">{runId}</span>}
           {matched?.job.workflow ? <>{" · "}<a className="text-[#087d50] underline" href={matched.job.workflow.url} target="_blank" rel="noreferrer">GitHub run</a></> : null}
           {ciRequestId.test(runId) ? " · Worker " + (matched?.job.workerName ?? matched?.claim?.workerId ?? "not reported") : ""}</p> : null}
