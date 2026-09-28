@@ -1046,3 +1046,98 @@ describe("reviewed provenance correction of an existing source-null occurrence",
     expect(repository.runs.get(p.run.runId)!.provenanceCorrections).toBeUndefined();
   });
 });
+
+describe("private worker preparation results through the existing ingest, occurrence and delivery contract", () => {
+  // Exact bytes saved by the private worker (worker/preparation-failure.ts) before its POST: one reviewed failure with
+  // an authenticated PR source, and one unreviewed error whose legacy request records no source. Offline synthetic IDs.
+  const bytes = (name: string) => readFileSync(join(import.meta.dir, `test-run-preparation-failure.${name}.fixture.json`), "utf8");
+  const secret = "fixture-action-signing-key-" + "x".repeat(32);
+  const environmentKeys = ["CLOUD_REPORT_AGENT_SIGNING_SECRET", "CLOUD_CORE_ENVIRONMENT", "CLOUD_REPORT_AGENT_URL"] as const;
+  let previous: Record<string, string | undefined>;
+  beforeEach(() => {
+    previous = Object.fromEntries(environmentKeys.map(key => [key, process.env[key]]));
+    process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = secret;
+    process.env.CLOUD_CORE_ENVIRONMENT = "dev";
+    process.env.CLOUD_REPORT_AGENT_URL = "https://agent.invalid";
+  });
+  afterEach(() => { for (const key of environmentKeys) if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; });
+
+  test("the producer's saved bytes are accepted unchanged and acknowledged with the digest the publisher verifies", async () => {
+    for (const name of ["reviewed", "unreviewed"]) {
+      repository.runs.clear();
+      const text = bytes(name), run = testRunSchema.parse(JSON.parse(text));
+      const response = await post(JSON.parse(text));
+      expect(response.status).toBe(201);
+      const ack = await response.json() as Record<string, unknown>;
+      // The publisher requires exactly these fields; its payload digest is SHA-256 of the saved canonical bytes.
+      expect(ack).toEqual({ runId: run.runId, reportPath: `/?testRun=${run.runId}`, created: true, payloadSha256: sha256(Buffer.from(text)),
+        occurrenceIds: [createTestFailureOccurrences(run)[0]!.occurrenceId], missingAssetIds: [] });
+      const replay = await post(JSON.parse(text));
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual({ ...ack, created: false });
+      expect(repository.runs.size).toBe(1);
+    }
+  });
+
+  test("a different payload cannot replace a saved attempt result, and its occurrence and receipt stay unchanged", async () => {
+    const reviewed = testRunSchema.parse(JSON.parse(bytes("reviewed"))), unreviewed = testRunSchema.parse(JSON.parse(bytes("unreviewed")));
+    // Same request and private attempt, therefore the same ID: only the first saved result is ever accepted.
+    expect(unreviewed.runId).toBe(reviewed.runId);
+    const [id] = (await service.ingest(reviewed)).occurrenceIds;
+    await service.acknowledgeFailure(id!, "agent_prep");
+    const receipt = structuredClone((await service.failureDetail(id!)).delivery);
+    expect((await post(unreviewed)).status).toBe(409);
+    expect(repository.runs.get(reviewed.runId)!.run).toEqual(reviewed);
+    expect((await service.failureDetail(id!)).delivery).toEqual(receipt);
+  });
+
+  test("occurrence detail preserves the authenticated source, not-run verdicts and evidence gaps without an incident or claim", async () => {
+    const reviewed = testRunSchema.parse(JSON.parse(bytes("reviewed")));
+    const [id] = (await service.ingest(reviewed)).occurrenceIds;
+    const detail = await service.failureDetail(id!);
+    expect(detail.source).toEqual(reviewed.source!);
+    expect(detail.failure).toMatchObject({ phase: "preflight", step: { id: "intake-fixture-readiness" },
+      code: "fixture-return-verification-missing", message: "Ready fixture lacks its original completed return-verification journal",
+      incidentIds: [], assetIds: [], redactionPolicy: "reviewed-preparation-diagnostic-v1" });
+    expect(detail.failure.missingEvidence.map(item => item.kind)).toEqual(["recording", "screenshot", "phone-logs", "glasses-logs",
+      "backend-logs", "incident"]);
+    expect(detail.evidence).toEqual({ complete: false, assets: [] });
+    const shown = await service.detail(reviewed.runId);
+    expect(shown).toMatchObject({ outcome: "blocked", outcomes: { test: "not-run", teardown: "not-run", fixture: "unknown", evidence: "incomplete" },
+      provenance: { intakeStage: "fixture-readiness", hardwareStarted: "false", claim: "not-attempted" }, failureOccurrences: [{ occurrenceId: id }] });
+    // Unknown text stays generic and keeps its missing source explicit instead of inheriting one.
+    repository.runs.clear();
+    const unreviewed = testRunSchema.parse(JSON.parse(bytes("unreviewed")));
+    const unknown = await service.failureDetail((await service.ingest(unreviewed)).occurrenceIds[0]!);
+    expect(unknown.source).toBeNull();
+    expect(unknown.failure).toMatchObject({ code: "unreviewed-error", redactionPolicy: "preparation-allowlist-v1" });
+    expect(unknown.failure.missingEvidence.map(item => item.kind)).toEqual(expect.arrayContaining(["failure-details", "source"]));
+    expect(JSON.stringify(unknown)).not.toContain("socket hang up");
+    expect(JSON.stringify(unknown)).not.toContain("token=");
+  });
+
+  test("the existing signed delivery sends one envelope across a lost reply and a later execution keeps its own result", async () => {
+    const reviewed = testRunSchema.parse(JSON.parse(bytes("reviewed")));
+    const [id] = (await service.ingest(reviewed)).occurrenceIds;
+    let calls = 0; const accepted = new Set<string>();
+    const send = (async (_url: unknown, options: RequestInit) => {
+      calls++;
+      const body = String(options.body), headers = new Headers(options.headers), input = JSON.parse(body);
+      expect(headers.get("x-mentra-action-signature")).toBe(signTestFailureDelivery(body, Number(headers.get("x-mentra-action-expires")), secret));
+      expect(input).toMatchObject({ schemaVersion: 1, occurrenceId: id, revision: 1, environment: "dev" });
+      expect(body).not.toContain("Ready fixture");
+      accepted.add(input.occurrenceId);
+      if (calls === 1) throw new Error("reply lost after durable insert");
+      return Response.json({ schemaVersion: 1, occurrenceId: id, revision: 1, status: "accepted", agentRunId: "agent_prep" });
+    }) as typeof fetch;
+    expect(await new TestFailureDeliveryService(service, send).flush()).toMatchObject({ acknowledged: 0, pending: 1 });
+    expect(await new TestFailureDeliveryService(service, send).flush()).toMatchObject({ acknowledged: 1, pending: 0 });
+    expect(await new TestFailureDeliveryService(service, send).flush()).toMatchObject({ acknowledged: 0, pending: 0 });
+    expect([calls, accepted.size]).toEqual([2, 1]);
+    // A later ordinary execution of the same request publishes under the request ID; both histories remain.
+    const later = { ...fixture(), runId: reviewed.requestId, requestId: reviewed.requestId, routineId: reviewed.routineId, prNumber: reviewed.prNumber };
+    expect((await post(later)).status).toBe(201);
+    expect([...repository.runs.keys()].sort()).toEqual([reviewed.requestId, reviewed.runId].sort());
+    expect((await service.detail(reviewed.runId)).failureOccurrences[0]!.delivery).toMatchObject({ state: "acknowledged", agentRunId: "agent_prep" });
+  });
+});
