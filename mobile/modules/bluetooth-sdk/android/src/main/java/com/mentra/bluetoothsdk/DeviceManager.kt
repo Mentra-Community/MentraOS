@@ -1378,7 +1378,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             Bridge.log("MAN: Cleaning up previous sgc type: ${sgc?.type}")
             sgc?.cleanup()
             sgc = null
-            resetSystemTimeSync()
+            DeviceStore.apply("glasses", "micEnabled", false)
+            resetConnectionReadyState()
         }
 
         if (sgc != null) {
@@ -1574,10 +1575,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             handleMach1Ready() // Z100 uses same initialization as Mach1
         }
 
-        // Re-apply microphone settings after reconnection
-        // Cache was cleared on disconnect, so this will definitely send commands
+        // Disconnect clears micEnabled but preserves the consumers' audio requests.
+        // Recompute that derived flag before selecting a microphone; replaying an
+        // unchanged should_send_* setting is deduplicated by DeviceStore.apply().
         Bridge.log("MAN: Re-applying microphone settings after reconnection")
-        updateMicState()
+        setMicState()
 
         // send to the server our battery status:
         Bridge.sendBatteryStatus(sgc?.batteryLevel ?: -1, false)
@@ -1617,7 +1619,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         mainHandler.postDelayed(sync, 3000)
     }
 
-    private fun resetSystemTimeSync() {
+    private fun resetConnectionReadyState() {
+        // Suppress duplicate readiness only within one connection, never across
+        // a genuine disconnect/reconnect of the same glasses inside two seconds.
+        lastReadyHandledKey = ""
+        lastReadyHandledAtMs = 0L
         pendingSystemTimeSync?.let { mainHandler.removeCallbacks(it) }
         pendingSystemTimeSync = null
         lastSystemTimeSyncConnectionKey = ""
@@ -1635,7 +1641,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
 
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
-        resetSystemTimeSync()
+        resetConnectionReadyState()
         resetMicHealth()
         DeviceStore.apply("glasses", "headUp", false)
         DeviceStore.apply(
@@ -2445,7 +2451,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         val device = sgc
         if (device is Nimo) device.cleanup() else device?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
-        resetSystemTimeSync()
+        // This cache belongs to the discarded connection. Keep consumer demand,
+        // but require a new mic-enable command when replacement glasses are ready.
+        DeviceStore.apply("glasses", "micEnabled", false)
+        resetConnectionReadyState()
         resetMicHealth()
         searching = false
         micEnabled = false
@@ -2508,7 +2517,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             // session state without calling disconnect() again (that would hit a dead instance
             // and leave a destroyed MentraLive retained for the next scan).
             sgc = null
-            resetSystemTimeSync()
+            DeviceStore.apply("glasses", "micEnabled", false)
+            resetConnectionReadyState()
             searching = false
             micEnabled = false
             updateMicState()
