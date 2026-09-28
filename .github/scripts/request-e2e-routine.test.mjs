@@ -409,7 +409,7 @@ test("freezes original build attempt, retained publication and exact raw manifes
   assert.match(request.reason, /has not run/)
 })
 
-for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone"]) test(`trusted explicit ${routine} requests need no label with latest or exact publication selection`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone", "livestreamer"]) test(`trusted explicit ${routine} requests need no label with latest or exact publication selection`, async () => {
   for (const selection of [{}, {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}]) {
     const f = fixture()
     f.manual()
@@ -423,7 +423,7 @@ for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-pho
   }
 })
 
-for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone"]) test(`automatic ${routine} requests require their own current label before and after selection`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone", "livestreamer"]) test(`automatic ${routine} requests require their own current label before and after selection`, async () => {
   for (const [labels, removed, ready] of [
     [[{name: `routine:${routine}`}], false, true], [[{name: REQUEST_LABEL}], false, false],
     [[{name: `routine:${routine}`}], true, false], [[], false, false],
@@ -439,8 +439,24 @@ for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-pho
   }
 })
 
+test("the workflow admits and selects exactly the registered routine labels; planned labels stay out", async () => {
+  const {DEVICE_ROUTINES, isRegisteredRoutine} = await import("./device-routines.mjs")
+  const workflow = await readFile(new URL("../workflows/request-e2e-routine.yml", import.meta.url), "utf8")
+  const admission = workflow.split("\n  request:\n")[1]?.split("\n    runs-on:")[0]
+  const chain = workflow.split("REQUEST_ROUTINE: ")[1]?.split("\n")[0]
+  assert.ok(admission && chain)
+  const labels = text => [...text.matchAll(/'routine:([a-z0-9-]+)'/g)].map(match => match[1]).sort()
+  const registered = Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id)).sort()
+  assert.deepEqual(labels(admission), registered)
+  // mentra-call is the chain's final default rather than a label test.
+  assert.deepEqual(labels(chain), registered.filter(id => id !== "mentra-call"))
+  assert.match(chain, /\|\| 'mentra-call'\) \}\}$/)
+  assert.ok(registered.includes("livestreamer"))
+  for (const id of ["account-miniapps", "connected-glasses"]) assert.equal(isRegisteredRoutine(id), false)
+})
+
 test("planned routines refuse PR requests, labelled or explicit, with their pending reason", async () => {
-  for (const routine of ["account-miniapps", "connected-glasses", "livestreamer"]) for (const manual of [false, true]) {
+  for (const routine of ["account-miniapps", "connected-glasses"]) for (const manual of [false, true]) {
     const f = fixture()
     if (manual) f.manual()
     f.state.pr.labels = [{name: `routine:${routine}`}]

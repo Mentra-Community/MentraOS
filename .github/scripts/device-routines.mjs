@@ -3,7 +3,8 @@
 const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/90a70edfe2fa17fd766dda3d98977555d6608a05/"
 const androidDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58483a6c729018dc9955122dd071ecefbfb8ae92/"
 const pendingDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/754d527a3d6aac8ac971c600998aece203015394/"
-const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/b522929b7a9ad283a877cbc8fc698c8499383947/"
+const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/69ffd29cba268d9ef2a67ee5d1b33edb2c547b90/"
+const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/cab6f0148653d2339c53ca83836c12d5c6822207/"
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",
@@ -45,10 +46,11 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${definitions}tools/mentra-e2e/runner/call-routine.ts`,
     worker: `${definitions}worker/CALL-RECIPE.md`,
   }),
-  // Planned nightly targets. Their names, labels, platforms and result rows are wired end to end, but each is
-  // `pending`: it has no registered automatic worker, so every request, dispatch and nightly path refuses it with
-  // this exact reason. Remove `pending` only in the reviewed change that registers its qualified worker, and add its
-  // label to request-e2e-routine.yml's pull_request trigger and explicit REQUEST_ROUTINE chain in that same change.
+  // Planned nightly targets (account-miniapps, connected-glasses). Their names, labels, platforms and result rows are
+  // wired end to end, but each is `pending`: it has no registered automatic worker, so every request, dispatch and
+  // nightly path refuses it with this exact reason. Remove `pending` only in the reviewed change that registers its
+  // qualified worker, and add its label to request-e2e-routine.yml's pull_request trigger and explicit REQUEST_ROUTINE
+  // chain in that same change.
   "account-miniapps": Object.freeze({
     label: "routine:account-miniapps", name: "Account and miniapps", platform: "ios-on-mac",
     coverage: "One combined paired-account routine: email login/logout, data export, Google SSO, exact feedback report, paired miniapps and visual incompatible tiles, with account and pairing restoration.",
@@ -71,16 +73,19 @@ export const DEVICE_ROUTINES = Object.freeze({
     worker: `${pendingDefinitions}worker/connected-glasses.ts`,
     pending: "No automatic worker: the existing host's admitConnectedGlassesRun refuses, its Wi-Fi connect, gallery delivery and YouTube audio sections are still pending, and no exported automatic preparation binds the request's selected APK and claim-bound recording evidence",
   }),
+  // Registered nightly target: its automatic worker (worker/livestreamer.ts, configuration kind
+  // automatic-livestreamer-worker) authenticates the request, binds its selected Mac build and runs the one claimed
+  // lifecycle with claim-bound CI evidence. Preparation still refuses before any claim while its physical
+  // observations are missing; live qualification is pending.
   livestreamer: Object.freeze({
     label: "routine:livestreamer", name: "Livestreamer", platform: "ios-on-mac",
-    coverage: "Stream here (WebRTC) and local RTMP start/stop from the Mentra app, observed by an owned receiver, with receiver and network cleanup.",
+    coverage: "One routine on the request's selected Mac build with paired glasses: managed Stream Here (WebRTC) started and stopped once, observed by an owned viewer of the run's own Share URL (decoded progression, live to offline), and a local Custom RTMP stream to an owned local receiver over the glasses hotspot, each stopped through its normal control with recordings verified; then network, receiver and UI restored and the selected app, original account and paired Home verified.",
     relatedPaths: ["mobile/assets/miniapps/**", "mobile/src/services/**"],
-    prerequisites: "CI Mac app; enrolled paired glasses and an owned local receiver.",
-    exclusions: "Receiver observations alone do not qualify the routine.",
-    definition: `${pendingDefinitions}docs/LIVESTREAMER-ROUTINE-BRIEF.md`,
-    implementation: `${pendingDefinitions}tools/mentra-e2e/runner/livestreamer-receiver.ts`,
-    worker: null,
-    pending: "No automatic worker: no editable Livestreamer flow, lifecycle routine or host exists yet (only media and receiver helpers)",
+    prerequisites: "CI Mac app installed from the claimed request's selected build; an enrolled paired-glasses Mac fixture with its pinned ADB, firmware and account; the host's pinned native snapshots of every observed Livestreamer state and an observed owned Stream Here Share URL (managed watch binding) on that build; the pinned local receiver and glasses-hotspot network; normal return custody of the app, glasses, receiver and network. Preparation refuses before any claim while an observation is missing.",
+    exclusions: "No Android, physical iPhone, OTA or Call coverage. Receiver or viewer observations alone do not qualify it. Registered in source; the managed-viewer and state observations and live qualification are still pending.",
+    definition: `${livestreamerDefinitions}docs/LIVESTREAMER-FULL-ROUTINE.md`,
+    implementation: `${livestreamerDefinitions}tools/mentra-e2e/flows/livestreamer.ts`,
+    worker: `${livestreamerDefinitions}worker/livestreamer.ts`,
   }),
   // Registered Mac Phone mode routines: one shared automatic worker (worker/phone-mode.ts) authenticates the request,
   // installs its selected Mac build and runs the complete flow with claim-bound CI evidence. Their live qualification is
