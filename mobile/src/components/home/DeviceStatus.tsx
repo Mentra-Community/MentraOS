@@ -25,6 +25,7 @@ import {
 
 import MicIcon from "assets/icons/component/MicIcon"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
+import G2ConnectionProgress from "@/components/glasses/G2ConnectionProgress"
 
 const getBatteryIcon = (batteryLevel: number): string => {
   if (batteryLevel >= 75) return "battery-3"
@@ -74,9 +75,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const pairingReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
     engine.pairing.onReadiness(onChange),
   )
-  const wifiStatus = useEngineSnapshot(engine.glasses.wifi.status, (onChange) =>
-    engine.glasses.wifi.onStatus(onChange),
-  )
+  const wifiStatus = useEngineSnapshot(engine.glasses.wifi.status, (onChange) => engine.glasses.wifi.onStatus(onChange))
   const glassesConnected = glassesStatus.state === "connected"
   const glassesFullyBooted = glassesStatus.fullyBooted
   const glassesStyle = glassesInfo.style
@@ -215,11 +214,13 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
               ? push("/pairing/select-glasses-model", {transition: "simple_push"})
               : push("/pairing/scan", {deviceModel: identity.model}))
           }
-          image={getGlassesImage(identity.model)}>
+          image={getGlassesImage(identity.model)}
+          className={glassesStatus.g2MissingArm ? "min-h-40" : "h-28"}>
           <View className="flex-row items-center gap-3">
             <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
             <Text className="font-semibold text-secondary-foreground text-end self-end" text={identity.model} />
           </View>
+          <G2ConnectionProgress missingArm={glassesStatus.g2MissingArm} />
           <Button
             flex
             compact
@@ -291,11 +292,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
     return (
-      <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
+      <DeviceStatus
+        onPress={onPress}
+        image={getCurrentGlassesImage()}
+        className={glassesStatus.g2MissingArm ? "min-h-40" : "h-28"}>
         <View className="flex-row items-center gap-3">
           <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
           <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
         </View>
+        <G2ConnectionProgress missingArm={glassesStatus.g2MissingArm} />
         {!isSearching && (
           <Button
             flex
@@ -360,7 +365,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   )
 }
 
-export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
+export const ControllerStatus = ({style: _style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
@@ -439,11 +444,3 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
     </DeviceStatus>
   )
 }
-
-
-
-
-
-
-
-

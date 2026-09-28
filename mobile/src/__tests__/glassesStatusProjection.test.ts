@@ -1,3 +1,5 @@
+// This test exercises engine-private projection and stores; no public test export exists.
+/* eslint-disable no-restricted-imports */
 import {
   startGlassesStatusProjection,
   stopGlassesStatusProjection,
@@ -16,6 +18,25 @@ describe("GlassesStatusProjection", () => {
 
   afterEach(() => {
     stopGlassesStatusProjection()
+  })
+
+  it("carries the delayed G2 arm notice through hydration, the facade and live clearing", async () => {
+    const {glasses} = jest.requireActual(
+      "../../modules/engine/src/facades/glasses",
+    ) as typeof import("../../modules/engine/src/facades/glasses")
+    ;(bluetoothSdkMock.getGlassesStatus as jest.Mock).mockResolvedValueOnce({
+      connection: {state: "disconnected"},
+      g2MissingArm: "left",
+    })
+    await startGlassesStatusProjection()
+    expect(glasses.status().g2MissingArm).toBe("left")
+    expect(glasses.status().fullyBooted).toBe(false)
+    const listener = jest.fn()
+    const unsubscribe = glasses.onStatus(listener)
+    emitBluetoothSdkEvent("glasses_status", {g2MissingArm: null})
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({g2MissingArm: null}))
+    expect(glasses.status().g2MissingArm).toBeNull()
+    unsubscribe()
   })
 
   it("hydrates the initial bluetooth and glasses status snapshots", async () => {

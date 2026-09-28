@@ -115,6 +115,7 @@ interface GlassesStore extends EngineGlassesStatus {
 const initialState: GlassesStore = {
   // state:
   connection: {state: "disconnected"},
+  g2MissingArm: null,
   micEnabled: false,
   bluetoothClassicConnected: false,
   signalStrength: -1,
