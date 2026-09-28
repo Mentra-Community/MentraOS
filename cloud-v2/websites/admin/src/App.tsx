@@ -9,10 +9,12 @@ import {
   readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
 import { TestRunsPage } from "./pages/test-runs";
+import { FixFlowsPage } from "./pages/fix-flows";
+import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs";
+type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "fix-flows";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
@@ -130,6 +132,7 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "audit", label: "Audit log", icon: History },
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
+  { key: "fix-flows", label: "Fix flows", icon: RotateCcw },
 ];
 
 /**
@@ -162,13 +165,16 @@ export function App() {
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
+const initialFixFlowLink = readFixFlowLink(window.location.search);
+const initialFixFlows = new URLSearchParams(window.location.search).get("fixFlows") === "active";
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
   );
+  const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
@@ -206,6 +212,11 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
+      const fixFlow = readFixFlowLink(window.location.search);
+      setFixFlowLink(fixFlow);
+      if (fixFlow || new URLSearchParams(window.location.search).get("fixFlows") === "active") {
+        setPage("fix-flows"); return;
+      }
       const selection = readTestRunLink(window.location.search);
       const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
@@ -215,6 +226,12 @@ function AdminPage() {
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
+
+  function selectFixFlow(selection: FixFlowLink | null) {
+    setFixFlowLink(selection);
+    setPage("fix-flows");
+    window.history.pushState(null, "", fixFlowHref(selection));
+  }
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
     setTestRunLink(selection);
@@ -340,6 +357,7 @@ function AdminPage() {
     audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or promoted something." },
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
+    "fix-flows": { title: "Fix flows", body: "Follow a failed routine through its incident, AI investigation, PR, review and verification." },
   };
 
   if (me.isLoading) return <Splash label="Checking admin session" />;
@@ -358,6 +376,10 @@ function AdminPage() {
       activeKey={page}
       onSelect={key => {
         setPage(key as AdminPageKey);
+        setFixFlowLink(null);
+        const location = new URL(window.location.href);
+        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep"]) location.searchParams.delete(param);
+        window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
         setDeepLinkReportId(null);
@@ -365,6 +387,7 @@ function AdminPage() {
           selectTestRun(null, true);
           clearTestRunListScope();
         }
+        if (key === "fix-flows") window.history.replaceState(null, "", fixFlowHref(null));
       }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
@@ -422,6 +445,7 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
+      {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" ? (
         <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
           scope={testRunListScope} onClearScope={clearTestRunListScope} />

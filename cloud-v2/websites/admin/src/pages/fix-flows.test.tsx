@@ -1,0 +1,57 @@
+import { describe, expect, test } from "bun:test";
+import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { FixFlow } from "../../../../packages/core/src/types/fix-flow.types";
+import { failedStepFlow, fixFlowHref, readFixFlowLink } from "../lib/fix-flow-links";
+import { FixFlowDetail, FixFlowsPage } from "./fix-flows";
+import type { TestRunDetail } from "./test-runs-data";
+
+const id = `tfo_${"a".repeat(64)}`;
+const flow: FixFlow = {
+  occurrenceId: id, runId: "synthetic-notes", routineId: "notes-phone", channel: "dev", build: "dev.synthetic",
+  step: { id: "NOTES-08", label: "Expand the note" }, failure: { code: "blank", message: "The note content is blank <script>bad()</script>" },
+  startedAt: "2026-09-28T18:00:00Z", updatedAt: "2026-09-28T18:05:00Z", state: "attention", stage: "Review requested changes",
+  nextAction: "Address the review and request another review", activity: "available", agent: { runId: "synthetic-agent", executor: "mini-claude",
+    status: "mini_waiting", caseId: `mfc_${"b".repeat(64)}`, anchorRunId: "synthetic-agent", repository: "Mentra-Community/MentraOS", branch: "fix/synthetic", heartbeatAt: null },
+  incidents: [{ reportId: "rep_synthetic", status: "ready" }], pullRequests: [], timeline: [
+    { id: "failure", stage: "test", title: "Routine failed", detail: "Blank note", at: "2026-09-28T18:00:00Z", url: "/?testRun=synthetic-notes&step=NOTES-08" },
+    { id: "review", stage: "record-review", title: "Review requested changes", detail: "a".repeat(40), at: null, url: "https://github.com/Mentra-Community/MentraOS/pull/42#pullrequestreview-13" },
+  ],
+};
+
+describe("Fix flows navigation and recorded states", () => {
+  test("exact occurrence links survive authentication return URL encoding", () => {
+    const target = fixFlowHref({ occurrenceId: id });
+    const auth = new URL(`https://auth.example.test/?return_to=${encodeURIComponent(`https://admin.dev.example.test${target}`)}`);
+    expect(readFixFlowLink(new URL(auth.searchParams.get("return_to")!).search)).toEqual({ occurrenceId: id });
+    expect(readFixFlowLink(`?fixFlow=${id}&fixFlow=${id}`)).toBeNull();
+    expect(readFixFlowLink(`?fixFlow=${id}&fixFlowRun=another&fixStep=step`)).toBeNull();
+  });
+  test("a step without an occurrence goes to its own pending lookup, never another failure", () => {
+    const run = { runId: "synthetic-run", failureOccurrences: [{ occurrenceId: id, failure: { step: { id: "other" } } }] } as TestRunDetail;
+    expect(failedStepFlow(run, "NOTES-08")).toEqual({ runId: "synthetic-run", stepId: "NOTES-08" });
+    expect(readFixFlowLink(fixFlowHref(failedStepFlow(run, "NOTES-08")).slice(1))).toEqual({ runId: "synthetic-run", stepId: "NOTES-08" });
+  });
+  test("detail preserves actual review history, incident link and separate recording link", () => {
+    const html = renderToStaticMarkup(<FixFlowDetail flow={flow} />);
+    expect(html).toContain("Review requested changes"); expect(html).toContain("#pullrequestreview-13");
+    expect(html).toContain("/?report=rep_synthetic"); expect(html).toContain("Failed step and recording");
+    expect(html).toContain("&lt;script&gt;"); expect(html).not.toContain("<script>bad()");
+    expect(html).not.toContain("PR #42 merged");
+  });
+  test("list immediately shows active work while completed history stays secondary", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(["admin-fix-flows"], { flows: [flow, { ...flow, occurrenceId: `tfo_${"c".repeat(64)}`, routineId: "finished-routine", state: "completed" }],
+      activity: "available", refreshedAt: flow.updatedAt, limited: false });
+    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><FixFlowsPage selection={null} onSelect={() => {}} /></QueryClientProvider>);
+    expect(html).toContain("notes-phone"); expect(html).toContain("In progress"); expect(html).toContain("Completed history");
+    expect(html).not.toContain("finished-routine"); expect(html).toContain("Address the review");
+  });
+  test("unpublished step gets an explanation and a return link", () => {
+    const selection = { runId: "synthetic-notes", stepId: "NOTES-08" };
+    const qc = new QueryClient();
+    qc.setQueryData(["admin-fix-flow", selection], { pending: true, runId: selection.runId, chapterId: selection.stepId, message: "No structured occurrence yet" });
+    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><FixFlowsPage selection={selection} onSelect={() => {}} /></QueryClientProvider>);
+    expect(html).toContain("Failure recorded, fix flow pending"); expect(html).toContain("Return to this failed step and recording");
+  });
+});

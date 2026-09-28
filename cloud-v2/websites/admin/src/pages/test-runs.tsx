@@ -6,6 +6,7 @@ import { Input } from "../components/ui/input";
 import { api } from "../lib/api";
 import { TestDispatchPanel } from "./test-dispatches";
 import { TestRunOverviewPanel } from "./test-run-overview";
+import { failedStepFlow, fixFlowHref } from "../lib/fix-flow-links";
 import { readRecordingTimeline, TestRunRecordings } from "./test-run-recordings";
 import { testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
 import {
@@ -438,7 +439,7 @@ export function TestRunView({
       <section className={PANEL}>
         <div className="border-b border-[#eceeeb] px-5 py-4">
           <h3 className="font-semibold">Routine recording</h3>
-          <p className="mt-1 text-sm text-[#68746d]">Select an English step to jump to its recording and screenshot.</p>
+          <p className="mt-1 text-sm text-[#68746d]">Open a failed step to follow its fix, or watch the recording of any step.</p>
         </div>
         <div className="grid lg:grid-cols-[280px_minmax(0,1fr)]">
           <div className="border-b border-[#eceeeb] p-4 lg:border-r lg:border-b-0">
@@ -455,28 +456,30 @@ export function TestRunView({
             <div className="mt-3 max-h-[640px] space-y-1 overflow-y-auto">
               {chapters.length ? (
                 chapters.map((chapter) => (
-                  <button
+                  <div
                     key={chapter.id}
-                    type="button"
                     aria-current={selected?.id === chapter.id ? "step" : undefined}
-                    className={`w-full rounded-xl p-3 text-left ${selected?.id === chapter.id ? "bg-[#edf6f0] ring-1 ring-[#cde4d5]" : "hover:bg-[#f5f7f4]"}`}
-                    onClick={() => {
-                      setRecordingSeekSequence(value => value + 1);
-                      onStep(chapter.id);
-                      if (selected?.id === chapter.id) seek();
-                    }}>
+                    className={`w-full rounded-xl p-3 text-left ${selected?.id === chapter.id ? "bg-[#edf6f0] ring-1 ring-[#cde4d5]" : "hover:bg-[#f5f7f4]"}`}>
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-[#68746d]">
                         {chapter.phase}
                       </span>
                       <Outcome value={chapter.status} />
                     </div>
-                    <div className="text-sm leading-5">{chapter.instruction}</div>
+                    {["failed", "blocked"].includes(chapter.status) ? <a className="text-sm leading-5 font-medium text-[#087d50] underline underline-offset-2"
+                      href={fixFlowHref(failedStepFlow(run, chapter.id))}>{chapter.instruction}</a>
+                      : <button type="button" className="text-left text-sm leading-5" onClick={() => {
+                        setRecordingSeekSequence(value => value + 1); onStep(chapter.id); if (selected?.id === chapter.id) seek();
+                      }}>{chapter.instruction}</button>}
                     <div className="mt-1 text-[10px] text-[#747780]">
                       {chapter.id}
                       {chapter.videoStart !== undefined ? ` · ${time(chapter.videoStart)}` : ""}
                     </div>
-                  </button>
+                    <button type="button" className="mt-2 text-xs font-medium text-[#087d50] underline"
+                      aria-label={`Watch recording: ${chapter.id}`} onClick={() => {
+                        setRecordingSeekSequence(value => value + 1); onStep(chapter.id); if (selected?.id === chapter.id) seek();
+                      }}>Watch recording</button>
+                  </div>
                 ))
               ) : (
                 <p className="p-3 text-sm text-[#747780]">
@@ -707,8 +710,9 @@ function FailureDetails({ run }: { run: TestRunDetail }) {
         {rows.map(({ key, failure, delivery }) => (
           <li key={key} className="rounded-xl bg-[#f5f7f4] p-3 text-sm">
             <p className="font-medium">
-              {FAILURE_PHASE_LABELS[failure.phase] ?? failure.phase}
-              {failure.step ? ` · ${failure.step.label}` : ""}
+              {key.startsWith("tfo_") ? <a className="text-[#087d50] underline underline-offset-2" href={fixFlowHref({ occurrenceId: key })}>
+                {FAILURE_PHASE_LABELS[failure.phase] ?? failure.phase}{failure.step ? ` · ${failure.step.label}` : ""}
+              </a> : <>{FAILURE_PHASE_LABELS[failure.phase] ?? failure.phase}{failure.step ? ` · ${failure.step.label}` : ""}</>}
             </p>
             <p className="mt-1 leading-6 text-[#4f5d54]">{failure.message}</p>
             <p className="mt-1 font-mono text-xs text-[#747780]">{failure.code}</p>
