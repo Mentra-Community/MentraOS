@@ -19,13 +19,16 @@ export const laneIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/
 /** Explicitly configured reporting host ID; never derived from a fixture alias or hostname. */
 export const testResourceHostIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/);
 /**
+ * `glasses-<12 hex>`: the lease of one physical glasses pair, keyed by the first 12 hex of its existing lease key
+ * (sha256 of its eMMC CID). Independent of phones and of other pairs; it names a run, never a phone.
  * `shared`: the Mac app guard covering Mac UI and Mac audio. Its owner's reported
  * `glassesScope` says which glasses pairs it also excludes: every pair unless it
  * reports `none` (verified no physical glasses) or `identified` (its own pair lease).
  * `android-<12 hex>`: one phone-only Android guard, keyed by the existing redacted
  * serial digest (`sha256:<12 hex>` in lane status). Independent of `shared`.
  */
-export const testResourceKeySchema = z.string().regex(/^(?:shared|android-[a-f0-9]{12})$/);
+export const testResourceKeySchema = z.string().regex(/^(?:shared|android-[a-f0-9]{12}|glasses-[a-f0-9]{12})$/);
+const glassesKeyDigestSchema = z.string().regex(/^[a-f0-9]{12}$/);
 
 export const testResourceLaneStates = [
   "available-to-attempt", "idle-prerequisites-unchecked", "idle-prerequisite-blocked", "idle-prerequisite-unknown",
@@ -105,6 +108,17 @@ export const testResourceObservationSchema = z.object({
       pendingReconciliation: pendingStep,
     }).strict(),
   ]).optional(),
+  /**
+   * Shared guard only (checked by the PUT schema): the per-glasses leases this host's shared app acquisition refuses on,
+   * read with the same reader at this observation. `pairs` are held lease key digests (at most 16, sorted, unique);
+   * `others` counts further held entries. `unreadable`: the lease root could not be listed. Absent from older producers,
+   * which means not reported. It is exclusion only: it names no owner, run or phone.
+   */
+  glassesLeases: z.discriminatedUnion("state", [
+    z.object({ state: z.literal("none") }).strict(),
+    z.object({ state: z.literal("held"), pairs: z.array(glassesKeyDigestSchema).max(16), others: z.number().int().min(0).max(10_000) }).strict(),
+    z.object({ state: z.literal("unreadable") }).strict(),
+  ]).optional(),
   fixture: z.union([
     z.object({ checked: z.literal(false) }).strict(),
     z.object({ checked: z.literal(true), record: z.enum(["absent", "malformed", "unreadable"]) }).strict(),
@@ -153,6 +167,11 @@ export const testResourceObservationSchema = z.object({
   if (value.reason.startsWith("fixture-record-") && value.reason !== `fixture-record-${fixture.checked ? fixture.record : ""}`)
     problem("fixture record does not match reason");
   if (value.reason === "no-guard-fixture-not-supplied" && fixture.checked) problem("fixture was checked");
+  const leases = value.glassesLeases;
+  if (leases?.state === "held") {
+    if (leases.pairs.length + leases.others === 0) problem("held glasses leases must name at least one lease");
+    if (leases.pairs.some((pair, index) => index > 0 && pair <= leases.pairs[index - 1]!)) problem("glasses lease pairs must be sorted and unique");
+  }
 });
 
 /**
@@ -176,6 +195,8 @@ export const testResourceObservationPutSchema = z.object({
     ctx.addIssue({ code: "custom", message: "progress must belong to the observed owner's reservation" });
   if (owner?.glassesScope !== undefined && value.resourceKey !== "shared")
     ctx.addIssue({ code: "custom", message: "a glasses scope is reported only for the shared guard" });
+  if (value.observation.glassesLeases !== undefined && value.resourceKey !== "shared")
+    ctx.addIssue({ code: "custom", message: "glasses leases are reported only for the shared guard" });
 });
 
 export type TestResourceObservation = z.infer<typeof testResourceObservationSchema>;
