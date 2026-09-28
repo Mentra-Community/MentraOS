@@ -16,8 +16,9 @@ const PUB = "Mentra-Community/MentraOS", feature = "codex/notes-pause-flush-bund
 const tested = "1ddae0ef1ee199d4396e8c00540fb8b08bf9a6f4", merge = "0a30d0aaaf06f63e579e33458842aa3040e23ff5";
 const candidateHead = "c".repeat(40), candidateMerge = "d".repeat(40), archiveSha256 = "e".repeat(64), occurrenceId = "tfo_" + "a".repeat(64);
 const secret = "destination-test-only-secret-".repeat(2);
-const merged = (): ContinuationExecutionDestination => ({ repository: PUB, baseBranch: "dev", sourceOrigin: { pullRequest: 4277, state: "merged", mergeCommitSha: merge } });
-const open = (): ContinuationExecutionDestination => ({ repository: PUB, baseBranch: "dev", sourceOrigin: { pullRequest: 4277, state: "open" } });
+// The saved route carries the tested commit its origin was proven for: the anchor's, whichever occurrence later consumes it.
+const merged = (): ContinuationExecutionDestination => ({ repository: PUB, baseBranch: "dev", sourceOrigin: { pullRequest: 4277, state: "merged", testedHeadSha: tested, mergeCommitSha: merge } });
+const open = (): ContinuationExecutionDestination => ({ repository: PUB, baseBranch: "dev", sourceOrigin: { pullRequest: 4277, state: "open", testedHeadSha: tested } });
 const grantFor = (destination: ContinuationExecutionDestination | undefined, pullRequest = 4300): ContinuationGrant => ({
   purpose: "mentra-routine-fixer-continuation-v1", environment: "dev", occurrenceId, agentRunId: anchor,
   candidate: { repository: PUB, pullRequest, headSha: candidateHead }, ...(destination ? { executionDestination: destination } : {}),
@@ -27,21 +28,24 @@ type Pr = { number: number; state: string; merged: boolean; merge_commit_sha: st
   head: { sha: string; ref: string; repo: { full_name: string } | null }; base: { ref: string; repo: { full_name: string } }; labels: { name: string }[] };
 
 /** The production gateway over a mocked provider: the tested commit's PR list, PR records and comparisons. */
-function provider() {
+function provider(consuming = tested) {
   const origin: Pr = { number: 4277, state: "closed", merged: true, merge_commit_sha: merge, merged_at: "2026-09-28T06:27:48Z",
     head: { sha: tested, ref: feature, repo: { full_name: PUB } }, base: { ref: "dev", repo: { full_name: PUB } }, labels: [] };
   const fix: Pr = { number: 4300, state: "open", merged: false, merge_commit_sha: null, merged_at: null,
     head: { sha: candidateHead, ref: `codex/routine-${anchor}`, repo: { full_name: PUB } }, base: { ref: "dev", repo: { full_name: PUB } }, labels: [] };
-  const state = { listed: [{ number: 4277, head: { ref: feature, repo: { full_name: PUB } } }] as unknown[], prs: new Map<number, Pr>([[4277, origin], [4300, fix]]),
-    compare: new Map<string, string>([[`${tested}...dev`, "ahead"], [`${merge}...dev`, "ahead"], [`${tested}...${candidateHead}`, "ahead"]]), calls: [] as string[] };
+  const state = { listed: [{ number: 4277, head: { ref: feature, repo: { full_name: PUB } } }] as unknown[], lists: new Map<string, unknown[]>(),
+    prs: new Map<number, Pr>([[4277, origin], [4300, fix]]),
+    compare: new Map<string, string>([[`${tested}...dev`, "ahead"], [`${merge}...dev`, "ahead"], [`${tested}...${candidateHead}`, "ahead"],
+      [`${tested}...${merge}`, "ahead"], [`${merge}...${candidateHead}`, "ahead"]]), calls: [] as string[] };
   const gateway = new GithubContinuationSource({ app: { token: async () => "fixture" } as unknown as TestRunGithubApp,
     fetch: (async (url: string, init?: RequestInit) => {
       expect(init?.method).toBeUndefined(); const path = new URL(url).pathname.replace(`/repos/${PUB}/`, ""); state.calls.push(path + new URL(url).search);
-      if (path === `commits/${tested}/pulls`) { expect(new URL(url).search).toBe("?per_page=100"); return Response.json(state.listed); }
+      const listing = /^commits\/([a-f0-9]{40})\/pulls$/.exec(path);
+      if (listing) { expect(new URL(url).search).toBe("?per_page=100"); return Response.json(listing[1] === tested ? state.listed : state.lists.get(listing[1]!) ?? []); }
       const pr = /^pulls\/(\d+)$/.exec(path); if (pr && state.prs.has(Number(pr[1]))) return Response.json(state.prs.get(Number(pr[1])));
       const compare = /^compare\/(.+)$/.exec(path); if (compare && state.compare.has(compare[1]!)) return Response.json({ status: state.compare.get(compare[1]!) });
       throw new Error(`Unexpected provider read ${path}`); }) as typeof fetch });
-  const source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: feature, headSha: tested } as const;
+  const source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: feature, headSha: consuming } as const;
   const packet = { schemaVersion: 1, occurrenceId, sourceStatus: "recorded", source, requestId: "local-notes-1", routine: { id: "notes-phone" },
     build: { hashes: {} }, delivery: { state: "acknowledged", agentRunId: anchor }, evidence: { complete: true, assets: [] } } as unknown as FailurePacket;
   // The same state object the provider reads, so a test's reassignment (for example of `listed`) reaches it.
@@ -54,9 +58,12 @@ test("the signed grant carries a strict optional destination; legacy grants are 
     expect(verifyTestContinuationGrant(signTestContinuationGrant(grant, secret), occurrenceId, secret, "dev")).toEqual(grant);
   }
   const tampered: unknown[] = [{ ...merged(), extra: true }, { ...merged(), baseBranch: "main" }, { ...merged(), baseBranch: feature },
-    { ...merged(), repository: "Mentra-Community/Mentra-Automated-Testing" }, { ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged" } },
-    { ...open(), sourceOrigin: { pullRequest: 4277, state: "open", mergeCommitSha: merge } }, { ...merged(), sourceOrigin: { pullRequest: 0, state: "merged", mergeCommitSha: merge } },
-    { ...merged(), sourceOrigin: { pullRequest: 4277, state: "closed" } }, { ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged", mergeCommitSha: "MERGE" } }];
+    { ...merged(), repository: "Mentra-Community/Mentra-Automated-Testing" }, { ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged", testedHeadSha: tested } },
+    { ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged", mergeCommitSha: merge } }, { ...open(), sourceOrigin: { pullRequest: 4277, state: "open" } },
+    { ...open(), sourceOrigin: { pullRequest: 4277, state: "open", testedHeadSha: "TESTED" } },
+    { ...open(), sourceOrigin: { pullRequest: 4277, state: "open", testedHeadSha: tested, mergeCommitSha: merge } }, { ...merged(), sourceOrigin: { pullRequest: 0, state: "merged", mergeCommitSha: merge } },
+    { ...merged(), sourceOrigin: { pullRequest: 4277, state: "closed", testedHeadSha: tested } },
+    { ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged", testedHeadSha: tested, mergeCommitSha: "MERGE" } }];
   // Core never signs one, and a correctly signed but tampered grant (as the controller signs it) never verifies.
   const forge = (value: unknown) => { const encoded = Buffer.from(JSON.stringify(value)).toString("base64url");
     return `${encoded}.${createHmac("sha256", secret).update(encoded).digest("hex")}`; };
@@ -97,7 +104,7 @@ test("an unproven, ambiguous, incomplete, foreign, retargeted or uncontained ori
     ["an origin record from another branch", f => { f.origin.head.ref = "codex/other"; }], ["an origin record from a fork", f => { f.origin.head.repo = { full_name: "someone/MentraOS" }; }],
     ["an origin retargeted to staging", f => { f.origin.base.ref = "staging"; }], ["a foreign origin base", f => { f.origin.base.repo.full_name = "someone/MentraOS"; }],
     ["a staging destination for a dev origin", () => undefined, { ...merged(), baseBranch: "staging" }],
-    ["another merge commit", () => undefined, { ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged", mergeCommitSha: "9".repeat(40) } }],
+    ["another merge commit", () => undefined, { ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged", testedHeadSha: tested, mergeCommitSha: "9".repeat(40) } }],
     ["an origin whose final head is not the tested commit", f => { f.origin.head.sha = "8".repeat(40); }],
     ["an unmerged origin saved as merged", f => { Object.assign(f.origin, { merged: false, merge_commit_sha: null, merged_at: null }); }],
     ["a tested commit outside dev", f => { f.compare.set(`${tested}...dev`, "behind"); }], ["a merge outside dev", f => { f.compare.set(`${merge}...dev`, "diverged"); }]];
@@ -154,6 +161,60 @@ test("an open origin keeps its own PR; the same PR's later merge verifies normal
   }
 });
 
+// A later occurrence of the same branch consumes the saved route with its own exact head: here the merge commit, reached through
+// dev after the feature branch was deleted (private reconciliation admits it). The origin is still proven from the anchor's head.
+test("a later same-branch occurrence continuing the merged origin is verified against the origin's own head; its source is unchanged", async () => {
+  const f = provider(merge);
+  expect(await f.gateway.target(f.packet, grantFor(merged()), "notes-phone")).toEqual({ query: { channel: "pr", pr: 4300 }, expectedHeadSha: candidateHead, automaticExpected: false });
+  expect(f.calls).toEqual([`commits/${tested}/pulls?per_page=100`, "pulls/4277", `compare/${tested}...dev`, `compare/${merge}...dev`,
+    `compare/${tested}...${merge}`, "pulls/4300", `compare/${merge}...${candidateHead}`]);
+  expect(f.packet.source).toEqual(f.frozen); expect(f.frozen.headSha).toBe(merge);
+  // The anchor itself needs no continuation proof: its head is the origin's.
+  const anchorRun = provider();
+  await anchorRun.gateway.target(anchorRun.packet, grantFor(merged()), "notes-phone");
+  expect(anchorRun.calls.some(call => call === `compare/${tested}...${tested}`)).toBe(false);
+});
+
+test("a later occurrence that does not continue the origin, or an origin re-proven from the wrong head, refuses before the candidate is read", async () => {
+  const unrelated = "6".repeat(40), entry = { number: 4277, head: { ref: feature, repo: { full_name: PUB } } };
+  const cases: Array<[string, string, (f: ReturnType<typeof provider>) => void, ContinuationExecutionDestination?]> = [
+    ["an unrelated later head on the branch name", unrelated, f => { f.compare.set(`${tested}...${unrelated}`, "diverged"); }],
+    ["an earlier head than the origin's", unrelated, f => { f.compare.set(`${tested}...${unrelated}`, "behind"); }],
+    // The later head substituted for the origin's: GitHub associates the merge with the PR, whose final head is still the anchor's.
+    ["the consuming head claimed as the origin head", merge, f => { f.lists.set(merge, [entry]); }, { ...merged(), sourceOrigin: { ...merged().sourceOrigin, testedHeadSha: merge } }],
+    ["an origin head the PR never had", merge, () => undefined, { ...merged(), sourceOrigin: { ...merged().sourceOrigin, testedHeadSha: unrelated } }],
+    ["a later occurrence from another branch", merge, f => { (f.packet.source as { branch: string }).branch = "codex/other-feature"; }],
+    ["the origin head outside dev", merge, f => { f.compare.set(`${tested}...dev`, "behind"); }]];
+  for (const [label, consuming, mutate, destination] of cases) {
+    const f = provider(consuming); mutate(f);
+    const outcome = await f.gateway.target(f.packet, grantFor(destination ?? merged()), "notes-phone").then(() => "resolved", (error: { status?: number; message?: string }) => `${error.status} ${error.message}`);
+    expect(`${label}: ${outcome}`).toMatch(/: 409 /);
+    expect(f.calls.includes("pulls/4300"), label).toBe(false);
+  }
+  // The candidate still has to descend from the later occurrence's exact head, not merely from the origin.
+  const g = provider(merge); g.compare.set(`${merge}...${candidateHead}`, "diverged");
+  await expect(g.gateway.target(g.packet, grantFor(merged()), "notes-phone")).rejects.toThrow("Candidate does not descend from the tested source");
+});
+
+test("an open origin's later occurrence keeps the originating PR; its later merge verifies normally; a non-continuing head refuses", async () => {
+  const later = "5".repeat(40);
+  const setup = () => { const f = provider(later);
+    Object.assign(f.origin, { state: "open", merged: false, merge_commit_sha: null, merged_at: null, head: { sha: candidateHead, ref: feature, repo: { full_name: PUB } } });
+    f.compare.set(`${tested}...${later}`, "ahead"); f.compare.set(`${later}...${candidateHead}`, "ahead"); return f; };
+  const f = setup();
+  expect(await f.gateway.target(f.packet, grantFor(open(), 4277), "notes-phone")).toEqual({ query: { channel: "pr", pr: 4277 }, expectedHeadSha: candidateHead, automaticExpected: false });
+  expect(f.calls).toEqual([`commits/${tested}/pulls?per_page=100`, "pulls/4277", `compare/${tested}...${later}`, "pulls/4277", `compare/${later}...${candidateHead}`]);
+  Object.assign(f.origin, { state: "closed", merged: true, merge_commit_sha: merge, merged_at: "2026-09-28T06:27:48Z" });
+  expect(await f.gateway.target(f.packet, grantFor(open(), 4277), "notes-phone")).toEqual({ query: { channel: "dev" }, expectedHeadSha: merge, automaticExpected: false });
+  for (const [label, mutate, grant] of [
+    ["a later head not continuing the origin", (g: ReturnType<typeof setup>) => { g.compare.set(`${tested}...${later}`, "diverged"); }, undefined],
+    ["a second PR from the branch", () => undefined, grantFor(open(), 4300)],
+    ["a retargeted origin", (g: ReturnType<typeof setup>) => { g.origin.base.ref = "staging"; }, undefined]] as const) {
+    const g = setup(); mutate(g);
+    await expect(g.gateway.target(g.packet, grant ?? grantFor(open(), 4277), "notes-phone"), label).rejects.toMatchObject({ status: 409 });
+  }
+});
+
 // The real continuation and dispatch services, the real lease callback and the production gateway, composed.
 const previous = { url: process.env.CLOUD_REPORT_AGENT_URL, secret: process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET };
 beforeEach(() => { process.env.CLOUD_REPORT_AGENT_URL = "https://mini.example.test"; process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = secret; });
@@ -161,8 +222,8 @@ afterEach(() => {
   if (previous.url === undefined) delete process.env.CLOUD_REPORT_AGENT_URL; else process.env.CLOUD_REPORT_AGENT_URL = previous.url;
   if (previous.secret === undefined) delete process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET; else process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = previous.secret;
 });
-function composed() {
-  const f = provider(), rows = new Map<string, { inputSha256: string; receipt: TestDispatchReceipt }>();
+function composed(consuming = tested) {
+  const f = provider(consuming), rows = new Map<string, { inputSha256: string; receipt: TestDispatchReceipt }>();
   let sends = 0, stored: unknown = merged();
   const repository: TestDispatchRepository = {
     get: async id => rows.get(id) ?? null, recent: async () => [...rows.values()].map(value => value.receipt),
@@ -207,9 +268,10 @@ test("request binds the destination durably, checks it at both lease admissions,
 
 test("a different destination cannot borrow the receipt, read its history or list it", async () => {
   const f = composed(), grant = grantFor(merged()); await f.service.request(grant, input);
-  const id = continuationOperationId(grant, "notes-phone"), other = grantFor({ ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged", mergeCommitSha: "9".repeat(40) } });
+  const id = continuationOperationId(grant, "notes-phone"), other = grantFor({ ...merged(), sourceOrigin: { pullRequest: 4277, state: "merged", testedHeadSha: tested, mergeCommitSha: "9".repeat(40) } });
   expect(continuationOperationId(other, "notes-phone")).toBe(id);
-  for (const tampered of [other, grantFor(undefined), grantFor({ ...merged(), baseBranch: "staging" })]) {
+  for (const tampered of [other, grantFor(undefined), grantFor({ ...merged(), baseBranch: "staging" }),
+    grantFor({ ...merged(), sourceOrigin: { ...merged().sourceOrigin, testedHeadSha: merge } })]) {
     await expect(f.service.request(tampered, input)).rejects.toThrow("not found");
     await expect(f.service.detail(tampered, id)).rejects.toThrow("not found");
     expect((await f.service.list(tampered)).reruns).toEqual([]);
@@ -227,4 +289,21 @@ test("a destination changed in the controller's stored route refuses at the leas
   const real = checking.checkLease; checking.checkLease = async (grant, routine) => { if (++calls === 2) g.store(undefined); return real(grant, routine); };
   await expect(g.service.request(grantFor(merged()), input)).rejects.toThrow("Mini lease changed");
   expect(calls).toBe(2); expect(g.sends()).toBe(0); expect(g.rows.size).toBe(0);
+});
+test("a later occurrence's request binds the same saved destination, reaches both lease checks and replays without a second send", async () => {
+  const f = composed(merge), grant = grantFor(merged());
+  expect(await f.service.request(grant, input)).toMatchObject({ sendState: "accepted", requestRunId: 90 });
+  const id = continuationOperationId(grant, "notes-phone");
+  expect(f.rows.get(id)!.receipt.continuation).toEqual({ occurrenceId, agentRunId: anchor, candidate: grant.candidate, executionDestination: merged(),
+    executionAttempt: 1, expectedHeadSha: candidateHead });
+  expect(f.leaseBodies.map(body => body.executionDestination)).toEqual([merged(), merged()]);
+  expect(await f.service.request(grant, input)).toMatchObject({ dispatchId: id }); expect(f.sends()).toBe(1);
+  expect(f.packet.source).toEqual(f.frozen);
+  // The controller's stored route names another origin head: refused at the lease check, before any send or receipt.
+  const g = composed(merge); g.store({ ...merged(), sourceOrigin: { ...merged().sourceOrigin, testedHeadSha: merge } });
+  await expect(g.service.request(grantFor(merged()), input)).rejects.toThrow("Mini lease changed"); expect(g.sends()).toBe(0); expect(g.rows.size).toBe(0);
+  // A later head that does not continue the origin is refused by the gateway: no final lease fence, send or receipt.
+  const h = composed("6".repeat(40)); h.compare.set(`${tested}...${"6".repeat(40)}`, "diverged");
+  await expect(h.service.request(grantFor(merged()), input)).rejects.toThrow("does not continue");
+  expect(h.leaseBodies.length).toBeLessThanOrEqual(1); expect(h.sends()).toBe(0); expect(h.rows.size).toBe(0);
 });

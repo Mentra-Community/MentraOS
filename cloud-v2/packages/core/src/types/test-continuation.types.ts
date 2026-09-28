@@ -29,15 +29,21 @@ export const continuationCaseBindingSchema = z.object({
  * itself a destination has no base of its own; the controller proves the pull request it came from and saves
  * that route. It signs this projection only from its saved route, never from model text, and Core re-verifies
  * the whole relationship with the provider. Absent for every other source, candidate and target.
+ *
+ * `testedHeadSha` is the exact tested commit the origin was proven for when the route was saved (the case
+ * anchor's own source head). The route belongs to the branch, so a later occurrence of that branch consumes it
+ * with its own, different head: the origin is re-proven from this immutable head, and the consuming head must
+ * continue it.
  */
 export const continuationExecutionDestinationSchema = z.object({
   repository: z.literal("Mentra-Community/MentraOS"),
   baseBranch: z.enum(["dev", "staging"]),
   sourceOrigin: z.discriminatedUnion("state", [
     // The originating PR is the route itself; if that same PR later merges, its merged-candidate path applies.
-    z.object({ pullRequest: z.number().int().positive().safe(), state: z.literal("open") }).strict(),
+    z.object({ pullRequest: z.number().int().positive().safe(), state: z.literal("open"), testedHeadSha: candidateHead }).strict(),
     // A merged origin takes no more commits: a new anchor fix PR into the same base carries the fix.
-    z.object({ pullRequest: z.number().int().positive().safe(), state: z.literal("merged"), mergeCommitSha: candidateHead }).strict(),
+    z.object({ pullRequest: z.number().int().positive().safe(), state: z.literal("merged"), testedHeadSha: candidateHead,
+      mergeCommitSha: candidateHead }).strict(),
   ]),
 }).strict();
 export const continuationGrantSchema = z.object({

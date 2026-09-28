@@ -105,29 +105,37 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
       automaticExpected: pr.labels.some(label => label.name === `routine:${routineId}`) };
   }
   /**
-   * Proves the controller's saved route for a local build of a feature branch, independently: the tested commit's
-   * complete association names exactly one pull request from this repository's recorded branch, the signed one, still
-   * into the saved base (a retarget refuses). A merged origin must have the tested commit as its final head, the saved
-   * merge commit, and both contained in the destination. An open origin may since have merged (its candidate then
-   * follows the merged-candidate path) but never closed unmerged.
+   * Proves the controller's saved route for a local build of a feature branch, independently. The route belongs to the
+   * branch and was proven from the tested commit it was saved for (`sourceOrigin.testedHeadSha`, the anchor's), so the
+   * origin is re-proven from that immutable commit, never from a later occurrence's head: its complete association names
+   * exactly one pull request from this repository's recorded branch, the signed one, still into the saved base (a
+   * retarget refuses). A merged origin must have that commit as its final head, the saved merge commit, and both
+   * contained in the destination. An open origin may since have merged (its candidate then follows the merged-candidate
+   * path) but never closed unmerged. The consuming occurrence keeps its own exact source on that same branch; a later
+   * one must continue the origin (its head descends from the origin's), and the candidate must descend from it as usual.
    */
   private async originRoute(source: NonNullable<FailurePacket["source"]>, tested: string, destination: ContinuationExecutionDestination) {
     ensure(source.channel === "local" && !source.pullRequest && source.repository === destination.repository && !["dev", "staging"].includes(source.branch),
       "An execution destination applies only to a local feature-branch source");
-    const listed = associatedSchema.safeParse(await this.api(PUBLIC, `commits/${tested}/pulls?per_page=100`));
+    const origin = destination.sourceOrigin, proven = origin.testedHeadSha;
+    const listed = associatedSchema.safeParse(await this.api(PUBLIC, `commits/${proven}/pulls?per_page=100`));
     ensure(listed.success, "The originating pull request list is incomplete or invalid");
     const associated = listed.data!.filter(item => item.head.repo?.full_name === PUBLIC && item.head.ref === source.branch);
-    const origin = destination.sourceOrigin;
     ensure(associated.length === 1 && associated[0]!.number === origin.pullRequest, "The originating pull request is not uniquely proven");
     const pr = prSchema.parse(await this.api(PUBLIC, `pulls/${origin.pullRequest}`));
     ensure(pr.number === origin.pullRequest && pr.head.repo?.full_name === PUBLIC && pr.head.ref === source.branch
       && pr.base.repo.full_name === PUBLIC, "The originating pull request differs from the recorded source");
     ensure(pr.base.ref === destination.baseBranch, "The originating pull request was retargeted; its saved destination no longer holds");
-    if (origin.state === "open") { ensure(pr.state === "open" || pr.merged, "The originating pull request closed without merging"); return; }
-    ensure(pr.merged && pr.head.sha === tested && pr.merge_commit_sha === origin.mergeCommitSha, "The merged originating pull request differs from the saved route");
-    for (const contained of [tested, origin.mergeCommitSha])
-      ensure(["ahead", "identical"].includes(comparisonSchema.parse(await this.api(PUBLIC, `compare/${contained}...${destination.baseBranch}`)).status),
-        "The destination does not contain the tested source and its merge");
+    if (origin.state === "open") ensure(pr.state === "open" || pr.merged, "The originating pull request closed without merging");
+    else {
+      ensure(pr.merged && pr.head.sha === proven && pr.merge_commit_sha === origin.mergeCommitSha, "The merged originating pull request differs from the saved route");
+      for (const contained of [proven, origin.mergeCommitSha])
+        ensure(["ahead", "identical"].includes(comparisonSchema.parse(await this.api(PUBLIC, `compare/${contained}...${destination.baseBranch}`)).status),
+          "The destination does not contain the tested source and its merge");
+    }
+    if (tested !== proven)
+      ensure(["ahead", "identical"].includes(comparisonSchema.parse(await this.api(PUBLIC, `compare/${proven}...${tested}`)).status),
+        "The consuming occurrence does not continue the saved route's origin");
   }
   /** The occurrence's own recorded source, channel, routine and artifact. Nothing is looked
    * up by branch or PR, so a newer head or another environment's build cannot substitute. */
