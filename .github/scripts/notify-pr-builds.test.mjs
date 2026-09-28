@@ -722,14 +722,16 @@ test("planned routine labels say no test was requested instead of linking result
   await notifyPrBuilds(h.args)
   const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
   const urls = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]).searchParams)
-  // Livestreamer and connected-glasses are registered: Livestreamer links results for the same Mac archive as day1-ota,
-  // connected-glasses for its own Android APK, never the Mac archive; only the planned routine says nothing was requested.
-  assert.deepEqual(urls.map(params => params.get("routineId")).sort(), ["connected-glasses", "day1-ota", "livestreamer"])
-  const [android, mac, live] = ["connected-glasses", "day1-ota", "livestreamer"].map(id => urls.find(params => params.get("routineId") === id))
-  assert.deepEqual([android.get("platform"), mac.get("platform"), live.get("platform")], ["android", "ios-mac", "ios-mac"])
+  // Every labelled routine is registered: account-miniapps and Livestreamer link results for the same Mac archive as
+  // day1-ota, connected-glasses for its own Android APK, never the Mac archive; no planned routine remains to report.
+  assert.deepEqual(urls.map(params => params.get("routineId")).sort(), ["account-miniapps", "connected-glasses", "day1-ota", "livestreamer"])
+  const [account, android, mac, live] = ["account-miniapps", "connected-glasses", "day1-ota", "livestreamer"]
+    .map(id => urls.find(params => params.get("routineId") === id))
+  assert.deepEqual([account, android, mac, live].map(params => params.get("platform")), ["ios-mac", "android", "ios-mac", "ios-mac"])
+  assert.match(mac.get("archiveSha256"), /^[0-9a-f]{64}$/)
   assert.notEqual(android.get("archiveSha256"), mac.get("archiveSha256"))
-  assert.equal(live.get("archiveSha256"), mac.get("archiveSha256"))
-  assert.equal((text.match(/Planned routine: no automatic worker is registered yet, so no test was requested\./g) ?? []).length, 1)
+  assert.ok([account, live].every(params => params.get("archiveSha256") === mac.get("archiveSha256")))
+  assert.equal((text.match(/Planned routine: no automatic worker is registered yet, so no test was requested\./g) ?? []).length, 0)
   for (const name of ["Account and miniapps", "Connected glasses \\(Android\\)", "Livestreamer"]) assert.match(text, new RegExp(name))
 })
 

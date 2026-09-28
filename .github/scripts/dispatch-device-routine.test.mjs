@@ -460,19 +460,83 @@ test("registered Phone mode labels request the exact Mac publication, never a su
   assert.ok(routines.every(routine => !NIGHTLY_ROUTINES.includes(routine)))
 })
 
+test("a registered account-miniapps label requests the exact dev or staging Mac publication, never a successful-build run", async () => {
+  for (const pull of [pr, stagingPr]) {
+    const labelled = {...pull, labels: ["account-miniapps", "day1-ota"].map(routine => ({name: `routine:${routine}`}))}
+    const jobs = ["account-miniapps", "day1-ota"].map(routine => ({...publicationJob, name: publicationJobName(123, 2, routine)}))
+    const f = fake({pull: labelled, callbackJobs: {[callback.id]: jobs}})
+    const plans = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
+    assert.deepEqual(plans.map(plan => plan.routine).sort(), ["account-miniapps", "day1-ota"])
+    const account = plans.find(plan => plan.routine === "account-miniapps")
+    assert.deepEqual(account, {...requestPlan, routine: "account-miniapps"})
+    assert.equal((await requestAfterPublication({...f, context, plan: account})).status, "request-dispatched")
+    const [, dispatch] = f.calls.find(([kind, call]) => kind === "dispatch" && call.inputs.routine === "account-miniapps")
+    assert.equal(dispatch.ref, "dev")
+    assert.deepEqual(dispatch.inputs, {pr: "42", routine: "account-miniapps", request_origin: "pr-label",
+      source_build_run_id: "123", source_publication_attempt: "2"})
+  }
+  // An Android publication never requests the Mac routine.
+  const apk = {...build, path: ".github/workflows/mentra-app-android-build.yml"}
+  const android = fake({run: apk, pull: {...pr, labels: [{name: "routine:account-miniapps"}]}, callbackJobs: {[callback.id]: []}})
+  assert.deepEqual((await planDeviceDispatches({...android, context})).filter(plan => plan.mode === "request"), [])
+  // Successful coordinated builds keep requesting only the no-glasses routines.
+  for (const channel of ["dev", "staging"]) {
+    const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: channel, pull_requests: []}
+    const coordinated = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: []}})
+    assert.equal((await planDeviceDispatch({...coordinated, context, routine: "account-miniapps"})).mode, "skip")
+    assert.deepEqual((await planDeviceDispatches({...coordinated, context})).filter(plan => plan.mode === "request")
+      .map(plan => plan.routine), ["no-glasses", "no-glasses-android"])
+  }
+})
+
+test("the staging account-miniapps wire request dispatches only under its own label with its bound Mac selection", async () => {
+  const fixtures = JSON.parse(await readFile(new URL("./fixtures/pr-routine-requests.json", import.meta.url)))
+  const value = structuredClone(fixtures.stagingLabelCallback)
+  value.routine.id = "account-miniapps"
+  value.requestId = value.requestId.replace(/day1-ota$/, "account-miniapps")
+  const plan = {mode: "dispatch", runId: value.trigger.runId, runAttempt: value.trigger.runAttempt, sourceSha: value.trigger.sha}
+  const current = labels => ({number: value.pullRequest.number, state: "open", base: {ref: "staging"},
+    head: {sha: value.pullRequest.headSha, ref: "feature", repo: {full_name: repo}}, labels: labels.map(name => ({name}))})
+  const f = fake({pull: current(["routine:account-miniapps"]), baseSha: value.pullRequest.baseSha}), remote = fake()
+  assert.equal((await dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(value)})).status,
+    "private-job-requested")
+  assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "200", request_attempt: "1", routine_id: "account-miniapps"})
+  for (const labels of [["routine:day1-ota"], []]) {
+    const other = fake({pull: current(labels), baseSha: value.pullRequest.baseSha}), privateGithub = fake()
+    assert.equal((await dispatchReadyRequest({...other, privateGithub: privateGithub.github, context, plan, bytes: bytes(value)})).status,
+      "not-dispatched")
+    assert.equal(privateGithub.calls.length, 0)
+  }
+  for (const [change, reason] of [[v => { v.selection.platform = "android" }, /Invalid ready selection/],
+    [v => { v.selection.app.backend = "dev" }, /destination is not admitted/],
+    [v => { v.requestId = v.requestId.replace(/account-miniapps$/, "day1-ota") }, /does not match its trusted producer/]]) {
+    const changed = structuredClone(value); change(changed)
+    const g = fake({pull: current(["routine:account-miniapps"]), baseSha: value.pullRequest.baseSha}), privateGithub = fake()
+    await assert.rejects(dispatchReadyRequest({...g, privateGithub: privateGithub.github, context, plan, bytes: bytes(changed)}), reason)
+    assert.equal(privateGithub.calls.length, 0)
+  }
+})
+
 test("planned routine labels never become automatic requests or private callbacks", async () => {
-  const planned = ["account-miniapps"]
-  const pull = {...pr, labels: [...planned, "day1-ota"].map(routine => ({name: `routine:${routine}`}))}
+  const {DEVICE_ROUTINES, isRegisteredRoutine} = await import("./device-routines.mjs")
+  // Every catalogued routine is registered now: an unknown label never becomes a request or callback, and a synthetic
+  // planned model of the former planned routines still never reaches the private workflow.
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES).filter(id => !isRegisteredRoutine(id)), [])
+  const unknown = "synthetic-unregistered"
+  const pull = {...pr, labels: [unknown, "day1-ota"].map(routine => ({name: `routine:${routine}`}))}
   const f = fake({pull, callbackJobs: {[callback.id]: [{...publicationJob, name: publicationJobName(123, 2, "day1-ota")}]}})
   const plans = await planDeviceDispatches({...f, context})
   assert.deepEqual(plans.filter(plan => plan.mode === "request").map(plan => plan.routine), ["day1-ota"])
-  assert.ok(plans.every(plan => !planned.includes(plan.routine)))
-  for (const routine of planned) {
-    await assert.rejects(planDeviceDispatch({...f, context, routine}), /planned but not registered/)
-    await assert.rejects(requestAfterPublication({...f, context, plan: {...plans[0], routine}}), /planned but not registered/)
+  assert.ok(plans.every(plan => plan.routine !== unknown))
+  await assert.rejects(planDeviceDispatch({...f, context, routine: unknown}), /Unsupported device routine/)
+  await assert.rejects(requestAfterPublication({...f, context, plan: {...plans[0], routine: unknown}}), /Unsupported device routine/)
+  const routineCatalog = {...DEVICE_ROUTINES, ...Object.fromEntries(["account-miniapps", "connected-glasses", "livestreamer"].map(id =>
+    [id, {...DEVICE_ROUTINES[id], pending: "Synthetic planned model"}]))}
+  for (const [routine, catalog, reason] of [[unknown, undefined, /Unsupported device routine/],
+    ...["account-miniapps", "connected-glasses", "livestreamer"].map(routine => [routine, routineCatalog, /planned but not registered/])]) {
     const remote = fake(), plan = await planDeviceDispatch({...fake({run: producer}), context})
     const value = {...request, requestId: `routine-123-2-42-${routine}`, routine: {...request.routine, id: routine}}
-    await assert.rejects(dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(value)}), /planned but not registered/)
+    await assert.rejects(dispatchReadyRequest({...f, privateGithub: remote.github, context, plan, bytes: bytes(value), routineCatalog: catalog}), reason)
     assert.equal(remote.calls.length, 0)
   }
   assert.equal(f.calls.filter(([kind]) => kind === "dispatch").length, 0)
@@ -505,7 +569,7 @@ test("a completed trusted request has one private callback regardless of registe
   assert.equal(f.calls.filter(([kind]) => kind === "read-artifacts").length, 1)
 })
 
-for (const routine of ["no-glasses", "mentra-call"]) test(`explicit trusted ${routine} request queues without a label but retains current PR and base checks`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "account-miniapps"]) test(`explicit trusted ${routine} request queues without a label but retains current PR and base checks`, async () => {
   const manual = {...request, requestId: `routine-123-2-42-${routine}`,
     routine: {...request.routine, id: routine, authorization: "workflow-dispatch"}}
   const f = fake({run: producer, pull: {...pr, labels: []}}), remote = fake()
@@ -649,7 +713,7 @@ test("coordinated reruns retain one automatic generation even after an ambiguous
   assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
 })
 
-for (const routine of ["no-glasses", "mentra-call"]) test(`coordinated ${routine} ready requests keep private dispatch limited to authenticated request IDs`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "account-miniapps"]) test(`coordinated ${routine} ready requests keep private dispatch limited to authenticated request IDs`, async () => {
   const {options, state} = coordinatedFixture("staging")
   const request = await createRoutineRequest({...options, routine})
   const plan = {mode: "dispatch", runId: 500, runAttempt: 1, sourceSha: options.source.sha}

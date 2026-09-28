@@ -100,10 +100,11 @@ Deployment must include `no-glasses-android` in `TEST_RUN_DISPATCH_ROUTINES` onl
 after its private worker lane is enrolled; `TEST_RUN_DISPATCH_CHANNELS` still
 controls PR/dev/staging availability. This code does not enable a new lane by itself.
 
-The planned nightly routine `account-miniapps` (Mac) is listed so its state is visible,
-but it carries a `planned` reason in `TEST_ROUTINES`. It stays unavailable, and dispatch
-refuses it, even if a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES`. Only the
-reviewed change that registers the routine's automatic worker removes `planned`.
+The nightly routines `account-miniapps`, `connected-glasses` and `livestreamer` are all
+registered, so `TEST_ROUTINES` currently carries no `planned` reason. A routine added
+later with a `planned` reason stays unavailable, and dispatch refuses it, even if a
+deployment adds it to `TEST_RUN_DISPATCH_ROUTINES`, until the reviewed change that
+registers its automatic worker removes `planned`.
 
 `livestreamer` (Mac) is registered: its private worker binds the request's selected Mac
 build and exports claim-bound CI evidence, and it is a nightly target. Like the other
@@ -118,6 +119,14 @@ it is a nightly target. Like `no-glasses-android`, it needs a published Android 
 and becomes requestable only once a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES`
 after its worker lane is enrolled. Its C8 and C9 sections have no controllers yet and
 fail by name; its live CI qualification is still pending.
+
+`account-miniapps` (Mac) is registered: its private worker verifies the request's
+exact selected Mac build and OTA manifest on a dev or staging backend, uses only that
+backend's reviewed host, and exports claim-bound CI evidence. It is a nightly target.
+Like `no-glasses-android`, it becomes requestable only once a deployment adds it to
+`TEST_RUN_DISPATCH_ROUTINES` after its worker lane is enrolled. Its Safari Google
+provider completion, callback and window close are unqualified and report failed or
+blocked results when unobserved; its live CI qualification is still pending.
 
 `captions-phone` and `notes-phone` (Mac, simulated glasses in Phone mode) are
 registered: their private worker installs the selected Mac build and exports

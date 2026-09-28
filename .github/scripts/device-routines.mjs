@@ -2,10 +2,10 @@
 // means a routine can exercise this behavior; only a completed run proves it.
 const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/90a70edfe2fa17fd766dda3d98977555d6608a05/"
 const androidDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58483a6c729018dc9955122dd071ecefbfb8ae92/"
-const pendingDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/754d527a3d6aac8ac971c600998aece203015394/"
 const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/69ffd29cba268d9ef2a67ee5d1b33edb2c547b90/"
 const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
 const connectedDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
+const accountDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",
@@ -47,20 +47,20 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${definitions}tools/mentra-e2e/runner/call-routine.ts`,
     worker: `${definitions}worker/CALL-RECIPE.md`,
   }),
-  // Planned nightly target (account-miniapps). Its name, label, platform and result rows are wired end to end, but it is
-  // `pending`: it has no registered automatic worker, so every request, dispatch and nightly path refuses it with this
-  // exact reason. Remove `pending` only in the reviewed change that registers its worker, and add its label to
-  // request-e2e-routine.yml's pull_request trigger and explicit REQUEST_ROUTINE chain in that same change.
+  // Registered Mac nightly target: its automatic worker (worker/account-miniapps.ts, configuration kind
+  // automatic-account-miniapps-worker) authenticates the request, verifies its exact selected Mac build and OTA manifest,
+  // binds the reviewed host of the selected app backend (dev or staging) and runs the full definition in one claimed
+  // lifecycle with claim-bound recording, export and settlement. Registration permits an honest attempted run; it is
+  // not qualification.
   "account-miniapps": Object.freeze({
     label: "routine:account-miniapps", name: "Account and miniapps", platform: "ios-on-mac",
-    coverage: "One combined paired-account routine: email login/logout, data export, Google SSO, exact feedback report, paired miniapps and visual incompatible tiles, with account and pairing restoration.",
+    coverage: "One combined paired-account routine on the request's selected Mac build: email login/logout, data export, Google SSO, exact feedback report, paired miniapps and visual incompatible tiles, with account and pairing restoration.",
     relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/src/services/**", "mobile/assets/miniapps/**"],
-    prerequisites: "CI Mac app; enrolled paired glasses fixture, the original consumer account and the Google account, with the Safari provider recording.",
-    exclusions: "Sections are one routine and are never requested separately. No Android, OTA or Call coverage.",
-    definition: `${pendingDefinitions}docs/ACCOUNT-MINIAPPS-ROUTINE.md`,
-    implementation: `${pendingDefinitions}tools/mentra-e2e/runner/account-miniapps-routine.ts`,
-    worker: `${pendingDefinitions}worker/account-miniapps.ts`,
-    pending: "No automatic worker: the existing host's admitAccountMiniappsRun refuses (safari-google-provider), and no exported automatic preparation binds the request's selected Mac build and claim-bound recording evidence (the host installs its static build and records development evidence only)",
+    prerequisites: "CI Mac app and immutable OTA manifest verified against the claimed request, on a dev or staging backend with its own reviewed worker host; the private lifecycle's recorded original account and paired glasses fixture, the Google account and the Safari provider recording, and the private worker's own fixture, credential and ownership prerequisites.",
+    exclusions: "Sections are one routine and are never requested separately. No Android, OTA or Call coverage. The owned Safari Google provider completion, its Mentra callback and the selected provider window's close are unqualified, and no real eligible customer completion has been observed: those cases report failed or blocked results when unobserved. Registered in source; not qualified.",
+    definition: `${accountDefinitions}docs/ACCOUNT-MINIAPPS-ROUTINE.md`,
+    implementation: `${accountDefinitions}tools/mentra-e2e/runner/account-miniapps-routine.ts`,
+    worker: `${accountDefinitions}worker/account-miniapps.ts`,
   }),
   // Registered Android nightly target: its automatic worker (worker/connected-glasses.ts, configuration kind
   // automatic-connected-glasses-worker) authenticates the request, verifies its exact selected APK and OTA manifest and
