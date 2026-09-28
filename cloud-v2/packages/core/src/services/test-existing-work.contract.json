@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "identity": {
+    "agentRunId": "781cded6-caba-4a3d-9851-afbf658014c6",
+    "occurrenceId": "tfo_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "testRunId": "notes-phone-fixture",
+    "environment": "dev",
+    "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "payloadSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "incidentId": "rep_fixture_existing_work",
+    "routineId": "no-glasses",
+    "source": {
+      "repository": "Mentra-Community/Mentra-Notes-Miniapp",
+      "pullRequest": 9,
+      "headSha": "dddddddddddddddddddddddddddddddddddddddd",
+      "baseBranch": "main",
+      "manifestPath": "miniapp/miniapp.json",
+      "packageName": "com.mentra.notes",
+      "version": "1.0.21"
+    },
+    "bundle": {
+      "repository": "Mentra-Community/MentraOS",
+      "pullRequest": 4273,
+      "headSha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "baseBranch": "dev",
+      "artifactPath": "mobile/assets/miniapps/com.mentra.notes-1.0.21.zip",
+      "artifactBlobSha": "ffffffffffffffffffffffffffffffffffffffff",
+      "registryPath": "mobile/src/generated/bundledMiniapps.ts"
+    }
+  },
+  "bindingOrdered": [
+    "existing-work-v1",
+    "781cded6-caba-4a3d-9851-afbf658014c6",
+    "tfo_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "notes-phone-fixture",
+    "dev",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "rep_fixture_existing_work",
+    "no-glasses",
+    "Mentra-Community/Mentra-Notes-Miniapp",
+    9,
+    "dddddddddddddddddddddddddddddddddddddddd",
+    "main",
+    "miniapp/miniapp.json",
+    "com.mentra.notes",
+    "1.0.21",
+    "Mentra-Community/MentraOS",
+    4273,
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "dev",
+    "mobile/assets/miniapps/com.mentra.notes-1.0.21.zip",
+    "ffffffffffffffffffffffffffffffffffffffff",
+    "mobile/src/generated/bundledMiniapps.ts"
+  ],
+  "bindingSerialization": "[\"existing-work-v1\",\"781cded6-caba-4a3d-9851-afbf658014c6\",\"tfo_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"notes-phone-fixture\",\"dev\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"rep_fixture_existing_work\",\"no-glasses\",\"Mentra-Community/Mentra-Notes-Miniapp\",9,\"dddddddddddddddddddddddddddddddddddddddd\",\"main\",\"miniapp/miniapp.json\",\"com.mentra.notes\",\"1.0.21\",\"Mentra-Community/MentraOS\",4273,\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"dev\",\"mobile/assets/miniapps/com.mentra.notes-1.0.21.zip\",\"ffffffffffffffffffffffffffffffffffffffff\",\"mobile/src/generated/bundledMiniapps.ts\"]",
+  "bindingSha256": "41fadfe15cac95ec087a40bc53dd9e3d9901a5cf53acfb2c518470e939b6c1e4",
+  "operation": {
+    "source": {
+      "channel": "dev",
+      "buildRunId": 123456789,
+      "publicationAttempt": 1
+    },
+    "archiveSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "expectedHeadSha": "2222222222222222222222222222222222222222",
+    "routineId": "no-glasses",
+    "verificationAttempt": 1
+  },
+  "operationOrdered": [
+    "existing-work-verification-v1",
+    "41fadfe15cac95ec087a40bc53dd9e3d9901a5cf53acfb2c518470e939b6c1e4",
+    {
+      "channel": "dev",
+      "buildRunId": 123456789,
+      "publicationAttempt": 1
+    },
+    "1111111111111111111111111111111111111111111111111111111111111111",
+    "2222222222222222222222222222222222222222",
+    "no-glasses",
+    1
+  ],
+  "operationSerialization": "[\"existing-work-verification-v1\",\"41fadfe15cac95ec087a40bc53dd9e3d9901a5cf53acfb2c518470e939b6c1e4\",{\"channel\":\"dev\",\"buildRunId\":123456789,\"publicationAttempt\":1},\"1111111111111111111111111111111111111111111111111111111111111111\",\"2222222222222222222222222222222222222222\",\"no-glasses\",1]",
+  "operationId": "42412132-a7c2-44ce-adb8-c33281b574c1"
+}
