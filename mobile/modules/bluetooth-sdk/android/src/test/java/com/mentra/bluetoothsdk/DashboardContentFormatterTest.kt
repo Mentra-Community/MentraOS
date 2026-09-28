@@ -13,10 +13,18 @@ class DashboardContentFormatterTest {
     }
 
     @Test
-    fun nonEmptyContentIsAppendedExactlyAfterBlankLine() {
+    fun nonEmptyContentIsAppendedExactlyOnNextLine() {
         assertEquals(
-            "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$\n\n  Next meeting\nRoom 2  ",
+            "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$\n  Next meeting\nRoom 2  ",
             DashboardContentFormatter.template("  Next meeting\nRoom 2  "),
+        )
+    }
+
+    @Test
+    fun leadingNewlineKeepsOptionalBlankRow() {
+        assertEquals(
+            "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$\n\nNext meeting",
+            DashboardContentFormatter.template("\nNext meeting"),
         )
     }
 }
