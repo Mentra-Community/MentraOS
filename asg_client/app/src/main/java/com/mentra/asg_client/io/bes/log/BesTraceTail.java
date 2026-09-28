@@ -10,6 +10,7 @@ import android.util.Log;
 import androidx.annotation.VisibleForTesting;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.utils.WakeLockManager;
 
 import org.json.JSONObject;
@@ -208,6 +209,11 @@ public final class BesTraceTail {
         }
         if (!mSupported || !mEnabled || mSender == null) {
             return; // setSupported/setEnabled re-arm the loop.
+        }
+        if (BesOtaManager.isBesOtaInProgress) {
+            // The UART belongs to the OTA transfer; the BES ring keeps the lines meanwhile.
+            schedule(AsgConstants.BES_TRACE_POLL_IDLE_MS);
+            return;
         }
         if (mInFlight && now - mRequestedAtMs < AsgConstants.BES_TRACE_REPLY_TIMEOUT_MS) {
             schedule(AsgConstants.BES_TRACE_REPLY_TIMEOUT_MS - (now - mRequestedAtMs));
