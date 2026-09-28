@@ -3,9 +3,10 @@ import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createTestFailureAgentApi } from "../api/agent/test-failures.api";
-import { existingWorkBindingDigest, existingWorkBindingOrdered, type ExistingWorkGrant, type ExistingWorkIdentity } from "../types/test-existing-work.types";
+import { existingWorkBindingDigest, existingWorkBindingOrdered, existingWorkRoutineNameSchema, type ExistingWorkGrant,
+  type ExistingWorkIdentity } from "../types/test-existing-work.types";
 import type { ContinuationGrant } from "../types/test-continuation.types";
-import type { TestBuild, TestDispatchReceipt } from "../types/test-dispatch.types";
+import { testRoutineIdSchema, type TestBuild, type TestDispatchReceipt } from "../types/test-dispatch.types";
 import type { TestRunClaim } from "../types/test-run-claim.types";
 import type { TestRunBackendDeployment } from "../types/test-run.types";
 import { GithubTestBuildGateway, type TestBuildGateway } from "./test-builds.service";
@@ -292,13 +293,18 @@ describe("nothing is sent without exact occurrence, binding, publication and wor
     expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
   });
   test("an unregistered routine is unavailable and never replaced by a registered one", async () => {
-    const f = fixture(); f.packet.routine = { id: "notes-phone", version: "1" };
-    const notes = { ...grant, routineId: "notes-phone" };
-    const inventory = await f.service.inventory(notes);
-    expect(inventory).toMatchObject({ routineId: "notes-phone", available: false, builds: [] });
+    // A deliberately synthetic routine name that no real routine will register, so the fixture stays
+    // valid as real routines (notes-phone, captions-phone, account/livestreamer) join the catalog.
+    const unregistered = "synthetic-unregistered-routine";
+    expect(existingWorkRoutineNameSchema.safeParse(unregistered).success).toBe(true);
+    expect(testRoutineIdSchema.safeParse(unregistered).success).toBe(false);
+    const f = fixture(); f.packet.routine = { id: unregistered, version: "1" };
+    const other = { ...grant, routineId: unregistered };
+    const inventory = await f.service.inventory(other);
+    expect(inventory).toMatchObject({ routineId: unregistered, available: false, builds: [] });
     expect((inventory as { reason: string }).reason).toContain("no other routine is substituted");
-    await expect(f.service.request(notes, { ...input, routineId: "notes-phone" })).rejects.toThrow("not registered");
-    // A no-glasses capability cannot verify a notes-phone occurrence either.
+    await expect(f.service.request(other, { ...input, routineId: unregistered })).rejects.toThrow("not registered");
+    // A no-glasses capability cannot verify that occurrence either.
     await expect(f.service.request(grant, input)).rejects.toThrow("recorded routine");
     expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
   });

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
+import {createHash} from "node:crypto"
 import {readFileSync} from "node:fs"
 import test from "node:test"
 import {publishPrRoutineResult, resolvePrRoutineResults} from "./pr-routine-result.mjs"
+import {readActionsJson} from "./release-routine-slack.mjs"
 
 const repository = "Mentra-Community/MentraOS", privateRepository = "Mentra-Community/Mentra-Automated-Testing"
 const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "workflow_dispatch", ref: "refs/heads/dev"}
@@ -55,6 +57,53 @@ function writer() {
   return {comments, writes, send: value => publishPrRoutineResult({github, context, plan: value}),
     loseResponse: () => { ambiguousCreate = true }}
 }
+
+/** The terminal read goes through the production `readActionsJson` over one synthetic, digest-bound private artifact:
+ * its allowed filenames are the reporting routine set, so an unlisted routine's terminal is refused there. `entries` is
+ * what the (synthetic) archive holds; the ZIP extraction itself is replaced by `readZip`. */
+function artifactRead(value, entries) {
+  const original = value.options.read
+  return async (github, repo, run, name, allowedFiles) => {
+    if (!name.startsWith("routine-terminal-")) return original(github, repo, run, name, allowedFiles)
+    const bytes = Buffer.from(`synthetic retained archive ${name}`)
+    const api = {paginate: async () => [{id: 7, name, expired: false, size_in_bytes: bytes.length,
+      digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, workflow_run: {id: run.id, head_sha: run.head_sha}}],
+    rest: {actions: {listWorkflowRunArtifacts: "listWorkflowRunArtifacts", downloadArtifact: async () => ({data: bytes})}}}
+    return readActionsJson(api, repo, run, name, allowedFiles, {readZip: async () => structuredClone(entries)})
+  }
+}
+
+test("both registered Phone routines post PR results through the terminal reader and resolver; an unknown routine still refuses", async () => {
+  for (const [routine, name] of [["captions-phone", "Captions with simulated glasses"], ["notes-phone", "Notes with simulated glasses"]]) {
+    const value = fixture({routine})
+    value.options.read = artifactRead(value, {[`routine-terminal-${routine}.json`]: value.terminal})
+    const [result, ...rest] = await resolvePrRoutineResults(value.options)
+    assert.equal(rest.length, 0)
+    assert.equal(result.pr, 4136)
+    for (const required of [name, "test passed", "Run result: Passed", `?testRun=routine-100-1-4136-${routine}`, "Platform: `ios-on-mac`",
+      "Mentra-PR-4136.zip", "actions/runs/200/attempts/1", "actions/runs/100/attempts/1", "routine-terminal-200-1"])
+      assert.ok(result.body.includes(required), `${routine}: ${required}`)
+    // Filename, request, attempt, revision and forged-success mismatches still refuse the Phone result.
+    for (const [change, message] of [
+      [f => ({[`routine-terminal-${routine === "captions-phone" ? "notes-phone" : "captions-phone"}.json`]: f.terminal}), /filename differs/],
+      [f => { f.terminal.request.routineId = "day1-ota"; return {[`routine-terminal-${routine}.json`]: f.terminal} }, /filename differs/],
+      [f => { f.terminal.request.runAttempt = 2; return {[`routine-terminal-${routine}.json`]: f.terminal} }, /request attempt did not succeed/],
+      [f => { f.terminal.privateRun.revision = "f".repeat(40); return {[`routine-terminal-${routine}.json`]: f.terminal} }, /does not match/],
+      [f => { f.terminal.checks.evidence = false; return {[`routine-terminal-${routine}.json`]: f.terminal} }, /contradicts/],
+      [f => { f.terminal.resultRunId = "routine-100-1-4136-day1-ota"; return {[`routine-terminal-${routine}.json`]: f.terminal} }, /contradicts/],
+      [f => ({[`routine-terminal-${routine}.json`]: f.terminal, "routine-terminal-arbitrary.json": f.terminal}), /Unexpected artifact entries/],
+    ]) {
+      const changed = fixture({routine})
+      changed.options.read = artifactRead(changed, change(changed))
+      await assert.rejects(resolvePrRoutineResults(changed.options), message)
+    }
+  }
+  // A routine outside the shared catalog is refused by the reader's allowlist and by the terminal row.
+  const unknown = fixture({routine: "arbitrary-routine"})
+  unknown.options.read = artifactRead(unknown, {"routine-terminal-arbitrary-routine.json": unknown.terminal})
+  await assert.rejects(resolvePrRoutineResults(unknown.options), /Unexpected artifact entries/)
+  await assert.rejects(resolvePrRoutineResults(fixture({routine: "arbitrary-routine"}).options), /does not match/)
+})
 
 test("a completed PR run retains candidate, build, request, worker and published recording identities", async () => {
   const result = await plan()

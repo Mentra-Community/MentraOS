@@ -106,6 +106,13 @@ and `livestreamer` (Mac) are listed so their state is visible, but each carries 
 even if a deployment adds them to `TEST_RUN_DISPATCH_ROUTINES`. Only the reviewed
 change that registers the routine's automatic worker removes `planned`.
 
+`captions-phone` and `notes-phone` (Mac, simulated glasses in Phone mode) are
+registered: their private worker installs the selected Mac build and exports
+claim-bound CI evidence. Like `no-glasses-android`, each becomes requestable only
+once a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES` after its worker lane is
+enrolled. Their live CI qualification is still pending. They are not nightly
+targets or successful-build requests.
+
 Existing `adminAuth` protects all three routes using the admin console session:
 
 - `GET /api/admin/test-runs/` returns `{runs, nextCursor}`. Filters: `pr`,
