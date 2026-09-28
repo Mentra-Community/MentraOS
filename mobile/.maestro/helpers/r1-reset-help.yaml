@@ -1,0 +1,13 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Start on the R1 preparation screen. No physical ring or reset is required.
+- assertVisible: "Even Realities R1"
+- assertVisible: "If your ring was previously paired with another phone.*"
+- assertNotVisible: ".*your G2.*"
+- tapOn: "I need more help"
+- assertVisible: "Reset using the ring touchpad"
+- assertVisible: "Place your R1 in its charger and keep the charger plugged into power.*touchpad 5 times.*"
+- assertNotVisible: ".*both touchpads.*"
+- takeScreenshot: "r1-touchpad-reset-help"
+- tapOn: "Done"
+- assertVisible: "Even Realities R1"

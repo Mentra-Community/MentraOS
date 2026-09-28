@@ -71,7 +71,12 @@ describe("Even pairing recovery", () => {
       ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G2", error: `errors:${error}`}})
       const screen = render(<UnpairEvenScreen />)
       expect(screen.getByText(en.pairing.g2ReconnectTitle)).toBeTruthy()
-      expect(screen.getByText(en.errors[error])).toBeTruthy()
+      expect(
+        screen.getByText(
+          `${en.errors[error]}\n\n${en.pairing.g2ResetInstructions}\n\n${en.pairing.g2ResetOlderHardware}`,
+        ),
+      ).toBeTruthy()
+      expect(screen.queryByText(/close it for 10 seconds/)).toBeNull()
       expect(screen.queryByText(en.onboarding.unpairEvenSubtitle)).toBeNull()
       expect(screen.queryByText(en.pairing.pairingFailed)).toBeNull()
       fireEvent.press(screen.getByLabelText("guide-primary-action"))

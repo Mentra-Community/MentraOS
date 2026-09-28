@@ -6,7 +6,9 @@ appId: ${MAESTRO_APP_ID}
 - extendedWaitUntil:
     visible: "Reconnect your G2s"
     timeout: 20000
-- assertVisible: "${G2_RECOVERY_MESSAGE}"
+- assertVisible: "(?s)${G2_RECOVERY_MESSAGE}.*"
+- assertVisible: "(?s).*quickly tap both touchpads 5 times simultaneously.*"
+- assertVisible: "(?s).*Older hardware may not play a confirmation tone.*"
 - assertNotVisible: "Pairing Failed"
 - assertVisible: "Open Settings"
 - assertVisible: "Try Again"
