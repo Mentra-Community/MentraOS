@@ -96,11 +96,11 @@ card from the overview response Core already returns; the API is unchanged.
 | Card state | When |
 | --- | --- |
 | Recovery required | A retained guard (any age: a dead PID or completed checkpoint never clears it), or a current report whose fixture record is `recovery-required` or `busy` without an owner. |
-| Running | A live owner, and its run reported an unfinished step within 2 minutes (host or CI claim progress), or the current report's reserved run is a GitHub job in progress. |
+| Running | A live owner in a report from the last 2 minutes, and either its run's latest step is unfinished and was received within 2 minutes, or its exact reserved request is a GitHub job in progress and the latest step has not completed. The latest step is the highest journal sequence from host or CI claim progress, never the latest arrival; a repeated sequence keeps its first receipt time. |
 | Reserved, idle | A current report of a live owner without recent step progress. |
 | Available | A current report with no owner and a fixture recorded ready. Admission still runs its normal checks. |
 | Not ready | A current report with no owner whose fixture record is uncommissioned, missing, malformed, unreadable or not checked. |
-| Offline or unknown | Any other state, and every report older than 2 minutes that is not a retained guard. |
+| Offline or unknown | Any other state, and every report older than 2 minutes that is not a retained guard. Fresh CI progress never refreshes a stale host report; it is shown as separate CI activity. |
 
 The card itself stays short: host and lane, state, the work holding the lane (routine and
 build, taken only from the CI job or claim with the owner's exact reserved request ID, else

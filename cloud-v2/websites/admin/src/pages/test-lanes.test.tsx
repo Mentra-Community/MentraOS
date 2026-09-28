@@ -252,3 +252,75 @@ describe("lane cards from actual host reports", () => {
     expect(before).toContain('aria-label="Test lanes"');
   });
 });
+
+describe("host ownership freshness and journal order decide a running lane", () => {
+  const run = "routine-36800000000-1-dev-no-glasses";
+  const step = (sequence: number, label: string, mode: "running" | "complete" = "running"): TestResourceProgress =>
+    ({ ...resourceProgress(run, sequence, label), phase: "test", mode });
+  /** The owning worker's CI claim for the same exact request, with its own Core-received checkpoint. */
+  const claim = (progress: TestResourceProgress, ago: number): OverviewClaimRecord => {
+    const { runId: _runId, ...fields } = progress;
+    return { claim: { requestId: run, requestSha256: "b".repeat(64), workerId: "mentra-device-mini-1", fixtureId: "mini-ui-unpaired",
+      executionId: "execution-lane", claimedAt: new Date(at - minutes(20)).toISOString(), state: "claimed" },
+    progress: { ...fields, receivedAt: new Date(at - ago).toISOString() } };
+  };
+  const githubJob = (state: OverviewJob["state"] = "queued") => job(36800000100, [request(run, { platform: "ios-on-mac", release: "3.3.0-dev.450" })], state);
+
+  test("a stale host report stays offline or unknown even while the CI claim reports a fresh step; the CI activity stays visible", async () => {
+    const data = await overview([{ hostId: "mentra-mac-mini", observation: aliveObservation(run, 5000), progress: step(5, "Open Settings"), ago: minutes(10) }],
+      { jobs: [githubJob("running")], claims: [claim(step(6, "Replay the shared walkthrough"), 10_000)] });
+    const html = render(data), card = parts(html, "mentra-mac-mini");
+    expect(card.visible).toContain("Offline or unknown");
+    expect(card.visible).not.toMatch(/>Running<|Replay the shared walkthrough · Testing/);
+    expect(card.visible).toContain("Responsible Host operator");
+    // The CI claim's newer step is reported separately, never as the lane's current step.
+    expect(card.visible).toContain("Its CI run reported a step 10s ago; that does not confirm this host's lane.");
+    expect(card.details).toContain("Last reported step: Replay the shared walkthrough · Testing, received 10s ago");
+    // The CI request itself stays visible as worker-reported activity below the lanes.
+    expect(text(html)).toContain("CI requests 1 running");
+  });
+
+  test("a retained hold keeps precedence over a fresh CI step for the same run", async () => {
+    const retained = { ...retainedObservation(run, 5000, "unknown"), lastCheckpoint: { available: true as const, runID: run, mode: "running" as const, phase: "test",
+      pendingOperation: null, pendingReconciliation: null } };
+    const card = parts(render(await overview([{ hostId: "mentra-mac-mini", observation: retained, ago: 30_000 }],
+      { jobs: [githubJob()], claims: [claim(step(8, "Replay the shared walkthrough"), 5_000)] })), "mentra-mac-mini");
+    expect(card.visible).toContain("Recovery required"); expect(card.visible).not.toMatch(/Running|Reserved/);
+  });
+
+  test("a delayed lower journal sequence cannot override a newer completed step, in either arrival order", async () => {
+    for (const [hostAgo, claimAgo] of [[30_000, 5_000], [5_000, 30_000]]) {
+      // Host journal sequence 20 completed the run's test step; the CI claim carries the older sequence 19, still running.
+      const data = await overview([{ hostId: "mentra-mac-mini", observation: aliveObservation(run, 5000), progress: step(20, "Finish walkthrough", "complete"), ago: hostAgo }],
+        { jobs: [githubJob()], claims: [claim(step(19, "Replay the shared walkthrough"), claimAgo)] });
+      const card = parts(render(data), "mentra-mac-mini");
+      expect(card.visible).toContain("Reserved, idle"); expect(card.visible).not.toMatch(/>Running<|Replay the shared walkthrough/);
+      expect(card.details).toContain("Last reported step: Finish walkthrough · Testing (completed)");
+    }
+    // Reversed: the host's own sequence is the older one, so the claim's newer unfinished step is current.
+    const newer = parts(render(await overview([{ hostId: "mentra-mac-mini", observation: aliveObservation(run, 5000), progress: step(19, "Replay the shared walkthrough"), ago: 5_000 }],
+      { jobs: [githubJob()], claims: [claim(step(21, "Check Home"), 30_000)] })), "mentra-mac-mini");
+    expect(newer.visible).toContain("Running"); expect(newer.visible).toContain("Check Home · Testing");
+  });
+
+  test("with a current host report, GitHub's own in-progress state for the exact request is running unless the latest step completed", async () => {
+    const observation = aliveObservation(run, 5000);
+    const running = parts(render(await overview([{ hostId: "mentra-mac-mini", observation, ago: 5_000 }], { jobs: [githubJob("running")] })), "mentra-mac-mini");
+    expect(running.visible).toContain("Running"); expect(running.visible).toContain("Work no-glasses · 3.3.0-dev.450");
+    const completed = parts(render(await overview([{ hostId: "mentra-mac-mini", observation, progress: step(30, "Finish walkthrough", "complete"), ago: 5_000 }],
+      { jobs: [githubJob("running")] })), "mentra-mac-mini");
+    expect(completed.visible).toContain("Reserved, idle");
+  });
+
+  test("duplicate delivery of the same journal sequence does not make an old step current", async () => {
+    // Core keeps the first receipt time when a heartbeat resends sequence 7, and a later claim copy of 7 is the same step.
+    const data = await overview([
+      { hostId: "mentra-mac-mini", observation: aliveObservation(run, 5000), progress: step(7, "Open Settings"), ago: minutes(5) },
+      { hostId: "mentra-mac-mini", observation: aliveObservation(run, 5000), progress: step(7, "Open Settings"), ago: 10_000 },
+    ], { jobs: [githubJob()], claims: [claim(step(7, "Open Settings"), 5_000)] });
+    const card = parts(render(data), "mentra-mac-mini");
+    expect(card.visible).toContain("Reserved, idle"); expect(card.visible).toContain("Held by a CI run with no step reported for 5m 0s.");
+    expect(card.visible).not.toMatch(/>Running<|Open Settings/);
+    expect(card.details).toContain("Last reported step: Open Settings · Testing, received 5m 0s ago");
+  });
+});

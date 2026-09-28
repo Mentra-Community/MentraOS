@@ -93,7 +93,8 @@ export interface LaneCard {
   runId?: string;
   matched?: Matched;
   progress?: Progress;
-  /** Progress was received recently and is unfinished: the only evidence of a current step. */
+  /** The run's latest step (by journal sequence) is unfinished and was received recently. Shown as the lane's current
+   * step only when the lane is running, which also needs a current host report. */
   active: boolean;
   summary: string;
   responsible: string;
@@ -113,10 +114,14 @@ function matchRun(data: TestRunOverview, runId: string): Matched | undefined {
   }
   return undefined;
 }
-/** The newest reported step for this run: the host's own checkpoint, else the CI claim's. Its age is its own receipt time. */
+/**
+ * The latest step of this exact run from the host's checkpoint and the CI claim's. The committed journal sequence
+ * orders them, never arrival time. The same sequence delivered twice keeps its first receipt time, so a duplicate
+ * never makes an old step look recent.
+ */
 function currentProgress(item: OverviewResourceObservation, runId: string | undefined, claim?: OverviewClaim): Progress | undefined {
   const candidates = [item.progress?.runId === runId ? item.progress : undefined, claim?.progress].filter((value): value is Progress => Boolean(value));
-  return candidates.sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))[0];
+  return candidates.sort((a, b) => b.sequence - a.sequence || Date.parse(a.receivedAt) - Date.parse(b.receivedAt))[0];
 }
 function heartbeatCommand(item: OverviewResourceObservation) {
   return "Host heartbeat: bun tools/mentra-e2e/lane-status.ts --resource " + (item.resourceKey === "shared" ? "shared" : "android --serial <this phone's serial>")
@@ -149,10 +154,13 @@ export function laneCard(data: TestRunOverview, item: OverviewResourceObservatio
       [...guard, ...pending ? ["Pending lifecycle step: " + pending.phase + " / " + pending.stepID + "."] : []]);
   }
   if (observation.state === "busy") {
-    if (active || fresh && matched && displayState(matched.job, now) === "running")
-      return card("running", "Running " + (local ? "a local session" : "this routine") + ".", owning, "Nothing needed; follow the run for its result.");
-    if (!fresh) return card("unknown", "The last report, " + elapsed(item.receivedAt, now) + " ago, showed a live owner. Whether it is still running is unknown.",
+    // Only this host's current report shows who holds the lane; CI progress or GitHub state never refreshes it.
+    if (!fresh) return card("unknown", "The last report, " + elapsed(item.receivedAt, now) + " ago, showed a live owner. Whether it is still running is unknown."
+      + (active && progress ? " Its CI run reported a step " + elapsed(progress.receivedAt, now) + " ago; that does not confirm this host's lane." : ""),
       "Host operator", "Confirm the host is online and reporting. Until it reports, treat the lane as in use.", offline);
+    // A completed latest step ends the lifecycle's activity even while GitHub still runs the job.
+    if (active || progress?.mode !== "complete" && matched?.job.workflow?.status === "in_progress")
+      return card("running", "Running " + (local ? "a local session" : "this routine") + ".", owning, "Nothing needed; follow the run for its result.");
     return card("reserved", "Held by " + (local ? "a local session" : "a CI run") + " with no step reported" + (progress ? " for " + elapsed(progress.receivedAt, now) : "") + ".",
       owning, local ? "Ask the session owner to finish or stop the session." : "Wait for the run to continue, or ask its test runner to stop it.");
   }
@@ -202,7 +210,7 @@ function Lane({ card, now, onResult }: { card: LaneCard; now: number; onResult: 
       <p className="min-w-0 break-words text-xs font-semibold">{item.hostId} · {item.resourceKey === "shared" ? "Mac UI lane" : "Android phone lane" + (fixture ? " (" + fixture.fixtureID + ")" : "")}</p>
       <span className={"shrink-0 rounded-md px-2 py-1 font-medium " + laneStateText[state].colors}>{laneStateText[state].badge}</span></div>
     <dl className="mt-2 space-y-1">
-      {work ? row("Work", <>{work}{card.active && progress ? <span className="block">{stepText(progress)}</span> : null}</>) : null}
+      {work ? row("Work", <>{work}{state === "running" && card.active && progress ? <span className="block">{stepText(progress)}</span> : null}</>) : null}
       {row("Status", card.summary)}
       {row("Last report", <span className={card.fresh ? "" : "text-[#805619]"}>{elapsed(item.receivedAt, now)} ago{card.fresh ? ""
         : value.state === "retained-recovery-required" ? "; the hold stays until the host reports again" : "; not current"}</span>)}
