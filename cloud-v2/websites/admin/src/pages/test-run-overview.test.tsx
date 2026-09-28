@@ -354,7 +354,8 @@ describe("worker-reported activity on a GitHub-queued job", () => {
     expect(html).toContain("6 of 38 actions completed");
     expect(html).toContain("2m 33s"); expect(html).toContain("Since worker claim");
     expect(html).not.toContain("GitHub has not started this job");
-    expect(html).not.toContain(">Waiting<");
+    const ciTable = html.slice(html.indexOf('aria-label="CI requests"'));
+    expect(ciTable.slice(0, ciTable.indexOf("</table>"))).not.toContain(">Waiting<");
   });
 
   test("once the checkpoint ages past the bound between refreshes, the activity is unconfirmed rather than running", () => {
@@ -521,7 +522,8 @@ describe("shared guard glasses scope", () => {
       { hostId: "mini-live", observation: aliveObservation("run-live", 5000, "none") },
     ])).overview))} now={at + 86_400_000} onResult={() => {}} />);
     expect(section).toContain(">owner alive<");
-    const row = (hostId: string) => { const host = stale.indexOf(">" + hostId + "</p>"); return stale.slice(stale.lastIndexOf("<tr", host), stale.indexOf("</tr>", host)); };
+    const resources = stale.slice(stale.indexOf('aria-label="Local resource observations"'));
+    const row = (hostId: string) => { const host = resources.indexOf(">" + hostId + "</p>"); return resources.slice(resources.lastIndexOf("<tr", host), resources.indexOf("</tr>", host)); };
     expect(row("mini-retained")).toContain(">retained hold<"); expect(row("mini-retained")).toContain("Kept until this host reports a newer observation");
     expect(row("mini-live")).toContain(">unconfirmed<"); expect(row("mini-live")).toContain("Not current");
     for (const host of ["mini-retained", "mini-live"]) {

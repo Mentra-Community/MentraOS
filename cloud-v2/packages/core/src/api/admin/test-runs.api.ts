@@ -25,6 +25,10 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
     c.header("Cache-Control", "no-store");
     return c.json(await overview.overview());
   });
+  app.get("/recent", async c => {
+    c.header("Cache-Control", "no-store");
+    return c.json(await service.recent());
+  });
   app.post("/claims/:requestId/cancel-follow-up", async c => {
     const admin = c.get("developer");
     if (!c.get("isAdmin") || !admin) throw new TestRunFollowUpError(403, "admin access required");

@@ -1,10 +1,14 @@
 import { Schema } from "mongoose";
 import { registerModel } from "./register-model";
 
+export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
 const schema = new Schema({
   runId: { type: String, required: true, unique: true },
   requestId: { type: String, required: true, index: true },
   startedAt: { type: Date, required: true },
+  // Server-derived from validated payload.finishedAt. Null marks an unparseable legacy value.
+  completedAt: { type: Date },
+  completionProjectionVersion: { type: Number, enum: [1] },
   payloadSha256: { type: String, required: true },
   payload: { type: Schema.Types.Mixed, required: true },
   // Server-owned upload projection; the source payload and its digest never change.
@@ -18,6 +22,7 @@ const schema = new Schema({
   provenanceCorrections: { type: [Schema.Types.Mixed], default: undefined },
 }, { collection: "test_runs", timestamps: true });
 schema.index({ startedAt: -1, runId: -1 });
+schema.index({ completionProjectionVersion: 1, completedAt: -1, runId: -1 }, { name: TEST_RUN_COMPLETION_INDEX });
 schema.index({ "payload.prNumber": 1, startedAt: -1 });
 schema.index({ "payload.channel": 1, startedAt: -1 });
 schema.index({ outcome: 1, startedAt: -1 });
