@@ -89,6 +89,8 @@ import com.mentra.glassesmedia.telemetry.PipelineStats
 import com.mentra.glassesmedia.telemetry.PipelineTicker
 import com.mentra.glassesmedia.trace.SoftApTrace
 import com.mentra.acsmeeting.video.AcsFrameSender
+import com.mentra.acsmeeting.video.OutgoingVideoHold
+import com.mentra.glassesmedia.source.I420Planes
 import com.mentra.acsmeeting.video.VideoProfile
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -134,6 +136,11 @@ class AcsMeetingSession(
   private val outgoingReady = AtomicBoolean(false)
   private val muted = AtomicBoolean(false)
   private val frameSender = AcsFrameSender(stats, avSync)
+  private val outgoingHold = OutgoingVideoHold(
+    send = { planes -> frameSender.sendPlanes(planes) },
+    width = { profile.width },
+    height = { profile.height },
+  )
   private var profile = VideoProfile.DEFAULT
   private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm, config ->
     // The synthetic diagnostic arm overrides everything; otherwise the requested kind decides.
@@ -644,12 +651,7 @@ class AcsMeetingSession(
           // The pin is back on by the time the Teams join below runs.
           bindIngestUnpinned {
             media.attach(
-              video = { planes ->
-                // Preview first, deliberately: the tap must see frames ACS's pacing and
-                // readiness gates would otherwise hide, and it cannot delay or break this call.
-                DecodedFrameTap.offer(planes)
-                if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
-              },
+              video = { planes -> forwardGlassesPlanes(planes) },
               pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
               config = videoSource.toConfig(),
             )
@@ -674,10 +676,7 @@ class AcsMeetingSession(
 
         if (videoSource !is MeetingVideoSourceSpec.SoftAp) {
           media.attach(
-            video = { planes ->
-              DecodedFrameTap.offer(planes)
-              if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
-            },
+            video = { planes -> forwardGlassesPlanes(planes) },
             pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
             config = if (synthetic) SourceConfig("", SourceKind.DIRECT) else videoSource.toConfig(),
           )
@@ -893,6 +892,24 @@ class AcsMeetingSession(
     mediaRestartAttempts = 0
   }
 
+  /**
+   * Ignore glasses frames and send a card or still instead. Returns once one replacement
+   * frame has been handed to the sender, so the caller can stop the camera after that.
+   */
+  fun setOutgoingHold(kind: String, imageBytes: ByteArray?): Boolean {
+    if (kind == "live") {
+      outgoingHold.stop()
+      return true
+    }
+    return outgoingHold.start(kind, imageBytes)
+  }
+
+  private fun forwardGlassesPlanes(planes: I420Planes) {
+    if (outgoingHold.isActive()) return
+    DecodedFrameTap.offer(planes)
+    if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
+  }
+
   fun setMuted(next: Boolean): Map<String, Any> {
     if (MediaDiagnostics.videoArm == VideoSourceArm.SYNTHETIC) {
       muted.set(true)
@@ -958,6 +975,7 @@ class AcsMeetingSession(
   }
 
   fun leave() {
+    outgoingHold.stop()
     val submittedAt = SystemClock.elapsedRealtime()
     // Invalidate before queueing: leaveLocked cannot run until the executor finishes the current
     // join/hang-up, and without this bump a Cancel sits behind an unbounded ACS Future.
@@ -1943,6 +1961,7 @@ class AcsMeetingSession(
     keepAgent: Boolean = false,
     failures: AtomicReference<Exception?>? = null,
   ) {
+    outgoingHold.stop()
     // Invalidate first: a bounded ACS operation still in flight has to find a stale generation
     // rather than attach an agent to a session that is being torn down.
     joinGeneration.incrementAndGet()

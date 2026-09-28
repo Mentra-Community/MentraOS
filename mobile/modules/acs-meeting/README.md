@@ -34,8 +34,10 @@ differences are collected in [iOS](#ios).
 ## Mental model
 
 **The phone is a relay, not a capture device.** It receives what the glasses already
-encoded, decodes it, and re-publishes it into ACS. Production never generates pixels on
-the phone, and no video frame ever crosses the JavaScript bridge.
+encoded, decodes it, and re-publishes it into ACS. Live video is not drawn on the phone,
+and a live frame does not cross the JavaScript bridge. A photo shutter is the exception:
+the phone draws a "Taking a photo" card, then a still, and feeds those pixels through the
+same sender. See [Photo hold](#photo-hold).
 
 ```
 glasses ──H.264 over WHIP──▶ [SoftAP listener | Cloudflare] ──▶ phone decode ──▶ ACS ──▶ Teams
@@ -532,6 +534,32 @@ The actual submit runs on the `acs-i420-send` thread with a 200 ms timeout. Two 
   the Teams jitter buffer hold the last picture — a random-looking freeze. `AcsTimestamp`
   prefers the stream clock when ACS is advancing it, falls back to capture time, and always
   emits a tick strictly after the last one.
+
+### Photo hold
+
+A high-resolution photo cannot ride the live camera. The host pauses only the glasses
+publisher (`start_stream` on Direct link; Call's own stream on Cloudflare), keeps the
+meeting, the hotspot, and the ACS sender up, and replaces the tile with three pictures
+in order:
+
+1. A full-frame card, "Taking a photo", from the button press until the still is ready.
+2. The still, for a few seconds counted by the caller from `shownAt`.
+3. Live video again.
+
+The card and the still are generated on the phone (`OutgoingVideoHold` on Android,
+`outgoingHoldPixelBuffer` on iOS) and pumped about every 100 ms through the existing
+frame sender. Each frame carries a fresh timestamp. A gap, or a timestamp of zero, makes
+Teams hold a random freeze. The last live frame is not repeated.
+
+While the hold is active, glasses frames are dropped (`forwardGlassesPlanes` /
+`holdingOutgoing`). `holdOutgoingVideo` resolves only after one replacement frame has
+been handed to the sender. Leave, End, and a new join stop the hold and cancel the
+pause without starting the publisher again. A pause the caller never resumes expires
+after 30 seconds, the publisher starts, and the host emits `miniapp_meeting_video_publisher`
+with `status: "expired"`. A resume that names a stale pause id does nothing.
+
+Direct link must not use the ordinary camera-loss recovery for this pause. That path
+rebuilds the hotspot. `PhotoPauseController` suppresses it until the pause ends.
 
 ## Audio uplink path
 

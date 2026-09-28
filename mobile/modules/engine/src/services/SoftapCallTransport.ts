@@ -21,6 +21,7 @@
  */
 
 import {softapTrace, softapTraceFailure, beginSoftapTrace, resetSoftapTrace} from "../utils/softapTrace"
+import {PhotoPauseController} from "./PhotoPauseController"
 
 /** Steps in order. Also the teardown order, reversed. */
 export const SOFTAP_STEPS = ["hotspot", "scopedJoin", "acsJoin", "publish", "live"] as const
@@ -225,6 +226,10 @@ export interface SoftapCallDeps {
    * tears down correctly, it just cannot honour `stop({mode: "end"})`.
    */
   endMeeting?(): Promise<void>
+  /** Photo pause ceiling. Tests pass a few milliseconds; production uses 30s. */
+  publisherPauseCeilingMs?: number
+  /** Fired when a photo pause hits its ceiling and the publisher is started again. */
+  onPublisherPauseExpired?: (pauseId: string) => void
   /**
    * Rebind the local WHIP listener onto the standing ACS session. Substitutes for
    * [joinMeeting] on a media-only rebuild: the meeting stays up, the ingest URL is new.
@@ -409,8 +414,50 @@ export class SoftapCallTransport {
    * A cancelled republish may only `stopPublishing` if it still owns this token.
    */
   private publisherToken: object | null = null
+  private readonly photoPause: PhotoPauseController
 
-  constructor(private readonly deps: SoftapCallDeps) {}
+  constructor(private readonly deps: SoftapCallDeps) {
+    this.photoPause = new PhotoPauseController({
+      ceilingMs: deps.publisherPauseCeilingMs,
+      onExpired: (pauseId) => deps.onPublisherPauseExpired?.(pauseId),
+      stopPublisher: () => this.deps.stopPublishing(),
+      startPublisher: () => this.restartPublisher(),
+    })
+  }
+
+  /** True while a photo pause owns the glasses publisher. Recovery must not rebuild the hotspot. */
+  isPublisherPaused(): boolean {
+    return this.photoPause.holding()
+  }
+
+  /**
+   * Stop only the glasses publisher. The meeting, hotspot, scoped network, and ACS sender stay up.
+   */
+  pauseVideoPublisher(): Promise<{pauseId: string}> {
+    if (this.phase !== "live" || this.terminating) {
+      return Promise.reject(
+        new SoftapCallError("publish", "NOT_PAUSABLE", `Cannot pause a SoftAP call that is ${this.phase}`),
+      )
+    }
+    this.republishGeneration++
+    return this.photoPause.pause()
+  }
+
+  /** A stale pause id does nothing. A current one starts the same publisher again. */
+  resumeVideoPublisher(pauseId: string): Promise<void> {
+    return this.photoPause.resume(pauseId).then(() => undefined)
+  }
+
+  /** Leave, End, or a new join. Does not start the publisher; teardown owns that. */
+  cancelVideoPublisherPause(): void {
+    this.photoPause.cancel()
+  }
+
+  private async restartPublisher(): Promise<void> {
+    if (this.terminating || this.phase !== "live" || !this.ingestUrl || this.photoPause.holding()) return
+    const token = {}
+    await this.startPublishingOwned(token, {ingestUrl: this.ingestUrl, traceId: this.traceId})
+  }
 
   currentPhase(): SoftapPhase {
     return this.phase
@@ -433,7 +480,7 @@ export class SoftapCallTransport {
    * existing ingest URL — do not rebind the WHIP listener, or the glasses POST to a dead port.
    */
   shouldRepublish(mediaSource?: string): boolean {
-    return this.phase === "live" && !this.terminating && mediaSource === "failed"
+    return this.phase === "live" && !this.terminating && !this.photoPause.holding() && mediaSource === "failed"
   }
 
   /**
@@ -510,6 +557,10 @@ export class SoftapCallTransport {
    * not after a BLE wait that could still issue `start_stream` at the dying hop.
    */
   recover(reason: string, options: {wait?: () => Promise<void>} = {}): Promise<void> {
+    if (this.photoPause.holding()) {
+      softapTrace("softap_recover_suppressed", {reason, pauseId: this.photoPause.pauseId()})
+      return Promise.resolve()
+    }
     if (this.recovering) return this.recovering
     if (this.phase !== "live") {
       return Promise.reject(
@@ -861,6 +912,7 @@ export class SoftapCallTransport {
   async stop(options: SoftapStopOptions = {}): Promise<void> {
     // Intent before action, always: a watcher must be able to tell a deliberate teardown from a
     // failure even during the very first await below.
+    this.cancelVideoPublisherPause()
     this.terminating = true
     this.republishGeneration++
     if (options.mode) this.teardownMode = options.mode

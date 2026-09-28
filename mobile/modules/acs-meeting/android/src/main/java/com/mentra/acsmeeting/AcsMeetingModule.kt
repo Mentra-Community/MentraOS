@@ -429,6 +429,17 @@ class AcsMeetingModule : Module() {
       session?.setMuted(muted) ?: mapOf("state" to "idle", "muted" to muted)
     }
 
+    AsyncFunction("holdOutgoingVideo") { kind: String, imageBase64: String?, promise: Promise ->
+      val meeting = session
+      if (meeting == null) {
+        promise.reject("NO_MEETING", "No active meeting", null)
+      } else {
+        val bytes = imageBase64?.let { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }
+        val handed = meeting.setOutgoingHold(kind, bytes)
+        if (handed) promise.resolve(null) else promise.reject("HOLD_FAILED", "The outgoing card was not sent", null)
+      }
+    }
+
     AsyncFunction("setVideoEnabled") { enabled: Boolean, promise: Promise ->
       val meeting = session
       if (meeting == null) {

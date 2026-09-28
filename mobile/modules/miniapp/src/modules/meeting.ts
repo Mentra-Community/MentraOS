@@ -399,6 +399,12 @@ export function parseMeetingParticipants(raw: unknown): MeetingParticipant[] | u
 
 export type MeetingStateHandler = (state: MeetingState) => void
 
+/** The host resumed a photo pause because it hit the ceiling. */
+export interface MeetingVideoPublisherEvent {
+  pauseId: string
+  status: "expired"
+}
+
 function isMiniappRequestError(error: unknown): error is MiniappRequestError {
   return Boolean(error && typeof error === "object" && "code" in error)
 }
@@ -518,6 +524,61 @@ export class MeetingModule {
    * call. The host always completes local teardown, so the honest thing to tell the user is "you
    * left, but the meeting may still be active".
    */
+  /**
+   * Stop the glasses camera publisher without leaving the meeting.
+   * On Direct link this stops only `start_stream`. Cloudflare callers pause their own stream.
+   */
+  async pauseVideoPublisher(options: {reason: "photo"}): Promise<{pauseId: string}> {
+    try {
+      return await this.session.sendRequest<{pauseId: string}>({
+        type: MiniappRequestType.MEETING_PAUSE_VIDEO_PUBLISHER,
+        reason: options.reason,
+      })
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /** A stale `pauseId` is a no-op. Leave, End, and a new join cancel the pause themselves. */
+  async resumeVideoPublisher(pauseId: string): Promise<void> {
+    try {
+      await this.session.sendRequest<void>({
+        type: MiniappRequestType.MEETING_RESUME_VIDEO_PUBLISHER,
+        pauseId,
+      })
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /** Resolves when the first card frame has been handed to the Teams sender. */
+  async showCard(options: {kind: "taking-photo"}): Promise<void> {
+    try {
+      await this.session.sendRequest<void>({
+        type: MiniappRequestType.MEETING_SHOW_CARD,
+        kind: options.kind,
+      })
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /**
+   * Replace the card with a still. Resolves when the first still frame is handed to the sender.
+   * `durationMs` is the caller's clock, starting at `shownAt`.
+   */
+  async showImage(options: {imageUrl: string; durationMs: number}): Promise<{shownAt: number}> {
+    try {
+      return await this.session.sendRequest<{shownAt: number}>({
+        type: MiniappRequestType.MEETING_SHOW_IMAGE,
+        imageUrl: options.imageUrl,
+        durationMs: options.durationMs,
+      })
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
   async end(): Promise<void> {
     try {
       await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_END}, {timeoutMs: 0})
@@ -605,12 +666,24 @@ export class MeetingModule {
     return this.session.on("meetingState", handler)
   }
 
+  /** Fired when the host's pause ceiling resumes the publisher. A resume this caller sent is silent. */
+  onVideoPublisher(handler: (event: MeetingVideoPublisherEvent) => void): UnsubscribeFn {
+    return this.session.on("meetingVideoPublisher", handler)
+  }
+
   /** @internal — applied by MiniappSession on inbound MEETING_STATE. */
   _applyState(event: MeetingState): void {
     this._state = {
       identityMode:
-        event.identityMode === "guest" || event.identityMode === "teams-user" ? event.identityMode : undefined,
-      guestReason: event.identityMode === "guest" ? event.guestReason : undefined,
+        event.identityMode === "guest" || event.identityMode === "teams-user"
+          ? event.identityMode
+          : this._state.identityMode,
+      guestReason:
+        event.identityMode === "guest"
+          ? event.guestReason
+          : event.identityMode === "teams-user"
+            ? undefined
+            : this._state.guestReason,
       state: event.state,
       muted: Boolean(event.muted),
       videoEnabled: typeof event.videoEnabled === "boolean" ? event.videoEnabled : undefined,

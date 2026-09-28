@@ -19,6 +19,8 @@ import {pcmToBase64} from "../utils/pcmToBase64"
 import {softapTrace, softapTraceFailure, softapTraceId} from "../utils/softapTrace"
 import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 import type {SoftapProgress} from "./SoftapCallTransport"
+import {PhotoPauseController} from "./PhotoPauseController"
+import {meetingCanSharePhoto} from "./outgoingStill"
 
 export {ACS_CALL_MIC}
 export {pcmToBase64}
@@ -408,6 +410,8 @@ type NativeModule = {
   setMuted(muted: boolean): Promise<MeetingState>
   /** Stop or resume ACS outgoing video; the call and glasses stream stay up. Absent on older natives. */
   setVideoEnabled?(enabled: boolean): Promise<MeetingState>
+  /** Card or still on the outgoing tile. `live` returns to glasses frames. Absent on older natives. */
+  holdOutgoingVideo?(kind: string, imageBase64?: string | null): Promise<void>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
@@ -596,6 +600,18 @@ class AcsMeetingService {
   private decodedMediaEpoch = 0
   /** [decodedMediaEpoch] at the moment the phone last reported `mediaSource: live`. */
   private liveEpoch = -1
+  /** Set while a photo pause owns the publisher, so a stopped camera is not "camera stream stopped". */
+  private photoPauseId: string | null = null
+  /** Cloudflare only. Direct link pauses the glasses publisher on the SoftAP transport. */
+  private photoPauseExpired: ((pauseId: string) => void) | null = null
+  private readonly cloudflarePause = new PhotoPauseController({
+    stopPublisher: async () => undefined,
+    startPublisher: async () => undefined,
+    onExpired: (pauseId) => {
+      this.clearPhotoPause(pauseId)
+      this.photoPauseExpired?.(pauseId)
+    },
+  })
   /** Mid-call republish waiters: live resolves true, leave/timeout resolves false. Failed is ignored. */
   private readonly mediaLiveWaiters = new Set<(live: boolean) => void>()
   private scopedLostSub: {remove: () => void} | null = null
@@ -1059,6 +1075,8 @@ class AcsMeetingService {
     if (this.owner && this.owner !== packageName) {
       throw new Error("Another miniapp already has an active meeting")
     }
+    // A new join cancels a photo pause without restarting the publisher the previous call owned.
+    this.cancelPhotoOverlay()
     // Validate before claiming ownership so a bad request cannot leave the slot taken.
     const video = args.video ? parseAcsOutgoingVideo(args.video) : undefined
     const resolved = resolveAcsAudioSource()
@@ -1206,7 +1224,60 @@ class AcsMeetingService {
     return this.lastState
   }
 
+  notePhotoPause(pauseId: string): void {
+    this.photoPauseId = pauseId
+  }
+
+  clearPhotoPause(pauseId: string): void {
+    if (this.photoPauseId === pauseId) this.photoPauseId = null
+  }
+
+  /** Leave, End, and a new join drop the pause and the card without waiting for a resume. */
+  cancelPhotoOverlay(): void {
+    this.cloudflarePause.cancel()
+    this.photoPauseId = null
+    void this.holdOutgoing("live").catch(() => undefined)
+  }
+
+  setPhotoPauseExpiredHandler(handler: (pauseId: string) => void): void {
+    this.photoPauseExpired = handler
+  }
+
+  meetingAcceptsPhoto(packageName: string): boolean {
+    return meetingCanSharePhoto({
+      owner: this.owner,
+      packageName,
+      released: this.hostStateReleased,
+      phase: this.lastState.state,
+    })
+  }
+
+  /**
+   * Cloudflare marker for a photo pause. Call stops its own stream; this id is what a later
+   * resume or the ceiling refers to. Direct link uses the SoftAP publisher instead.
+   */
+  async pauseCloudflarePublisher(packageName: string): Promise<{pauseId: string}> {
+    if (this.videoSource?.type === "softap") throw new Error("A Direct link call pauses the glasses publisher")
+    if (!this.meetingAcceptsPhoto(packageName)) throw new Error("The meeting has already ended")
+    const paused = await this.cloudflarePause.pause()
+    this.notePhotoPause(paused.pauseId)
+    return paused
+  }
+
+  /** A stale pause id does nothing. A current one clears the marker so live frames can return. */
+  async resumeCloudflarePublisher(pauseId: string): Promise<void> {
+    const outcome = await this.cloudflarePause.resume(pauseId)
+    if (outcome === "resumed") this.clearPhotoPause(pauseId)
+  }
+
+  async holdOutgoing(kind: "card" | "image" | "live", imageBase64?: string): Promise<void> {
+    const native = getNative()
+    if (!native?.holdOutgoingVideo) throw new Error("Sharing a photo in the meeting needs a newer Mentra App")
+    await native.holdOutgoingVideo(kind, imageBase64 ?? null)
+  }
+
   async leave(packageName: string): Promise<void> {
+    this.cancelPhotoOverlay()
     if (this.owner && this.owner !== packageName) {
       // Not the owner, so this is a no-op rather than a leave. Said out loud because a miniapp
       // that thinks it left and a host that never hung up look identical from the miniapp's side.
@@ -1248,6 +1319,7 @@ class AcsMeetingService {
       softapTrace("acs_native_leave_and_await_ignored", {packageName, owner: this.owner})
       return {completed: true}
     }
+    this.cancelPhotoOverlay()
     const native = getNative()
     if (!native?.leaveAndAwait) {
       // The fallback is the case the cleanup barrier was built for: this build's leave returns
@@ -1304,6 +1376,7 @@ class AcsMeetingService {
     if (this.owner && this.owner !== packageName) {
       throw new Error("This miniapp does not own the active meeting")
     }
+    this.cancelPhotoOverlay()
     const native = getNative()
     if (!native?.endForEveryone) {
       softapTraceFailure("acs_native_end_unsupported", {packageName, nativeLoaded: Boolean(native)})
@@ -1347,6 +1420,8 @@ class AcsMeetingService {
    */
   private async releaseHostState(): Promise<void> {
     if (this.hostStateReleased) return
+    this.cloudflarePause.cancel()
+    this.photoPauseId = null
     this.hostStateReleased = true
     const releasedInstance = `acs-${this.callGeneration}`
     this.callGeneration++
@@ -1760,7 +1835,9 @@ class AcsMeetingService {
           })
         }
         const participants = parseMeetingParticipants(event.participants)
-        const mediaSource = parseMediaSource(event.mediaSource)
+        const reportedMedia = parseMediaSource(event.mediaSource)
+        const mediaSource =
+          this.photoPauseId && reportedMedia === "failed" ? this.lastState.mediaSource : reportedMedia
         const mediaSourceReason = typeof event.mediaSourceReason === "string" ? event.mediaSourceReason : undefined
         const callEndReason =
           Number.isInteger(event.endReason_code) && Number.isInteger(event.endReason_subcode)
@@ -1819,7 +1896,7 @@ class AcsMeetingService {
           endReason: endReason ? `${endReason.code ?? "?"}/${endReason.subcode ?? "?"}` : undefined,
         })
         if (mediaSource === "live") this.liveEpoch = this.decodedMediaEpoch
-        this.settleFirstFrameWaiters(mediaSource)
+        if (!(this.photoPauseId && reportedMedia === "failed")) this.settleFirstFrameWaiters(mediaSource)
         this.onState?.(packageName, state)
         // A remote hang-up, an ACS error or a dropped call never goes through `leave`, so without
         // this the microphone pin, the PCM requirement and the `mic_pcm` listener would outlive the
