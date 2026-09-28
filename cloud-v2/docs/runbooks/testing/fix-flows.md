@@ -35,6 +35,9 @@ including released branch history, before projecting that owner's progress.
 The direct lookup passes both `occurrenceId` and `testRunId`; it never substitutes
 the anchor's first failure. Admin labels shared progress **Linked case** and
 keeps the occurrence's status distinct from its execution owner's status.
+The owner's existing triage state is projected separately as well. A recorded
+pre-execution cancellation belongs in completed history even when the retained
+run status remains `awaiting_executor`; it does not imply a fix or a passing test.
 
 The join requires the Core acknowledgement's agent run ID, test run ID,
 occurrence ID and environment to agree. Prompts, lease tokens, raw stderr,

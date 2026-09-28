@@ -62,7 +62,7 @@ export function matchingFixActivity(stored: StoredTestRun, occurrence: TestFailu
   if (acknowledged !== occurrence.delivery.agentRunId) return null;
   // Linked rows keep their own intake identity. Only the controller's durable observation proof can attach the acknowledged owner.
   if (!activity.executionOwnerRunId && (activity.executionOwnerStatus || activity.executionOwnerStatusLabel
-    || activity.executionOwnerUpdatedAt || activity.executionOwnerHeartbeatAt)) return null;
+    || activity.executionOwnerUpdatedAt || activity.executionOwnerHeartbeatAt || activity.executionOwnerTriage)) return null;
   if (activity.executionOwnerRunId && (activity.executionOwnerRunId !== acknowledged || !activity.executionOwnerStatus)) return null;
   if (activity.runId !== acknowledged && (!activity.executionOwnerRunId || !activity.routineCase
     || activity.routineCase.anchorRunId !== acknowledged)) return null;
@@ -75,6 +75,8 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
   const turn = activity?.miniExecution?.stage ?? activity?.miniLastTurn;
   const status = activity?.executionOwnerStatus ?? activity?.status;
   const linked = !!activity?.executionOwnerRunId && activity.executionOwnerRunId !== activity.runId;
+  const triage = activity?.executionOwnerTriage ?? activity?.miniTriage;
+  const cancelled = triage?.state === "cancelled";
   let state: FixFlow["state"] = occurrence.delivery.state === "pending" ? "active" : "unknown";
   let stage = occurrence.delivery.state === "pending" ? "Awaiting fixer intake" : "Fixer status unavailable";
   let nextAction = occurrence.delivery.state === "pending"
@@ -84,14 +86,19 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
     state = completedStatuses.has(status!) ? "completed" : attentionStatuses.has(status!) ? "attention" : "active";
     stage = activity.executionOwnerStatusLabel ?? activity.statusLabel ?? words(status!);
     // Admission is historical once the case has started; its old nextAction cannot mask a later review or input wait.
-    nextAction = activity.miniTriage?.state !== "admitted" && activity.miniTriage?.nextAction
-      ? activity.miniTriage.nextAction : turn ? executionActions[turn.reason] ?? "The next action is not recorded."
+    nextAction = triage?.state !== "admitted" && triage?.nextAction
+      ? triage.nextAction : turn ? executionActions[turn.reason] ?? "The next action is not recorded."
         : "Waiting for the next recorded agent update.";
     if (turn) stage = executionStages[turn.stage] ?? words(turn.stage);
-    if (activity.miniTurnFailure && !["mini_running", "investigating"].includes(status!)) {
+    if (activity.miniTurnFailure && !cancelled && !["mini_running", "investigating"].includes(status!)) {
       state = "attention";
       stage = `Agent stopped during ${activity.miniTurnFailure.phase}`;
       nextAction = `Recorded ${words(activity.miniTurnFailure.kind)}. A recovery owner and next action have not been recorded.`;
+    }
+    if (cancelled) {
+      state = "completed";
+      stage = "Cancelled before execution";
+      nextAction = triage.nextAction ?? "The controller cancelled this pre-execution intake. No fix or verification is implied.";
     }
   }
   const prs = new Map<string, FixFlow["pullRequests"][number]>();
@@ -109,7 +116,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
       url: prUrl(pr.repository, pr.pullRequestNumber), state: pr.pullRequestLifecycle?.state ?? "unknown",
       mergedAt: pr.pullRequestLifecycle?.mergedAt ?? null });
   }
-  if (prs.size && [...prs.values()].every(pr => pr.state === "merged") && !activity?.miniTurnFailure) {
+  if (prs.size && [...prs.values()].every(pr => pr.state === "merged") && !activity?.miniTurnFailure && !cancelled) {
     stage = "Fix merged";
     // A merged PR is not proof the routine passed; keep outstanding verification visible.
     if (state === "attention") {

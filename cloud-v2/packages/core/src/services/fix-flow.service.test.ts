@@ -43,6 +43,22 @@ describe("exact failure-to-fixer projection", () => {
     const result = projectFixFlow(stored, { ...occurrence, delivery: { state: "pending" } }, null, "pending", []);
     expect(result.stage).toBe("Awaiting fixer intake"); expect(result.agent).toBeNull(); expect(result.state).toBe("active");
   });
+  test("recorded triage cancellation ends both original and linked placeholder activity without claiming a fix", () => {
+    const cancelled = { state: "cancelled", reason: "reconciliation-required", nextAction: "This intake was cancelled after reconciliation." };
+    const own = { ...activity, status: "awaiting_executor", miniTriage: cancelled };
+    const linked: FixActivity = { ...activity, runId: "22222222-2222-4222-8222-222222222222", status: "mini_linked",
+      acknowledgedAgentRunId: agentId, executionOwnerRunId: agentId, executionOwnerStatus: "awaiting_executor",
+      executionOwnerTriage: cancelled, miniTriage: { state: "admitted", nextAction: "Historical own admission" } };
+    for (const row of [own, linked]) {
+      expect(matchingFixActivity(stored, occurrence, row, "dev")).toEqual(row);
+      const flow = projectFixFlow(stored, occurrence, row, "available", []);
+      expect(flow.state).toBe("completed");
+      expect(flow.stage).toContain("Cancelled before execution");
+      expect(flow.nextAction).toContain("cancelled after reconciliation");
+      expect(flow.nextAction).not.toContain("Historical");
+      expect(flow.pullRequests).toEqual([]);
+    }
+  });
   test("two runs linked to one case retain distinct occurrence identities and shared owner progress", async () => {
     const linkedId = "22222222-2222-4222-8222-222222222222", linkedOccurrenceId = `tfo_${"e".repeat(64)}`;
     const linkedOccurrence = { ...occurrence, occurrenceId: linkedOccurrenceId };
