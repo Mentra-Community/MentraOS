@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { FixFlow } from "../../../../packages/core/src/types/fix-flow.types";
 import { failedStepFlow, fixFlowHref, readFixFlowLink } from "../lib/fix-flow-links";
-import { filterFixFlowGroups, groupFixFlows, FLOW_STAGES, FLOW_STATUSES } from "../lib/fix-flow-groups";
+import { filterFixFlowGroups, groupFixFlows, flowCurrentState, FLOW_CURRENT_STATES } from "../lib/fix-flow-groups";
 import { FixFlowDetail, FixFlowsPage, FixFlowOverview } from "./fix-flows";
 import type { TestRunDetail } from "./test-runs-data";
 import { projectFixFlow } from "../../../../packages/core/src/services/fix-flow.service";
@@ -48,7 +48,7 @@ describe("Fix flows navigation and recorded states", () => {
     qc.setQueryData(["admin-fix-flows"], { flows: [flow, { ...flow, occurrenceId: `tfo_${"c".repeat(64)}`, routineId: "finished-routine", state: "completed" }],
       activity: "available", refreshedAt: flow.updatedAt, limited: false });
     const html = renderToStaticMarkup(<QueryClientProvider client={qc}><FixFlowsPage selection={null} onSelect={() => {}} /></QueryClientProvider>);
-    expect(html).toContain("notes-phone"); expect(html).toContain("Needs attention"); expect(html).toContain("Completed");
+    expect(html).toContain("notes-phone"); expect(html).toContain("Stopped"); expect(html).toContain("Status unavailable");
     expect(html.indexOf("notes-phone")).toBeLessThan(html.indexOf("finished-routine")); expect(html).toContain("Address the review");
   });
   test("same case and owner groups related failures without losing their exact links", () => {
@@ -67,21 +67,20 @@ describe("Fix flows navigation and recorded states", () => {
     expect(html).toContain("3 flows"); expect(html).toContain("5 failures"); expect(html).toContain("2 related failure occurrences");
     for (const item of data.flows) expect(html).toContain(`?fixFlow=${item.occurrenceId}`);
   });
-  test("pipeline and status filters have exact grouped counts, including zero and All reset", () => {
-    const waiting = { ...flow, occurrenceId: `tfo_${"1".repeat(64)}`, state: "waiting" as const, pipelineStage: "intake" as const, agent: null };
+  test("current-state filters count every grouped flow once, including zero nodes and All reset", () => {
+    const waiting: FixFlow = { ...flow, occurrenceId: `tfo_${"1".repeat(64)}`, state: "waiting", currentState: "waiting-review", agent: null };
     const data = { flows: [flow, waiting], activity: "available" as const, refreshedAt: flow.updatedAt, limited: false };
     const groups = groupFixFlows(data.flows);
-    expect(FLOW_STAGES.reduce((total, item) => total + filterFixFlowGroups(groups, { kind: "stage", value: item.id }).length, 0)).toBe(groups.length);
-    expect(FLOW_STATUSES.reduce((total, item) => total + filterFixFlowGroups(groups, { kind: "status", value: item.id }).length, 0)).toBe(groups.length);
-    expect(filterFixFlowGroups(groups, { kind: "status", value: "running" })).toEqual([]);
+    expect(FLOW_CURRENT_STATES.reduce((total, item) => total + filterFixFlowGroups(groups, { kind: "current", value: item.id }).length, 0)).toBe(groups.length);
+    expect(filterFixFlowGroups(groups, { kind: "current", value: "worker-active" })).toEqual([]);
     expect(filterFixFlowGroups(groups, null)).toHaveLength(2);
-    const html = renderToStaticMarkup(<FixFlowOverview data={data} filter={{ kind: "stage", value: "review" }} onFilter={() => {}} onSelect={() => {}} />);
-    expect(html).toContain('aria-label="PR / review: 1 flow groups" aria-pressed="true"');
-    expect(html).toContain('aria-label="Merged: 0 flow groups"'); expect(html).toContain("All flows");
-    expect(html).toContain(`?fixFlow=${flow.occurrenceId}`); expect(html).not.toContain(`?fixFlow=${waiting.occurrenceId}`);
+    const html = renderToStaticMarkup(<FixFlowOverview data={data} filter={{ kind: "current", value: "waiting-review" }} onFilter={() => {}} onSelect={() => {}} />);
+    expect(html).toContain('aria-label="Waiting for review: 1 flow groups" aria-pressed="true"');
+    expect(html).toContain('aria-label="Merged and verified: 0 flow groups"'); expect(html).toContain("All flows");
+    expect(html).not.toContain(`?fixFlow=${flow.occurrenceId}`); expect(html).toContain(`?fixFlow=${waiting.occurrenceId}`);
   });
   test("a completed occurrence cannot hide pending verification or attention in its case group", () => {
-    const completed: FixFlow = { ...flow, state: "completed", pipelineStage: "merged", updatedAt: "2026-09-28T19:00:00Z" };
+    const completed: FixFlow = { ...flow, state: "completed", currentState: "merged", pipelineStage: "merged", updatedAt: "2026-09-28T19:00:00Z" };
     const pending: FixFlow = { ...flow, occurrenceId: `tfo_${"2".repeat(64)}`, state: "waiting", pipelineStage: "verification" };
     const attention: FixFlow = { ...flow, occurrenceId: `tfo_${"3".repeat(64)}`, pipelineStage: "review" };
     const waitingGroups = groupFixFlows([completed, pending]);
@@ -94,6 +93,41 @@ describe("Fix flows navigation and recorded states", () => {
     expect(html).toContain("1 flows"); expect(html).toContain("3 failures");
     for (const occurrence of [completed, pending, attention]) expect(html).toContain(`?fixFlow=${occurrence.occurrenceId}`);
     expect(completed.state).toBe("completed"); expect(pending.state).toBe("waiting");
+  });
+  test("current-state nodes never mix a stopped diagnosis with active work or count duplicates", () => {
+    const currentStates = ["worker-active", "stopped", "worker-repair", "waiting-review", "unknown"] as const;
+    const rows = currentStates.map((currentState, i): FixFlow => ({ ...flow, currentState, pipelineStage: "investigation",
+      occurrenceId: `tfo_${String(i + 1).repeat(64)}`, agent: { ...flow.agent!, runId: `owner-${i}` } }));
+    const repeated = { ...rows[0]!, occurrenceId: `tfo_${"6".repeat(64)}` };
+    const data = { flows: [...rows, repeated], activity: "available" as const, refreshedAt: flow.updatedAt, limited: false };
+    const groups = groupFixFlows(data.flows);
+    expect(groups).toHaveLength(5);
+    for (const currentState of currentStates) expect(filterFixFlowGroups(groups, { kind: "current", value: currentState })).toHaveLength(1);
+    const html = renderToStaticMarkup(<FixFlowOverview data={data} filter={null} onFilter={() => {}} onSelect={() => {}} />);
+    for (const label of ["Worker active", "Stopped", "Stopped · worker repair", "Waiting for review", "Status unavailable"])
+      expect(html).toContain(`aria-label="${label}: 1 flow groups"`);
+    expect(html).toContain("Last recorded progress: Diagnosis");
+    expect(html).not.toContain('aria-label="Diagnosis:');
+    expect(html).toContain("Stopped or unresolved"); expect(html).toContain("Waiting for a decision or input");
+  });
+  test("every selected current state explains its meaning above the list even when empty", () => {
+    const data = { flows: [flow], activity: "available" as const, refreshedAt: flow.updatedAt, limited: false };
+    for (const state of FLOW_CURRENT_STATES) {
+      const html = renderToStaticMarkup(<FixFlowOverview data={data} filter={{ kind: "current", value: state.id }} onFilter={() => {}} onSelect={() => {}} />);
+      expect(html).toContain(`aria-label="${state.label} meaning"`);
+      expect(html).toContain(state.description);
+      expect(html.indexOf(state.description)).toBeLessThan(html.indexOf(state.id === "stopped" ? "<article" : "No flow groups match"));
+    }
+  });
+  test("overview, repeated occurrences and detail share the server current-state label", () => {
+    for (const state of FLOW_CURRENT_STATES) {
+      const row: FixFlow = { ...flow, currentState: state.id, stage: "Investigating", pipelineStage: "investigation" };
+      const html = renderToStaticMarkup(<FixFlowDetail flow={row} />);
+      expect(html).toContain(state.label); expect(html).toContain(state.description);
+      expect(html).not.toContain(">Investigating<");
+      expect(flowCurrentState(row)).toBe(state.id);
+    }
+    for (const state of ["active", "running"] as const) expect(flowCurrentState({ ...flow, state })).toBe("unknown");
   });
   test("legacy broad active responses are unverified, never Running", () => {
     const result = groupFixFlows([{ ...flow, state: "active", pipelineStage: undefined }]);
@@ -118,7 +152,7 @@ describe("Fix flows navigation and recorded states", () => {
     expect(filterFixFlowGroups(groups, { kind: "status", value: "attention" })).toHaveLength(2);
     expect(filterFixFlowGroups(groups, { kind: "status", value: "waiting" })).toHaveLength(0);
     const html = renderToStaticMarkup(<FixFlowOverview data={{ flows: blocked, activity: "available", refreshedAt: flow.updatedAt, limited: false }} filter={{ kind: "status", value: "attention" }} onFilter={() => {}} onSelect={() => {}} />);
-    expect(html).toContain("Needs attention · 2"); expect(html).toContain("4 failures");
+    expect(html).toContain("Stopped: 2 flow groups"); expect(html).toContain("4 failures");
     for (const occurrence of blocked) expect(html).toContain(`?fixFlow=${occurrence.occurrenceId}`);
   });
   test("linked occurrence labels its execution owner separately", () => {

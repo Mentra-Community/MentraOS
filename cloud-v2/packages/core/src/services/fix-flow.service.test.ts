@@ -54,6 +54,38 @@ describe("exact failure-to-fixer projection", () => {
       expect(projectFixFlow(stored, occurrence, { ...activity, status }, "available", []).state).toBe("waiting");
     }
   });
+  test("current states distinguish worker custody from historical diagnosis and typed waits", () => {
+    const current = (row: FixActivity | null, availability: "available" | "unavailable" = "available") => projectFixFlow(stored, occurrence, row, availability, [], Date.parse(at)).currentState;
+    for (const progressPhase of ["inspecting_code", "implementing_fix", "reviewing_pr"] as const)
+      expect(current({ ...activity, progressPhase, miniLastTurn: { stage: "waiting-for-review", reason: "review-pending" } })).toBe("worker-active");
+    expect(current({ ...activity, workerLease: undefined })).toBe("unknown");
+    expect(current({ ...activity, workerLease: { state: "active", expiresAt: at } })).toBe("worker-repair");
+    expect(current(activity, "unavailable")).toBe("unknown"); expect(current(null)).toBe("unknown");
+    for (const [stage, expected] of [["waiting-for-review", "waiting-review"], ["waiting-for-build", "waiting-build"],
+      ["waiting-for-routine", "waiting-routine"], ["ready-for-policy", "waiting-merge"]] as const) {
+      expect(current({ ...activity, status: "mini_waiting", progressPhase: "inspecting_code", miniExecution: undefined,
+        miniLastTurn: { stage: stage!, reason: "synthetic" } })).toBe(expected);
+    }
+    const stopped: FixActivity = { ...activity, status: "mini_needs_input", progressPhase: "inspecting_code",
+      miniTurnFailure: { phase: "model", kind: "timeout", at } };
+    expect(current(stopped)).toBe("stopped");
+    expect(current({ ...stopped, status: "mini_running" })).toBe("worker-active");
+    for (const reason of ["infrastructure", "access-required", "budget-exhausted", "missing-evidence"])
+      expect(current({ ...activity, status: "mini_needs_input", miniExecution: undefined, miniLastTurn: { stage: "needs-input", reason } }))
+        .toBe(reason === "infrastructure" ? "worker-repair" : "stopped");
+    for (const status of ["needs_more_info", "needs_product_decision", "needs_human_engineer"])
+      expect(current({ ...activity, status })).toBe("stopped");
+    for (const status of ["cancelled", "no_fix_needed", "third_party_out_of_scope"])
+      expect(current({ ...stopped, status })).toBe("closed");
+    const merged: FixActivity = { ...activity, status: "mini_waiting", pullRequests: [{ repository: "Mentra-Community/MentraOS",
+      pullRequestNumber: 42, headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] };
+    expect(current(merged)).toBe("waiting-routine");
+    expect(current({ ...merged, miniTurnFailure: stopped.miniTurnFailure })).toBe("stopped");
+    const linked: FixActivity = { ...activity, executionOwnerRunId: agentId, executionOwnerStatus: "mini_running",
+      executionOwnerProgressPhase: "implementing_fix" };
+    expect(current(linked)).toBe("unknown");
+    expect(current({ ...linked, executionOwnerWorkerLease: activity.workerLease })).toBe("worker-active");
+  });
   test("only current structured worker custody can produce Running", () => {
     const now = Date.parse(at);
     const expired = { state: "active" as const, expiresAt: at };
@@ -105,6 +137,31 @@ describe("exact failure-to-fixer projection", () => {
       routineFailure: { intake: { occurrenceId: row.failureOccurrences[0]!.occurrenceId, testRunId: row.run.runId } } }));
     const result = await new FixFlowService(repository(rows), reader(activities), "dev").list();
     expect(result.flows.map(flow => flow.state)).toEqual(["attention", "running", "waiting"]);
+  });
+  test("a failed model launch stays at intake unless source diagnosis was actually recorded", () => {
+    const stopped: FixActivity = { ...activity, status: "mini_needs_input", workerLease: { state: "inactive" },
+      miniTurnFailure: { kind: "process-exit", phase: "model", at } };
+    const initial = projectFixFlow(stored, occurrence, stopped, "available", []);
+    expect(initial.state).toBe("attention"); expect(initial.pipelineStage).toBe("intake");
+    expect(initial.timeline.some(event => event.stage === "agent-stop")).toBe(true);
+    for (const checkpoint of [{ action: "record-diagnosis", summary: "A recorded source defect", components: ["harness"] },
+      { action: "route-harness" }]) {
+      const diagnosed = projectFixFlow(stored, occurrence, { ...stopped,
+        miniExecution: { ...activity.miniExecution!, checkpoints: [checkpoint] } }, "available", []);
+      expect(diagnosed.state).toBe("attention"); expect(diagnosed.pipelineStage).toBe("investigation");
+    }
+    expect(projectFixFlow(stored, occurrence, { ...stopped, progressPhase: "inspecting_code" }, "available", []).pipelineStage).toBe("investigation");
+  });
+  test("generic infrastructure needs-input means blocked worker repair, not an unanswered user question", () => {
+    const blocked: FixActivity = { ...activity, status: "mini_needs_input", workerLease: { state: "inactive" },
+      miniExecution: { ...activity.miniExecution!, stage: { stage: "needs-input", reason: "infrastructure" },
+        checkpoints: [{ action: "record-diagnosis", summary: "Recorded host issue", components: ["harness"] }] } };
+    const result = projectFixFlow(stored, occurrence, blocked, "available", []);
+    expect(result.stage).toBe("Blocked · worker repair"); expect(result.state).toBe("attention");
+    expect(result.pipelineStage).toBe("investigation"); expect(result.nextAction).toContain("No question is available here");
+    const explicit = projectFixFlow(stored, occurrence, { ...blocked,
+      miniTriage: { state: "held", nextAction: "The assigned owner will restore the host connection." } }, "available", []);
+    expect(explicit.nextAction).toBe("The assigned owner will restore the host connection.");
   });
   test("recorded triage cancellation ends both original and linked placeholder activity without claiming a fix", () => {
     const cancelled = { state: "cancelled", reason: "reconciliation-required", nextAction: "This intake was cancelled after reconciliation." };

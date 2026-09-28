@@ -1,3 +1,7 @@
+/** Mutually exclusive current disposition, not a historical progress stage. */
+export type FixFlowCurrentState = "queued" | "worker-active" | "waiting-review" | "waiting-build" | "waiting-routine"
+  | "waiting-merge" | "waiting-input" | "worker-repair" | "stopped" | "merged" | "closed" | "unknown";
+
 /** Read-only Admin projection. No lease tokens, prompts, local paths or raw agent output. */
 export interface FixFlow {
   occurrenceId: string | null;
@@ -11,6 +15,8 @@ export interface FixFlow {
   updatedAt: string;
   // active is accepted only for older Core responses during a rolling deployment.
   state: "running" | "waiting" | "attention" | "completed" | "unknown" | "active";
+  // Optional during rolling deployment; absence never proves active execution.
+  currentState?: FixFlowCurrentState;
   pipelineStage?: "intake" | "investigation" | "fix" | "review" | "verification" | "merged" | "closed" | "unknown";
   stage: string;
   nextAction: string;

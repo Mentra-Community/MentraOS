@@ -37,7 +37,7 @@ const completedStatuses = new Set(["cancelled", "no_fix_needed", "third_party_ou
 const attentionStatuses = new Set(["mini_needs_input", "needs_more_info", "needs_product_decision", "needs_human_engineer", "ready_for_human_test", "failed"]);
 const attentionTriageStates = new Set(["needs-evidence", "held", "rejected", "linked-owner"]);
 const executionActions: Record<string, string> = {
-  "source-investigation": "The fixer is investigating the recorded source and evidence.",
+  "source-investigation": "Source investigation was last recorded. Current worker activity is shown separately.",
   "review-pending": "Waiting for a reviewer to assess the recorded PR head.",
   "build-pending": "Waiting for the build system to publish the reviewed fix.",
   "routine-pending": "Waiting for the routine worker to publish its verification result.",
@@ -96,6 +96,12 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
       ? triage.nextAction : turn ? executionActions[turn.reason] ?? "The next action is not recorded."
         : "Waiting for the next recorded agent update.";
     if (turn) stage = executionStages[turn.stage] ?? words(turn.stage);
+    if (turn?.stage === "needs-input" && turn.reason === "infrastructure" && !currentlyLeased
+      && !cancelled && !completedStatuses.has(status!)) {
+      stage = "Blocked · worker repair";
+      if (!triage?.nextAction || triage.state === "admitted")
+        nextAction = "An infrastructure issue stopped the fixer. No question is available here. The saved agent transcript may contain context; a reply action has not been recorded.";
+    }
     if (activity.miniTurnFailure && !cancelled && !currentlyLeased) {
       state = "attention";
       stage = `Agent stopped during ${activity.miniTurnFailure.phase}`;
@@ -196,13 +202,39 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
     step: failure.step, failure: { code: failure.code, message: failure.message, ...(failure.expected ? { expected: failure.expected } : {}) },
     startedAt: run.finishedAt, updatedAt: activity ? [activity.updatedAt, activity.executionOwnerUpdatedAt ?? activity.updatedAt].sort().at(-1)!
       : occurrence.delivery.state === "acknowledged" ? occurrence.delivery.acknowledgedAt : run.finishedAt,
-    state, pipelineStage: fixFlowPipelineStage(activity, state, [...prs.values()]), stage, nextAction, activity: occurrence.delivery.state === "pending" ? "pending" : activity ? "available" : activityState,
+    state, currentState: fixFlowCurrentState(activity, occurrence, activityState, [...prs.values()], currentlyLeased), pipelineStage: fixFlowPipelineStage(activity, state, [...prs.values()]), stage, nextAction, activity: occurrence.delivery.state === "pending" ? "pending" : activity ? "available" : activityState,
     agent: activity ? { runId: activity.runId, executor: activity.executor, status: activity.status,
       caseId: activity.routineCase?.caseId ?? null, anchorRunId: activity.routineCase?.anchorRunId ?? null,
       repository: activity.miniExecution?.route.repository ?? null, branch: activity.miniExecution?.route.branch ?? null,
       heartbeatAt: activity.executionOwnerHeartbeatAt ?? activity.heartbeatAt ?? null,
       executionOwner: linked ? { runId: activity.executionOwnerRunId!, status: activity.executionOwnerStatus! } : null } : null,
     incidents, pullRequests: [...prs.values()], timeline };
+}
+
+/** Only bound controller evidence determines current work. Historical phases are not attempt-bound. */
+function fixFlowCurrentState(activity: FixActivity | null, occurrence: TestFailureOccurrence,
+  availability: FixFlow["activity"], prs: FixFlow["pullRequests"], currentlyLeased: boolean): NonNullable<FixFlow["currentState"]> {
+  if (!activity) return occurrence.delivery.state === "pending" ? "queued" : "unknown";
+  if (availability !== "available") return "unknown";
+  const status = activity.executionOwnerStatus ?? activity.status;
+  const triage = activity.executionOwnerTriage ?? activity.miniTriage;
+  const turn = activity.miniExecution?.stage ?? activity.miniLastTurn;
+  const lease = activity.executionOwnerRunId ? activity.executionOwnerWorkerLease : activity.workerLease;
+  if (triage?.state === "cancelled" || completedStatuses.has(status)) return "closed";
+  if (status === "mini_running") return currentlyLeased ? "worker-active" : lease ? "worker-repair" : "unknown";
+  if (activity.miniTurnFailure) return "stopped";
+  if (triage && attentionTriageStates.has(triage.state)) return "stopped";
+  if (turn?.stage === "needs-input") return turn.reason === "infrastructure" ? "worker-repair" : "stopped";
+  if (attentionStatuses.has(status)) return "stopped";
+  if (turn?.stage === "waiting-for-review") return "waiting-review";
+  if (turn?.stage === "waiting-for-build") return "waiting-build";
+  if (turn?.stage === "waiting-for-routine" || turn?.reason === "occurrence-verification-required") return "waiting-routine";
+  if (turn?.stage === "ready-for-policy") return "waiting-merge";
+  if (prs.length && prs.every(pr => pr.state === "merged")) return "waiting-routine";
+  if (["awaiting_executor", "queued", "mini_waiting"].includes(status)) return "queued";
+  // Waiting-input requires a bound unanswered question; merged requires explicit verified completion.
+  // Neither fact is supplied by the current controller contract, so neither is inferred here.
+  return "unknown";
 }
 
 /** Current recorded phase only. Neither prose labels nor earlier steps imply later progress. */
@@ -227,7 +259,6 @@ function fixFlowPipelineStage(activity: FixActivity | null, state: FixFlow["stat
   }
   if (phase) return phases[phase];
   if (prs.length) return prs.every(pr => pr.state === "merged") ? "merged" : "review";
-  if (activity.miniTurnFailure?.phase === "model") return "investigation";
   return "intake";
 }
 
