@@ -35,8 +35,18 @@ jest.mock("@/components/ignite", () => {
     Screen: View,
     Icon: () => null,
     Text: ({children}: {children: ReactNode}) => <Text>{children}</Text>,
-    Button: ({text, onPress, disabled}: {text: string; onPress: () => void; disabled?: boolean}) => (
-      <Pressable accessibilityRole="button" onPress={onPress} disabled={disabled}>
+    Button: ({
+      text,
+      onPress,
+      disabled,
+      testID,
+    }: {
+      text: string
+      onPress: () => void
+      disabled?: boolean
+      testID?: string
+    }) => (
+      <Pressable accessibilityRole="button" onPress={onPress} disabled={disabled} testID={testID}>
         <Text>{text}</Text>
       </Pressable>
     ),
@@ -63,6 +73,8 @@ test("requires one description and submits it as the dashboard title without sep
 
   const description = screen.getByLabelText("What happened? What did you expect?")
   const submit = () => screen.getByRole("button", {name: "Continue"})
+  expect(screen.getByTestId("feedback.description")).toBe(description)
+  expect(screen.getByTestId("feedback.submit")).toBe(submit())
   expect(screen.UNSAFE_getAllByType(TextInput)).toHaveLength(1)
   expect(submit()).toBeDisabled()
 

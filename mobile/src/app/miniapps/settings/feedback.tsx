@@ -307,6 +307,7 @@ export default function FeedbackPage() {
                   className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
                   multiline
                   numberOfLines={4}
+                  testID="feedback.description"
                   accessibilityLabel={translate("feedback:description")}
                   placeholder={translate("feedback:descriptionPlaceholder")}
                   placeholderTextColor={theme.colors.muted_foreground}
@@ -390,6 +391,7 @@ export default function FeedbackPage() {
         </View>
         <View className="flex-1 min-h-6" />
         <Button
+          testID="feedback.submit"
           text={
             isSubmitting ? "" : feedbackType === "bug" ? translate("feedback:continue") : translate("feedback:submit")
           }

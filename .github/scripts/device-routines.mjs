@@ -1,7 +1,8 @@
 // Selection guidance, not path-trigger rules or worker authorization. Coverage
 // means a routine can exercise this behavior; only a completed run proves it.
 const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/90a70edfe2fa17fd766dda3d98977555d6608a05/"
-const androidDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58483a6c729018dc9955122dd071ecefbfb8ae92/"
+// Combined feedback form contract; deploy the companion harness before testing these app artifacts.
+const noGlassesDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/09e8c89b2dd0212d342d05f48b988dec9c21d7a5/"
 const pendingDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/754d527a3d6aac8ac971c600998aece203015394/"
 const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/69ffd29cba268d9ef2a67ee5d1b33edb2c547b90/"
 const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
@@ -23,9 +24,9 @@ export const DEVICE_ROUTINES = Object.freeze({
     relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/src/i18n/en.ts", "mobile/app.config.ts"],
     prerequisites: "CI Mac app; enrolled unpaired fixture and existing test account. Preserves the declared app/account return state.",
     exclusions: "No actual account creation, recovery email or credential changes; no connected glasses, Phone Mode, camera/media streaming, Android-only behavior or translated-locale qualification. A changed mobile path alone is insufficient.",
-    definition: `${definitions}tools/mentra-e2e/COMPILED-ROUTINE.md`,
-    implementation: `${definitions}tools/mentra-e2e/flows/no-glasses.ts`,
-    worker: `${definitions}worker/no-glasses.ts`,
+    definition: `${noGlassesDefinitions}tools/mentra-e2e/COMPILED-ROUTINE.md`,
+    implementation: `${noGlassesDefinitions}tools/mentra-e2e/flows/no-glasses.ts`,
+    worker: `${noGlassesDefinitions}worker/no-glasses.ts`,
   }),
   "no-glasses-android": Object.freeze({
     label: "routine:no-glasses-android", name: "Android no-glasses UI", platform: "android",
@@ -33,9 +34,9 @@ export const DEVICE_ROUTINES = Object.freeze({
     relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/app.config.ts", "mobile/modules/**/android/**"],
     prerequisites: "CI signed Android APK and immutable OTA manifest; enrolled Android phone with its own existing test account and no paired glasses.",
     exclusions: "No login/logout, onboarding, permission changes, pairing, connected glasses, OTA, Call, acoustic qualification or physical-iPhone coverage. Mac and Android results are independent; the Android adapter's device qualification is pending.",
-    definition: `${androidDefinitions}tools/mentra-e2e/ANDROID-NO-GLASSES-ROUTINE.md`,
-    implementation: `${androidDefinitions}tools/mentra-e2e/runner/android-walkthrough.ts`,
-    worker: `${androidDefinitions}worker/android-no-glasses.ts`,
+    definition: `${noGlassesDefinitions}tools/mentra-e2e/ANDROID-NO-GLASSES-ROUTINE.md`,
+    implementation: `${noGlassesDefinitions}tools/mentra-e2e/runner/android-walkthrough.ts`,
+    worker: `${noGlassesDefinitions}worker/android-no-glasses.ts`,
   }),
   "mentra-call": Object.freeze({
     label: "routine:mentra-call", name: "Mentra Call", platform: "ios-on-mac",
