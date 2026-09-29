@@ -13,6 +13,7 @@ import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
 import { notifyReportSlack } from "./report-slack.service";
+import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
 import { UserModel } from "../models/user.model";
 import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
 import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
@@ -401,7 +402,7 @@ export interface AdminReportAsset {
 
 export interface ListReportsFilter {
   // Internal and Testing are triage categories, not submitted/stored report kinds.
-  kind?: ReportKind | "internal" | "testing";
+  kind?: ReportCategory;
   status?: ReportStatus;
   limit?: number;
   before?: Date;
@@ -413,8 +414,8 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
     // The incident automation contract uses this trigger source.
     // Apply category membership before the database limit, including old reports.
     query["trigger.source"] = filter.kind === "testing"
-      ? "mentra_automated_testing"
-      : { $ne: "mentra_automated_testing" };
+      ? REPORT_TESTING_SOURCE
+      : { $ne: REPORT_TESTING_SOURCE };
   }
   if (filter.kind === "automatic") {
     query.kind = "automatic";
