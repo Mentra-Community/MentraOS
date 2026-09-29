@@ -102,11 +102,54 @@ final class NimoCanvasSessionTests: XCTestCase {
         XCTAssertEqual(frame, b)
     }
 
-    func testNativeTakeoverSuppressesReplayUntilHostOffersAgain() {
+    func testNativeTakeoverReplaysWithoutNewHostFrame() {
         let session = NimoCanvasSession(); connected(session)
-        XCTAssertTrue(session.nativeApp(1, entered: true).isEmpty)
-        XCTAssertTrue(session.readiness(true, confirmed: true).isEmpty)
-        XCTAssertEqual(sentKey(session.offer(b, scope: "new")), 1)
-        XCTAssertEqual(session.nativeApp(1, entered: true), [.reconnect("Native app transition interrupted canvas command")])
+        XCTAssertEqual(sentKey(session.nativeApp(0, entered: true)), 1)
+        XCTAssertTrue(session.nativeApp(0, entered: true).isEmpty)
+        guard case let .send(_, frame, _) = ack(session, 1).first else { return XCTFail() }
+        XCTAssertEqual(frame, a)
+        XCTAssertTrue(session.nativeApp(0xFD, entered: false).isEmpty)
+        XCTAssertEqual(sentKey(ack(session, 4)), 1)
+    }
+
+    func testStartupStockUiPreservesReconnectScene() {
+        let session = NimoCanvasSession(); connected(session)
+        session.disconnected()
+        XCTAssertTrue(session.nativeApp(0, entered: true).isEmpty)
+        XCTAssertTrue(session.activate().isEmpty)
+        XCTAssertEqual(sentKey(session.readiness(true)), 1)
+        guard case let .send(_, frame, _) = ack(session, 1).first else { return XCTFail() }
+        XCTAssertEqual(frame, a)
+    }
+
+    func testActivationEntersBlankCanvasBeforeAnyMiniapp() {
+        let session = NimoCanvasSession()
+        XCTAssertTrue(session.activate().isEmpty)
+        XCTAssertEqual(sentKey(session.readiness(true)), 1)
+        guard case let .send(_, frame, _) = ack(session, 1).first else { return XCTFail() }
+        XCTAssertEqual(frame, Data([0, 0, 1]))
+    }
+
+    func testExplicitExitStopsRestorationUntilAnotherConnection() {
+        let session = NimoCanvasSession(); connected(session)
+        XCTAssertEqual(sentKey(session.exit()), 3)
+        XCTAssertTrue(session.nativeApp(0, entered: true).isEmpty)
+        XCTAssertTrue(ack(session, 3).isEmpty)
+        XCTAssertTrue(session.nativeApp(0xFD, entered: false).isEmpty)
+        session.disconnected()
+        _ = session.activate()
+        XCTAssertEqual(sentKey(session.readiness(true)), 1)
+    }
+
+    func testProbesAreBoundedAndHeartbeatCanStillRecover() {
+        let session = NimoCanvasSession()
+        _ = session.activate(); _ = session.readiness(true)
+        for _ in 0 ..< 3 {
+            _ = ack(session, 1, status: 7)
+            XCTAssertEqual(sentKey(session.retryNotReady()), 1)
+        }
+        _ = ack(session, 1, status: 7)
+        XCTAssertTrue(session.retryNotReady().isEmpty)
+        XCTAssertEqual(sentKey(session.readiness(true, confirmed: true)), 1)
     }
 }

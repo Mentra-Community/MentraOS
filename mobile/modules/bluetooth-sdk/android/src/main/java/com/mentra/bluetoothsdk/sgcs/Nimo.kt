@@ -2145,7 +2145,10 @@ class Nimo : SGCManager() {
             )
         }
         diagnostics?.connected((negotiatedMtu - 3).coerceIn(20, 512))
-        canvas.readiness(twsConnected && peerCompanionReady == true)
+        // Launch checks peer readiness in firmware; do not wait up to a minute for
+        // the first unsolicited heartbeat just because peer status is still unknown.
+        canvas.activate()
+        canvas.readiness(twsConnected && peerCompanionReady != false)
     }
 
     private fun handshakeFailed() {
@@ -2221,6 +2224,7 @@ class Nimo : SGCManager() {
         if (diagnostics?.onPacket(packet) == true) return
         if (packet.size >= 10 && packet[8].toInt() == 7 && (packet[9].toInt() and 255) in listOf(1, 3, 4)) {
             val response = NimoCanvasCodec.response(packet) ?: return
+            if (response.first == 1) Bridge.log("NIMO: canvas Launch response status=${response.second.firstOrNull()?.toInt()}")
             canvas.response(response.first, response.second)
             return
         }
@@ -2252,13 +2256,13 @@ class Nimo : SGCManager() {
                             if (appId != NimoCanvasCodec.APP_ID) {
                                 diagnostics?.cancelHeldCapture("Native app takeover preempted held capture", resumeCanvas = false)
                             }
-                            if (canvas.nativeApp(appId, true)) canvasEncoder.invalidate()
+                            canvas.nativeApp(appId, true)
                         }
                         NimoProtocol.STATE_EXIT -> {
                             if (appId == NimoCanvasCodec.APP_ID) {
                                 diagnostics?.cancelHeldCapture("Canvas exit preempted held capture", resumeCanvas = false)
                             }
-                            if (canvas.nativeApp(appId, false)) canvasEncoder.invalidate()
+                            canvas.nativeApp(appId, false)
                         }
                     }
                 }
@@ -2290,7 +2294,7 @@ class Nimo : SGCManager() {
                     // Both predicates were sampled by this device report. TWS-only
                     // reports and cached state cannot release a status-7 wait.
                     if (handshakeState == HandshakeState.READY) {
-                        canvas.confirmedReadiness(twsConnected && peerCompanionReady == true)
+                        canvas.confirmedReadiness(twsConnected && peerCompanionReady != false)
                     }
                 }
             }
@@ -2316,7 +2320,7 @@ class Nimo : SGCManager() {
         if (!connected && handshakeState == HandshakeState.READY) {
             Bridge.log("NIMO: TWS service dropped mid-session (arm removed/off?)")
         }
-        if (handshakeState == HandshakeState.READY) canvas.readiness(connected && peerCompanionReady == true)
+        if (handshakeState == HandshakeState.READY) canvas.readiness(connected && peerCompanionReady != false)
     }
 
     private fun handleInputEvent(code: Int) {

@@ -1325,7 +1325,10 @@ class Nimo: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "fullyBooted", true)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         startTimers()
-        canvas.readiness(twsConnected && peerCompanionReady == true)
+        // The Launch ACK validates peer readiness without waiting for the first
+        // unsolicited heartbeat (which can arrive a minute after connection).
+        canvas.activate()
+        canvas.readiness(twsConnected && peerCompanionReady != false)
     }
 
     private func handshakeFailed() {
@@ -1394,6 +1397,7 @@ class Nimo: NSObject, SGCManager {
     private func handleRxPacket(_ packet: Data) {
         if packet.count >= 10, packet[8] == 7, [1, 3, 4].contains(packet[9]) {
             if let response = NimoCanvasCodec.response(packet) {
+                if response.key == 1 { Bridge.log("NIMO: canvas Launch response status=\(response.payload.first.map(Int.init) ?? -1)") }
                 canvas.response(key: response.key, payload: response.payload)
             }
             return
@@ -1427,9 +1431,9 @@ class Nimo: NSObject, SGCManager {
                 Bridge.log("NIMO: app state report appId=\(appId) phase=\(phase)")
                 switch phase {
                 case NimoProtocol.STATE_ENTER:
-                    if canvas.nativeApp(appId, entered: true) { canvasEncoder.invalidate() }
+                    canvas.nativeApp(appId, entered: true)
                 case NimoProtocol.STATE_EXIT:
-                    if canvas.nativeApp(appId, entered: false) { canvasEncoder.invalidate() }
+                    canvas.nativeApp(appId, entered: false)
                 default:
                     break
                 }
@@ -1459,7 +1463,7 @@ class Nimo: NSObject, SGCManager {
                 peerCompanionReady = v[9] != 0
                 onTwsState(Int(v[8]) >= 1)
                 if handshakeState == .ready {
-                    canvas.readiness(twsConnected && peerCompanionReady == true, confirmed: true)
+                    canvas.readiness(twsConnected && peerCompanionReady != false, confirmed: true)
                 }
             }
         case NimoProtocol.BUSINESS_BATTERY:
@@ -1482,7 +1486,7 @@ class Nimo: NSObject, SGCManager {
         if !connected, handshakeState == .ready {
             Bridge.log("NIMO: TWS service dropped mid-session (arm removed/off?)")
         }
-        if handshakeState == .ready { canvas.readiness(connected && peerCompanionReady == true) }
+        if handshakeState == .ready { canvas.readiness(connected && peerCompanionReady != false) }
     }
 
     private func handleInputEvent(_ code: Int) {

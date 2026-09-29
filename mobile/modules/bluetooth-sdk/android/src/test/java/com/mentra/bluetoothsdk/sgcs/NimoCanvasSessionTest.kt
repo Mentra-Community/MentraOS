@@ -210,31 +210,77 @@ class NimoCanvasSessionTest {
     assertArrayEquals(frameB, send(success(session, 1)).frame)
   }
 
-  @Test fun actualNativeTakeoverDuringExitDiscardsNewerScene() {
+  @Test fun nativeReportDuringExitPreservesNewerHostScene() {
     val session = NimoCanvasSession()
     launched(session); success(session, 4)
     assertEquals(3, send(session.exit()).key)
     session.offer(frameB, "two:1")
     assertTrue(session.nativeApp(0, true).isEmpty())
-    assertTrue(success(session, 3).isEmpty())
-    session.disconnected()
-    assertTrue(session.readiness(true).isEmpty())
+    assertEquals(1, send(success(session, 3)).key)
+    assertArrayEquals(frameB, send(success(session, 1)).frame)
   }
 
-  @Test fun nativeTakeoverSuppressesReplayUntilNewHostFrame() {
-    val session = NimoCanvasSession()
-    launched(session); success(session, 4)
-    assertTrue(session.nativeApp(0, true).isEmpty())
-    assertTrue(session.readiness(true).isEmpty())
-    assertEquals(1, send(session.offer(frameA, "one:1")).key)
-  }
-
-  @Test fun nativeTakeoverOrReadinessLossDuringCommandResets() {
-    for (takeover in listOf(true, false)) {
-      val session = NimoCanvasSession(); launched(session)
-      val actions = if (takeover) session.nativeApp(0, true) else session.readiness(false)
-      assertTrue(actions.single() is NimoCanvasSession.Action.Reconnect)
+  @Test fun nativeTakeoverRestoresLatestSceneWithoutAnotherHostOffer() {
+    for (app in listOf(0, 0xFD)) {
+      val session = NimoCanvasSession()
+      launched(session); success(session, 4)
+      assertEquals(1, send(session.nativeApp(app, app != 0xFD)).key)
+      assertArrayEquals(frameA, send(success(session, 1)).frame)
     }
+  }
+
+  @Test fun nativeTakeoverWaitsForCurrentAckInsteadOfOverlappingCommands() {
+    val session = NimoCanvasSession(); launched(session)
+    assertTrue(session.nativeApp(0, true).isEmpty())
+    session.offer(frameB, "one:1")
+    assertEquals(1, send(success(session, 4)).key)
+    assertTrue(session.nativeApp(0, true).isEmpty()) // Startup report during Launch.
+    assertArrayEquals(frameB, send(success(session, 1)).frame)
+  }
+
+  @Test fun startupStockUiDoesNotDiscardRetainedSceneBeforeReadiness() {
+    val session = NimoCanvasSession(); launched(session); success(session, 4)
+    session.disconnected()
+    assertTrue(session.nativeApp(0, true).isEmpty())
+    session.activate()
+    assertEquals(1, send(session.readiness(true)).key)
+    assertArrayEquals(frameA, send(success(session, 1)).frame)
+  }
+
+  @Test fun explicitExitStillReturnsControlToStockUiUntilNextConnection() {
+    val session = NimoCanvasSession(); launched(session); success(session, 4)
+    assertEquals(3, send(session.exit()).key)
+    assertTrue(session.nativeApp(0, true).isEmpty())
+    assertTrue(success(session, 3).isEmpty())
+    assertTrue(session.nativeApp(0, true).isEmpty())
+    session.disconnected(); session.activate()
+    assertEquals(1, send(session.readiness(true)).key)
+    assertArrayEquals(byteArrayOf(0, 0, 1), send(success(session, 1)).frame)
+  }
+
+  @Test fun activationLaunchesBlankCanvasWithoutAnyMiniapp() {
+    val session = NimoCanvasSession()
+    assertTrue(session.activate().isEmpty())
+    assertEquals(1, send(session.readiness(true)).key)
+    assertArrayEquals(byteArrayOf(0, 0, 1), send(success(session, 1)).frame)
+  }
+
+  @Test fun notReadyProbesAreBoundedAndFreshHeartbeatStillRecovers() {
+    val session = NimoCanvasSession(); session.activate(); session.readiness(true)
+    repeat(3) {
+      session.response(1, byteArrayOf(7))
+      assertEquals(1, send(session.retryNotReady()).key)
+    }
+    session.response(1, byteArrayOf(7))
+    repeat(5) { assertTrue(session.retryNotReady().isEmpty()) }
+    assertEquals(1, send(session.confirmedReadiness(true)).key)
+    assertEquals(4, send(success(session, 1)).key)
+  }
+
+  @Test fun lostReadinessDuringCommandStillResets() {
+    val session = NimoCanvasSession(); launched(session)
+    assertTrue(session.readiness(false).single() is NimoCanvasSession.Action.Reconnect)
+    assertTrue(session.retryNotReady().isEmpty())
   }
 
   @Test fun offersCopyMutableInputAndRejectOversizedFrame() {
