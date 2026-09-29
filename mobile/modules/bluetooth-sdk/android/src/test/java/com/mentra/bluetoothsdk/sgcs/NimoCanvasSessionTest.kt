@@ -238,6 +238,16 @@ class NimoCanvasSessionTest {
     assertArrayEquals(frameB, send(success(session, 1)).frame)
   }
 
+  @Test fun takeoverDuringUpdateReplaysIdenticalFrameAfterRelaunch() {
+    val session = NimoCanvasSession(); launched(session)
+    assertTrue(session.nativeApp(0, true).isEmpty())
+    // The old Update ACK must not deduplicate the same scene on a new canvas.
+    assertEquals(1, send(success(session, 4)).key)
+    assertArrayEquals(frameA, send(success(session, 1)).frame)
+    assertTrue(success(session, 4).isEmpty())
+    assertTrue(session.offer(frameA, "one:1").isEmpty())
+  }
+
   @Test fun startupStockUiDoesNotDiscardRetainedSceneBeforeReadiness() {
     val session = NimoCanvasSession(); launched(session); success(session, 4)
     session.disconnected()
@@ -263,6 +273,19 @@ class NimoCanvasSessionTest {
     assertTrue(session.activate().isEmpty())
     assertEquals(1, send(session.readiness(true)).key)
     assertArrayEquals(byteArrayOf(0, 0, 1), send(success(session, 1)).frame)
+  }
+
+  @Test fun successfulUpdateRestoresProbeBudgetForNextRecovery() {
+    val session = NimoCanvasSession(); session.activate(); session.readiness(true)
+    repeat(2) { episode ->
+      if (episode > 0) assertEquals(1, send(session.nativeApp(0, true)).key)
+      repeat(3) {
+        session.response(1, byteArrayOf(7))
+        assertEquals(1, send(session.retryNotReady()).key)
+      }
+      assertEquals(4, send(success(session, 1)).key)
+      assertTrue(success(session, 4).isEmpty())
+    }
   }
 
   @Test fun notReadyProbesAreBoundedAndFreshHeartbeatStillRecovers() {

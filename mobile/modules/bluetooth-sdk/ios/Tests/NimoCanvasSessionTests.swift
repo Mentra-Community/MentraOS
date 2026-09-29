@@ -112,6 +112,18 @@ final class NimoCanvasSessionTests: XCTestCase {
         XCTAssertEqual(sentKey(ack(session, 4)), 1)
     }
 
+    func testTakeoverDuringUpdateReplaysIdenticalFrameAfterRelaunch() {
+        let session = NimoCanvasSession()
+        _ = session.offer(a, scope: "app:1"); _ = session.readiness(true)
+        XCTAssertEqual(sentKey(ack(session, 1)), 4)
+        XCTAssertTrue(session.nativeApp(0, entered: true).isEmpty)
+        XCTAssertEqual(sentKey(ack(session, 4)), 1)
+        guard case let .send(_, frame, _) = ack(session, 1).first else { return XCTFail("Missing replay Update") }
+        XCTAssertEqual(frame, a)
+        XCTAssertTrue(ack(session, 4).isEmpty)
+        XCTAssertTrue(session.offer(a, scope: "app:1").isEmpty)
+    }
+
     func testStartupStockUiPreservesReconnectScene() {
         let session = NimoCanvasSession(); connected(session)
         session.disconnected()
@@ -139,6 +151,20 @@ final class NimoCanvasSessionTests: XCTestCase {
         session.disconnected()
         _ = session.activate()
         XCTAssertEqual(sentKey(session.readiness(true)), 1)
+    }
+
+    func testSuccessfulUpdateRestoresProbeBudgetForNextRecovery() {
+        let session = NimoCanvasSession()
+        _ = session.activate(); _ = session.readiness(true)
+        for episode in 0 ..< 2 {
+            if episode > 0 { XCTAssertEqual(sentKey(session.nativeApp(0, entered: true)), 1) }
+            for _ in 0 ..< 3 {
+                _ = ack(session, 1, status: 7)
+                XCTAssertEqual(sentKey(session.retryNotReady()), 1)
+            }
+            XCTAssertEqual(sentKey(ack(session, 1)), 4)
+            XCTAssertTrue(ack(session, 4).isEmpty)
+        }
     }
 
     func testProbesAreBoundedAndHeartbeatCanStillRecover() {

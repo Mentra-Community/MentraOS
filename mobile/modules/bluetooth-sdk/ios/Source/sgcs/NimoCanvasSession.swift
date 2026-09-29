@@ -128,8 +128,8 @@ final class NimoCanvasSession {
             return [.rejected(status)] + pump()
         }
         switch key {
-        case 1: active = true
-        case 4: accepted = current.frame; rejected = nil; readinessRetries = 0
+        case 1: active = true; accepted = nil
+        case 4: accepted = current.frame; rejected = nil; readinessRetries = 0; probeRetries = 0
         case 3: active = false; accepted = nil; exitRequested = false
         default: break
         }

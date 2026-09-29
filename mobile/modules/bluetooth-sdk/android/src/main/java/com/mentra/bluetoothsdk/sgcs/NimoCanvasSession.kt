@@ -142,7 +142,7 @@ internal class NimoCanvasSession {
       return listOf(Action.Rejected(status)) + pump()
     }
     when (key) {
-      1 -> active = true
+      1 -> { active = true; accepted = null }
       4 -> { accepted = current.frame; rejected = null; readinessRetries = 0; probeRetries = 0 }
       3 -> { active = false; accepted = null; exitRequested = false }
     }
