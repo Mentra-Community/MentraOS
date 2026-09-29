@@ -34,6 +34,11 @@ cannot be proved, the result still publishes with ordinary independent failure
 intake and an explicit `unavailableReason`. This preserves the existing recovery
 overview path for an original upload that never reached Core; it grants no
 deduplication on the strength of an unverified original-run ID.
+Before any unavailable fallback, the published original still constrains its
+test and evidence outcomes. Every published original or parent constrains the
+incoming identity, test outcome, finish time, terminal hashes and retained
+failures. Missing legacy source metadata disables
+deduplication without disabling checks against the other known identity fields.
 
 Exact replays preserve existing occurrence projections and acknowledgments.
 Legacy rows with no occurrence projection can be reconciled by replaying their

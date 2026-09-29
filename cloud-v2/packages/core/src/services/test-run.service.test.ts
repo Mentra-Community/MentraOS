@@ -211,6 +211,23 @@ describe("validated recovery failure lineage", () => {
       .toMatchObject({ state: "acknowledged", agentRunId: "new_error_agent" });
   });
 
+  test("later recovery can improve its own evidence outcome while retaining the original test and all failures", async () => {
+    const { original, recovery } = recoveryPackets();
+    original.outcomes.evidence = "complete";
+    original.failures!.pop();
+    await service.ingest(original);
+    await service.ingest(recovery);
+    const third = structuredClone(recovery);
+    third.runId = recoveryResultRunId(original.runId, 3);
+    Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId, terminalSnapshotSha256: "f".repeat(64) });
+    third.outcomes.evidence = "complete";
+    await service.ingest(third);
+    const detail = await service.detail(third.runId);
+    expect(repository.runs.get(third.runId)!.run.outcomes).toEqual(third.outcomes);
+    expect(detail.failures).toEqual(recovery.failures);
+    expect(repository.runs.get(third.runId)!.failureOccurrences).toEqual([]);
+  });
+
   test.each([
     ["arbitrary recovery ID", (run: TestRun) => { run.runId = "arbitrary-recovery"; }],
     ["wrong request", (run: TestRun) => { run.requestId = "other"; }],
@@ -261,6 +278,113 @@ describe("validated recovery failure lineage", () => {
     const result = await service.ingest(third);
     expect(result.occurrenceIds).toEqual(createTestFailureOccurrences(third).map(item => item.occurrenceId));
     expect(repository.runs.get(third.runId)!.recoveryLineage).toMatchObject({ unavailableReason: "parent-not-published", inheritedFailures: [] });
+  });
+
+  describe.each([
+    ["missing parent", "parent-not-published"],
+    ["missing original terminal", "ancestor-provenance-unavailable"],
+    ["missing original source", "ancestor-provenance-unavailable"],
+    ["missing parent terminal", "ancestor-provenance-unavailable"],
+    ["missing parent source", "ancestor-provenance-unavailable"],
+    ["underivable legacy parent", "legacy-ancestry-unavailable"],
+    ["missing occurrence projection", "ancestor-occurrences-unavailable"],
+  ] as const)("known original with %s", (gap, unavailableReason) => {
+    const prepare = async () => {
+      const { original, recovery } = recoveryPackets();
+      if (gap === "missing original terminal") {
+        delete original.provenance.terminalSnapshotSha256;
+        delete original.provenance.lifecycleTerminalSha256;
+      }
+      if (gap === "missing original source") delete original.source;
+      await service.ingest(original);
+      if (gap === "missing occurrence projection") delete repository.runs.get(original.runId)!.failureOccurrences;
+      const next = (previous: TestRun, generation: number, terminal: string) => {
+        const result = structuredClone(previous);
+        result.runId = recoveryResultRunId(original.runId, generation);
+        Object.assign(result.provenance, { resultGeneration: String(generation),
+          previousResultRunId: recoveryResultRunId(original.runId, generation - 1), terminalSnapshotSha256: terminal.repeat(64) });
+        return result;
+      };
+      if (gap === "missing parent") return next(recovery, 3, "f");
+      if (gap === "missing parent terminal" || gap === "missing parent source") {
+        await service.ingest(recovery);
+        const parent = repository.runs.get(recovery.runId)!;
+        if (gap === "missing parent terminal") delete parent.run.provenance.terminalSnapshotSha256;
+        else delete parent.run.source;
+        return next(recovery, 3, "f");
+      }
+      if (gap === "underivable legacy parent") {
+        const third = next(recovery, 3, "f");
+        await service.ingest(third);
+        delete repository.runs.get(third.runId)!.recoveryLineage;
+        return next(third, 4, "e");
+      }
+      return recovery;
+    };
+
+    test("consistent recovery retains independent intake without rewriting ancestors", async () => {
+      const run = await prepare(), before = structuredClone(repository.runs);
+      const result = await service.ingest(run);
+      expect(result.occurrenceIds).toEqual(createTestFailureOccurrences(run).map(item => item.occurrenceId));
+      expect(repository.runs.get(run.runId)!.recoveryLineage).toMatchObject({ unavailableReason, inheritedFailures: [] });
+      for (const [id, row] of before) expect(repository.runs.get(id)).toEqual(row);
+    });
+
+    test.each([
+      ["changed request", (run: TestRun) => { run.requestId = "other"; }],
+      ["changed routine", (run: TestRun) => { run.routineVersion = "other"; }],
+      ["changed build", (run: TestRun) => { run.provenance.buildSha = "a".repeat(40); }],
+      ["changed test outcome", (run: TestRun) => { run.outcomes.test = "passed"; }],
+      ["passed failed original", (run: TestRun) => {
+        run.outcome = "passed";
+        run.outcomes = { test: "passed", teardown: "passed", fixture: "ready", evidence: "complete" };
+        delete run.failures;
+        for (const chapter of run.chapters) chapter.status = "passed";
+        for (const assertion of run.firmwareAssertions) assertion.status = "passed";
+      }],
+      ["cleared incomplete evidence", (run: TestRun) => { run.outcomes.evidence = "complete"; }],
+      ["omitted original failure", (run: TestRun) => { run.failures!.pop(); }],
+      ["earlier finish", (run: TestRun) => { run.finishedAt = run.startedAt; }],
+    ] as const)("rejects %s before persistence", async (_label, mutate) => {
+      const run = await prepare(), before = structuredClone(repository.runs);
+      mutate(run);
+      await expect(service.ingest(run)).rejects.toMatchObject({ status: 409 });
+      expect(repository.runs).toEqual(before);
+    });
+
+    test("retains every available source and original terminal check", async () => {
+      const run = await prepare(), before = structuredClone(repository.runs);
+      if (gap !== "missing original source") {
+        const changedSource = structuredClone(run);
+        changedSource.source!.branch = "other";
+        await expect(service.ingest(changedSource)).rejects.toMatchObject({ status: 409 });
+      }
+      if (gap !== "missing original terminal") {
+        run.provenance.originalTerminalSnapshotSha256 = "c".repeat(64);
+        await expect(service.ingest(run)).rejects.toMatchObject({ status: 409 });
+      }
+      expect(repository.runs).toEqual(before);
+    });
+  });
+
+  test("an available parent still constrains recovery when the original is missing", async () => {
+    const { original, recovery } = recoveryPackets();
+    await service.ingest(original);
+    recovery.failures!.push({ ...structuredClone(recovery.failures![0]!), phase: "return-verification",
+      step: { id: "new-return-failure", label: "Return failed" }, code: "return-failed", message: "A new recovery failure." });
+    await service.ingest(recovery);
+    repository.runs.delete(original.runId);
+    const third = structuredClone(recovery);
+    third.runId = recoveryResultRunId(original.runId, 3);
+    Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId, terminalSnapshotSha256: "f".repeat(64) });
+    const before = structuredClone(repository.runs), changed = structuredClone(third);
+    changed.failures!.pop();
+    await expect(service.ingest(changed)).rejects.toMatchObject({ status: 409 });
+    expect(repository.runs).toEqual(before);
+    const result = await service.ingest(third);
+    expect(result.occurrenceIds).toEqual(createTestFailureOccurrences(third).map(item => item.occurrenceId));
+    expect(repository.runs.get(third.runId)!.recoveryLineage).toMatchObject({ unavailableReason: "original-not-published", inheritedFailures: [] });
+    expect(repository.runs.get(recovery.runId)).toEqual(before.get(recovery.runId));
   });
 
   test("replayed legacy recovery parents retain their own receipts while new generations derive ancestry", async () => {

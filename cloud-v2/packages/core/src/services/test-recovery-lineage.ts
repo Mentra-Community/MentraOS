@@ -38,10 +38,10 @@ const identityProvenance = ["repository", "headSha", "baseSha", "branch", "build
   "archiveSha256", "receiptSha256", "manifestSha256", "requestSha256", "claimSha256", "definitionDigest",
   "qualificationDigest", "returnProfileDigest", "mobileSourceCommit", "appRepository", "appSourceCommit",
   "appExecutableSha256", "appJavascriptSha256", "executionMode"] as const;
-function identity(run: TestRun) {
+function identity(run: TestRun, includeSource: boolean) {
   return { requestId: run.requestId, routineId: run.routineId, routineVersion: run.routineVersion,
     platform: run.platform, channel: run.channel, prNumber: run.prNumber, release: run.release,
-    startedAt: run.startedAt, source: run.source, fixture: run.fixture,
+    startedAt: run.startedAt, source: includeSource ? run.source : undefined, fixture: run.fixture,
     provenance: Object.fromEntries(identityProvenance.map(key => [key, run.provenance[key]])) };
 }
 const phaseStep = (failure: TestFailure) => canonical([failure.phase, failure.step?.id ?? null]);
@@ -71,18 +71,38 @@ export async function testFailureProjection(run: TestRun, get: (id: string) => P
   });
   const original = await get(p.originalRunId!);
   const parent = generation === 2 ? original : await get(p.previousResultRunId!);
+  const byStep = new Map(occurrences.map(item => [phaseStep(item.failure), item]));
+  // Missing ancestry only disables deduplication. Every result Core does have
+  // still constrains the incoming identity, test, evidence and retained failures.
+  for (const known of new Set([original, parent])) {
+    if (!known) continue;
+    // A legacy result may lack source metadata; its other identity fields are still known.
+    const includeSource = !!known.run.source;
+    if (!same(identity(run, includeSource), identity(known.run, includeSource)))
+      reject("recovery changed the original routine, request, source or build identity");
+    if (Date.parse(run.finishedAt) < Date.parse(known.run.finishedAt) || run.outcomes.test !== known.run.outcomes.test)
+      reject("recovery cannot replace the original test or evidence outcome");
+    for (const occurrence of createTestFailureOccurrences(known.run)) {
+      if (!byStep.has(phaseStep(occurrence.failure))) reject("recovery omitted an inherited failure");
+    }
+  }
+  const originalTerminal = original?.run.provenance.terminalSnapshotSha256 ?? original?.run.provenance.lifecycleTerminalSha256;
+  const parentTerminal = generation === 2 ? originalTerminal : parent?.run.provenance.terminalSnapshotSha256;
+  if (original && (original.run.provenance.originalRunId || original.run.provenance.previousResultRunId
+    || (original.run.provenance.resultGeneration && original.run.provenance.resultGeneration !== "1"))
+    || (digest.test(originalTerminal ?? "") && (p.originalTerminalSnapshotSha256 !== originalTerminal
+      || p.terminalSnapshotSha256 === originalTerminal))
+    || (digest.test(parentTerminal ?? "") && p.terminalSnapshotSha256 === parentTerminal))
+    reject("recovery terminal does not extend the recorded original and parent results");
+  if (original && ((original.run.outcome === "failed" && run.outcome !== "failed")
+    || (original.run.outcome !== "passed" && run.outcome === "passed")
+    || (original.run.outcomes.evidence === "incomplete" && run.outcomes.evidence !== "incomplete")))
+    reject("recovery cannot replace the original test or evidence outcome");
   if (!original) return unavailable("original-not-published");
   if (!parent) return unavailable("parent-not-published");
-  const root = original!, previous = parent!;
-  const originalTerminal = root.run.provenance.terminalSnapshotSha256 ?? root.run.provenance.lifecycleTerminalSha256;
-  const parentTerminal = generation === 2 ? originalTerminal : previous.run.provenance.terminalSnapshotSha256;
-  if (!digest.test(originalTerminal ?? "") || !digest.test(parentTerminal ?? "") || !root.run.source)
+  const root = original, previous = parent;
+  if (!digest.test(originalTerminal ?? "") || !digest.test(parentTerminal ?? "") || !root.run.source || !previous.run.source)
     return unavailable("ancestor-provenance-unavailable");
-  if (root.run.provenance.originalRunId || root.run.provenance.previousResultRunId
-    || (root.run.provenance.resultGeneration && root.run.provenance.resultGeneration !== "1")
-    || p.originalTerminalSnapshotSha256 !== originalTerminal
-    || p.terminalSnapshotSha256 === parentTerminal || p.terminalSnapshotSha256 === originalTerminal)
-    reject("recovery terminal does not extend the recorded original and parent results");
   if (generation > 2) {
     let lineage = previous.recoveryLineage;
     if (!lineage || lineage.unavailableReason) {
@@ -99,20 +119,9 @@ export async function testFailureProjection(run: TestRun, get: (id: string) => P
     if (lineage.generation !== generation - 1 || lineage.originalRunId !== root.run.runId
       || lineage.originalPayloadSha256 !== root.payloadSha256) reject("recovery parent contradicts this original result");
   }
-  if (!same(identity(run), identity(root.run)) || !same(identity(previous.run), identity(root.run)))
-    reject("recovery changed the original routine, request, source or build identity");
-  if (Date.parse(run.finishedAt) < Date.parse(previous.run.finishedAt) || run.outcomes.test !== root.run.outcomes.test
-    || (root.run.outcome === "failed" && run.outcome !== "failed")
-    || (root.run.outcome !== "passed" && run.outcome === "passed")
-    || (root.run.outcomes.evidence === "incomplete" && run.outcomes.evidence !== "incomplete"))
-    reject("recovery cannot replace the original test or evidence outcome");
   if (previous.failureOccurrences === undefined || root.failureOccurrences === undefined)
     return unavailable("ancestor-occurrences-unavailable");
-  const byStep = new Map(occurrences.map(item => [phaseStep(item.failure), item]));
   const parentFailures = createTestFailureOccurrences(previous.run);
-  for (const occurrence of parentFailures) {
-    if (!byStep.has(phaseStep(occurrence.failure))) reject("recovery omitted an inherited failure");
-  }
   const recoveryLineage: TestRecoveryLineage = { schemaVersion: 1, generation, originalRunId: root.run.runId,
     originalPayloadSha256: root.payloadSha256, previousResultRunId: previous.run.runId,
     previousPayloadSha256: previous.payloadSha256, inheritedFailures: [] };
