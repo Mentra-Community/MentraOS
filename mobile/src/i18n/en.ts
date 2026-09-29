@@ -63,14 +63,11 @@ const en = {
     microphonePermissionRequiredMessage:
       "Microphone permission is required to use the phone microphone feature. Please grant the microphone permission in settings.",
     infoTitle: "About this setting",
-    infoDescription:
-      'Most users should leave this set to "Automatic". Only change this if you need to use a Bluetooth lapel microphone to improve transcription quality.',
-    glassesMicGates: "Glasses microphone gates",
+    infoDescription: "Most users should not change these settings.",
+    glassesMicGates: "Glasses microphone settings",
     vadLabel: "Allow voice activity detection",
-    vadSubtitle:
-      "Off keeps audio flowing while a miniapp uses the microphone, even when speech isn't detected. On allows miniapps to use speech detection.",
     barrierLabel: "Barrier",
-    barrierSubtitle: "Center-mic RMS loudness gate. Blocks quiet audio independently of VAD.",
+    barrierSubtitle: "Block quiet audio",
     tuningTitle: "Mic tuning",
     tuningEntrySubtitle: "Gain, RMS gate, and speaker-elevated thresholds. RAM-only on the glasses.",
     tuningWaiting: "Waiting for the glasses to report a level...",
