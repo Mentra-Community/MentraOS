@@ -29,7 +29,10 @@ export const fixActivitySchema = z.object({
   miniExecution: z.object({ stage: z.object({ stage: text, reason: text }).optional(),
     route: z.object({ repository: text, branch: text }), checkpoints: z.array(checkpoint).max(2000) }).optional(),
   miniLastTurn: z.object({ stage: text, reason: text }).optional(),
-  miniTurnFailure: z.object({ kind: text, phase: text, at: z.string().datetime() }).optional(),
+  miniTurnFailure: z.object({ kind: text, phase: text, at: z.string().datetime(),
+    // Only controller-classified codes cross this boundary; newer/unknown codes do not hide the activity row.
+    sourcePolicy: z.enum(["harness-source-unverified", "harness-origin-ambiguous", "harness-origin-unmerged", "harness-base-not-contained"])
+      .optional().catch(undefined) }).optional(),
   miniTriage: triage.optional(),
   result: z.object({ summary: text, pullRequests: z.array(pr).max(30).optional() }).optional(),
   // The controller's routine activity view also decorates in-progress record-pr checkpoints.

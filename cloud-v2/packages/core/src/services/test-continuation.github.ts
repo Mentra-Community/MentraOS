@@ -30,6 +30,7 @@ const prSchema = z.object({ number: z.number().int().positive(), state: z.string
 // GitHub lists at most 100 pull requests for a commit per page; a full page may hide another, so it is refused as incomplete.
 const associatedSchema = z.array(z.object({ number: z.number().int().positive(),
   head: z.object({ ref: z.string(), repo: z.object({ full_name: z.string() }).nullable() }) })).max(99);
+const harnessAssociatedSchema = z.array(prSchema.pick({ number: true, head: true, base: true })).max(99);
 const comparisonSchema = z.object({ status: z.enum(["ahead", "identical", "behind", "diverged"]) });
 const ensure = (value: unknown, message: string): void => { if (!value) throw new TestDispatchError(409, message); };
 
@@ -90,12 +91,14 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     ensure(destination?.sourceOrigin.state !== "open" || destination.sourceOrigin.pullRequest === pr.number, "Use the originating PR");
     ensure(["dev", "staging"].includes(base) || harness, "Candidate destination is not admitted");
     ensure(pr.state === "open" || pr.merged, "Candidate PR closed without merging");
-    const comparison = comparisonSchema.parse(await this.api(candidate.repository, `compare/${tested}...${candidate.headSha}`));
-    ensure(["ahead", "identical"].includes(comparison.status), "Candidate does not descend from the tested source");
+    const comparison = comparisonSchema.parse(await this.api(candidate.repository,
+      `compare/${tested}...${candidate.headSha}${harness ? "?per_page=1&page=2" : ""}`));
     if (harness) {
       ensure(pr.merged && pr.merge_commit_sha && pr.merged_at, "Harness changes require review and merge before device execution");
       const ref = z.object({ ref: z.literal("refs/heads/main"), object: z.object({ type: z.literal("commit"), sha }) }).parse(
         await this.api(HARNESS, "git/ref/heads/main"));
+      if (!["ahead", "identical"].includes(comparison.status))
+        await this.harnessOrigin(tested!, candidate.headSha, ref.object.sha);
       // GitHub includes changed-file patches only on page 1. Page 2 retains the
       // comparison status even for zero/one commits, without unrelated patches.
       const contained = comparisonSchema.parse(await this.api(HARNESS, `compare/${pr.merge_commit_sha}...${ref.object.sha}?per_page=1&page=2`));
@@ -105,6 +108,7 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
         expectedHarnessSha: pr.merge_commit_sha!, requestNotBefore: pr.merged_at!, automaticExpected: false,
         ...(localPublication ? { localPublication } : {}) };
     }
+    ensure(["ahead", "identical"].includes(comparison.status), "Candidate does not descend from the tested source");
     if (pr.merged) {
       ensure(pr.merge_commit_sha, "Merged candidate has no merge commit");
       return { query: { channel: base as "dev" | "staging" }, expectedHeadSha: pr.merge_commit_sha!,
@@ -114,6 +118,26 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     // its merge to the PR's current base tip and its app to that base's backend.
     return { query: { channel: "pr", pr: pr.number }, expectedHeadSha: candidate.headSha,
       automaticExpected: pr.labels.some(label => label.name === `routine:${routineId}`) };
+  }
+  /** A squash merge does not retain the tested PR head as an ancestor. Prove its
+   * unique, exact final-head origin from GitHub, then require that origin's merge
+   * in both the candidate and current main. The recorded source is never replaced. */
+  private async harnessOrigin(tested: string, candidateHead: string, main: string) {
+    const listed = harnessAssociatedSchema.safeParse(await this.api(HARNESS, `commits/${tested}/pulls?per_page=100`));
+    ensure(listed.success, "The tested harness origin list is incomplete or invalid");
+    const associated = listed.data!.filter(item => item.head.sha === tested && item.head.repo?.full_name === HARNESS
+      && item.base.repo.full_name === HARNESS && item.base.ref === "main");
+    ensure(associated.length === 1, "Candidate does not descend from the tested harness source or a uniquely proven merged origin");
+    const number = associated[0]!.number;
+    const origin = prSchema.parse(await this.api(HARNESS, `pulls/${number}`));
+    ensure(origin.number === number && origin.head.sha === tested && origin.head.repo?.full_name === HARNESS
+      && origin.base.repo.full_name === HARNESS && origin.base.ref === "main" && origin.state === "closed"
+      && origin.merged && origin.merge_commit_sha && origin.merged_at,
+    "The tested harness origin is not an exact same-repository merged PR into main");
+    for (const tip of [candidateHead, main])
+      ensure(["ahead", "identical"].includes(comparisonSchema.parse(await this.api(HARNESS,
+        `compare/${origin.merge_commit_sha}...${tip}?per_page=1&page=2`)).status),
+      "The candidate and private main must contain the tested harness origin merge");
   }
   /**
    * Proves the controller's saved route for a local build of a feature branch, independently. The route belongs to the

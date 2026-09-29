@@ -408,6 +408,49 @@ describe("exact failure-to-fixer projection", () => {
 
 describe("bounded authenticated activity reader", () => {
   const env = { CLOUD_REPORT_AGENT_URL: "https://agent.example.test", CLOUD_REPORT_AGENT_ACTIVITY_TOKEN: "synthetic-read-token" };
+  test("only fixed preparation source-policy codes give stopped cases source guidance, without raw diagnostics or implied retry", async () => {
+    for (const sourcePolicy of ["harness-source-unverified", "harness-origin-ambiguous", "harness-origin-unmerged", "harness-base-not-contained"] as const) {
+      const candidate = { ...activity, status: "mini_needs_input", workerLease: undefined,
+        miniLastTurn: { stage: "needs-input", reason: "infrastructure" },
+        miniTurnFailure: { kind: "exception", phase: "prepare", at, sourcePolicy,
+          error: "MiniSourcePolicyError", message: "private provider diagnostic", raw: "private transport data" } };
+      const send = (async (url: unknown) => Response.json(String(url).includes("?scope=")
+        ? { runs: [candidate], limited: false } : candidate)) as typeof fetch;
+      const client = new HttpFixActivityReader(env, send), service = new FixFlowService(repository(), client, "dev");
+      const rows = await client.list();
+      expect(rows.state).toBe("available"); expect(rows.runs[0]?.miniTurnFailure?.sourcePolicy).toBe(sourcePolicy);
+      expect(JSON.stringify(rows)).not.toContain("private"); expect(JSON.stringify(rows)).not.toContain("MiniSourcePolicyError");
+      for (const flow of [(await service.list()).flows[0]!, await service.detail(occurrenceId)]) {
+        expect(flow).toMatchObject({ state: "attention", currentState: "stopped", stage: "Harness source verification required" });
+        expect(flow.nextAction).toContain("Verify"); expect(flow.nextAction).toContain("main");
+        expect(flow.nextAction).not.toContain("retry"); expect(flow.nextAction).not.toContain("scheduled");
+        expect(flow.timeline.find(item => item.id === "last-stop")?.detail).toBe(flow.nextAction);
+        expect(JSON.stringify(flow)).not.toContain("private");
+      }
+      const parsed = rows.runs[0]!;
+      const running = projectFixFlow(stored, occurrence, { ...parsed, status: "mini_running", workerLease: activity.workerLease }, "available", []);
+      expect(running.currentState).toBe("worker-active"); expect(running.stage).toBe("Mini worker active");
+      const queued = projectFixFlow(stored, occurrence, { ...parsed, status: "mini_waiting" }, "available", []);
+      expect(queued.currentState).toBe("queued"); expect(queued.stage).toBe("Awaiting next agent turn");
+    }
+  });
+  test("unknown source-policy values stay generic, and model failures or interruptions never become source-policy guidance", () => {
+    for (const sourcePolicy of [undefined, "unknown private diagnostic", { message: "private" }]) {
+      const parsed = fixActivitySchema.parse({ ...activity, status: "mini_needs_input",
+        miniTurnFailure: { kind: "exception", phase: "prepare", at, sourcePolicy } });
+      expect(parsed.miniTurnFailure?.sourcePolicy).toBeUndefined();
+      const flow = projectFixFlow(stored, occurrence, parsed, "available", []);
+      expect(flow.currentState).toBe("stopped"); expect(flow.stage).toBe("Agent stopped during prepare");
+      expect(JSON.stringify(flow)).not.toContain("private");
+    }
+    for (const [kind, phase] of [["interrupted", "prepare"], ["exception", "model"]]) {
+      const parsed = fixActivitySchema.parse({ ...activity, status: "mini_needs_input",
+        miniTurnFailure: { kind, phase, at, sourcePolicy: "harness-origin-unmerged" } });
+      const flow = projectFixFlow(stored, occurrence, parsed, "available", []);
+      expect(flow.currentState).toBe("stopped"); expect(flow.stage).toBe(`Agent stopped during ${phase}`);
+      expect(flow.nextAction).toContain(`Recorded ${kind}`); expect(flow.nextAction).not.toContain("merged PR");
+    }
+  });
   test("passes only the read token upstream and strips fields outside the projection", async () => {
     const send = async (_url: unknown, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer synthetic-read-token");

@@ -52,6 +52,12 @@ const executionActions: Record<string, string> = {
 const executionStages: Record<string, string> = { continue: "Investigating", "waiting-for-review": "Waiting for review",
   "waiting-for-build": "Waiting for a build", "waiting-for-routine": "Waiting for routine verification",
   "needs-input": "Needs input", "ready-for-policy": "Ready for merge policy" };
+const sourcePolicyActions = {
+  "harness-source-unverified": "Verify the recorded harness revision and its exact merged PR, then confirm the repair base is contained in main.",
+  "harness-origin-ambiguous": "The recorded harness revision has no unique merged PR origin. Verify one exact final PR head and its merge in main before preparing the repair.",
+  "harness-origin-unmerged": "The originating harness PR is not verified as merged. Verify its exact final head and merge in main before preparing the repair.",
+  "harness-base-not-contained": "The proven harness repair base is not contained in main. Verify the exact merged source and current main before preparing the repair.",
+};
 
 /** The delivery receipt identifies the executor. A matching signature/case alone never identifies this occurrence. */
 export function matchingFixActivity(stored: StoredTestRun, occurrence: TestFailureOccurrence, activity: FixActivity | null,
@@ -84,6 +90,9 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
   const lease = activity?.executionOwnerRunId ? activity.executionOwnerWorkerLease : activity?.workerLease;
   const currentlyLeased = status === "mini_running" && lease?.state === "active"
     && !!lease.expiresAt && Date.parse(lease.expiresAt) > now;
+  const stopped = activity?.miniTurnFailure;
+  const sourcePolicyAction = stopped?.kind === "exception" && stopped.phase === "prepare" && stopped.sourcePolicy
+    ? sourcePolicyActions[stopped.sourcePolicy] : undefined;
   let state: FixFlow["state"] = occurrence.delivery.state === "pending" ? "waiting" : "unknown";
   let stage = occurrence.delivery.state === "pending" ? "Awaiting fixer intake" : "Fixer status unavailable";
   let nextAction = occurrence.delivery.state === "pending"
@@ -106,8 +115,8 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
     }
     if (activity.miniTurnFailure && !cancelled && !currentlyLeased) {
       state = "attention";
-      stage = `Agent stopped during ${activity.miniTurnFailure.phase}`;
-      nextAction = `Recorded ${words(activity.miniTurnFailure.kind)}. A recovery owner and next action have not been recorded.`;
+      stage = sourcePolicyAction ? "Harness source verification required" : `Agent stopped during ${activity.miniTurnFailure.phase}`;
+      nextAction = sourcePolicyAction ?? `Recorded ${words(activity.miniTurnFailure.kind)}. A recovery owner and next action have not been recorded.`;
     }
     if (!completedStatuses.has(status!) && !cancelled) {
       if (triage && attentionTriageStates.has(triage.state)) state = "attention";
@@ -194,7 +203,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
   for (const pr of prs.values()) if (pr.state === "merged") timeline.push({ id: `merged-${pr.repository}-${pr.number}`, stage: "merged",
     title: `PR #${pr.number} merged`, detail: pr.repository, at: pr.mergedAt, url: pr.url });
   if (activity?.miniTurnFailure) timeline.push({ id: "last-stop", stage: "agent-stop", title: "Last recorded agent stop",
-    detail: `${words(activity.miniTurnFailure.kind)} during ${activity.miniTurnFailure.phase}`, at: activity.miniTurnFailure.at, url: null });
+    detail: sourcePolicyAction ?? `${words(activity.miniTurnFailure.kind)} during ${activity.miniTurnFailure.phase}`, at: activity.miniTurnFailure.at, url: null });
   const currentState = fixFlowCurrentState(activity, occurrence, activityState, [...prs.values()], currentlyLeased);
   if (currentState === "queued" && (activity?.miniTurnFailure || ["needs-input", "ready-for-policy"].includes(turn?.stage ?? ""))) {
     state = "waiting";
