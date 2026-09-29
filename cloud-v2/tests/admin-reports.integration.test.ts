@@ -31,9 +31,10 @@ const savedServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 let directoryUsers: Array<{ id: string; email: string }> = [];
 let directoryFailure = false;
 let directoryNeverEnds = false;
+let directoryHonorsFilters = false;
 let directoryRequests = 0;
-// A local directory deliberately ignores filter, like older GoTrue deployments.
-// This verifies that the server still applies exact admin matching itself.
+// Exercise both older directories that ignore filter and substring filtering.
+// The server must always apply the full admin policy to returned candidates.
 const directory = Bun.serve({
   hostname: "127.0.0.1", port: 0,
   fetch(req) {
@@ -43,9 +44,12 @@ const directory = Bun.serve({
     if (directoryFailure) return new Response(null, { status: 503 });
     const page = Number(url.searchParams.get("page"));
     const perPage = Number(url.searchParams.get("per_page"));
+    const candidates = directoryHonorsFilters
+      ? directoryUsers.filter(user => user.email.toLowerCase().includes((url.searchParams.get("filter") ?? "").toLowerCase()))
+      : directoryUsers;
     return Response.json({ users: directoryNeverEnds
       ? Array.from({ length: perPage }, (_, i) => ({ id: `repeated-${i}`, email: "outside@example.test" }))
-      : directoryUsers.slice((page - 1) * perPage, page * perPage) });
+      : candidates.slice((page - 1) * perPage, page * perPage) });
   },
 });
 {
@@ -137,6 +141,7 @@ beforeEach(async () => {
   directoryUsers = [];
   directoryFailure = false;
   directoryNeverEnds = false;
+  directoryHonorsFilters = false;
   directoryRequests = 0;
   await Promise.all([
     ReportModel.deleteMany({}),
@@ -245,6 +250,29 @@ describe("admin reports read surface", () => {
     process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "";
     expect(await listed("kind=internal")).toEqual([]);
     expect(await listed("kind=bug")).toHaveLength(7);
+  });
+
+  test("finds plus aliases through directory filters without admitting similar mailboxes or other domains", async () => {
+    directoryHonorsFilters = true;
+    const fixtures = [
+      { id: "internal-fixture-base", email: "named@personal.test", internal: true },
+      { id: "internal-fixture-alias", email: "NAMED+test@PERSONAL.TEST", internal: true },
+      { id: "internal-fixture-other-domain", email: "named+test@elsewhere.test", internal: false },
+      { id: "internal-fixture-similar", email: "namedmore+test@personal.test", internal: false },
+      { id: "internal-fixture-wrong-base", email: "other+named@personal.test", internal: false },
+    ];
+    directoryUsers = fixtures;
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `${adminEmail}, named@personal.test`;
+    for (const fixture of fixtures) {
+      await UserModel.create({ mentraUserId: `mu_${fixture.id}`, tenantId: "mentra", tenantUserId: fixture.id });
+      await ReportModel.create({ reportId: `rep_${fixture.id}`, mentraUserId: `mu_${fixture.id}`, kind: "bug", context: {} });
+    }
+    expect((await listed("kind=internal")).map(row => row.reportId).sort()).toEqual(
+      fixtures.filter(f => f.internal).map(f => `rep_${f.id}`).sort(),
+    );
+    expect((await listed("kind=bug")).map(row => row.reportId).sort()).toEqual(
+      fixtures.filter(f => !f.internal).map(f => `rep_${f.id}`).sort(),
+    );
   });
 
   test("finds admins beyond the first directory page and rejects incomplete classification", async () => {

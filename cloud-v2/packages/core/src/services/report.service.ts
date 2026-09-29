@@ -442,7 +442,9 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
  */
 async function internalReporterIds(): Promise<string[]> {
   const allowlist = getAdminEmailAllowlist();
-  const filters = [...allowlist.emails, ...allowlist.domains.map(domain => `@${domain}`)];
+  // GoTrue searches substrings: the full base email would miss local+tag@domain.
+  // Search the local part, then apply the complete email/domain policy below.
+  const filters = [...allowlist.emails.map(email => email.split("@")[0]!), ...allowlist.domains.map(domain => `@${domain}`)];
   if (filters.length === 0) return [];
   const identities = await findUsersByEmailFilters(filters);
   const adminIds = identities.filter(identity => isAdminEmail(identity.email, allowlist)).map(identity => identity.id);

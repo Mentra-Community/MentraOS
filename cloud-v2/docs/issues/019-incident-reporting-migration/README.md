@@ -63,7 +63,10 @@ Notifications use the same category precedence as the admin dashboard:
 | Bug / Feedback | All remaining reports | `#user-feedback` | `CLOUD_REPORTS_SLACK_CHANNEL_ID` |
 
 Internal uses the first-party account email resolved by the server and the existing
-`CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` policy. Contact email and
+`CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` policy. An allowlisted
+base email also grants admin status to its `+tag` aliases on the same domain;
+this applies to any email provider. Domain allowlist entries still match only
+the exact domain. Contact email and
 client context never grant Internal status. If the account lookup fails or times
 out, the existing best-effort notifier posts with the opaque user ID and falls
 back to the non-admin category. Slack routing is evaluated at notification time;

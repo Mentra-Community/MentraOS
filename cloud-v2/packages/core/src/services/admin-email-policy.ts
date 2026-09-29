@@ -8,8 +8,15 @@ export function getAdminEmailAllowlist() {
 
 export function isAdminEmail(email: string, allowlist = getAdminEmailAllowlist()): boolean {
   const normalized = email.trim().toLowerCase();
+  const [local, domain, ...extra] = normalized.split("@");
+  if (!local || !domain || extra.length || /\s/.test(normalized)) return false;
+  const plus = local.indexOf("+");
+  // Only the submitted address loses its tag. An explicitly allowlisted tagged
+  // address must not grant access to its base mailbox or sibling tags.
+  const base = plus > 0 && plus < local.length - 1 ? `${local.slice(0, plus)}@${domain}` : normalized;
   return allowlist.emails.includes(normalized)
-    || allowlist.domains.some(domain => normalized.endsWith(`@${domain}`));
+    || allowlist.emails.includes(base)
+    || allowlist.domains.includes(domain);
 }
 
 function parseList(value: string | undefined): string[] {
