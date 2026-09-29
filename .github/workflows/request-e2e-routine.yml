@@ -35,6 +35,10 @@ on:
         description: Optional exact publication attempt (requires source build run ID)
         type: string
         required: false
+      expected_harness_sha:
+        description: Optional exact merged private harness revision for verification (internal)
+        type: string
+        required: false
       original_request_run_id:
         description: Optional original request run ID to replay exactly (PR channel, explicit workflow_dispatch only)
         type: string
@@ -89,7 +93,7 @@ jobs:
         with:
           node-version: "20"
       - name: Verify public request selection
-        run: node --test .github/scripts/request-e2e-routine.test.mjs .github/scripts/coordinated-routine-request.test.mjs .github/scripts/original-routine-request.test.mjs
+        run: node --test .github/scripts/harness-verification.test.mjs .github/scripts/request-e2e-routine.test.mjs .github/scripts/coordinated-routine-request.test.mjs .github/scripts/original-routine-request.test.mjs
       - name: Resolve the selected build without running PR application code
         uses: actions/github-script@v7
         env:
@@ -100,6 +104,7 @@ jobs:
           SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
           SOURCE_PUBLICATION_ATTEMPT: ${{ inputs.source_publication_attempt }}
           ORIGINAL_REQUEST_RUN_ID: ${{ inputs.original_request_run_id }}
+          EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
           NIGHTLY_RUN_ID: ${{ inputs.nightly_run_id }}
           NIGHTLY_RUN_ATTEMPT: ${{ inputs.nightly_run_attempt }}
           NIGHTLY_MODE: ${{ inputs.nightly_mode || 'ordered' }}
@@ -123,6 +128,10 @@ jobs:
               },
             });
             await writeRoutineRequest('routine-request', request);
+            if (process.env.EXPECTED_HARNESS_SHA) {
+              const {writeHarnessVerification} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/harness-verification.mjs`);
+              await writeHarnessVerification(process.env.EXPECTED_HARNESS_SHA);
+            }
             await core.summary.addHeading(`Device routine: ${request.status}`)
               .addRaw(`${request.reason}\n\nNo device test ran in this workflow.\n`).write();
       - name: Publish immutable request generation
@@ -130,5 +139,15 @@ jobs:
         with:
           name: mentra-routine-request-${{ github.run_id }}-${{ github.run_attempt }}
           path: routine-request/request.json
+          if-no-files-found: error
+          retention-days: 14
+
+      # Fixed step name is also authenticated by both dispatch readers. Do not rename without updating them.
+      - name: Publish harness verification constraint
+        if: inputs.expected_harness_sha != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-harness-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: harness-verification/constraint.json
           if-no-files-found: error
           retention-days: 14

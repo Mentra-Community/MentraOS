@@ -23,7 +23,8 @@ async function artifacts(github, repo, runId) {
 }
 
 /** GitHub authenticates the ZIP; read bounded JSON only, never extract or execute it. */
-export async function readActionsJson(github, repo, run, name, allowedFiles, {readZip} = {}) {
+export async function readActionsJson(github, repo, run, name, allowedFiles, {readZip, maxJsonBytes = 262144} = {}) {
+  requireThat(Number.isSafeInteger(maxJsonBytes) && maxJsonBytes > 0 && maxJsonBytes <= 262144, "Invalid JSON byte limit")
   const matches = (await artifacts(github, repo, run.id)).filter(item => item.name === name)
   requireThat(matches.length === 1, "Expected one retained notification artifact")
   const artifact = matches[0]
@@ -38,11 +39,11 @@ export async function readActionsJson(github, repo, run, name, allowedFiles, {re
     "import io,json,sys,zipfile",
     "z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()))",
     "files=z.infolist()",
-    "assert 0 < len(files) <= 3 and sum(f.file_size for f in files) <= 262144",
+    "assert 0 < len(files) <= 3 and sum(f.file_size for f in files) <= int(sys.argv[2])",
     "assert len(set(f.filename for f in files)) == len(files)",
     "assert all(not f.is_dir() and f.filename in json.loads(sys.argv[1]) for f in files)",
     "print(json.dumps({f.filename:json.loads(z.read(f).decode('utf-8')) for f in files}))",
-  ].join("\n"), JSON.stringify(allowedFiles)], {input: bytes, maxBuffer: 512 * 1024, timeout: 10_000}).toString())
+  ].join("\n"), JSON.stringify(allowedFiles), String(maxJsonBytes)], {input: bytes, maxBuffer: 512 * 1024, timeout: 10_000}).toString())
   requireThat(Object.keys(values).length > 0 && Object.keys(values).every(name => allowedFiles.includes(name)), "Unexpected artifact entries")
   return values
 }

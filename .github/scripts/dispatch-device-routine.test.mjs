@@ -38,7 +38,7 @@ const requestPlan = {mode: "request", routine: "day1-ota", pr: 42, sourceRunId: 
   sourceCreatedAt: build.created_at, callbackRunId: 777, callbackAttempt: 1}
 const dispatchResponse = {status: 200, data: {workflow_run_id: 9000,
   run_url: `https://api.github.com/repos/${repo}/actions/runs/9000`, html_url: `https://github.com/${repo}/actions/runs/9000`}}
-function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, jobs = publishedJobs,
+function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, jobs = publishedJobs, requestSteps = [],
   history = [callback], historyResponse, builds = [build], callbackJobs = {[callback.id]: [publicationJob]},
   dispatch = async () => dispatchResponse} = {}) {
   const calls = []
@@ -55,6 +55,8 @@ function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, j
         if (input.workflow_id === build.path) {calls.push(["read-builds", input]); return {data: {workflow_runs: builds}}}
         calls.push(["read-callbacks", input]); return {data:
           typeof historyResponse === "function" ? historyResponse(input) : historyResponse ?? {total_count: history.length, workflow_runs: history}}},
+      listJobsForWorkflowRunAttempt: async () => ({data: {total_count: 1, jobs: [{id: 500, run_id: run.id,
+        run_attempt: run.run_attempt, head_sha: run.head_sha, status: "completed", steps: requestSteps}]}}),
       listJobsForWorkflowRun, listWorkflowRunArtifacts: () => {}, createWorkflowDispatch: async (input) => {calls.push(["dispatch", input]); return dispatch()}},
     pulls: {get: async () => ({data: pull})},
     git: {getRef: async ({ref}) => {calls.push(["read-base", ref]); return {data: {ref: `refs/${ref}`, object: {type: "commit", sha: baseSha}}}}},

@@ -728,3 +728,19 @@ test("dispatch sends an original replay by its request run only, and refuses a n
   // Admin input cannot carry an original replay.
   expect(testDispatchInputSchema.safeParse({ ...input, originalRequestRunId: 60 }).success).toBe(false);
 });
+
+
+test("only the trusted continuation argument adds a restrictive private harness pin", async () => {
+  const f = fixture(), pin = "f".repeat(40);
+  f.rows.set(`POST ${API}/actions/workflows/request-e2e-routine.yml/dispatches`, {
+    workflow_run_id: 70, html_url: `https://github.com/${REPO}/actions/runs/70`, run_url: `${API}/actions/runs/70`,
+  });
+  await f.gateway.dispatch(input, pin);
+  expect(JSON.parse(String(f.calls.at(-1)!.init?.body)).inputs).toEqual({
+    routine: "no-glasses", request_origin: "workflow-dispatch", source_build_run_id: "50", source_publication_attempt: "1", pr: "12",
+    expected_harness_sha: pin,
+  });
+  const calls = f.calls.length;
+  await expect(f.gateway.dispatch(input, "main")).rejects.toThrow();
+  expect(f.calls.length).toBe(calls);
+});

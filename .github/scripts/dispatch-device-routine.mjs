@@ -1,3 +1,4 @@
+import {harnessVerificationArtifact, readHarnessVerification} from "./harness-verification.mjs"
 import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
 import {admittedPrBase, currentBaseSha, successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
@@ -190,8 +191,10 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
       /^sha256:[a-f0-9]{64}$/.test(matches[0].digest ?? "") &&
       matches[0].workflow_run?.id === run.id && matches[0].workflow_run.head_sha === run.head_sha,
     "Request artifact is missing, ambiguous or not bound to the workflow")
+    const constraint = await harnessVerificationArtifact(github, context.repo, run, artifacts)
     return {mode: "dispatch", runId: run.id, runAttempt: run.run_attempt,
-      sourceSha: run.head_sha, artifactId: matches[0].id, artifactName: name}
+      sourceSha: run.head_sha, artifactId: matches[0].id, artifactName: name,
+      ...(constraint ? {harnessVerification: true} : {})}
   }
   return {mode: "skip", reason: "Not an eligible build or trusted dev request workflow"}
 }
@@ -281,11 +284,13 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
         return {status: "not-dispatched", reason: "Request was superseded, retargeted or PR opt-in was removed"}
     }
   }
+  const expectedHarnessSha = plan.harnessVerification ? await readHarnessVerification(github, context.repo,
+    {id: plan.runId, run_attempt: plan.runAttempt, head_sha: plan.sourceSha}, bytes, request.routine.id) : undefined
   requireThat(privateGithub, "Missing short-lived GitHub App dispatch token")
   await privateGithub.rest.actions.createWorkflowDispatch({owner: context.repo.owner, repo: PRIVATE_REPOSITORY,
     workflow_id: "device-routine.yml", ref: "main", inputs: {
       source_repository: REPOSITORY, request_run_id: String(plan.runId), request_attempt: String(plan.runAttempt),
-      routine_id: request.routine.id,
+      routine_id: request.routine.id, ...(expectedHarnessSha ? {expected_harness_sha: expectedHarnessSha} : {}),
     }})
   return {status: "private-job-requested", requestId: request.requestId,
     reason: "GitHub accepted the workflow dispatch; device execution and results are not yet known"}

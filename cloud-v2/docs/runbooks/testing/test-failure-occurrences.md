@@ -73,7 +73,9 @@ optional attempt and hashes as `build.recordedAppPublication`; this is a lookup
 hint, not a claim that publication or execution was verified.
 
 For a private harness candidate, Core still verifies the case branch, tested
-harness ancestry, merged PR and exact current private main. It then resolves
+harness ancestry and merged PR, and proves its exact merge is still contained in
+private `main`. A later unrelated main merge does not change the selected worker
+revision. It then resolves
 only that recorded producer through the existing coordinated-release validator:
 repository, workflow, source commit, dev/staging backend, publication attempt,
 immutable receipt, both installed app hashes and archive availability must agree.
@@ -86,7 +88,31 @@ binding, the selected published artifact and expected merged harness revision.
 The new request is a real dev/staging request; the original result, local source,
 outcome and ACK remain immutable. Existing idempotency, attempt budget, lease
 check and registered-result correlation apply, including refusal of results from
-a different worker revision.
+a different worker revision. Harness verification always creates a constrained
+request through that idempotent operation; it cannot adopt an older automatic
+request that has no private-revision constraint.
+
+The trusted issuer receives `expected_harness_sha` from the saved continuation
+binding. It keeps the legacy `request.json` unchanged and publishes a separate
+`mentra-harness-verification-<runId>-<attempt>` artifact containing only
+`constraint.json` (at most 8 KiB). The constraint binds the request repository,
+run, attempt, routine, SHA-256 of the exact request bytes and expected private
+revision. The fixed successful step `Publish harness verification constraint`
+makes that companion mandatory; deleting it cannot make the request ordinary.
+The public callback verifies the authenticated artifact digest and binding before
+forwarding the pin. The current private dispatcher independently re-reads the
+same attempt/companion and refuses a missing or mismatched constraint, then
+compares the pin with enrollment before loading an executor, provisioning a
+driver or entering a claim. It never passes new fields to the older executor.
+
+Roll out the private dispatcher companion before enabling these public sends.
+Schema 3 enrollment may select the exact reviewed ancestor, with its existing
+clean-source/ancestry and recipe checks. This feature does not enroll or load an
+arbitrary runtime named by a request. After rollout, an existing stopped
+`repository-policy` case can use the normal reviewed `clarify-source` operation
+with its current revision/session/profile; the original history and all budgets
+remain intact. It must still wait for compatible enrollment and ordinary lane
+admission. No case is automatically retried by this deployment.
 
 `TEST_RUN_DISPATCH_CHANNELS` and `TEST_RUN_DISPATCH_ROUTINES` still control
 configured availability and return their existing refusal reasons. Registration
