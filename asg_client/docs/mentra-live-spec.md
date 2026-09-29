@@ -223,6 +223,13 @@ unit tests.
 
 WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
 
+A full-size photo can be taken during a WHIP stream on the glasses hotspot without ending it. The
+phone requests it with `take_photo` whose upload target is its own local `/photo/<id>` endpoint on
+the WHIP listener. The WHIP capturer lends Camera2 to the still while black substitute frames keep
+the track flowing, reopens as soon as the JPEG is in memory, and the JPEG is uploaded to the phone
+over the hotspot. A watchdog returns the camera to the stream regardless of the photo's outcome. Any
+other photo request during a stream is still rejected as camera busy.
+
 Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
 
 ### Local media sync server

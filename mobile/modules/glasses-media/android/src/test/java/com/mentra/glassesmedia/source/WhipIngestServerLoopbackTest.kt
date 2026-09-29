@@ -375,8 +375,67 @@ class WhipIngestServerLoopbackTest {
   }
 
   // -----------------------------------------------------------------
+  // Stills
+  // -----------------------------------------------------------------
+
+  @Test
+  fun `a still for a pending request is read byte for byte and handed over`() {
+    val endpoint = start(StubNegotiator())
+    val pending = StillPhotoInbox.expect("still-1")
+    // CR, LF and NUL inside the body must survive: the header reader cannot swallow any of it.
+    val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x0D, 0x0A, 0x7F, 0xFF.toByte(), 0xD9.toByte())
+
+    val response = requestBytes(endpoint.port, "POST", "/photo/still-1", jpeg)
+
+    assertThat(response.statusLine).isEqualTo("HTTP/1.1 200 OK")
+    assertThat(response.body).contains("\"bytes\":${jpeg.size}")
+    assertThat(pending.get(1, TimeUnit.SECONDS)).isEqualTo(jpeg)
+    assertThat(endpoint.stillUrl("still-1")).isEqualTo("http://127.0.0.1:${endpoint.port}/photo/still-1")
+    StillPhotoInbox.cancel("still-1")
+  }
+
+  @Test
+  fun `a still nobody asked for is refused without reading it`() {
+    val endpoint = start(StubNegotiator())
+
+    val response = requestBytes(endpoint.port, "POST", "/photo/unsolicited", ByteArray(64))
+
+    assertThat(response.statusLine).isEqualTo("HTTP/1.1 404 Not Found")
+  }
+
+  @Test
+  fun `the still endpoint only accepts POST and does not disturb WHIP`() {
+    val negotiator = StubNegotiator()
+    val endpoint = start(negotiator)
+    StillPhotoInbox.expect("still-2")
+
+    val wrongMethod = requestBytes(endpoint.port, "GET", "/photo/still-2", ByteArray(0))
+    val offer = request(endpoint.port, postOffer())
+
+    assertThat(wrongMethod.statusLine).isEqualTo("HTTP/1.1 405 Method Not Allowed")
+    assertThat(offer.statusLine).isEqualTo("HTTP/1.1 201 Created")
+    assertThat(negotiator.offers).hasSize(1)
+    StillPhotoInbox.cancel("still-2")
+  }
+
+  // -----------------------------------------------------------------
   // Wire helpers
   // -----------------------------------------------------------------
+
+  private fun requestBytes(port: Int, method: String, target: String, body: ByteArray): WireResponse =
+    Socket().use { socket ->
+      socket.connect(InetSocketAddress(loopback, port), 3_000)
+      socket.soTimeout = 10_000
+      socket.getOutputStream().apply {
+        write(
+          "$method $target HTTP/1.1\r\nHost: x\r\nContent-Type: image/jpeg\r\nContent-Length: ${body.size}\r\n\r\n"
+            .toByteArray(Charsets.UTF_8),
+        )
+        write(body)
+        flush()
+      }
+      readResponse(socket.getInputStream().bufferedReader(Charsets.UTF_8))
+    }
 
   private data class WireResponse(
     val statusLine: String,
