@@ -536,8 +536,8 @@ export class Runtime implements RuntimeModule {
     this.lastUdpAckAt = 0;
     this.sendUdpProbe();
     this.udpProbeTimer = this.timers.setInterval(() => {
-      this.sendUdpProbe();
       this.checkUdpLiveness();
+      this.sendUdpProbe();
     }, UDP_PROBE_INTERVAL_MS);
   }
 
@@ -562,6 +562,12 @@ export class Runtime implements RuntimeModule {
     const since = this.lastUdpAckAt || this.udpProbeStartedAt;
     if (since === 0 || Date.now() - since < UDP_LIVENESS_TIMEOUT_MS) return;
     this.updateStatus({ audioTransport: this.connection.isOpen ? "ws" : "none" });
+    // Connected UDP sockets retain their resolved peer and route. Recreate one
+    // after a missed liveness window so DNS/network changes can recover even
+    // when the WebSocket stayed open. Keep audio on WS until an ack arrives.
+    this.audio.resetSocket();
+    this.lastUdpAckAt = 0;
+    this.udpProbeStartedAt = Date.now();
   }
 
   private handleUdpLivenessAck(payload: {

@@ -7,6 +7,7 @@
  * Buffer wrap the native module needs.
  */
 import dgram from "react-native-udp"
+import {Platform} from "react-native"
 import type {UdpSocketLike} from "@mentra/cloud-client"
 
 type CloudUdpSocket = ReturnType<typeof dgram.createSocket> & {
@@ -17,6 +18,9 @@ type CloudUdpSocket = ReturnType<typeof dgram.createSocket> & {
 export function createCloudUdpSocket(): UdpSocketLike {
   const socket = dgram.createSocket({type: "udp4"}) as CloudUdpSocket
   let onBytes: ((bytes: Uint8Array) => void) | null = null
+  let connected = false
+  let closed = false
+  const useConnectedSocket = Platform.OS === "ios"
 
   socket.on("error", (err: Error) => {
     console.warn(`[cloud-client udp] socket error: ${err.message}`)
@@ -29,14 +33,33 @@ export function createCloudUdpSocket(): UdpSocketLike {
 
   return {
     send(bytes: Uint8Array, host: string, port: number): void {
-      socket.send(bytes, 0, bytes.length, port, host, (err?: Error) => {
-        if (err) console.warn(`[cloud-client udp] send failed: ${err.message}`)
-      })
+      if (closed) return
+      // UdpAudio owns one socket per peer/session. iOS queues sends behind this
+      // one DNS lookup instead of resolving the host for every audio packet.
+      if (useConnectedSocket && !connected) {
+        connected = true
+        socket.connect(port, host, (err?: Error) => {
+          if (err && !closed) console.warn(`[cloud-client udp] connect failed: ${err.message}`)
+        })
+      }
+      socket.send(
+        bytes,
+        0,
+        bytes.length,
+        useConnectedSocket ? undefined : port,
+        useConnectedSocket ? undefined : host,
+        (err?: Error) => {
+          if (err && !closed) console.warn(`[cloud-client udp] send failed: ${err.message}`)
+        },
+      )
     },
     onMessage(cb: (bytes: Uint8Array) => void): void {
       onBytes = cb
     },
     close(): void {
+      if (closed) return
+      closed = true
+      onBytes = null
       try {
         socket.close()
       } catch {

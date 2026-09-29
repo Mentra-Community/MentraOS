@@ -236,7 +236,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
     expect(statuses).toContainEqual({ status: "reconnecting", audioTransport: "none" });
   });
 
-  test("falls back to WS when UDP liveness dies, then switches back on one UDP ack", async () => {
+  test("refreshes a dead UDP route while using WS, then switches back on one UDP ack", async () => {
     const socket = new FakeSocket();
     let created = 0;
     const ws = (_url: string): WebSocketLike => {
@@ -244,6 +244,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       return socket;
     };
     const udpSent: Uint8Array[] = [];
+    const udpSockets: { closed: boolean }[] = [];
     const scheduledIntervals: number[] = [];
     const timers: CloudClientTimers = {
       ...systemTimers,
@@ -277,7 +278,16 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       camera: new Camera({ http: fakeHttp() }),
       maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
-      audio: new UdpAudio({ udp: () => recordingUdp(udpSent) }),
+      audio: new UdpAudio({
+        udp: () => {
+          const state = { closed: false };
+          udpSockets.push(state);
+          return {
+            ...recordingUdp(udpSent),
+            close: () => { state.closed = true; },
+          };
+        },
+      }),
       timers,
       logger: noopLogger,
       forceRefreshToken: async () => "tok",
@@ -290,9 +300,16 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
 
     expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "udp" });
     expect(scheduledIntervals).toEqual([1_000]);
+    expect(udpSockets).toEqual([{ closed: false }]);
     await waitUntil(() => runtime.getStatus().audioTransport === "ws", 4_000);
     expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "ws" });
 
+    expect(udpSockets).toEqual([{ closed: true }, { closed: false }]);
+    const countAfterTimeout = udpSent.length;
+    // The replacement gets another complete liveness window, not a reset on
+    // each one-second probe tick. Audio continues on WS until UDP is proven.
+    await waitUntil(() => udpSent.length > countAfterTimeout, 1_500);
+    expect(udpSockets).toHaveLength(2);
     runtime.sendAudioFrame(new Uint8Array([1, 2, 3]));
     expect(socket.sentBinary.length).toBe(1);
 
@@ -318,7 +335,9 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
     expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "udp" });
     expect(socket.sentBinary.length).toBe(wsFramesBeforeUdpSend);
     expect(udpSent.length).toBeGreaterThan(udpFramesBeforeRealAudio);
+    expect(udpSockets).toHaveLength(2);
     runtime.close();
+    expect(udpSockets.every((entry) => entry.closed)).toBe(true);
   });
 
   test("connected event fires once on a normal initial open", async () => {

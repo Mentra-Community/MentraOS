@@ -1,0 +1,254 @@
+diff --git a/node_modules/react-native-udp/.bun-tag-a07a95ec0a41a2ec b/.bun-tag-a07a95ec0a41a2ec
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/ios/UdpSocketClient.h b/ios/UdpSocketClient.h
+index 7c43af6771b5731bc50ebac22c7d2d82cc7bdffc..633032492007bb00a6b475ef51a33dcc302c53c9 100644
+--- a/ios/UdpSocketClient.h
++++ b/ios/UdpSocketClient.h
+@@ -66,6 +66,9 @@ typedef enum RCTUDPError RCTUDPError;
+  */
+ - (BOOL)bind:(u_int16_t) port address:(NSString*)address options:(NSDictionary *)options error:(NSError**)error;
+ 
++/** Associate a bound socket with a single resolved peer (iOS). */
++- (void)connect:(u_int16_t)port address:(NSString *)address callback:(RCTResponseSenderBlock)callback;
++
+ /**
+  * Join multicast groupt
+  *
+diff --git a/ios/UdpSocketClient.m b/ios/UdpSocketClient.m
+index 82e3288e01a5299521116c8bc8961cb95f2139e1..fc2f241cfad3b7d63cf0c252fa9b77779b162cd4 100644
+--- a/ios/UdpSocketClient.m
++++ b/ios/UdpSocketClient.m
+@@ -22,6 +22,7 @@ @interface UdpSocketClient()
+   GCDAsyncUdpSocket *_udpSocket;
+   NSMutableDictionary<NSNumber *, RCTResponseSenderBlock> *_pendingSends;
+   NSLock *_lock;
++  RCTResponseSenderBlock _connectCallback;
+   long tag;
+ }
+ 
+@@ -58,26 +59,53 @@ - (void)setPendingSend:(RCTResponseSenderBlock)callback forKey:(NSNumber *)key
+   }
+ }
+ 
+-- (RCTResponseSenderBlock)getPendingSend:(NSNumber *)key
++- (RCTResponseSenderBlock)takePendingSend:(NSNumber *)key
+ {
+   [_lock lock];
+   @try {
+-    return [_pendingSends objectForKey:key];
++    RCTResponseSenderBlock callback = [_pendingSends objectForKey:key];
++    [_pendingSends removeObjectForKey:key];
++    return callback;
+   } @finally {
+     [_lock unlock];
+   }
+ }
+ 
+-- (void)dropPendingSend:(NSNumber *)key
++- (void)finishConnect:(NSArray *)result
+ {
+   [_lock lock];
+-  @try {
+-    [_pendingSends removeObjectForKey:key];
+-  } @finally {
+-    [_lock unlock];
++  RCTResponseSenderBlock callback = _connectCallback;
++  _connectCallback = nil;
++  [_lock unlock];
++  if (callback) callback(result);
++}
++
++- (void)connect:(u_int16_t)port address:(NSString *)address callback:(RCTResponseSenderBlock)callback
++{
++  [_lock lock];
++  BOOL pending = _connectCallback != nil;
++  if (!pending) _connectCallback = [callback copy];
++  [_lock unlock];
++  if (pending) {
++    callback(@[@"Socket is already connecting"]);
++    return;
++  }
++  NSError *error = nil;
++  if (!_udpSocket || ![_udpSocket connectToHost:address onPort:port error:&error]) {
++    [self finishConnect:@[error.localizedDescription ?: @"Socket is not bound"]];
+   }
+ }
+ 
++- (void)udpSocket:(GCDAsyncUdpSocket *)sock didConnectToAddress:(NSData *)address
++{
++  [self finishConnect:@[]];
++}
++
++- (void)udpSocket:(GCDAsyncUdpSocket *)sock didNotConnect:(NSError *)error
++{
++  [self finishConnect:@[error.localizedDescription ?: @"UDP connect failed"]];
++}
++
+ - (BOOL)bind:(u_int16_t)port address:(NSString *)address options:(NSDictionary *)options error:(NSError **) error
+ {
+ 
+@@ -138,10 +166,9 @@ - (BOOL)leaveMulticastGroup:(NSString *)address error:(NSError **) error
+ - (void)udpSocket:(GCDAsyncUdpSocket *)sock didSendDataWithTag:(long)msgTag
+ {
+   NSNumber* tagNum = [NSNumber numberWithLong:msgTag];
+-  RCTResponseSenderBlock callback = [self getPendingSend:tagNum];
++  RCTResponseSenderBlock callback = [self takePendingSend:tagNum];
+   if (callback) {
+     callback(@[]);
+-    [self dropPendingSend:tagNum];
+   }
+ }
+ 
+@@ -149,11 +176,10 @@ - (void)udpSocket:(GCDAsyncUdpSocket *)sock didNotSendDataWithTag:(long)msgTag d
+ {
+ //  NSError* err = [self sendFailedError:[error description]];
+   NSNumber* tagNum = [NSNumber numberWithLong:msgTag];
+-  RCTResponseSenderBlock callback = [self getPendingSend:tagNum];
++  RCTResponseSenderBlock callback = [self takePendingSend:tagNum];
+   if (callback) {
+     NSString *msg = error.localizedFailureReason ?: error.localizedDescription;
+     callback(@[msg ?: @"unknown error"]);
+-    [self dropPendingSend:tagNum];
+   }
+ }
+ 
+@@ -162,11 +188,17 @@ - (void) send:(NSData *)data
+ remoteAddress:(NSString *)address
+      callback:(RCTResponseSenderBlock)callback
+ {
+-  [_udpSocket sendData:data toHost:address port:port withTimeout:-1 tag:tag];
+   if (callback) {
+     [self setPendingSend:callback forKey:[NSNumber numberWithLong:tag]];
+   }
+ 
++  // A connect is queued before sends, so GCDAsyncUdpSocket waits for its single
++  // DNS lookup. Connected sends reuse the peer and skip per-datagram getaddrinfo.
++  if (address) {
++    [_udpSocket sendData:data toHost:address port:port withTimeout:-1 tag:tag];
++  } else {
++    [_udpSocket sendData:data withTimeout:-1 tag:tag];
++  }
+   tag++;
+ }
+ 
+@@ -181,6 +213,12 @@ - (NSDictionary* ) address
+ - (void) close
+ {
+   [_udpSocket close];
++  [self finishConnect:@[@"Socket closed"]];
++  [_lock lock];
++  NSArray *callbacks = [_pendingSends allValues];
++  [_pendingSends removeAllObjects];
++  [_lock unlock];
++  for (RCTResponseSenderBlock callback in callbacks) callback(@[@"Socket closed"]);
+ }
+ 
+ - (BOOL) setBroadcast:(BOOL)flag
+diff --git a/ios/UdpSockets.m b/ios/UdpSockets.m
+index 69abcc58ee1cc15e88dd220e7c88c8b52205ee6c..7f6bd8ed582696949e704ca89fac1a2db0d01860 100644
+--- a/ios/UdpSockets.m
++++ b/ios/UdpSockets.m
+@@ -70,6 +70,14 @@ - (void)dealloc
+     callback(@[[NSNull null], [client address]]);
+ }
+ 
++RCT_EXPORT_METHOD(connect:(nonnull NSNumber*)cId
++                  port:(int)port
++                  address:(NSString*)address
++                  callback:(RCTResponseSenderBlock)callback) {
++    UdpSocketClient *client = [self findClient:cId callback:callback];
++    if (client) [client connect:port address:address callback:callback];
++}
++
+ RCT_EXPORT_METHOD(send:(nonnull NSNumber*)cId
+                   string:(NSString*)base64String
+                   port:(int)port
+diff --git a/lib/types/UdpSocket.d.ts b/lib/types/UdpSocket.d.ts
+index 06e6473ec40db2758c810f84c58f642742a3feaa..af7fc64d1ca8f4e21b5a520f6f1364fb215f5af6 100644
+--- a/lib/types/UdpSocket.d.ts
++++ b/lib/types/UdpSocket.d.ts
+@@ -54,9 +54,9 @@ export default class UdpSocket extends EventEmitter {
+      */
+     close(callback?: (...args: any[]) => void): number | undefined;
+     /**
+-     * NOT IMPLEMENTED
++     * Associate a bound iOS socket with one peer. Close and recreate to change it.
++     * Android retains the upstream unimplemented behavior.
+      *
+-     * @deprecated
+      * @param {number} port
+      * @param {string} address
+      * @param {(...args: any[]) => void} callback
+diff --git a/src/UdpSocket.js b/src/UdpSocket.js
+index 4f659868a5c617fd157a8281ca10f0a8a699debf..57a350ee9135488d77d9fc8ac1b1fc65e385dcf6 100644
+--- a/src/UdpSocket.js
++++ b/src/UdpSocket.js
+@@ -30,6 +30,7 @@ export default class UdpSocket extends EventEmitter {
+     this.debugEnabled = options && options.debug
+     /** @private */
+     this._destroyed = false
++    this._connected = false
+     /** @private */
+     this._id = instances++
+     /** @private */
+@@ -140,16 +141,29 @@ export default class UdpSocket extends EventEmitter {
+   }
+ 
+   /**
+-   * NOT IMPLEMENTED
++   * Associate a bound iOS socket with one peer. Sends queued while DNS resolves
++   * are held by the native socket. Close and create a new socket to change peers.
++   * Android retains the upstream unimplemented behavior.
+    *
+-   * @deprecated
+    * @param {number} port
+    * @param {string} address
+    * @param {(...args: any[]) => void} callback
+    */
+-  // eslint-disable-next-line no-unused-vars
+   connect(port, address, callback) {
+-    console.warn('react-native-udp: connect() is not implemented')
++    if (!Sockets.connect) {
++      console.warn('react-native-udp: connect() is not implemented')
++      return
++    }
++    if (this._destroyed) throw new Error('Socket is closed')
++    if (this._state === STATE.UNBOUND) throw new Error('Bind before connecting')
++    if (this._connected) throw new Error('Socket is already connected')
++    // Native calls are serialized after bind, including while its JS callback is pending.
++    this._connected = true
++    Sockets.connect(this._id, port, address, (err) => {
++      err = normalizeError(err)
++      if (callback) callback(err)
++      else if (err) this.emit('error', err)
++    })
+   }
+ 
+   /**
+@@ -227,11 +241,14 @@ export default class UdpSocket extends EventEmitter {
+    */
+   send(msg, offset, length, port, address, callback) {
+     if (this._state === STATE.UNBOUND) throw new Error('ERR_SOCKET_BAD_PORT')
+-    if (!address) {
++    if (this._connected && (port !== undefined || address !== undefined)) {
++      throw new Error('Cannot specify a destination for a connected socket')
++    }
++    if (!this._connected && !address) {
+       if (this.type === 'udp4') address = '127.0.0.1'
+       else address = '::1'
+     }
+-    if (port === undefined || address === undefined) {
++    if (!this._connected && (port === undefined || address === undefined)) {
+       throw new Error('socket.send(): address and port parameters must be provided')
+     }
+     if (Array.isArray(msg) && (offset !== undefined || length !== undefined)) {
+@@ -241,7 +258,7 @@ export default class UdpSocket extends EventEmitter {
+     const generatedBuffer = this._generateSendBuffer(msg).slice(offset, length)
+     const str = generatedBuffer.toString('base64')
+     // Call native module
+-    Sockets.send(this._id, str, port, address, (/** @type {any} */ err) => {
++    Sockets.send(this._id, str, port ?? 0, address ?? null, (/** @type {any} */ err) => {
+       err = normalizeError(err)
+       if (err) {
+         if (callback) callback(err)
