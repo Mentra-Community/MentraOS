@@ -15,6 +15,8 @@ import { TestFailureCorrectionService } from "./test-failure-correction.service"
 import { testFailureSchema, type TestFailureProvenanceCorrection } from "../types/test-failure.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
 import { recoveryResultRunId, type TestFailureProjection } from "./test-recovery-lineage";
+import { recoveredClaim } from "./test-run-overview.service";
+import type { TestRunClaim } from "../types/test-run-claim.types";
 import { TestFailureDeliveryService, startTestFailureDelivery } from "./test-failure-delivery.service";
 import { boundBackendDeployment, testRunBackendDeploymentSchema, testRunQuerySchema, testRunSchema, type TestRun,
   type TestRunBackendDeployment, type TestRunQuery } from "../types/test-run.types";
@@ -232,18 +234,55 @@ describe("validated recovery failure lineage", () => {
     expect(repository.runs).toEqual(before);
   });
 
-  test("empty failures, missing parents and unvalidated generation parents cannot suppress intake", async () => {
+  test("missing original publication keeps independent intake and can still resolve the existing recovery overview", async () => {
     const { original, recovery } = recoveryPackets();
-    await expect(service.ingest(recovery)).rejects.toMatchObject({ status: 409 });
+    Object.assign(recovery.provenance, { executionMode: "ci-registered", requestRelationship: "consumed",
+      requestSha256: "a".repeat(64), archiveSha256: "b".repeat(64), recoveryHistorySha256: "c".repeat(64) });
+    const claim: TestRunClaim = { requestId: original.runId, requestSha256: "a".repeat(64),
+      workerId: "test-worker", fixtureId: recovery.fixture.alias, executionId: "test-execution", claimedAt: original.startedAt,
+      state: "recovery-required", settledAt: original.finishedAt,
+      settlement: { state: "recovery-required", reason: "Original publication did not reach Core." } };
+    const result = await service.ingest(recovery), detail = await service.detail(recovery.runId);
+    expect(result.occurrenceIds).toEqual(createTestFailureOccurrences(recovery).map(item => item.occurrenceId));
+    expect(await service.pendingFailureDeliveries()).toHaveLength(2);
+    expect(detail.recoveryLineage).toMatchObject({ unavailableReason: "original-not-published", inheritedFailures: [] });
+    expect(detail.failures).toEqual(recovery.failures);
+    expect(recoveredClaim(claim, [detail])).toMatchObject({ kind: "recovery", originalAvailable: false, recoveryRunId: recovery.runId });
+    expect(repository.runs.has(original.runId)).toBe(false);
+  });
+
+  test("missing immediate parent and empty failure handling never suppress intake", async () => {
+    const { original, recovery } = recoveryPackets();
     await service.ingest(original);
     await expect(service.ingest({ ...recovery, failures: [] })).rejects.toMatchObject({ status: 400 });
-    await service.ingest(recovery);
-    delete repository.runs.get(recovery.runId)!.recoveryLineage;
     const third = structuredClone(recovery);
     third.runId = recoveryResultRunId(original.runId, 3);
     Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId, terminalSnapshotSha256: "f".repeat(64) });
-    await expect(service.ingest(third)).rejects.toMatchObject({ status: 409 });
-    expect(repository.runs.has(third.runId)).toBe(false);
+    const result = await service.ingest(third);
+    expect(result.occurrenceIds).toEqual(createTestFailureOccurrences(third).map(item => item.occurrenceId));
+    expect(repository.runs.get(third.runId)!.recoveryLineage).toMatchObject({ unavailableReason: "parent-not-published", inheritedFailures: [] });
+  });
+
+  test("replayed legacy recovery parents retain their own receipts while new generations derive ancestry", async () => {
+    const { original, recovery } = recoveryPackets();
+    await service.ingest(original);
+    await service.ingest(recovery);
+    const legacy = repository.runs.get(recovery.runId)!;
+    legacy.failureOccurrences = createTestFailureOccurrences(recovery);
+    delete legacy.recoveryLineage;
+    await service.acknowledgeFailure(legacy.failureOccurrences[0]!.occurrenceId, "legacy_agent");
+    const before = structuredClone(repository.runs);
+    await service.ingest(recovery);
+    expect(repository.runs).toEqual(before);
+    const third = structuredClone(recovery);
+    third.runId = recoveryResultRunId(original.runId, 3);
+    Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId, terminalSnapshotSha256: "f".repeat(64) });
+    await service.ingest(third);
+    expect(repository.runs.get(third.runId)!.failureOccurrences).toEqual([]);
+    expect(repository.runs.get(third.runId)!.recoveryLineage!.inheritedFailures.map(item => item.runId)).toEqual([recovery.runId, recovery.runId]);
+    expect((await service.detail(third.runId)).failureOccurrences[0]!.delivery).toMatchObject({ state: "acknowledged", agentRunId: "legacy_agent" });
+    expect(repository.runs.get(recovery.runId)).toEqual(before.get(recovery.runId));
+    expect(repository.runs.get(original.runId)).toEqual(before.get(original.runId));
   });
 
   test("legacy reconciliation persists lineage atomically; an accepted old projection is never rewritten", async () => {

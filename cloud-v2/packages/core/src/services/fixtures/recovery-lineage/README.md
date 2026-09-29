@@ -29,7 +29,15 @@ code, stack, redaction and declared diagnostic bytes remain significant. Reads
 resolve the original current delivery receipt and case link. Missing referenced
 records fail visibly instead of hiding the failure.
 
+When the original or immediate parent was not published, or legacy ancestry
+cannot be proved, the result still publishes with ordinary independent failure
+intake and an explicit `unavailableReason`. This preserves the existing recovery
+overview path for an original upload that never reached Core; it grants no
+deduplication on the strength of an unverified original-run ID.
+
 Exact replays preserve existing occurrence projections and acknowledgments.
 Legacy rows with no occurrence projection can be reconciled by replaying their
 exact metadata; an already accepted recovery with an older projection is never
-silently rewritten. Further generations require a validated parent receipt.
+silently rewritten. Further generations can derive a legacy parent's ancestry
+on demand, bounded to 20 ancestors. They reference that parent's own already
+accepted occurrences and receipts; no historical incidents are merged or erased.

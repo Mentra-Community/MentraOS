@@ -8,10 +8,13 @@ export interface TestRecoveryLineage {
   schemaVersion: 1;
   generation: number;
   originalRunId: string;
-  originalPayloadSha256: string;
+  originalPayloadSha256?: string;
   previousResultRunId: string;
-  previousPayloadSha256: string;
+  previousPayloadSha256?: string;
   inheritedFailures: Array<{ failureIndex: number; occurrenceId: string; runId: string; payloadSha256: string }>;
+  /** Publication remains independent when Core cannot prove ancestry for deduplication. */
+  unavailableReason?: "original-not-published" | "parent-not-published" | "ancestor-provenance-unavailable"
+    | "ancestor-occurrences-unavailable" | "legacy-ancestry-unavailable";
 }
 export interface TestFailureProjection {
   failureOccurrences: TestFailureOccurrence[];
@@ -50,8 +53,8 @@ function failureIdentity(failure: TestFailure, run: TestRun) {
     assets: failure.assetIds.map(id => run.assets.find(asset => asset.assetId === id)).map(canonical).sort() });
 }
 
-/** Resolve only against accepted immutable results. Missing or forged lineage fails before any write. */
-export async function testFailureProjection(run: TestRun, get: (id: string) => Promise<StoredResult | null>): Promise<TestFailureProjection> {
+/** Resolve only against accepted results. Unavailable ancestry keeps ordinary independent intake. */
+export async function testFailureProjection(run: TestRun, get: (id: string) => Promise<StoredResult | null>, remainingAncestors = 20): Promise<TestFailureProjection> {
   const occurrences = createTestFailureOccurrences(run), p = run.provenance;
   if (!p.originalRunId && !p.previousResultRunId && (!p.resultGeneration || p.resultGeneration === "1")
     && !/^recovery-[a-f0-9]{32}-/.test(run.runId)) return { failureOccurrences: occurrences };
@@ -62,22 +65,41 @@ export async function testFailureProjection(run: TestRun, get: (id: string) => P
     || p.previousResultRunId !== (generation === 2 ? p.originalRunId : recoveryResultRunId(p.originalRunId!, generation - 1))
     || !digest.test(p.terminalSnapshotSha256 ?? "") || !digest.test(p.originalTerminalSnapshotSha256 ?? ""))
     reject("recovery result has invalid generation, parent identity or terminal hashes");
+  const unavailable = (unavailableReason: NonNullable<TestRecoveryLineage["unavailableReason"]>): TestFailureProjection => ({
+    failureOccurrences: occurrences, recoveryLineage: { schemaVersion: 1, generation, originalRunId: p.originalRunId!,
+      previousResultRunId: p.previousResultRunId!, inheritedFailures: [], unavailableReason },
+  });
   const original = await get(p.originalRunId!);
   const parent = generation === 2 ? original : await get(p.previousResultRunId!);
-  if (!original || !parent) reject("recovery requires its original and immediate parent results to be published first");
+  if (!original) return unavailable("original-not-published");
+  if (!parent) return unavailable("parent-not-published");
   const root = original!, previous = parent!;
   const originalTerminal = root.run.provenance.terminalSnapshotSha256 ?? root.run.provenance.lifecycleTerminalSha256;
   const parentTerminal = generation === 2 ? originalTerminal : previous.run.provenance.terminalSnapshotSha256;
+  if (!digest.test(originalTerminal ?? "") || !digest.test(parentTerminal ?? "") || !root.run.source)
+    return unavailable("ancestor-provenance-unavailable");
   if (root.run.provenance.originalRunId || root.run.provenance.previousResultRunId
     || (root.run.provenance.resultGeneration && root.run.provenance.resultGeneration !== "1")
-    || !digest.test(originalTerminal ?? "") || p.originalTerminalSnapshotSha256 !== originalTerminal
-    || !digest.test(parentTerminal ?? "") || p.terminalSnapshotSha256 === parentTerminal)
+    || p.originalTerminalSnapshotSha256 !== originalTerminal
+    || p.terminalSnapshotSha256 === parentTerminal || p.terminalSnapshotSha256 === originalTerminal)
     reject("recovery terminal does not extend the recorded original and parent results");
-  if (generation > 2 && (!previous.recoveryLineage || previous.recoveryLineage.generation !== generation - 1
-    || previous.recoveryLineage.originalRunId !== root.run.runId
-    || previous.recoveryLineage.originalPayloadSha256 !== root.payloadSha256))
-    reject("recovery parent has no validated lineage to this original result");
-  if (!root.run.source || !same(identity(run), identity(root.run)) || !same(identity(previous.run), identity(root.run)))
+  if (generation > 2) {
+    let lineage = previous.recoveryLineage;
+    if (!lineage || lineage.unavailableReason) {
+      // Validate legacy ancestry on demand, without replacing any already accepted
+      // occurrences, receipts or payloads. Bound reads even for very long histories.
+      if (remainingAncestors === 0) return unavailable("legacy-ancestry-unavailable");
+      try { lineage = (await testFailureProjection(previous.run, get, remainingAncestors - 1)).recoveryLineage; }
+      catch (error) {
+        if (!(error instanceof RecoveryLineageError)) throw error;
+        return unavailable("legacy-ancestry-unavailable");
+      }
+    }
+    if (!lineage || lineage.unavailableReason) return unavailable("legacy-ancestry-unavailable");
+    if (lineage.generation !== generation - 1 || lineage.originalRunId !== root.run.runId
+      || lineage.originalPayloadSha256 !== root.payloadSha256) reject("recovery parent contradicts this original result");
+  }
+  if (!same(identity(run), identity(root.run)) || !same(identity(previous.run), identity(root.run)))
     reject("recovery changed the original routine, request, source or build identity");
   if (Date.parse(run.finishedAt) < Date.parse(previous.run.finishedAt) || run.outcomes.test !== root.run.outcomes.test
     || (root.run.outcome === "failed" && run.outcome !== "failed")
@@ -85,7 +107,7 @@ export async function testFailureProjection(run: TestRun, get: (id: string) => P
     || (root.run.outcomes.evidence === "incomplete" && run.outcomes.evidence !== "incomplete"))
     reject("recovery cannot replace the original test or evidence outcome");
   if (previous.failureOccurrences === undefined || root.failureOccurrences === undefined)
-    reject("replay the accepted parent metadata to persist its failure occurrences before recovery");
+    return unavailable("ancestor-occurrences-unavailable");
   const byStep = new Map(occurrences.map(item => [phaseStep(item.failure), item]));
   const parentFailures = createTestFailureOccurrences(previous.run);
   for (const occurrence of parentFailures) {

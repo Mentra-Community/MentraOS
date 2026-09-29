@@ -6,6 +6,8 @@ import type { TestRun } from "../types/test-run.types";
 import { MongoTestRunRepository, TestRunService } from "./test-run.service";
 import { readFileSync } from "node:fs";
 import { testRunSchema } from "../types/test-run.types";
+import { createTestFailureOccurrences } from "./test-failure-occurrence";
+import { recoveryResultRunId } from "./test-recovery-lineage";
 import { TestFailureCorrectionService } from "./test-failure-correction.service";
 import { MongoEvidenceSupplementRepository } from "./test-failure-evidence.service";
 import type { EvidenceSupplement } from "../types/test-failure-evidence.types";
@@ -62,6 +64,26 @@ describe.skipIf(!uri)("Mongo failure occurrence durability", () => {
     const replayed = await TestRunModel.findOne({ runId: recovery.runId }).lean();
     expect(replayed!.failureOccurrences).toEqual([]);
     expect(replayed!.recoveryLineage).toEqual(saved!.recoveryLineage);
+    // Simulate a pre-deployment generation with its own already accepted intake.
+    const legacyOccurrences = createTestFailureOccurrences(recovery);
+    await TestRunModel.updateOne({ runId: recovery.runId }, {
+      $set: { failureOccurrences: legacyOccurrences }, $unset: { recoveryLineage: "" },
+    });
+    await service.acknowledgeFailure(legacyOccurrences[0]!.occurrenceId, "legacy_recovery_agent");
+    const legacyBefore = await TestRunModel.findOne({ runId: recovery.runId }).lean();
+    await service.ingest(recovery);
+    const third = structuredClone(recovery);
+    third.runId = recoveryResultRunId(original.runId, 3);
+    Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId, terminalSnapshotSha256: "f".repeat(64) });
+    await Promise.all(Array.from({ length: 8 }, () => new TestRunService().ingest(third)));
+    expect((await TestRunModel.findOne({ runId: third.runId }).lean())!.failureOccurrences).toEqual([]);
+    expect((await service.detail(third.runId)).failureOccurrences[0]!.delivery)
+      .toMatchObject({ state: "acknowledged", agentRunId: "legacy_recovery_agent" });
+    const legacyAfter = await TestRunModel.findOne({ runId: recovery.runId }).lean();
+    expect(legacyAfter!.payloadSha256).toBe(legacyBefore!.payloadSha256);
+    expect(legacyAfter!.payload).toEqual(legacyBefore!.payload);
+    expect(legacyAfter!.failureOccurrences).toEqual(legacyBefore!.failureOccurrences);
+    expect(legacyAfter!.recoveryLineage).toBeUndefined();
   });
 
   test("concurrent evidence additions enforce the per-occurrence bound without touching the payload", async () => {
