@@ -45,10 +45,12 @@ cross-contract fixtures for the producer.
   never as `none`. A retained `none` owner still holds Mac UI, audio and recorder custody
   and may still require recovery; the scope admits and releases nothing
 - for the `shared` guard only, optional `glassesLeases`: the per-glasses leases that host's
-  shared app acquisition refuses on, read with the same reader at this observation —
+  unidentified/legacy app acquisition refuses on, read with the same reader at this observation —
   `none`, `held` (`pairs`: up to 16 sorted unique 12-hex lease digests, `others`: the count
-  of further held entries) or `unreadable`. It is exclusion only and names no owner, run or
-  phone. Older producers omit it, which means not reported
+  of further held entries) or `unreadable`. Identified-pair acquisition reserves the Mac
+  lane and only its selected pair; a different held pair does not exclude that path.
+  The list names no owner, run or phone and does not establish the selected pair's readiness.
+  Older producers omit it, which means not reported
 - last checkpoint run ID, mode, phase, pending operation and pending reconciliation
 - recorded fixture `checked`, `record`, `status`, `fixtureID` and `lastRunID`
 
@@ -107,8 +109,7 @@ card from the overview response Core already returns; the API is unchanged.
 | Recovery required | A retained guard (any age: a dead PID, a completed checkpoint or a newer report never clears it; only the owner's verified recovery releases it), or a current report whose fixture record is `recovery-required` or `busy` without an owner. |
 | Running | A live owner in a report from the last 2 minutes, and either its run's latest step is unfinished and was received within 2 minutes, or its exact reserved request is a GitHub job in progress and the latest step has not completed. The latest step is the highest journal sequence from host or CI claim progress, never the latest arrival; a repeated sequence keeps its first receipt time. |
 | Reserved, idle | A current report of a live owner without recent step progress. |
-| Blocked | A current Mac lane report with no shared owner whose `glassesLeases` are held: the shared acquisition refuses until those pair leases are released. A recorded `recovery-required` or `busy` fixture stays Recovery required with its own action; held or unreadable pair leases are then stated beside it. |
-| Available | A current report with no owner and a fixture recorded ready, or a glasses pair with no lease (its readiness is separate). Admission still runs its normal checks. |
+| Available | A current report with no owner and a fixture recorded ready, or a glasses pair with no lease (its readiness is separate). Held leases for other pairs do not change the Mac lane's own state. Admission still runs its normal checks. |
 | Not ready | A current report with no owner whose fixture record is uncommissioned, missing, malformed, unreadable or not checked. |
 | Offline or unknown | Any other state (including unreadable `glassesLeases`), and every report older than 2 minutes that is not a retained guard. Fresh CI progress never refreshes a stale host report; it is shown as separate CI activity. |
 
@@ -117,7 +118,12 @@ same host are shown together only when both current reports show live owners wit
 identical reservation run and fixture, as one lifecycle holds both. Otherwise a phone card
 says a held pair on its host is not reported as used with it, and a held pair says no phone
 is reported with it. A phone's own lock is taken per command, so between commands the phone
-card is truthfully free while the pair and Mac lane cards show the hold.
+card is truthfully free while the pair card still shows its hold. The Mac card keeps its
+own ownership and fixture state: it is not universally blocked by another pair's lease.
+Its held-pair warning explains that unidentified app entry still waits, while an
+identified-pair routine checks only its selected pair. That pair and the Mac lane must
+both be ready; a free Mac card does not make an uncommissioned pair usable. Recorded Mac
+fixture recovery remains the primary state and action, with pair restrictions alongside it.
 
 The card itself stays short: host and lane, state, the work holding the lane (routine and
 build, taken only from the CI job or claim with the owner's exact reserved request ID, else
