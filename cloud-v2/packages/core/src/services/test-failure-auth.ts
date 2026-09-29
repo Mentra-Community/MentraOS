@@ -3,6 +3,7 @@ import { z } from "zod";
 import { continuationGrantSchema, type ContinuationGrant } from "../types/test-continuation.types";
 import { existingWorkGrantSchema, type ExistingWorkGrant } from "../types/test-existing-work.types";
 import { testFailureOccurrenceIdSchema } from "../types/test-failure.types";
+import { EVIDENCE_SUPPLEMENT_PURPOSE } from "../types/test-failure-evidence.types";
 
 export function testFailureEnvironment(): "dev" | "staging" | "prod" | null {
   const value = process.env.CLOUD_CORE_ENVIRONMENT;
@@ -17,6 +18,9 @@ export function signTestFailureDelivery(body: string, expires: number, secret: s
 /** Same secret and transport as occurrence delivery, under its own purpose so neither body can stand in for the other. */
 export function signTestFailureCorrectionDelivery(body: string, expires: number, secret: string): string {
   return createHmac("sha256", secret).update(`mentra-routine-failure-correction-v1\n${expires}\n${body}`).digest("hex");
+}
+export function signTestFailureEvidenceDelivery(body: string, expires: number, secret: string): string {
+  return createHmac("sha256", secret).update(`${EVIDENCE_SUPPLEMENT_PURPOSE}\n${expires}\n${body}`).digest("hex");
 }
 
 const readGrantSchema = z.object({

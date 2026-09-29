@@ -141,11 +141,59 @@ The GET returns the exact binding a reviewer must echo — `payloadSha256`, `occ
 
 Only `{schemaVersion:1, occurrenceId, revision:1, correctionId, agentRunId, status:"accepted"}` naming the same correction and the original `agentRunId` acknowledges it. A controller 409 is recorded as a terminal `refused` state and reads fall back to the original packet; other failures stay pending with the same identity. The controller admits it on the existing row and anchor only while its source-required outcome is untouched; it never creates another occurrence, row, anchor or case.
 
+## Reviewed supplemental evidence for an existing Mini case
+
+When a launched case stops with `needs-input/missing-evidence`, an admin can add
+bounded diagnostic JSON beside its immutable result. This differs from a
+provenance correction: it changes no source, failure, asset, outcome, evidence
+completeness, ownership or execution charge.
+
+```text
+GET  /api/admin/test-runs/:runId/failures/:occurrenceId/evidence-supplements
+POST /api/admin/test-runs/:runId/failures/:occurrenceId/evidence-supplements
+```
+
+POST requires the existing admin gate and `application/json`, with body
+`{confirmation:"append-reviewed-diagnostics", manifest, content:[{assetId,json}]}`.
+`json` is the exact reviewed UTF-8 JSON text, not a file path or URL. The manifest
+binds environment, accepted payload digest, run, occurrence/revision, acknowledged
+agent run and `target:{caseId,caseRevision,sessionSha256}`, plus a review reason,
+`redactionPolicy:"reviewed-harness-diagnostic-v1"` and `{assetId,sizeBytes,sha256}`
+for each file. Use the existing diagnostic redactor and review the representation
+before submission; the policy names that review, not an automatic guarantee that
+arbitrary logs contain no secrets. Preserve capture windows and source-binding
+limitations in the JSON itself.
+
+There are at most 8 uniquely named JSON assets and 262144 bytes in total per
+supplement, at most 2 supplements per occurrence, and one per exact stopped
+session/revision. The request ceiling is 1 MiB including JSON escaping. The server
+validates all content before writing and appends the manifest only after every
+object is stored. Identical retry returns the existing supplement; a changed
+retry for that stop refuses. The canonical manifest hash names `tes_<sha256>`.
+Original files and published metadata are never replaced.
+
+The existing delivery pass sends only the immutable reference, under the separate
+`mentra-routine-failure-evidence-supplement-v1` signature purpose, to
+`/internal/routine-failure-evidence-supplements`. An exact acknowledgement means
+the controller retained it on the existing anchor, not that a model or device ran.
+The companion Mini consumer admits it only through its local guardian, with exact
+case/session/revision, an accepted released missing-evidence stop and unchanged
+budgets. No new task, dispatcher or manual resume command is required. A stale,
+held or otherwise ineligible target stays stopped.
+
+The existing occurrence read capability reads the separate manifest at
+`/api/agent/test-failures/:occurrenceId/evidence-supplements/:supplementId` and its
+assigned bytes at `.../assets/:assetId`. Every turn verifies these again into a
+separate supplemental snapshot. The original occurrence packet remains unchanged.
+Supplement bytes never enter Mongo events or signed delivery messages. Install
+the compatible Mini receiver/consumer before submitting any live supplement;
+an older receiver cannot acknowledge it. This grants no new recovery capability.
+
 ## Validation
 
 ```sh
 cd cloud-v2
-bun test packages/core/src/services/test-run.service.test.ts
+bun test packages/core/src/services/test-run.service.test.ts packages/core/src/services/test-failure-evidence.service.test.ts
 bunx tsc -b packages/core --pretty false
 # Optional real Mongo atomicity checks: creates/drops only a unique test database.
 TEST_FAILURE_MONGO_URI=mongodb://127.0.0.1:27017 bun test packages/core/src/services/test-failure.mongo.test.ts

@@ -5,6 +5,7 @@ import { TestContinuationService } from "../../services/test-continuation.servic
 import { TestExistingWorkService } from "../../services/test-existing-work.service";
 import { TestRepairService } from "../../services/test-repair.service";
 import { TestFailureIncidentService } from "../../services/test-failure-incident.service";
+import { TestFailureEvidenceService } from "../../services/test-failure-evidence.service";
 import { TestDispatchError, UnsupportedReplayError } from "../../services/test-builds.service";
 import { ZodError } from "zod";
 import type { ContinuationGrant } from "../../types/test-continuation.types";
@@ -18,7 +19,8 @@ import type { AppEnv } from "../../types/hono.types";
 export function createTestFailureAgentApi(service = new TestRunService(), continuation = new TestContinuationService(),
   incidents: Pick<TestFailureIncidentService, "metadata" | "artifact"> = new TestFailureIncidentService(service),
   repairs: Pick<TestRepairService, "request" | "detail"> = new TestRepairService(service),
-  existingWork: Pick<TestExistingWorkService, "inventory" | "request" | "detail"> = new TestExistingWorkService(service)) {
+  existingWork: Pick<TestExistingWorkService, "inventory" | "request" | "detail"> = new TestExistingWorkService(service),
+  evidence: Pick<TestFailureEvidenceService, "metadata" | "media"> = new TestFailureEvidenceService()) {
   type Env = AppEnv & { Variables: AppEnv["Variables"] & { continuationGrant: ContinuationGrant; existingWorkGrant: ExistingWorkGrant } };
   const app = new Hono<Env>();
   // Purpose-separated: neither the read nor the continuation grant reaches these routes, and this grant reaches only them.
@@ -100,6 +102,10 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
   app.get("/:occurrenceId/existing-work/requests/:operationId", verification("read-results"), c =>
     existingWork.detail(c.get("existingWorkGrant"), c.req.param("operationId")).then(value => c.json(value)));
   app.get("/:occurrenceId", authorize, c => service.failureDetail(c.req.param("occurrenceId")).then(value => c.json(value)));
+  app.get("/:occurrenceId/evidence-supplements/:supplementId", authorize, c =>
+    evidence.metadata(c.req.param("occurrenceId"), c.req.param("supplementId")).then(value => c.json(value)));
+  app.on(["GET", "HEAD"], "/:occurrenceId/evidence-supplements/:supplementId/assets/:assetId", authorize, c =>
+    evidence.media(c.req.param("occurrenceId"), c.req.param("supplementId"), c.req.param("assetId"), c.req.raw));
   app.on(["GET", "HEAD"], "/:occurrenceId/assets/:assetId", authorize, c =>
     service.failureMedia(c.req.param("occurrenceId"), c.req.param("assetId"), c.req.raw));
   app.get("/:occurrenceId/incidents/:reportId", authorize, c => {
