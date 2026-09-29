@@ -1,4 +1,3 @@
-import React from "react"
 import {fireEvent, render} from "@testing-library/react-native"
 import {engine, SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
@@ -14,13 +13,16 @@ jest.mock("@/components/ignite", () => {
 })
 jest.mock("@/components/settings/SliderSetting", () => {
   const {Text} = require("react-native")
-  return ({label, min, max}: {label: string; min: number; max: number}) => <Text>{`${label}: ${min}-${max}`}</Text>
+  return function SliderMock({label, min, max}: {label: string; min: number; max: number}) {
+    return <Text>{`${label}: ${min}-${max}`}</Text>
+  }
 })
 jest.mock("@/components/settings/ToggleSetting", () => () => null)
 jest.mock("@/components/settings/HeadUpAngleComponent", () => {
   const {Text} = require("react-native")
-  return ({visible, maxAngle}: {visible: boolean; maxAngle: number}) =>
-    visible ? <Text>{`Maximum angle: ${maxAngle}`}</Text> : null
+  return function HeadAngleMock({visible, maxAngle}: {visible: boolean; maxAngle: number}) {
+    return visible ? <Text>{`Maximum angle: ${maxAngle}`}</Text> : null
+  }
 })
 jest.mock("@/components/ui/RouteButton", () => {
   const {Text, Pressable} = require("react-native")
