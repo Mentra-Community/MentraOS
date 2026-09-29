@@ -39,7 +39,17 @@ test("metadata outage preserves release delivery and explicitly disables termina
   assert.equal(calls, 1)
   assert.equal(receipt.build, null)
   assert.deepEqual(receipt.payload.blocks[0], payload.blocks[0])
-  assert.match(receipt.payload.blocks[1].text.text, /Terminal Slack updates unavailable/)
+  assert.match(receipt.payload.blocks[1].text.text, /Test result updates are disabled.*Mac download could not be verified/)
+  assert.doesNotMatch(receipt.payload.blocks[1].text.text, /archive receipt/)
+})
+test("failed release posts explain that no verified build is attached", async () => {
+  const receipt = await postReleaseMessage({...env, FINALIZE_RESULT: "skipped", MAC_URL: ""}, payload, {
+    select: async () => assert.fail("A failed release must not select an archive"),
+    fetchImpl: async () => response({channel: "CDEV", ts: "100.123", message: {bot_id: "BBUILDS"}}),
+  })
+  assert.equal(receipt.build, null)
+  assert.match(receipt.payload.blocks[1].text.text, /no verified Mac build to attach test results to/)
+  assert.throws(() => assertNotification(receipt), /Invalid retained release message/)
 })
 test("initial ambiguous POST is attempted once", async () => {
   let calls = 0
