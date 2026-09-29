@@ -226,11 +226,11 @@ function fixFlowCurrentState(activity: FixActivity | null, occurrence: TestFailu
   if (triage && attentionTriageStates.has(triage.state)) return "stopped";
   if (turn?.stage === "needs-input") return turn.reason === "infrastructure" ? "worker-repair" : "stopped";
   if (attentionStatuses.has(status)) return "stopped";
+  if (prs.length && prs.every(pr => pr.state === "merged")) return "waiting-routine";
   if (turn?.stage === "waiting-for-review") return "waiting-review";
   if (turn?.stage === "waiting-for-build") return "waiting-build";
   if (turn?.stage === "waiting-for-routine" || turn?.reason === "occurrence-verification-required") return "waiting-routine";
   if (turn?.stage === "ready-for-policy") return "waiting-merge";
-  if (prs.length && prs.every(pr => pr.state === "merged")) return "waiting-routine";
   if (["awaiting_executor", "queued", "mini_waiting"].includes(status)) return "queued";
   // Waiting-input requires a bound unanswered question; merged requires explicit verified completion.
   // Neither fact is supplied by the current controller contract, so neither is inferred here.
@@ -269,7 +269,7 @@ export class FixFlowService {
     knownReports?: Array<{ reportId: string; status: string }>) {
     const activity = matchingFixActivity(stored, occurrence, candidate, this.environment);
     const reports = knownReports ?? await this.repository.incidents(occurrence.failure.incidentIds);
-    return projectFixFlow(stored, occurrence, activity, candidate && !activity ? "unmatched" : availability,
+    return projectFixFlow(stored, occurrence, activity, activity ? "available" : candidate ? "unmatched" : availability,
       occurrence.failure.incidentIds.map(reportId => ({ reportId, status: reports.find(report => report.reportId === reportId)?.status ?? "unavailable" })));
   }
   async list(): Promise<FixFlowList> {

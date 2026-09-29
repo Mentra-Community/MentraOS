@@ -86,6 +86,37 @@ describe("exact failure-to-fixer projection", () => {
     expect(current(linked)).toBe("unknown");
     expect(current({ ...linked, executionOwnerWorkerLease: activity.workerLease })).toBe("worker-active");
   });
+  test("list, exact detail and API preserve matched current states rather than the unavailable fallback", async () => {
+    for (const [row, expected] of [
+      [activity, "worker-active"],
+      [{ ...activity, status: "mini_waiting", miniLastTurn: { stage: "waiting-for-review", reason: "review-pending" } }, "waiting-review"],
+      [{ ...activity, status: "mini_needs_input", miniTurnFailure: { kind: "timeout", phase: "model", at } }, "stopped"],
+      [{ ...activity, status: "cancelled" }, "closed"],
+    ] as const) {
+      for (const linked of [false, true]) {
+        const candidate: FixActivity = linked ? { ...row, runId: "22222222-2222-4222-8222-222222222222", acknowledgedAgentRunId: agentId,
+          executionOwnerRunId: agentId, executionOwnerStatus: row.status, executionOwnerWorkerLease: row.workerLease } : row;
+        const service = new FixFlowService(repository(), reader([candidate]), "dev");
+        expect((await service.list()).flows[0]).toMatchObject({ activity: "available", currentState: expected });
+        expect(await service.detail(occurrenceId)).toMatchObject({ activity: "available", currentState: expected });
+        expect(await (await createFixFlowAdminApi(service).request(`/${occurrenceId}`)).json()).toMatchObject({ currentState: expected });
+      }
+    }
+    for (const candidate of [null, { ...activity, routineFailure: { intake: { occurrenceId, testRunId: "another-run" } } }]) {
+      const service = new FixFlowService(repository(), { list: async () => ({ runs: candidate ? [candidate] : [], state: "available", limited: false }), detail: async () => candidate }, "dev");
+      expect((await service.list()).flows[0]?.currentState).toBe("unknown");
+      expect((await service.detail(occurrenceId)).currentState).toBe("unknown");
+    }
+  });
+  test("merged PRs supersede retained pre-merge waits but not active custody or a stop", () => {
+    for (const stage of ["waiting-for-review", "waiting-for-build", "ready-for-policy"]) {
+      const row: FixActivity = { ...activity, status: "mini_waiting", miniLastTurn: { stage, reason: "synthetic" },
+        pullRequests: [{ repository: "Mentra-Community/MentraOS", pullRequestNumber: 42, headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] };
+      expect(projectFixFlow(stored, occurrence, row, "available", []).currentState).toBe("waiting-routine");
+      expect(projectFixFlow(stored, occurrence, { ...row, status: "mini_running" }, "available", []).currentState).toBe("worker-active");
+      expect(projectFixFlow(stored, occurrence, { ...row, miniTurnFailure: { kind: "timeout", phase: "model", at } }, "available", []).currentState).toBe("stopped");
+    }
+  });
   test("only current structured worker custody can produce Running", () => {
     const now = Date.parse(at);
     const expired = { state: "active" as const, expiresAt: at };
@@ -308,7 +339,7 @@ describe("exact failure-to-fixer projection", () => {
     expect((await app.request(`/${occurrenceId}`, { method: "POST" })).status).toBe(404);
     const response = await app.request(`/${occurrenceId}`);
     expect(response.headers.get("cache-control")).toContain("no-store");
-    expect(await response.json()).toMatchObject({ occurrenceId, agent: { runId: agentId } });
+    expect(await response.json()).toMatchObject({ occurrenceId, currentState: "worker-active", agent: { runId: agentId } });
   });
 });
 
