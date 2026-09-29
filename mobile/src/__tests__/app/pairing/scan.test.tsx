@@ -192,6 +192,25 @@ describe("pairing scan screen", () => {
     setPlatformOS(originalPlatformOS)
   })
 
+  it("persists the iOS NIMO selection before any Companion is found", async () => {
+    ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "NIMO"})
+    ;(useNimoCompanionDiscovery as jest.Mock).mockReturnValue({
+      devices: [],
+      requiresSelection: false,
+      needsRetry: false,
+      retry: jest.fn(),
+      select: jest.fn(),
+    })
+    const screen = render(<SelectGlassesBluetoothScreen />)
+    await waitFor(() => {
+      expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("NIMO")
+    })
+    expect(useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)).toBe("")
+    expect(replace).not.toHaveBeenCalled()
+    screen.unmount()
+    expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("NIMO")
+  })
+
   it("keeps the remaining NIMO selectable after the chooser has been shown", () => {
     const device = {id: "nimo-a", name: "Nimo-4027", model: "NIMO", address: "nimo-a"}
     const select = jest.fn()

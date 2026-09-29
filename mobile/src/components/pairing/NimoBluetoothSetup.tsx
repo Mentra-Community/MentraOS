@@ -1,5 +1,6 @@
 import CrustModule from "@mentra/crust"
 import {DeviceTypes, engine} from "@mentra/engine"
+import {useEffect} from "react"
 import {Image, ScrollView, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -14,8 +15,11 @@ import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 
 export function NimoBluetoothSetup() {
   const {goBack, replace} = useNavigationStore.getState()
-  const {devices, needsRetry, requiresSelection, retry, select} = useNimoCompanionDiscovery((device) => {
+  useEffect(() => {
+    // Persist before leaving for system Settings, even if no Companion is found yet.
     engine.pairing.markPendingSelection(DeviceTypes.NIMO)
+  }, [])
+  const {devices, needsRetry, requiresSelection, retry, select} = useNimoCompanionDiscovery((device) => {
     // The loading screen owns the actual connection and readiness handshake.
     replace("/pairing/loading", {device: JSON.stringify(device), deviceModel: device.model, deviceName: device.name})
   })
