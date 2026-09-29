@@ -2,6 +2,135 @@ import {describe, expect, it, mock} from "bun:test"
 
 import {RecorderController} from "./RecorderController"
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: Error) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return {promise, resolve, reject}
+}
+
+function playbackMeta(id: string) {
+  return {uri: `file:///${id}.wav`, meta: {durationMs: 10000}}
+}
+
+function makePlaybackHarness() {
+  const send = mock((_channel: string, _payload: unknown) => {})
+  const get = mock(async (id: string): Promise<ReturnType<typeof playbackMeta> | null> => playbackMeta(id))
+  const completions: ReturnType<typeof deferred<void>>[] = []
+  const play = mock((_options: {audioUrl: string; startPositionMs?: number; stopOtherAudio?: boolean}) => {
+    const completion = deferred<void>()
+    completions.push(completion)
+    return completion.promise
+  })
+  const stop = mock(() => {})
+  const controller = new RecorderController({blob: {get}, speaker: {play, stop}} as never) as unknown as {
+    ui: {send: typeof send}
+    play(id: string, positionMs?: number): Promise<void>
+    stopPlay(): void
+    playingId: string | null
+  }
+  controller.ui = {send}
+  return {controller, send, get, play, stop, completions}
+}
+
+describe("RecorderController playback ownership", () => {
+  for (const failure of ["missing", "unreadable"] as const) {
+    it(`clears completed playback after another recording is ${failure}`, async () => {
+      const h = makePlaybackHarness()
+      const playingA = h.controller.play("A")
+      await Promise.resolve()
+      h.get.mockImplementationOnce(async () => {
+        if (failure === "unreadable") throw new Error("Unreadable blob")
+        return null
+      })
+
+      await h.controller.play("B")
+      expect(h.send).toHaveBeenCalledWith("rec:audio-missing", {id: "B"})
+      expect(h.controller.playingId).toBe("A")
+      expect(h.play).toHaveBeenCalledTimes(1)
+      h.completions[0].resolve()
+      await playingA
+      expect(h.controller.playingId).toBeNull()
+      expect(h.send).toHaveBeenLastCalledWith("rec:playback", {playingId: null, positionMs: 0})
+    })
+  }
+
+  it("clears finished audio while the next recording is still loading", async () => {
+    const h = makePlaybackHarness()
+    const playingA = h.controller.play("A")
+    await Promise.resolve()
+    const lookupB = deferred<ReturnType<typeof playbackMeta> | null>()
+    h.get.mockImplementationOnce(() => lookupB.promise)
+    const playingB = h.controller.play("B", 4000)
+
+    h.completions[0].resolve()
+    await playingA
+    expect(h.controller.playingId).toBeNull()
+    lookupB.resolve(playbackMeta("B"))
+    await Promise.resolve()
+    expect(h.controller.playingId).toBe("B")
+    expect(h.play).toHaveBeenLastCalledWith({audioUrl: "file:///B.wav", startPositionMs: 4000, stopOtherAudio: true})
+    h.completions[1].resolve()
+    await playingB
+    expect(h.controller.playingId).toBeNull()
+  })
+
+  it("keeps replacement playback active when the previous audio completes", async () => {
+    const h = makePlaybackHarness()
+    const playingA = h.controller.play("A")
+    await Promise.resolve()
+    const playingB = h.controller.play("B")
+    await Promise.resolve()
+    h.completions[0].resolve()
+    await playingA
+    expect(h.controller.playingId).toBe("B")
+    h.completions[1].resolve()
+    await playingB
+    expect(h.controller.playingId).toBeNull()
+  })
+
+  it("cancels pending lookups on stop and ignores older playback completion", async () => {
+    const h = makePlaybackHarness()
+    const playingA = h.controller.play("A")
+    await Promise.resolve()
+    const lookupB = deferred<ReturnType<typeof playbackMeta> | null>()
+    h.get.mockImplementationOnce(() => lookupB.promise)
+    const playingB = h.controller.play("B")
+    h.controller.stopPlay()
+    expect(h.stop).toHaveBeenCalledTimes(1)
+    expect(h.controller.playingId).toBeNull()
+
+    const playingC = h.controller.play("C")
+    await Promise.resolve()
+    lookupB.resolve(playbackMeta("B"))
+    await playingB
+    h.completions[0].resolve()
+    await playingA
+    expect(h.play).toHaveBeenCalledTimes(2)
+    expect(h.controller.playingId).toBe("C")
+    h.completions[1].resolve()
+    await playingC
+  })
+
+  it("ignores an older lookup after a newer play request", async () => {
+    const h = makePlaybackHarness()
+    const lookupA = deferred<ReturnType<typeof playbackMeta> | null>()
+    h.get.mockImplementationOnce(() => lookupA.promise)
+    const playingA = h.controller.play("A")
+    const playingB = h.controller.play("B")
+    await Promise.resolve()
+    lookupA.resolve(playbackMeta("A"))
+    await playingA
+    expect(h.play).toHaveBeenCalledTimes(1)
+    expect(h.controller.playingId).toBe("B")
+    h.completions[0].resolve()
+    await playingB
+  })
+})
+
 function makeHarness(
   hasMic = true,
   closeMs = 0,
@@ -99,7 +228,12 @@ describe("RecorderController recording edges", () => {
     const h = makeHarness()
     await h.controller.startRecording()
     let finishWrite!: () => void
-    h.writer.write.mockImplementationOnce(() => new Promise<void>((resolve) => {finishWrite = resolve}))
+    h.writer.write.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWrite = resolve
+        }),
+    )
     const audio = h.getAudioHandler()!
     audio({data: Buffer.alloc(49152).toString("base64"), sampleRate: 16000})
     await Promise.resolve()

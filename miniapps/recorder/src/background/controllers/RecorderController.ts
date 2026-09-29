@@ -89,7 +89,9 @@ export class RecorderController {
   // Mirrored UI state
   private lastStatus: RecorderStatus | null = null
   private playingId: string | null = null
-  /** Monotonic playback token — only the latest play() owns the UI playing state. */
+  /** New play/stop requests invalidate pending blob lookups without orphaning active audio. */
+  private playRequestSeq = 0
+  /** Only a valid replacement or stop transfers ownership of playback completion. */
   private playSeq = 0
   private playStartedAt = 0
   private playPositionMs = 0
@@ -682,14 +684,14 @@ export class RecorderController {
   // ── Playback ─────────────────────────────────────────────────────────────
 
   private async play(id: string, positionMs = 0): Promise<void> {
-    const seq = ++this.playSeq
+    const requestSeq = ++this.playRequestSeq
     let meta: BlobMeta | null = null
     try {
       meta = await this.session.blob.get(id)
     } catch {
       meta = null
     }
-    if (seq !== this.playSeq) return
+    if (requestSeq !== this.playRequestSeq) return
     if (!meta) {
       // Stored audio is gone/unreadable — tell the UI instead of a dead tap.
       this.ui.send("rec:audio-missing", {id})
@@ -697,6 +699,7 @@ export class RecorderController {
     }
     const durationMs = Number(meta.meta?.durationMs ?? 0)
     const startPositionMs = Number.isFinite(positionMs) ? Math.max(0, Math.min(positionMs, durationMs)) : 0
+    const seq = ++this.playSeq
     this.setPlaying(id, startPositionMs)
     try {
       await this.session.speaker.play({audioUrl: meta.uri, stopOtherAudio: true, startPositionMs})
@@ -711,6 +714,7 @@ export class RecorderController {
   }
 
   private stopPlay(): void {
+    ++this.playRequestSeq
     ++this.playSeq
     try {
       this.session.speaker.stop()
