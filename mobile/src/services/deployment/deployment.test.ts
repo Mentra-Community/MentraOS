@@ -586,7 +586,7 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
 })
 
 it("resolves the actual Enterprise reference manifest with preinstalled Call managed as userland", async () => {
-  const origin = "https://enterprisedev.mentraglass.com"
+  const origin = new URL(referenceManifest.services.runtimeUrl).origin
   const fetch = jest.fn(async () =>
     response(JSON.stringify(referenceManifest), {
       url: `${origin}/.well-known/mentra-deployment.json`,
