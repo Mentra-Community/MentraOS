@@ -5,6 +5,25 @@ import XCTest
 final class DeviceManagerReconnectTests: XCTestCase {
     private let requests = ["should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active"]
 
+    func testDelayedReconnectReplayPreservesNimoDepthEndpoints() {
+        for depth in [0, 10] {
+            withRecordingDevice { manager, store in
+                let device = manager.sgc as! ReconnectRecordingDevice
+                device.type = DeviceTypes.NIMO
+                store.set("bluetooth", "dashboard_height", 7)
+                store.set("bluetooth", "dashboard_depth", depth)
+                let replayed = expectation(description: "Delayed NIMO depth \(depth)")
+                replayed.assertForOverFulfill = false
+                device.onPosition = { replayed.fulfill() }
+                manager.handleDeviceReady()
+                XCTAssertTrue(device.positions.isEmpty)
+                wait(for: [replayed], timeout: 3)
+                XCTAssertEqual(device.positions.last?.0, 7)
+                XCTAssertEqual(device.positions.last?.1, depth)
+            }
+        }
+    }
+
     private func withRecordingDevice(_ body: (DeviceManager, DeviceStore) -> Void) {
         let manager = DeviceManager.shared
         let store = DeviceStore.shared
@@ -265,6 +284,8 @@ private final class ReconnectRecordingDevice: SGCManager {
     let hasMic = true
     let showConnectionConfirmation = false
     var micChanges: [Bool] = []
+    var positions: [(Int, Int)] = []
+    var onPosition: (() -> Void)?
     var isMicSuspendedForAudio = false
 
     func clearSceneElements(_: [String]) async {}
@@ -300,7 +321,11 @@ private final class ReconnectRecordingDevice: SGCManager {
     }
 
     func showDashboard() {}
-    func setDashboardPosition(_: Int, _: Int) {}
+    func setDashboardPosition(_ height: Int, _ depth: Int) {
+        positions.append((height, depth))
+        onPosition?()
+    }
+
     func setHeadUpAngle(_: Int) {}
     func getBatteryStatus() {}
     func setSilentMode(_: Bool) {}

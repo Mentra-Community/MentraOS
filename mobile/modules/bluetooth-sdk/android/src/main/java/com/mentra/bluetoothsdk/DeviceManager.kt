@@ -35,7 +35,10 @@ import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -1537,6 +1540,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         // re-apply display height/depth after reconnection
         mainHandler.postDelayed(
             {
+                val device = sgc ?: return@postDelayed
                 val h =
                     (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
                         ?.toInt()
@@ -1545,8 +1549,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
                     (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
                         ?.toInt()
                         ?: dashboardDepth // canonical default (2), not 1
-                val d = rawDepth.coerceIn(1, 4)
-                sgc?.setDashboardPosition(h, d)
+                val d = if (device.type == DeviceTypes.NIMO) rawDepth.coerceIn(0, 10) else rawDepth.coerceIn(1, 4)
+                device.setDashboardPosition(h, d)
             },
             2000
         )
@@ -2499,6 +2503,37 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.disconnectController()
         controller?.disconnect()
         controller = null
+    }
+
+    private var unpairInProgress = false
+
+    /** Explicit user Unpair, separate from passive pairing cleanup and logout. */
+    suspend fun unpair() = withContext(Dispatchers.Main) {
+        check(!unpairInProgress) { "Unpair already in progress" }
+        unpairInProgress = true
+        try {
+            val target = sgc
+            val nimo = target as? Nimo
+            val savedNimoAddress = when {
+                defaultWearable == DeviceTypes.NIMO -> deviceAddress
+                pendingWearable == DeviceTypes.NIMO -> pendingDeviceAddress
+                else -> null
+            }
+            if (nimo != null) {
+                suspendCancellableCoroutine<Boolean> { continuation ->
+                    nimo.resetForUnpair { if (continuation.isActive) continuation.resume(it) }
+                }
+                check(sgc === target) { "Glasses changed during Unpair" }
+                // Drop the encrypted link before removing the phone's bond.
+                nimo.disconnect()
+                nimo.removeBluetoothBond()
+            } else if (target == null && savedNimoAddress != null) {
+                Nimo.removeBluetoothBond(savedNimoAddress)
+            }
+            forget()
+        } finally {
+            unpairInProgress = false
+        }
     }
 
     fun forget() {

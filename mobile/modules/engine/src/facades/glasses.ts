@@ -94,10 +94,12 @@ export const glasses = {
   },
   disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
   forget: (): Promise<void> => BluetoothSdk.forget(),
+  /** Explicit user Unpair; NIMO is reset before its local pairing is cleared. */
+  unpair: (): Promise<void> => BluetoothSdk.unpair(),
   /** Connect to a specific (discovered) device. */
   connect: async (device: Device, options?: ConnectOptions): Promise<void> => {
     try {
-      await pushAllBluetoothSettings()
+      await pushAllBluetoothSettings(device.model)
       await BluetoothSdk.connect(device, options)
     } catch (error) {
       recordSupportProfileConnectionFailure(error, "connect")

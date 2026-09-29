@@ -54,19 +54,29 @@ describe("NIMO preparation", () => {
     Platform.OS = originalPlatform
   })
 
-  it("explains system pairing before continuing to iOS discovery", async () => {
+  it("shows one opening instruction before continuing to iOS discovery", async () => {
     Platform.OS = "ios"
     const screen = render(<PairingPrepScreen />)
-    expect(screen.getByText(en.pairing.nimoIosSettingsPairing)).toBeTruthy()
-    await act(async () => fireEvent.press(screen.getByText(en.common.continue)))
+    expect(screen.getByText(en.pairing.nimoOpenBody)).toBeTruthy()
+    expect(screen.queryByText(en.pairing.nimoSettings)).toBeNull()
+    await act(async () => fireEvent.press(screen.getByText(en.pairing.nimoTheyreOpen)))
     expect(preparePairingScan).toHaveBeenCalledWith("NIMO")
     expect(push).toHaveBeenCalledWith("/pairing/scan", {deviceModel: "NIMO", ar99ProjectName: undefined})
   })
 
-  it("keeps Settings pairing instructions specific to iOS", () => {
+  it("sends Android directly to the existing scanner", async () => {
     Platform.OS = "android"
     const screen = render(<PairingPrepScreen />)
-    expect(screen.queryByText(en.pairing.nimoIosSettingsPairing)).toBeNull()
-    expect(screen.getByText(en.common.continue)).toBeTruthy()
+    expect(screen.queryByText(en.pairing.nimoSettings)).toBeNull()
+    await act(async () => fireEvent.press(screen.getByText(en.pairing.nimoFindGlasses)))
+    expect(preparePairingScan).toHaveBeenCalledWith("NIMO")
+    expect(push).toHaveBeenCalledWith("/pairing/scan", {deviceModel: "NIMO", ar99ProjectName: undefined})
+  })
+  it("stays in preparation when Bluetooth permission is denied", async () => {
+    Platform.OS = "ios"
+    ;(preparePairingScan as jest.Mock).mockResolvedValue(false)
+    const screen = render(<PairingPrepScreen />)
+    await act(async () => fireEvent.press(screen.getByText(en.pairing.nimoTheyreOpen)))
+    expect(push).not.toHaveBeenCalled()
   })
 })

@@ -1008,7 +1008,7 @@ struct ViewState {
             let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
             // Fall back to the canonical default (2), matching DeviceStore, not 1.
             let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2
-            let d = min(max(rawDepth, 1), 4)
+            let d = sgc.type == DeviceTypes.NIMO ? min(max(rawDepth, 0), 10) : min(max(rawDepth, 1), 4)
             sgc.setDashboardPosition(h, d)
         }
 
@@ -1997,6 +1997,28 @@ struct ViewState {
         sgc?.disconnectController()
         controller?.disconnect()
         controller = nil // Clear the controller reference after disconnect
+    }
+
+    private var unpairInProgress = false
+
+    /// Explicit user Unpair, separate from passive pairing cleanup and logout.
+    func unpair() async throws {
+        guard !unpairInProgress else {
+            throw NSError(domain: "NimoUnpair", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Unpair already in progress"])
+        }
+        unpairInProgress = true
+        defer { unpairInProgress = false }
+        if let nimo = sgc as? Nimo {
+            _ = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                nimo.resetForUnpair { continuation.resume(returning: $0) }
+            }
+            guard (sgc as? Nimo) === nimo else {
+                throw NSError(domain: "NimoUnpair", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "Glasses changed during Unpair"])
+            }
+        }
+        forget()
     }
 
     func forget() {
