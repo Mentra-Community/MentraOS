@@ -9,3 +9,5 @@
 .fix-flow-track button[aria-pressed=true] { color: #087d50; font-weight: 700; }
 .fix-flow-track button[aria-pressed=true] .fix-flow-node { border-color: #087d50; background: #087d50; color: white; box-shadow: 0 0 0 5px #e8f4eb; }
 @media (max-width: 800px) { .fix-flow-track { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 0; } .fix-flow-track li:nth-child(3)::after { display: none; } }
+
+.fix-flow-branch{border-top:1px solid #e0e4de;padding:14px 20px 0;background:#f8faf7}.fix-flow-branch h3{font-size:12px;font-weight:600;color:#68746d}.fix-flow-track-branch{grid-template-columns:repeat(4,minmax(0,1fr));padding:14px 0}.fix-flow-track-branch li::after{display:none}.fix-flow-branch-stopped{background:#fff9f5}.fix-flow-branch-stopped .fix-flow-node{border-color:#e8c8bb;color:#9a5941}@media(max-width:640px){.fix-flow-track-branch{grid-template-columns:repeat(2,minmax(0,1fr))}}
