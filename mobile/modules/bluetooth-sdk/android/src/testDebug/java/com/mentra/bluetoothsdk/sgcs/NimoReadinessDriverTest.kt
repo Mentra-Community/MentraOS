@@ -121,25 +121,31 @@ class NimoReadinessDriverTest {
     assertTrue(failures.isEmpty())
   }
 
-  @Test fun unknownPeerCannotLaunchFromHandshakeOrTwsOnlyReports() {
-    canvas.offer(byteArrayOf(0, 0, 1), "initial")
+  @Test fun freshHandshakeProbesCanvasWithoutWaitingForHeartbeat() {
     finishHandshake(peer = null)
+    assertNull(field("peerCompanionReady").get(nimo))
+    assertKeys(1) // Firmware validates peer readiness, not a synthetic heartbeat.
+    emit(packet(6, 2, byteArrayOf(0, 0, 1))) // Stock dashboard entering at startup.
+    assertKeys(1)
+    emit(packet(7, 1, byteArrayOf(0, 0xFD.toByte())))
+    assertKeys(1, 4)
+    assertArrayEquals(NimoCanvasCodec.frames(4, byteArrayOf(0, 0, 1), 512).single(), frames.last())
+    assertTrue(failures.isEmpty())
+  }
+
+  @Test fun knownDisconnectedPeerStillBlocksUntilReadinessArrives() {
+    finishHandshake(peer = false)
     assertKeys()
     emit(packet(6, 3, byteArrayOf(0, 1)))
-    assertNull(field("peerCompanionReady").get(nimo))
-    assertKeys()
-    emit(heartbeat(peer = 0))
-    assertEquals(false, field("peerCompanionReady").get(nimo))
     assertKeys()
     emit(heartbeat())
-    assertEquals(true, field("peerCompanionReady").get(nimo))
     assertKeys(1)
     assertTrue(failures.isEmpty())
   }
 
   @Test fun queuedOldGattAndWrongServiceCannotEstablishReadiness() {
     canvas.offer(byteArrayOf(0, 0, 1), "initial")
-    finishHandshake(peer = null)
+    finishHandshake(peer = false)
     val oldGatt = currentGatt
     queue(heartbeat(), oldGatt)
     currentGatt = newGatt()
@@ -147,7 +153,7 @@ class NimoReadinessDriverTest {
     idle() // The generation check must occur when the queued callback executes.
     emit(heartbeat(), oldGatt)
     emit(heartbeat(), currentGatt, characteristic(UUID.fromString("00001234-0000-1000-8000-00805f9b34fb")))
-    assertNull(field("peerCompanionReady").get(nimo))
+    assertEquals(false, field("peerCompanionReady").get(nimo))
     assertKeys()
 
     emit(heartbeat()) // Positive control through the actual current RX callback.

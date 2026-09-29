@@ -132,6 +132,7 @@ internal class NimoCanvasCoordinator(
     private var holding = false
     private var heldScope: String? = null
     private var cancelDeadline: (() -> Unit)? = null
+    private var cancelRetry: (() -> Unit)? = null
 
     fun offer(bytes: ByteArray, scope: String, force: Boolean = false) {
         if (holding && scope != heldScope) {
@@ -140,8 +141,15 @@ internal class NimoCanvasCoordinator(
         }
         run(session.offer(bytes, scope, force))
     }
-    fun readiness(ready: Boolean) = run(session.readiness(ready))
-    fun confirmedReadiness(ready: Boolean) = run(session.confirmedReadiness(ready))
+    fun activate() = run(session.activate())
+    fun readiness(ready: Boolean) {
+        if (!ready) { cancelRetry?.invoke(); cancelRetry = null }
+        run(session.readiness(ready))
+    }
+    fun confirmedReadiness(ready: Boolean) {
+        if (!ready) { cancelRetry?.invoke(); cancelRetry = null }
+        run(session.confirmedReadiness(ready))
+    }
     fun hold(onReady: () -> Unit) {
         session.hold(true)
         holding = true
@@ -155,19 +163,14 @@ internal class NimoCanvasCoordinator(
         heldScope = null
         run(session.hold(false, resume))
     }
-    fun exit() = run(session.exit())
-    /** Whether this report also invalidates an unfinished host encode. Exit's report does not
-     * invalidate a NEW scene submitted while the explicit Exit waits for its business ACK. */
-    fun nativeApp(appId: Int, entered: Boolean): Boolean {
-        val takeover = (appId == NimoCanvasCodec.APP_ID && !entered) ||
-            (appId != NimoCanvasCodec.APP_ID && entered)
-        val expectedExitReport = appId == NimoCanvasCodec.APP_ID && !entered && flight?.action?.key == 3
-        val invalidateEncoding = takeover && !expectedExitReport
-        run(session.nativeApp(appId, entered))
-        return invalidateEncoding
+    fun exit() {
+        cancelRetry?.invoke(); cancelRetry = null
+        run(session.exit())
     }
+    fun nativeApp(appId: Int, entered: Boolean) = run(session.nativeApp(appId, entered))
 
     fun disconnected() {
+        cancelRetry?.invoke(); cancelRetry = null
         cancelDeadline?.invoke(); cancelDeadline = null
         flight = null
         holdReady = null
@@ -199,6 +202,7 @@ internal class NimoCanvasCoordinator(
     private fun run(actions: List<NimoCanvasSession.Action>) {
         for (action in actions) when (action) {
             is NimoCanvasSession.Action.Send -> {
+                cancelRetry?.invoke(); cancelRetry = null
                 cancelDeadline?.invoke()
                 val current = Flight(action)
                 flight = current
@@ -219,7 +223,16 @@ internal class NimoCanvasCoordinator(
                 }
             }
             is NimoCanvasSession.Action.Reconnect -> { disconnected(); reconnect(action.reason) }
-            is NimoCanvasSession.Action.Rejected -> rejected(action.status)
+            is NimoCanvasSession.Action.Rejected -> {
+                rejected(action.status)
+                if (action.status == 7) {
+                    cancelRetry?.invoke()
+                    cancelRetry = scheduler.post(1_000) {
+                        cancelRetry = null
+                        run(session.retryNotReady())
+                    }
+                }
+            }
         }
     }
 }
