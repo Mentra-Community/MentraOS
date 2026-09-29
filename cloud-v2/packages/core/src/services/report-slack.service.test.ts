@@ -87,9 +87,13 @@ describe("notifyReportSlack", () => {
       [{}, "main"],
       [{ kind: "feedback", userEmail: "customer@example.test" }, "main"],
       [{ userEmail: " Admin@Personal.Test " }, "internal"],
+      [{ userEmail: "admin+test@personal.test" }, "internal"],
+      [{ userEmail: "other+admin@personal.test" }, "main"],
+      [{ userEmail: "admin+test@personal.test.evil.test" }, "main"],
       [{ userEmail: "alice@mentra.glass" }, "internal"],
       [{ kind: "feedback", userEmail: "alice@mentraglass.com" }, "internal"],
       [{ kind: "automatic", userEmail: "alice@mentra.glass" }, "automatic"],
+      [{ kind: "automatic", userEmail: "admin+test@personal.test" }, "automatic"],
       [{ kind: "automatic", userEmail: "customer@example.test" }, "automatic"],
       [{ userEmail: "alice@sub.mentra.glass" }, "main"],
       [{ userEmail: "alice@notmentra.glass" }, "main"],
@@ -99,7 +103,7 @@ describe("notifyReportSlack", () => {
       [{ trigger: { source: "mentra_automated_testing_extra" } }, "main"],
       [{ trigger: { source: "MENTRA_AUTOMATED_TESTING" } }, "main"],
       ...(["bug", "feedback", "automatic"] as const).flatMap(kind =>
-        ["admin@personal.test", "customer@example.test"].map(userEmail =>
+        ["admin@personal.test", "admin+test@personal.test", "customer@example.test"].map(userEmail =>
           [{ kind, userEmail, trigger: { source: "mentra_automated_testing" } }, "testing"] as
             [Partial<ReportSlackNotification>, "testing"])),
     ];

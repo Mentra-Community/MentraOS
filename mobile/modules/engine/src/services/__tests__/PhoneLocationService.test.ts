@@ -1,6 +1,7 @@
 /// <reference types="bun-types" />
 
 import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
+import {readFileSync} from "node:fs"
 import type {LocationTaskOptions} from "expo-location"
 
 const platform = {OS: "android"}
@@ -117,7 +118,7 @@ describe("PhoneLocationService Android while-in-use location", () => {
 
     expect(stopLocationUpdatesAsync).toHaveBeenCalledTimes(1)
     expect(started).toEqual([{accuracy: 2, pausesUpdatesAutomatically: false}])
-    expect(appState.addEventListener).not.toHaveBeenCalled()
+    expect(appStateListeners.size).toBe(0)
   })
 
   test("preserves iOS start-on-query-failure behavior", async () => {
@@ -306,5 +307,176 @@ describe("PhoneLocationService Android while-in-use location", () => {
 
     expect(startLocationUpdatesAsync).not.toHaveBeenCalled()
     expect(registered).toBe(false)
+  })
+})
+
+describe("PhoneLocationService idle resource ownership", () => {
+  test.each(["", "unknown", "HIGH", "off"])("legacy tier %s stops stale iOS registration", async (tier) => {
+    platform.OS = "ios"
+    registered = true
+    await setLocationTier(tier)
+    expect(registered).toBe(false)
+    expect(startLocationUpdatesAsync).not.toHaveBeenCalled()
+    expect(stopLocationUpdatesAsync).toHaveBeenCalledTimes(1)
+  })
+
+  test("an iOS stop query failure is retried on foreground instead of cached as stopped", async () => {
+    platform.OS = "ios"
+    registered = true
+    hasStartedLocationUpdatesAsync.mockRejectedValueOnce(new Error("temporarily unavailable"))
+    await setLocationTier("off")
+    expect(registered).toBe(true)
+    expect(appStateListeners.size).toBe(1)
+    changeAppState("active")
+    await flushLocationWork()
+    expect(registered).toBe(false)
+    expect(appStateListeners.size).toBe(0)
+    expect(startLocationUpdatesAsync).not.toHaveBeenCalled()
+  })
+
+  test("last iOS subscriber disappearing during native start leaves no task", async () => {
+    platform.OS = "ios"
+    let release!: () => void
+    startGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const starting = setLocationTier("high")
+    await flushLocationWork()
+    const stopping = setLocationTier("off")
+    release()
+    await Promise.all([starting, stopping])
+    expect(registered).toBe(false)
+    expect(stopLocationUpdatesAsync).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Execute the actual startup/runtime methods with the real location service and
+// fake native registration. This catches ownership races across both layers.
+function method(source: string, name: string): string {
+  const start = source.search(new RegExp(`^  (?:private|public) (?:async )?${name}\\(`, "m"))
+  if (start < 0) throw new Error(`Missing method ${name}`)
+  const rest = source.slice(start)
+  const end = rest.search(/^  }$/m)
+  if (end < 0) throw new Error(`Missing end of ${name}`)
+  return rest.slice(0, end + 3)
+}
+
+const runtimeSource = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
+const mantleSource = readFileSync(new URL("../../../../../src/services/MantleManager.ts", import.meta.url), "utf8")
+const tiers = runtimeSource.slice(
+  runtimeSource.indexOf("const LOCATION_RATE_PRIORITY ="),
+  runtimeSource.indexOf("const LOG_TAG ="),
+)
+const compile = (source: string) => new Bun.Transpiler({loader: "ts"}).transformSync(source)
+
+function makeLocationHost(savedTier: string) {
+  const runtimeCode = compile(`${tiers}; class LocalMiniappRuntime {
+    ${["initialize", "cleanup", "recomputeLocationTier"].map((name) => method(runtimeSource, name)).join("\n")}
+  }`)
+  const Runtime = new Function(
+    "phoneLocationService",
+    "useAppStatusStore",
+    "AppState",
+    "BgTimer",
+    "LOG_TAG",
+    `${runtimeCode}; return LocalMiniappRuntime`,
+  )({setLocationTier}, {subscribe: () => () => {}}, appState, {clearTimeout() {}}, "TEST")
+  const runtime = new Runtime() as {
+    initialize(): void
+    cleanup(): void
+    recomputeLocationTier(): void
+    connectedApps: Map<string, {requestedLocationRate: string}>
+    lastAppliedLocationRate: string | null
+  }
+  Object.assign(runtime, {
+    connectedApps: new Map(),
+    streamSubscribers: new Map(),
+    foregroundProbeTimers: new Map(),
+    lastAppliedLocationRate: null,
+    ensurePingLoop() {},
+    stopPingLoop() {},
+    currentVisiblePackage: () => null,
+    updateVisibility() {},
+    getButtonPressSubscribers: () => [],
+  })
+  const hostCode = compile(`class Host { ${method(mantleSource, "setupPeriodicTasks")} }`)
+  const Host = new Function(
+    "phoneLocationService",
+    "BgTimer",
+    "checkFeaturePermissions",
+    "PermissionFeatures",
+    "engine",
+    "SETTINGS",
+    `${hostCode}; return Host`,
+  )(
+    {setLocationTier},
+    {setInterval() {}, clearInterval() {}},
+    async () => true,
+    {LOCATION: "location"},
+    {settings: {get: async () => savedTier}},
+    {location_tier: {key: "location_tier"}},
+  )
+  const host = new Host() as {setupPeriodicTasks(): Promise<void>}
+  Object.assign(host, {sendCalendarEvents() {}})
+  return {host, runtime}
+}
+
+describe("location runtime/startup integration", () => {
+  test.each(["", "high", "tenMeters"])(
+    "no consumers stops stale native state despite saved %s tier in either startup order",
+    async (savedTier) => {
+      platform.OS = "ios"
+      for (const runtimeFirst of [true, false]) {
+        registered = true
+        const {host, runtime} = makeLocationHost(savedTier)
+        if (runtimeFirst) runtime.initialize()
+        await host.setupPeriodicTasks()
+        if (!runtimeFirst) runtime.initialize()
+        await flushLocationWork()
+        expect(registered).toBe(false)
+        expect(startLocationUpdatesAsync).not.toHaveBeenCalled()
+        runtime.cleanup()
+        await flushLocationWork()
+      }
+    },
+  )
+
+  test("highest subscriber wins and the last one leaving stops native updates", async () => {
+    platform.OS = "ios"
+    const {runtime} = makeLocationHost("high")
+    runtime.initialize()
+    runtime.connectedApps.set("navigation", {requestedLocationRate: "realtime"})
+    runtime.connectedApps.set("weather", {requestedLocationRate: "low"})
+    runtime.recomputeLocationTier()
+    await flushLocationWork()
+    expect(started.at(-1)?.accuracy).toBe(6)
+    runtime.connectedApps.delete("navigation")
+    runtime.recomputeLocationTier()
+    await flushLocationWork()
+    expect(started.at(-1)?.accuracy).toBe(2)
+    runtime.connectedApps.clear()
+    runtime.recomputeLocationTier()
+    await flushLocationWork()
+    expect(registered).toBe(false)
+    runtime.cleanup()
+    await flushLocationWork()
+  })
+
+  test("cleanup and reinitialization reconcile stale registration despite an off cache", async () => {
+    platform.OS = "ios"
+    const {runtime} = makeLocationHost("high")
+    runtime.initialize()
+    await flushLocationWork()
+    expect(runtime.lastAppliedLocationRate).toBe("off")
+    registered = true
+    runtime.cleanup()
+    await flushLocationWork()
+    expect(registered).toBe(false)
+    registered = true
+    runtime.initialize()
+    await flushLocationWork()
+    expect(registered).toBe(false)
+    runtime.cleanup()
+    await flushLocationWork()
   })
 })

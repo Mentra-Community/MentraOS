@@ -821,6 +821,10 @@ class LocalMiniappRuntime {
     this.visibilityUnsubscribe = useAppStatusStore.subscribe(() => this.updateVisibility())
     this.appStateSubscription = AppState.addEventListener("change", () => this.updateVisibility())
     this.ensurePingLoop()
+    // Native background tasks can survive a previous JS runtime. Reconcile even
+    // when no miniapps register and the previous aggregate was already off.
+    this.lastAppliedLocationRate = null
+    this.recomputeLocationTier()
   }
 
   private currentVisiblePackage(): string | null {
@@ -2198,7 +2202,14 @@ class LocalMiniappRuntime {
     this.cancelSpeech(packageName)
     this.setSpeakerState(packageName, "loading")
     audioPlaybackService.play(
-      {requestId: audioRequestId, audioUrl, appId: packageName, volume, stopOtherAudio},
+      {
+        requestId: audioRequestId,
+        audioUrl,
+        appId: packageName,
+        volume,
+        stopOtherAudio,
+        startPositionMs: typeof payload.startPositionMs === "number" ? payload.startPositionMs : 0,
+      },
       (_respId, success, error, duration) => {
         if (success) {
           this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
@@ -6819,6 +6830,8 @@ class LocalMiniappRuntime {
       }
     }
     this.connectedApps.clear()
+    this.lastAppliedLocationRate = null
+    this.recomputeLocationTier()
     for (const timerId of this.foregroundProbeTimers.values()) {
       BgTimer.clearTimeout(timerId)
     }

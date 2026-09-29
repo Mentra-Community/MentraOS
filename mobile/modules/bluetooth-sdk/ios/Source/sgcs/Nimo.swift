@@ -20,10 +20,6 @@ enum NimoBLE {
     static let CHAR_RX = CBUUID(string: "00002022-0000-1000-8000-00805F9B34FB")
     static let CHAR_MIC = CBUUID(string: "00002025-0000-1000-8000-00805F9B34FB")
 
-    static let NAME_PREFIX = "nimo"
-    /// iOS ANCS side-channel devices advertise "<name>_ble" — never the data channel.
-    static let BLE_NAME_SUFFIX = "_ble"
-
     static let CHUNK_SIZE = 501
     static let INTER_FRAME_DELAY_MS = 5
 }
@@ -591,6 +587,27 @@ class Nimo: NSObject, SGCManager {
     private var rxChar: CBCharacteristic?
     private var micChar: CBCharacteristic?
     private var isDisconnecting = false
+    private var scanRequested = false
+    private lazy var discovery = NimoDiscovery<CBPeripheral>(
+        register: { [weak self] in
+            #if os(iOS)
+                self?.centralManager?.registerForConnectionEvents(options: [.serviceUUIDs: [NimoBLE.SERVICE_UUID]])
+            #endif
+        }, connected: { [weak self] in
+            self?.centralManager?.retrieveConnectedPeripherals(withServices: [NimoBLE.SERVICE_UUID]) ?? []
+        }, scan: { [weak self] in
+            self?.centralManager?.scanForPeripherals(
+                withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+            )
+        }, stop: { [weak self] in
+            self?.centralManager?.stopScan()
+            #if os(iOS)
+                self?.centralManager?.registerForConnectionEvents(options: [:])
+            #endif
+        }, name: { $0.name }, found: { [weak self] peripheral, name, rssi in
+            self?.onDeviceFound(peripheral, name: name, rssi: rssi)
+        }
+    )
 
     /// Device search
     private var DEVICE_SEARCH_ID = "NOT_SET"
@@ -680,6 +697,8 @@ class Nimo: NSObject, SGCManager {
     func findCompatibleDevices() {
         Bridge.log("NIMO: findCompatibleDevices()")
         DEVICE_SEARCH_ID = "NOT_SET"
+        isDisconnecting = false
+        scanRequested = true
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.SCANNING)
         startScan()
     }
@@ -687,6 +706,7 @@ class Nimo: NSObject, SGCManager {
     func connectById(_ id: String) {
         Bridge.log("NIMO: connectById(\(id))")
         DEVICE_SEARCH_ID = id
+        scanRequested = true
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTING)
         isDisconnecting = false
         startPairingTimeout()
@@ -694,7 +714,8 @@ class Nimo: NSObject, SGCManager {
     }
 
     func stopScan() {
-        centralManager?.stopScan()
+        scanRequested = false
+        discovery.cancel()
     }
 
     func disconnect() {
@@ -1061,13 +1082,9 @@ class Nimo: NSObject, SGCManager {
 
     // MARK: - BLE Scanning
 
-    private func isNimoMainDevice(_ name: String) -> Bool {
-        let lower = name.lowercased()
-        return lower.hasPrefix(NimoBLE.NAME_PREFIX) && !lower.hasSuffix(NimoBLE.BLE_NAME_SUFFIX)
-    }
-
     @discardableResult
     private func startScan() -> Bool {
+        guard scanRequested, !isDisconnecting else { return false }
         Bridge.log("NIMO: startScan()")
         if centralManager == nil {
             centralManager = CBCentralManager(
@@ -1083,17 +1100,32 @@ class Nimo: NSObject, SGCManager {
 
         // Fast path: reconnect to the cached peripheral UUID.
         if connectByUUID() {
+            stopScan()
             return true
         }
 
-        centralManager!.scanForPeripherals(
-            withServices: nil,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
-        )
+        // NIMO's Companion service is GATT over BR/EDR. The main device must
+        // first be paired in Settings; it does not appear in a BLE-only scan.
+        discovery.start()
         return true
     }
 
+    private func onDeviceFound(_ peripheral: CBPeripheral, name: String, rssi: Int?) {
+        Bridge.log("NIMO: found Companion device: \(name)")
+        Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssi)
+        guard DEVICE_SEARCH_ID != "NOT_SET", name == DEVICE_SEARCH_ID,
+              self.peripheral == nil else { return }
+        Bridge.log("NIMO: Connecting to \(name)")
+        stopScan()
+        lastDeviceName = name
+        lastDeviceUUID = peripheral.identifier.uuidString
+        self.peripheral = peripheral
+        peripheral.delegate = self
+        centralManager?.connect(peripheral, options: nil)
+    }
+
     private func connectByUUID() -> Bool {
+        guard peripheral == nil else { return false }
         guard DEVICE_SEARCH_ID != "NOT_SET", !DEVICE_SEARCH_ID.isEmpty else { return false }
         guard lastDeviceName == DEVICE_SEARCH_ID,
               let uuidString = lastDeviceUUID,
@@ -1299,7 +1331,8 @@ class Nimo: NSObject, SGCManager {
                 }
                 Bridge.log("NIMO: Attempting reconnection...")
                 await MainActor.run {
-                    self.isDisconnecting = false
+                    guard !self.isDisconnecting else { return }
+                    self.scanRequested = true
                     self.startScan()
                 }
                 return false
@@ -1543,7 +1576,7 @@ class Nimo: NSObject, SGCManager {
         guard let opusDecoder else { return }
         for opusFrame in packet.opusFrames {
             if let pcm = opusDecoder.decode(opusFrame), !pcm.isEmpty {
-                DeviceManager.shared.handlePcm(pcm)
+                DeviceManager.shared.handleGlassesPcm(pcm)
             }
         }
     }
@@ -1564,36 +1597,28 @@ extension Nimo: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _ central: CBCentralManager,
+        _: CBCentralManager,
         didDiscover peripheral: CBPeripheral,
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
-        guard
-            let name = peripheral.name
-            ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        else { return }
+        let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let rssiValue = rssi.intValue
-
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard self.isNimoMainDevice(name) else { return }
-
-            Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssiValue)
-
-            guard self.DEVICE_SEARCH_ID != "NOT_SET" else { return }
-            guard name == self.DEVICE_SEARCH_ID else { return }
-            guard self.peripheral == nil else { return }
-
-            Bridge.log("NIMO: Connecting to \(name)")
-            self.stopScan()
-            self.lastDeviceName = name
-            self.lastDeviceUUID = peripheral.identifier.uuidString
-            self.peripheral = peripheral
-            peripheral.delegate = self
-            central.connect(peripheral, options: nil)
+            self?.discovery.receive(peripheral, advertisedName: advertisedName, rssi: rssiValue)
         }
     }
+
+    #if os(iOS)
+        nonisolated func centralManager(
+            _: CBCentralManager, connectionEventDidOccur event: CBConnectionEvent, for peripheral: CBPeripheral
+        ) {
+            guard event == .peerConnected else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.discovery.receive(peripheral)
+            }
+        }
+    #endif
 
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         DispatchQueue.main.async { [weak self] in

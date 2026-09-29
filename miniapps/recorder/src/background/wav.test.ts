@@ -1,6 +1,6 @@
 import {describe, expect, it} from "bun:test"
 
-import {buildInfoChunk, buildWavHeader, pcmDurationMs, pcmPeakLevel, u16le, u32le, WAV_HEADER_BYTES} from "./wav"
+import {buildInfoChunk, buildWavHeader, pcmDurationMs, pcmPeakLevel, pcmRmsLevel, u16le, u32le, WAV_HEADER_BYTES} from "./wav"
 
 const str = (h: Uint8Array, at: number, len: number) => String.fromCharCode(...Array.from(h.subarray(at, at + len)))
 const readU32 = (h: Uint8Array, at: number) => (h[at] | (h[at + 1] << 8) | (h[at + 2] << 16) | (h[at + 3] << 24)) >>> 0
@@ -91,5 +91,19 @@ describe("pcmDurationMs", () => {
     expect(pcmDurationMs(16000, 16000)).toBe(500)
     expect(pcmDurationMs(0, 16000)).toBe(0)
     expect(pcmDurationMs(100, 0)).toBe(0)
+  })
+})
+
+describe("pcmRmsLevel", () => {
+  it("preserves dynamic range between slices with the same peak", () => {
+    const transient = new Uint8Array(200)
+    transient.set([0, 128])
+    const sustained = new Uint8Array(200)
+    for (let i = 0; i < sustained.length; i += 2) sustained.set([0, 128], i)
+    expect(pcmPeakLevel(transient)).toBe(pcmPeakLevel(sustained))
+    expect(pcmRmsLevel(transient)).toBeCloseTo(0.1, 5)
+    expect(pcmRmsLevel(sustained)).toBe(1)
+    expect(pcmRmsLevel(new Uint8Array(200))).toBe(0)
+    expect(pcmRmsLevel(new Uint8Array())).toBe(0)
   })
 })

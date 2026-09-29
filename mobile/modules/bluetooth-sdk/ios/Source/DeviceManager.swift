@@ -318,9 +318,9 @@ struct ViewState {
     var lc3Converter: PcmConverter?
     /// Audio output format - defaults to LC3 for bandwidth savings
     private var audioOutputFormat: AudioOutputFormat = .lc3
-    /// Last time we received an LC3 frame from the glasses (used by the mic
-    /// inactivity watchdog).
-    private var lastLc3Event: Date?
+    private var micWatchdog = GlassesMicWatchdog()
+    // Injectable monotonic clock so recovery deadlines can be tested without sleeping.
+    var micWatchdogNow: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private var sequenceGapEvents: Int64 = 0
     private var decodeFailures: Int64 = 0
     private var lastLc3ReceivedAt: Int64?
@@ -330,7 +330,7 @@ struct ViewState {
 
     /// STT:
     #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
-    private var transcriber: SherpaOnnxTranscriber?
+    private let transcriber = SherpaOnnxTranscriber()
     #endif
 
     var viewStates: [ViewState] = [
@@ -382,24 +382,6 @@ struct ViewState {
 
         // Start memory monitoring (logs every 30s to help detect leaks)
         // MemoryMonitor.start()
-
-        // Initialize SherpaOnnx Transcriber
-        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
-           let rootViewController = window.rootViewController
-        {
-            transcriber = SherpaOnnxTranscriber(context: rootViewController)
-        } else {
-            Bridge.log("Failed to create SherpaOnnxTranscriber - no root view controller found")
-        }
-
-        // Initialize the transcriber
-        if let transcriber = transcriber {
-            transcriber.initialize()
-            Bridge.log("SherpaOnnxTranscriber fully initialized")
-        }
-        #endif
 
         // Initialize persistent LC3 converter for unified audio encoding
         lc3Converter = PcmConverter()
@@ -472,8 +454,15 @@ struct ViewState {
     }
 
     func reportGlassesAudioActivity() {
-        lastLc3Event = Date()
+        micWatchdog.receivedAudio(at: micWatchdogNow())
         lastPcmProducedAt = nowMs()
+    }
+
+    /// Decoded glasses audio must update recovery health; phone PCM must not.
+    func handleGlassesPcm(_ pcmData: Data) {
+        guard !pcmData.isEmpty else { return }
+        reportGlassesAudioActivity()
+        handlePcm(pcmData)
     }
 
     private func micHealth() -> MicHealth {
@@ -499,13 +488,13 @@ struct ViewState {
         lastLc3ReceivedAt = nil
         lastPcmProducedAt = nil
         lastLc3Sequence = nil
-        lastLc3Event = nil
+        micWatchdog = GlassesMicWatchdog()
     }
 
     private func recordLc3Packet(sequenceNumber: Int?) {
         let receivedAt = nowMs()
         lastLc3ReceivedAt = receivedAt
-        lastLc3Event = Date()
+        micWatchdog.receivedAudio(at: micWatchdogNow())
         var hasGap = false
         if let sequenceNumber {
             let normalized = sequenceNumber & 0xFF
@@ -535,7 +524,7 @@ struct ViewState {
         // Send PCM to local transcriber.
 #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         if shouldSendTranscript || localSttFallbackActive {
-            transcriber?.acceptAudio(pcm16le: pcmData)
+            transcriber.acceptAudio(pcm16le: pcmData)
         }
 #endif
     }
@@ -605,6 +594,7 @@ struct ViewState {
         }
 
         currentMic = micUsed
+        updateGlassesMicExpectation()
 
         // log if no mic was found:
         if micUsed == "" && micEnabled {
@@ -723,6 +713,7 @@ struct ViewState {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
             sgc?.cleanup()
             sgc = nil
+            DeviceStore.shared.apply("glasses", "micEnabled", false)
             resetSystemTimeSync()
         }
 
@@ -902,27 +893,20 @@ struct ViewState {
         return result
     }
 
-    private func checkAndReinitGlassesMic() {
-        // if the glasses mic is marked as enabled (and the glasses are connected), but our last known lc3 event is from > 5 seconds ago, reinitialize the mic:
-        let glassesMicEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-        let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
-        if !glassesMicEnabled || !glassesConnected {
-            return
-        }
+    private func updateGlassesMicExpectation() {
+        // Demand/route and device readiness decide whether audio is expected. The
+        // shared micEnabled flag alone is not evidence of a running hardware stream.
+        let expected = micEnabled && currentMic == MicTypes.GLASSES_CUSTOM
+            && sgc?.fullyBooted == true && sgc?.hasMic == true
+            && sgc?.isMicSuspendedForAudio != true
+            && !PhoneAudioMonitor.getInstance().isOwnAppAudioPlaying()
+        micWatchdog.expectAudio(expected, at: micWatchdogNow())
+    }
 
-        if sgc?.isMicSuspendedForAudio == true {
-            Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
-            return
-        }
-
-        if PhoneAudioMonitor.getInstance().isOwnAppAudioPlaying() {
-            Bridge.log("MAN: Mentra audio is playing; skipping glasses mic recovery")
-            return
-        }
-
-        let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
-        if timeSinceLastLc3Event > 5 {
-            Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
+    func checkAndReinitGlassesMic() {
+        updateGlassesMicExpectation()
+        if micWatchdog.shouldRetry(at: micWatchdogNow()) {
+            Bridge.log("MAN: Expected glasses audio missing for 5 seconds; retrying mic start")
             sgc?.setMicEnabled(true)
         }
     }
@@ -982,7 +966,7 @@ struct ViewState {
     func restartTranscriber() {
         #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
-        transcriber?.restart()
+        transcriber.restart()
         #else
         Bridge.log("MAN: Local STT is not included in this SwiftPM build")
         #endif
@@ -1065,6 +1049,11 @@ struct ViewState {
         }
         #endif
         checkCurrentAudioDevice()
+
+        // Disconnect clears micEnabled but preserves the consumers' audio requests.
+        // Recompute demand before selecting a microphone; unchanged requests are
+        // deduplicated by DeviceStore.apply().
+        setMicState()
 
         // save the default_wearable now that we're connected:
         Bridge.saveSetting("default_wearable", defaultWearable)
@@ -1755,6 +1744,9 @@ struct ViewState {
     func setMicState() {
         let willSendPcm = shouldSendPcm || shouldSendLc3
         let willSendTranscript = shouldSendTranscript || localSttFallbackActive
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
+        transcriber.setActive(willSendTranscript)
+        #endif
         micEnabled = willSendPcm || willSendTranscript
         updateMicState()
     }
@@ -1960,6 +1952,9 @@ struct ViewState {
         sgc?.clearDisplay() // clear the screen
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect
+        // This cache belongs to the discarded connection. Keep consumer demand,
+        // but require a new mic-enable command when replacement glasses are ready.
+        DeviceStore.shared.apply("glasses", "micEnabled", false)
         resetSystemTimeSync()
         resetMicHealth()
         searching = false
@@ -2070,8 +2065,7 @@ struct ViewState {
         #endif
         // Clean up transcriber resources
 #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
-        transcriber?.shutdown()
-        transcriber = nil
+        transcriber.shutdown()
 #endif
 
         // Clean up LC3 converter

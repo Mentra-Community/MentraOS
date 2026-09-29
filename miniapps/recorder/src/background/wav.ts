@@ -151,6 +151,19 @@ export function pcmPeakLevel(bytes: Uint8Array): number {
   return Math.min(1, peak / 32768)
 }
 
+/** Energy of this PCM slice, without smoothing across time or peak-hold. */
+export function pcmRmsLevel(bytes: Uint8Array): number {
+  const count = Math.floor(bytes.length / 2)
+  if (count === 0) return 0
+  let sumSquares = 0
+  for (let i = 0; i < count * 2; i += 2) {
+    let sample = bytes[i] | (bytes[i + 1] << 8)
+    if (sample >= 0x8000) sample -= 0x10000
+    sumSquares += sample * sample
+  }
+  return Math.sqrt(sumSquares / count) / 32768
+}
+
 /** ms of 16-bit mono PCM for `pcmBytes` at `sampleRate`. */
 export function pcmDurationMs(pcmBytes: number, sampleRate: number): number {
   if (sampleRate <= 0) return 0
