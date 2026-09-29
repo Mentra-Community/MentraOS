@@ -25,6 +25,20 @@ class DeviceManagerSceneHandoffTest {
     @Before fun setup() { Bridge.initialize(ApplicationProvider.getApplicationContext()) }
 
     @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun delayedReconnectReplayPreservesNimoDepthEndpoints() {
+        for (depth in listOf(0, 10)) {
+            withReadyRecordingDevice { manager, device, _ ->
+                DeviceStore.set("bluetooth", "dashboard_height", 7)
+                DeviceStore.set("bluetooth", "dashboard_depth", depth)
+                manager.handleDeviceReady()
+                assertTrue(device.positions.isEmpty())
+                Shadows.shadowOf(Looper.getMainLooper()).idleFor(2, TimeUnit.SECONDS)
+                assertEquals(listOf(7 to depth), device.positions)
+            }
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
     fun reconnectRestoresUnchangedAudioRequests() {
         for (request in listOf("should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active")) {
             withReadyRecordingDevice { manager, original, _ ->
@@ -592,6 +606,7 @@ class DeviceManagerSceneHandoffTest {
         val micChanges = mutableListOf<Boolean>()
         val calls = CopyOnWriteArrayList<String>()
         val brightnessCalls = mutableListOf<String>()
+        val positions = mutableListOf<Pair<Int, Int>>()
         val textSent = CountDownLatch(1)
         var lastTextNanos = 0L
         var lastClearNanos = 0L
@@ -622,7 +637,7 @@ class DeviceManagerSceneHandoffTest {
         override fun sendDoubleTextWall(top: String, bottom: String) {}
         override fun displayBitmap(base64ImageData: String, x: Int?, y: Int?, width: Int?, height: Int?) = true
         override fun showDashboard() {}
-        override fun setDashboardPosition(height: Int, depth: Int) {}
+        override fun setDashboardPosition(height: Int, depth: Int) { positions += height to depth }
         override fun setHeadUpAngle(angle: Int) {}
         override fun getBatteryStatus() {}
         override fun setSilentMode(enabled: Boolean) {}

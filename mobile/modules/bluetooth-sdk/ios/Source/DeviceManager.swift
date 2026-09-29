@@ -1008,7 +1008,7 @@ struct ViewState {
             let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
             // Fall back to the canonical default (2), matching DeviceStore, not 1.
             let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2
-            let d = min(max(rawDepth, 1), 4)
+            let d = sgc.type == DeviceTypes.NIMO ? min(max(rawDepth, 0), 10) : min(max(rawDepth, 1), 4)
             sgc.setDashboardPosition(h, d)
         }
 

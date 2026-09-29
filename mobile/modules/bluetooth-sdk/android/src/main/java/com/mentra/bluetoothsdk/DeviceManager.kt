@@ -1540,6 +1540,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         // re-apply display height/depth after reconnection
         mainHandler.postDelayed(
             {
+                val device = sgc ?: return@postDelayed
                 val h =
                     (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
                         ?.toInt()
@@ -1548,8 +1549,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
                     (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
                         ?.toInt()
                         ?: dashboardDepth // canonical default (2), not 1
-                val d = rawDepth.coerceIn(1, 4)
-                sgc?.setDashboardPosition(h, d)
+                val d = if (device.type == DeviceTypes.NIMO) rawDepth.coerceIn(0, 10) else rawDepth.coerceIn(1, 4)
+                device.setDashboardPosition(h, d)
             },
             2000
         )
