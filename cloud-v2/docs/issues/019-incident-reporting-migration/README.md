@@ -53,6 +53,12 @@ logs and screenshots.
 
 ## Slack routing
 
+The admin list API keeps `kind=bug|feedback|automatic` as a stored-kind filter,
+including internal and harness submissions. The dashboard uses the separate
+`category=bug|feedback|internal|testing|automatic` filter to partition triage views.
+When both are provided, both must match. Console MCP `report_list` accepts both
+filters, and `fetch-incident-logs.sh --list` exposes `--kind` and `--category`.
+
 Notifications use the same category precedence as the admin dashboard:
 
 | Category | Rule | Channel | Bot destination env var |

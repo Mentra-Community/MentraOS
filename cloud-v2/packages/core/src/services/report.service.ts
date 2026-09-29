@@ -401,8 +401,9 @@ export interface AdminReportAsset {
 }
 
 export interface ListReportsFilter {
+  kind?: ReportKind;
   // Internal and Testing are triage categories, not submitted/stored report kinds.
-  kind?: ReportCategory;
+  category?: ReportCategory;
   status?: ReportStatus;
   limit?: number;
   before?: Date;
@@ -410,19 +411,23 @@ export interface ListReportsFilter {
 
 export async function listReports(filter: ListReportsFilter = {}): Promise<AdminReportSummary[]> {
   const query: Record<string, unknown> = {};
-  if (filter.kind) {
+  if (filter.kind) query.kind = filter.kind;
+  if (filter.category) {
+    const category: Record<string, unknown> = {};
     // The incident automation contract uses this trigger source.
     // Apply category membership before the database limit, including old reports.
-    query["trigger.source"] = filter.kind === "testing"
+    category["trigger.source"] = filter.category === "testing"
       ? REPORT_TESTING_SOURCE
       : { $ne: REPORT_TESTING_SOURCE };
-  }
-  if (filter.kind === "automatic") {
-    query.kind = "automatic";
-  } else if (filter.kind && filter.kind !== "testing") {
-    const internalUserIds = await internalReporterIds();
-    query.mentraUserId = filter.kind === "internal" ? { $in: internalUserIds } : { $nin: internalUserIds };
-    query.kind = filter.kind === "internal" ? { $in: ["bug", "feedback"] } : filter.kind;
+    if (filter.category === "automatic") {
+      category.kind = "automatic";
+    } else if (filter.category !== "testing") {
+      const internalUserIds = await internalReporterIds();
+      category.mentraUserId = filter.category === "internal" ? { $in: internalUserIds } : { $nin: internalUserIds };
+      category.kind = filter.category === "internal" ? { $in: ["bug", "feedback"] } : filter.category;
+    }
+    // Compose with a supplied stored kind instead of replacing its predicate.
+    query.$and = [category];
   }
   if (filter.status) query.status = filter.status;
   if (filter.before) query.createdAt = { $lt: filter.before };

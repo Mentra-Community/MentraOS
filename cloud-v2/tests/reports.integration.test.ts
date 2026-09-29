@@ -452,7 +452,7 @@ describe("report Slack notifications", () => {
       expect(slackCalls[0]!.payload.channel).toBe(`C_${scenario.channel.toUpperCase()}`);
       // Exercise the database filters and the notifier against the same trusted directory.
       for (const kind of ["bug", "feedback", "internal", "automatic", "testing"] as const) {
-        const ids = (await listReports({ kind })).map(report => report.reportId);
+        const ids = (await listReports({ category: kind })).map(report => report.reportId);
         expect(ids.includes(reportId)).toBe(kind === scenario.category);
       }
     });
