@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isOriginalCandidate, type ContinuationCandidate, type ContinuationExecutionDestination, type ContinuationGrant } from "../types/test-continuation.types";
-import type { TestBuildQuery } from "../types/test-dispatch.types";
+import { recordedAppPublicationSchema, type RecordedAppPublication, type TestBuildQuery } from "../types/test-dispatch.types";
 import { TestDispatchError, UnsupportedReplayError, readTestMetadata } from "./test-builds.service";
 import { TestRunGithubApp } from "./test-run-github-app";
 import type { TestRunService } from "./test-run.service";
@@ -15,6 +15,7 @@ export interface ContinuationTarget {
   /** Original target only: the exact recorded artifact and the request that selected it.
    * Requests are never adopted, so the original (or any earlier) one cannot stand in for the rerun. */
   original?: { archiveSha256: string; requestRunId: number };
+  localPublication?: RecordedAppPublication & { channel: "dev" | "staging" };
 }
 export interface ContinuationSourceGateway {
   target(packet: FailurePacket, grant: ContinuationGrant, routineId: string): Promise<ContinuationTarget>;
@@ -49,13 +50,19 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     ensure(source?.repository === PUBLIC, "Recorded app source provenance is required");
     const candidate = grant.candidate;
     const harness = candidate.repository === HARNESS;
-    // An authenticated local run keeps its local provenance. Rerunning its exact tested app build (the
-    // original target, or a harness candidate on that build) needs an immutable published artifact and
-    // dispatch path, which a local run does not have. That is a capability limit, not a trust failure:
-    // investigation, fix PRs and app candidate CI verification on the recorded branch remain available.
-    if (source!.channel === "local" && (isOriginalCandidate(candidate) || harness))
-      throw new UnsupportedReplayError("Unsupported replay: a local run has no immutable published artifact or dispatch path "
-        + "for its exact tested build. Investigate from its evidence and verify app fixes on their own PR builds.");
+    // A local failure has no consumed CI request. A harness fix may instead use
+    // its explicitly recorded app publication, independently verified below by
+    // the build gateway; the original occurrence and source stay unchanged.
+    let localPublication: ContinuationTarget["localPublication"];
+    if (source!.channel === "local" && (isOriginalCandidate(candidate) || harness)) {
+      if (isOriginalCandidate(candidate)) throw new UnsupportedReplayError("Unsupported replay: a local original target has no recorded CI request to replay");
+      const publication = recordedAppPublicationSchema.safeParse(packet.build.recordedAppPublication);
+      if (packet.sourceStatus !== "recorded" || !["ios-mac", "ios-on-mac"].includes(packet.platform) || !["dev", "staging"].includes(source!.branch)
+        || packet.routine.id !== routineId || !publication.success)
+        throw new UnsupportedReplayError("Local harness verification requires the recorded Mac app producer, executable and JavaScript hashes, "
+          + "and the same routine on a dev or staging source branch");
+      localPublication = { ...publication.data, channel: source!.branch as "dev" | "staging" };
+    }
     const destination = grant.executionDestination;
     ensure(!destination || (!isOriginalCandidate(candidate) && !harness && !grant.caseBinding),
       "An execution destination applies only to this case's own app candidate");
@@ -90,9 +97,10 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
       const ref = z.object({ ref: z.literal("refs/heads/main"), object: z.object({ type: z.literal("commit"), sha }) }).parse(
         await this.api(HARNESS, "git/ref/heads/main"));
       ensure(ref.object.sha === pr.merge_commit_sha, "Private main changed; qualify an explicitly reviewed worker revision");
-      return { query: source!.channel === "pr" ? { channel: "pr", pr: source!.pullRequest!.number }
+      return { query: localPublication ? { channel: localPublication.channel } : source!.channel === "pr" ? { channel: "pr", pr: source!.pullRequest!.number }
         : { channel: source!.channel as "dev" | "staging" }, expectedHeadSha: source!.headSha,
-        expectedHarnessSha: pr.merge_commit_sha!, requestNotBefore: pr.merged_at!, automaticExpected: false };
+        expectedHarnessSha: pr.merge_commit_sha!, requestNotBefore: pr.merged_at!, automaticExpected: false,
+        ...(localPublication ? { localPublication } : {}) };
     }
     if (pr.merged) {
       ensure(pr.merge_commit_sha, "Merged candidate has no merge commit");

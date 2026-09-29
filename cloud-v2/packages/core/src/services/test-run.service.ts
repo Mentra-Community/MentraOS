@@ -6,6 +6,7 @@ import { z } from "zod";
 import { TEST_RUN_COMPLETION_INDEX, TestAssetModel, TestRunModel } from "../models/test-run.model";
 import { testFailureOccurrenceIdSchema, type TestFailureOccurrence, type TestFailureProvenanceCorrection } from "../types/test-failure.types";
 import { testRunIdSchema, testRunSchema, type TestAsset, type TestRun, type TestRunQuery } from "../types/test-run.types";
+import { recordedAppPublicationSchema } from "../types/test-dispatch.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
 import { createStorageService, type StorageService } from "./storage/storage.service";
 import { ByteRangeError, parseSingleByteRange } from "./storage/byte-range";
@@ -325,12 +326,20 @@ export class TestRunService {
       && /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(value)));
     const workflowUrl = (value: string | undefined) => value && /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/\d+(\/attempts\/\d+)?$/.test(value) ? value : null;
     const relatedRunId = (value: string | undefined) => testRunIdSchema.safeParse(value).success ? value! : null;
+    // Only this explicit app producer field is a publication hint. A local test
+    // remains local; neither a harness workflow nor a free-form URL is promoted.
+    const producer = /^https:\/\/github\.com\/Mentra-Community\/MentraOS\/actions\/runs\/([1-9]\d*)(?:\/attempts\/([1-9]\d*))?$/.exec(run.provenance.appActionsRunUrl ?? "");
+    const publication = producer && run.source?.channel === "local" ? recordedAppPublicationSchema.safeParse({
+      producerRunId: Number(producer[1]), ...(producer[2] ? { publicationAttempt: Number(producer[2]) } : {}),
+      executableSha256: run.provenance.appExecutableSha256, javascriptSha256: run.provenance.appJavascriptSha256,
+    }) : null;
     return { schemaVersion: 1 as const, occurrenceId, revision: occurrence.revision,
       testRunId: run.runId, requestId: run.requestId, payloadSha256,
       routine: { id: run.routineId, version: run.routineVersion }, platform: run.platform,
       source, sourceStatus: run.source ? "recorded" as const : correction ? "corrected" as const : "missing" as const,
       build: { channel: run.channel, prNumber: run.prNumber ?? null, hashes,
-        requestUrl: workflowUrl(run.provenance.requestUrl), producerUrl: workflowUrl(run.provenance.producerUrl) },
+        requestUrl: workflowUrl(run.provenance.requestUrl), producerUrl: workflowUrl(run.provenance.producerUrl),
+        ...(publication?.success ? { recordedAppPublication: publication.data } : {}) },
       recovery: { originalRunId: relatedRunId(run.provenance.originalRunId), previousResultRunId: relatedRunId(run.provenance.previousResultRunId) },
       originalOutcome: run.outcome, outcomes: run.outcomes,
       failure: { ...occurrence.failure, ...(correction ? bindings : {}), missingEvidence: [

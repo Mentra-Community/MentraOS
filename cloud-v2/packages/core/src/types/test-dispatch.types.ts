@@ -10,6 +10,15 @@ export const testBuildSourceSchema = z.discriminatedUnion("channel", [
   z.object({ channel: z.literal("dev"), buildRunId: positive, publicationAttempt: positive }).strict(),
   z.object({ channel: z.literal("staging"), buildRunId: positive, publicationAttempt: positive }).strict(),
 ]);
+/** Publisher-recorded app identity, separate from the local test's origin. The
+ * producer is only a lookup hint until its published receipt matches both bytes. */
+export const recordedAppPublicationSchema = z.object({
+  producerRunId: positive,
+  publicationAttempt: positive.optional(),
+  executableSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  javascriptSha256: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+export type RecordedAppPublication = z.infer<typeof recordedAppPublicationSchema>;
 export const testDispatchInputSchema = z.object({
   source: testBuildSourceSchema,
   routineId: testRoutineIdSchema,
@@ -75,6 +84,7 @@ export interface TestBuild {
   archive?: { name: string; sha256: string; size: number };
   receiptSha256?: string;
   manifestSha256?: string;
+  app?: { executableSha256: string; javascriptSha256: string };
   routines: { id: TestRoutineId; available: boolean; reason?: string }[];
 }
 

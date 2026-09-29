@@ -203,3 +203,41 @@ test("an authenticated local source is an unsupported replay, not an invalid sou
   const other = fixture(); other.packet.source = { ...other.packet.source!, repository: "someone/else" as typeof PUB };
   await expect(other.gateway.target(other.packet, other.grant, "no-glasses")).rejects.toMatchObject({ status: 409 });
 });
+
+test("local Notes uses its recorded publication only after the exact harness candidate is merged", async () => {
+  // Selected identity from the real local dev468 Notes packet; no CI request is invented.
+  const publication = { producerRunId: 36496912774,
+    executableSha256: "3cd22e5a9ec9b62c55d0cf79df0aec71c721c3110e712127b3c131a46b4f1842",
+    javascriptSha256: "f3bd02020c7b5d4d44d7768888be90e549ebdf15526e14c65532dcc990a8c423" };
+  const setup = (channel: "dev" | "staging" = "dev") => {
+    const f = fixture(true);
+    f.packet.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: channel,
+      headSha: "d6c74c857015fac95fbc6195dbf009acfab65eeb" };
+    f.packet.sourceStatus = "recorded"; f.packet.platform = "ios-mac";
+    f.packet.routine = { id: "notes-phone", version: "1" }; f.packet.build.recordedAppPublication = publication;
+    f.packet.requestId = "notes-phone-22c2da8c-b863-4a03-b37f-4780f49d7fa0";
+    f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-29T13:00:00Z";
+    return f;
+  };
+  for (const channel of ["dev", "staging"] as const) {
+    const f = setup(channel), before = structuredClone(f.packet);
+    expect(await f.gateway.target(f.packet, f.grant, "notes-phone")).toEqual({ query: { channel },
+      expectedHeadSha: f.packet.source!.headSha, expectedHarnessSha: merged, requestNotBefore: f.pr.merged_at!,
+      automaticExpected: false, localPublication: { ...publication, channel } });
+    expect(f.packet).toEqual(before);
+  }
+  for (const mismatch of ["missing", "bad-hash", "extra", "corrected", "platform", "branch", "routine", "unmerged", "main", "ancestry"]) {
+    const f = setup();
+    if (mismatch === "missing") delete f.packet.build.recordedAppPublication;
+    if (mismatch === "bad-hash") f.packet.build.recordedAppPublication = { ...publication, executableSha256: "bad" };
+    if (mismatch === "extra") f.packet.build.recordedAppPublication = { ...publication, arbitraryUrl: "https://other.invalid" } as typeof publication;
+    if (mismatch === "corrected") f.packet.sourceStatus = "corrected";
+    if (mismatch === "platform") f.packet.platform = "android";
+    if (mismatch === "branch") f.packet.source!.branch = "feature";
+    if (mismatch === "routine") f.packet.routine.id = "captions-phone";
+    if (mismatch === "unmerged") f.pr.merged = false;
+    if (mismatch === "main") f.moveMain();
+    if (mismatch === "ancestry") f.diverged();
+    await expect(f.gateway.target(f.packet, f.grant, "notes-phone")).rejects.toThrow();
+  }
+});

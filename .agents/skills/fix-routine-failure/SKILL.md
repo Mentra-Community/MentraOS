@@ -97,10 +97,15 @@ repair to unlock a rerun.
   original uses its exact retained build. If the controller refuses the rerun,
   record the refusal; do not work around it.
 - **Local original.** A local run keeps its recorded local provenance and
-  branch. It has no immutable published build to replay, so an original rerun
-  returns `unsupported_replay`. That is a capability limit, not a bad source:
-  keep investigating from its evidence, and open and verify fixes on their own
-  PR builds as usual.
+  branch. It has no consumed CI request, so the original-target rerun returns
+  `unsupported_replay`. A merged private harness fix can use the same routine
+  on an existing dev or staging Mac publication when the original packet
+  recorded its app producer and executable/JavaScript hashes. Core verifies
+  that exact publication and both hashes before offering it; it never picks a
+  newer build or rewrites the local failure as CI. Missing or mismatched proof
+  remains a capability refusal. Use the normal build lookup and request, never
+  invent a request ID or add provenance yourself. App fixes still verify on
+  their own PR builds as usual.
 - **State-only repair.** When the machine or fixture state is wrong, request
   the controller's registered repair: one of the named owned recovery
   operations for that routine. Each is sent at most once. An in-flight or

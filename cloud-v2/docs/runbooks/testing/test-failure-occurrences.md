@@ -62,6 +62,39 @@ A non-passing legacy result gets an `unknown` phase occurrence with explicit mis
 
 Agent routes require a short-lived occurrence/environment-bound read capability, not an Admin session, ingest token or general report token. `signTestFailureReadGrant` defines the controller-side format. It uses the existing action signing secret; the master secret must never reach a coding CLI. A future assigned-worker controller issues a five-minute capability only to the active owner; capabilities are not stored in cases, queue payloads or events. Reads reject expired, cross-environment and cross-occurrence capabilities. There is no agent inventory or mutation endpoint.
 
+## Verify a harness fix for a local failure
+
+A local Mac run may use an immutable published dev or staging app without
+consuming a CI request. For that case, the publisher can record
+`appActionsRunUrl` (the exact MentraOS Actions producer, optionally with
+`/attempts/N`), `appExecutableSha256` and `appJavascriptSha256` in the original
+run's provenance. The assigned detail exposes only the validated producer ID,
+optional attempt and hashes as `build.recordedAppPublication`; this is a lookup
+hint, not a claim that publication or execution was verified.
+
+For a private harness candidate, Core still verifies the case branch, tested
+harness ancestry, merged PR and exact current private main. It then resolves
+only that recorded producer through the existing coordinated-release validator:
+repository, workflow, source commit, dev/staging backend, publication attempt,
+immutable receipt, both installed app hashes and archive availability must agree.
+The same recorded routine is required. No latest-build substitution or fabricated
+original CI request is allowed. A result missing this recorded proof remains
+unsupported; a provenance correction does not grant this path.
+
+The ordinary continuation request stores the local occurrence/agent/candidate
+binding, the selected published artifact and expected merged harness revision.
+The new request is a real dev/staging request; the original result, local source,
+outcome and ACK remain immutable. Existing idempotency, attempt budget, lease
+check and registered-result correlation apply, including refusal of results from
+a different worker revision.
+
+`TEST_RUN_DISPATCH_CHANNELS` and `TEST_RUN_DISPATCH_ROUTINES` still control
+configured availability and return their existing refusal reasons. Registration
+does not prove that a live worker is enrolled: normal runner labels, exact recipe
+and worker revision, fixture admission and return checks remain required. A
+missing runner can leave an ordinary request queued; this binding does not add
+an enrollment API, bypass retained ownership or dispatch a device by itself.
+
 ## Deliver references to the existing queue
 
 Delivery is opt-in, with `CLOUD_TEST_FAILURE_DELIVERY_ENABLED=true`. Other settings reuse the existing integration:
