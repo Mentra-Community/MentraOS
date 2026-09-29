@@ -65,7 +65,9 @@ export function matchingFixActivity(stored: StoredTestRun, occurrence: TestFailu
   if (!activity.executionOwnerRunId && (activity.executionOwnerStatus || activity.executionOwnerStatusLabel
     || activity.executionOwnerUpdatedAt || activity.executionOwnerHeartbeatAt || activity.executionOwnerTriage
     || activity.executionOwnerWorkerLease || activity.executionOwnerProgressPhase)) return null;
-  if (activity.executionOwnerRunId && (activity.executionOwnerRunId !== acknowledged || !activity.executionOwnerStatus)) return null;
+  if (activity.executionOwnerRunId && (!activity.executionOwnerStatus
+    || (activity.executionOwnerRunId !== acknowledged && (acknowledged !== activity.runId
+      || activity.routineCase?.anchorRunId !== activity.executionOwnerRunId)))) return null;
   if (activity.runId !== acknowledged && (!activity.executionOwnerRunId || !activity.routineCase
     || activity.routineCase.anchorRunId !== acknowledged)) return null;
   return activity;

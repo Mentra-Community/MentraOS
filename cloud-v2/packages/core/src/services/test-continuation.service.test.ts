@@ -72,6 +72,23 @@ function fixture(incidents?: IncidentReportStore) {
     claim: (value: typeof claim) => { claim = value; }, results: (additional: typeof result[] = []) => { extraResults = additional; ids = [result.runId, ...additional.map(item => item.runId)]; },
     existing: () => { existing = { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; } };
 }
+test.each(["22222222-2222-4222-8222-222222222222", "run_linked_123"])("a signed continuation retains the original %s ACK distinct from the editor", async acknowledgedAgentRunId => {
+  const f = fixture();
+  f.packet.delivery = { state: "acknowledged", agentRunId: acknowledgedAgentRunId, acknowledgedAt: new Date().toISOString() };
+  const linked = { ...grant, acknowledgedAgentRunId };
+  expect(verifyTestContinuationGrant(signTestContinuationGrant(linked, secret), occurrenceId, secret, "dev")).toEqual(linked);
+  expect(() => signTestContinuationGrant({ ...linked, acknowledgedAgentRunId: "invalid/id" }, secret)).toThrow();
+  expect((await acknowledgedCase(f.runs, linked)).delivery).toMatchObject({ state: "acknowledged", agentRunId: acknowledgedAgentRunId });
+  await expect(acknowledgedCase(f.runs, grant)).rejects.toThrow("acknowledged case");
+  await expect(acknowledgedCase(f.runs, { ...linked, acknowledgedAgentRunId: "33333333-3333-4333-8333-333333333333" }))
+    .rejects.toThrow("acknowledged case");
+  await f.service.request(linked, input);
+  expect(f.sends()).toBe(1);
+  expect(f.leaseChecks.every(value => value.agentRunId === grant.agentRunId && value.acknowledgedAgentRunId === acknowledgedAgentRunId)).toBe(true);
+  const stopped = fixture(); stopped.packet.delivery = f.packet.delivery; stopped.loseLease();
+  await expect(stopped.service.request(linked, input)).rejects.toThrow("Stale lease");
+  expect(stopped.sends()).toBe(0);
+});
 test("capability signature, expiry, environment, purpose and occurrence are bound", () => {
   const token = signTestContinuationGrant(grant, secret);
   expect(verifyTestContinuationGrant(token, occurrenceId, secret, "dev")).toEqual(grant);
