@@ -385,11 +385,12 @@ describe("physical glasses pairs beside phones and the Mac lane", () => {
     expect(pairDuring.visible).toContain("mentra-mac-mini · Glasses pair 54f6abd2d6d4 (03BE) Reserved, idle");
     expect(pairDuring.visible).toContain("Phone Held with Android phone lane 03BE by the same run at their last reports.");
     expect(phoneDuring.visible).toContain("Glasses Held with glasses pair 54f6abd2d6d4 by the same run at their last reports.");
-    expect(macDuring.visible).toContain("Blocked");
-    expect(macDuring.visible).toContain("Status No Mac app owner, but 1 glasses pair lease is held. A Mac app routine cannot start until it is released.");
+    expect(macDuring.visible).toContain("Available");
+    expect(macDuring.visible).not.toContain("Blocked");
+    expect(macDuring.visible).toContain("1 glasses pair is in use. A routine selecting another pair still needs that pair and the Mac lane to be ready. App entry without an identified pair must wait.");
     expect(macDuring.details).toContain("Held pair leases at this report: 54f6abd2d6d4.");
 
-    // Between commands: the phone lock is absent, so the phone card is free; the pair and the Mac exclusion stay held.
+    // Between commands the phone and Mac are free; the selected pair stays held and unidentified entry still waits.
     const between = render(await overview([
       { hostId: host, observation: macFree(held(["54f6abd2d6d4"])), ago: 5_000 },
       phoneIdleReport(5_000),
@@ -400,7 +401,8 @@ describe("physical glasses pairs beside phones and the Mac lane", () => {
     expect(phoneBetween.visible).toContain("Glasses A glasses pair on this host is held; whether it is used with this phone is not reported.");
     expect(pairBetween.visible).toContain("Reserved, idle"); expect(pairBetween.visible).toContain("Phone Not reported. A pair lease names its run, not a phone.");
     expect(pairBetween.visible).toContain("Queue CI requests are not queued per glasses pair.");
-    expect(parts(between, host).visible).toContain("Blocked");
+    expect(parts(between, host).visible).toContain("Available");
+    expect(parts(between, host).visible).toContain("App entry without an identified pair must wait.");
     expect(text(section(between, "Test lanes"))).not.toContain("3 available");
 
     // Normal return: fresh absent reports replace the held rows.
@@ -451,7 +453,7 @@ describe("physical glasses pairs beside phones and the Mac lane", () => {
       "recovery-required": "Next Recover the fixture and publish verified return evidence before routines use it." } as const;
     for (const status of ["busy", "recovery-required"] as const) {
       for (const [glassesLeases, alongside, detail] of [
-        [held(["0123456789ab", "54f6abd2d6d4"]), "A Mac app routine also cannot start while 2 glasses pair leases are held.", "Held pair leases at this report: 0123456789ab, 54f6abd2d6d4."],
+        [held(["0123456789ab", "54f6abd2d6d4"]), "2 glasses pairs are in use. A routine selecting another pair still needs that pair and the Mac lane to be ready. App entry without an identified pair must wait.", "Held pair leases at this report: 0123456789ab, 54f6abd2d6d4."],
         [{ state: "unreadable" as const }, "The glasses pair leases could not be read either, so a Mac app routine may also be refused.",
           "The glasses pair leases could not be read at this report."],
       ] as const) {
@@ -467,8 +469,8 @@ describe("physical glasses pairs beside phones and the Mac lane", () => {
         expect(text(section(html, "Test lanes"))).toContain("1 recovery required");
       }
     }
-    // With a ready fixture the lease exclusion itself remains the Mac lane's blocker.
-    expect(parts(render(await overview([{ hostId: host, observation: macFree(held(["54f6abd2d6d4"])), ago: 5_000 }])), host).visible).toContain("Blocked");
+    // A ready Mac fixture remains available independently; held-pair admission is still explained.
+    expect(parts(render(await overview([{ hostId: host, observation: macFree(held(["54f6abd2d6d4"])), ago: 5_000 }])), host).visible).toContain("Available");
   });
 
   test("stale, retained, unreadable and unreported physical state stays explicit", async () => {
@@ -487,5 +489,31 @@ describe("physical glasses pairs beside phones and the Mac lane", () => {
     // An older producer reports no pair leases: its behavior is unchanged and the gap is stated in the details.
     const legacy = parts(html, "mini-legacy");
     expect(legacy.visible).toContain("Available"); expect(legacy.details).toContain("Glasses pair leases were not reported by this host's version.");
+  });
+
+  test("an independent Mac lane stays free while its selected pair still requires commissioning", async () => {
+    const uncommissioned: TestResourceObservation = { state: "idle-prerequisite-blocked", reason: "recorded-fixture-uncommissioned",
+      guard: { lock: "absent", reclaimMarker: "absent" },
+      fixture: { checked: true, record: "valid", fixtureID: "mini-03be", status: "uncommissioned", lastRunID: "commissioning-not-started" } };
+    const html = render(await overview([
+      { hostId: host, observation: macFree(held(["54f6abd2d6d4"])), ago: 5_000 },
+      { hostId: host, resourceKey: phone, observation: aliveObservation(run, 7001), ago: 5_000 },
+      { hostId: host, resourceKey: pairKey, observation: aliveObservation(run, 7002), ago: 5_000 },
+      { hostId: host, resourceKey: otherPair, observation: uncommissioned, ago: 5_000 },
+    ]));
+    const mac = parts(html, host), selected = parts(html, host, otherPair);
+    expect(mac.visible).toContain("Mac UI lane Available");
+    expect(mac.visible).not.toContain("Blocked");
+    expect(selected.visible).toContain("Not ready");
+    expect(selected.visible).toContain("Commission this fixture before routines use it.");
+    expect(parts(html, host, phone).visible).toContain("Reserved, idle");
+    expect(parts(html, host, pairKey).visible).toContain("Reserved, idle");
+
+    // If the Mac fixture itself needs commissioning, another pair's hold cannot hide that prerequisite.
+    const notReady = parts(render(await overview([{ hostId: host,
+      observation: { ...uncommissioned, glassesLeases: held(["54f6abd2d6d4"]) }, ago: 5_000 }])), host);
+    expect(notReady.visible).toContain("Mac UI lane Not ready");
+    expect(notReady.visible).toContain("Commission this fixture before routines use it.");
+    expect(notReady.visible).toContain("App entry without an identified pair must wait.");
   });
 });

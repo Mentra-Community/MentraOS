@@ -183,29 +183,28 @@ export function laneCard(data: TestRunOverview, item: OverviewResourceObservatio
   }
   if (!fresh) return card("unknown", "No report for " + elapsed(item.receivedAt, now) + ", so the lane's current state is unknown.", "Host operator",
     "Confirm the host is online and reporting. Until it reports, do not treat the lane as free.", offline);
-  // The shared guard can be absent while its own acquisition refuses: another owner holds a glasses pair lease.
+  // Pair leases restrict unidentified app entry. Identified-pair admission takes only its selected pair,
+  // so another pair being held does not make the otherwise free Mac lane universally blocked.
   const leases = kind === "shared" && observation.guard.lock === "absent" ? observation.glassesLeases : undefined;
   const heldCount = leases?.state === "held" ? leases.pairs.length + leases.others : 0;
   const leaseLines = leases?.state === "held" ? ["Held pair leases at this report: " + [...leases.pairs, ...leases.others ? [plural(leases.others, "other", "others")] : []].join(", ") + "."]
     : leases?.state === "unreadable" ? ["The glasses pair leases could not be read at this report."] : [];
+  const pairContext = leases?.state === "held" ? " " + plural(heldCount, "glasses pair is", "glasses pairs are")
+    + " in use. A routine selecting another pair still needs that pair and the Mac lane to be ready. App entry without an identified pair must wait." : "";
   // A known fixture recovery stays the primary state and action. A pair exclusion is stated beside it, never as what
   // frees the lane.
   if (observation.reason === "recorded-fixture-recovery-required" || observation.reason === "recorded-fixture-busy")
-    return card("recovery", guidance.summary + (leases?.state === "held" ? " A Mac app routine also cannot start while "
-      + plural(heldCount, "glasses pair lease is", "glasses pair leases are") + " held."
+    return card("recovery", guidance.summary + (leases?.state === "held" ? pairContext
       : leases?.state === "unreadable" ? " The glasses pair leases could not be read either, so a Mac app routine may also be refused." : ""),
     guidance.responsible, guidance.next, [...guard, ...leaseLines]);
-  if (leases?.state === "held")
-    return card("blocked", "No Mac app owner, but " + plural(heldCount, "glasses pair lease is", "glasses pair leases are") + " held. A Mac app routine cannot start until "
-      + (heldCount === 1 ? "it is" : "they are") + " released.", "Holder of the glasses pair", "See the glasses pair's card. This lane frees when that lease is released or recovered.",
-      [...guard, ...leaseLines]);
   if (leases?.state === "unreadable") return card("unknown", "The glasses pair leases could not be read, so whether a Mac app routine can start is unknown.",
     "Host operator", "Check the host's glasses lease folder with the read-only lane status, then refresh.");
   // A pair lease names only its run: with no lease held the pair is free at this report; its readiness is separate.
   if (kind === "glasses" && (observation.reason === "no-guard-fixture-not-supplied" || observation.state === "available-to-attempt"))
     return card("available", "No run held this pair at the last report.", "None", "Nothing needed.");
-  if (observation.state === "available-to-attempt") return card("available", "Free at the last report. A routine still goes through normal admission.", "None", "Nothing needed.");
-  if (observation.state.startsWith("idle-")) return card("not-ready", guidance.summary, guidance.responsible, guidance.next);
+  if (observation.state === "available-to-attempt") return card("available", "Free at the last report. A routine still goes through normal admission." + pairContext,
+    "None", pairContext ? "Check the selected pair's card and the routine's prerequisites before starting." : "Nothing needed.", [...guard, ...leaseLines]);
+  if (observation.state.startsWith("idle-")) return card("not-ready", guidance.summary + pairContext, guidance.responsible, guidance.next, [...guard, ...leaseLines]);
   return card("unknown", guidance.summary, guidance.responsible, guidance.next);
 }
 
