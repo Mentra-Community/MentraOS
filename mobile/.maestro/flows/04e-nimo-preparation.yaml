@@ -27,12 +27,12 @@ tags:
           text: "OK"
           optional: true
       - assertVisible: "Connect your NIMO"
-      - assertVisible: "Open Settings"
+      - assertVisible: "Open settings"
       - assertNotVisible: "Already connected?"
       - assertNotVisible: "Step 2/2"
       - assertNotVisible: "Example Bluetooth settings"
       - takeScreenshot: "nimo-bluetooth-preparation"
-      - tapOn: "Open Settings"
+      - tapOn: "Open settings"
       - launchApp:
           stopApp: false
       - assertVisible: "Connect your NIMO"
