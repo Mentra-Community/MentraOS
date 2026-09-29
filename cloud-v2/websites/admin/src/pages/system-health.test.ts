@@ -35,4 +35,15 @@ describe("system health presentation", () => {
     expect(markup).toContain("unknown"); expect(markup).toContain("refused"); expect(markup).toContain("2 items removed");
     expect(markup).toContain("Pass time limit reached; remaining work was deferred."); expect(markup).not.toContain("next scheduled pass");
   });
+  test("an overlapping cleanup is shown as skipped without a custody or budget warning", () => {
+    const events: TestHostHistory["cleanupEvents"] = [{ receiptId: "overlap", receiptSha256: "b".repeat(64),
+      origin: "scheduled", startedAt: at(-60_000), finishedAt: at(-59_000), status: "already-running", reason: "none", removedCount: 0,
+      freeBefore: null, freeAfter: null, freeAfterSampledAt: null }];
+    const markup = renderToStaticMarkup(createElement(CleanupEvents, { events }));
+    expect(markup).toContain("Skipped: another cleanup was running"); expect(markup).toContain("0 items removed");
+    expect(markup).not.toContain("holding this worker"); expect(markup).not.toContain("Pass time limit reached");
+    const history: TestHostHistory = { hostId: host.hostId, generatedAt: at(0), from: at(-120_000), to: at(0), points: [],
+      cleanupEvents: events, truncated: false, thresholdBytes: 20 * 1024 ** 3, gapAfterMs: 90_000 };
+    expect(renderToStaticMarkup(createElement(DiskHistoryChart, { history }))).toContain("Skipped: another cleanup was running");
+  });
 });

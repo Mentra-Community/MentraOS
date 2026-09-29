@@ -42,6 +42,8 @@ const size = (bytes: number | null) => bytes === null ? "Unavailable" : (bytes /
 const time = (iso: string) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const cleanupReason = (event: CleanupHealthEvent) => event.reason === "budget-limited" ? "Pass time limit reached; remaining work was deferred."
   : event.reason === "none" ? "" : event.reason === "unknown" ? "Reason unavailable." : reasonText[event.reason].summary;
+const cleanupStatus = (event: CleanupHealthEvent) => event.status === "already-running"
+  ? "Skipped: another cleanup was running" : event.status.replaceAll("-", " ");
 function useClock() { const [now, setNow] = useState(Date.now); useEffect(() => { const id = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(id); }, []); return now; }
 function useHostHealth() { return useQuery({ queryKey: ["test-host-health"], queryFn: () => api<TestHostList>("/api/admin/test-runs/health"), refetchInterval: 60_000 }); }
 
@@ -94,7 +96,7 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
       {segments.map((segment, index) => <g key={index}><polyline points={segment.map(point => `${x(point.sampledAt)},${y(point.freeBytes!)}`).join(" ")} fill="none" stroke="#0c9667" strokeWidth="2" />
         {segment.length === 1 ? <circle cx={x(segment[0].sampledAt)} cy={y(segment[0].freeBytes!)} r="3" fill="#0c9667"><title>{`${time(segment[0].sampledAt)} · ${size(segment[0].freeBytes)}`}</title></circle> : null}</g>)}
       {history.cleanupEvents.map(event => <g key={event.receiptId}><line x1={x(event.startedAt)} x2={x(event.startedAt)} y1={top} y2={height - bottom} stroke={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"} strokeDasharray="2 5" />
-        <circle cx={x(event.startedAt)} cy={top + 4} r="4" fill={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"}><title>{`${time(event.startedAt)} · ${event.origin} cleanup · ${event.status} · ${event.removedCount} removed. ${cleanupReason(event)}`}</title></circle></g>)}
+        <circle cx={x(event.startedAt)} cy={top + 4} r="4" fill={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"}><title>{`${time(event.startedAt)} · ${event.origin} cleanup · ${cleanupStatus(event)} · ${event.removedCount} removed. ${cleanupReason(event)}`}</title></circle></g>)}
       {!segments.length ? <text x={width / 2} y={height / 2} textAnchor="middle" fontSize="14" fill="#68746d">No disk measurements in this period</text> : null}
     </svg>
     <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The threshold is a recording margin, not a readiness check.</p>
@@ -106,10 +108,10 @@ export function CleanupEvents({ events }: { events: CleanupHealthEvent[] }) {
   const recent = [...events].reverse().slice(0, 8);
   return <details className="mt-4 border-t border-[#e4e9e2] pt-3"><summary className="cursor-pointer text-sm font-medium">Recent cleanup attempts ({events.length})</summary>
     {!recent.length ? <p className="mt-2 text-xs text-[#68746d]">No cleanup receipt was reported for this period.</p> : <div className="mt-2 space-y-2">{recent.map(event => <div key={event.receiptId} className="flex flex-wrap justify-between gap-2 text-xs">
-      <div><strong>{event.origin === "pre-job" ? "Before a job" : event.origin} · {event.status.replaceAll("-", " ")}</strong><p className="text-[#68746d]">{time(event.startedAt)} · {event.removedCount} items removed</p>{cleanupReason(event) ? <p className="mt-1 text-[#68746d]">{cleanupReason(event)}</p> : null}</div>
+      <div><strong>{event.origin === "pre-job" ? "Before a job" : event.origin} · {cleanupStatus(event)}</strong><p className="text-[#68746d]">{time(event.startedAt)} · {event.removedCount} items removed</p>{cleanupReason(event) ? <p className="mt-1 text-[#68746d]">{cleanupReason(event)}</p> : null}</div>
       <div className="text-right text-[#68746d]">{size(event.freeBefore)} → {size(event.freeAfter)}<p>{event.freeAfterSampledAt ? `After measured ${time(event.freeAfterSampledAt)}` : "After measurement time unavailable"}</p></div>
     </div>)}</div>}
-    <p className="mt-2 text-xs text-[#68746d]">Space changes also include other host activity. A refused or dry run is not a successful cleanup.</p>
+    <p className="mt-2 text-xs text-[#68746d]">Space changes also include other host activity. A skipped, refused or dry run is not a successful cleanup.</p>
   </details>;
 }
 

@@ -31,7 +31,7 @@ export const cleanupEventSchema = z.object({
   receiptId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), receiptSha256: z.string().regex(/^[a-f0-9]{64}$/),
   origin: z.enum(["scheduled", "manual", "pre-job", "unknown"]),
   startedAt: timestamp, finishedAt: timestamp.nullable(),
-  status: z.enum(["above-trigger", "target-reached", "dry-run-complete", "retained-or-budget-limited", "refused", "error", "unknown"]),
+  status: z.enum(["above-trigger", "target-reached", "dry-run-complete", "already-running", "retained-or-budget-limited", "refused", "error", "unknown"]),
   reason: hostReasonSchema, removedCount: z.number().int().nonnegative().max(100_000),
   freeBefore: bytes, freeAfter: bytes, freeAfterSampledAt: timestamp.nullable(),
 }).strict().superRefine((value, ctx) => {
@@ -39,6 +39,9 @@ export const cleanupEventSchema = z.object({
     || value.freeAfterSampledAt && (value.freeAfter === null || Date.parse(value.freeAfterSampledAt) < Date.parse(value.startedAt)
       || value.finishedAt !== null && Date.parse(value.freeAfterSampledAt) > Date.parse(value.finishedAt)))
     ctx.addIssue({ code: "custom", message: "invalid cleanup measurement times" });
+  if (value.status === "already-running" && (value.reason !== "none" || value.removedCount !== 0
+    || value.finishedAt === null || value.origin === "unknown"))
+    ctx.addIssue({ code: "custom", message: "overlapping cleanup must be a completed, identified skip with no removals" });
 });
 export type CleanupHealthEvent = z.infer<typeof cleanupEventSchema>;
 
