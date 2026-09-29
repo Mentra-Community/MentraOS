@@ -7,8 +7,8 @@
  * This used to be the host-injected `locationTier` runtime hook + a MantleManager
  * `TaskManager.defineTask`. It's device/OS plumbing (no UI), so it moved into engine:
  * the runtime drives `setLocationTier` directly off miniapp demand, and any host —
- * including a bare OEM — gets phone location without wiring a hook. The host keeps the
- * permission *UI* (it gates `setLocationTier` on the OS permission before calling).
+ * including a bare OEM — gets phone location without wiring a hook. The host keeps
+ * permission UI; permission or a saved accuracy preference alone never enables GPS.
  *
  * The task is registered at module load (the export from `index.ts` evaluates this
  * file as soon as `@mentra/engine` is imported), matching the old MantleManager
@@ -21,6 +21,20 @@ import {AppState, Platform} from "react-native"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 
 export const LOCATION_TASK_NAME = "handleLocationUpdates"
+
+const ACTIVE_LOCATION_TIERS = new Set([
+  "passive",
+  "low",
+  "high",
+  "realtime",
+  "tenMeters",
+  "hundredMeters",
+  "kilometer",
+  "threeKilometers",
+  "reduced",
+])
+let effectiveTier = "off"
+let locationCallbackCount = 0
 
 // Background location task — forwards the first fix from each non-empty batch.
 TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NAME, async ({data, error}) => {
@@ -35,6 +49,7 @@ TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NA
     console.log("ISLAND: LOCATION: No locations received")
     return
   }
+  locationCallbackCount += 1
   const first = locs[0]!
   // Deliver directly to local miniapps. The Cloud V1 upload that used to run
   // here was removed with the V1 ripout (issue #3392).
@@ -101,7 +116,7 @@ async function reconcileLocationTier(): Promise<void> {
 
     if (tier === "off" || !isAndroid) {
       const isRegistered = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch((error) => {
-        if (isAndroid) throw error
+        if (isAndroid || tier === "off") throw error
         return false // Preserve iOS's existing start-on-query-failure behavior.
       })
       if (pendingLocationRequest !== request) return
@@ -151,9 +166,11 @@ async function reconcileLocationTier(): Promise<void> {
  */
 export function setLocationTier(tier: "off" | "passive" | "low" | "high" | "realtime" | string): Promise<void> {
   console.log("ISLAND: setLocationTier()", tier)
-  pendingLocationRequest = {tier}
+  // Empty/unknown legacy settings must not turn permission into tracking demand.
+  effectiveTier = ACTIVE_LOCATION_TIERS.has(tier) ? tier : "off"
+  pendingLocationRequest = {tier: effectiveTier}
   try {
-    if (Platform.OS === "android" && !foregroundRetrySubscription) {
+    if (!foregroundRetrySubscription) {
       foregroundRetrySubscription = AppState.addEventListener("change", (state) => {
         if (state === "active" && pendingLocationRequest) void queueLocationReconciliation()
       })
@@ -165,6 +182,16 @@ export function setLocationTier(tier: "off" | "passive" | "low" | "high" | "real
   return queueLocationReconciliation()
 }
 
+/** On-demand resource diagnostics; no timer, location fix, or network activity. */
+export async function getPhoneLocationSnapshot() {
+  return {
+    effectiveTier,
+    pendingTier: pendingLocationRequest?.tier ?? null,
+    registered: await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME),
+    locationCallbackCount,
+  }
+}
+
 /** Stop the background location task (host cleanup). */
 export function stopPhoneLocation(): void {
   void setLocationTier("off")
@@ -173,6 +200,7 @@ export function stopPhoneLocation(): void {
 export const phoneLocationService = {
   LOCATION_TASK_NAME,
   getLocationAccuracy,
+  getSnapshot: getPhoneLocationSnapshot,
   setLocationTier,
   stopPhoneLocation,
 }
