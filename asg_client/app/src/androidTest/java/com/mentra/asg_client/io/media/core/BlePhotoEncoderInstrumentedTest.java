@@ -122,20 +122,20 @@ public class BlePhotoEncoderInstrumentedTest {
     public void benchmarkCurrentTextModeCropConfig() throws Exception {
         // A detected text crop preserves more spatial detail for small text.
         runConfig(
-                "2880_jpeg_q80",
+                "2880_jpeg_q95",
                 BleCodec.JPEG_FAST,
                 AsgConstants.TEXT_MODE_BLE_TARGET_WIDTH,
-                AsgConstants.BLE_PHOTO_JPEG_FAST_QUALITY);
+                AsgConstants.PHOTO_JPEG_QUALITY_NONE);
     }
 
     @Test
     public void benchmarkCurrentTextModeFallbackConfig() throws Exception {
         // A full-frame fallback retains the previous BLE transfer bound.
         runConfig(
-                "1920_jpeg_q80",
+                "1920_jpeg_q95",
                 BleCodec.JPEG_FAST,
                 AsgConstants.TEXT_MODE_BLE_FALLBACK_TARGET_WIDTH,
-                AsgConstants.BLE_PHOTO_JPEG_FAST_QUALITY);
+                AsgConstants.PHOTO_JPEG_QUALITY_NONE);
     }
 
     @Test

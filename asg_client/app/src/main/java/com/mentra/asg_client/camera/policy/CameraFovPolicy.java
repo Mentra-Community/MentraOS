@@ -1,5 +1,7 @@
 package com.mentra.asg_client.camera.policy;
 
+import com.dev.api.DevApi;
+import com.mentra.asg_client.AsgConstants;
 import java.util.function.BooleanSupplier;
 
 /** Tracks applied hardware state, not preferences, and refuses disruptive crop changes. */
@@ -7,6 +9,13 @@ public final class CameraFovPolicy {
     public enum Result { UNCHANGED, CHANGED, BUSY }
     private Integer mAppliedFov;
     private Integer mAppliedRoi;
+
+    /** Uses the applied crop, including temporary leases, rather than saved preferences. */
+    public synchronized boolean isFullFovBottomAligned() {
+        return mAppliedFov != null
+                && mAppliedFov == AsgConstants.CAMERA_FOV_FULL
+                && mAppliedRoi == DevApi.ROI_POSITION_BOTTOM;
+    }
 
     /** Applies a crop only when capture is idle; failed writes never advance the cache. */
     public synchronized Result apply(int fov, int roi, BooleanSupplier busy, Runnable write) {

@@ -94,8 +94,11 @@ public class AsgConstants {
     /** Protocol version for session-correlated saved WiFi network responses. */
     public static final int SAVED_WIFI_NETWORKS_VERSION = 1;
 
+    /** Vendor FOV value that retains the full sensor grab width. */
+    public static final int CAMERA_FOV_FULL = 118;
+
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
-    public static final int CAMERA_FOV_DEFAULT = 118;
+    public static final int CAMERA_FOV_DEFAULT = CAMERA_FOV_FULL;
 
     public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
 
