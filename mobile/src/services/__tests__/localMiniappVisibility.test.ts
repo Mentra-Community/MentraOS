@@ -3,6 +3,11 @@ import {AppState, type AppStateStatus} from "react-native"
 import {MiniappRequestType, MiniappResponseType, parseEnvelope, serializeEnvelope} from "@mentra/miniapp"
 
 jest.mock("react-native-share", () => ({__esModule: true, default: {open: jest.fn()}}))
+// Count visibility observers here; native location cleanup and retry observers
+// are covered separately by PhoneLocationService's native-state tests.
+jest.mock("../../../modules/engine/src/services/PhoneLocationService", () => ({
+  phoneLocationService: {setLocationTier: jest.fn(() => Promise.resolve())},
+}))
 jest.unmock("../../../modules/engine/src/services/LocalMiniappRuntime")
 
 import {cloudClientService} from "../../../modules/engine/src/services/CloudClientService"
