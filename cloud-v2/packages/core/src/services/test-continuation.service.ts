@@ -79,7 +79,9 @@ export class TestContinuationService {
       const selection = await this.originalSelection(target, routineId);
       const build = await this.originalBuild(selection.source, routineId, selection.source.channel === "pr" ? target.original.requestRunId : undefined);
       return { candidate: grant.candidate, builds: [build].filter(item => item.headSha === target.expectedHeadSha
-          && item.archive?.sha256 === selection.archiveSha256), expectedHeadSha: target.expectedHeadSha };
+          && item.archive?.sha256 === selection.archiveSha256), expectedHeadSha: target.expectedHeadSha,
+        ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}),
+        ...(grant.harnessVerification ? { harnessVerification: grant.harnessVerification } : {}) };
     }
     const builds = await this.builds.inventory({ ...target.query, routineId });
     return { candidate: grant.candidate, builds: builds.filter(build => build.headSha === target.expectedHeadSha),
@@ -138,7 +140,7 @@ export class TestContinuationService {
     const target = await this.source.target(packet, grant, routineId);
     if (data.source.channel !== target.query.channel
       || (data.source.channel === "pr" && data.source.prNumber !== target.query.pr)) fail("Build is outside the candidate source");
-    // The original target admits only the build its recorded request selected, never a caller-named,
+    // Original targets and CI harness candidates admit only the build the recorded request selected, never a caller-named,
     // rebuilt or newer one.
     if (target.original) {
       const selection = await this.originalSelection(target, routineId);

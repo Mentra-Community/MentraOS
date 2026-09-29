@@ -7,7 +7,9 @@ const head = "a".repeat(40), tested = "b".repeat(40), merged = "c".repeat(40);
 function fixture(harness = false) {
   const grant = { agentRunId: "run_123", candidate: { repository: harness ? HARNESS : PUB, pullRequest: 12, headSha: head } } as ContinuationGrant;
   const packet = { source: { schemaVersion: 1, channel: "pr", repository: PUB, branch: "candidate", headSha: tested,
-    pullRequest: { number: 12, headRepository: PUB, baseBranch: "dev", baseSha: merged } }, build: { hashes: { harnessSha: tested } } } as unknown as FailurePacket;
+    pullRequest: { number: 12, headRepository: PUB, baseBranch: "dev", baseSha: merged } },
+    requestId: "routine-70-1-12-no-glasses", routine: { id: "no-glasses", version: "1" },
+    build: { hashes: { harnessSha: tested, archiveSha256: "d".repeat(64) } } } as unknown as FailurePacket;
   const pr = { number: 12, state: "open", merged: false, merge_commit_sha: null as string | null, merged_at: null as string | null,
     head: { sha: head, ref: harness ? "fix/routine-run_123" : "candidate", repo: { full_name: grant.candidate.repository } },
     base: { ref: harness ? "main" : "dev", repo: { full_name: grant.candidate.repository } }, labels: [] as { name: string }[] };
@@ -84,6 +86,23 @@ test("private main containment omits oversized unrelated patches while preservin
   // Omitting the patch list must not weaken rejection of a rewritten main history.
   f.excludeMerge("diverged");
   await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("no longer contains");
+});
+test("CI harness candidates bind the consuming occurrence's original request and artifact", async () => {
+  for (const channel of ["pr", "dev", "staging"] as const) {
+    const f = fixture(true); f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
+    if (channel !== "pr") f.packet.source = { schemaVersion: 1, trigger: channel, channel, repository: PUB, branch: channel, headSha: tested };
+    f.packet.requestId = `routine-70-1-${channel === "pr" ? 12 : channel}-no-glasses`;
+    const before = structuredClone(f.packet);
+    expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ expectedHeadSha: tested,
+      expectedHarnessSha: merged, original: { requestRunId: 70, archiveSha256: "d".repeat(64) } });
+    expect(f.packet).toEqual(before);
+    for (const problem of ["request", "archive", "routine"]) {
+      f.packet.requestId = problem === "request" ? "routine-70-2-dev-no-glasses" : before.requestId;
+      if (problem === "archive") delete f.packet.build.hashes.archiveSha256;
+      else f.packet.build.hashes.archiveSha256 = before.build.hashes.archiveSha256!;
+      await expect(f.gateway.target(f.packet, f.grant, problem === "routine" ? "day1-ota" : "no-glasses")).rejects.toThrow();
+    }
+  }
 });
 test("an adopted harness candidate uses only the recorded same-case owner's branch", async () => {
   const f = fixture(true); f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";

@@ -12,7 +12,7 @@ export interface ContinuationTarget {
   expectedHarnessSha?: string;
   automaticExpected: boolean;
   requestNotBefore?: string;
-  /** Original target only: the exact recorded artifact and the request that selected it.
+  /** The original CI app artifact, for an original target or a harness candidate.
    * Requests are never adopted, so the original (or any earlier) one cannot stand in for the rerun. */
   original?: { archiveSha256: string; requestRunId: number };
   localPublication?: RecordedAppPublication & { channel: "dev" | "staging" };
@@ -141,7 +141,7 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
       return { query: localPublication ? { channel: localPublication.channel } : source!.channel === "pr" ? { channel: "pr", pr: source!.pullRequest!.number }
         : { channel: source!.channel as "dev" | "staging" }, expectedHeadSha: source!.headSha,
         expectedHarnessSha: verification.merge_commit_sha!, requestNotBefore: verification.merged_at!, automaticExpected: false,
-        ...(localPublication ? { localPublication } : {}) };
+        ...(localPublication ? { localPublication } : { original: this.originalRequest(packet, routineId) }) };
     }
     if (pr.merged) {
       ensure(pr.merge_commit_sha, "Merged candidate has no merge commit");
@@ -189,10 +189,16 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
   /** The occurrence's own recorded source, channel, routine and artifact. Nothing is looked
    * up by branch or PR, so a newer head or another environment's build cannot substitute. */
   private original(packet: FailurePacket, grant: ContinuationGrant, candidate: ContinuationCandidate, routineId: string): ContinuationTarget {
-    const source = packet.source!, archiveSha256 = packet.build.hashes.archiveSha256;
+    const source = packet.source!;
     ensure(candidate.repository === source.repository && candidate.headSha === source.headSha,
       "The original target is the occurrence's exact recorded source");
     ensure(!grant.caseBinding, "The original target belongs to its own occurrence, not a shared candidate");
+    return { query: source.channel === "pr" ? { channel: "pr", pr: source.pullRequest!.number } : { channel: source.channel as "dev" | "staging" },
+      expectedHeadSha: source.headSha, automaticExpected: false, original: this.originalRequest(packet, routineId) };
+  }
+  /** Harness verification changes the worker, never the occurrence's selected app artifact. */
+  private originalRequest(packet: FailurePacket, routineId: string): NonNullable<ContinuationTarget["original"]> {
+    const source = packet.source!, archiveSha256 = packet.build.hashes.archiveSha256;
     ensure(packet.routine.id === routineId, "The original target reruns only the recorded routine");
     ensure(typeof archiveSha256 === "string" && /^[a-f0-9]{64}$/.test(archiveSha256), "The original artifact identity was not recorded");
     // The trusted issuer's request that selected this exact build; its immutable artifact,
@@ -200,7 +206,6 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     const suffix = source.channel === "pr" ? String(source.pullRequest!.number) : source.channel;
     const request = new RegExp(`^routine-([1-9]\\d*)-1-${suffix}-${routineId}$`).exec(packet.requestId);
     ensure(request, "The original request identity was not recorded");
-    return { query: source.channel === "pr" ? { channel: "pr", pr: source.pullRequest!.number } : { channel: source.channel as "dev" | "staging" },
-      expectedHeadSha: source.headSha, automaticExpected: false, original: { archiveSha256: archiveSha256!, requestRunId: Number(request![1]) } };
+    return { archiveSha256: archiveSha256!, requestRunId: Number(request![1]) };
   }
 }

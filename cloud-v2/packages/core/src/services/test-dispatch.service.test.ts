@@ -294,7 +294,7 @@ test("Admin inventory forwards the optional routine selector and rejects arbitra
   expect(routines.routines.some(routine => routine.id === "no-glasses-android")).toBe(true);
 });
 
-test("only an original-target continuation may carry an original request replay; Admin input never can", async () => {
+test("only original or revision-pinned harness continuations may replay an original request; Admin input never can", async () => {
   const replay = { ...input, originalRequestRunId: 60 };
   const binding = (candidate: TestContinuationBinding["candidate"]) => ({ occurrenceId: "tfo_" + "a".repeat(64), agentRunId: "run_1",
     candidate, executionAttempt: 1, expectedHeadSha: "a".repeat(40) });
@@ -312,4 +312,14 @@ test("only an original-target continuation may carry an original request replay;
   await original.service.create(replay, "routine-fixer:run_1", binding({ repository: "Mentra-Community/MentraOS", headSha: "a".repeat(40), target: "original" }));
   // The dispatcher re-resolves the same original request, then sends once.
   expect(seen).toEqual([60]); expect(original.sends()).toBe(1);
+  const harness = { repository: "Mentra-Community/Mentra-Automated-Testing" as const, pullRequest: 231, headSha: "b".repeat(40) };
+  for (const pin of [undefined, "latest"]) {
+    const denied = fixture();
+    await expect(denied.service.create(replay, "routine-fixer:run_1", { ...binding(harness), expectedHarnessSha: pin }))
+      .rejects.toThrow("Invalid routine dispatch request");
+    expect(denied.sends()).toBe(0);
+  }
+  const allowed = fixture(); allowed.github.resolve = original.github.resolve;
+  await allowed.service.create(replay, "routine-fixer:run_1", { ...binding(harness), expectedHarnessSha: "c".repeat(40) });
+  expect(seen).toEqual([60, 60]); expect(allowed.sends()).toBe(1);
 });
