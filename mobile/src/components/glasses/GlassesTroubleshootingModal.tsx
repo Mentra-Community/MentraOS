@@ -1,11 +1,13 @@
 import {useState, useRef, useEffect} from "react"
-import {View, TouchableOpacity, Modal, Image, ImageStyle, Animated} from "react-native"
+import {View, TouchableOpacity, Modal, Image, ImageStyle, Animated, ScrollView} from "react-native"
 import MaterialIcons from "react-native-vector-icons/MaterialIcons"
 
 import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
+import {getG2ResetInstructions} from "@/utils/pairing/g2Recovery"
 
 interface TroubleshootingModalProps {
   isVisible: boolean
@@ -19,7 +21,14 @@ export interface PairingTip {
   image?: any // Image source (require() or URI)
 }
 
-export const getModelSpecificTips = (model: string): PairingTip[] => {
+export const getModelSpecificTips = (model: string, {includeResetInstructions = false} = {}): PairingTip[] => {
+  // The loader also consumes these tips. Do not suggest a reset during normal pairing.
+  if (includeResetInstructions && model === "Even Realities G2") {
+    return [{title: translate("pairing:g2ResetTitle"), body: getG2ResetInstructions()}]
+  }
+  if (includeResetInstructions && model === "Even Realities R1") {
+    return [{title: translate("pairing:r1ResetTitle"), body: translate("pairing:r1ResetInstructions")}]
+  }
   switch (model) {
     case "Even Realities G1":
       return [
@@ -130,7 +139,7 @@ export const getModelSpecificTips = (model: string): PairingTip[] => {
 
 const GlassesTroubleshootingModal: React.FC<TroubleshootingModalProps> = ({isVisible, onClose, deviceModel}) => {
   const {theme, themed} = useAppTheme()
-  const tips = getModelSpecificTips(deviceModel)
+  const tips = getModelSpecificTips(deviceModel, {includeResetInstructions: true})
   const [currentIndex, setCurrentIndex] = useState(0)
   const fadeAnim = useRef(new Animated.Value(1)).current
 
@@ -184,24 +193,26 @@ const GlassesTroubleshootingModal: React.FC<TroubleshootingModalProps> = ({isVis
   return (
     <Modal visible={isVisible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={themed($overlay)}>
-        <View style={themed($modalContainer)}>
+        <View style={themed($modalContainer)} className="max-h-[90%]">
           {/* Close button */}
           <TouchableOpacity onPress={onClose} style={themed($closeButton)}>
             <MaterialIcons name="close" size={24} color={theme.colors.text} />
           </TouchableOpacity>
 
-          <Animated.View style={{opacity: fadeAnim}}>
-            {/* Image */}
-            <View style={themed($imageContainer)}>
-              <Image source={currentTip.image || fallbackImage} style={themed($image)} resizeMode="contain" />
-            </View>
+          <ScrollView className="shrink">
+            <Animated.View style={{opacity: fadeAnim}}>
+              {/* Image */}
+              <View style={themed($imageContainer)}>
+                <Image source={currentTip.image || fallbackImage} style={themed($image)} resizeMode="contain" />
+              </View>
 
-            {/* Title */}
-            <Text style={themed($title)} weight="semibold" text={currentTip.title} />
+              {/* Title */}
+              <Text style={themed($title)} weight="semibold" text={currentTip.title} />
 
-            {/* Body */}
-            <Text style={themed($body)}>{currentTip.body}</Text>
-          </Animated.View>
+              {/* Body */}
+              <Text style={themed($body)}>{currentTip.body}</Text>
+            </Animated.View>
+          </ScrollView>
 
           {/* Pagination dots */}
           <View style={themed($paginationContainer)}>

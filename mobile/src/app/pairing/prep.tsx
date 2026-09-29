@@ -275,6 +275,9 @@ export default function PairingPrepScreen() {
       <View className="flex-1 mt-6">
         <ScrollView showsVerticalScrollIndicator={false}>
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          {Platform.OS === "ios" && (
+            <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:nimoIosSettingsPairing" />
+          )}
           <Text
             className="text-lg text-secondary-foreground mb-2"
             text="1. Make sure your NIMO glasses are fully charged and turned on."
@@ -295,12 +298,6 @@ export default function PairingPrepScreen() {
             className="text-lg text-secondary-foreground mb-2"
             text="5. If nothing else works, reset the glasses by holding the left and right touch areas at the same time for a few seconds, then restart them."
           />
-          {Platform.OS === "ios" && (
-            <Text
-              className="text-lg text-secondary-foreground mb-2"
-              text="6. If prompted, allow the Bluetooth pairing request."
-            />
-          )}
           <View className="h-6" />
         </ScrollView>
       </View>

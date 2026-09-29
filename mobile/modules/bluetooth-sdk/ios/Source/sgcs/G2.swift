@@ -1386,8 +1386,9 @@ private final class ImgAckBox {
 
 // MARK: - G2 Class (SGCManager implementation)
 
-/// Actor for reconnection logic (matches G1 pattern)
-actor G2ReconnectionManager {
+/// Reconnection attempts share the driver's main-actor lifecycle.
+@MainActor
+final class G2ReconnectionManager {
     private var task: Task<Void, Never>?
     private let intervalSeconds: TimeInterval
     private var attempts = 0
@@ -1459,10 +1460,10 @@ class G2: NSObject, SGCManager {
     private var rightNotifyChar: CBCharacteristic?
     private var rightAudioChar: CBCharacteristic?
     private var leftAudioChar: CBCharacteristic?
-    private var leftInitialized: Bool = false
-    private var rightInitialized: Bool = false
-    private var leftAuthenticated: Bool = false
-    private var rightAuthenticated: Bool = false
+    private var connectionSession = G2ConnectionSession()
+    private var partialConnection = G2PartialConnection()
+    private var partialConnectionTimer: DispatchWorkItem?
+    private var authTask: Task<Void, Never>?
     private var isDisconnecting = false
     private var pairingTimeoutTimer: DispatchWorkItem?
     private var useEvenDashboard = true
@@ -1528,7 +1529,7 @@ class G2: NSObject, SGCManager {
 
     // Protocol state
     private let sendManager = G2SendManager()
-    private let receiveManager = G2ReceiveManager()
+    private var receiveManager = G2ReceiveManager()
     private var foregroundObserver: NSObjectProtocol?
     private var startupPageCreated: Bool = false // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
@@ -1564,7 +1565,6 @@ class G2: NSObject, SGCManager {
     /// How many redundant resends each text update gets (text has no ACK). The reconcile loop sets a
     /// container's `pendingSends` to `1 + EVEN_HUB_RESEND_COUNT` on change.
     private let EVEN_HUB_RESEND_COUNT: Int = 1
-    private var authStarted: Bool = false
 
     /// Dashboard menu: appId → packageName mapping for selection reverse lookup
     private var menuAppIdToPackageName: [Int32: String] = [:]
@@ -1754,16 +1754,17 @@ class G2: NSObject, SGCManager {
             if leftDraining { return }
             leftDraining = true
         }
+        let generation = connectionSession.generation
         Task { @MainActor [weak self] in
-            await self?.drainLoop(right: right)
+            await self?.drainLoop(right: right, generation: generation)
         }
     }
 
     /// Drain one side's queue: write each packet directly (`.withoutResponse`), paced by a small
     /// sleep. No `canSend` gate (see note above). Runs until the queue is empty, then clears the
     /// per-side flag so the next enqueue restarts it.
-    private func drainLoop(right: Bool) async {
-        while true {
+    private func drainLoop(right: Bool, generation: UInt64) async {
+        while connectionSession.generation == generation && !Task.isCancelled {
             guard let peripheral = right ? rightPeripheral : leftPeripheral,
                   let char = right ? rightWriteChar : leftWriteChar
             else {
@@ -1891,20 +1892,19 @@ class G2: NSObject, SGCManager {
 
     // MARK: - Authentication Sequence
 
-    private func authLeft() {
-        // Auth to left side
-        if leftPeripheral != nil && leftWriteChar != nil {
-            let authL = DevSettingsProto.authCmd(magicRandom: sendManager.nextMagicRandom())
-            sendDevSettingsCommand(authL, left: true, right: false)
-        }
+    private func startAuthenticationIfReady() {
+        guard let generation = connectionSession.beginAuthentication() else { return }
+        Bridge.log("G2: Both sides initialized, starting auth sequence")
+        authTask = Task { [weak self] in await self?.runAuthSequence(generation: generation) }
     }
 
-    private func authRight() {
-        let authR = DevSettingsProto.authCmd(magicRandom: sendManager.nextMagicRandom())
-        sendDevSettingsCommand(authR, left: false, right: true)
+    private func waitForAuthStep(generation: UInt64) async -> Bool {
+        do { try await Task.sleep(nanoseconds: 200_000_000) } catch { return false }
+        return !Task.isCancelled && connectionSession.generation == generation && !isDisconnecting
     }
 
-    private func runAuthSequence() async {
+    private func runAuthSequence(generation: UInt64) async {
+        guard !Task.isCancelled, connectionSession.generation == generation, !isDisconnecting else { return }
         Bridge.log("G2: Running auth sequence")
 
         // Auth to left side
@@ -1914,19 +1914,19 @@ class G2: NSObject, SGCManager {
         }
 
         // Small delay then auth right + pipe role change + time sync
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        guard await waitForAuthStep(generation: generation) else { return }
 
         let authR = DevSettingsProto.authCmd(magicRandom: sendManager.nextMagicRandom())
         sendDevSettingsCommand(authR, left: false, right: true)
 
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        guard await waitForAuthStep(generation: generation) else { return }
 
         let roleChange = DevSettingsProto.pipeRoleChange(
             magicRandom: sendManager.nextMagicRandom()
         )
         sendDevSettingsCommand(roleChange, left: false, right: true)
 
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        guard await waitForAuthStep(generation: generation) else { return }
 
         let timeSync = DevSettingsProto.timeSync(
             magicRandom: sendManager.nextMagicRandom()
@@ -1934,7 +1934,7 @@ class G2: NSObject, SGCManager {
         sendDevSettingsCommand(timeSync, left: true, right: true)
 
         // Skip onboarding on connect
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        guard await waitForAuthStep(generation: generation) else { return }
         let onboarding = OnboardingProto.skipOnboarding(
             magicRandom: sendManager.nextMagicRandom()
         )
@@ -2018,11 +2018,21 @@ class G2: NSObject, SGCManager {
 
         Bridge.log("G2: Sent full Even-compatible init sequence")
 
-        // Start heartbeats after auth
-        startHeartbeats()
+        connectionSession.completeSetup(generation: generation)
+        finishConnectionIfReady()
+    }
 
-        Task { await self.reconnectionManager.stop() }
-        Bridge.log("G2: Auth sequence complete, glasses ready")
+    private func finishConnectionIfReady() {
+        guard connectionSession.isReady, !isDisconnecting,
+              leftPeripheral?.state == .connected, rightPeripheral?.state == .connected,
+              DeviceStore.shared.get("glasses", "fullyBooted") as? Bool != true
+        else { return }
+
+        cancelPairingTimeout()
+        updatePartialConnection()
+        startHeartbeats()
+        reconnectionManager.stop()
+        Bridge.log("G2: Both arms authenticated and initialization complete, glasses ready")
 
         // Set device_name so DeviceManager can save it for reconnection
         let peripheralName = rightPeripheral?.name ?? leftPeripheral?.name
@@ -2048,6 +2058,8 @@ class G2: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "deviceModel", DeviceTypes.G2)
 
         setFullyConnected()
+        sendEvenHubHeartbeat()
+        sendDevSettingsHeartbeat()
 
         // connnect a controller if we have one:
         connectController()
@@ -2973,11 +2985,14 @@ class G2: NSObject, SGCManager {
 
     /// re-creates the containers and re-sends all images to the glasses:
     private func rebuildState() async {
+        guard connectionSession.isReady, !isDisconnecting else { return }
+        let generation = connectionSession.generation
         Bridge.log("G2: rebuildState()")
         // recreate the containers (sets pageCreated = true; embeds text content directly):
         createPageWithContainers()
 
-        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms to settle
+        do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
+        guard connectionSession.generation == generation, connectionSession.isReady else { return }
         // Mark every image container dirty and let the reconcile loop re-send them, one at a time.
         // Doing the sends here directly is what used to race a concurrent displayBitmap and clobber
         // imgAckBox; routing through the dirty flag keeps a single sender (see displayReconcileTask).
@@ -2990,7 +3005,8 @@ class G2: NSObject, SGCManager {
         }
         signalDisplayDirty()
 
-        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms to settle
+        do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
+        guard connectionSession.generation == generation, connectionSession.isReady else { return }
         syncImuReportingWithIntent()
         confirmImuReporting(
             forPageGeneration: pageGeneration,
@@ -3005,6 +3021,7 @@ class G2: NSObject, SGCManager {
     /// guard each one triggered a rebuild that was torn down again → rebuild→exit→rebuild
     /// storm. At most one rebuild in flight, and at most one per RECOVERY_DEBOUNCE_MS.
     private func recoverPageAndMic(reason: String) {
+        guard connectionSession.isReady, !isDisconnecting else { return }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         // If the page is already alive and the mic matches intent, there's nothing to recover —
         // this is a spurious/phantom firmware event (it spams close/exit even when our page is
@@ -3023,11 +3040,13 @@ class G2: NSObject, SGCManager {
             return
         }
         recoveryInFlight = true
+        let generation = connectionSession.generation
         lastRecoveryRebuildMs = now
         Bridge.log("G2: recover(\(reason)) — rebuilding EvenHub page")
         Task { [weak self] in
             guard let self = self else { return }
             await self.rebuildState()
+            guard self.connectionSession.generation == generation, self.connectionSession.isReady else { return }
             // Reconcile against DeviceManager's authoritative current view so the glasses
             // match the phone, not just the last-cached G2 containers.
             DeviceManager.shared.sendCurrentState()
@@ -3649,28 +3668,67 @@ class G2: NSObject, SGCManager {
 
     func findCompatibleDevices() {
         Bridge.log("G2: findCompatibleDevices()")
+        disconnect()
+        isDisconnecting = false
         DEVICE_SEARCH_ID = "NOT_SET"
         startScan()
     }
 
     func connectById(_ id: String) {
         Bridge.log("G2: connectById(\(id))")
+        disconnect()
         DEVICE_SEARCH_ID = id
+        isDisconnecting = false
         startScan()
-        startPairingTimeout()
     }
 
     private func startPairingTimeout() {
-        pairingTimeoutTimer?.cancel()
+        guard pairingTimeoutTimer == nil, !connectionSession.isReady,
+              DEVICE_SEARCH_ID != "NOT_SET", !DEVICE_SEARCH_ID.isEmpty else { return }
+        let generation = connectionSession.generation
         let work = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            if self.leftPeripheral != nil && self.rightPeripheral == nil {
-                Bridge.log("G2: pairing timeout — found LEFT but not RIGHT")
-                Bridge.sendPairFailureEvent("errors:pairNeedDisconnect")
-            }
+            guard let self, !self.isDisconnecting,
+                  self.connectionSession.needsRecovery(attempt: generation) else { return }
+            Bridge.log("G2: Pair initialization timed out; retrying both arms")
+            self.updatePartialConnection()
+            let error = self.partialConnection.timeoutError
+            self.recoverConnection()
+            Bridge.sendPairFailureEvent(error)
         }
         pairingTimeoutTimer = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
+    }
+
+    /// Publish a durable status field so Home and pairing agree, including after a remount.
+    /// Do not flash a warning for the normal interval between the two BLE connections.
+    private func updatePartialConnection() {
+        partialConnectionTimer?.cancel()
+        partialConnectionTimer = nil
+        partialConnection.update(
+            leftConnected: leftPeripheral?.state == .connected,
+            rightConnected: rightPeripheral?.state == .connected,
+            now: ProcessInfo.processInfo.systemUptime
+        )
+        publishPartialConnection()
+        guard partialConnection.missingSide != nil else { return }
+        let generation = connectionSession.generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.isDisconnecting, self.connectionSession.generation == generation else { return }
+            self.partialConnection.update(
+                leftConnected: self.leftPeripheral?.state == .connected,
+                rightConnected: self.rightPeripheral?.state == .connected,
+                now: ProcessInfo.processInfo.systemUptime
+            )
+            self.publishPartialConnection()
+        }
+        partialConnectionTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + G2PartialConnection.noticeDelay, execute: work)
+    }
+
+    private func publishPartialConnection() {
+        let side = partialConnection.visibleMissingSide(now: ProcessInfo.processInfo.systemUptime)
+        let value: Any = side.map { $0 == .left ? "left" : "right" } as Any? ?? NSNull()
+        DeviceStore.shared.apply("glasses", "g2MissingArm", value)
     }
 
     private func cancelPairingTimeout() {
@@ -3678,49 +3736,67 @@ class G2: NSObject, SGCManager {
         pairingTimeoutTimer = nil
     }
 
-    func disconnect() {
-        Bridge.log("G2: disconnect()")
-        isDisconnecting = true
-        notificationEpoch += 1
-        notificationControlMagic = nil
-        clearDisplay()
+    /// Retire the entire attempt before cancelling BLE, so late callbacks and suspended work
+    /// cannot revive it. Only release peripherals belonging to this selected pair.
+    private func resetConnection() {
+        connectionSession.reset()
+        partialConnectionTimer?.cancel()
+        partialConnectionTimer = nil
+        partialConnection = G2PartialConnection()
+        publishPartialConnection()
+        authTask?.cancel()
+        authTask = nil
         cancelPairingTimeout()
         stopHeartbeats()
-        Task { await reconnectionManager.stop() }
-
-        // Disconnect known peripherals
-        if let left = leftPeripheral {
-            centralManager?.cancelPeripheralConnection(left)
-        }
-        if let right = rightPeripheral {
-            centralManager?.cancelPeripheralConnection(right)
-        }
-
-        // Also disconnect any other G2 peripherals the system still has connected
-        let connected = getConnectedDevices()
-        for peripheral in connected {
-            centralManager?.cancelPeripheralConnection(peripheral)
-        }
-
+        centralManager?.stopScan()
+        notificationEpoch += 1
+        notificationControlMagic = nil
+        let peripherals = [leftPeripheral, rightPeripheral].compactMap { $0 }
+        leftPeripheral = nil
+        rightPeripheral = nil
+        leftWriteChar = nil
+        rightWriteChar = nil
+        leftNotifyChar = nil
+        rightNotifyChar = nil
+        leftAudioChar = nil
+        rightAudioChar = nil
         leftWriteQueue.removeAll()
         rightWriteQueue.removeAll()
-        leftInitialized = false
-        rightInitialized = false
-        authStarted = false
-        leftAuthenticated = false
-        rightAuthenticated = false
+        leftDraining = false
+        rightDraining = false
+        receiveManager = G2ReceiveManager()
         startupPageCreated = false
         pageCreated = false
+        pageGeneration &+= 1
+        evenHubMicActive = false
+        recoveryInFlight = false
+        lastRecoveryRebuildMs = 0
         dashboardShowing = 0
         dashboardOpening = false
         heartbeatCounter = 0
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
+        for peripheral in peripherals {
+            centralManager?.cancelPeripheralConnection(peripheral)
+        }
+        publishNotificationStatus()
+    }
+
+    private func recoverConnection() {
+        resetConnection()
+        startReconnectionTimer()
+    }
+
+    func disconnect() {
+        Bridge.log("G2: disconnect()")
+        isDisconnecting = true
+        resetConnection()
+        reconnectionManager.stop()
     }
 
     func forget() {
         stopHeartbeats()
-        Task { await reconnectionManager.stop() }
+        reconnectionManager.stop()
         disconnect()
         // Note: leftGlassUUIDMap / rightGlassUUIDMap intentionally preserved so a future
         // pair to the same serial number can reuse the cached peripheral UUID.
@@ -3960,7 +4036,7 @@ class G2: NSObject, SGCManager {
         // } else {
         //     stopCompass()
         // }
-        Task { await runAuthSequence() }
+        startAuthenticationIfReady()
     }
 
     /// Start a navigation session so the glasses stream compass heading via
@@ -4182,6 +4258,7 @@ class G2: NSObject, SGCManager {
 
     @discardableResult
     private func startScan() -> Bool {
+        guard !isDisconnecting else { return false }
         Bridge.log("G2: startScan()")
         if centralManager == nil {
             centralManager = CBCentralManager(
@@ -4190,44 +4267,16 @@ class G2: NSObject, SGCManager {
             )
         }
 
-        isDisconnecting = false
         guard centralManager!.state == .poweredOn else {
             Bridge.log("G2: Bluetooth not powered on")
             return false
         }
 
-        let devices = getConnectedDevices()
-        Bridge.log("G2: connnectedDevices.count: (\(devices.count))")
-        for device in devices {
-            if let name = device.name, let serialNumber = deviceNameToSerialNumber[name] {
-                Bridge.log("G2: Connected to device: \(name)")
-
-                if name.contains("_L_") && serialNumber.contains(DEVICE_SEARCH_ID) {
-                    leftPeripheral = device
-                    device.delegate = self
-                    device.discoverServices([G2BLE.SERVICE_UUID])
-                    centralManager!.connect(
-                        leftPeripheral!,
-                        options: notificationConnectionOptions
-                    )
-                } else if name.contains("_R_") && serialNumber.contains(DEVICE_SEARCH_ID) {
-                    rightPeripheral = device
-                    device.delegate = self
-                    device.discoverServices([G2BLE.SERVICE_UUID])
-                    centralManager!.connect(
-                        rightPeripheral!,
-                        options: notificationConnectionOptions
-                    )
-                }
-                // we can't emit the serial number here unfortunately:
-                emitDiscoveredDevice(serialNumber)
-            }
-        }
-
-        // Try UUID-based reconnection first
-        if connectByUUID() {
-            return true
-        }
+        startPairingTimeout()
+        // UUIDs are scoped to the selected serial. Reclaim each saved arm independently,
+        // including one still connected to iOS after a process restart, then scan for its peer.
+        connectKnownPeripherals()
+        if leftPeripheral != nil && rightPeripheral != nil { return true }
 
         centralManager!.scanForPeripherals(
             withServices: nil,
@@ -4242,47 +4291,34 @@ class G2: NSObject, SGCManager {
         centralManager?.stopScan()
     }
 
-    private func connectByUUID() -> Bool {
-        // don't do this if we don't have a search id set:
-        if DEVICE_SEARCH_ID == "NOT_SET" || DEVICE_SEARCH_ID.isEmpty {
-            Bridge.log("G2: 🔵 No DEVICE_SEARCH_ID set, skipping connect by UUID")
-            return false
+    private func connectKnownPeripherals() {
+        guard DEVICE_SEARCH_ID != "NOT_SET", !DEVICE_SEARCH_ID.isEmpty else { return }
+        let leftUUID = leftGlassUUID(forSN: DEVICE_SEARCH_ID)
+        let rightUUID = rightGlassUUID(forSN: DEVICE_SEARCH_ID)
+        let cachedIDs = [leftUUID, rightUUID].compactMap { $0 }
+        let cached = centralManager?.retrievePeripherals(withIdentifiers: cachedIDs) ?? []
+        for peripheral in cached + getConnectedDevices() {
+            let serial = peripheral.name.flatMap { deviceNameToSerialNumber[$0] }
+            guard let side = G2ConnectionTarget.side(
+                identifier: peripheral.identifier, name: peripheral.name,
+                advertisedSerial: serial, searchID: DEVICE_SEARCH_ID,
+                leftUUID: leftUUID, rightUUID: rightUUID
+            ) else { continue }
+            connectPeripheral(peripheral, side: side)
         }
+    }
 
-        guard let leftUUID = leftGlassUUID(forSN: DEVICE_SEARCH_ID),
-              let rightUUID = rightGlassUUID(forSN: DEVICE_SEARCH_ID)
-        else { return false }
-
-        let knownLeft = centralManager?.retrievePeripherals(withIdentifiers: [leftUUID])
-        let knownRight = centralManager?.retrievePeripherals(withIdentifiers: [rightUUID])
-
-        guard let left = knownLeft?.first, let right = knownRight?.first else { return false }
-
-        // Validate the cached peripherals match the device the user selected
-        let leftName = left.name ?? ""
-        let rightName = right.name ?? ""
-        // if !leftName.isEmpty && !leftName.contains(DEVICE_SEARCH_ID) {
-        //     Bridge.log(
-        //         "G2: connectByUUID - cached left '\(leftName)' doesn't match search ID '\(DEVICE_SEARCH_ID)', skipping"
-        //     )
-        //     return false
-        // }
-        // if !rightName.isEmpty && !rightName.contains(DEVICE_SEARCH_ID) {
-        //     Bridge.log(
-        //         "G2: connectByUUID - cached right '\(rightName)' doesn't match search ID '\(DEVICE_SEARCH_ID)', skipping"
-        //     )
-        //     return false
-        // }
-
-        Bridge.log("G2: connectByUUID - left: \(leftName), right: \(rightName)")
-
-        leftPeripheral = left
-        rightPeripheral = right
-        left.delegate = self
-        right.delegate = self
-        centralManager?.connect(left, options: notificationConnectionOptions)
-        centralManager?.connect(right, options: notificationConnectionOptions)
-        return true
+    private func connectPeripheral(_ peripheral: CBPeripheral, side: G2ConnectionSession.Side) {
+        guard !isDisconnecting, peripheral.state != .disconnecting else { return }
+        if side == .left {
+            guard leftPeripheral == nil else { return }
+            leftPeripheral = peripheral
+        } else {
+            guard rightPeripheral == nil else { return }
+            rightPeripheral = peripheral
+        }
+        peripheral.delegate = self
+        centralManager?.connect(peripheral, options: notificationConnectionOptions)
     }
 
     private func getConnectedDevices() -> [CBPeripheral] {
@@ -4628,6 +4664,7 @@ class G2: NSObject, SGCManager {
     }
 
     private func setFullyConnected() {
+        guard connectionSession.isReady, !isDisconnecting else { return }
         let isFullyConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
         let isFullyBooted = DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
         if !isFullyConnected {
@@ -4683,7 +4720,10 @@ class G2: NSObject, SGCManager {
         return (x, y, z)
     }
 
-    private func handleTouchEvent(_ devEventData: Data) {
+    func handleTouchEvent(_ devEventData: Data) {
+        // A single arm can emit system_exit and gestures before the pair has authenticated.
+        // Those events must neither establish readiness nor drive page recovery.
+        guard connectionSession.isReady, !isDisconnecting else { return }
         // Parse SendDeviceEvent: field 1=ListEvent, field 2=TextEvent, field 3=SysEvent
         var reader = ProtobufReader(devEventData)
         let fields = reader.parseFields()
@@ -4718,9 +4758,6 @@ class G2: NSObject, SGCManager {
             return
         }
         lastClickTimestamp = timestamp
-
-        // if we are receiving touch events we are fully booted:
-        setFullyConnected()
 
         // Bridge.log("G2: handleTouchEvent: \(fields)")
         // Bridge.log(
@@ -4970,16 +5007,13 @@ class G2: NSObject, SGCManager {
             }
             let secAuthStr = secAuth.map { $0 ? "true" : "false" } ?? "?"
             Bridge.log("G2: Authentication response: \(sourceKey) secAuth=\(secAuthStr)")
-            if secAuth == true {
-                if sourceKey == "L" {
-                    leftAuthenticated = true
-                } else if sourceKey == "R" {
-                    rightAuthenticated = true
-                }
-                if leftAuthenticated && rightAuthenticated {
-                    Bridge.log("G2: Both sides authenticated, setting fully booted and connected")
-                    setFullyConnected()
-                }
+            if secAuth == false {
+                recoverConnection()
+                return
+            }
+            if let side = G2ConnectionSession.Side(rawValue: sourceKey) {
+                connectionSession.authenticated(side, success: secAuth == true)
+                finishConnectionIfReady()
             }
         }
     }
@@ -5205,14 +5239,18 @@ extension G2: CBCentralManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             Bridge.log("G2: Bluetooth state: \(state.rawValue)")
+            guard !self.isDisconnecting else { return }
             if state == .poweredOn {
                 _ = self.startScan()
+            } else {
+                self.reconnectionManager.stop()
+                self.resetConnection()
             }
         }
     }
 
     nonisolated func centralManager(
-        _ central: CBCentralManager,
+        _: CBCentralManager,
         didDiscover peripheral: CBPeripheral,
         advertisementData: [String: Any],
         rssi _: NSNumber
@@ -5235,6 +5273,7 @@ extension G2: CBCentralManagerDelegate {
                 Bridge.log("G2: Could not extract SN from manufacturer data")
                 return
             }
+            guard !self.isDisconnecting else { return }
             // sn = "S200LACA040040"
             let mfgHex = mfgData.map { String(format: "%02X", $0) }.joined(separator: " ")
             Bridge.log(
@@ -5257,33 +5296,17 @@ extension G2: CBCentralManagerDelegate {
             self.emitDiscoveredDevice(serialNumber)
 
             // If scan-only mode (no search ID set), don't auto-connect
-            guard self.DEVICE_SEARCH_ID != "NOT_SET" else { return }
+            guard let side = G2ConnectionTarget.side(
+                identifier: peripheral.identifier, name: name, advertisedSerial: serialNumber,
+                searchID: self.DEVICE_SEARCH_ID,
+                leftUUID: self.leftGlassUUID(forSN: self.DEVICE_SEARCH_ID),
+                rightUUID: self.rightGlassUUID(forSN: self.DEVICE_SEARCH_ID)
+            ) else { return }
+            self.connectPeripheral(peripheral, side: side)
 
-            // Bridge.log("G2: SN: \(serialNumber), DEVICE_SEARCH_ID: \(self.DEVICE_SEARCH_ID) name: \(name)")
-
-            // Only connect to devices matching our search ID
-            guard serialNumber.contains(self.DEVICE_SEARCH_ID) else { return }
-
-            if name.contains("_L_") {
-                if self.leftPeripheral == nil {
-                    self.leftPeripheral = peripheral
-                    peripheral.delegate = self
-                    central.connect(peripheral, options: self.notificationConnectionOptions)
-                    // Bridge.log("G2: Connecting to LEFT: \(name)")
-                }
-            } else if name.contains("_R_") {
-                if self.rightPeripheral == nil {
-                    self.rightPeripheral = peripheral
-                    peripheral.delegate = self
-                    central.connect(peripheral, options: self.notificationConnectionOptions)
-                    // Bridge.log("G2: Connecting to RIGHT: \(name)")
-                }
-            }
-
-            // Stop scanning once we have both
+            // Keep the attempt deadline until both arms are authenticated, not merely discovered.
             if self.leftPeripheral != nil && self.rightPeripheral != nil {
                 self.stopScan()
-                self.cancelPairingTimeout()
             }
         }
     }
@@ -5300,7 +5323,10 @@ extension G2: CBCentralManagerDelegate {
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            guard peripheral === self.leftPeripheral || peripheral === self.rightPeripheral,
+                  !self.isDisconnecting else { return }
             Bridge.log("G2: Connected to \(peripheral.name ?? "unknown")")
+            self.updatePartialConnection()
 
             // Store UUID for reconnection, keyed by serial number.
             let sn = peripheral.name.flatMap { self.deviceNameToSerialNumber[$0] }
@@ -5330,59 +5356,29 @@ extension G2: CBCentralManagerDelegate {
             Bridge.log("G2: Disconnected \(side): \(error?.localizedDescription ?? "clean")")
 
             guard peripheral === self.leftPeripheral || peripheral === self.rightPeripheral else { return }
-            self.notificationEpoch += 1
-            self.notificationControlMagic = nil
-            // Only reconnect if not intentionally disconnecting
             if self.isDisconnecting { return }
+            self.recoverConnection()
+        }
+    }
 
-            // Clear both sides to force re-discovery (like G1)
-            self.leftPeripheral = nil
-            self.rightPeripheral = nil
-            self.leftWriteQueue.removeAll()
-            self.rightWriteQueue.removeAll()
-            self.leftInitialized = false
-            self.rightInitialized = false
-            self.leftWriteChar = nil
-            self.rightWriteChar = nil
-            self.leftNotifyChar = nil
-            self.rightNotifyChar = nil
-            self.leftAudioChar = nil
-            self.rightAudioChar = nil
-            self.authStarted = false
-
-            self.startupPageCreated = false
-            self.pageCreated = false
-            self.dashboardShowing = 0
-            self.dashboardOpening = false
-            DeviceStore.shared.apply("glasses", "connected", false)
-            DeviceStore.shared.apply("glasses", "fullyBooted", false)
-            self.publishNotificationStatus()
-
-            // Start persistent reconnection loop (every 30s, unlimited attempts)
-            self.startReconnectionTimer()
+    nonisolated func centralManager(
+        _: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self, !self.isDisconnecting,
+                  peripheral === self.leftPeripheral || peripheral === self.rightPeripheral else { return }
+            Bridge.log("G2: Connection failed: \(error?.localizedDescription ?? "unknown")")
+            // The attempt deadline bounds failures without an immediate reconnect loop.
         }
     }
 
     private func startReconnectionTimer() {
-        Task {
-            await reconnectionManager.start { [weak self] in
-                guard let self else { return false }
-
-                // Check if already connected
-                if await MainActor.run(body: {
-                    DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
-                }) {
-                    Bridge.log("G2: Already connected, stopping reconnection")
-                    return true
-                }
-
+        reconnectionManager.start { [weak self] in
+            await MainActor.run {
+                guard let self, !self.isDisconnecting else { return true }
+                if self.connectionSession.isReady { return true }
                 Bridge.log("G2: Attempting reconnection...")
-
-                await MainActor.run {
-                    self.startScan()
-                }
-
-                // Return false to keep trying
+                self.startScan()
                 return false
             }
         }
@@ -5393,9 +5389,13 @@ extension G2: CBCentralManagerDelegate {
 
 extension G2: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {
-        guard let services = peripheral.services else { return }
-        for service in services {
-            peripheral.discoverCharacteristics(nil, for: service)
+        Task { @MainActor [weak self] in
+            guard let self, !self.isDisconnecting,
+                  peripheral === self.leftPeripheral || peripheral === self.rightPeripheral,
+                  let services = peripheral.services else { return }
+            for service in services {
+                peripheral.discoverCharacteristics(nil, for: service)
+            }
         }
     }
 
@@ -5407,6 +5407,8 @@ extension G2: CBPeripheralDelegate {
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            guard !self.isDisconnecting,
+                  peripheral === self.leftPeripheral || peripheral === self.rightPeripheral else { return }
             let side = peripheral === self.leftPeripheral ? "LEFT" : "RIGHT"
 
             for char in characteristics {
@@ -5448,23 +5450,32 @@ extension G2: CBPeripheralDelegate {
                 }
             }
 
-            // Check if this side is fully initialized
-            if peripheral === self.leftPeripheral && self.leftWriteChar != nil {
-                self.leftInitialized = true
-                Bridge.log("G2: LEFT initialized")
-            } else if peripheral === self.rightPeripheral && self.rightWriteChar != nil
-                && self.rightNotifyChar != nil
-            {
-                self.rightInitialized = true
-                Bridge.log("G2: RIGHT initialized")
-            }
+            self.updateInitialization(for: peripheral)
+        }
+    }
 
-            // Both sides ready -> run auth (once)
-            if self.leftInitialized && self.rightInitialized && !self.authStarted {
-                self.authStarted = true
-                Bridge.log("G2: Both sides initialized, starting auth sequence")
-                Task { await self.runAuthSequence() }
+    private func updateInitialization(for peripheral: CBPeripheral) {
+        guard !isDisconnecting, peripheral.state == .connected else { return }
+        if peripheral === leftPeripheral, leftWriteChar != nil, leftNotifyChar?.isNotifying == true {
+            connectionSession.initialize(.left)
+        } else if peripheral === rightPeripheral, rightWriteChar != nil, rightNotifyChar?.isNotifying == true {
+            connectionSession.initialize(.right)
+        }
+        startAuthenticationIfReady()
+    }
+
+    nonisolated func peripheral(
+        _ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?
+    ) {
+        guard characteristic.uuid == G2BLE.CHAR_NOTIFY else { return }
+        Task { @MainActor [weak self] in
+            guard let self, !self.isDisconnecting,
+                  peripheral === self.leftPeripheral || peripheral === self.rightPeripheral else { return }
+            guard error == nil, characteristic.isNotifying else {
+                self.recoverConnection()
+                return
             }
+            self.updateInitialization(for: peripheral)
         }
     }
 
@@ -5485,7 +5496,10 @@ extension G2: CBPeripheralDelegate {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
 
+            guard !self.isDisconnecting,
+                  peripheral === self.leftPeripheral || peripheral === self.rightPeripheral else { return }
             if characteristic.uuid == G2BLE.AUDIO_NOTIFY {
+                guard self.connectionSession.isReady else { return }
                 // Audio data - forward to mic system
                 await self.handleAudioData(data)
             } else if characteristic.uuid == G2BLE.CHAR_NOTIFY {

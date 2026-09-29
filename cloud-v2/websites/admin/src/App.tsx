@@ -920,15 +920,15 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
 }
 
 function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
-  const [kind, setKind] = useState<"all" | ReportKind | "internal" | "testing">("all");
+  const [category, setCategory] = useState<"all" | ReportKind | "internal" | "testing">("bug");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
   const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
   const reports = useQuery({
-    queryKey: ["admin-reports", kind, status],
+    queryKey: ["admin-reports", category, status],
     queryFn: () => {
       const params = new URLSearchParams();
-      if (kind !== "all") params.set("kind", kind);
+      if (category !== "all") params.set("category", category);
       if (status !== "all") params.set("status", status);
       const qs = params.toString();
       return api<{ reports: ReportSummary[] }>(`/api/admin/reports${qs ? `?${qs}` : ""}`);
@@ -948,8 +948,8 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <FilterPills
-              value={kind}
-              onChange={setKind}
+              value={category}
+              onChange={setCategory}
               options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["internal", "Internal"], ["testing", "Testing"], ["automatic", "Automatic"]]}
             />
             <FilterPills
@@ -974,7 +974,7 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
         ) : reports.isError ? (
           <div className="p-5"><ErrorText error={reports.error} /></div>
         ) : rows.length === 0 ? (
-          <EmptyState title="No reports" body={kind === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : kind === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
+          <EmptyState title="No reports" body={category === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : category === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
         ) : (
           <div className="divide-y divide-[#eceeeb]">
             {rows.map(report => (

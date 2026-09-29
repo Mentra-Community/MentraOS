@@ -20,7 +20,7 @@ jest.mock("@/components/ignite", () => {
     Button: ({onPress, tx, disabled}: {onPress?: () => void; tx: string; disabled?: boolean}) => (
       <Pressable accessibilityLabel={tx} onPress={onPress} disabled={disabled} />
     ),
-    Text: ({text}: {text?: string}) => <RNText>{text}</RNText>,
+    Text: ({text, tx}: {text?: string; tx?: string}) => <RNText>{text ?? tx}</RNText>,
     Icon: () => null,
   }
 })
@@ -83,4 +83,37 @@ describe("unfinished pairing on Home", () => {
     })
     expect(screen.queryByLabelText("pairing:cancelPairing")).toBeNull()
   })
+})
+
+describe("G2 arm progress on Home", () => {
+  beforeEach(async () => {
+    jest.clearAllMocks()
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({push: jest.fn()})
+    engine.pairing.onScanning = jest.fn(() => () => {})
+    await useSettingsStore.getState().resetAllSettingsLocally()
+    await useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, "Even Realities G2", false)
+    await useSettingsStore.getState().setSetting(SETTINGS.device_name.key, "test-selected-pair", false)
+  })
+
+  it.each(["left", "right"] as const)(
+    "shows the native delayed %s-arm notice and clears it on the next status",
+    (missingArm) => {
+      const status = {state: "disconnected", fullyBooted: false, case: {}, g2MissingArm: missingArm as string | null}
+      ;(engine.glasses.status as jest.Mock).mockImplementation(() => status)
+      let notify = () => {}
+      ;(engine.glasses.onStatus as jest.Mock).mockImplementation((listener) => {
+        notify = listener
+        return () => {}
+      })
+      const screen = render(<GlassesStatus />)
+      const key = missingArm === "left" ? "pairing:g2WaitingForLeft" : "pairing:g2WaitingForRight"
+      expect(screen.getByText(key)).toBeTruthy()
+      act(() => {
+        // Snapshot updates use a new object, as the real engine projection does.
+        ;(engine.glasses.status as jest.Mock).mockReturnValue({...status, g2MissingArm: null})
+        notify()
+      })
+      expect(screen.queryByText(key)).toBeNull()
+    },
+  )
 })
