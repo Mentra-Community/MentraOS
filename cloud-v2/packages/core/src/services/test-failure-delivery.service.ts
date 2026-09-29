@@ -1,13 +1,16 @@
 import { createLogger } from "@mentra/cloud-shared";
 import { testFailureCorrectionAckSchema, testFailureDeliveryAckSchema } from "../types/test-failure.types";
-import { signTestFailureCorrectionDelivery, signTestFailureDelivery, testFailureEnvironment } from "./test-failure-auth";
+import { signTestFailureCorrectionDelivery, signTestFailureDelivery, signTestFailureEvidenceDelivery, testFailureEnvironment } from "./test-failure-auth";
 import { TestRunService } from "./test-run.service";
+import { EVIDENCE_SUPPLEMENT_CONTENT_TYPE, evidenceSupplementAckSchema } from "../types/test-failure-evidence.types";
+import { TestFailureEvidenceService } from "./test-failure-evidence.service";
 
 const logger = createLogger("test-failure-delivery");
 
 /** Only transports durable references into the existing dev-agent queue. */
 export class TestFailureDeliveryService {
-  constructor(private readonly runs = new TestRunService(), private readonly send: typeof fetch = fetch) {}
+  constructor(private readonly runs = new TestRunService(), private readonly send: typeof fetch = fetch,
+    private readonly evidence?: Pick<TestFailureEvidenceService, "repository">) {}
 
   /** One signed POST with a bounded JSON reply; null when the receiver did not accept. */
   private async post(url: URL, contentType: string, body: string, signature: (expires: number) => string, signal?: AbortSignal) {
@@ -87,13 +90,37 @@ export class TestFailureDeliveryService {
         // Same rule: nothing remote is logged; the pending correction keeps its identity for the next pass.
       }
     }
+    const supplements = signal?.aborted || !this.evidence ? [] : await this.evidence.repository.pending(10);
+    let supplemented = 0;
+    for (const supplement of supplements) {
+      if (signal?.aborted) break;
+      const ref = supplement.reference, body = JSON.stringify(ref);
+      if (ref.environment !== environment) continue;
+      try {
+        await this.evidence!.repository.attempted(ref.supplementId);
+        const { status, value } = await this.post(new URL("/internal/routine-failure-evidence-supplements", base),
+          EVIDENCE_SUPPLEMENT_CONTENT_TYPE, body, expires => signTestFailureEvidenceDelivery(body, expires, secret), signal);
+        if (status === 409) {
+          await this.evidence!.repository.settle(ref.supplementId, { state: "refused", refusedAt: new Date().toISOString() });
+          continue;
+        }
+        if (value === null) continue;
+        const ack = evidenceSupplementAckSchema.parse(value);
+        if (ack.occurrenceId !== ref.occurrenceId || ack.revision !== ref.revision
+          || ack.agentRunId !== ref.agentRunId || ack.supplementId !== ref.supplementId) continue;
+        await this.evidence!.repository.settle(ref.supplementId,
+          { state: "acknowledged", agentRunId: ref.agentRunId, acknowledgedAt: new Date().toISOString() });
+        supplemented++;
+      } catch { /* Keep the same pending reference; never log diagnostic bodies or signing material. */ }
+    }
     return { acknowledged, pending: pending.length - acknowledged, configured: true,
+      ...(supplements.length ? { evidenceSupplements: { acknowledged: supplemented, pending: supplements.length - supplemented } } : {}),
       ...(corrections.length ? { corrections: { acknowledged: corrected, pending: corrections.length - corrected } } : {}) };
   }
 }
 
 /** Explicit rollout switch; no delivery is required for evidence ingestion. */
-export function startTestFailureDelivery(service = new TestFailureDeliveryService()) {
+export function startTestFailureDelivery(service = new TestFailureDeliveryService(new TestRunService(), fetch, new TestFailureEvidenceService())) {
   if (process.env.CLOUD_TEST_FAILURE_DELIVERY_ENABLED !== "true") return async () => {};
   const abort = new AbortController();
   let active: Promise<unknown> | undefined;

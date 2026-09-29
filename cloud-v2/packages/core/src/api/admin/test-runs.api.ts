@@ -7,10 +7,11 @@ import { TestRunFollowUpError, TestRunFollowUpService } from "../../services/tes
 import { testRunQuerySchema } from "../../types/test-run.types";
 import type { AppEnv } from "../../types/hono.types";
 import { TestHostHealthError, TestHostHealthService } from "../../services/test-host-health.service";
+import { TestFailureEvidenceService } from "../../services/test-failure-evidence.service";
 
 /** Mounted only behind preinstalled.api's existing adminAuth gate. */
 export function createTestRunAdminApi(service = new TestRunService(), overview = new TestRunOverviewService(), followUp = new TestRunFollowUpService(),
-  corrections = new TestFailureCorrectionService(), health = new TestHostHealthService()) {
+  corrections = new TestFailureCorrectionService(), health = new TestHostHealthService(), evidence = new TestFailureEvidenceService()) {
   const app = new Hono<AppEnv>();
   app.onError((error, c) => {
     if (error instanceof TestRunError) return c.json({ error: "test_run_error", error_description: error.message }, error.status);
@@ -65,6 +66,19 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
     return c.json(result.correction, result.created ? 201 : 200);
   });
   app.get("/:runId", async c => c.json(await service.detail(c.req.param("runId"))));
+  const evidencePath = "/:runId/failures/:occurrenceId/evidence-supplements";
+  app.get(evidencePath, async c => {
+    c.header("Cache-Control", "no-store");
+    return c.json(await evidence.list(c.req.param("runId"), c.req.param("occurrenceId")));
+  });
+  app.post(evidencePath, bodyLimit({ maxSize: 1024 * 1024, onError: c => c.json({ error: "too_large" }, 413) }), async c => {
+    c.header("Cache-Control", "no-store");
+    const admin = c.get("developer");
+    if (!c.get("isAdmin") || !admin) throw new TestRunFollowUpError(403, "admin access required");
+    if (c.req.header("content-type") !== "application/json") throw new TestRunError(400, "JSON evidence supplement required");
+    const result = await evidence.submit(c.req.param("runId"), c.req.param("occurrenceId"), await c.req.json().catch(() => null), admin.developerId);
+    return c.json(result.supplement, result.created ? 201 : 200);
+  });
   app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => service.media(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
   return app;
 }

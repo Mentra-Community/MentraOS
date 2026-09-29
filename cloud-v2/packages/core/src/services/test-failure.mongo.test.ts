@@ -5,6 +5,8 @@ import { TestRunModel } from "../models/test-run.model";
 import type { TestRun } from "../types/test-run.types";
 import { MongoTestRunRepository, TestRunService } from "./test-run.service";
 import { TestFailureCorrectionService } from "./test-failure-correction.service";
+import { MongoEvidenceSupplementRepository } from "./test-failure-evidence.service";
+import type { EvidenceSupplement } from "../types/test-failure-evidence.types";
 
 // Optional real Mongo proof; never use an existing database or non-loopback host.
 const uri = process.env.TEST_FAILURE_MONGO_URI;
@@ -28,6 +30,29 @@ describe.skipIf(!uri)("Mongo failure occurrence durability", () => {
     outcomes: { test: "failed", teardown: "passed", fixture: "ready", evidence: "incomplete" },
     provenance: { repository: "Mentra-Community/MentraOS" }, fixture: { alias: "phone" },
     firmwareAssertions: [], chapters: [], assets: [],
+  });
+
+  test("concurrent evidence additions enforce the per-occurrence bound without touching the payload", async () => {
+    const service = new TestRunService(), result = await service.ingest(fixture("evidence-race"));
+    const occurrenceId = result.occurrenceIds[0]!, agentRunId = randomUUID();
+    await service.acknowledgeFailure(occurrenceId, agentRunId);
+    const before = await TestRunModel.findOne({ runId: result.runId }).lean(), repository = new MongoEvidenceSupplementRepository();
+    const value = (index: number): EvidenceSupplement => {
+      const digest = index.toString(16).padStart(64, "0"), identity = { schemaVersion: 1 as const, environment: "dev" as const,
+        testRunId: result.runId, payloadSha256: result.payloadSha256, occurrenceId, revision: 1 as const, agentRunId,
+        target: { caseId: `mfc_${"b".repeat(64)}`, caseRevision: index, sessionSha256: "c".repeat(64) } };
+      return { reference: { ...identity, supplementId: `tes_${digest}`, supplementSha256: digest },
+        manifest: { ...identity, reason: "Synthetic concurrency contract proof.", redactionPolicy: "reviewed-harness-diagnostic-v1",
+          assets: [{ assetId: "synthetic", sizeBytes: 2, sha256: "d".repeat(64) }] },
+        reviewedBy: "synthetic", reviewedAt: new Date().toISOString(), delivery: { state: "pending" } };
+    };
+    await Promise.all(Array.from({ length: 8 }, (_, index) => repository.append(value(index))));
+    const rows = await repository.list(result.runId); expect(rows).toHaveLength(2);
+    const after = await TestRunModel.findOne({ runId: result.runId }).lean();
+    expect(after!.payload).toEqual(before!.payload); expect(after!.payloadSha256).toBe(before!.payloadSha256);
+    expect(after!.failureOccurrences).toEqual(before!.failureOccurrences); expect(after!.uploadsComplete).toBe(before!.uploadsComplete);
+    await repository.settle(rows[0]!.reference.supplementId, { state: "acknowledged", agentRunId: randomUUID(), acknowledgedAt: new Date().toISOString() });
+    expect((await repository.list(result.runId))[0]!.delivery.state).toBe("pending");
   });
 
   test("concurrent metadata retries create one occurrence, and passing runs share no failure identity", async () => {

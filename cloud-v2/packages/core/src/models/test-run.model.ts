@@ -20,6 +20,8 @@ const schema = new Schema({
   // Admin-reviewed provenance corrections of existing occurrences (at most one each), with
   // their own delivery receipts. They never replace the payload, its digest or an occurrence.
   provenanceCorrections: { type: [Schema.Types.Mixed], default: undefined },
+  // Bounded reviewed diagnostic additions; original payload, source, outcome and assets remain immutable.
+  evidenceSupplements: { type: [Schema.Types.Mixed], default: undefined },
 }, { collection: "test_runs", timestamps: true });
 schema.index({ startedAt: -1, runId: -1 });
 schema.index({ completionProjectionVersion: 1, completedAt: -1, runId: -1 }, { name: TEST_RUN_COMPLETION_INDEX });
@@ -31,6 +33,7 @@ schema.index({ outcome: 1, startedAt: -1 });
 schema.index({ "failureOccurrences.occurrenceId": 1 }, { sparse: true });
 schema.index({ "failureOccurrences.delivery.state": 1, startedAt: 1 });
 schema.index({ "provenanceCorrections.delivery.state": 1 }, { sparse: true });
+schema.index({ "evidenceSupplements.delivery.state": 1 }, { sparse: true });
 
 const assetSchema = new Schema({
   runId: { type: String, required: true },
