@@ -68,6 +68,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -165,6 +168,37 @@ public class WhipStreamingService extends Service {
 
   private IHardwareManager mHardwareManager;
   private final Object mPrivacyLightOwner = new Object();
+
+  // ---- Stream photo: the camera is lent to a still while substitute frames hold the track ----
+
+  /** Outcome of {@link #suspendCameraForStill}. Called off the main thread. */
+  public interface StillCameraCallback {
+    /** The live capturer released Camera2 and substitute frames are flowing. */
+    void onCameraReleased();
+
+    /** The camera cannot be lent; the stream is unchanged. */
+    void onUnavailable(String errorCode, String message);
+  }
+
+  /**
+   * Guards the capturer against concurrent stop/start from the still worker and teardown. Always
+   * taken before {@link #mStateLock} when both are needed.
+   */
+  private final Object mStillLock = new Object();
+  /** The stream photo that currently holds the camera, or null. Guarded by {@link #mStillLock}. */
+  private String mStillRequestId;
+  /**
+   * Substitute frames for the current or just-finished stream photo. Atomic rather than lock
+   * guarded: the reopened camera's first frame clears it on the capture thread, and that thread
+   * must never wait on {@link #mStillLock} because a holder of that lock can be blocked inside
+   * {@code stopCapture()} waiting for the capture thread.
+   */
+  private final java.util.concurrent.atomic.AtomicReference<WhipFillerFrameSource> mStillFiller =
+      new java.util.concurrent.atomic.AtomicReference<>();
+  /** Bumped whenever the still slot is taken or torn down, so late worker steps can tell they are stale. */
+  private int mStillGeneration;
+  private ExecutorService mStillExecutor;
+  private Runnable mStillWatchdog;
 
   // ---- State management ----
   private enum StreamState { IDLE, STARTING, STREAMING, STOPPING, RECONNECTING }
@@ -443,6 +477,9 @@ public class WhipStreamingService extends Service {
       }
     }
     stopStreaming();
+    ExecutorService stillExecutor = mStillExecutor;
+    mStillExecutor = null;
+    if (stillExecutor != null) stillExecutor.shutdown();
     Log.d(TAG, "WhipStreamingService destroyed");
     super.onDestroy();
   }
@@ -1457,6 +1494,266 @@ public class WhipStreamingService extends Service {
   }
 
   // -----------------------------------------------------------------------
+  // Stream photo
+  // -----------------------------------------------------------------------
+
+  private synchronized ExecutorService stillExecutor() {
+    if (mStillExecutor == null) {
+      mStillExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "WhipStillWorker");
+        thread.setDaemon(true);
+        return thread;
+      });
+    }
+    return mStillExecutor;
+  }
+
+  private void suspendForStill(String requestId, StillCameraCallback callback) {
+    final WhipCameraCapturer capturer;
+    final SurfaceTextureHelper helper;
+    final VideoSource source;
+    final int generation;
+    String unavailableCode = null;
+    String unavailableMessage = null;
+    synchronized (mStillLock) {
+      StreamState state;
+      synchronized (mStateLock) {
+        state = mStreamState;
+      }
+      if (state != StreamState.STREAMING) {
+        unavailableCode = "NOT_STREAMING";
+        unavailableMessage = "WHIP stream is " + state;
+      } else if (mStillRequestId != null) {
+        unavailableCode = "CAMERA_BUSY";
+        unavailableMessage = "Another stream photo holds the camera";
+      } else if (!(mVideoCapturer instanceof WhipCameraCapturer)
+          || mSurfaceTextureHelper == null
+          || mVideoSource == null) {
+        unavailableCode = "NOT_STREAMING";
+        unavailableMessage = "WHIP camera pipeline is not ready";
+      }
+      if (unavailableCode != null) {
+        capturer = null;
+        helper = null;
+        source = null;
+        generation = 0;
+      } else {
+        capturer = (WhipCameraCapturer) mVideoCapturer;
+        helper = mSurfaceTextureHelper;
+        source = mVideoSource;
+        mStillRequestId = requestId;
+        generation = ++mStillGeneration;
+      }
+    }
+    if (unavailableCode != null) {
+      Log.w(TAG, "[STREAM_PHOTO] cannot lend camera requestId=" + requestId + " code=" + unavailableCode);
+      callback.onUnavailable(unavailableCode, unavailableMessage);
+      return;
+    }
+    armStillWatchdog(requestId);
+    Log.i(TAG, "[STREAM_PHOTO] suspend requested requestId=" + requestId + " generation=" + generation);
+    try {
+      stillExecutor().execute(() -> lendCamera(requestId, generation, capturer, helper, source, callback));
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      synchronized (mStillLock) {
+        if (generation == mStillGeneration) mStillRequestId = null;
+      }
+      cancelStillWatchdog();
+      callback.onUnavailable("NOT_STREAMING", "WHIP service is shutting down");
+    }
+  }
+
+  private void lendCamera(
+      String requestId,
+      int generation,
+      WhipCameraCapturer capturer,
+      SurfaceTextureHelper helper,
+      VideoSource source,
+      StillCameraCallback callback) {
+    long startedAt = SystemClock.elapsedRealtime();
+    boolean lent = false;
+    synchronized (mStillLock) {
+      if (generation == mStillGeneration
+          && requestId.equals(mStillRequestId)
+          && mVideoCapturer == capturer) {
+        capturer.setFirstFrameListener(null);
+        try {
+          capturer.stopCapture();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+        // A previous photo's substitutes may still be waiting for the camera's first frame.
+        if (mStillFiller.get() == null) {
+          WhipFillerFrameSource filler = new WhipFillerFrameSource(
+              helper,
+              source.getCapturerObserver(),
+              capturer.getOutputWidth(),
+              capturer.getOutputHeight(),
+              capturer.getLastFrameRotation(),
+              AsgConstants.STREAM_PHOTO_FILLER_FPS,
+              capturer.getLastFrameTimestampNs(),
+              capturer.getLastFrameClockNs());
+          filler.start();
+          mStillFiller.set(filler);
+        }
+        lent = true;
+      }
+    }
+    if (lent) {
+      Log.i(TAG, "[STREAM_PHOTO] camera lent requestId=" + requestId
+          + " stopMs=" + (SystemClock.elapsedRealtime() - startedAt));
+      callback.onCameraReleased();
+    } else {
+      callback.onUnavailable("STREAM_CHANGED", "WHIP stream changed before the camera was released");
+    }
+  }
+
+  private void resumeAfterStill(String requestId, String reason) {
+    final WhipCameraCapturer capturer;
+    final int generation;
+    synchronized (mStillLock) {
+      if (requestId == null || !requestId.equals(mStillRequestId)) return;
+      mStillRequestId = null;
+      capturer = mVideoCapturer instanceof WhipCameraCapturer ? (WhipCameraCapturer) mVideoCapturer : null;
+      generation = mStillGeneration;
+    }
+    cancelStillWatchdog();
+    Log.i(TAG, "[STREAM_PHOTO] resume requestId=" + requestId + " reason=" + reason);
+    try {
+      stillExecutor().execute(() -> restartCameraAfterStill(requestId, capturer, generation, 1));
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      stopStillFiller("executor_closed");
+    }
+  }
+
+  private void restartCameraAfterStill(
+      String requestId, WhipCameraCapturer capturer, int generation, int attempt) {
+    // CameraNeo keeps a finished photo's device open for rapid shots; the capturer cannot open it
+    // until that session lets go.
+    long deadline = SystemClock.elapsedRealtime() + AsgConstants.STREAM_PHOTO_CAMERA_RELEASE_TIMEOUT_MS;
+    boolean released = CameraNeoService.releaseIdleCameraForStream();
+    while (!released && SystemClock.elapsedRealtime() < deadline) {
+      try {
+        Thread.sleep(100);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        break;
+      }
+      released = CameraNeoService.releaseIdleCameraForStream();
+    }
+    if (!released) {
+      Log.w(TAG, "[STREAM_PHOTO] photo camera still busy after "
+          + AsgConstants.STREAM_PHOTO_CAMERA_RELEASE_TIMEOUT_MS + "ms; reopening anyway");
+    }
+    final AtomicBoolean firstFrame = new AtomicBoolean(false);
+    synchronized (mStillLock) {
+      if (!ownsCapturerForRestart(capturer, generation)) {
+        Log.i(TAG, "[STREAM_PHOTO] restart skipped requestId=" + requestId + " (stream changed)");
+        return;
+      }
+      capturer.setFirstFrameListener(() -> {
+        firstFrame.set(true);
+        stopStillFiller("camera_frame");
+      });
+      Log.i(TAG, "[STREAM_PHOTO] reopening live camera requestId=" + requestId + " attempt=" + attempt);
+      capturer.startCapture(capturer.getOutputWidth(), capturer.getOutputHeight(), capturer.getOutputFps());
+    }
+    mMainHandler.postDelayed(() -> {
+      if (firstFrame.get()) {
+        Log.i(TAG, "[STREAM_PHOTO] live camera back requestId=" + requestId + " attempt=" + attempt);
+        return;
+      }
+      try {
+        stillExecutor().execute(() -> retryCameraAfterStill(requestId, capturer, generation, attempt));
+      } catch (java.util.concurrent.RejectedExecutionException e) {
+        stopStillFiller("executor_closed");
+      }
+    }, AsgConstants.STREAM_PHOTO_FIRST_FRAME_TIMEOUT_MS);
+  }
+
+  private void retryCameraAfterStill(
+      String requestId, WhipCameraCapturer capturer, int generation, int attempt) {
+    synchronized (mStillLock) {
+      if (!ownsCapturerForRestart(capturer, generation)) return;
+      capturer.setFirstFrameListener(null);
+      try {
+        capturer.stopCapture();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+    }
+    if (attempt < AsgConstants.STREAM_PHOTO_CAMERA_RESTART_ATTEMPTS) {
+      Log.w(TAG, "[STREAM_PHOTO] live camera gave no frame; retrying requestId=" + requestId
+          + " attempt=" + attempt);
+      try {
+        Thread.sleep(AsgConstants.STREAM_PHOTO_CAMERA_RESTART_RETRY_MS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+      restartCameraAfterStill(requestId, capturer, generation, attempt + 1);
+      return;
+    }
+    // Stopping substitutes lets the phone see an ingest stall and republish, which rebuilds the
+    // publisher with a fresh camera. Holding black frames would hide the failure indefinitely.
+    Log.e(TAG, "[STREAM_PHOTO] live camera did not return after " + attempt
+        + " attempts requestId=" + requestId + "; ending substitute frames");
+    stopStillFiller("restart_failed");
+  }
+
+  private boolean ownsCapturerForRestart(WhipCameraCapturer capturer, int generation) {
+    if (capturer == null || generation != mStillGeneration || mStillRequestId != null) return false;
+    if (mVideoCapturer != capturer) return false;
+    synchronized (mStateLock) {
+      return mStreamState == StreamState.STREAMING;
+    }
+  }
+
+  private void stopStillFiller(String reason) {
+    WhipFillerFrameSource filler = mStillFiller.getAndSet(null);
+    if (filler == null) return;
+    Log.i(TAG, "[STREAM_PHOTO] substitute frames ending reason=" + reason);
+    filler.release();
+  }
+
+  /** Teardown: drop the still's hold without reopening the camera. Caller holds {@link #mStillLock}. */
+  private void abandonStillLocked(String reason) {
+    if (mStillRequestId != null || mStillFiller.get() != null) {
+      Log.i(TAG, "[STREAM_PHOTO] abandoned requestId=" + mStillRequestId + " reason=" + reason);
+    }
+    mStillRequestId = null;
+    mStillGeneration++;
+    if (mVideoCapturer instanceof WhipCameraCapturer) {
+      ((WhipCameraCapturer) mVideoCapturer).setFirstFrameListener(null);
+    }
+    stopStillFiller(reason);
+    cancelStillWatchdog();
+  }
+
+  private void armStillWatchdog(String requestId) {
+    if (mMainHandler == null) return;
+    Runnable watchdog = () -> {
+      Log.e(TAG, "[STREAM_PHOTO] watchdog: still held the camera for "
+          + AsgConstants.STREAM_PHOTO_MAX_HOLD_MS + "ms requestId=" + requestId);
+      resumeAfterStill(requestId, "watchdog");
+    };
+    synchronized (mStillLock) {
+      if (mStillWatchdog != null) mMainHandler.removeCallbacks(mStillWatchdog);
+      mStillWatchdog = watchdog;
+    }
+    mMainHandler.postDelayed(watchdog, AsgConstants.STREAM_PHOTO_MAX_HOLD_MS);
+  }
+
+  private void cancelStillWatchdog() {
+    if (mMainHandler == null) return;
+    Runnable watchdog;
+    synchronized (mStillLock) {
+      watchdog = mStillWatchdog;
+      mStillWatchdog = null;
+    }
+    if (watchdog != null) mMainHandler.removeCallbacks(watchdog);
+  }
+
+  // -----------------------------------------------------------------------
   // Resource release
   // -----------------------------------------------------------------------
 
@@ -1468,10 +1765,13 @@ public class WhipStreamingService extends Service {
     }
     mWhipOfferPosted = false;
     mWhipStreamingNotified = false;
-    if (mVideoCapturer != null) {
-      try { mVideoCapturer.stopCapture(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-      mVideoCapturer.dispose();
-      mVideoCapturer = null;
+    synchronized (mStillLock) {
+      abandonStillLocked("webrtc_released");
+      if (mVideoCapturer != null) {
+        try { mVideoCapturer.stopCapture(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        mVideoCapturer.dispose();
+        mVideoCapturer = null;
+      }
     }
     synchronized (mStateLock) {
       if (mPeerConnection != null) {
@@ -1854,6 +2154,33 @@ public class WhipStreamingService extends Service {
       return instance.mStreamState == StreamState.STREAMING
           || instance.mStreamState == StreamState.STARTING;
     }
+  }
+
+  /**
+   * Lend the live camera to a still without ending the stream.
+   *
+   * <p>The WHIP capturer releases Camera2 and substitute frames keep the video track flowing, so the
+   * peer connection, the phone's receiver, and the meeting stay up. Every successful call must be
+   * paired with {@link #resumeCameraAfterStill}; a watchdog resumes after {@link
+   * AsgConstants#STREAM_PHOTO_MAX_HOLD_MS} regardless, so a lost resume cannot leave the stream on
+   * substitute frames.
+   */
+  public static void suspendCameraForStill(String requestId, StillCameraCallback callback) {
+    WhipStreamingService instance = sInstance;
+    if (instance == null) {
+      callback.onUnavailable("NOT_STREAMING", "No WHIP stream is running");
+      return;
+    }
+    instance.suspendForStill(requestId, callback);
+  }
+
+  /**
+   * Give the camera back to the stream. Idempotent, and a no-op for a request that no longer holds
+   * the camera. Substitute frames continue until the reopened camera's first frame.
+   */
+  public static void resumeCameraAfterStill(String requestId, String reason) {
+    WhipStreamingService instance = sInstance;
+    if (instance != null) instance.resumeAfterStill(requestId, reason);
   }
 
   /** @return true only after WHIP negotiation has reached a live streaming state. */

@@ -496,4 +496,69 @@ describe("host-owned meeting identity", () => {
     expect(await new MeetingModule(session).getConfiguration()).toEqual(config)
     expect(sent).toEqual([{type: MiniappRequestType.MEETING_GET_CONFIGURATION}])
   })
+
+  test("captureStill is one host request that outlives the default timeout by the hold", async () => {
+    const sent: Array<{payload: unknown; opts: unknown}> = []
+    const result = {
+      ok: true,
+      requestId: "st1",
+      bytes: 1_186_932,
+      shownAt: 42,
+      timings: {cardMs: 90, stillMs: 3_100, heldMs: 4_000, totalMs: 7_190},
+    }
+    const {session} = mockSession((async (payload: unknown, opts: unknown) => {
+      sent.push({payload, opts})
+      return result
+    }) as MiniappSession["sendRequest"])
+    expect(await new MeetingModule(session).captureStill({durationMs: 4_000})).toEqual(result)
+    expect(sent).toEqual([
+      {
+        payload: {type: MiniappRequestType.MEETING_CAPTURE_STILL, durationMs: 4_000, stillId: expect.any(String)},
+        opts: {timeoutMs: 79_000},
+      },
+    ])
+  })
+
+  test("captureStill reports only its own progress and stops listening when it settles", async () => {
+    let stillId = ""
+    let release!: () => void
+    const {session, handlers} = mockSession((async (payload: {stillId?: string}) => {
+      stillId = payload.stillId ?? ""
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return {ok: true}
+    }) as unknown as MiniappSession["sendRequest"])
+    const phases: string[] = []
+    const run = new MeetingModule(session).captureStill({durationMs: 0, onProgress: (phase) => phases.push(phase)})
+    await Promise.resolve()
+
+    for (const handler of handlers) {
+      handler({stillId: "someone-else", phase: "card"})
+      handler({stillId, phase: "card"})
+      handler({stillId, phase: "shown"})
+    }
+    release()
+    await run
+
+    expect(phases).toEqual(["card", "shown"])
+    expect(handlers.size).toBe(0)
+  })
+
+  test("captureStill keeps the host's failure reason so callers know when to fall back", async () => {
+    const reject = (error: unknown) => mockSession(async () => Promise.reject(error)).session
+    await expect(
+      new MeetingModule(reject({code: MiniappErrorCode.INTERNAL, message: "timed out", reason: "upload_timeout"}))
+        .captureStill({durationMs: 1}),
+    ).rejects.toEqual({code: MiniappErrorCode.INTERNAL, message: "timed out", reason: "upload_timeout"})
+    // An older host that has never heard of the request answers NOT_IMPLEMENTED with no reason.
+    await expect(
+      new MeetingModule(reject({code: MiniappErrorCode.NOT_IMPLEMENTED, message: "unknown request"})).captureStill({
+        durationMs: 1,
+      }),
+    ).rejects.toMatchObject({reason: "unsupported"})
+    await expect(
+      new MeetingModule(reject({code: MiniappErrorCode.REQUEST_ABORTED, message: "left"})).captureStill({durationMs: 1}),
+    ).rejects.toMatchObject({reason: "cancelled"})
+  })
 })

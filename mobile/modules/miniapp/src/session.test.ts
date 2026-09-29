@@ -117,6 +117,35 @@ describe("MiniappSession meeting termination details", () => {
     expect(session.meeting.state.videoEnabled).toBeUndefined()
     session.disconnect()
   })
+
+  test("a publisher ceiling expiry is delivered, and a resume the caller sent is not an event", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.meeting"})
+    const connected = session.connect()
+    await Promise.resolve()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.meeting",
+    })
+    await connected
+    const events: Array<{pauseId: string; status: "expired"}> = []
+    session.meeting.onVideoPublisher((event) => events.push(event))
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_VIDEO_PUBLISHER,
+      pauseId: "pause-1",
+      status: "expired",
+    })
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_VIDEO_PUBLISHER,
+      pauseId: "pause-2",
+      status: "resumed",
+    })
+
+    expect(events).toEqual([{pauseId: "pause-1", status: "expired"}])
+    session.disconnect()
+  })
 })
 
 describe("MiniappSession queue-before-ACK", () => {

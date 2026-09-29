@@ -53,6 +53,18 @@ final class AcsFrameSender: NSObject {
         return true
     }
 
+    /// The size ACS currently expects. A hold frame built at any other size is tagged with the
+    /// negotiated format and dropped for a dimension mismatch, so callers render to this.
+    func negotiatedSize() -> (width: Int, height: Int)? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let stream else { return nil }
+        let width = Int(stream.format.width)
+        let height = Int(stream.format.height)
+        guard width > 0, height > 0 else { return nil }
+        return (width, height)
+    }
+
     func detach() {
         stateLock.lock()
         running = false
