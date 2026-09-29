@@ -1,0 +1,55 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - no-glasses
+---
+# Starts signed in. Exercise auth through the existing deep link without signing
+# out or submitting credentials, then return to Home. Run at standard and large
+# system font sizes; restore the original font size after the test.
+- launchApp:
+    stopApp: false
+- openLink: "com.mentra:///auth/start"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Sign up with email"
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: "Continue with Google"
+    direction: DOWN
+    centerElement: false
+- assertVisible: "Continue with Google"
+- takeScreenshot: "login-labels-start"
+- scrollUntilVisible:
+    element:
+      text: "Sign in to your organization"
+    direction: DOWN
+    centerElement: false
+- assertVisible: "or"
+- takeScreenshot: "login-labels-bottom"
+- scrollUntilVisible:
+    element:
+      text: "Log In"
+    direction: UP
+    centerElement: false
+- tapOn: "Log In"
+- hideKeyboard
+- assertVisible: "Log in to MentraOS"
+- assertVisible: "Log In"
+- scrollUntilVisible:
+    element:
+      text: "Continue with Google"
+    direction: DOWN
+    centerElement: false
+- takeScreenshot: "login-labels-email"
+- scrollUntilVisible:
+    element:
+      text: "Log In"
+      index: 1
+    direction: UP
+    centerElement: false
+- tapOn:
+    text: "Log In"
+    index: 1
+- assertVisible: "Please enter your email address"
+- tapOn: "OK"
+- openLink: "com.mentra:///home"

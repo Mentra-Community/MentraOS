@@ -10,6 +10,11 @@ tags:
 - tapOn:
     text: "Continue"
     optional: true
+- scrollUntilVisible:
+    element:
+      id: "pairing-model-nimo"
+    direction: DOWN
+    centerElement: false
 - tapOn:
     id: "pairing-model-nimo"
 - assertVisible: "Open your glasses"

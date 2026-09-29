@@ -98,7 +98,7 @@ export default function EmailLoginScreen() {
             {/* Email Input */}
             <View className="mb-3">
               <Text tx="login:email" className="text-sm font-medium text-foreground mb-2" />
-              <View className="flex-row items-center h-12 border border-border rounded-lg px-3 bg-background">
+              <View className="flex-row items-center min-h-12 border border-border rounded-lg px-3 bg-background">
                 <TextInput
                   hitSlop={{top: 16, bottom: 16}}
                   className="flex-1 text-base text-foreground"
@@ -117,7 +117,7 @@ export default function EmailLoginScreen() {
             {/* Password Input */}
             <View className="mb-3">
               <Text tx="login:password" className="text-sm font-medium text-foreground mb-2" />
-              <View className="flex-row items-center h-12 border border-border rounded-lg px-3 bg-background dark:bg-transparent dark:shadow-sm">
+              <View className="flex-row items-center min-h-12 border border-border rounded-lg px-3 bg-background dark:bg-transparent dark:shadow-sm">
                 <TextInput
                   hitSlop={{top: 16, bottom: 16}}
                   className="flex-1 text-base text-foreground"

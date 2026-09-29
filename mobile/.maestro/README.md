@@ -145,3 +145,16 @@ For real-device qualification (no microphone permission needed):
 Check the prep screens and login labels on a small Android screen with standard
 and large font sizes. Labels should wrap without hiding words; bottom actions
 and the Log In link must remain reachable by scrolling.
+
+## Android login layout
+
+`01c-login-layout.yaml` checks the Google label, Log In link and submit button,
+organization sign-in action, and empty-email validation. Start signed in; the
+flow uses the existing auth deep link without signing out or submitting credentials.
+Run on a connected physical Android phone at standard and large system font sizes,
+inspect the screenshots for clipped glyphs, then restore the original font size.
+
+```bash
+adb devices -l
+maestro --device <phone-serial> test -e MAESTRO_APP_ID=com.mentra.mentra .maestro/flows/01c-login-layout.yaml
+```
