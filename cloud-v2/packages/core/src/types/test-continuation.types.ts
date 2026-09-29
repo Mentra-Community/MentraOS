@@ -51,6 +51,9 @@ export const continuationGrantSchema = z.object({
   environment: z.enum(["dev", "staging", "prod"]),
   occurrenceId: testFailureOccurrenceIdSchema,
   agentRunId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/),
+  // Triage may acknowledge an occurrence before attaching it to an existing editor.
+  // The signed issuer retains that ACK; the lease callback proves the exact link.
+  acknowledgedAgentRunId: z.string().uuid().optional(),
   candidate: continuationCandidateSchema,
   caseBinding: continuationCaseBindingSchema.optional(),
   executionDestination: continuationExecutionDestinationSchema.optional(),

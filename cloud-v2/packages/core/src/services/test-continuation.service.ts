@@ -41,12 +41,12 @@ export function continuationOperationId(grant: ContinuationGrant, routineId: Tes
 }
 const fail = (message: string): never => { throw new TestDispatchError(409, message); };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-/** The grant's occurrence, with a recorded or admin-reviewed corrected source, acknowledged to this exact
- * case anchor. Any grant naming one occurrence and agent run (continuation or existing work) uses it. */
-export async function acknowledgedCase(runs: Pick<Runs, "failureDetail">, grant: Pick<ContinuationGrant, "occurrenceId" | "agentRunId">) {
+/** Read the grant's exact occurrence and immutable intake acknowledgement. For a
+ * triaged recurrence, the continuation lease callback separately proves its editor. */
+export async function acknowledgedCase(runs: Pick<Runs, "failureDetail">, grant: Pick<ContinuationGrant, "occurrenceId" | "agentRunId" | "acknowledgedAgentRunId">) {
   const packet = await runs.failureDetail(grant.occurrenceId);
   if (packet.occurrenceId !== grant.occurrenceId || !["recorded", "corrected"].includes(packet.sourceStatus) || !packet.source
-    || packet.delivery.state !== "acknowledged" || packet.delivery.agentRunId !== grant.agentRunId)
+    || packet.delivery.state !== "acknowledged" || packet.delivery.agentRunId !== (grant.acknowledgedAgentRunId ?? grant.agentRunId))
     fail("Recorded source and acknowledged case ownership are required");
   return packet;
 }
