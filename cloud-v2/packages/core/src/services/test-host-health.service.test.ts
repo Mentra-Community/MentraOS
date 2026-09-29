@@ -95,7 +95,7 @@ describe("passive host health", () => {
       cleanupEvents: [event] }));
     expect((await service.list()).hosts[0].components[0].state).toBe("scheduled");
     expect((await service.history("mini-1", "1")).cleanupEvents).toEqual([event]);
-    for (const change of [{ reason: "held-custody" }, { reason: "budget-limited" }, { removedCount: 1 }, { finishedAt: null }, { origin: "unknown" }])
+    for (const change of [{ reason: "held-custody" }, { reason: "budget-limited" }, { removedCount: 1 }, { finishedAt: null }, { origin: "unknown" }] as const)
       expect(testHostSampleSchema.safeParse(sample(start, { cleanupEvents: [{ ...event, ...change }] })).success).toBe(false);
   });
 });
