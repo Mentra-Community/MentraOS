@@ -86,6 +86,18 @@ describe("passive host health", () => {
       { ...event, finishedAt: new Date(start - 30_000).toISOString(), freeAfterSampledAt: new Date(start - 20_000).toISOString() }])
       expect(testHostSampleSchema.safeParse(sample(start, { cleanupEvents: [bad] })).success).toBe(false);
   });
+  test("an overlapping pass round-trips as a skip and rejects contradictory completion claims", async () => {
+    const service = new TestHostHealthService(new MemoryHealth(), () => new Date(start));
+    const event: TestHostSample["cleanupEvents"][number] = { receiptId: "overlap", receiptSha256: "b".repeat(64), origin: "scheduled",
+      startedAt: new Date(start - 1_000).toISOString(), finishedAt: new Date(start).toISOString(), status: "already-running",
+      reason: "none", removedCount: 0, freeBefore: null, freeAfter: null, freeAfterSampledAt: null };
+    await service.ingest(sample(start, { components: [{ component: "disk-cleanup", enabled: true, state: "scheduled", reason: "none" }],
+      cleanupEvents: [event] }));
+    expect((await service.list()).hosts[0].components[0].state).toBe("scheduled");
+    expect((await service.history("mini-1", "1")).cleanupEvents).toEqual([event]);
+    for (const change of [{ reason: "held-custody" }, { reason: "budget-limited" }, { removedCount: 1 }, { finishedAt: null }, { origin: "unknown" }])
+      expect(testHostSampleSchema.safeParse(sample(start, { cleanupEvents: [{ ...event, ...change }] })).success).toBe(false);
+  });
 });
 describe("host health authorization", () => {
   const old = process.env.TEST_RUN_INGEST_TOKEN, token = randomUUID() + randomUUID();
