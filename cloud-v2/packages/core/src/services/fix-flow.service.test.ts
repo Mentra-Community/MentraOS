@@ -32,6 +32,14 @@ const reader = (runs: FixActivity[] = [activity]) => ({ list: async () => ({ run
     && run.routineFailure.intake.occurrenceId === binding.occurrenceId && run.routineFailure.intake.testRunId === binding.testRunId) ?? null });
 
 describe("exact failure-to-fixer projection", () => {
+  test("exposes a missing-detail flag without copying withheld diagnostic text", () => {
+    const missing = { ...occurrence, failure: { ...occurrence.failure, message: "The lifecycle phase failed before it could complete.",
+      missingEvidence: [{ kind: "failure-details" as const, reason: "Withheld diagnostic metadata" }] } };
+    const result = projectFixFlow(stored, missing, activity, "available", []);
+    expect(result.failure).toEqual({ code: "blank-content", message: missing.failure.message, detailUnpublished: true });
+    expect(JSON.stringify(result)).not.toContain("Withheld diagnostic metadata");
+    expect(projectFixFlow(stored, occurrence, activity, "available", []).failure.detailUnpublished).toBeUndefined();
+  });
   test("a triaged occurrence keeps its ACK while showing its authenticated shared editor", async () => {
     const editor = "22222222-2222-4222-8222-222222222222";
     const linked: FixActivity = { ...activity, status: "mini_linked", acknowledgedAgentRunId: agentId,

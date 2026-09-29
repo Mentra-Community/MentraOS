@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
+import type { FixFlowList } from "../../../../packages/core/src/types/fix-flow.types";
 import { CHECKPOINT_FRESH_MS, type OverviewClaim, type OverviewJob, type OverviewRequest, type OverviewResourceObservation,
   type TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import type { TestResourceProgressCheckpoint, TestResourceReason } from "../../../../packages/core/src/types/test-resource-observation.types";
+import { LaneFailureContext, laneFailureRun } from "./test-lane-failure";
 
 /**
  * One card per host lane (a reported guard), built only from the overview Core already returns: the latest
@@ -273,7 +275,7 @@ function glassesText(owner: { glassesScope?: "none" | "identified" | "unknown" }
   if (owner.glassesScope === "identified") return "Glasses scope at that report: one identified pair, under its own lease.";
   return "Glasses scope at that report: unknown, so every pair is excluded.";
 }
-function Lane({ card, now, onResult }: { card: LaneCard; now: number; onResult: (id: string) => void }) {
+function Lane({ card, now, onResult, fixFlows }: { card: LaneCard; now: number; onResult: (id: string) => void; fixFlows?: FixFlowList }) {
   const { item, state, runId, matched, progress } = card, value = item.observation;
   const owner = value.owner?.valid ? value.owner : undefined, checkpoint = value.lastCheckpoint?.available ? value.lastCheckpoint : undefined;
   const fixture = value.fixture.checked && value.fixture.record === "valid" ? value.fixture : undefined;
@@ -290,13 +292,14 @@ function Lane({ card, now, onResult }: { card: LaneCard; now: number; onResult: 
       {row("Status", card.summary)}
       {row("Last report", <span className={card.fresh ? "" : "text-[#805619]"}>{elapsed(item.receivedAt, now)} ago{card.fresh ? ""
         : value.state === "retained-recovery-required" ? "; not current. The lane stays held until its recovery is verified." : "; not current"}</span>)}
-      {state !== "available" && state !== "running" ? <>{row("Responsible", card.responsible)}{row("Next", card.next)}</> : null}
+      {state !== "available" && state !== "running" && !laneFailureRun(card) ? <>{row("Responsible", card.responsible)}{row("Next", card.next)}</> : null}
       {card.pairing ? row(kind === "glasses" ? "Phone" : "Glasses", card.pairing) : null}
       {row("Queue", kind === "glasses" ? "CI requests are not queued per glasses pair."
         : !card.queue ? "No CI run was seen on this lane, so no CI queue is shown."
         : !card.queue.length ? "No queued " + platform + " requests."
         : card.queue.length + " queued " + platform + " " + (card.queue.length === 1 ? "request" : "requests") + ". GitHub assigns runners; this lane is not confirmed for them.")}
     </dl>
+    <LaneFailureContext card={card} feed={fixFlows} now={now} onResult={onResult} />
     <details className="mt-2"><summary className="cursor-pointer text-[#68746d]">Lane details</summary>
       <div className="mt-1 space-y-1 text-[#59655e]">
         <p>Resource {item.resourceKey}{scope}{fixture ? " · fixture " + fixture.fixtureID + ", recorded " + fixture.status : ""}</p>
@@ -315,7 +318,7 @@ function Lane({ card, now, onResult }: { card: LaneCard; now: number; onResult: 
 }
 
 /** Top-level lane inventory: one compact card per reporting host lane. */
-export function LaneOverview({ data, now, onResult }: { data: TestRunOverview; now: number; onResult: (id: string) => void }) {
+export function LaneOverview({ data, now, onResult, fixFlows }: { data: TestRunOverview; now: number; onResult: (id: string) => void; fixFlows?: FixFlowList }) {
   const feed = data.resourceObservations, cards = laneCards(data, now);
   const unmatched = data.jobs.filter(job => ["queued", "waiting"].includes(displayState(job, now))).flatMap(job => job.requests.filter(request => !request.platform)).length;
   return <section className="mt-3" aria-label="Test lanes">
@@ -327,7 +330,7 @@ export function LaneOverview({ data, now, onResult }: { data: TestRunOverview; n
       : <>
         <div className="mt-2 flex flex-wrap gap-2 text-xs">{laneStateOrder.map(state => [state, cards.filter(card => card.state === state).length] as const).filter(([, count]) => count)
           .map(([state, count]) => <span key={state} className="rounded-md bg-[#f1f4ef] px-2 py-1"><strong>{count}</strong> {laneStateText[state].badge.toLowerCase()}</span>)}</div>
-        <div className="mt-2 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{cards.map(card => <Lane key={card.item.hostId + "/" + card.item.resourceKey} card={card} now={now} onResult={onResult} />)}</div>
+        <div className="mt-2 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{cards.map(card => <Lane key={card.item.hostId + "/" + card.item.resourceKey} card={card} now={now} onResult={onResult} fixFlows={fixFlows} />)}</div>
         {feed.truncated ? <p className="mt-2 text-xs text-[#805619]">More lanes reported than shown.</p> : null}</>}
     {unmatched ? <p className="mt-2 text-xs text-[#805619]">{unmatched} queued {unmatched === 1 ? "request does" : "requests do"} not report a platform and {unmatched === 1 ? "is" : "are"} not shown on a lane.</p> : null}
   </section>;

@@ -216,7 +216,8 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
   }
   return { occurrenceId: occurrence.occurrenceId, runId: run.runId, routineId: run.routineId, channel: run.channel,
     build: run.prNumber ? `PR #${run.prNumber}` : run.release ?? run.provenance.buildSha?.slice(0, 10) ?? "Build not recorded",
-    step: failure.step, failure: { code: failure.code, message: failure.message, ...(failure.expected ? { expected: failure.expected } : {}) },
+    step: failure.step, failure: { code: failure.code, message: failure.message, ...(failure.expected ? { expected: failure.expected } : {}),
+      ...(failure.missingEvidence.some(item => item.kind === "failure-details") ? { detailUnpublished: true } : {}) },
     startedAt: run.finishedAt, updatedAt: activity ? [activity.updatedAt, activity.executionOwnerUpdatedAt ?? activity.updatedAt].sort().at(-1)!
       : occurrence.delivery.state === "acknowledged" ? occurrence.delivery.acknowledgedAt : run.finishedAt,
     state, currentState, pipelineStage: fixFlowPipelineStage(activity, state, [...prs.values()]), stage, nextAction, activity: occurrence.delivery.state === "pending" ? "pending" : activity ? "available" : activityState,
