@@ -40,6 +40,57 @@ describe("exact failure-to-fixer projection", () => {
     expect(JSON.stringify(result)).not.toContain("Withheld diagnostic metadata");
     expect(projectFixFlow(stored, occurrence, activity, "available", []).failure.detailUnpublished).toBeUndefined();
   });
+  test("pre-execution triage uses its own current lease and launch, instead of staying queued", () => {
+    const row: FixActivity = { ...activity, status: "awaiting_executor", workerLease: { state: "inactive" },
+      miniExecution: undefined, miniTriage: { state: "running", launched: true, leaseExpiresAt: "2099-01-01T00:00:00Z" } };
+    const project = (activity: FixActivity) => projectFixFlow(stored, occurrence, fixActivitySchema.parse(activity), "available", [], Date.parse(at));
+    expect(project(row)).toMatchObject({ currentState: "investigating", state: "running" });
+    expect(project({ ...row, miniTriage: { ...row.miniTriage!, launched: false } }).currentState).toBe("worker-active");
+    for (const leaseExpiresAt of [undefined, at]) expect(project({ ...row, miniTriage: { ...row.miniTriage!, leaseExpiresAt } }))
+      .toMatchObject({ currentState: "worker-repair", state: "attention" });
+    expect(project({ ...row, miniTriage: { state: "pending" } }).currentState).toBe("queued");
+  });
+  test("current work follows the live attempt and owner, never a previous or stopped attempt", () => {
+    const project = (row: FixActivity) => projectFixFlow(stored, occurrence, row, "available", [], Date.parse(at));
+    const current: FixActivity = { ...activity, attempt: 3, currentActivity: { phase: "investigating", attempt: 3, reportedAt: at } };
+    for (const [phase, expected] of [["investigating", "investigating"], ["fixing", "fixing"], ["testing", "testing"],
+      ["reviewing", "reviewing"], ["addressing-feedback", "fixing"], ["preparing", "worker-active"], ["finalizing", "worker-active"]] as const) {
+      const flow = project({ ...current, currentActivity: { ...current.currentActivity!, phase } });
+      expect(flow.currentState).toBe(expected); expect(flow.state).toBe("running");
+    }
+    expect(project({ ...current, attempt: 4 }).currentState).toBe("worker-active");
+    expect(project({ ...current, currentActivity: { ...current.currentActivity!, reportedAt: "2099-01-01T00:00:00Z" } }).currentState).toBe("worker-active");
+    expect(project({ ...current, workerLease: { state: "active", expiresAt: at } }).currentState).toBe("worker-repair");
+    expect(project({ ...current, status: "mini_needs_input", miniTurnFailure: { phase: "model", kind: "timeout", at } }).currentState).toBe("stopped");
+    const linked = { ...current, executionOwnerRunId: agentId, executionOwnerStatus: "mini_running", executionOwnerWorkerLease: activity.workerLease,
+      executionOwnerAttempt: 9, executionOwnerCurrentActivity: { phase: "reviewing" as const, attempt: 9, reportedAt: at } };
+    expect(project(linked).currentState).toBe("reviewing");
+    expect(project({ ...linked, executionOwnerCurrentActivity: undefined }).currentState).toBe("worker-active");
+    expect(matchingFixActivity(stored, occurrence, { ...current, executionOwnerCurrentActivity: current.currentActivity }, "dev")).toBeNull();
+  });
+  test("completion requires this occurrence's passing routine, accepted handoff and the exact merged head", () => {
+    const headSha = "a".repeat(40);
+    const done: FixActivity = { ...activity, status: "mini_needs_input", miniLastTurn: { stage: "ready-for-policy", reason: "source-investigation" },
+      pullRequests: [{ repository: "Mentra-Community/MentraOS", pullRequestNumber: 42, headSha,
+        pullRequestLifecycle: { state: "merged", mergedAt: at, headSha } }],
+      verifiedReruns: [{ occurrenceId, routineId: stored.run.routineId, headSha, resultIds: ["verified-notes-run"] }],
+      miniExecution: { ...activity.miniExecution!, checkpoints: [
+        { action: "reserve-dispatch", intentId: "dispatch", occurrence: { agentRunId: agentId, occurrenceId } },
+        { action: "consume-result", intentId: "dispatch", resultId: "verified-notes-run", outcome: "passed" },
+      ] } };
+    const project = (row: FixActivity) => projectFixFlow(stored, occurrence, row, "available", []);
+    const flow = project(done);
+    expect(flow).toMatchObject({ currentState: "merged", state: "completed", pipelineStage: "merged" });
+    expect(flow.timeline.find(item => item.title === "Verification result: passed")?.url).toBe("/?testRun=verified-notes-run");
+    for (const verifiedReruns of [undefined, [], [{ ...done.verifiedReruns![0]!, occurrenceId: `tfo_${"b".repeat(64)}` }],
+      [{ ...done.verifiedReruns![0]!, routineId: "another-routine" }], [{ ...done.verifiedReruns![0]!, headSha: "b".repeat(40) }]])
+      expect(project({ ...done, verifiedReruns }).currentState).toBe("waiting-routine");
+    for (const headSha of [undefined, "b".repeat(40)]) expect(project({ ...done, pullRequests: [{ ...done.pullRequests![0]!,
+      pullRequestLifecycle: { state: "merged", mergedAt: at, headSha } }] }).currentState).toBe("waiting-routine");
+    expect(project({ ...done, status: "mini_running" }).currentState).toBe("worker-active");
+    expect(project({ ...done, miniTurnFailure: { phase: "model", kind: "timeout", at } }).currentState).toBe("stopped");
+    expect(project({ ...done, status: "mini_waiting" }).currentState).toBe("queued");
+  });
   test("a triaged occurrence keeps its ACK while showing its authenticated shared editor", async () => {
     const editor = "22222222-2222-4222-8222-222222222222";
     const linked: FixActivity = { ...activity, status: "mini_linked", acknowledgedAgentRunId: agentId,

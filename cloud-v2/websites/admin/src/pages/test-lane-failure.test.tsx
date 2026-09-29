@@ -48,6 +48,16 @@ test("reported concrete errors are shown verbatim without being inferred from fi
   expect(rendered).not.toContain("Detailed cause is not included");
 });
 
+test("current investigation, fix, test and review phases retain their verified actor and next action", () => {
+  for (const currentState of ["investigating", "fixing", "testing", "reviewing"] as const) {
+    const rendered = html(data(), feed([{ ...flow, state: "running", currentState, nextAction: `Current ${currentState} action` }]));
+    expect(rendered).toContain("Responsible:</strong> Automated fixer");
+    expect(rendered).toContain(`Current ${currentState} action`);
+    expect(rendered).toContain("No input request reported.");
+    expect(rendered).not.toContain("Status unavailable");
+  }
+});
+
 test("a published run without a matching occurrence keeps the recorded fixture recovery guidance", () => {
   for (const response of [undefined, feed([]), { ...feed([]), activity: "unavailable" as const },
     { ...feed([]), limited: true }, feed([{ ...flow, runId: "other-run" }])]) {

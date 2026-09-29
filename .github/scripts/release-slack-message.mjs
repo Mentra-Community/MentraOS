@@ -49,8 +49,11 @@ export async function postReleaseMessage(env, payload, {fetchImpl = fetch, selec
         release: env.RELEASE_IDENTITY, archiveSha256: selection.archive.sha256}
     } catch { /* Keep the existing release notification; this post cannot receive device results. */ }
   }
+  const updateDetail = env.FINALIZE_RESULT !== "success" || !env.MAC_URL
+    ? "This post has no verified Mac build to attach test results to."
+    : "Test result updates are disabled for this post because its Mac download could not be verified."
   const messagePayload = build ? payload : {...payload, blocks: payload.blocks.map(block => block.block_id === ROUTINE_BLOCK
-    ? {...block, text: {...block.text, text: `${block.text.text}\nTerminal Slack updates unavailable: no verified archive receipt for this post.`}} : block)}
+    ? {...block, text: {...block.text, text: `${block.text.text}\n${updateDetail}`}} : block)}
   // No automatic POST retry and no webhook fallback after an attempted bot send.
   const result = await slackCall("chat.postMessage", env.SLACK_BUILDS_BOT_TOKEN,
     {channel, text: `Mentra ${env.BRANCH} release ${env.RELEASE_IDENTITY}`, ...messagePayload, unfurl_links: false, unfurl_media: false}, fetchImpl)

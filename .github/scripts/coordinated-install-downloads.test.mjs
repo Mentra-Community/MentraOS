@@ -190,7 +190,7 @@ test("coordinated routine links select the exact source and archive without clai
     assert.equal(pipeline.searchParams.get("query"), '"Device request callback 100 / attempt 2"')
     for (const override of [{FINALIZE_RESULT: "failure"}, {MAC_URL: "https://other.example/app.zip"}, {SHA: "f".repeat(40)}]) {
       const unavailable = JSON.stringify(await coordinatedRoutineLinks({...env, ...override}, options.fetchImpl))
-      assert.match(unavailable, /Unavailable/)
+      assert.match(unavailable, /Not requested/)
       assert.doesNotMatch(unavailable, /Results for this exact build/)
     }
     for (const key of ["RELEASE_PAGE_RESULT", "EXAMPLES_DISPATCH_RESULT"]) for (const result of ["failure", "cancelled", "skipped", undefined]) {

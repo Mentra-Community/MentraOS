@@ -1,5 +1,6 @@
 /** Mutually exclusive current disposition, not a historical progress stage. */
 export type FixFlowCurrentState = "queued" | "worker-active" | "waiting-review" | "waiting-build" | "waiting-routine"
+  | "investigating" | "fixing" | "testing" | "reviewing"
   | "waiting-merge" | "waiting-input" | "worker-repair" | "stopped" | "merged" | "closed" | "unknown";
 
 /** Read-only Admin projection. No lease tokens, prompts, local paths or raw agent output. */
@@ -25,7 +26,7 @@ export interface FixFlow {
     executionOwner: { runId: string; status: string } | null } | null;
   incidents: Array<{ reportId: string; status: string }>;
   pullRequests: Array<{ repository: string; number: number; headSha: string; state: "open" | "closed" | "merged" | "unknown";
-    url: string; mergedAt: string | null }>;
+    url: string; mergedAt: string | null; currentHeadSha?: string }>;
   timeline: Array<{ id: string; stage: string; title: string; detail: string | null; at: string | null; url: string | null }>;
   activity: "available" | "pending" | "unavailable" | "not-configured" | "unmatched";
 }

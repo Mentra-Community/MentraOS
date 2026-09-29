@@ -36,6 +36,22 @@ const prUrl = (repository: string, number: number) => `https://github.com/${repo
 const completedStatuses = new Set(["cancelled", "no_fix_needed", "third_party_out_of_scope"]);
 const attentionStatuses = new Set(["mini_needs_input", "needs_more_info", "needs_product_decision", "needs_human_engineer", "ready_for_human_test", "failed"]);
 const attentionTriageStates = new Set(["needs-evidence", "held", "rejected", "linked-owner"]);
+const activeWork = {
+  preparing: { label: "Preparing agent", description: "The worker is preparing the evidence and workspace for this attempt.", pipeline: "intake" },
+  "agent-working": { label: "Agent working", description: "The agent turn has started; its specific task has not yet been reported.", pipeline: "unknown" },
+  investigating: { label: "Investigating", description: "The active agent reports that it is diagnosing the failure and identifying the responsible code.", pipeline: "investigation" },
+  fixing: { label: "Implementing fix", description: "The active agent reports that it is making the fix.", pipeline: "fix" },
+  testing: { label: "Testing", description: "The active agent reports that it is validating the fix. Published rerun results appear in the timeline.", pipeline: "verification" },
+  reviewing: { label: "Reviewing", description: "The active agent reports that it is running or checking the PR review.", pipeline: "review" },
+  "addressing-feedback": { label: "Addressing review changes", description: "The active agent reports that it is addressing requested review changes.", pipeline: "fix" },
+  finalizing: { label: "Finalizing attempt", description: "The worker is checking this attempt's outcome before handing off or waiting.", pipeline: "verification" },
+} as const;
+
+function currentWork(activity: FixActivity | null, currentlyLeased: boolean, now: number) {
+  const progress = activity?.executionOwnerRunId ? activity.executionOwnerCurrentActivity : activity?.currentActivity;
+  const attempt = activity?.executionOwnerRunId ? activity.executionOwnerAttempt : activity?.attempt;
+  return currentlyLeased && progress && progress.attempt === attempt && Date.parse(progress.reportedAt) <= now ? progress.phase : null;
+}
 const executionActions: Record<string, string> = {
   "source-investigation": "Source investigation was last recorded. Current worker activity is shown separately.",
   "review-pending": "Waiting for a reviewer to assess the recorded PR head.",
@@ -64,7 +80,8 @@ export function matchingFixActivity(stored: StoredTestRun, occurrence: TestFailu
   // Linked rows keep their own intake identity. Only the controller's durable observation proof can attach the acknowledged owner.
   if (!activity.executionOwnerRunId && (activity.executionOwnerStatus || activity.executionOwnerStatusLabel
     || activity.executionOwnerUpdatedAt || activity.executionOwnerHeartbeatAt || activity.executionOwnerTriage
-    || activity.executionOwnerWorkerLease || activity.executionOwnerProgressPhase)) return null;
+    || activity.executionOwnerWorkerLease || activity.executionOwnerProgressPhase || activity.executionOwnerCurrentActivity
+    || activity.executionOwnerAttempt !== undefined)) return null;
   if (activity.executionOwnerRunId && (!activity.executionOwnerStatus
     || (activity.executionOwnerRunId !== acknowledged && (acknowledged !== activity.runId
       || activity.routineCase?.anchorRunId !== activity.executionOwnerRunId)))) return null;
@@ -82,8 +99,12 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
   const triage = activity?.executionOwnerTriage ?? activity?.miniTriage;
   const cancelled = triage?.state === "cancelled";
   const lease = activity?.executionOwnerRunId ? activity.executionOwnerWorkerLease : activity?.workerLease;
-  const currentlyLeased = status === "mini_running" && lease?.state === "active"
-    && !!lease.expiresAt && Date.parse(lease.expiresAt) > now;
+  const triaging = status === "awaiting_executor" && ["running", "admitting"].includes(triage?.state ?? "");
+  const currentlyLeased = (status === "mini_running" && lease?.state === "active"
+    && !!lease.expiresAt && Date.parse(lease.expiresAt) > now)
+    || (triaging && !!triage?.leaseExpiresAt && Date.parse(triage.leaseExpiresAt) > now);
+  const work = activityState === "available" ? currentWork(activity, currentlyLeased && !triaging, now)
+    ?? (triaging && currentlyLeased ? triage?.state === "running" && triage.launched ? "investigating" : "preparing" : null) : null;
   let state: FixFlow["state"] = occurrence.delivery.state === "pending" ? "waiting" : "unknown";
   let stage = occurrence.delivery.state === "pending" ? "Awaiting fixer intake" : "Fixer status unavailable";
   let nextAction = occurrence.delivery.state === "pending"
@@ -148,7 +169,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
     if (recorded && recorded.headSha !== pr.headSha) continue;
     prs.set(key, { repository: pr.repository, number: pr.pullRequestNumber, headSha: pr.headSha,
       url: prUrl(pr.repository, pr.pullRequestNumber), state: pr.pullRequestLifecycle?.state ?? "unknown",
-      mergedAt: pr.pullRequestLifecycle?.mergedAt ?? null });
+      mergedAt: pr.pullRequestLifecycle?.mergedAt ?? null, currentHeadSha: pr.pullRequestLifecycle?.headSha });
   }
   if (prs.size && [...prs.values()].every(pr => pr.state === "merged") && !activity?.miniTurnFailure && !cancelled && !completedStatuses.has(status!)) {
     stage = "Fix merged";
@@ -185,7 +206,8 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
         detail = cp.headSha ?? null; if (url && cp.reviewId && /^\d+$/.test(cp.reviewId)) link = `${url}#pullrequestreview-${cp.reviewId}`; break;
       case "record-dispatch": title = "Verification rerun requested"; detail = `Request ${cp.requestRunId}, attempt ${cp.requestAttempt}`;
         link = cp.requestRunId ? `https://github.com/Mentra-Community/MentraOS/actions/runs/${cp.requestRunId}` : null; break;
-      case "consume-result": title = `Verification result: ${words(cp.outcome ?? "unknown")}`; detail = cp.resultId ?? null; break;
+      case "consume-result": title = `Verification result: ${words(cp.outcome ?? "unknown")}`; detail = cp.resultId ?? null;
+        link = cp.resultId ? `/?testRun=${encodeURIComponent(cp.resultId)}` : null; break;
       case "record-repair": title = `Machine state repair: ${words(cp.state ?? "unknown")}`; break;
     }
     if (title) timeline.push({ id: `checkpoint-${index}`, stage: cp.action, title, detail,
@@ -195,13 +217,25 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
     title: `PR #${pr.number} merged`, detail: pr.repository, at: pr.mergedAt, url: pr.url });
   if (activity?.miniTurnFailure) timeline.push({ id: "last-stop", stage: "agent-stop", title: "Last recorded agent stop",
     detail: `${words(activity.miniTurnFailure.kind)} during ${activity.miniTurnFailure.phase}`, at: activity.miniTurnFailure.at, url: null });
-  const currentState = fixFlowCurrentState(activity, occurrence, activityState, [...prs.values()], currentlyLeased);
+  const verified = activity?.verifiedReruns?.some(rerun => rerun.occurrenceId === occurrence.occurrenceId
+    && rerun.routineId === run.routineId && rerun.resultIds.length > 0
+    && [...prs.values()].some(pr => pr.headSha === rerun.headSha)) === true;
+  const currentState = fixFlowCurrentState(activity, occurrence, activityState, [...prs.values()], currentlyLeased, work, verified);
+  if (work) {state = "running"; stage = activeWork[work].label; nextAction = activeWork[work].description;}
+  if (triaging && currentState === "worker-repair") {
+    state = "attention"; stage = "Triage worker needs reconciliation";
+    nextAction = "The triage worker lease is missing or expired. Active investigation is not confirmed; its recorded owner needs reconciliation.";
+  }
   if (currentState === "queued" && (activity?.miniTurnFailure || ["needs-input", "ready-for-policy"].includes(turn?.stage ?? ""))) {
     state = "waiting";
     stage = "Awaiting next agent turn";
     nextAction = "The controller has scheduled another agent turn. The earlier stop or handoff remains in the recorded history.";
   }
-  if (currentState === "waiting-merge") {
+  if (currentState === "merged") {
+    state = "completed";
+    stage = "Merged and verified";
+    nextAction = "The agent handed off the verified fix, its recorded PR heads have merged, and the failing routine passed for this occurrence. Open the rerun in the timeline.";
+  } else if (currentState === "waiting-merge") {
     state = "waiting";
     stage = "Waiting for merge decision";
     nextAction = "The fix is ready for the next merge decision.";
@@ -220,7 +254,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
       ...(failure.missingEvidence.some(item => item.kind === "failure-details") ? { detailUnpublished: true } : {}) },
     startedAt: run.finishedAt, updatedAt: activity ? [activity.updatedAt, activity.executionOwnerUpdatedAt ?? activity.updatedAt].sort().at(-1)!
       : occurrence.delivery.state === "acknowledged" ? occurrence.delivery.acknowledgedAt : run.finishedAt,
-    state, currentState, pipelineStage: fixFlowPipelineStage(activity, state, [...prs.values()]), stage, nextAction, activity: occurrence.delivery.state === "pending" ? "pending" : activity ? "available" : activityState,
+    state, currentState, pipelineStage: work ? activeWork[work].pipeline : fixFlowPipelineStage(activity, state, [...prs.values()]), stage, nextAction, activity: occurrence.delivery.state === "pending" ? "pending" : activity ? "available" : activityState,
     agent: activity ? { runId: activity.runId, executor: activity.executor, status: activity.status,
       caseId: activity.routineCase?.caseId ?? null, anchorRunId: activity.routineCase?.anchorRunId ?? null,
       repository: activity.miniExecution?.route.repository ?? null, branch: activity.miniExecution?.route.branch ?? null,
@@ -231,7 +265,8 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
 
 /** Only bound controller evidence determines current work. Historical phases are not attempt-bound. */
 function fixFlowCurrentState(activity: FixActivity | null, occurrence: TestFailureOccurrence,
-  availability: FixFlow["activity"], prs: FixFlow["pullRequests"], currentlyLeased: boolean): NonNullable<FixFlow["currentState"]> {
+  availability: FixFlow["activity"], prs: FixFlow["pullRequests"], currentlyLeased: boolean,
+  work: keyof typeof activeWork | null, verified: boolean): NonNullable<FixFlow["currentState"]> {
   if (!activity) return occurrence.delivery.state === "pending" ? "queued" : "unknown";
   if (availability !== "available") return "unknown";
   const status = activity.executionOwnerStatus ?? activity.status;
@@ -239,7 +274,12 @@ function fixFlowCurrentState(activity: FixActivity | null, occurrence: TestFailu
   const turn = activity.miniExecution?.stage ?? activity.miniLastTurn;
   const lease = activity.executionOwnerRunId ? activity.executionOwnerWorkerLease : activity.workerLease;
   if (triage?.state === "cancelled" || completedStatuses.has(status)) return "closed";
-  if (status === "mini_running") return currentlyLeased ? "worker-active" : lease ? "worker-repair" : "unknown";
+  if (status === "awaiting_executor" && ["running", "admitting"].includes(triage?.state ?? ""))
+    return currentlyLeased ? work === "investigating" ? "investigating" : "worker-active" : "worker-repair";
+  if (status === "mini_running") {
+    if (!currentlyLeased) return lease ? "worker-repair" : "unknown";
+    return work === "addressing-feedback" ? "fixing" : work === "investigating" || work === "fixing" || work === "testing" || work === "reviewing" ? work : "worker-active";
+  }
   if (triage && attentionTriageStates.has(triage.state)) return "stopped";
   const allMerged = prs.length > 0 && prs.every(pr => pr.state === "merged");
   const waitState = turn?.stage === "waiting-for-review" ? "waiting-review"
@@ -254,13 +294,15 @@ function fixFlowCurrentState(activity: FixActivity | null, occurrence: TestFailu
   if (activity.miniTurnFailure) return "stopped";
   if (turn?.stage === "needs-input") return turn.reason === "infrastructure" ? "worker-repair" : "stopped";
   // Accepted ready-for-policy and needs-input turns share mini_needs_input; the former is a handoff, not a failure.
-  if (status === "mini_needs_input" && turn?.stage === "ready-for-policy") return allMerged ? "waiting-routine" : "waiting-merge";
+  if (status === "mini_needs_input" && turn?.stage === "ready-for-policy") {
+    if (allMerged && verified && prs.every(pr => pr.currentHeadSha === pr.headSha)) return "merged";
+    return allMerged ? "waiting-routine" : "waiting-merge";
+  }
   if (attentionStatuses.has(status)) return "stopped";
   if (allMerged) return "waiting-routine";
   if (waitState) return waitState;
   if (turn?.stage === "ready-for-policy") return "waiting-merge";
-  // Waiting-input requires a bound unanswered question; merged requires explicit verified completion.
-  // Neither fact is supplied by the current controller contract, so neither is inferred here.
+  // A generic needs-input reason does not supply a question someone can answer.
   return "unknown";
 }
 

@@ -6,6 +6,7 @@ import type { LaneCard } from "./test-lanes";
 const LINK = "text-[#087d50] underline underline-offset-2";
 const CURRENT_MS = 120_000;
 const responsibility: Record<FixFlowCurrentState, string> = {
+  investigating: "Automated fixer", fixing: "Automated fixer", testing: "Automated fixer", reviewing: "Automated fixer",
   queued: "Automated fixer", "worker-active": "Automated fixer", "waiting-review": "PR reviewer",
   "waiting-build": "Build system", "waiting-routine": "Test runner", "waiting-merge": "PR merge owner",
   "waiting-input": "Requested respondent", "worker-repair": "Fixer operator", stopped: "Fix-flow owner",
