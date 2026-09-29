@@ -18,7 +18,7 @@ type CloudUdpSocket = ReturnType<typeof dgram.createSocket> & {
 export function createCloudUdpSocket(): UdpSocketLike {
   const socket = dgram.createSocket({type: "udp4"}) as CloudUdpSocket
   let onBytes: ((bytes: Uint8Array) => void) | null = null
-  let connected = false
+  let connectStarted = false
   let closed = false
   const useConnectedSocket = Platform.OS === "ios"
 
@@ -36,8 +36,8 @@ export function createCloudUdpSocket(): UdpSocketLike {
       if (closed) return
       // UdpAudio owns one socket per peer/session. iOS queues sends behind this
       // one DNS lookup instead of resolving the host for every audio packet.
-      if (useConnectedSocket && !connected) {
-        connected = true
+      if (useConnectedSocket && !connectStarted) {
+        connectStarted = true
         socket.connect(port, host, (err?: Error) => {
           if (err && !closed) console.warn(`[cloud-client udp] connect failed: ${err.message}`)
         })

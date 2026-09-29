@@ -22,6 +22,7 @@ const bytes = new Uint8Array([0, 255, 128, 42])
 
 beforeEach(() => {
   jest.clearAllMocks()
+  native.connect.mockReset()
   Platform.OS = "ios"
   native.bind.mockImplementation(
     (
@@ -63,6 +64,22 @@ test("connect and first probe stay ordered even before the bind callback returns
   expect(native.connect).toHaveBeenCalledTimes(1)
   expect(native.connect.mock.invocationCallOrder[0]).toBeLessThan(native.send.mock.invocationCallOrder[0])
   socket.close()
+})
+
+test("failed iOS connect is retried on socket replacement, not on every send", () => {
+  jest.spyOn(console, "warn").mockImplementation(() => {})
+  native.connect.mockImplementation((_id: number, _port: number, _host: string, cb: (error: string) => void) => {
+    cb("DNS lookup failed")
+  })
+  const first = createCloudUdpSocket()
+  first.send(bytes, "audio.example.test", 8000)
+  first.send(bytes, "audio.example.test", 8000)
+  expect(native.connect).toHaveBeenCalledTimes(1)
+  first.close()
+  const replacement = createCloudUdpSocket()
+  replacement.send(bytes, "audio.example.test", 8000)
+  expect(native.connect).toHaveBeenCalledTimes(2)
+  replacement.close()
 })
 
 test("Android preserves the unconnected native send API", () => {

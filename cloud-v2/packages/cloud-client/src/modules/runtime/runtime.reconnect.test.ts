@@ -126,6 +126,30 @@ const ACK_WITH_AUDIO: ConnectionAck = {
     },
   },
 };
+
+function readProbeId(packet: Uint8Array): string {
+  const key = new Uint8Array(Buffer.from(ACK_WITH_AUDIO.audio!.encryption.key, "base64"));
+  const plaintext = nacl.secretbox.open(packet.subarray(30), packet.subarray(6, 30), key);
+  expect(plaintext).not.toBeNull();
+  const probe = new TextDecoder().decode(plaintext!);
+  expect(probe.startsWith(UDP_LIVENESS_PROBE_PREFIX)).toBe(true);
+  return probe.slice(UDP_LIVENESS_PROBE_PREFIX.length);
+}
+
+function acknowledgeUdpProbe(socket: FakeSocket, probeId: string): void {
+  socket.messageCb?.(JSON.stringify({
+    v: PROTOCOL_MAJOR,
+    type: "audio.udp_liveness_ack",
+    timestamp: Date.now(),
+    payload: {
+      sessionId: ACK_WITH_AUDIO.sessionId,
+      sessionTag: ACK_WITH_AUDIO.audio?.sessionTag,
+      probeId,
+      receivedAt: Date.now(),
+    },
+  }));
+}
+
 const FAST_RECONNECT = { baseMs: 3, maxMs: 10, jitter: false };
 
 function wait(ms: number): Promise<void> {
@@ -176,8 +200,9 @@ function recordingUdp(sent: Uint8Array[]): UdpSocketLike {
 }
 
 describe("Runtime transcript delivery survives a multi-attempt reconnect", () => {
-  test("status tracks runtime liveness and the configured audio transport", async () => {
+  test("initial and reconnected sessions use WS until their own UDP probe is acknowledged", async () => {
     const socket = new FakeSocket();
+    const udpSent: Uint8Array[] = [];
     let created = 0;
     const ws = (_url: string): WebSocketLike => {
       created += 1;
@@ -208,7 +233,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       camera: new Camera({ http: fakeHttp() }),
       maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
-      audio: new UdpAudio({ udp: fakeUdp }),
+      audio: new UdpAudio({ udp: () => recordingUdp(udpSent) }),
       logger: noopLogger,
       forceRefreshToken: async () => "tok",
     });
@@ -226,15 +251,28 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
 
     socket.handshake(ACK_WITH_AUDIO);
     await connectedPromise;
-    expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "udp" });
+    expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "ws" });
+    const firstProbeId = readProbeId(udpSent.at(-1)!);
+    acknowledgeUdpProbe(socket, firstProbeId);
+    expect(runtime.getStatus().audioTransport).toBe("udp");
 
     socket.closeCb?.({ code: 1006, reason: "network lost" });
     await waitUntil(() => runtime.getStatus().status === "reconnecting");
     expect(runtime.getStatus()).toEqual({ status: "reconnecting", audioTransport: "none" });
+    await waitUntil(() => created === 2);
+    socket.handshake(ACK_WITH_AUDIO);
+    await waitUntil(() => runtime.getStatus().status === "connected");
+    expect(runtime.getStatus().audioTransport).toBe("ws");
+    acknowledgeUdpProbe(socket, firstProbeId);
+    expect(runtime.getStatus().audioTransport).toBe("ws");
+    runtime.sendAudioFrame(new Uint8Array([1, 2, 3]));
+    expect(socket.sentBinary).toHaveLength(1);
+    acknowledgeUdpProbe(socket, readProbeId(udpSent.at(-1)!));
+    expect(runtime.getStatus().audioTransport).toBe("udp");
 
     runtime.close();
     expect(runtime.getStatus()).toEqual({ status: "disconnected", audioTransport: "none" });
-    expect(statuses).toContainEqual({ status: "connected", audioTransport: "udp" });
+    expect(statuses).toContainEqual({ status: "connected", audioTransport: "ws" });
     expect(statuses).toContainEqual({ status: "reconnecting", audioTransport: "none" });
   });
 
@@ -246,27 +284,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       return socket;
     };
     const udpSent: Uint8Array[] = [];
-    const readProbeId = (packet: Uint8Array): string => {
-      const key = new Uint8Array(Buffer.from(ACK_WITH_AUDIO.audio!.encryption.key, "base64"));
-      const plaintext = nacl.secretbox.open(packet.subarray(30), packet.subarray(6, 30), key);
-      expect(plaintext).not.toBeNull();
-      const probe = new TextDecoder().decode(plaintext!);
-      expect(probe.startsWith(UDP_LIVENESS_PROBE_PREFIX)).toBe(true);
-      return probe.slice(UDP_LIVENESS_PROBE_PREFIX.length);
-    };
-    const acknowledge = (probeId: string): void => {
-      socket.messageCb?.(JSON.stringify({
-        v: PROTOCOL_MAJOR,
-        type: "audio.udp_liveness_ack",
-        timestamp: Date.now(),
-        payload: {
-          sessionId: ACK_WITH_AUDIO.sessionId,
-          sessionTag: ACK_WITH_AUDIO.audio?.sessionTag,
-          probeId,
-          receivedAt: Date.now(),
-        },
-      }));
-    };
+    const acknowledge = (probeId: string): void => acknowledgeUdpProbe(socket, probeId);
     const udpSockets: { closed: boolean }[] = [];
     const scheduledIntervals: number[] = [];
     const timers: CloudClientTimers = {
@@ -321,12 +339,19 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
     socket.handshake(ACK_WITH_AUDIO);
     await connectedPromise;
 
-    expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "udp" });
+    // A failed initial DNS/connect/send produces no UDP ack. Audio must use WS
+    // immediately, including before the first liveness timeout replaces it.
+    expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "ws" });
+    const probesBeforeAudio = udpSent.length;
+    runtime.sendAudioFrame(new Uint8Array([10, 11, 12]));
+    expect(socket.sentBinary.length).toBe(1);
+    expect(udpSent.length).toBe(probesBeforeAudio);
     expect(scheduledIntervals).toEqual([1_000]);
     expect(udpSockets).toEqual([{ closed: false }]);
     await waitUntil(() => udpSent.length >= 3, 2_500);
     const oldProbeId = readProbeId(udpSent.at(-1)!);
-    await waitUntil(() => runtime.getStatus().audioTransport === "ws", 4_000);
+    expect(runtime.getStatus().audioTransport).toBe("ws");
+    await waitUntil(() => udpSockets.length === 2, 2_000);
     expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "ws" });
 
     expect(udpSockets).toEqual([{ closed: true }, { closed: false }]);
@@ -336,7 +361,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
     await waitUntil(() => udpSent.length > countAfterTimeout, 1_500);
     expect(udpSockets).toHaveLength(2);
     runtime.sendAudioFrame(new Uint8Array([1, 2, 3]));
-    expect(socket.sentBinary.length).toBe(1);
+    expect(socket.sentBinary.length).toBe(2);
 
     // Same-session acks from the closed socket (or unknown probes) cannot move
     // audio away from working WS while the replacement may still be failing.
@@ -344,7 +369,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
     acknowledge("unknown-probe");
     expect(runtime.getStatus().audioTransport).toBe("ws");
     runtime.sendAudioFrame(new Uint8Array([7, 8, 9]));
-    expect(socket.sentBinary.length).toBe(2);
+    expect(socket.sentBinary.length).toBe(3);
     acknowledge(readProbeId(udpSent.at(-1)!));
 
     await waitUntil(() => runtime.getStatus().audioTransport === "udp");

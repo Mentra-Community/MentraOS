@@ -394,7 +394,9 @@ export class Runtime implements RuntimeModule {
   private configureAudio(ack: ConnectionAck): void {
     if (ack.audio) {
       this.audio.configure(ack.audio);
-      this.updateStatus({ audioTransport: "udp" });
+      // Configured credentials do not prove DNS/connect or UDP delivery works.
+      // Use the already-open WS while probes establish the new UDP route.
+      this.updateStatus({ audioTransport: this.connection.isOpen ? "ws" : "none" });
       this.startUdpLiveness();
       return;
     }

@@ -36,6 +36,8 @@ while sending audio through the existing WebSocket fallback. This refreshes a
 stale peer/route even if the WebSocket remains alive. Session tag, key and packet
 sequence survive this socket replacement. Only a recent, pending probe from the
 replacement socket can restore UDP audio; delayed old acknowledgments are ignored.
+Initial connections and reconnects also send audio over WebSocket until a valid
+UDP acknowledgment arrives, so failed DNS/connect does not drop startup audio.
 Ordinary cloud reconnects still create a fresh session and socket.
 
 ## Repeatable validation
