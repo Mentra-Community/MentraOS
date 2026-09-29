@@ -3,10 +3,10 @@
  *
  * Cloud V2 replacement for the retired V1 feedback Slack path: bug reports
  * and feedback submitted through /api/client/reports post a summary to the
- * team channel via a Slack Incoming Webhook. Automatic reports can be
- * routed to their own channel via CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
- * falling back to the main webhook when unset — the same routing V1 used for
- * SLACK_WEBHOOK_AUTOMATIC_INCIDENTS.
+ * team channels via a Slack bot or Incoming Webhooks. Routing matches the
+ * dashboard: Testing first, then Automatic, then human admin submissions as
+ * Internal, with other bugs/feedback on the main channel. Unconfigured splits
+ * fall back to the main destination for compatibility.
  *
  * Best-effort by design: an unset webhook (local dev, tests) is a silent
  * skip, and send failures are logged, never thrown, so a notification can
@@ -15,6 +15,7 @@
 
 import { createLogger } from "@mentra/cloud-shared";
 import { createHmac } from "node:crypto";
+import { reportCategory, type ReportCategory } from "./report-category";
 
 const logger = createLogger("core").child({ service: "report-slack.service" });
 
@@ -94,11 +95,12 @@ type SlackButton = {
 export async function notifyReportSlack(
   notification: ReportSlackNotification,
 ): Promise<ReportSlackResult> {
-  const destination = slackDestinationFor(notification.kind);
+  const category = reportCategory(notification);
+  const destination = slackDestinationFor(category);
   if (!destination) {
     logger.debug(
-      { reportId: notification.reportId, kind: notification.kind },
-      "no Slack destination configured for this report kind; skipping notification",
+      { reportId: notification.reportId, kind: notification.kind, category },
+      "no Slack destination configured for this report category; skipping notification",
     );
     return { ok: false, skipped: true };
   }
@@ -177,37 +179,21 @@ type SlackDestination =
  * that makes the message editable. The webhook stays as the fallback so local
  * and unconfigured environments keep working unchanged.
  */
-function slackDestinationFor(
-  kind: ReportSlackNotification["kind"],
-): SlackDestination | undefined {
+function slackDestinationFor(category: ReportCategory): SlackDestination | undefined {
   const token = process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
-  const channel = channelIdFor(kind);
+  const suffix = category === "bug" || category === "feedback" ? undefined : category.toUpperCase();
+  if (suffix) {
+    const channel = process.env[`CLOUD_REPORTS_SLACK_CHANNEL_ID_${suffix}`];
+    if (token && channel) return { transport: "bot", token, channel };
+    const url = process.env[`CLOUD_REPORTS_SLACK_WEBHOOK_${suffix}_URL`];
+    if (url) return { transport: "webhook", url };
+  }
+  // Resolve the category across both transports before falling back. A main-channel
+  // bot must not override a configured category-specific webhook.
+  const channel = process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
   if (token && channel) return { transport: "bot", token, channel };
-  const url = webhookUrlFor(kind);
+  const url = process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   return url ? { transport: "webhook", url } : undefined;
-}
-
-/** Mirrors the webhook split so automatic reports keep their own channel. */
-function channelIdFor(kind: ReportSlackNotification["kind"]): string | undefined {
-  const main = process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
-  if (kind === "automatic") {
-    return process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC || main;
-  }
-  return main;
-}
-
-/**
- * Automatic reports post to their own channel when
- * CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL is set, falling back to the main
- * webhook otherwise, so the feedback channel stays free of watchdog noise
- * without making the split mandatory.
- */
-function webhookUrlFor(kind: ReportSlackNotification["kind"]): string | undefined {
-  const main = process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
-  if (kind === "automatic") {
-    return process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL || main;
-  }
-  return main;
 }
 
 function buildSlackMessage(notification: ReportSlackNotification): {

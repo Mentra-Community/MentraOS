@@ -74,6 +74,37 @@ link, and the admin proxy keeps exact lengths on these ranged responses.
 Browser playback and seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
 artifacts with an `.mp4` extension.
 
+## Slack routing
+
+Notifications use the same category precedence as the admin dashboard:
+
+| Category | Rule | Channel | Bot destination env var |
+| --- | --- | --- | --- |
+| Testing | Exact `trigger.source = mentra_automated_testing`, regardless of kind or admin status | `#user-feedback-testing` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING` |
+| Automatic | Remaining `kind = automatic` reports, including admins' automatic reports | `#user-feedback-auto` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC` |
+| Internal | Remaining bugs/feedback from an account on the current admin allowlist | `#user-feedback-internal` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL` |
+| Bug / Feedback | All remaining reports | `#user-feedback` | `CLOUD_REPORTS_SLACK_CHANNEL_ID` |
+
+Internal uses the first-party account email resolved by the server and the existing
+`CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` policy. Contact email and
+client context never grant Internal status. If the account lookup fails or times
+out, the existing best-effort notifier posts with the opaque user ID and falls
+back to the non-admin category. Slack routing is evaluated at notification time;
+historical messages are not moved when the allowlist changes.
+
+The bot uses `CLOUD_REPORTS_SLACK_BOT_TOKEN` and must be a member of each destination
+channel. Each split can instead use `CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL`,
+`CLOUD_REPORTS_SLACK_WEBHOOK_INTERNAL_URL`, or `CLOUD_REPORTS_SLACK_WEBHOOK_TESTING_URL`.
+A category's bot destination takes priority over its webhook. Only when neither
+is usable does routing fall back to the main bot or `CLOUD_REPORTS_SLACK_WEBHOOK_URL`.
+A send failure is logged without retrying another channel or failing report
+submission. Feedback notifies on submission; bug/automatic reports notify once
+when artifact collection completes, as before.
+
+Configure the channel IDs in Doppler `cloud-v2/dev_aws` first, then deploy and
+verify dev before promoting the same keys to staging and prod. Category-specific
+webhooks are unnecessary when the bot token and all four channel IDs are set.
+
 ## Mobile Flow
 
 Manual bug report:

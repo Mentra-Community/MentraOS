@@ -11,6 +11,13 @@ const CHANNEL_ID = "C0TESTMAIN";
 const AUTOMATIC_CHANNEL_ID = "C0TESTAUTO";
 const AGENT_SIGNING_SECRET = "test-agent-signing-secret-with-at-least-32-bytes";
 
+const categoryEnvKeys = [
+  "CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL", "CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING",
+  "CLOUD_REPORTS_SLACK_WEBHOOK_INTERNAL_URL", "CLOUD_REPORTS_SLACK_WEBHOOK_TESTING_URL",
+  "CLOUD_CORE_ADMIN_EMAILS", "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
+] as const;
+const savedCategoryEnv = Object.fromEntries(categoryEnvKeys.map(key => [key, process.env[key]]));
+
 const savedEnv = {
   CLOUD_REPORTS_SLACK_WEBHOOK_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL,
   CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
@@ -32,6 +39,7 @@ type FetchCall = (input: string | URL | Request, init?: RequestInit) => Promise<
 let fetchMock: ReturnType<typeof mock<FetchCall>>;
 
 beforeEach(() => {
+  for (const key of categoryEnvKeys) delete process.env[key];
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
   delete process.env.CLOUD_ADMIN_CONSOLE_URL;
@@ -47,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const key of categoryEnvKeys) restoreEnv(key, savedCategoryEnv[key]);
   globalThis.fetch = realFetch;
   restoreEnv("CLOUD_REPORTS_SLACK_WEBHOOK_URL", savedEnv.CLOUD_REPORTS_SLACK_WEBHOOK_URL);
   restoreEnv(
@@ -115,6 +124,101 @@ describe("notifyReportSlack", () => {
 
     expect(result).toEqual({ ok: false, skipped: true });
     expect(fetchMock.mock.calls).toHaveLength(0);
+  });
+
+  for (const transport of ["bot", "webhook"] as const) {
+    test(`routes dashboard categories with Testing > Automatic > Internal precedence using ${transport}`, async () => {
+      process.env.CLOUD_CORE_ADMIN_EMAILS = " ADMIN@PERSONAL.TEST ";
+      process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = " @MENTRA.GLASS, mentraglass.com ";
+      const destinations = { main: "main", automatic: "automatic", internal: "internal", testing: "testing" };
+      for (const category of Object.keys(destinations) as Array<keyof typeof destinations>) {
+        const suffix = category === "main" ? "" : `_${category.toUpperCase()}`;
+        if (transport === "bot") process.env[`CLOUD_REPORTS_SLACK_CHANNEL_ID${suffix}`] = `C_${category}`;
+        else process.env[`CLOUD_REPORTS_SLACK_WEBHOOK${suffix}_URL`] = `https://hooks.slack.test/${category}`;
+      }
+      if (transport === "bot") process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+      fetchMock.mockImplementation(async () => Response.json({ ok: true, ts: "1.2" }));
+      const cases: Array<[Partial<ReportSlackNotification>, keyof typeof destinations]> = [
+        [{}, "main"],
+        [{ kind: "feedback", userEmail: "customer@example.test" }, "main"],
+        [{ userEmail: " Admin@Personal.Test " }, "internal"],
+        [{ userEmail: "alice@mentra.glass" }, "internal"],
+        [{ kind: "feedback", userEmail: "alice@mentraglass.com" }, "internal"],
+        [{ kind: "automatic", userEmail: "alice@mentra.glass" }, "automatic"],
+        [{ kind: "automatic", userEmail: "customer@example.test" }, "automatic"],
+        [{ userEmail: "alice@sub.mentra.glass" }, "main"],
+        [{ userEmail: "alice@notmentra.glass" }, "main"],
+        [{ userEmail: null, report: { contactEmail: "admin@personal.test" },
+           feedback: { contactEmail: "admin@personal.test" }, context: { email: "admin@personal.test" } }, "main"],
+        // Exact source matching, with no trimming/case folding beyond the dashboard query.
+        [{ trigger: { source: "mentra_automated_testing_extra" } }, "main"],
+        [{ trigger: { source: "MENTRA_AUTOMATED_TESTING" } }, "main"],
+        ...(["bug", "feedback", "automatic"] as const).flatMap(kind =>
+          ["admin@personal.test", "customer@example.test"].map(userEmail =>
+            [{ kind, userEmail, trigger: { source: "mentra_automated_testing" } }, "testing"] as
+              [Partial<ReportSlackNotification>, "testing"])),
+      ];
+      for (const [overrides, category] of cases) {
+        fetchMock.mockClear();
+        expect(await notifyReportSlack(bugNotification(overrides))).toEqual({ ok: true });
+        expect(fetchMock.mock.calls).toHaveLength(1);
+        const [url, init] = fetchMock.mock.calls[0]!;
+        expect(transport === "bot" ? JSON.parse(String(init?.body)).channel : String(url))
+          .toBe(transport === "bot" ? `C_${category}` : `https://hooks.slack.test/${category}`);
+      }
+    });
+  }
+
+  for (const category of ["automatic", "internal", "testing"] as const) {
+    const notification = () => bugNotification({
+      kind: category === "automatic" ? "automatic" : "bug",
+      userEmail: "admin@personal.test",
+      ...(category === "testing" ? { trigger: { source: "mentra_automated_testing" } } : {}),
+    });
+    test(`uses a configured ${category} webhook before the main-channel bot`, async () => {
+      process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@personal.test";
+      process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+      process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = CHANNEL_ID;
+      const url = `https://hooks.slack.test/${category}`;
+      process.env[`CLOUD_REPORTS_SLACK_WEBHOOK_${category.toUpperCase()}_URL`] = url;
+      await expect(notifyReportSlack(notification())).resolves.toEqual({ ok: true });
+      expect(fetchMock.mock.calls[0]![0]).toBe(url);
+    });
+    test(`prefers the ${category} bot over its webhook and never retries a refusal elsewhere`, async () => {
+      process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@personal.test";
+      process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+      process.env[`CLOUD_REPORTS_SLACK_CHANNEL_ID_${category.toUpperCase()}`] = `C_${category}`;
+      process.env[`CLOUD_REPORTS_SLACK_WEBHOOK_${category.toUpperCase()}_URL`] = `https://hooks.slack.test/${category}`;
+      process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+      fetchMock.mockImplementation(async () => Response.json({ ok: false, error: "not_in_channel" }));
+      await expect(notifyReportSlack(notification())).resolves.toEqual({ ok: false });
+      expect(fetchMock.mock.calls).toHaveLength(1);
+      expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body)).channel).toBe(`C_${category}`);
+    });
+    test(`falls back to main when the ${category} split is unconfigured`, async () => {
+      process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@personal.test";
+      process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+      await expect(notifyReportSlack(notification())).resolves.toEqual({ ok: true });
+      expect(fetchMock.mock.calls[0]![0]).toBe(WEBHOOK_URL);
+      fetchMock.mockClear();
+      process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+      process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = CHANNEL_ID;
+      fetchMock.mockImplementation(async () => Response.json({ ok: true, ts: "1.2" }));
+      await notifyReportSlack(notification());
+      expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body)).channel).toBe(CHANNEL_ID);
+    });
+  }
+
+  test("reads admin allowlist changes at notification time", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_INTERNAL_URL = "https://hooks.slack.test/internal";
+    const notification = bugNotification({ userEmail: "admin@personal.test" });
+    await notifyReportSlack(notification);
+    process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@personal.test";
+    await notifyReportSlack(notification);
+    delete process.env.CLOUD_CORE_ADMIN_EMAILS;
+    await notifyReportSlack(notification);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([WEBHOOK_URL, "https://hooks.slack.test/internal", WEBHOOK_URL]);
   });
 
   test("posts a bug report summary with trigger, env, and artifact count", async () => {
