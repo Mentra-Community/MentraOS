@@ -193,6 +193,21 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
     title: `PR #${pr.number} merged`, detail: pr.repository, at: pr.mergedAt, url: pr.url });
   if (activity?.miniTurnFailure) timeline.push({ id: "last-stop", stage: "agent-stop", title: "Last recorded agent stop",
     detail: `${words(activity.miniTurnFailure.kind)} during ${activity.miniTurnFailure.phase}`, at: activity.miniTurnFailure.at, url: null });
+  const currentState = fixFlowCurrentState(activity, occurrence, activityState, [...prs.values()], currentlyLeased);
+  if (currentState === "queued" && (activity?.miniTurnFailure || ["needs-input", "ready-for-policy"].includes(turn?.stage ?? ""))) {
+    state = "waiting";
+    stage = "Awaiting next agent turn";
+    nextAction = "The controller has scheduled another agent turn. The earlier stop or handoff remains in the recorded history.";
+  }
+  if (currentState === "waiting-merge") {
+    state = "waiting";
+    stage = "Waiting for merge decision";
+    nextAction = "The fix is ready for the next merge decision.";
+  } else if (currentState === "waiting-routine" && prs.size && [...prs.values()].every(pr => pr.state === "merged")) {
+    state = "waiting";
+    stage = "Fix merged · waiting for verification";
+    nextAction = "Fix merged; verification of this occurrence is still pending.";
+  }
   if (linked) {
     stage = `Linked case · ${stage}`;
     nextAction = `This failure is linked to the recorded case. ${nextAction}`;
@@ -202,7 +217,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
     step: failure.step, failure: { code: failure.code, message: failure.message, ...(failure.expected ? { expected: failure.expected } : {}) },
     startedAt: run.finishedAt, updatedAt: activity ? [activity.updatedAt, activity.executionOwnerUpdatedAt ?? activity.updatedAt].sort().at(-1)!
       : occurrence.delivery.state === "acknowledged" ? occurrence.delivery.acknowledgedAt : run.finishedAt,
-    state, currentState: fixFlowCurrentState(activity, occurrence, activityState, [...prs.values()], currentlyLeased), pipelineStage: fixFlowPipelineStage(activity, state, [...prs.values()]), stage, nextAction, activity: occurrence.delivery.state === "pending" ? "pending" : activity ? "available" : activityState,
+    state, currentState, pipelineStage: fixFlowPipelineStage(activity, state, [...prs.values()]), stage, nextAction, activity: occurrence.delivery.state === "pending" ? "pending" : activity ? "available" : activityState,
     agent: activity ? { runId: activity.runId, executor: activity.executor, status: activity.status,
       caseId: activity.routineCase?.caseId ?? null, anchorRunId: activity.routineCase?.anchorRunId ?? null,
       repository: activity.miniExecution?.route.repository ?? null, branch: activity.miniExecution?.route.branch ?? null,
@@ -222,16 +237,25 @@ function fixFlowCurrentState(activity: FixActivity | null, occurrence: TestFailu
   const lease = activity.executionOwnerRunId ? activity.executionOwnerWorkerLease : activity.workerLease;
   if (triage?.state === "cancelled" || completedStatuses.has(status)) return "closed";
   if (status === "mini_running") return currentlyLeased ? "worker-active" : lease ? "worker-repair" : "unknown";
-  if (activity.miniTurnFailure) return "stopped";
   if (triage && attentionTriageStates.has(triage.state)) return "stopped";
+  const allMerged = prs.length > 0 && prs.every(pr => pr.state === "merged");
+  const waitState = turn?.stage === "waiting-for-review" ? "waiting-review"
+    : turn?.stage === "waiting-for-build" ? "waiting-build"
+      : turn?.stage === "waiting-for-routine" || turn?.reason === "occurrence-verification-required" ? "waiting-routine" : null;
+  // The controller re-admits a stopped turn by changing its status, retaining the old turn/failure as history.
+  if (["awaiting_executor", "queued"].includes(status)) return "queued";
+  if (status === "mini_waiting") {
+    if (["needs-input", "ready-for-policy", "continue"].includes(turn?.stage ?? "")) return "queued";
+    return allMerged ? "waiting-routine" : waitState ?? "queued";
+  }
+  if (activity.miniTurnFailure) return "stopped";
   if (turn?.stage === "needs-input") return turn.reason === "infrastructure" ? "worker-repair" : "stopped";
+  // Accepted ready-for-policy and needs-input turns share mini_needs_input; the former is a handoff, not a failure.
+  if (status === "mini_needs_input" && turn?.stage === "ready-for-policy") return allMerged ? "waiting-routine" : "waiting-merge";
   if (attentionStatuses.has(status)) return "stopped";
-  if (prs.length && prs.every(pr => pr.state === "merged")) return "waiting-routine";
-  if (turn?.stage === "waiting-for-review") return "waiting-review";
-  if (turn?.stage === "waiting-for-build") return "waiting-build";
-  if (turn?.stage === "waiting-for-routine" || turn?.reason === "occurrence-verification-required") return "waiting-routine";
+  if (allMerged) return "waiting-routine";
+  if (waitState) return waitState;
   if (turn?.stage === "ready-for-policy") return "waiting-merge";
-  if (["awaiting_executor", "queued", "mini_waiting"].includes(status)) return "queued";
   // Waiting-input requires a bound unanswered question; merged requires explicit verified completion.
   // Neither fact is supplied by the current controller contract, so neither is inferred here.
   return "unknown";

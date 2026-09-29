@@ -63,7 +63,7 @@ describe("exact failure-to-fixer projection", () => {
     expect(current(activity, "unavailable")).toBe("unknown"); expect(current(null)).toBe("unknown");
     for (const [stage, expected] of [["waiting-for-review", "waiting-review"], ["waiting-for-build", "waiting-build"],
       ["waiting-for-routine", "waiting-routine"], ["ready-for-policy", "waiting-merge"]] as const) {
-      expect(current({ ...activity, status: "mini_waiting", progressPhase: "inspecting_code", miniExecution: undefined,
+      expect(current({ ...activity, status: stage === "ready-for-policy" ? "mini_needs_input" : "mini_waiting", progressPhase: "inspecting_code", miniExecution: undefined,
         miniLastTurn: { stage: stage!, reason: "synthetic" } })).toBe(expected);
     }
     const stopped: FixActivity = { ...activity, status: "mini_needs_input", progressPhase: "inspecting_code",
@@ -80,7 +80,7 @@ describe("exact failure-to-fixer projection", () => {
     const merged: FixActivity = { ...activity, status: "mini_waiting", pullRequests: [{ repository: "Mentra-Community/MentraOS",
       pullRequestNumber: 42, headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] };
     expect(current(merged)).toBe("waiting-routine");
-    expect(current({ ...merged, miniTurnFailure: stopped.miniTurnFailure })).toBe("stopped");
+    expect(current({ ...merged, status: "mini_needs_input", miniTurnFailure: stopped.miniTurnFailure })).toBe("stopped");
     const linked: FixActivity = { ...activity, executionOwnerRunId: agentId, executionOwnerStatus: "mini_running",
       executionOwnerProgressPhase: "implementing_fix" };
     expect(current(linked)).toBe("unknown");
@@ -110,12 +110,52 @@ describe("exact failure-to-fixer projection", () => {
   });
   test("merged PRs supersede retained pre-merge waits but not active custody or a stop", () => {
     for (const stage of ["waiting-for-review", "waiting-for-build", "ready-for-policy"]) {
-      const row: FixActivity = { ...activity, status: "mini_waiting", miniLastTurn: { stage, reason: "synthetic" },
+      const row: FixActivity = { ...activity, status: stage === "ready-for-policy" ? "mini_needs_input" : "mini_waiting", miniLastTurn: { stage, reason: "synthetic" },
         pullRequests: [{ repository: "Mentra-Community/MentraOS", pullRequestNumber: 42, headSha: "a".repeat(40), pullRequestLifecycle: { state: "merged", mergedAt: at } }] };
       expect(projectFixFlow(stored, occurrence, row, "available", []).currentState).toBe("waiting-routine");
       expect(projectFixFlow(stored, occurrence, { ...row, status: "mini_running" }, "available", []).currentState).toBe("worker-active");
-      expect(projectFixFlow(stored, occurrence, { ...row, miniTurnFailure: { kind: "timeout", phase: "model", at } }, "available", []).currentState).toBe("stopped");
+      expect(projectFixFlow(stored, occurrence, { ...row, status: "mini_needs_input", miniTurnFailure: { kind: "timeout", phase: "model", at } }, "available", []).currentState).toBe("stopped");
     }
+  });
+  test("all six accepted Mini turn stages use their real controller statuses", async () => {
+    // mini-case-store.release: needs-input / ready-for-policy -> mini_needs_input; all others -> mini_waiting.
+    const accepted = [
+      ["continue", "source-investigation", "mini_waiting", "queued"],
+      ["waiting-for-review", "review-pending", "mini_waiting", "waiting-review"],
+      ["waiting-for-build", "build-pending", "mini_waiting", "waiting-build"],
+      ["waiting-for-routine", "routine-pending", "mini_waiting", "waiting-routine"],
+      ["needs-input", "infrastructure", "mini_needs_input", "worker-repair"],
+      ["ready-for-policy", "source-investigation", "mini_needs_input", "waiting-merge"],
+    ] as const;
+    for (const [stage, reason, status, expected] of accepted) for (const linked of [false, true]) {
+      const row: FixActivity = { ...activity, status, miniLastTurn: { stage, reason },
+        ...(linked ? { runId: "22222222-2222-4222-8222-222222222222", acknowledgedAgentRunId: agentId,
+          executionOwnerRunId: agentId, executionOwnerStatus: status } : {}) };
+      const service = new FixFlowService(repository(), reader([row]), "dev");
+      expect((await service.list()).flows[0]?.currentState).toBe(expected);
+      expect((await service.detail(occurrenceId)).currentState).toBe(expected);
+      expect(projectFixFlow(stored, occurrence, { ...row, ...(linked ? { executionOwnerTriage: { state: "held" } } : { miniTriage: { state: "held" } }) }, "available", []).currentState).toBe("stopped");
+    }
+    const ready = projectFixFlow(stored, occurrence, { ...activity, status: "mini_needs_input", miniLastTurn: { stage: "ready-for-policy", reason: "source-investigation" } }, "available", []);
+    expect(ready).toMatchObject({ state: "waiting", currentState: "waiting-merge", stage: "Waiting for merge decision" });
+    expect(ready.nextAction).toContain("merge decision");
+  });
+  test("supported retry, clarification, restoration and recurrence schedules preserve stops as history", () => {
+    // Operator retry preserves turnFailure; clarification/restoration preserve needs-input; recurrence preserves ready-for-policy.
+    for (const stage of ["needs-input", "ready-for-policy"]) for (const status of ["mini_waiting", "awaiting_executor"]) {
+      for (const historicalFailure of [undefined, { kind: "timeout", phase: "model", at }]) {
+        const row: FixActivity = { ...activity, status, miniLastTurn: { stage, reason: "infrastructure" }, miniTurnFailure: historicalFailure };
+        const result = projectFixFlow(stored, occurrence, row, "available", []);
+        expect(result).toMatchObject({ currentState: "queued", state: "waiting", stage: "Awaiting next agent turn" });
+        expect(result.nextAction).toContain("scheduled another agent turn");
+        expect(result.timeline.some(item => item.stage === "agent-stop")).toBe(!!historicalFailure);
+        expect(projectFixFlow(stored, occurrence, { ...row, miniTriage: { state: "held" } }, "available", []).currentState).toBe("stopped");
+        expect(projectFixFlow(stored, occurrence, { ...row, status: "mini_running", workerLease: { state: "reconciliation-required" } }, "available", []).currentState).toBe("worker-repair");
+      }
+    }
+    const failure: FixActivity = { ...activity, status: "mini_needs_input", miniLastTurn: { stage: "needs-input", reason: "infrastructure" },
+      miniTurnFailure: { kind: "timeout", phase: "model", at } };
+    expect(projectFixFlow(stored, occurrence, failure, "available", []).currentState).toBe("stopped");
   });
   test("only current structured worker custody can produce Running", () => {
     const now = Date.parse(at);
@@ -308,7 +348,7 @@ describe("exact failure-to-fixer projection", () => {
   });
   test("admitted triage cannot mask the current review wait or access blocker", () => {
     for (const reason of ["review-pending", "access-required"]) {
-      const result = projectFixFlow(stored, occurrence, { ...activity, status: "mini_waiting",
+      const result = projectFixFlow(stored, occurrence, { ...activity, status: reason === "review-pending" ? "mini_waiting" : "mini_needs_input",
         miniTriage: { state: "admitted", nextAction: "Old admission text" },
         miniExecution: { ...activity.miniExecution!, stage: { stage: reason === "review-pending" ? "waiting-for-review" : "needs-input", reason } },
       }, "available", []);
