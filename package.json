@@ -47,5 +47,8 @@
     "build:miniapp": "cd mobile/modules/miniapp && bun run build",
     "sync-miniapp": "bun scripts/sync-miniapp.mjs",
     "postinstall": "bun run build:miniapp || echo '\\n[postinstall] WARNING: failed to build @mentra/miniapp. Miniapps will not run until you build it manually:\\n  cd mobile/modules/miniapp && bun run build\\n'"
+  },
+  "dependencies": {
+    "react-router-dom": "7.18.0"
   }
 }
