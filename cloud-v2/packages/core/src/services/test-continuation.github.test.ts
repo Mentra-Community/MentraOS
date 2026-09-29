@@ -11,15 +11,16 @@ function fixture(harness = false) {
   const pr = { number: 12, state: "open", merged: false, merge_commit_sha: null as string | null, merged_at: null as string | null,
     head: { sha: head, ref: harness ? "fix/routine-run_123" : "candidate", repo: { full_name: grant.candidate.repository } },
     base: { ref: harness ? "main" : "dev", repo: { full_name: grant.candidate.repository } }, labels: [] as { name: string }[] };
-  const calls: string[] = []; let status = "ahead", mainStatus = "identical", main = merged;
+  const calls: string[] = []; let status = "ahead", mainStatus = "identical", main = merged, largeMainFiles = false;
   const gateway = new GithubContinuationSource({ app: { token: async (scope: string) => { expect(scope).toBe(harness ? "harness" : "source"); return "fixture"; } } as TestRunGithubApp,
     fetch: (async (url: string, init?: RequestInit) => { calls.push(url); expect(init?.method).toBeUndefined();
       if (url.endsWith("/pulls/12")) return Response.json(pr);
-      if (url.includes(`/compare/${merged}...`)) return Response.json({ status: mainStatus });
+      if (url.includes(`/compare/${merged}...`)) return Response.json({ status: mainStatus,
+        ...(largeMainFiles && new URL(url).searchParams.get("page") !== "2" ? {files: [{patch: "x".repeat(3 * 1024 * 1024)}]} : {}) });
       if (url.includes("/compare/")) return Response.json({ status });
       if (url.endsWith("/git/ref/heads/main")) return Response.json({ ref: "refs/heads/main", object: { type: "commit", sha: main } });
       throw new Error("Unexpected endpoint"); }) as typeof fetch });
-  return { grant, packet, pr, gateway, calls, diverged: () => { status = "diverged"; }, moveMain: () => { main = head; mainStatus = "ahead"; }, excludeMerge: (value = "diverged") => { mainStatus = value; } };
+  return { grant, packet, pr, gateway, calls, diverged: () => { status = "diverged"; }, moveMain: () => { main = head; mainStatus = "ahead"; }, excludeMerge: (value = "diverged") => { mainStatus = value; }, largeMainFiles: () => { largeMainFiles = true; } };
 }
 test("originating PR retains exact branch/base/repository/head and tested ancestry", async () => {
   const good = fixture(); expect(await good.gateway.target(good.packet, good.grant, "no-glasses")).toMatchObject({ query: { channel: "pr", pr: 12 }, expectedHeadSha: head });
@@ -67,11 +68,22 @@ test("harness route requires recorded tested revision and the reviewed merge sti
   await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("revision is missing");
   f.packet.build.hashes.harnessSha = tested; f.moveMain();
   expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ expectedHarnessSha: merged });
-  expect(f.calls.at(-1)).toContain(`/compare/${merged}...${head}?per_page=1`);
+  expect(f.calls.at(-1)).toContain(`/compare/${merged}...${head}?per_page=1&page=2`);
   for (const status of ["behind", "diverged", "unknown"]) {
     f.excludeMerge(status);
     await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow();
   }
+});
+test("private main containment omits oversized unrelated patches while preserving exact ancestry", async () => {
+  const f = fixture(true); f.largeMainFiles();
+  f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
+  // The identical comparison has no second commit, but still carries its global status.
+  expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ expectedHarnessSha: merged });
+  f.moveMain();
+  expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ expectedHarnessSha: merged });
+  // Omitting the patch list must not weaken rejection of a rewritten main history.
+  f.excludeMerge("diverged");
+  await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("no longer contains");
 });
 test("an adopted harness candidate uses only the recorded same-case owner's branch", async () => {
   const f = fixture(true); f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
