@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent, type HostComponent, type HostDiskPoint,
   type HostReason, type TestHostHistory, type TestHostLatest, type TestHostList } from "../../../../packages/core/src/types/test-host-health.types";
 import type { TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
@@ -68,18 +68,24 @@ export function diskSegments(points: HostDiskPoint[], gapAfterMs: number) {
   return segments;
 }
 export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
-  const from = Date.parse(history.from), to = Date.parse(history.to), width = 880, height = 225, left = 58, top = 15, bottom = 38;
+  const container = useRef<HTMLDivElement>(null), [width, setWidth] = useState(880);
+  useEffect(() => {
+    const node = container.current; if (!node) return;
+    const measure = () => setWidth(Math.max(240, Math.round(node.getBoundingClientRect().width)));
+    measure(); const observer = new ResizeObserver(measure); observer.observe(node); return () => observer.disconnect();
+  }, []);
+  const from = Date.parse(history.from), to = Date.parse(history.to), height = 225, left = 58, top = 15, bottom = 38;
   const yMax = Math.ceil(Math.max(25, ...history.points.map(point => (point.freeBytes ?? 0) / GiB)) / 5) * 5;
   const x = (at: string) => left + (Date.parse(at) - from) / Math.max(1, to - from) * (width - left - 16);
   const y = (bytes: number) => height - bottom - (bytes / GiB / yMax) * (height - top - bottom);
   const segments = diskSegments(history.points, history.gapAfterMs);
-  return <div>
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Available disk space over time. Gaps mean no measurement. Dashed line marks 20 GiB." className="w-full">
+  return <div ref={container}>
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="Available disk space over time. Gaps mean no measurement. Dashed line marks 20 GiB.">
       {[0, yMax / 2, yMax].map(tick => <g key={tick}><line x1={left} x2={width - 16} y1={y(tick * GiB)} y2={y(tick * GiB)} stroke="#e4e9e2" />
         <text x={left - 9} y={y(tick * GiB) + 4} textAnchor="end" fontSize="11" fill="#68746d">{tick} GiB</text></g>)}
       <line x1={left} x2={width - 16} y1={y(history.thresholdBytes)} y2={y(history.thresholdBytes)} stroke="#b57729" strokeDasharray="5 4" />
       <text x={width - 20} y={y(history.thresholdBytes) - 5} textAnchor="end" fontSize="11" fill="#946024">20 GiB recording margin</text>
-      {[0, 0.5, 1].map(ratio => <text key={ratio} x={left + ratio * (width - left - 16)} y={height - 10} textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fill="#68746d">{time(new Date(from + ratio * (to - from)).toISOString())}</text>)}
+      {(width < 500 ? [0, 1] : [0, 0.5, 1]).map(ratio => <text key={ratio} x={left + ratio * (width - left - 16)} y={height - 10} textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fill="#68746d">{time(new Date(from + ratio * (to - from)).toISOString())}</text>)}
       {segments.map((segment, index) => <g key={index}><polyline points={segment.map(point => `${x(point.sampledAt)},${y(point.freeBytes!)}`).join(" ")} fill="none" stroke="#0c9667" strokeWidth="2" />
         {segment.length === 1 ? <circle cx={x(segment[0].sampledAt)} cy={y(segment[0].freeBytes!)} r="3" fill="#0c9667"><title>{`${time(segment[0].sampledAt)} · ${size(segment[0].freeBytes)}`}</title></circle> : null}</g>)}
       {history.cleanupEvents.map(event => <g key={event.receiptId}><line x1={x(event.startedAt)} x2={x(event.startedAt)} y1={top} y2={height - bottom} stroke={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"} strokeDasharray="2 5" />
