@@ -59,6 +59,13 @@ describe("exact failure-to-fixer projection", () => {
     expect(project(linked).currentState).toBe("reviewing");
     expect(project({ ...linked, executionOwnerCurrentActivity: undefined }).currentState).toBe("worker-active");
     expect(matchingFixActivity(stored, occurrence, { ...current, executionOwnerCurrentActivity: current.currentActivity }, "dev")).toBeNull();
+    for (const row of [{ ...current, miniTriage: { state: "cancelled" } },
+      { ...linked, executionOwnerTriage: { state: "cancelled" } }]) {
+      const closed = project(row);
+      expect(closed).toMatchObject({ currentState: "closed", state: "completed", pipelineStage: "closed" });
+      expect(closed.stage).toContain("Cancelled before execution");
+      expect(closed.nextAction).toContain("cancelled");
+    }
   });
   test("completion requires this occurrence's passing routine, accepted handoff and the exact merged head", () => {
     const headSha = "a".repeat(40);
