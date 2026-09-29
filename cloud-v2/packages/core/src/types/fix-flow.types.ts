@@ -11,7 +11,7 @@ export interface FixFlow {
   channel: string;
   build: string;
   step: { id: string; label: string } | null;
-  failure: { code: string; message: string; expected?: string };
+  failure: { code: string; message: string; expected?: string; detailUnpublished?: boolean };
   startedAt: string;
   updatedAt: string;
   // active is accepted only for older Core responses during a rolling deployment.

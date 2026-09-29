@@ -32,6 +32,14 @@ const reader = (runs: FixActivity[] = [activity]) => ({ list: async () => ({ run
     && run.routineFailure.intake.occurrenceId === binding.occurrenceId && run.routineFailure.intake.testRunId === binding.testRunId) ?? null });
 
 describe("exact failure-to-fixer projection", () => {
+  test("exposes a missing-detail flag without copying withheld diagnostic text", () => {
+    const missing = { ...occurrence, failure: { ...occurrence.failure, message: "The lifecycle phase failed before it could complete.",
+      missingEvidence: [{ kind: "failure-details" as const, reason: "Withheld diagnostic metadata" }] } };
+    const result = projectFixFlow(stored, missing, activity, "available", []);
+    expect(result.failure).toEqual({ code: "blank-content", message: missing.failure.message, detailUnpublished: true });
+    expect(JSON.stringify(result)).not.toContain("Withheld diagnostic metadata");
+    expect(projectFixFlow(stored, occurrence, activity, "available", []).failure.detailUnpublished).toBeUndefined();
+  });
   test("pre-execution triage uses its own current lease and launch, instead of staying queued", () => {
     const row: FixActivity = { ...activity, status: "awaiting_executor", workerLease: { state: "inactive" },
       miniExecution: undefined, miniTriage: { state: "running", launched: true, leaseExpiresAt: "2099-01-01T00:00:00Z" } };

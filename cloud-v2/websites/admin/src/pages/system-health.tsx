@@ -3,8 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent, type HostComponent, type HostDiskPoint,
   type HostReason, type TestHostHistory, type TestHostLatest, type TestHostList } from "../../../../packages/core/src/types/test-host-health.types";
 import type { TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
+import type { FixFlowList } from "../../../../packages/core/src/types/fix-flow.types";
 import { api } from "../lib/api";
-import { elapsed, LaneOverview } from "./test-lanes";
+import { elapsed, laneCards, LaneOverview } from "./test-lanes";
+import { laneFailureRun } from "./test-lane-failure";
 
 const GiB = 1024 ** 3;
 const componentNames = { "general-worker": "General worker", "triage-worker": "Dedicated triage worker", "disk-cleanup": "Scheduled cleanup" };
@@ -91,7 +93,7 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
       {[0, yMax / 2, yMax].map(tick => <g key={tick}><line x1={left} x2={width - 16} y1={y(tick * GiB)} y2={y(tick * GiB)} stroke="#e4e9e2" />
         <text x={left - 9} y={y(tick * GiB) + 4} textAnchor="end" fontSize="11" fill="#68746d">{tick} GiB</text></g>)}
       <line x1={left} x2={width - 16} y1={y(history.thresholdBytes)} y2={y(history.thresholdBytes)} stroke="#b57729" strokeDasharray="5 4" />
-      <text x={width - 20} y={y(history.thresholdBytes) - 5} textAnchor="end" fontSize="11" fill="#946024">20 GiB recording margin</text>
+      <text x={width - 20} y={y(history.thresholdBytes) - 5} textAnchor="end" fontSize="11" fill="#946024">20 GiB headroom target</text>
       {(width < 500 ? [0, 1] : [0, 0.5, 1]).map(ratio => <text key={ratio} x={left + ratio * (width - left - 16)} y={height - 10} textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fill="#68746d">{time(new Date(from + ratio * (to - from)).toISOString())}</text>)}
       {segments.map((segment, index) => <g key={index}><polyline points={segment.map(point => `${x(point.sampledAt)},${y(point.freeBytes!)}`).join(" ")} fill="none" stroke="#0c9667" strokeWidth="2" />
         {segment.length === 1 ? <circle cx={x(segment[0].sampledAt)} cy={y(segment[0].freeBytes!)} r="3" fill="#0c9667"><title>{`${time(segment[0].sampledAt)} · ${size(segment[0].freeBytes)}`}</title></circle> : null}</g>)}
@@ -99,7 +101,7 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
         <circle cx={x(event.startedAt)} cy={top + 4} r="4" fill={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"}><title>{`${time(event.startedAt)} · ${event.origin} cleanup · ${cleanupStatus(event)} · ${event.removedCount} removed. ${cleanupReason(event)}`}</title></circle></g>)}
       {!segments.length ? <text x={width / 2} y={height / 2} textAnchor="middle" fontSize="14" fill="#68746d">No disk measurements in this period</text> : null}
     </svg>
-    <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The threshold is a recording margin, not a readiness check.</p>
+    <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The 20 GiB guide is a headroom target, not a recording or readiness gate.</p>
     {history.truncated ? <p className="mt-1 text-xs text-[#a64235]">Only the newest {history.points.length.toLocaleString()} measurements are shown.</p> : null}
   </div>;
 }
@@ -121,11 +123,13 @@ export function SystemHealthPage() {
   const history = useQuery({ queryKey: ["test-host-history", host?.hostId, days], enabled: Boolean(host), refetchInterval: 60_000,
     queryFn: () => api<TestHostHistory>(`/api/admin/test-runs/health/${encodeURIComponent(host!.hostId)}?days=${days}`) });
   const overview = useQuery({ queryKey: ["test-run-overview"], queryFn: () => api<TestRunOverview>("/api/admin/test-runs/overview"), refetchInterval: 30_000 });
+  const fixFlows = useQuery({ queryKey: ["admin-fix-flows"], queryFn: () => api<FixFlowList>("/api/admin/fix-flows"),
+    enabled: Boolean(overview.data && laneCards(overview.data, now).some(card => laneFailureRun(card))), refetchInterval: 15_000, retry: false });
   const fresh = Boolean(host && !query.isError && hostIsFresh(host, now));
   return <div className="space-y-5">
     <section className="rounded-2xl border border-[#dfe5dd] bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Workers &amp; disk space</h2><p className="mt-1 text-sm text-[#68746d]">Service status is separate from a job's progress and a device lane's availability.</p></div>
-        <button className="text-sm font-medium text-[#087d50] underline" onClick={() => { void query.refetch(); if (host) void history.refetch(); void overview.refetch(); }}>Refresh</button></div>
+        <button className="text-sm font-medium text-[#087d50] underline" onClick={() => { void query.refetch(); if (host) void history.refetch(); void overview.refetch(); if (fixFlows.isEnabled) void fixFlows.refetch(); }}>Refresh</button></div>
       {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Health could not refresh. Current service status is unknown.</p> : null}
       {!hosts.length ? <p className="mt-4 text-sm text-[#68746d]">{query.isPending ? "Loading host reports…" : "No independent host monitor has reported yet. Historical disk measurements will appear as they are collected."}</p> : <>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><select aria-label="Host" value={host?.hostId} onChange={event => setHostId(event.target.value)} className="rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{hosts.map(value => <option key={value.hostId}>{value.hostId}</option>)}</select>
@@ -142,7 +146,9 @@ export function SystemHealthPage() {
       </>}
     </section>
     <section className="rounded-2xl border border-[#dfe5dd] bg-white p-5"><h2 className="text-lg font-semibold">Device lanes</h2>
-      {overview.isError ? <p className="mt-3 text-sm text-[#a64235]">Lane activity could not refresh. Open Test runs to retry.</p> : overview.data ? <LaneOverview data={overview.data} now={now} onResult={id => { window.location.href = `/?testRun=${encodeURIComponent(id)}`; }} /> : <p className="mt-3 text-sm text-[#68746d]">Loading lane reports…</p>}
+      {overview.isError ? <p className="mt-3 text-sm text-[#a64235]">Lane activity could not refresh. Open Test runs to retry.</p> : overview.data ? <LaneOverview data={overview.data} now={now}
+        fixFlows={fixFlows.isError && fixFlows.data ? { ...fixFlows.data, activity: "unavailable" } : fixFlows.data}
+        onResult={id => { window.location.href = `/?testRun=${encodeURIComponent(id)}`; }} /> : <p className="mt-3 text-sm text-[#68746d]">Loading lane reports…</p>}
     </section>
   </div>;
 }

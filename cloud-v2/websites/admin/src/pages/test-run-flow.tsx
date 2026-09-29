@@ -1,8 +1,10 @@
 import { ArrowRight, CheckCircle2, Clock3, Glasses, Monitor, Smartphone } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import type { FixFlowList } from "../../../../packages/core/src/types/fix-flow.types";
 import type { OverviewJob, OverviewRequest, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import { displayState, elapsed, laneCards, laneKind, phaseNames, type LaneCard, type LaneState } from "./test-lanes";
 import { runDuration, type TestRunSummary } from "./test-runs-data";
+import { LaneFailureContext, laneFailureFlows } from "./test-lane-failure";
 
 const BOX = "rounded-xl border border-[#e0e4de] bg-white p-3";
 const MUTED = "text-[11px] text-[#68746d]";
@@ -62,7 +64,7 @@ function LaneProgress({ card }: { card: LaneCard }) {
   </div>;
 }
 
-function FlowLane({ card, now, onResult }: { card: LaneCard; now: number; onResult: (id: string) => void }) {
+function FlowLane({ card, now, onResult, fixFlows }: { card: LaneCard; now: number; onResult: (id: string) => void; fixFlows?: FixFlowList }) {
   const mac = laneKind(card.item.resourceKey) === "shared", Icon = mac ? Monitor : Smartphone;
   const request = card.matched?.request;
   const fixture = card.item.observation.fixture;
@@ -83,8 +85,9 @@ function FlowLane({ card, now, onResult }: { card: LaneCard; now: number; onResu
     </div> : null}
     <LaneProgress card={card} />
     <p className="mt-3 text-xs">{card.summary}</p>
-    {card.state !== "available" && card.state !== "running" ? <div className="mt-2 border-l-2 border-[#dec694] pl-2 text-[11px]">
+    {card.state !== "available" && card.state !== "running" && !laneFailureFlows(card, fixFlows, now).length ? <div className="mt-2 border-l-2 border-[#dec694] pl-2 text-[11px]">
       <p>{card.responsible}</p><p className="mt-1">{card.next}</p></div> : null}
+    <LaneFailureContext card={card} feed={fixFlows} onResult={onResult} />
     {card.pairing ? <p className={`mt-2 ${MUTED}`}>{card.pairing}</p> : null}
     <p className={`mt-2 ${MUTED}`}>{fixture.checked && fixture.record === "valid" ? `${fixture.fixtureID} · ` : ""}
       Reported {elapsed(card.item.receivedAt, now)} ago{card.fresh ? "" : " · stale"}</p>
@@ -120,9 +123,10 @@ function FinishedCard({ run, now, onResult }: { run: TestRunSummary; now: number
 }
 
 type Segment = "all" | "waiting" | "lanes" | "finished";
-export function TestRunFlow({ data, now, recentRuns = [], recentState = "loading", onResult }: {
+export function TestRunFlow({ data, now, recentRuns = [], recentState = "loading", onResult, fixFlows }: {
   data: TestRunOverview; now: number; recentRuns?: TestRunSummary[]; recentState?: "loading" | "ready" | "error";
   onResult: (id: string) => void;
+  fixFlows?: FixFlowList;
 }) {
   const [selected, setSelected] = useState<Segment>("all");
   const { waiting, lanes, resources, other } = testFlowItems(data, now);
@@ -152,7 +156,7 @@ export function TestRunFlow({ data, now, recentRuns = [], recentState = "loading
       {panel("lanes", <><h4 className="mb-2 text-xs font-semibold">What each lane is doing</h4>
         {!data.resourceObservations?.available ? <p className={`${BOX} text-xs text-[#805619]`}>Lane reports are unavailable. Current ownership is unknown.</p>
           : !lanes.length ? <p className={`${BOX} text-xs text-[#68746d]`}>No execution lanes have reported yet.</p>
-          : <div className="space-y-3">{lanes.map(card => <FlowLane key={`${card.item.hostId}/${card.item.resourceKey}`} card={card} now={now} onResult={onResult} />)}</div>}
+          : <div className="space-y-3">{lanes.map(card => <FlowLane key={`${card.item.hostId}/${card.item.resourceKey}`} card={card} now={now} onResult={onResult} fixFlows={fixFlows} />)}</div>}
         {resources.length ? <div className="mt-3 rounded-lg border border-dashed border-[#d4dfd5] p-3"><h5 className="flex items-center gap-2 text-[11px] font-semibold"><Glasses className="size-4" aria-hidden="true" />Glasses resources</h5>
           <p className={`mt-1 ${MUTED}`}>Shared equipment, separate from execution lanes.</p>
           {resources.map(card => <div key={`${card.item.hostId}/${card.item.resourceKey}`} className="mt-2 border-t border-[#e0e4de] pt-2 text-[11px]">

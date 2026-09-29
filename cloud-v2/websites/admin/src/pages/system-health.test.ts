@@ -25,7 +25,8 @@ describe("system health presentation", () => {
       cleanupEvents: [], truncated: false, thresholdBytes: 20 * 1024 ** 3, gapAfterMs: 180_000 };
     const markup = renderToStaticMarkup(createElement(DiskHistoryChart, { history }));
     expect((markup.match(/<polyline/g) ?? []).length).toBe(3);
-    expect(markup).toContain("20 GiB recording margin"); expect(markup).toContain("Gaps are missing measurements");
+    expect(markup).toContain("20 GiB headroom target"); expect(markup).toContain("not a recording or readiness gate");
+    expect(markup).not.toContain("recording margin"); expect(markup).toContain("Gaps are missing measurements");
     expect(renderToStaticMarkup(createElement(DiskHistoryChart, { history: { ...history, points: [] } }))).toContain("No disk measurements in this period");
   });
   test("unknown-origin partial cleanup explains its time limit without claiming a scheduled success", () => {
