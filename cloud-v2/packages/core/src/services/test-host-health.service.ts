@@ -30,12 +30,18 @@ export class MongoTestHostHealthRepository implements TestHostHealthRepository {
   }
   async updateLatest(sample: StoredHostSample) {
     const { hostId, sampleId, sampledAt, receivedAt, payload } = sample;
+    const filter = { hostId, $or: [
+      { sampledAt: { $lt: sampledAt } }, { sampledAt, sampleId: { $lte: sampleId } },
+    ] }, update = { $set: { hostId, sampleId, sampledAt, receivedAt, payload } };
     // Only actual sample time orders observations. Backlogged delivery and exact retries never refresh contact.
     try {
-      await TestHostLatestModel.collection.updateOne({ hostId, $or: [
-        { sampledAt: { $lt: sampledAt } }, { sampledAt, sampleId: { $lte: sampleId } },
-      ] }, { $set: { hostId, sampleId, sampledAt, receivedAt, payload } }, { upsert: true, writeConcern: { w: "majority", j: true } });
-    } catch (error) { if (!duplicate(error)) throw error; }
+      await TestHostLatestModel.collection.updateOne(filter, update, { upsert: true, writeConcern: { w: "majority", j: true } });
+    } catch (error) {
+      if (!duplicate(error)) throw error;
+      // A first writer may have inserted an older row after our upsert selected no document.
+      // Re-evaluate the same monotonic predicate against the now-existing row; never insert or regress it.
+      await TestHostLatestModel.collection.updateOne(filter, update, { writeConcern: { w: "majority", j: true } });
+    }
   }
   async hosts(limit: number) {
     return await TestHostLatestModel.collection.find<Pick<StoredHostSample, "payload" | "receivedAt">>({}, { projection: { _id: 0, payload: 1, receivedAt: 1 } })

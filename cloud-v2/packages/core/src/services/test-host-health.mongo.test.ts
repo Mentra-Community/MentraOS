@@ -29,6 +29,15 @@ describe.skipIf(!uri)("Mongo host sample ordering and bounded indexed history", 
     expect((await service.list()).hosts.find(host => host.hostId === "race")?.sampleId).toBe(newer.sampleId);
     await expect(service.ingest({ ...input, freeBytes: 1 })).rejects.toMatchObject({ status: 409 });
   });
+  test("concurrent first reports with different timestamps always leave the newest accepted observation", async () => {
+    const service = new TestHostHealthService();
+    const rounds = Array.from({ length: 20 }, (_, round) => Array.from({ length: 8 }, (_, index) => sample(`first-${round}`, base - (7 - index) * 1_000)));
+    await Promise.all(rounds.flatMap(inputs => inputs.map(input => service.ingest(input))));
+    for (const inputs of rounds) {
+      const latest = await TestHostLatestModel.collection.findOne({ hostId: inputs[0].hostId });
+      expect(latest?.sampleId).toBe(inputs[7].sampleId);
+    }
+  });
   test("history uses compound index with no global sort; retained host registry has no TTL", async () => {
     const service = new TestHostHealthService();
     await Promise.all(Array.from({ length: 120 }, (_, index) => service.ingest(sample("series", base - index * 60_000))));
