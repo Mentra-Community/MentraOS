@@ -76,8 +76,9 @@ export class TestContinuationService {
     }
     if (target.original || target.recordedBuild) {
       // Exactly the recorded build, however old: never the newest listing or a current head.
-      const selection = target.recordedBuild ?? await this.originalSelection(target, routineId);
-      const build = await this.originalBuild(selection.source, routineId, selection.source.channel === "pr" ? target.original?.requestRunId : undefined);
+      const selection = target.recordedBuild ? { ...target.recordedBuild, initialRequestRunId: undefined } : await this.originalSelection(target, routineId);
+      const build = await this.originalBuild(selection.source, routineId, selection.source.channel === "pr"
+        ? selection.initialRequestRunId ?? target.original?.requestRunId : undefined);
       return { candidate: grant.candidate, builds: [build].filter(item => item.headSha === target.expectedHeadSha
           && item.archive?.sha256 === selection.archiveSha256), expectedHeadSha: target.expectedHeadSha,
         ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}),
@@ -142,12 +143,14 @@ export class TestContinuationService {
       || (data.source.channel === "pr" && data.source.prNumber !== target.query.pr)) fail("Build is outside the candidate source");
     // Original targets and harness candidates admit only the recorded app
     // artifact, never a caller-named rebuilt or newer one.
+    let originalRequestRunId: number | undefined;
     if (target.original || target.recordedBuild) {
-      const selection = target.recordedBuild ?? await this.originalSelection(target, routineId);
+      const selection = target.recordedBuild ? { ...target.recordedBuild, initialRequestRunId: undefined } : await this.originalSelection(target, routineId);
       if (!same(data.source, selection.source) || data.archiveSha256 !== selection.archiveSha256) fail("Build is not the original recorded artifact");
+      if (target.original && data.source.channel === "pr") originalRequestRunId =
+        selection.initialRequestRunId ?? target.original.requestRunId;
     }
     // A PR original is replayed by its request run through the trusted issuer, for its recorded PR identity.
-    const originalRequestRunId = target.original && data.source.channel === "pr" ? target.original.requestRunId : undefined;
     const build = target.localPublication ? await this.recordedAppBuild(target, routineId)
       : target.original || target.recordedBuild ? await this.originalBuild(data.source, routineId, originalRequestRunId) : await this.builds.resolve(data.source, routineId);
     if (target.localPublication && !same(data.source, build.source)) fail("Build is not the local test's recorded app publication");

@@ -78,13 +78,15 @@ function fixture(channel: "pr" | "dev" | "staging" = "pr") {
     trigger: { repository: REPO, kind: "workflow_dispatch", runId: 70, runAttempt: 1, sha: HEAD, workflowSha: HEAD, ref: "refs/heads/dev", workflow: ".github/workflows/request-e2e-routine.yml" },
     selection: { platform: "ios-on-mac", archive: { name: "app.zip", sha256: HASH, size: 100 }, producer: { runId: 50, publicationAttempt: 1 },
       build: channel === "pr" ? { headSha: HEAD, baseSha: BASE, buildSha: MERGE } : { sourceCommit: HEAD } } };
-  const publish = (value: unknown) => {
+  const publish = (value: unknown, id = 70) => {
     const bytes = zipSync({ "request.json": strToU8(JSON.stringify(value)) });
-    rows.set(`${API}/actions/runs/70/attempts/1`, buildRun({ id: 70, event: "workflow_dispatch", head_branch: "dev", path: ".github/workflows/request-e2e-routine.yml" }));
-    rows.set(`${API}/actions/runs/70/artifacts?per_page=100`, { artifacts: [{ id: 80, name: "mentra-routine-request-70-1", expired: false,
-      size_in_bytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, workflow_run: { id: 70, head_sha: HEAD } }] });
-    rows.set(`${API}/actions/artifacts/80/zip`, new Response(null, { status: 302, headers: { location: "https://test.blob.core.windows.net/request.zip?signature=synthetic" } }));
-    rows.set("https://test.blob.core.windows.net/request.zip?signature=synthetic", new Response(bytes));
+    const digest = createHash("sha256").update(bytes).digest("hex"), url = `https://test.blob.core.windows.net/request-${id}.zip?signature=synthetic`;
+    rows.set(`${API}/actions/runs/${id}/attempts/1`, buildRun({ id, event: "workflow_dispatch", head_branch: "dev", path: ".github/workflows/request-e2e-routine.yml" }));
+    rows.set(`${API}/actions/runs/${id}/artifacts?per_page=100`, { artifacts: [{ id: id + 10, name: `mentra-routine-request-${id}-1`, expired: false,
+      size_in_bytes: bytes.length, digest: `sha256:${digest}`, workflow_run: { id, head_sha: HEAD } }] });
+    rows.set(`${API}/actions/artifacts/${id + 10}/zip`, new Response(null, { status: 302, headers: { location: url } }));
+    rows.set(url, new Response(bytes));
+    return digest;
   };
   publish(originalRequest);
   rows.set(DISPATCH, { workflow_run_id: 90, html_url: `https://github.com/${REPO}/actions/runs/90`, run_url: `${API}/actions/runs/90` });
@@ -109,9 +111,74 @@ function fixture(channel: "pr" | "dev" | "staging" = "pr") {
   const service = new TestContinuationService(runs, new TestDispatchService(repository, gateway), gateway,
     new GithubContinuationSource({ app, fetch }), { list: async () => [], results: async () => [], claim: async () => null }, async () => {});
   const input = { source, routineId: "no-glasses", archiveSha256: HASH };
-  return { rows, calls, bodies, receipts, service, runs, input, pr, receipt, originalRequest, publish, packet,
+  return { rows, calls, bodies, receipts, service, runs, input, pr, receipt, originalRequest, publish, packet, gateway, repository, fetch,
     sends: () => calls.filter(call => call === DISPATCH).length };
 }
+
+function harnessFixture() {
+  const f = fixture(), repository = "Mentra-Community/Mentra-Automated-Testing", api = `https://api.github.com/repos/${repository}`;
+  const harnessSha = "f".repeat(40), selected: ContinuationGrant = { ...grant,
+    candidate: { repository, pullRequest: 55, headSha: MOVED } };
+  f.packet.build.hashes.harnessSha = BASE;
+  f.rows.set(`${api}/pulls/55`, { number: 55, state: "closed", merged: true, merge_commit_sha: harnessSha, merged_at: "2026-09-29T12:00:00Z",
+    head: { sha: MOVED, ref: "codex/routine-run_123", repo: { full_name: repository } },
+    base: { ref: "main", repo: { full_name: repository } }, labels: [] });
+  f.rows.set(`${api}/compare/${BASE}...${MOVED}`, { status: "ahead" });
+  f.rows.set(`${api}/git/ref/heads/main`, { ref: "refs/heads/main", object: { type: "commit", sha: harnessSha } });
+  f.rows.set(`${api}/compare/${harnessSha}...${harnessSha}?per_page=1&page=2`, { status: "identical" });
+  const source = new GithubContinuationSource({ app: { token: async () => "test-only" } as unknown as TestRunGithubApp, fetch: f.fetch });
+  const service = new TestContinuationService(f.runs, new TestDispatchService(f.repository, f.gateway), f.gateway, source,
+    { list: async () => [], results: async () => [], claim: async () => null }, async () => {});
+  const digest = f.publish(f.originalRequest);
+  const replay = (id: number) => ({ ...structuredClone(f.originalRequest), requestId: `routine-${id}-1-12-no-glasses`,
+    trigger: { ...f.originalRequest.trigger, runId: id },
+    original: { requestId: f.originalRequest.requestId, runId: 70, runAttempt: 1, artifactDigest: digest } });
+  return { ...f, service, selected, harnessSha, replay };
+}
+
+test("repeated failed harness verification authenticates the initial app request while retaining each consuming occurrence", async () => {
+  const f = harnessFixture(), initial = structuredClone(f.originalRequest);
+  // Three distinct failure occurrences may verify the same candidate/artifact; each replay points directly to request 70.
+  for (let generation = 0; generation < 3; generation++) {
+    const requestId = generation === 0 ? 70 : 89 + generation, nextRun = 90 + generation;
+    if (generation) f.publish(f.replay(requestId), requestId);
+    const id = `tfo_${String(generation + 1).repeat(64)}`;
+    f.packet.occurrenceId = id; f.packet.requestId = `routine-${requestId}-1-12-no-glasses`;
+    const selected = { ...f.selected, occurrenceId: id }, packet = structuredClone(f.packet);
+    f.rows.set(DISPATCH, { workflow_run_id: nextRun, html_url: `https://github.com/${REPO}/actions/runs/${nextRun}`, run_url: `${API}/actions/runs/${nextRun}` });
+    const inventory = await f.service.inventory(selected, "no-glasses");
+    expect(inventory).toMatchObject({ expectedHeadSha: HEAD, expectedHarnessSha: f.harnessSha, candidate: selected.candidate });
+    expect(inventory.builds.map(item => item.source)).toEqual([f.input.source]);
+    const result = await f.service.request(selected, f.input);
+    expect(f.receipts.get(result.dispatchId)!.receipt).toMatchObject({ input: { originalRequestRunId: 70 },
+      continuation: { occurrenceId: id, candidate: selected.candidate, expectedHeadSha: HEAD, expectedHarnessSha: f.harnessSha } });
+    expect(f.bodies[generation]).toMatchObject({ inputs: { original_request_run_id: "70", expected_harness_sha: f.harnessSha } });
+    await f.service.request(selected, f.input); expect(f.sends()).toBe(generation + 1);
+    expect(f.packet).toEqual(packet); expect(f.originalRequest).toEqual(initial);
+  }
+  expect(f.calls.some(call => call.endsWith("/pulls/12") || call.includes("request-e2e-routine.yml/runs?"))).toBe(false);
+});
+
+test.each(["marker-digest", "marker-id", "marker-attempt", "self", "chain", "selection", "pr", "routine", "request-id", "issuer", "initial-missing"])(
+  "a failed harness replay refuses altered or unproven %s before dispatch", async change => {
+    const f = harnessFixture(), replay = f.replay(90);
+    f.packet.requestId = replay.requestId;
+    if (change === "marker-digest") replay.original.artifactDigest = "0".repeat(64);
+    if (change === "marker-id") replay.original.requestId = "routine-71-1-12-no-glasses";
+    if (change === "marker-attempt") replay.original.runAttempt = 2;
+    if (change === "self") replay.original.runId = 90;
+    if (change === "chain") f.publish({ ...f.originalRequest, original: replay.original });
+    if (change === "selection") replay.selection.producer.runId++;
+    if (change === "pr" && "pullRequest" in replay) replay.pullRequest!.baseSha = MOVED;
+    if (change === "routine") replay.routine.id = "day1-ota";
+    if (change === "request-id") replay.requestId = "routine-91-1-12-no-glasses";
+    f.publish(replay, 90);
+    if (change === "issuer") f.rows.set(`${API}/actions/runs/90/attempts/1`, buildRun({ id: 90, event: "pull_request" }));
+    if (change === "initial-missing") f.rows.delete(`${API}/actions/runs/70/artifacts?per_page=100`);
+    await expect(f.service.inventory(f.selected, "no-glasses")).rejects.toThrow();
+    await expect(f.service.request(f.selected, f.input)).rejects.toThrow();
+    expect(f.sends()).toBe(0); expect(f.receipts.size).toBe(0);
+  });
 
 test("an open unchanged PR original is selected and dispatched only by its recorded request's exact build", async () => {
   const f = fixture();
