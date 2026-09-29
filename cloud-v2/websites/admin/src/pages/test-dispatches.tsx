@@ -94,7 +94,7 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
   return (
     <section className="border-b border-[#eceeeb] p-5" aria-label="Run a routine">
       <div className="flex items-center justify-between gap-4">
-        <div><h3 className="font-semibold">Run a routine</h3><p className="mt-1 text-sm text-[#68746d]">Choose an existing PR, dev or staging build. PR labels are optional.</p></div>
+        <div><h3 className="font-semibold">Run a routine</h3><p className="mt-1 text-sm text-[#68746d]">Choose an existing PR or dev build. Published staging builds are temporarily paused.</p></div>
         <Button variant="outline" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? "Hide controls" : "Run routine"}</Button>
       </div>
       {open ? <div className="mt-4 space-y-4">
@@ -110,7 +110,7 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
             {routines.data?.routines.map(routine => <option key={routine.id} value={routine.id}>{routine.name}</option>)}
           </select></label>
           <label className="grid gap-1 text-xs font-medium">Build channel<select aria-label="Build channel" className={SELECT} value={channel} disabled={!!dispatchId} onChange={event => { setChannel(event.target.value); clearSelection(); }}>
-            <option value="pr">Pull request</option><option value="dev">Dev</option><option value="staging">Staging</option>
+            <option value="pr">Pull request</option><option value="dev">Dev</option><option value="staging" disabled>Staging (paused)</option>
           </select></label>
           {channel === "pr" ? <label className="grid gap-1 text-xs font-medium">PR number<Input aria-label="PR number to test" inputMode="numeric" value={pr} disabled={!!dispatchId} onChange={event => { setPr(event.target.value); clearSelection(); }} className="w-32" /></label> : null}
           <Button type="submit" variant="outline" disabled={builds.isFetching || !routines.data || !!dispatchId}>{builds.isFetching ? "Checking builds…" : "Find builds"}</Button>

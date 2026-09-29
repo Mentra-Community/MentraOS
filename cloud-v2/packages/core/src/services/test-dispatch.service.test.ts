@@ -313,3 +313,13 @@ test("only an original-target continuation may carry an original request replay;
   // The dispatcher re-resolves the same original request, then sends once.
   expect(seen).toEqual([60]); expect(original.sends()).toBe(1);
 });
+
+
+test("paused staging source refuses new dispatch before resolving or reserving an ID", async () => {
+  const f = fixture();
+  await expect(f.service.create({...input, source: {channel: "staging", buildRunId: 50, publicationAttempt: 1}}, "admin@example.test"))
+    .rejects.toThrow("Tests of published staging builds are temporarily paused");
+  expect(f.resolveCount()).toBe(0);
+  expect(f.sends()).toBe(0);
+  expect(f.repository.rows.size).toBe(0);
+});

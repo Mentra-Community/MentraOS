@@ -10,7 +10,7 @@ on:
       channel:
         description: Build source channel
         type: choice
-        options: [pr, dev, staging]
+        options: [pr, dev]
         default: pr
         required: true
       routine:
@@ -66,7 +66,7 @@ permissions:
 jobs:
   request:
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && inputs.channel != 'staging') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') ||

@@ -485,7 +485,7 @@ test("a registered account-miniapps label requests the exact dev or staging Mac 
     const coordinated = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: []}})
     assert.equal((await planDeviceDispatch({...coordinated, context, routine: "account-miniapps"})).mode, "skip")
     assert.deepEqual((await planDeviceDispatches({...coordinated, context})).filter(plan => plan.mode === "request")
-      .map(plan => plan.routine), ["no-glasses", "no-glasses-android"])
+      .map(plan => plan.routine), channel === "staging" ? [] : ["no-glasses", "no-glasses-android"])
   }
 })
 
@@ -680,13 +680,17 @@ test("observed automatic request metadata selects dispatch while the unrelated p
 const coordinatedJob = (attempt = 2) => ({id: 1000 + attempt, name: COORDINATED_FINALIZE_JOB, run_attempt: attempt,
   status: "completed", conclusion: "success", steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "success"}]})
 
-test("successful dev and staging builds request independent Mac and Android no-glasses routines through dev", async () => {
+test("successful dev builds request Mac and Android routines; staging is paused", async () => {
   for (const channel of ["dev", "staging"]) {
     const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: channel, pull_requests: []}
     const job = {...publicationJob, name: publicationJobName(123, 2, "no-glasses", channel)}
     const f = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: [job]}})
     const work = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
-    assert.deepEqual(work.map(plan => plan.routine), ["no-glasses", "no-glasses-android"])
+    assert.deepEqual(work.map(plan => plan.routine), channel === "staging" ? [] : ["no-glasses", "no-glasses-android"])
+    if (channel === "staging") {
+      assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
+      continue
+    }
     assert.equal(work[0].routine, "no-glasses")
     assert.equal(work[0].pr, undefined)
     assert.equal((await requestAfterPublication({...f, context, plan: work[0]})).status, "request-dispatched")
@@ -714,7 +718,7 @@ test("coordinated reruns retain one automatic generation even after an ambiguous
 })
 
 for (const routine of ["no-glasses", "mentra-call", "account-miniapps"]) test(`coordinated ${routine} ready requests keep private dispatch limited to authenticated request IDs`, async () => {
-  const {options, state} = coordinatedFixture("staging")
+  const {options, state} = coordinatedFixture("dev")
   const request = await createRoutineRequest({...options, routine})
   const plan = {mode: "dispatch", runId: 500, runAttempt: 1, sourceSha: options.source.sha}
   const remote = fake()
@@ -731,14 +735,20 @@ for (const routine of ["no-glasses", "mentra-call", "account-miniapps"]) test(`c
   assert.equal(remote.calls.length, 1)
 })
 
-for (const channel of ["dev", "staging"]) test(`queued ${channel} request dispatches once after dev advances`, async () => {
+for (const channel of ["dev", "staging"]) test(`queued ${channel} request respects the staging pause after dev advances`, async () => {
   const {options, state} = coordinatedFixture(channel)
   const request = await createRoutineRequest(options), frozen = bytes(request)
   state.devSha = "f".repeat(40)
   const plan = {mode: "dispatch", runId: 500, runAttempt: 1, sourceSha: options.source.sha}
   const remote = fake()
-  assert.equal((await dispatchReadyRequest({...options, plan, privateGithub: remote.github, bytes: frozen})).status,
-    "private-job-requested")
+  const result = await dispatchReadyRequest({...options, plan, privateGithub: remote.github, bytes: frozen})
+  if (channel === "staging") {
+    assert.equal(result.status, "not-dispatched")
+    assert.deepEqual(remote.calls, [])
+    assert.deepEqual(bytes(request), frozen)
+    return
+  }
+  assert.equal(result.status, "private-job-requested")
   assert.equal(remote.calls.length, 1)
   assert.deepEqual(remote.calls[0][1].inputs, {source_repository: repo, request_run_id: "500", request_attempt: "1", routine_id: "no-glasses"})
   assert.deepEqual(bytes(request), frozen)
@@ -894,4 +904,23 @@ test("an Android producer callback requests only its matching Android label, and
   ready.selection.platform = "ios-on-mac"
   await assert.rejects(dispatchReadyRequest({...remote, privateGithub: remote.github, context, plan: selected,
     bytes: Buffer.from(JSON.stringify(ready))}), /Invalid ready selection/)
+})
+
+
+test("staging coordinated builds are paused before publication reads", async () => {
+  const f = fake({run: {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: "staging"}})
+  const plan = await planDeviceDispatch({...f, context, routine: "no-glasses"})
+  assert.equal(plan.mode, "skip")
+  assert.match(plan.reason, /staging builds are temporarily paused/)
+  assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
+})
+
+test("already produced staging requests cannot reach the private worker", async () => {
+  const value = {...request, schemaVersion: 2, requestId: "routine-123-2-staging-day1-ota",
+    source: {kind: "coordinated-release", channel: "staging"}}
+  delete value.pullRequest
+  const result = await dispatchReadyRequest({github: {}, privateGithub: {}, context,
+    plan: {mode: "dispatch", runId: 123, runAttempt: 2, sourceSha: source}, bytes: Buffer.from(JSON.stringify(value))})
+  assert.equal(result.status, "not-dispatched")
+  assert.match(result.reason, /staging builds are temporarily paused/)
 })

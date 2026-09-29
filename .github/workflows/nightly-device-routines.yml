@@ -38,12 +38,15 @@ jobs:
           script: |
             const {planNightlyRequests} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
             const plan = await planNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT)});
+            // Keep historical staging provenance readable, but do not request staging tests while paused.
+            plan.requests = plan.requests.filter(row => row.channel !== 'staging');
+            plan.unavailable = plan.unavailable.filter(row => row.channel !== 'staging');
             core.setOutput('matrix', JSON.stringify({include: plan.requests}));
             core.setOutput('has-work', String(plan.requests.length > 0));
             core.setOutput('unavailable', JSON.stringify(plan.unavailable));
             const cell = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
             await core.summary.addHeading('Nightly test plan — 04:00 Pacific')
-              .addRaw('Each eligible routine runs independently. Request dispatch is not a passing test. Open a member job for its request and recorded-result links.\n\n')
+              .addRaw('Published staging builds are temporarily paused; this nightly tests dev only. Each eligible routine runs independently. Request dispatch is not a passing test. Open a member job for its request and recorded-result links.\n\n')
               .addTable([
                 ['Channel', 'Routine', 'Build', 'Status', 'Reason'].map(data => ({data, header: true})),
                 ...plan.requests.map(row => [row.channel, row.routine, row.releaseIdentity, 'Ready to request', ''].map(cell)),

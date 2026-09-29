@@ -98,6 +98,8 @@ export class TestDispatchService {
     };
     const before = await this.repository.get(dispatchId);
     if (before) return replay(before);
+    if (data.source.channel === "staging")
+      throw new TestDispatchError(409, "Tests of published staging builds are temporarily paused. Use a dev build or a PR build.");
     let rejectionReason: string | undefined;
     try {
       const build = await this.github.resolve(data.source, data.routineId, data.originalRequestRunId);

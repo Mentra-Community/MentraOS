@@ -282,6 +282,11 @@ for (const channel of ["dev", "staging"]) for (const target of NIGHTLY_TARGETS)
     const privateCalls = [], privateGithub = {rest: {actions: {createWorkflowDispatch: async input => { privateCalls.push(input); return {status: 204} }}}}
     const callback = {...f.options, github, privateGithub, routineCatalog,
       plan: {mode: "dispatch", runId: 9000, runAttempt: 1, sourceSha: sha}, bytes: Buffer.from(JSON.stringify(request))}
+    if (channel === "staging") {
+      assert.equal((await dispatchReadyRequest(callback)).status, "not-dispatched")
+      assert.deepEqual(privateCalls, [])
+      return
+    }
     // Hash, attempt and platform mismatches never reach the private workflow.
     for (const mutate of [r => r.selection.archive.sha256 = "0".repeat(64), r => r.selection.otaManifest.sha256 = "0".repeat(64),
       r => r.trigger.runAttempt = 2, r => r.sequence.runAttempt = 2, r => r.source.publicationAttempt = 1,

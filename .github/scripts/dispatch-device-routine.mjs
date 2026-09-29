@@ -127,6 +127,7 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
   const run = await completedRun(github, context)
   if (!run) return {mode: "skip", reason: "Workflow has not completed"}
   if (run.path === COORDINATED_WORKFLOW) {
+    if (run.head_branch === "staging") return {mode: "skip", reason: "Tests of published staging builds are temporarily paused. Use a dev build or a PR build."}
     if (!["no-glasses", "no-glasses-android"].includes(routine) || !["dev", "staging"].includes(run.head_branch) ||
       !["push", "workflow_dispatch"].includes(run.event) || run.conclusion !== "success")
       return {mode: "skip", reason: "Automatic coordinated requests require successful dev/staging builds and no-glasses"}
@@ -255,6 +256,8 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
       : positive(request.pullRequest?.number) &&
         request.requestId === `routine-${plan.runId}-${plan.runAttempt}-${request.pullRequest.number}-${request.routine.id}`),
   "Request does not match its trusted producer")
+  if (coordinated && request.source.channel === "staging") return {status: "not-dispatched", requestId: request.requestId,
+    reason: "Tests of published staging builds are temporarily paused. Use a dev build or a PR build."}
   const nightly = validateNightlyMarker(request)
   if (nightly?.kind === "nightly-ota-call") return {status: "not-dispatched", requestId: request.requestId,
     reason: "Nightly sequence member; only the scheduled source may dispatch the paired OTA then Call job"}
