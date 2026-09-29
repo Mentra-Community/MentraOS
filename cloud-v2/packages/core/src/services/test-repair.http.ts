@@ -13,7 +13,7 @@ export const REPAIR_SUBMIT = { path: "/internal/routine-failure-repair", domain:
 export const REPAIR_STATUS = { path: "/internal/routine-failure-repair-status", domain: "mentra-mini-repair-status-v1",
   contentType: "application/vnd.mentra.mini-repair-status+json" } as const;
 /** Operations with an actual enrolled host adapter. An allowlist naming anything else is refused. */
-export const ENROLLABLE_REPAIR_OPERATIONS: readonly TestRepairOperation[] = ["android.sign-in-recovery"];
+export const ENROLLABLE_REPAIR_OPERATIONS: readonly TestRepairOperation[] = ["android.sign-in-recovery", "android.interrupted-search-return"];
 const MAX_BODY = 4096, MAX_REPLY = 64 * 1024, EXPIRES_SECONDS = 30, TIMEOUT_MS = 15_000;
 
 export interface HttpRepairExecutorOptions {

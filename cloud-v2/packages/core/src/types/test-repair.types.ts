@@ -12,6 +12,7 @@ export const TEST_REPAIR_OPERATIONS = {
   "no-glasses.recover-recording-start": { routineId: "no-glasses", privateEntrypoint: "worker/no-glasses.ts recover-recording-start" },
   "no-glasses.recover-account-home": { routineId: "no-glasses", privateEntrypoint: "worker/no-glasses.ts recover-account-home" },
   "android.sign-in-recovery": { routineId: "no-glasses-android", privateEntrypoint: "worker/android-no-glasses.ts --recover-setup-sign-in" },
+  "android.interrupted-search-return": { routineId: "no-glasses-android", privateEntrypoint: "worker/android-search-repair.ts executeAndroidSearchRepair" },
   "android.owner-reconciliation": { routineId: "no-glasses-android", privateEntrypoint: "worker/android-no-glasses.ts --reconcile-original-owner" },
   "day1.recovery": { routineId: "day1-ota", privateEntrypoint: "worker/day1-recovery.ts recover (host maintenance recover-day1)" },
 } as const satisfies Record<string, { routineId: TestRoutineId; privateEntrypoint: string }>;
