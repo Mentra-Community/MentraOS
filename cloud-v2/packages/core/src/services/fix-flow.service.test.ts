@@ -409,7 +409,7 @@ describe("exact failure-to-fixer projection", () => {
 describe("bounded authenticated activity reader", () => {
   const env = { CLOUD_REPORT_AGENT_URL: "https://agent.example.test", CLOUD_REPORT_AGENT_ACTIVITY_TOKEN: "synthetic-read-token" };
   test("only fixed preparation source-policy codes give stopped cases source guidance, without raw diagnostics or implied retry", async () => {
-    for (const sourcePolicy of ["harness-source-unverified", "harness-origin-ambiguous", "harness-origin-unmerged", "harness-base-not-contained"]) {
+    for (const sourcePolicy of ["harness-source-unverified", "harness-origin-ambiguous", "harness-origin-unmerged", "harness-base-not-contained"] as const) {
       const candidate = { ...activity, status: "mini_needs_input", workerLease: undefined,
         miniLastTurn: { stage: "needs-input", reason: "infrastructure" },
         miniTurnFailure: { kind: "exception", phase: "prepare", at, sourcePolicy,
