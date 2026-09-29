@@ -153,6 +153,8 @@ const en = {
     forget: "Forget",
   },
   pairing: {
+    nimoIosSettingsPairing:
+      "Before continuing, open iPhone Settings → Bluetooth and pair with your NIMO glasses. Choose the name without _BLE and wait until it shows Connected. Then return to the Mentra App and continue.",
     cancelPairing: "Cancel pairing",
     cancelFailed: "Pairing could not be cancelled. Please try again.",
     selectModel: "Select Model",

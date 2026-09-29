@@ -69,6 +69,29 @@ Bluetooth SDK podspec. Both platforms require a native app rebuild.
 
 ## Validation and remaining device acceptance
 
+### iOS discovery prerequisite
+
+NIMO serves Companion service `7033` over classic Bluetooth (BR/EDR). Pair the
+main NIMO device in **iPhone Settings → Bluetooth** first, wait for **Connected**,
+then return to the Mentra App. The separate name ending in `_BLE` is the ANCS
+side channel and does not expose the Companion data service. The iOS driver
+enumerates system-connected devices and registers for service connection events,
+so both an existing connection and pairing in Settings during discovery are handled.
+See Apple's [Core Bluetooth BR/EDR walkthrough](https://developer.apple.com/videos/play/wwdc2019/901/).
+
+For physical-iPhone acceptance, start with the NIMO app closed and a recorded
+app/OS/firmware version. Verify the preparation instruction, pair the main device
+in Settings, return, select it in the Mentra App, and reach a completed handshake.
+Repeat with a device already connected before scanning, and with Settings pairing
+after scanning starts. Verify `_BLE` never appears as a selectable data device,
+cancel scanning before connecting in Settings to check no unsolicited connection,
+then explicitly retry. Reconnect and run Captions to verify the data path. Restore
+the fixture's original pairing state and retain timestamps/logs for failed steps.
+These physical checks remain required; simulated discovery tests are not device
+acceptance. No currently registered device routine covers NIMO iPhone pairing.
+
+### Canvas acceptance
+
 Automated coverage includes the vendor's exact packet examples, both command
 and transport lifecycles, image compression round trips, scene handoff,
 foreground visibility, notification restoration, phone location, and miniapp
