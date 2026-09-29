@@ -103,6 +103,7 @@ async function trustedRequest(github, context, selector, read) {
 const WORKER = ".github/workflows/device-routine.yml"
 const CALLBACK = ".github/workflows/dispatch-device-routine.yml"
 const WORKER_JOB = "prepared-mac-routine"
+const PREFLIGHT_JOB = "runner-preflight"
 const CALLBACK_JOB = "Dispatch trusted request"
 const PRIVATE_SEND_STEP = "Queue the ready request in the private repository"
 export const DISPATCHER = {workflow: CALLBACK, job: CALLBACK_JOB, step: PRIVATE_SEND_STEP}
@@ -163,8 +164,22 @@ async function unexecutedCancellation({github, privateGithub, context, run, read
   "Only an unrerun first dispatched attempt can be reported as cancelled before execution")
   const jobs = await privateGithub.paginate(privateGithub.rest.actions.listJobsForWorkflowRunAttempt,
     {...PRIVATE, run_id: run.id, attempt_number: run.run_attempt, per_page: 100})
-  requireThat(jobs.length === 1, "Cancelled attempt jobs are ambiguous")
-  const [job] = jobs
+  // The only supported second job is the reviewed hosted preflight. Its work
+  // does not mean the device job started; every device assignment/step is still
+  // checked below. Missing, failed or extra jobs are never inferred harmless.
+  let job = jobs[0]
+  if (jobs.length === 2) {
+    const preflight = jobs.find(item => item.name === PREFLIGHT_JOB)
+    job = jobs.find(item => item.name === WORKER_JOB)
+    const availability = Array.isArray(preflight?.steps)
+      ? preflight.steps.filter(step => step.name === "Verify request and runner availability") : []
+    requireThat(preflight && job && positive(preflight.id) && positive(job.id) && preflight.id !== job.id &&
+      preflight.run_id === run.id && preflight.run_attempt === run.run_attempt && preflight.head_sha === run.head_sha &&
+      preflight.status === "completed" && preflight.conclusion === "success" &&
+      isDeepStrictEqual(preflight.labels, ["blacksmith-4vcpu-ubuntu-2404"]) &&
+      availability?.length === 1 && availability[0].status === "completed" && availability[0].conclusion === "success",
+    "Cancelled attempt jobs are ambiguous; a successful hosted preflight is not proven")
+  } else requireThat(jobs.length === 1, "Cancelled attempt jobs are ambiguous")
   const {source, request} = await trustedRequest(github, context,
     {repository: REPOSITORY, runId: Number(title[1]), runAttempt: Number(title[2])}, read)
   const routine = request.routine?.id
@@ -175,7 +190,8 @@ async function unexecutedCancellation({github, privateGithub, context, run, read
   "Cancelled job differs from its requested routine")
   // A started, interrupted or crashed job keeps its own recovery/evidence contract.
   requireThat(job.status === "completed" && job.conclusion === "cancelled" && Array.isArray(job.steps) && job.steps.length === 0 &&
-    !job.runner_id && !job.runner_name && !job.runner_group_id, "Cancelled attempt may have reached a runner; use its recovery evidence")
+    ["runner_id", "runner_name", "runner_group_id"].every(key => Object.hasOwn(job, key) &&
+      [null, 0, ""].includes(job[key])), "Cancelled attempt may have reached a runner; use its recovery evidence")
   const requested = Date.parse(source.created_at), created = Date.parse(run.created_at)
   requireThat(Number.isFinite(requested) && Number.isFinite(created) && requested < created, "Worker predates its request")
   const callbacks = (await completeRuns(github, context.repo, {workflow_id: CALLBACK, event: "workflow_run", branch: "dev",

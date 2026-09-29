@@ -475,6 +475,77 @@ test("staging cancellation updates its own post from the original request withou
   for (const api of [options.github, options.privateGithub]) assert.equal(api.rest.actions.createWorkflowDispatch, undefined)
 })
 
+// Synthetic extension of the retained one-job metadata: this is an offline
+// contract fixture, not a new cancellation or evidence that hardware ran.
+function addSuccessfulPreflight(values) {
+  values.workerJobs.push({...structuredClone(values.workerJobs[0]), id: 108338589125, name: "runner-preflight",
+    conclusion: "success", labels: ["blacksmith-4vcpu-ubuntu-2404"], runner_id: 99, runner_name: "hosted-preflight", runner_group_id: 1,
+    steps: [{name: "Verify request and runner availability", status: "completed", conclusion: "success"}]})
+}
+
+test("a successful hosted preflight does not hide proof that the cancelled device job never started", async () => {
+  for (const reverse of [false, true]) {
+    const options = cancelled({corrupt: values => {addSuccessfulPreflight(values); if (reverse) values.workerJobs.reverse()}})
+    const [plan] = await resolveRoutineNotifications(options)
+    assert.equal(plan.row.status, "cancelled")
+    assert.equal(plan.row.resultRunId, undefined)
+    assert.deepEqual(options.verified, ["routine-36218243731-1-dev-no-glasses"])
+    const updated = applyRoutineResult(plan.notification, plan.row)
+    assert.match(updated.payload.blocks[1].text.text, /Cancelled before execution; no test result/)
+    assert.doesNotMatch(updated.payload.blocks[1].text.text, /Recording|testRun=|Passed|Failed/)
+  }
+})
+
+test("the two-job exception rejects every unproven preflight, changed identity and extra layout", async () => {
+  for (const mutate of [
+    values => {values.workerJobs[1].name = "other"},
+    values => {values.workerJobs[1].labels = ["mentra-device-worker"]},
+    values => {values.workerJobs[1].labels.push("ios-on-mac")},
+    values => {values.workerJobs[1].status = "in_progress"},
+    values => {values.workerJobs[1].conclusion = "cancelled"},
+    values => {values.workerJobs[1].conclusion = "failure"},
+    values => {values.workerJobs[1].head_sha = "f".repeat(40)},
+    values => {values.workerJobs[1].run_id++},
+    values => {values.workerJobs[1].run_attempt++},
+    values => {values.workerJobs[1].id = values.workerJobs[0].id},
+    values => {delete values.workerJobs[1].head_sha},
+    values => {values.workerJobs[1].steps = []},
+    values => {values.workerJobs[1].steps = {}},
+    values => {values.workerJobs[1].steps[0].name = "unrelated check"},
+    values => {values.workerJobs[1].steps[0].status = "in_progress"},
+    values => {values.workerJobs[1].steps[0].conclusion = "failure"},
+    values => {values.workerJobs[1].steps.push({...values.workerJobs[1].steps[0]})},
+    values => {values.workerJobs.push({...values.workerJobs[1], id: 108338589126})},
+  ]) {
+    let returnedJobs
+    const options = cancelled({corrupt: values => {
+      addSuccessfulPreflight(values); mutate(values); returnedJobs = values.workerJobs
+    }})
+    // Preserve malformed returned identity fields instead of letting the mock
+    // server filter that row into another run/attempt before the verifier sees it.
+    options.privateGithub.rest.actions.listJobsForWorkflowRunAttempt = async () => ({data: {jobs: structuredClone(returnedJobs)}})
+    await assert.rejects(resolveRoutineNotifications(options))
+  }
+})
+
+test("both layouts require explicit unassigned device fields and an empty completed cancelled job", async () => {
+  for (const preflight of [false, true]) for (const mutate of [
+    values => {delete values.workerJobs[0].runner_id},
+    values => {delete values.workerJobs[0].runner_name},
+    values => {delete values.workerJobs[0].runner_group_id},
+    values => {values.workerJobs[0].runner_id = 88},
+    values => {values.workerJobs[0].runner_name = "device-worker"},
+    values => {values.workerJobs[0].runner_group_id = 1},
+    values => {values.workerJobs[0].steps = [{name: "Maintain local disk headroom", status: "completed", conclusion: "success"}]},
+    values => {delete values.workerJobs[0].steps},
+    values => {values.workerJobs[0].status = "queued"},
+    values => {values.workerJobs[0].conclusion = "failure"},
+  ]) await assert.rejects(resolveRoutineNotifications(cancelled({corrupt: values => {
+    if (preflight) addSuccessfulPreflight(values)
+    mutate(values)
+  }})), /may have reached a runner/)
+})
+
 test("cancellation is refused unless GitHub proves the exact request never reached a runner", async () => {
   const workerStep = {name: "Check out the immutable private workflow revision", status: "completed", conclusion: "success", number: 1,
     started_at: "2026-09-26T05:50:00Z", completed_at: "2026-09-26T05:50:02Z"}
