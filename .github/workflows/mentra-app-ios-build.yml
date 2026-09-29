@@ -96,9 +96,49 @@ jobs:
 
       - name: Clean previous build outputs only
         run: |
-          # Wipe build outputs from previous runs but preserve dependency caches
-          # (node_modules, Pods, DerivedData are kept and invalidated by lockfile keys below)
-          rm -rf mobile/ios/build mobile/ios/build-device
+          # This must run before checkout's git clean. Keep the helper outside
+          # the checkout so the clean-cache retry can use the same policy.
+          cat > "$RUNNER_TEMP/mentra-ios-cleanup.py" <<'PY'
+          import errno
+          import os
+          from pathlib import Path
+          import shutil
+          import sys
+          import time
+
+          def remove_output(target):
+              # Xcode workers can finish writing after their parent is stopped.
+              # Retry only teardown races, for at most 15 seconds of backoff.
+              for attempt in range(6):
+                  try:
+                      if target.is_symlink():
+                          target.unlink()
+                      else:
+                          shutil.rmtree(target)
+                      if os.path.lexists(target):
+                          raise OSError(errno.EBUSY, "Build output was recreated", str(target))
+                      return
+                  except OSError as error:
+                      if error.errno == errno.ENOENT and not os.path.lexists(target):
+                          return
+                      if error.errno not in {errno.ENOENT, errno.ENOTEMPTY, errno.EBUSY} or attempt == 5:
+                          raise
+                      delay = min(2 ** attempt, 4)
+                      print(f"::warning::Cleanup still busy: {target} ({error.strerror}); retrying in {delay}s", flush=True)
+                      time.sleep(delay)
+
+          if __name__ == "__main__":
+              root = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+              allowed = {"mobile/ios/build", "mobile/ios/build-device", "mobile/ios/Pods"}
+              if not sys.argv[1:] or any(target not in allowed for target in sys.argv[1:]):
+                  raise ValueError("Expected only this checkout's iOS build/cache paths")
+              if (root / "mobile/ios").resolve() != root / "mobile/ios":
+                  raise ValueError("Refusing cleanup through a symlinked mobile/ios parent")
+              for target in sys.argv[1:]:
+                  remove_output(root / target)
+          PY
+          # Preserve Pods, node_modules and all other runners' build outputs.
+          python3 "$RUNNER_TEMP/mentra-ios-cleanup.py" mobile/ios/build mobile/ios/build-device
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -126,6 +166,7 @@ jobs:
           bash mobile/ci/pr-ios/mac-installer/test.sh
           python3 mobile/ci/pr-ios/test_repackage.py
           python3 mobile/ci/pr-ios/test_keychain_search.py
+          python3 mobile/ci/pr-ios/test_cleanup_workflow.py
           node --test mobile/ci/pr-ios/xcode-attempt.test.mjs
           node --test .github/scripts/pr-mobile-build.test.mjs
 
@@ -615,7 +656,7 @@ jobs:
           # shared runner, which was contributing to the cross-build failures.
           # Keep Podfile.lock so the retry resolves the same dependency graph as
           # the first attempt rather than drifting to newer pod versions.
-          rm -rf Pods build-device
+          python3 "$RUNNER_TEMP/mentra-ios-cleanup.py" mobile/ios/Pods mobile/ios/build-device
 
           # Reinstall pods from scratch with fresh repo
           pod install --repo-update
