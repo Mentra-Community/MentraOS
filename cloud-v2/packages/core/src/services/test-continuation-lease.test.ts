@@ -39,6 +39,23 @@ test("lease callback forwards an adopted case binding for controller verificatio
     return Response.json({ schemaVersion: 1, valid: true, agentRunId: "run-123", leaseGeneration: 3 }); }) as unknown as typeof fetch);
   expect("caseBinding" in body).toBe(false);
 });
+test("lease callback signs the separately reserved harness verification revision", async () => {
+  process.env.CLOUD_REPORT_AGENT_URL = "https://agent.example.test";
+  process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = "fixture-signing-key-".repeat(3);
+  const grant = { agentRunId: "run-123", environment: "dev", occurrenceId: "tfo_" + "a".repeat(64),
+    candidate: { repository: "Mentra-Community/Mentra-Automated-Testing", pullRequest: 217, headSha: "b".repeat(40) },
+    harnessVerification: { pullRequest: 225, mergeCommitSha: "d".repeat(40) },
+    executionAttempt: 1, leaseGeneration: 3, leaseTokenSha256: "c".repeat(64) } as ContinuationGrant;
+  let body: Record<string, unknown> = {};
+  const accept = (async (_: URL, init: RequestInit) => { body = JSON.parse(String(init.body));
+    return Response.json({ schemaVersion: 1, valid: true, agentRunId: "run-123", leaseGeneration: 3 }); }) as unknown as typeof fetch;
+  await requireContinuationLease(grant, "notes-phone", accept);
+  expect(body).toMatchObject({ candidate: grant.candidate, harnessVerification: grant.harnessVerification });
+  await requireContinuationLease({ ...grant, harnessVerification: undefined }, "notes-phone", accept);
+  expect(body).not.toHaveProperty("harnessVerification");
+  await expect(requireContinuationLease(grant, "notes-phone", (async () => new Response(null, { status: 409 })) as unknown as typeof fetch))
+    .rejects.toThrow("lease changed");
+});
 test("lease callback authenticates the occurrence ACK without replacing the case editor", async () => {
   process.env.CLOUD_REPORT_AGENT_URL = "https://agent.example.test";
   process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = "fixture-signing-key-".repeat(3);

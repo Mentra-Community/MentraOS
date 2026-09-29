@@ -184,6 +184,43 @@ test("local publication cannot be exchanged for a newer build, attempt, channel 
     expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
   }
 });
+test("a selected verification revision preserves candidate217, its app and operation while freezing the dispatch/result pin", async () => {
+  const f = localNotesFixture(), original = structuredClone(f.packet), candidate = structuredClone(f.candidateGrant.candidate);
+  const harnessVerification = { pullRequest: 225, mergeCommitSha: f.harness };
+  const selected = { ...f.candidateGrant, harnessVerification };
+  expect(continuationOperationId(selected, "notes-phone")).toBe(continuationOperationId(f.candidateGrant, "notes-phone"));
+  expect(await f.service.inventory(selected, "notes-phone")).toMatchObject({ candidate, harnessVerification, builds: [f.selected] });
+  expect(verifyTestContinuationGrant(signTestContinuationGrant(selected, secret), occurrenceId, secret, "dev")).toEqual(selected);
+  await Promise.all([f.service.request(selected, f.request), f.service.request(selected, f.request)]);
+  expect(f.sends()).toBe(1); expect(f.rows.size).toBe(1); expect(f.sentHarness()).toBe(harnessVerification.mergeCommitSha);
+  const stored = [...f.rows.values()][0]!.receipt;
+  expect(stored.continuation).toMatchObject({ candidate, harnessVerification, expectedHarnessSha: f.harness });
+  expect(stored.input.source).toEqual(f.selected.source);
+  expect(f.packet).toEqual(original);
+  expect(f.leaseChecks.every(value => value.harnessVerification === harnessVerification)).toBe(true);
+  for (const changed of [undefined, { ...harnessVerification, pullRequest: 226 }, { ...harnessVerification, mergeCommitSha: "0".repeat(40) }]) {
+    const rebound = { ...selected, harnessVerification: changed };
+    await expect(f.service.request(rebound, f.request)).rejects.toThrow("not found");
+    await expect(f.service.detail(rebound, stored.dispatchId)).rejects.toThrow("not found");
+    expect((await f.service.list(rebound)).reruns).toEqual([]);
+  }
+  expect(f.sends()).toBe(1);
+  f.result.requestId = "routine-90-1-dev-notes-phone"; f.result.routineId = "notes-phone";
+  f.result.source.headSha = f.selected.headSha; f.result.provenance.archiveSha256 = f.selected.archive!.sha256;
+  f.result.provenance.harnessSha = "0".repeat(40); f.results();
+  await expect(f.service.detail(selected, stored.dispatchId)).rejects.toThrow("worker revision");
+  f.result.provenance.harnessSha = f.harness;
+  expect((await f.service.detail(selected, stored.dispatchId)).recordedResults[0]!.provenance.harnessSha).toBe(f.harness);
+});
+test("selection is signed controller metadata and cannot be added to a caller request or an app/original grant", async () => {
+  const f = localNotesFixture(), harnessVerification = { pullRequest: 225, mergeCommitSha: f.harness };
+  await expect(f.service.request(f.candidateGrant, { ...f.request, harnessVerification })).rejects.toThrow();
+  expect(() => signTestContinuationGrant({ ...grant, harnessVerification }, secret)).toThrow();
+  expect(() => signTestContinuationGrant({ ...f.candidateGrant, harnessVerification,
+    candidate: { repository: "Mentra-Community/Mentra-Automated-Testing", target: "original", headSha } }, secret)).toThrow();
+  expect(() => signTestContinuationGrant({ ...f.candidateGrant, harnessVerification: { ...harnessVerification, mergeCommitSha: "latest" } }, secret)).toThrow();
+  expect(f.sends()).toBe(0);
+});
 test("unavailable local publication, disabled routine and stale custody refuse without consuming the send identity", async () => {
   for (const state of ["archive", "routine", "lease", "resolver"] as const) {
     const f = localNotesFixture();
@@ -278,6 +315,24 @@ test("known cleaned-up attempt permits one budgeted same-head retry with its own
   const second = await f.service.request(retryGrant, request);
   expect(second.dispatchId).not.toBe(continuationOperationId(grant, input.routineId)); expect(f.sends()).toBe(2);
   await f.service.request(retryGrant, request); expect(f.sends()).toBe(2); expect(f.rows.size).toBe(2);
+});
+test("a second reserved attempt verifies cleanup under the first attempt's saved harness selection", async () => {
+  const f = fixture(), first = { ...grant, candidate: { ...grant.candidate, repository: "Mentra-Community/Mentra-Automated-Testing" as const },
+    harnessVerification: { pullRequest: 225, mergeCommitSha: "d".repeat(40) } };
+  f.target({ expectedHarnessSha: first.harnessVerification.mergeCommitSha });
+  await f.service.request(first, input);
+  const second = { ...first, executionAttempt: 2, harnessVerification: { pullRequest: 226, mergeCommitSha: "e".repeat(40) } };
+  const request = { ...input, executionAttempt: 2, retryReason: "Use the reviewed compatibility correction after verified return" };
+  await expect(f.service.request(second, request)).rejects.toThrow("verified fixture cleanup");
+  f.result.provenance.harnessSha = first.harnessVerification.mergeCommitSha;
+  f.claim({ state: "terminal", resultRunId: f.result.runId }); f.results();
+  f.target({ expectedHarnessSha: second.harnessVerification.mergeCommitSha });
+  await f.service.request(second, request);
+  expect(f.rows.size).toBe(2); expect(f.sends()).toBe(2);
+  expect(f.rows.get(continuationOperationId(first, input.routineId))!.receipt.continuation?.harnessVerification).toEqual(first.harnessVerification);
+  expect(f.rows.get(continuationOperationId(second, input.routineId))!.receipt.continuation?.harnessVerification).toEqual(second.harnessVerification);
+  await expect(f.service.detail(second, continuationOperationId(first, input.routineId))).rejects.toThrow("not found");
+  expect((await f.service.detail(first, continuationOperationId(first, input.routineId))).recordedResults).toHaveLength(1);
 });
 
 test("verified linked recovery permits a deliberate retry while retaining the original failure and hold", async () => {

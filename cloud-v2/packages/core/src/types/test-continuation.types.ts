@@ -24,6 +24,12 @@ export const continuationCaseBindingSchema = z.object({
   caseId: z.string().regex(/^mfc_[a-f0-9]{64}$/),
   candidateOwnerRunId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/),
 }).strict();
+/** A reviewed, merged harness revision used to verify the unchanged candidate.
+ * It may include later compatibility fixes, but must contain the candidate merge. */
+export const continuationHarnessVerificationSchema = z.object({
+  pullRequest: z.number().int().positive().safe(),
+  mergeCommitSha: candidateHead,
+}).strict();
 /**
  * Where an app candidate for a local feature-branch source is verified. A local build of a branch that is not
  * itself a destination has no base of its own; the controller proves the pull request it came from and saves
@@ -57,23 +63,30 @@ export const continuationGrantSchema = z.object({
   candidate: continuationCandidateSchema,
   caseBinding: continuationCaseBindingSchema.optional(),
   executionDestination: continuationExecutionDestinationSchema.optional(),
+  harnessVerification: continuationHarnessVerificationSchema.optional(),
   executionAttempt: z.number().int().min(1).max(2),
   leaseGeneration: z.number().int().positive().safe(),
   leaseTokenSha256: z.string().regex(/^[a-f0-9]{64}$/),
   routineIds: z.array(testRoutineIdSchema).min(1).max(4).refine(ids => new Set(ids).size === ids.length),
   actions: z.array(z.enum(["request-routine", "read-results", "repair-state"])).min(1).max(3).refine(ids => new Set(ids).size === ids.length),
   expires: z.number().int().positive().safe(),
-}).strict();
+}).strict().superRefine((grant, ctx) => {
+  if (grant.harnessVerification && (isOriginalCandidate(grant.candidate)
+    || grant.candidate.repository !== "Mentra-Community/Mentra-Automated-Testing"))
+    ctx.addIssue({ code: "custom", message: "A harness verification revision requires a harness PR candidate" });
+});
 export type ContinuationGrant = z.infer<typeof continuationGrantSchema>;
 export type ContinuationCandidate = z.infer<typeof continuationCandidateSchema>;
 export type ContinuationCaseBinding = z.infer<typeof continuationCaseBindingSchema>;
 export type ContinuationExecutionDestination = z.infer<typeof continuationExecutionDestinationSchema>;
+export type ContinuationHarnessVerification = z.infer<typeof continuationHarnessVerificationSchema>;
 export interface TestContinuationBinding {
   occurrenceId: string;
   agentRunId: string;
   candidate: ContinuationCandidate;
   caseBinding?: ContinuationCaseBinding;
   executionDestination?: ContinuationExecutionDestination;
+  harnessVerification?: ContinuationHarnessVerification;
   executionAttempt: number;
   retryReason?: string;
   expectedHeadSha: string;

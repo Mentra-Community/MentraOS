@@ -32,6 +32,26 @@ const associatedSchema = z.array(z.object({ number: z.number().int().positive(),
   head: z.object({ ref: z.string(), repo: z.object({ full_name: z.string() }).nullable() }) })).max(99);
 const comparisonSchema = z.object({ status: z.enum(["ahead", "identical", "behind", "diverged"]) });
 const ensure = (value: unknown, message: string): void => { if (!value) throw new TestDispatchError(409, message); };
+// The same formal/fallback verdict convention as the enrolled Mini reviewer.
+// A full page is refused rather than treating an incomplete history as approval.
+const verificationReviewsSchema = z.array(z.object({ id: z.number().int().positive(), commit_id: sha,
+  state: z.string(), body: z.string().nullable(), user: z.object({ login: z.string() }),
+  submitted_at: z.string().datetime({ offset: true }).nullable() })).max(99);
+function approvedVerificationHead(input: unknown, head: string): boolean {
+  const latest = new Map<string, string>();
+  for (const row of verificationReviewsSchema.parse(input).sort((a, b) => a.id - b.id)) {
+    if (row.commit_id !== head || !row.submitted_at) continue;
+    const trusted = ["PhilippeFerreiraDeSousa", "mentra-release-coordinator[bot]"].includes(row.user.login);
+    let verdict = row.state;
+    if (verdict === "COMMENTED") {
+      if (!trusted || !row.body?.includes("Reviewed by local Codex")) continue;
+      verdict = /^Approve\.\s/.test(row.body) ? "APPROVED" : /^Request changes\.\s/.test(row.body) ? "CHANGES_REQUESTED" : "COMMENTED";
+    }
+    if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(verdict))
+      latest.set(row.user.login, verdict === "APPROVED" && !trusted ? "UNTRUSTED" : verdict);
+  }
+  return [...latest.values()].includes("APPROVED") && ![...latest.values()].includes("CHANGES_REQUESTED");
+}
 
 /** Fixed repositories and read-only App scopes. Model text cannot choose a host or ref. */
 export class GithubContinuationSource implements ContinuationSourceGateway {
@@ -50,6 +70,8 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     ensure(source?.repository === PUBLIC, "Recorded app source provenance is required");
     const candidate = grant.candidate;
     const harness = candidate.repository === HARNESS;
+    ensure(!grant.harnessVerification || (harness && !isOriginalCandidate(candidate)),
+      "A harness verification revision requires a harness PR candidate");
     // A local failure has no consumed CI request. A harness fix may instead use
     // its explicitly recorded app publication, independently verified below by
     // the build gateway; the original occurrence and source stay unchanged.
@@ -100,9 +122,24 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
       // comparison status even for zero/one commits, without unrelated patches.
       const contained = comparisonSchema.parse(await this.api(HARNESS, `compare/${pr.merge_commit_sha}...${ref.object.sha}?per_page=1&page=2`));
       ensure(["ahead", "identical"].includes(contained.status), "Private main no longer contains the reviewed harness merge");
+      let verification = pr;
+      if (grant.harnessVerification) {
+        const selected = grant.harnessVerification;
+        verification = prSchema.parse(await this.api(HARNESS, `pulls/${selected.pullRequest}`));
+        ensure(verification.number === selected.pullRequest && verification.head.repo?.full_name === HARNESS
+          && verification.base.repo.full_name === HARNESS && verification.base.ref === "main" && verification.state === "closed"
+          && verification.merged && verification.merged_at && verification.merge_commit_sha === selected.mergeCommitSha,
+        "Selected harness verification PR is not the exact merged main revision");
+        for (const [base, head] of [[pr.merge_commit_sha, selected.mergeCommitSha], [selected.mergeCommitSha, ref.object.sha]]) {
+          const relation = comparisonSchema.parse(await this.api(HARNESS, `compare/${base}...${head}?per_page=1&page=2`));
+          ensure(["ahead", "identical"].includes(relation.status), "Selected harness revision must contain the candidate merge and remain on main");
+        }
+        ensure(approvedVerificationHead(await this.api(HARNESS, `pulls/${selected.pullRequest}/reviews?per_page=100`), verification.head.sha),
+          "Selected harness verification head requires a current approved review");
+      }
       return { query: localPublication ? { channel: localPublication.channel } : source!.channel === "pr" ? { channel: "pr", pr: source!.pullRequest!.number }
         : { channel: source!.channel as "dev" | "staging" }, expectedHeadSha: source!.headSha,
-        expectedHarnessSha: pr.merge_commit_sha!, requestNotBefore: pr.merged_at!, automaticExpected: false,
+        expectedHarnessSha: verification.merge_commit_sha!, requestNotBefore: verification.merged_at!, automaticExpected: false,
         ...(localPublication ? { localPublication } : {}) };
     }
     if (pr.merged) {
