@@ -42,3 +42,17 @@ describe("NIMO capabilities", () => {
     expect(getModelCapabilities(" \tnImO \n" as DeviceTypes)).toBe(nimo)
   })
 })
+
+
+describe("device settings capabilities", () => {
+  test("NIMO exposes firmware ranges rather than the G1 slider ranges", () => {
+    expect(nimo.display?.position).toEqual({depth: {min: 0, max: 10}, height: {min: 0, max: 10}})
+    expect(nimo.imu?.headUpAngle).toEqual({min: 0, max: 90})
+  })
+
+  test("an IMU or binocular display does not imply adjustable settings", () => {
+    expect(getModelCapabilities(DeviceTypes.LIVE).hasIMU).toBe(true)
+    expect(getModelCapabilities(DeviceTypes.LIVE).imu?.headUpAngle).toBeUndefined()
+    expect(getModelCapabilities(DeviceTypes.SIMULATED).display?.position).toBeUndefined()
+  })
+})

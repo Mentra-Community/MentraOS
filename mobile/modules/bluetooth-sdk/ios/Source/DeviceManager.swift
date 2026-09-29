@@ -1999,6 +1999,28 @@ struct ViewState {
         controller = nil // Clear the controller reference after disconnect
     }
 
+    private var unpairInProgress = false
+
+    /// Explicit user Unpair, separate from passive pairing cleanup and logout.
+    func unpair() async throws {
+        guard !unpairInProgress else {
+            throw NSError(domain: "NimoUnpair", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Unpair already in progress"])
+        }
+        unpairInProgress = true
+        defer { unpairInProgress = false }
+        if let nimo = sgc as? Nimo {
+            _ = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                nimo.resetForUnpair { continuation.resume(returning: $0) }
+            }
+            guard (sgc as? Nimo) === nimo else {
+                throw NSError(domain: "NimoUnpair", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "Glasses changed during Unpair"])
+            }
+        }
+        forget()
+    }
+
     func forget() {
         Bridge.log("MAN: Forgetting smart glasses")
         // Call forget first to stop timers/handlers/reconnect logic

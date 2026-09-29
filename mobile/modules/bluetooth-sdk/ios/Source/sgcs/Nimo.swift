@@ -40,6 +40,8 @@ enum NimoProtocol {
     static let CMD_SET_PARAMETER = 0x03
     static let CMD_INSTRUCTION_REPORT = 0x06
     static let CMD_CONTROL_INSTRUCTION = 0x07
+    static let CMD_CONTROL_FACTORY = 0x08
+    static let FACTORY_RECOVER = 0x03
     static let CMD_CONTROL_NOTIFICATION = 0x09
 
     // get parameter keys
@@ -58,6 +60,9 @@ enum NimoProtocol {
     static let SET_DISPLAY_OFF = 0x0F
     static let SET_PHONE_TYPE = 0x14
     static let SET_HEIGHT_LEVEL = 0x17
+    // Dynamic-v1 firmware: 1-based UI locale; 1 selects English.
+    static let SET_SYSTEM_LANGUAGE = 0x24
+    static let LANGUAGE_ENGLISH: UInt8 = 0x01
 
     // control instruction keys
     static let CTRL_ENTER_APP = 0x01
@@ -742,6 +747,27 @@ class Nimo: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
     }
 
+    /// Explicit Unpair only; passive forget/cleanup must never reset the glasses.
+    func resetForUnpair(onResult: @escaping (Bool) -> Void) {
+        guard peripheral != nil, txChar != nil, handshakeState == .ready else {
+            Bridge.log("NIMO: unpair while offline; remote reset unavailable")
+            onResult(false)
+            return
+        }
+        isDisconnecting = true
+        stopTimers()
+        Task { await reconnectionManager.stop() }
+        canvasEncoder.invalidate()
+        canvas.disconnected()
+        Bridge.log("NIMO: sending factory reset for explicit Unpair")
+        sendAwaitingAck(cmd: NimoProtocol.CMD_CONTROL_FACTORY, key: NimoProtocol.FACTORY_RECOVER,
+                        payload: Data())
+        { success in
+            Bridge.log("NIMO: factory reset acknowledged=\(success)")
+            onResult(success)
+        }
+    }
+
     func forget() {
         Bridge.log("NIMO: forget()")
         disconnect()
@@ -1287,6 +1313,9 @@ class Nimo: NSObject, SGCManager {
                 needsAck: false
             )
         )
+        // Optional setting: older firmware may reject it without preventing connection.
+        sendFrame(NimoFrameCodec.encodeFrame(cmd: NimoProtocol.CMD_SET_PARAMETER,
+                                             key: NimoProtocol.SET_SYSTEM_LANGUAGE, payload: Data([NimoProtocol.LANGUAGE_ENGLISH])))
         getBatteryStatus()
         requestVersionInfo()
 
@@ -1489,6 +1518,9 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func handleResponse(cmd: Int, key: Int, statusCode: Int, data: Data) {
+        if cmd == NimoProtocol.CMD_SET_PARAMETER, key == NimoProtocol.SET_SYSTEM_LANGUAGE {
+            Bridge.log("NIMO: English menu setting acknowledged=\(statusCode == 0) status=\(statusCode)")
+        }
         resolvePendingAck(cmd: cmd, key: key, success: statusCode == 0)
 
         guard cmd == NimoProtocol.CMD_GET_PARAMETER, statusCode == 0 else { return }

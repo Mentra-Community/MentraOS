@@ -62,6 +62,15 @@ describe("glasses facade", () => {
     expect(BluetoothSdk.forget).toHaveBeenCalled()
   })
 
+  it("explicit unpair uses the reset-capable path while passive forget remains separate", async () => {
+    await glasses.unpair()
+    expect(BluetoothSdk.unpair).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.forget).not.toHaveBeenCalled()
+    await glasses.forget()
+    expect(BluetoothSdk.unpair).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.forget).toHaveBeenCalledTimes(1)
+  })
+
   it("connectDefault() seeds the phone's device settings to native before connecting", async () => {
     await glasses.connectDefault()
     // The pre-connect seed (moved out of the host Reconnect flow) must land first.
