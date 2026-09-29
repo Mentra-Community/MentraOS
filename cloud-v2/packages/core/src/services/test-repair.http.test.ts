@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { ContinuationGrant } from "../types/test-continuation.types";
-import type { TestRepairReceipt } from "../types/test-repair.types";
+import type { TestRepairOperation, TestRepairReceipt } from "../types/test-repair.types";
 import { configuredTestRepairExecutor, HttpTestRepairExecutor, REPAIR_STATUS, REPAIR_SUBMIT } from "./test-repair.http";
 import { TestRepairService, absentTestRepairExecutor, type TestRepairExecutor, type TestRepairRepository } from "./test-repair.service";
 import type { TestRunService } from "./test-run.service";
@@ -18,9 +18,9 @@ const evidence = (passed: boolean) => ({ before: { sequence: 3 }, action: { sequ
 const about = (extra: Record<string, unknown>) => ({ repairId: operationId, operation: "android.sign-in-recovery", ...extra });
 
 /** A fake internal-tools bridge that verifies exactly what the wire requires before answering. */
-function bridge() {
+function bridge(operation: TestRepairOperation = "android.sign-in-recovery") {
   const seen: { route: string; body: Record<string, unknown>; raw: string }[] = [];
-  let submitMode: "accept" | "accept-lost" | number = "accept", statusMode: unknown = about({ state: "running", owner });
+  let submitMode: "accept" | "accept-lost" | number = "accept", statusMode: unknown = about({ state: "running", owner, operation });
   let admitted = 0;
   const fetch = (async (input: URL, init: RequestInit) => {
     const url = new URL(input), headers = new Headers(init.headers), raw = String(init.body);
@@ -37,13 +37,13 @@ function bridge() {
       admitted++;
       // The admission is durable on the bridge; only its reply is lost.
       if (submitMode === "accept-lost") throw new TypeError("socket closed after admission");
-      return Response.json({ schemaVersion: 1, repairId: operationId, operation: "android.sign-in-recovery", state: "accepted" });
+      return Response.json({ schemaVersion: 1, repairId: operationId, operation, state: "accepted" });
     }
     if (typeof statusMode === "number") return new Response("unavailable", { status: statusMode });
     if (statusMode instanceof Error) throw statusMode;
     return typeof statusMode === "string" ? new Response(statusMode) : Response.json(statusMode);
   }) as unknown as typeof globalThis.fetch;
-  const executor = new HttpTestRepairExecutor({ url: origin, secret, operations: ["android.sign-in-recovery"], fetch, now: () => now });
+  const executor = new HttpTestRepairExecutor({ url: origin, secret, operations: [operation], fetch, now: () => now });
   return { executor, seen, admitted: () => admitted, submit: (mode: typeof submitMode) => { submitMode = mode; },
     status: (mode: unknown) => { statusMode = mode; }, submits: () => seen.filter(item => item.route === REPAIR_SUBMIT.path).length };
 }
@@ -72,12 +72,36 @@ test("configuration enables the executor only with the origin, secret and an exp
   expect(enabled).toBeInstanceOf(HttpTestRepairExecutor);
   expect(enabled!.supports("android.sign-in-recovery")).toBe(true);
   expect(enabled!.supports("day1.recovery")).toBe(false);
+  expect(enabled!.supports("android.interrupted-search-return")).toBe(false);
+  const search = configuredTestRepairExecutor({...base, CLOUD_TEST_REPAIR_OPERATIONS: "android.interrupted-search-return"});
+  expect(search!.supports("android.interrupted-search-return")).toBe(true);
+  expect(search!.supports("android.sign-in-recovery")).toBe(false);
+  expect(configuredTestRepairExecutor({...base, CLOUD_TEST_REPAIR_OPERATIONS:
+    "android.sign-in-recovery,android.interrupted-search-return"})!.supports("android.interrupted-search-return")).toBe(true);
   for (const change of [{ CLOUD_TEST_REPAIR_OPERATIONS: "" }, { CLOUD_TEST_REPAIR_OPERATIONS: undefined },
     { CLOUD_TEST_REPAIR_OPERATIONS: "android.sign-in-recovery,day1.recovery" }, { CLOUD_TEST_REPAIR_OPERATIONS: "runner.recovery" },
     { CLOUD_TEST_REPAIR_OPERATIONS: "android.sign-in-recovery,android.sign-in-recovery" },
     { CLOUD_REPORT_AGENT_URL: undefined }, { CLOUD_REPORT_AGENT_URL: "http://agent.example.test" },
     { CLOUD_REPORT_AGENT_URL: "https://user:pass@agent.example.test" }, { CLOUD_REPORT_AGENT_SIGNING_SECRET: "short" }])
     expect(configuredTestRepairExecutor({ ...base, ...change })).toBeNull();
+});
+
+test("interrupted-search return keeps the signed original binding and one-send fence, then requires matching status evidence", async () => {
+  const operation = "android.interrupted-search-return", b = bridge(operation), f = service(b.executor);
+  const input = {...request, operation};
+  await expect(f.service.request(grant, {...input, routineId: "day1-ota"})).rejects.toThrow("Routine is outside this capability");
+  expect(b.submits()).toBe(0);
+  b.submit("accept-lost"); b.status(503);
+  expect((await f.service.request(grant, input)).state).toBe("unknown");
+  expect(b.seen[0]!.body).toMatchObject({occurrenceId, agentRunId: grant.agentRunId, candidate: grant.candidate,
+    leaseGeneration: grant.leaseGeneration, leaseTokenSha256: grant.leaseTokenSha256,
+    routineId: "no-glasses-android", repair: {operation, operationId}});
+  // The existing fake bridge checks the signature/domain over these exact bytes.
+  b.status(about({state: "completed", owner, evidence: evidence(true)}));
+  await expect(f.service.detail(grant, operationId)).rejects.toMatchObject({status: 502});
+  b.status({repairId: operationId, operation, state: "completed", owner, evidence: evidence(true)});
+  expect(await f.service.request({...grant, leaseGeneration: 8}, input)).toMatchObject({state: "completed", operation, owner, evidence: evidence(true)});
+  expect(b.submits()).toBe(1); expect(b.admitted()).toBe(1);
 });
 
 test("without configuration a repair is 501 and nothing is sent or recorded", async () => {
