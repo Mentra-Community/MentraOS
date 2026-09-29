@@ -192,7 +192,8 @@ describe("pairing scan screen", () => {
     setPlatformOS(originalPlatformOS)
   })
 
-  it("persists the iOS NIMO selection before any Companion is found", async () => {
+  it.each(["", "Even Realities G1"])("persists iOS NIMO before discovery, replacing pending model %s", async (pending) => {
+    await useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, pending, false)
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "NIMO"})
     ;(useNimoCompanionDiscovery as jest.Mock).mockReturnValue({
       devices: [],
