@@ -78,6 +78,13 @@ export class UdpAudio {
     return this.session?.sessionTag ?? null;
   }
 
+  /** Refresh a dead UDP route without changing the session key, tag or sequence. */
+  resetSocket(): void {
+    if (!this.session) return;
+    this.session.socket.close();
+    this.session.socket = this.udpFactory();
+  }
+
   /**
    * Open the UDP socket and load the session's routing + encryption material
    * from `connection.ack.audio`.
