@@ -51,6 +51,47 @@ There is deliberately no `/api/incidents` compatibility mount in Cloud V2.
 Glasses logs are report artifacts and use the same artifact endpoint as phone
 logs and screenshots.
 
+## Slack routing
+
+The admin list API keeps `kind=bug|feedback|automatic` as a stored-kind filter,
+including internal and harness submissions. The dashboard uses the separate
+`category=bug|feedback|internal|testing|automatic` filter to partition triage views.
+When both are provided, both must match. Console MCP `report_list` accepts both
+filters, and `fetch-incident-logs.sh --list` exposes `--kind` and `--category`.
+
+Notifications use the same category precedence as the admin dashboard:
+
+| Category | Rule | Channel | Bot destination env var |
+| --- | --- | --- | --- |
+| Testing | Exact `trigger.source = mentra_automated_testing`, regardless of kind or admin status | `#user-feedback-testing` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING` |
+| Automatic | Remaining `kind = automatic` reports, including admins' automatic reports | `#user-feedback-auto` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC` |
+| Internal | Remaining bugs/feedback from an account on the current admin allowlist | `#user-feedback-internal` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL` |
+| Bug / Feedback | All remaining reports | `#user-feedback` | `CLOUD_REPORTS_SLACK_CHANNEL_ID` |
+
+Internal uses the first-party account email resolved by the server and the existing
+`CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` policy. An allowlisted
+base email also grants admin status to its `+tag` aliases on the same domain;
+this applies to any email provider. Domain allowlist entries still match only
+the exact domain. Contact email and
+client context never grant Internal status. If the account lookup fails or times
+out, the existing best-effort notifier posts with the opaque user ID and falls
+back to the non-admin category. Slack routing is evaluated at notification time;
+historical messages are not moved when the allowlist changes.
+
+The existing bot uses `CLOUD_REPORTS_SLACK_BOT_TOKEN` and must be a member of all
+four channels. Each category requires its exact channel ID. Missing credentials
+or channel configuration returns a failure and logs the missing key names;
+Slack refusals and network errors are logged without retrying another channel.
+Report submission remains independent of Slack delivery. There are no webhook
+or cross-channel fallbacks. Bot posts preserve the existing ability to update an
+incident message with agent progress.
+
+Configure all four channel IDs in Doppler `cloud-v2/dev_aws` first, then deploy
+and verify dev before promoting configuration to staging and prod. Existing
+webhook settings are ignored by this notifier and can be retired after rollout.
+Feedback notifies on submission; bug/automatic reports notify once when artifact
+collection completes.
+
 ## Mobile Flow
 
 Manual bug report:

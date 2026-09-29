@@ -888,15 +888,15 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
 }
 
 function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
-  const [kind, setKind] = useState<"all" | ReportKind>("all");
+  const [category, setCategory] = useState<"all" | ReportKind | "internal" | "testing">("bug");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
   const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
   const reports = useQuery({
-    queryKey: ["admin-reports", kind, status],
+    queryKey: ["admin-reports", category, status],
     queryFn: () => {
       const params = new URLSearchParams();
-      if (kind !== "all") params.set("kind", kind);
+      if (category !== "all") params.set("category", category);
       if (status !== "all") params.set("status", status);
       const qs = params.toString();
       return api<{ reports: ReportSummary[] }>(`/api/admin/reports${qs ? `?${qs}` : ""}`);
@@ -911,14 +911,14 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
           <div>
             <h2 className="text-xl font-bold">User reports</h2>
             <p className="mt-1 text-sm text-[#68746d]">
-              Everything filed through the Mentra App reporting flow — open a report for its context, screenshots, and logs.
+              Internal contains bugs and feedback from admin accounts. Testing contains harness reports; other automatic reports stay in Automatic.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <FilterPills
-              value={kind}
-              onChange={setKind}
-              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["automatic", "Automatic"]]}
+              value={category}
+              onChange={setCategory}
+              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["internal", "Internal"], ["testing", "Testing"], ["automatic", "Automatic"]]}
             />
             <FilterPills
               value={status}
@@ -942,7 +942,7 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
         ) : reports.isError ? (
           <div className="p-5"><ErrorText error={reports.error} /></div>
         ) : rows.length === 0 ? (
-          <EmptyState title="No reports" body="Bug reports and feedback submitted from the Mentra App will appear here." />
+          <EmptyState title="No reports" body={category === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : category === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
         ) : (
           <div className="divide-y divide-[#eceeeb]">
             {rows.map(report => (
@@ -991,12 +991,12 @@ function FilterPills<T extends string>(props: {
   options: ReadonlyArray<readonly [T, string]>;
 }) {
   return (
-    <div className="flex h-9 items-center gap-1 rounded-full border border-[#e0e4de] bg-[#f7f8f6] p-1">
+    <div className="flex min-h-9 flex-wrap items-center gap-1 rounded-[18px] border border-[#e0e4de] bg-[#f7f8f6] p-1">
       {props.options.map(([value, label]) => (
         <button
           key={value}
           onClick={() => props.onChange(value)}
-          className={`h-7 rounded-full px-3 text-xs font-semibold ${
+          className={`h-7 whitespace-nowrap rounded-full px-3 text-xs font-semibold ${
             props.value === value ? "bg-white text-[#14151b] shadow-sm" : "text-[#68746d] hover:text-[#14151b]"
           }`}
         >

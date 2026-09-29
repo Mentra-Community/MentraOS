@@ -2,7 +2,7 @@
  * @fileoverview Admin report triage routes.
  *
  * Read-only surface behind the internal admin console's incident system:
- *   GET /            — newest-first report list (kind/status filters)
+ *   GET /            — newest-first report list (kind/category/status filters)
  *   GET /:reportId   — full report document plus its asset rows
  *   GET /:reportId/artifacts/:artifactId — raw artifact payload bytes
  *
@@ -24,6 +24,7 @@ const app = new Hono<AppEnv>();
 
 const listQuerySchema = z.object({
   kind: z.enum(["bug", "feedback", "automatic"]).optional(),
+  category: z.enum(["bug", "feedback", "internal", "testing", "automatic"]).optional(),
   status: z.enum(["collecting", "ready", "closed"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   before: z.coerce.date().optional(),
@@ -36,6 +37,7 @@ app.get("/:reportId/artifacts/:artifactId", getReportArtifact);
 async function getReportsList(c: AppContext) {
   const parsed = listQuerySchema.safeParse({
     kind: c.req.query("kind"),
+    category: c.req.query("category"),
     status: c.req.query("status"),
     limit: c.req.query("limit"),
     before: c.req.query("before"),

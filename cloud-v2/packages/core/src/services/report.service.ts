@@ -13,8 +13,10 @@ import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
 import { notifyReportSlack } from "./report-slack.service";
+import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
 import { UserModel } from "../models/user.model";
-import { getUserById } from "./account/gotrue.client";
+import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
+import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
 import { createStorageService } from "./storage/storage.service";
 
 const logger = createLogger("core").child({ service: "report.service" });
@@ -400,6 +402,8 @@ export interface AdminReportAsset {
 
 export interface ListReportsFilter {
   kind?: ReportKind;
+  // Internal and Testing are triage categories, not submitted/stored report kinds.
+  category?: ReportCategory;
   status?: ReportStatus;
   limit?: number;
   before?: Date;
@@ -408,6 +412,23 @@ export interface ListReportsFilter {
 export async function listReports(filter: ListReportsFilter = {}): Promise<AdminReportSummary[]> {
   const query: Record<string, unknown> = {};
   if (filter.kind) query.kind = filter.kind;
+  if (filter.category) {
+    const category: Record<string, unknown> = {};
+    // The incident automation contract uses this trigger source.
+    // Apply category membership before the database limit, including old reports.
+    category["trigger.source"] = filter.category === "testing"
+      ? REPORT_TESTING_SOURCE
+      : { $ne: REPORT_TESTING_SOURCE };
+    if (filter.category === "automatic") {
+      category.kind = "automatic";
+    } else if (filter.category !== "testing") {
+      const internalUserIds = await internalReporterIds();
+      category.mentraUserId = filter.category === "internal" ? { $in: internalUserIds } : { $nin: internalUserIds };
+      category.kind = filter.category === "internal" ? { $in: ["bug", "feedback"] } : filter.category;
+    }
+    // Compose with a supplied stored kind instead of replacing its predicate.
+    query.$and = [category];
+  }
   if (filter.status) query.status = filter.status;
   if (filter.before) query.createdAt = { $lt: filter.before };
   const limit = Math.min(Math.max(Math.trunc(filter.limit ?? 50), 1), 200);
@@ -418,6 +439,24 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
     .limit(limit)
     .lean();
   return rows.map(serializeReportSummary);
+}
+
+/** Resolve current admin accounts, including reporters of historical incidents.
+ * The report's contact email/context are user supplied and cannot identify an admin.
+ * All kinds, Automatic, Testing, and detail remain available without a directory lookup.
+ */
+async function internalReporterIds(): Promise<string[]> {
+  const allowlist = getAdminEmailAllowlist();
+  // GoTrue searches substrings: the full base email would miss local+tag@domain.
+  // Search the local part, then apply the complete email/domain policy below.
+  const filters = [...allowlist.emails.map(email => email.split("@")[0]!), ...allowlist.domains.map(domain => `@${domain}`)];
+  if (filters.length === 0) return [];
+  const identities = await findUsersByEmailFilters(filters);
+  const adminIds = identities.filter(identity => isAdminEmail(identity.email, allowlist)).map(identity => identity.id);
+  if (adminIds.length === 0) return [];
+  // OEM subject IDs are a different identity namespace, even if the strings collide.
+  const users = await UserModel.find({ tenantId: "mentra", tenantUserId: { $in: adminIds } }, { mentraUserId: 1 }).lean();
+  return users.map(user => user.mentraUserId);
 }
 
 export async function getReport(

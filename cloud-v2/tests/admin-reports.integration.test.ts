@@ -26,6 +26,32 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 
 const STORAGE_DIR = join(tmpdir(), `mentra-admin-reports-test-${process.pid}`);
 const savedAdminEmails = process.env.CLOUD_CORE_ADMIN_EMAILS;
+const savedAdminDomains = process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS;
+const savedServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let directoryUsers: Array<{ id: string; email: string }> = [];
+let directoryFailure = false;
+let directoryNeverEnds = false;
+let directoryHonorsFilters = false;
+let directoryRequests = 0;
+// Exercise both older directories that ignore filter and substring filtering.
+// The server must always apply the full admin policy to returned candidates.
+const directory = Bun.serve({
+  hostname: "127.0.0.1", port: 0,
+  fetch(req) {
+    directoryRequests++;
+    const url = new URL(req.url);
+    if (url.pathname !== "/auth/v1/admin/users") return new Response(null, { status: 404 });
+    if (directoryFailure) return new Response(null, { status: 503 });
+    const page = Number(url.searchParams.get("page"));
+    const perPage = Number(url.searchParams.get("per_page"));
+    const candidates = directoryHonorsFilters
+      ? directoryUsers.filter(user => user.email.toLowerCase().includes((url.searchParams.get("filter") ?? "").toLowerCase()))
+      : directoryUsers;
+    return Response.json({ users: directoryNeverEnds
+      ? Array.from({ length: perPage }, (_, i) => ({ id: `repeated-${i}`, email: "outside@example.test" }))
+      : candidates.slice((page - 1) * perPage, page * perPage) });
+  },
+});
 {
   const { privateKey: nodePriv, publicKey: nodePub } =
     crypto.generateKeyPairSync("ed25519");
@@ -38,7 +64,8 @@ const savedAdminEmails = process.env.CLOUD_CORE_ADMIN_EMAILS;
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
   process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
-  process.env.SUPABASE_URL = "https://testproj.supabase.co";
+  process.env.SUPABASE_URL = directory.url.origin;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "local-directory-test-key";
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
   // Pin the API-key environment label so minted keys validate deterministically.
   process.env.CLOUD_CORE_ENVIRONMENT = "local";
@@ -67,6 +94,7 @@ let coreApp: ReturnType<typeof createApp>;
 let userAccessToken: string;
 let adminBearer: string;
 let nonAdminBearer: string;
+let adminEmail: string;
 
 beforeAll(async () => {
   await connectMongo(process.env.MONGO_URL!);
@@ -90,21 +118,35 @@ beforeAll(async () => {
   const nonAdminKey = await apiKeys.create("org_admin_reports_test", "plain", "user_plain", "local");
   adminBearer = adminKey.value!;
   nonAdminBearer = nonAdminKey.value!;
-  process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${adminKey.id}.local`;
+  adminEmail = `api-key@${adminKey.id}.local`;
 });
 
 afterAll(async () => {
   if (savedAdminEmails === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAILS;
   else process.env.CLOUD_CORE_ADMIN_EMAILS = savedAdminEmails;
+  if (savedAdminDomains === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS;
+  else process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = savedAdminDomains;
+  if (savedServiceKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  else process.env.SUPABASE_SERVICE_ROLE_KEY = savedServiceKey;
+  directory.stop(true);
+  await UserModel.deleteMany({ tenantUserId: /^internal-fixture-/ });
   await DeveloperOrgApiKeyModel.deleteMany({ orgId: "org_admin_reports_test" });
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
+  process.env.CLOUD_CORE_ADMIN_EMAILS = adminEmail;
+  process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "";
+  directoryUsers = [];
+  directoryFailure = false;
+  directoryNeverEnds = false;
+  directoryHonorsFilters = false;
+  directoryRequests = 0;
   await Promise.all([
     ReportModel.deleteMany({}),
     ReportAssetModel.deleteMany({}),
+    UserModel.deleteMany({ tenantUserId: /^internal-fixture-/ }),
   ]);
 });
 
@@ -121,6 +163,147 @@ describe("admin reports auth gate", () => {
 });
 
 describe("admin reports read surface", () => {
+  test("separates harness reports by their existing source without changing stored kinds", async () => {
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test";
+    directoryUsers = [{ id: "internal-fixture-harness", email: "admin@company.test" }];
+    await UserModel.create({ mentraUserId: "mu_harness_admin", tenantId: "mentra", tenantUserId: "internal-fixture-harness" });
+    const fixtures = [
+      { reportId: "rep_harness_old", kind: "automatic", source: "mentra_automated_testing", status: "ready", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_harness_bug", kind: "bug", source: "mentra_automated_testing", status: "closed", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_harness_new", kind: "automatic", source: "mentra_automated_testing", status: "ready", mentraUserId: "mu_harness_customer" },
+      { reportId: "rep_runtime", kind: "automatic", source: "runtime", status: "ready", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_untagged", kind: "automatic", source: undefined, status: "ready", mentraUserId: "mu_harness_customer" },
+      { reportId: "rep_human", kind: "bug", source: "feedback_screen", status: "ready", mentraUserId: "mu_harness_admin" },
+    ];
+    for (const [i, fixture] of fixtures.entries()) {
+      const { source, ...row } = fixture;
+      await ReportModel.create({ ...row, trigger: source ? { type: row.kind === "bug" ? "manual" : "automatic", source, reason: "test" } : null,
+        context: { source: "mentra_automated_testing" }, createdAt: new Date(1_700_000_000_000 + i * 1000) });
+    }
+    // Existing API/MCP/script clients filter stored kinds, including every category.
+    expect((await listed("kind=bug")).map(row => row.reportId)).toEqual(["rep_human", "rep_harness_bug"]);
+    expect((await listed("kind=automatic")).map(row => row.reportId)).toEqual(
+      ["rep_untagged", "rep_runtime", "rep_harness_new", "rep_harness_old"],
+    );
+    expect((await listed("kind=bug&category=internal")).map(row => row.reportId)).toEqual(["rep_human"]);
+    expect((await listed("kind=bug&category=testing")).map(row => row.reportId)).toEqual(["rep_harness_bug"]);
+    expect(await listed("kind=automatic&category=internal")).toEqual([]);
+    const testing = await listed("category=testing");
+    expect(testing.map(row => row.reportId)).toEqual(["rep_harness_new", "rep_harness_bug", "rep_harness_old"]);
+    expect(testing.map(row => row.kind)).toEqual(["automatic", "bug", "automatic"]);
+    expect((await listed("category=automatic")).map(row => row.reportId)).toEqual(["rep_untagged", "rep_runtime"]);
+    expect((await listed("category=internal")).map(row => row.reportId)).toEqual(["rep_human"]);
+    expect(await listed("category=bug")).toEqual([]);
+    expect((await listed("category=testing&status=ready&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_new"]);
+    expect((await listed("category=testing&before=2023-11-14T22:13:21.500Z&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_bug"]);
+    expect(await listed("")).toHaveLength(fixtures.length);
+    directoryFailure = true;
+    directoryRequests = 0;
+    expect(await listed("kind=bug")).toHaveLength(2);
+    expect(await listed("kind=automatic")).toHaveLength(4);
+    expect(await listed("category=testing")).toHaveLength(3);
+    expect(await listed("category=automatic")).toHaveLength(2);
+    expect(directoryRequests).toBe(0);
+  });
+
+  test("separates historical human admin submissions while keeping automatic reports together", async () => {
+    const fixtures = [
+      { id: "internal-fixture-named", email: "NAMED@personal.test", internal: true },
+      { id: "internal-fixture-domain", email: "user@company.test", internal: true },
+      { id: "internal-fixture-second", email: "user@second.test", internal: true },
+      { id: "internal-fixture-outsider", email: "user@personal.test", internal: false },
+      { id: "internal-fixture-subdomain", email: "user@sub.company.test", internal: false },
+      { id: "internal-fixture-suffix", email: "user@company.test.evil.test", internal: false },
+    ];
+    directoryUsers = fixtures;
+    const internalIds: string[] = [];
+    const externalIds: string[] = [];
+    for (const [index, fixture] of fixtures.entries()) {
+      await UserModel.create({ mentraUserId: `mu_${fixture.id}`, tenantId: "mentra", tenantUserId: fixture.id });
+      for (const kind of ["bug", "feedback", "automatic"]) {
+        const reportId = `rep_${fixture.id}-${kind}`;
+        (fixture.internal ? internalIds : externalIds).push(reportId);
+        await ReportModel.create({
+          reportId, mentraUserId: `mu_${fixture.id}`, kind, status: "ready",
+          // Deliberately misleading client-provided email must not make this internal.
+          report: { actualBehavior: "fixture", contactEmail: "user@company.test" },
+          context: { email: "user@company.test" }, createdAt: new Date(1_700_000_000_000 + index * 1000),
+        });
+      }
+    }
+    // OEM identity collides with an admin's GoTrue subject; it stays external.
+    await UserModel.create({ mentraUserId: "mu_oem", tenantId: "other-oem", tenantUserId: fixtures[0].id });
+    await ReportModel.create({ reportId: "rep_oem", mentraUserId: "mu_oem", kind: "bug", status: "closed", context: {} });
+    // Change the allowlists AFTER all reports exist: no migration/re-submission required.
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `${adminEmail}, named@personal.test`;
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test, @SECOND.test";
+
+    const internal = await listed("category=internal");
+    expect(internal.map(row => row.reportId).sort()).toEqual(internalIds.filter(id => !id.endsWith("-automatic")).sort());
+    expect(new Set(internal.map(row => row.kind))).toEqual(new Set(["bug", "feedback"]));
+    for (const kind of ["bug", "feedback"]) {
+      const rows = await listed(`category=${kind}&status=ready`);
+      expect(rows.map(row => row.reportId).sort()).toEqual(externalIds.filter(id => id.endsWith(`-${kind}`)).sort());
+    }
+    expect((await listed("category=automatic&status=ready")).map(row => row.reportId).sort()).toEqual(
+      [...internalIds, ...externalIds].filter(id => id.endsWith("-automatic")).sort(),
+    );
+    expect((await listed("category=bug&status=closed")).map(row => row.reportId)).toEqual(["rep_oem"]);
+    expect(await listed("category=internal&status=closed")).toEqual([]);
+    const limited = await listed("category=internal&limit=2&before=2023-11-14T22:13:21.500Z");
+    expect(limited).toHaveLength(2);
+    expect(limited.every(row => row.mentraUserId === "mu_internal-fixture-domain")).toBe(true);
+    directoryRequests = 0;
+    expect(await listed("")).toHaveLength(19);
+    expect(directoryRequests).toBe(0);
+    process.env.CLOUD_CORE_ADMIN_EMAILS = adminEmail;
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "";
+    expect(await listed("category=internal")).toEqual([]);
+    expect(await listed("category=bug")).toHaveLength(7);
+  });
+
+  test("finds plus aliases through directory filters without admitting similar mailboxes or other domains", async () => {
+    directoryHonorsFilters = true;
+    const fixtures = [
+      { id: "internal-fixture-base", email: "named@personal.test", internal: true },
+      { id: "internal-fixture-alias", email: "NAMED+test@PERSONAL.TEST", internal: true },
+      { id: "internal-fixture-other-domain", email: "named+test@elsewhere.test", internal: false },
+      { id: "internal-fixture-similar", email: "namedmore+test@personal.test", internal: false },
+      { id: "internal-fixture-wrong-base", email: "other+named@personal.test", internal: false },
+    ];
+    directoryUsers = fixtures;
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `${adminEmail}, named@personal.test`;
+    for (const fixture of fixtures) {
+      await UserModel.create({ mentraUserId: `mu_${fixture.id}`, tenantId: "mentra", tenantUserId: fixture.id });
+      await ReportModel.create({ reportId: `rep_${fixture.id}`, mentraUserId: `mu_${fixture.id}`, kind: "bug", context: {} });
+    }
+    expect((await listed("category=internal")).map(row => row.reportId).sort()).toEqual(
+      fixtures.filter(f => f.internal).map(f => `rep_${f.id}`).sort(),
+    );
+    expect((await listed("category=bug")).map(row => row.reportId).sort()).toEqual(
+      fixtures.filter(f => !f.internal).map(f => `rep_${f.id}`).sort(),
+    );
+  });
+
+  test("finds admins beyond the first directory page and rejects incomplete classification", async () => {
+    directoryUsers = Array.from({ length: 200 }, (_, i) => ({ id: `outside-${i}`, email: `outside-${i}@example.test` }));
+    directoryUsers.push({ id: "internal-fixture-late", email: "late@company.test" });
+    await UserModel.create({ mentraUserId: "mu_late", tenantId: "mentra", tenantUserId: "internal-fixture-late" });
+    await ReportModel.create({ reportId: "rep_late", mentraUserId: "mu_late", kind: "bug", context: {} });
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test";
+    expect((await listed("category=internal")).map(row => row.reportId)).toEqual(["rep_late"]);
+    directoryFailure = true;
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=internal`)).status).toBe(502);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=bug`)).status).toBe(502);
+    // The unfiltered incident evidence remains usable during a directory outage.
+    expect(await listed("")).toHaveLength(1);
+    expect(await listed("category=automatic")).toEqual([]);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}/rep_late`)).status).toBe(200);
+    directoryFailure = false;
+    directoryNeverEnds = true;
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=internal`)).status).toBe(502);
+  });
+
   test("lists reports newest-first with artifact metadata and no context", async () => {
     const first = await seedReport("first crash");
     const second = await seedReport("second crash");
@@ -144,6 +327,8 @@ describe("admin reports read surface", () => {
 
     const badQuery = await adminGet(`${ADMIN_REPORTS_PATH}?kind=nonsense`);
     expect(badQuery.status).toBe(400);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=nonsense`)).status).toBe(400);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?kind=internal`)).status).toBe(400);
   });
 
   test("returns full detail with context and asset rows", async () => {
@@ -249,6 +434,12 @@ function adminGet(url: string): Promise<Response> {
 }
 
 /** Submit a bug report with one log bundle and one screenshot; returns the reportId. */
+async function listed(query: string): Promise<Array<{ reportId: string; kind: string; mentraUserId: string }>> {
+  const response = await adminGet(`${ADMIN_REPORTS_PATH}?${query}`);
+  expect(response.status).toBe(200);
+  return (await response.json() as { reports: Array<{ reportId: string; kind: string; mentraUserId: string }> }).reports;
+}
+
 async function seedReport(actualBehavior: string, screenshot?: Buffer): Promise<string> {
   const submit = await coreApp.fetch(
     new Request(REPORTS_PATH, {
