@@ -75,23 +75,53 @@ test("enabled Wi-Fi skips the prompt and settings", async () => {
 test("cancel keeps settings closed", async () => {
   const pending = requestPhoneWifiEnable("Calling needs Wi-Fi")
   await jest.advanceTimersByTimeAsync(0)
-  expect(getPhoneWifiPrompt()?.message).toContain("Calling needs Wi-Fi")
+  expect(getPhoneWifiPrompt()?.message).toBe("Calling needs Wi-Fi")
   completePhoneWifiPrompt(false)
   await expect(pending).resolves.toEqual({enabled: false, cancelled: true})
   expect(Linking.sendIntent).not.toHaveBeenCalled()
 })
 
-test.each([true, false])("panel focus rechecks the radio (%s) and cleans up listeners", async (enabled) => {
+describe.each(["android", "ios"] as const)("%s prompt explanation", (platform) => {
+  test.each([
+    ["  Gallery transfer needs Wi-Fi  ", "Gallery transfer needs Wi-Fi"],
+    [undefined, "phoneWifi:reason"],
+    ["", "phoneWifi:reason"],
+    ["   ", "phoneWifi:reason"],
+  ])("uses the caller's reason or generic fallback for %p", async (reason, expected) => {
+    Object.defineProperty(Platform, "OS", {value: platform})
+    const pending = requestPhoneWifiEnable(reason)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(getPhoneWifiPrompt()?.message).toBe(
+      platform === "ios" ? `${expected}\n\nphoneWifi:instructionsIos` : expected,
+    )
+    completePhoneWifiPrompt(false)
+    await expect(pending).resolves.toEqual({enabled: false, cancelled: true})
+  })
+})
+
+test("panel focus sees Wi-Fi on and finishes without a confirmation popup", async () => {
   const pending = requestPhoneWifiEnable()
   await acceptPrompt()
   expect(Linking.sendIntent).toHaveBeenCalledWith("android.settings.panel.action.WIFI")
   events.get("blur")!()
-  ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(enabled)
+  ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("focus")!()
   await jest.advanceTimersByTimeAsync(500)
-  await expect(pending).resolves.toEqual({enabled, cancelled: false})
+  expect(getPhoneWifiPrompt()).toBeNull()
+  await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
   expect(removed).toHaveBeenCalledTimes(3)
   expect(jest.getTimerCount()).toBe(0)
+})
+
+test("returning without turning Wi-Fi on asks again with the caller's reason", async () => {
+  const pending = requestPhoneWifiEnable("Calling needs Wi-Fi")
+  await acceptPrompt()
+  events.get("blur")!()
+  events.get("focus")!()
+  await jest.advanceTimersByTimeAsync(500)
+  expect(getPhoneWifiPrompt()).toMatchObject({tone: "still-off", message: "Calling needs Wi-Fi"})
+  completePhoneWifiPrompt(false)
+  await expect(pending).resolves.toEqual({enabled: false, cancelled: true})
 })
 
 test("missing panel falls back to Wi-Fi settings; background/active also resumes", async () => {
@@ -103,15 +133,22 @@ test("missing panel falls back to Wi-Fi settings; background/active also resumes
   events.get("focus")!()
   await jest.advanceTimersByTimeAsync(1000)
   expect(WifiManager.isEnabled).toHaveBeenCalledTimes(1)
+  ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   events.get("change")!("background")
   events.get("change")!("active")
   await jest.advanceTimersByTimeAsync(500)
-  await pending
+  await expect(pending).resolves.toEqual({enabled: true, cancelled: false})
 })
 
-test("iOS opens public app settings and preserves unknown on return", async () => {
+test("iOS explains app Settings navigation and preserves unknown on return", async () => {
   Object.defineProperty(Platform, "OS", {value: "ios"})
   const pending = requestPhoneWifiEnable()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(getPhoneWifiPrompt()).toMatchObject({
+    actionLabel: "phoneWifi:openSettings",
+    message: "phoneWifi:reason\n\nphoneWifi:instructionsIos",
+  })
   await acceptPrompt()
   expect(Linking.openSettings).toHaveBeenCalledTimes(1)
   events.get("change")!("inactive")

@@ -61,4 +61,25 @@ describe.skipIf(!uri)("Mongo cross-worker claims", () => {
       { executionToken: input.executionToken, settlement: read.claim.settlement })).toEqual(read);
     expect((await new TestRunClaimService().claim(input)).executionGranted).toBe(false);
   });
+
+  test("concurrent different closures record exactly one; the claim and settlement stay unchanged", async () => {
+    const input = request("closure");
+    const service = new TestRunClaimService();
+    await service.claim(input);
+    await service.settle(input.requestId, { executionToken: input.executionToken,
+      settlement: { state: "recovery-required", reason: "Android update refused in place" } });
+    const before = await service.get(input.requestId);
+    const closure = (eventSha256: string) => ({ kind: "android-refused-install-released" as const,
+      originalTerminal: { sequence: 26, sha256: "b".repeat(64) }, journalPrefix: { bytes: 4096, sha256: "c".repeat(64) },
+      release: { type: "setup-abandoned-after-refusal" as const, sequence: 27, eventSha256, revision: "1".repeat(40), implementationSha256: "e".repeat(64) },
+      fixture: "uncommissioned" as const, selectedCandidateInstalled: false as const, candidateTestRun: false as const, recordingStarted: false as const });
+    const { executionToken: _, ...identity } = input;
+    const results = await Promise.allSettled(["d", "f"].map(value =>
+      new TestRunClaimService().close(input.requestId, { ...input, closure: closure(value.repeat(64)) })));
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    for (const result of results) if (result.status === "rejected") expect(result.reason.status).toBe(409);
+    expect(await service.get(input.requestId)).toEqual(before);
+    const row = await TestRunClaimModel.findOne({ requestId: input.requestId }).lean();
+    expect(row?.claim).toMatchObject({ ...identity, state: "recovery-required" });
+  });
 });

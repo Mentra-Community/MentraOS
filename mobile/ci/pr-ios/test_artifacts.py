@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import subprocess
 import sys
-from artifacts import BUNDLE_ID, digest, package_mac_app, probe_framework_copy, probe_signing, validate_profile, verify_pr_ota, verify_private_signing
+from artifacts import BUNDLE_ID, digest, package_mac_app, packaged_backend, probe_framework_copy, probe_signing, validate_profile, verify_pr_ota, verify_private_signing
 
 
 class MacPackageTests(unittest.TestCase):
@@ -106,6 +106,30 @@ class OtaPinTests(unittest.TestCase):
         (self.app / "EXConstants.bundle/app.config").unlink()
         with self.assertRaises(FileNotFoundError):
             self.verify()
+
+
+class BackendTests(unittest.TestCase):
+    fingerprint = "f" * 64
+    compilation = {"mobileFingerprint": fingerprint}
+
+    def env(self, **change):
+        return {"EXPO_PUBLIC_BUILD_ENV": "dev", "GITHUB_BASE_REF": "dev", "MENTRA_PR_MOBILE_FINGERPRINT": self.fingerprint, **change}
+
+    def test_records_the_backend_selected_by_the_pr_base(self):
+        self.assertEqual(packaged_backend(self.compilation, self.env()), "dev")
+        self.assertEqual(packaged_backend(self.compilation, self.env(EXPO_PUBLIC_BUILD_ENV="staging", GITHUB_BASE_REF="staging")), "staging")
+        # Other PR bases keep the existing dev app.
+        self.assertEqual(packaged_backend(self.compilation, self.env(GITHUB_BASE_REF="main")), "dev")
+
+    def test_never_relabels_another_backend_or_a_different_compilation(self):
+        for change in [{"GITHUB_BASE_REF": "staging"}, {"EXPO_PUBLIC_BUILD_ENV": "staging"},
+                       {"EXPO_PUBLIC_BUILD_ENV": "staging", "GITHUB_BASE_REF": "main"},
+                       {"EXPO_PUBLIC_BUILD_ENV": "prod", "GITHUB_BASE_REF": "prod"}]:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "PR base"):
+                packaged_backend(self.compilation, self.env(**change))
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            packaged_backend({"mobileFingerprint": "e" * 64},
+                             self.env(EXPO_PUBLIC_BUILD_ENV="staging", GITHUB_BASE_REF="staging"))
 
 
 class SigningProbeTests(unittest.TestCase):

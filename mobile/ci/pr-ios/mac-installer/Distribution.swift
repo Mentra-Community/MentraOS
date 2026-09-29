@@ -82,7 +82,8 @@ struct DistributionReceipt {
               distributionInteger(app["runAttempt"]) == buildAttempt,
               app["buildSha"] as? String == buildSHA,
               app["otaManifestUrl"] as? String == request.otaURL,
-              app["backend"] as? String == "dev"
+              // Only the admitted PR backends; the notifier binds each to its PR base.
+              ["dev", "staging"].contains(app["backend"] as? String ?? "")
         else { throw InstallerError.invalid("The published receipt does not match the selected PR, commit, or workflow attempt.") }
         _ = try BuildManifest(data: JSONSerialization.data(withJSONObject: app))
         guard let assets = json["artifacts"] as? [String: [String: Any]] else {

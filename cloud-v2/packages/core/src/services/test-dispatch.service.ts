@@ -2,12 +2,20 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
-import { testDispatchInputSchema, type TestDispatchReceipt, type TestDispatchView } from "../types/test-dispatch.types";
+import { continuationDispatchInputSchema, testDispatchInputSchema, type TestDispatchInput, type TestDispatchReceipt, type TestDispatchView } from "../types/test-dispatch.types";
 import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
+import type { TestContinuationBinding } from "../types/test-continuation.types";
+import { testExistingWorkBindingSchema, type TestExistingWorkBinding } from "../types/test-existing-work.types";
+import type { TestRunClaimClosure } from "../types/test-run-claim.types";
 import { TestRunService } from "./test-run.service";
 
 interface StoredDispatch { inputSha256: string; receipt: TestDispatchReceipt }
-interface ClaimState { state: string; resultRunId?: string }
+/** `closure` is the kind of the original owner's recorded closure, if any. */
+interface ClaimState { state: string; resultRunId?: string; closure?: TestRunClaimClosure["kind"] }
+const closedWithoutTest: Record<TestRunClaimClosure["kind"], string> = {
+  "android-refused-install-released": "Android refused the app update and no recording started.",
+  "preflight-abandoned-released": "preflight failed before setup, so nothing was installed, tested or recorded.",
+};
 interface ResultState { runId: string; requestId: string; outcome: string; outcomes: Record<string, string>; provenance: Record<string, string> }
 export interface TestDispatchRepository {
   get(id: string): Promise<StoredDispatch | null>;
@@ -53,7 +61,8 @@ export class MongoTestDispatchRepository implements TestDispatchRepository {
     const row = await TestRunClaimModel.findOne({ requestId }).lean();
     if (!row) return null;
     const value = row.claim as { state: string; settlement?: { resultRunId?: string } };
-    return { state: value.state, resultRunId: value.settlement?.resultRunId };
+    return { state: value.state, resultRunId: value.settlement?.resultRunId,
+      ...(row.closure ? { closure: (row.closure as { kind: TestRunClaimClosure["kind"] }).kind } : {}) };
   }
   async result(runId: string) { return new TestRunService().detail(runId); }
 }
@@ -63,11 +72,29 @@ export class TestDispatchService {
   constructor(private readonly repository: TestDispatchRepository = new MongoTestDispatchRepository(),
     private readonly github: TestBuildGateway = new GithubTestBuildGateway()) {}
 
-  async create(input: unknown, requestedBy: string): Promise<TestDispatchView> {
-    const parsed = testDispatchInputSchema.safeParse(input);
-    if (!parsed.success || !requestedBy) throw new TestDispatchError(400, "Invalid routine dispatch request");
-    const data = parsed.data;
-    const inputSha256 = createHash("sha256").update(JSON.stringify({ input: data, requestedBy })).digest("hex");
+  /**
+   * `binding` is a case continuation or, separately, an existing-work verification. Both
+   * reserve their permanent operation ID across artifact selection and check the published
+   * head; an existing-work binding is stored as `existingWork` and never adopts a request.
+   */
+  async create(input: unknown, requestedBy: string, binding?: TestContinuationBinding | TestExistingWorkBinding,
+    adopt?: { requestRunId: number; requestUrl: string }, admit?: () => Promise<void>): Promise<TestDispatchView> {
+    const existingWork = binding && "kind" in binding ? testExistingWorkBindingSchema.safeParse(binding) : undefined;
+    if (existingWork && !existingWork.success) throw new TestDispatchError(400, "Invalid routine dispatch request");
+    const verification = existingWork?.data, continuation = verification ? undefined : binding as TestContinuationBinding | undefined;
+    // Admin input is unchanged. Only original targets or revision-pinned harness
+    // continuations may replay the app artifact selected by an original request.
+    const parsed = (continuation ? continuationDispatchInputSchema : testDispatchInputSchema).safeParse(input);
+    const data: TestDispatchInput | undefined = parsed.success ? parsed.data : undefined;
+    const originalArtifact = continuation && ("target" in continuation.candidate
+      || (continuation.candidate.repository === "Mentra-Community/Mentra-Automated-Testing"
+        && /^[a-f0-9]{40}$/.test(continuation.expectedHarnessSha ?? "")));
+    if (!data || !requestedBy || (data.originalRequestRunId !== undefined && !originalArtifact)
+      || (verification && (adopt || data.source.channel !== verification.bundle.baseBranch || data.routineId !== verification.routineId)))
+      throw new TestDispatchError(400, "Invalid routine dispatch request");
+    const inputSha256 = createHash("sha256").update(JSON.stringify({ input: data, requestedBy,
+      ...(continuation ? { continuation } : {}), ...(verification ? { existingWork: verification } : {}) })).digest("hex");
+    const expectedHeadSha = (continuation ?? verification)?.expectedHeadSha;
     const dispatchId = data.idempotencyKey;
     const replay = (stored: StoredDispatch) => {
       if (stored.inputSha256 !== inputSha256) throw new TestDispatchError(409, "Submission ID already belongs to a different request");
@@ -77,16 +104,28 @@ export class TestDispatchService {
     if (before) return replay(before);
     let rejectionReason: string | undefined;
     try {
-      const build = await this.github.resolve(data.source);
+      const build = await this.github.resolve(data.source, data.routineId, data.originalRequestRunId);
       if (build.availability !== "available" || build.archive?.sha256 !== data.archiveSha256)
         throw new TestDispatchError(409, build.reason ?? "Selected build changed or is unavailable; refresh the build list");
+      if (expectedHeadSha !== undefined && build.headSha !== expectedHeadSha)
+        throw new TestDispatchError(409, "Candidate head differs from the published build");
       const routine = build.routines.find(item => item.id === data.routineId);
       if (!routine?.available) throw new TestDispatchError(409, routine?.reason ?? "This routine is not compatible with the selected build");
     } catch (error) {
       if (!(error instanceof TestDispatchError) || ![400, 404, 409].includes(error.status)) throw error;
       rejectionReason = error.message;
     }
+    if (expectedHeadSha !== undefined && rejectionReason !== undefined) {
+      // A continuation or verification reserves its execution identity across artifact selection.
+      // Failed admission is not an execution and cannot burn that permanent ID.
+      // Preserve a concurrent successful/uncertain send if it already won.
+      const winner = await this.repository.get(dispatchId);
+      if (winner) return replay(winner);
+      throw new TestDispatchError(409, rejectionReason);
+    }
+    if (admit && rejectionReason === undefined) await admit();
     const value: TestDispatchReceipt = { dispatchId, input: data, requestedBy, createdAt: new Date().toISOString(),
+      ...(continuation ? { continuation } : {}), ...(verification ? { existingWork: verification } : {}), ...(adopt ? { adopted: true } : {}),
       sendState: rejectionReason === undefined ? "sending" : "rejected", ...(rejectionReason === undefined ? {} : { rejectionReason }) };
     // Rejection must own the same unique ID as sending. A concurrent validator
     // may already have sent; only the stored winner can authorize a new request.
@@ -94,13 +133,14 @@ export class TestDispatchService {
     if (!inserted.created) return replay(inserted.stored);
     if (value.sendState === "rejected") return this.present(value);
     let response;
-    try { response = await this.github.dispatch(data); }
+    try { response = adopt ?? await this.github.dispatch(data, continuation?.expectedHarnessSha); }
     catch {
       return this.present(await this.repository.acknowledge(dispatchId, null));
     }
     // A failed database acknowledgement cannot authorize a second external send.
     return this.present(await this.repository.acknowledge(dispatchId, response));
   }
+  async receipt(id: string) { return (await this.repository.get(id))?.receipt ?? null; }
   async list() { return { dispatches: await this.repository.recent() }; }
   async detail(id: string) {
     if (!z.string().uuid().safeParse(id).success) throw new TestDispatchError(400, "Invalid dispatch ID");
@@ -120,6 +160,9 @@ export class TestDispatchService {
       let workerUrl: string | undefined;
       try { workerUrl = (await this.github.progress(value.requestRunId, value.input)).workerUrl; }
       catch { /* Recovery ownership remains authoritative when GitHub status is unavailable. */ }
+      // The original owner closed the request: resolved, but neither a pass nor a ready fixture.
+      if (claim.closure) return { ...value, requestId, state: "failed", ...(workerUrl ? { workerUrl } : {}),
+        message: `Closed by its original worker without a test: ${closedWithoutTest[claim.closure] ?? "no candidate test ran."} The failed result is unchanged and is not a pass. The fixture was left uncommissioned.` };
       return { ...value, requestId, state: "recovery-required", ...(workerUrl ? { workerUrl } : {}),
         message: "The worker retained this fixture for recovery. Review the worker evidence before reuse." };
     }

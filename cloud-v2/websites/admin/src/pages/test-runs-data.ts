@@ -1,4 +1,4 @@
-import type { TestRunListScope } from "../lib/test-run-links";
+import { readTestRunLink, type TestRunListScope } from "../lib/test-run-links";
 
 export type RunOutcome = "passed" | "failed" | "blocked" | "aborted";
 export type CheckOutcome = "passed" | "failed" | "blocked" | "not-run";
@@ -75,6 +75,28 @@ export interface TestRunChapter {
   screenshotAssetId?: string;
 }
 
+/** A published failure packet (Core testFailureSchema); only reviewed/redacted fields are present. */
+export interface TestRunFailure {
+  phase: FirmwareCheckPhase | "unknown";
+  step: { id: string; label: string } | null;
+  code: string;
+  message: string;
+  expected?: string;
+  assetIds: string[];
+  incidentIds: string[];
+  redactionPolicy: string;
+  missingEvidence: { kind: string; reason: string }[];
+}
+
+/** Core's deterministic occurrence of one failure and its signed delivery state. */
+export interface TestRunFailureOccurrence {
+  occurrenceId: string;
+  failure: TestRunFailure;
+  delivery:
+    | { state: "pending"; lastAttemptAt?: string }
+    | { state: "acknowledged"; agentRunId: string; acknowledgedAt: string };
+}
+
 export interface TestRunDetail extends TestRunSummary {
   chapters: TestRunChapter[];
   assets: TestRunAsset[];
@@ -86,6 +108,63 @@ export interface TestRunDetail extends TestRunSummary {
     phase?: FirmwareCheckPhase;
   }[];
   notes?: string;
+  failures?: TestRunFailure[];
+  failureOccurrences?: TestRunFailureOccurrence[];
+}
+
+export const FAILURE_PHASE_LABELS: Record<TestRunFailure["phase"], string> = { ...FIRMWARE_PHASE_LABELS, unknown: "Unknown phase" };
+
+/**
+ * Failure rows with their occurrence delivery. Core creates exactly one occurrence per failure (run/phase/step), and one
+ * generic occurrence for a result that published none, so its occurrences are listed when present. A record without
+ * occurrences shows its failures with no delivery state; nothing is inferred.
+ */
+export function failureRows(run: Pick<TestRunDetail, "failures" | "failureOccurrences">) {
+  const occurrences = Array.isArray(run.failureOccurrences) ? run.failureOccurrences : [];
+  if (occurrences.length)
+    return occurrences.map((item) => ({ key: item.occurrenceId, failure: item.failure, delivery: item.delivery }));
+  return (Array.isArray(run.failures) ? run.failures : []).map((failure) => ({
+    key: `${failure.phase}/${failure.step?.id ?? ""}`,
+    failure,
+    delivery: undefined,
+  }));
+}
+
+const POSITIVE = /^[1-9]\d{0,15}$/;
+const PRIVATE_WORKER_REPOSITORY = "Mentra-Community/Mentra-Automated-Testing";
+
+/**
+ * A not-run result that the private worker published when it stopped during intake. Shown only when the worker
+ * recorded every fact here itself; the claim is named only from an exact recorded status/claim pair, and the request
+ * and worker links are rebuilt from validated identifiers.
+ */
+export function preparationStop(run: Pick<TestRunDetail, "outcome" | "outcomes" | "provenance">) {
+  const p = run.provenance;
+  if (
+    run.outcome !== "blocked" ||
+    run.outcomes.test !== "not-run" ||
+    p.hardwareStarted !== "false" ||
+    !["preparation-blocked", "claim-blocked"].includes(p.intakeStatus ?? "") ||
+    !/^[a-z][a-z0-9-]{0,63}$/.test(p.intakeStage ?? "")
+  )
+    return null;
+  const worker =
+    p.privateRepository === PRIVATE_WORKER_REPOSITORY && POSITIVE.test(p.privateRunId ?? "") && POSITIVE.test(p.privateRunAttempt ?? "")
+      ? `https://github.com/${PRIVATE_WORKER_REPOSITORY}/actions/runs/${p.privateRunId}/attempts/${p.privateRunAttempt}`
+      : null;
+  const request = /^https:\/\/github\.com\/Mentra-Community\/MentraOS\/actions\/runs\/[1-9]\d{0,15}\/attempts\/[1-9]\d{0,5}$/.test(
+    p.requestUrl ?? "",
+  )
+    ? p.requestUrl!
+    : null;
+  // The worker records exactly one claim value per status; anything else proves neither label.
+  const claimed =
+    p.intakeStatus === "preparation-blocked" && p.claim === "not-attempted"
+      ? "No claim requested"
+      : p.intakeStatus === "claim-blocked" && p.claim === "not-granted"
+        ? "Claim not granted"
+        : "Claim state not recorded";
+  return { stage: p.intakeStage!, claimed, worker, request };
 }
 
 export interface TestRunFilters {
@@ -174,6 +253,61 @@ export function safeProducerUrl(value: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+export interface RelatedRun {
+  kind: "recovery" | "source";
+  runId: string;
+}
+
+const DIGEST = /^[a-f0-9]{64}$/;
+
+function safeRelatedRunId(value: string | undefined, runId: string) {
+  return typeof value === "string" && value !== runId
+    ? readTestRunLink(new URLSearchParams({ testRun: value }).toString())?.runID ?? null
+    : null;
+}
+
+/**
+ * The run this result links back to. It is a recovery only when a registered,
+ * consumed CI result declares an appended lifecycle generation with its original
+ * and current terminal snapshot digests, the lineage Core accepts for recovery.
+ * Optional previous-result and amendment metadata, and the recovery's own
+ * outcome, do not decide the label. Any other safe, distinct original run ID
+ * (development exports, legacy results) stays a neutral source link. Run ID
+ * prefixes are never used as evidence.
+ */
+export function relatedRun(run: Pick<TestRunDetail, "runId" | "provenance">): RelatedRun | null {
+  const provenance = run.provenance;
+  const runId = safeRelatedRunId(provenance.originalRunId, run.runId);
+  if (!runId) return null;
+  const generation = Number(provenance.resultGeneration);
+  const recovery =
+    provenance.executionMode === "ci-registered" &&
+    provenance.requestRelationship === "consumed" &&
+    /^[1-9]\d*$/.test(provenance.resultGeneration ?? "") &&
+    Number.isSafeInteger(generation) &&
+    generation > 1 &&
+    DIGEST.test(provenance.terminalSnapshotSha256 ?? "") &&
+    DIGEST.test(provenance.originalTerminalSnapshotSha256 ?? "");
+  return { kind: recovery ? "recovery" : "source", runId };
+}
+
+/**
+ * Elapsed time between a run's recorded start and finish. Returns null when either
+ * timestamp is missing or malformed, or when the finish precedes the start, so the
+ * UI never shows an estimated or fabricated duration.
+ */
+export function runDuration(startedAt: unknown, finishedAt: unknown): string | null {
+  if (typeof startedAt !== "string" || typeof finishedAt !== "string") return null;
+  const ms = Date.parse(finishedAt) - Date.parse(startedAt);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  if (ms === 0) return "0s";
+  if (ms < 1000) return "<1s";
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
 export function valueText(value: unknown): string {

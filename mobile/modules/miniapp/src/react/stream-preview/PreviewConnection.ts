@@ -349,9 +349,13 @@ export class PreviewConnection {
       result = (await channel.request({cmd: "handshake", docGen: this.docGen, mountEpoch})) as PreviewHandshakeResult
     } catch (error) {
       const code = error instanceof PreviewControlError ? error.code : "transport_failed"
-      previewTraceWarn("handshake_failed", {code, docGen: this.docGen})
-      this.setState(code === "unsupported" ? "unsupported" : "error", {code})
+      const message = error instanceof Error ? error.message.slice(0, 120) : undefined
+      previewTraceWarn("handshake_failed", {code, message, docGen: this.docGen})
+      // A bind that is not ready yet is reported as unsupported. That used to
+      // stick for the whole document. Treat it like a transport error and try again.
+      this.setState("error", {code})
       this.sink?.onError(code)
+      if (this.isVisible() && this.wantsFrames()) this.scheduleReconnect(code)
       return false
     }
     if (gen !== this.connectionGen) return false
@@ -440,7 +444,12 @@ export class PreviewConnection {
     switch (event.t) {
       case "lease_available":
         previewTrace("lease_available", {docGen: this.docGen, state: this.state})
-        if (this.state === "waiting_for_lease" || this.state === "idle" || this.state === "error") {
+        if (
+          this.state === "waiting_for_lease" ||
+          this.state === "idle" ||
+          this.state === "error" ||
+          this.state === "unsupported"
+        ) {
           this.setState("idle")
           // Hidden stays connected-but-stopped, so handshake as soon as anyone has mounted.
           if (this.desired) void this.ensureOpen().then((open) => open && this.sync())

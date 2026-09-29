@@ -18,7 +18,13 @@ case "${BRANCH:-}" in
     ;;
 esac
 
-if [[ -z "$webhook_url" ]]; then
+bot_channel="${SLACK_DEV_BUILDS_CHANNEL_ID:-}"
+[[ "${BRANCH:-}" != staging ]] || bot_channel="${SLACK_STAGING_BUILDS_CHANNEL_ID:-}"
+use_bot=false
+if [[ "${RELEASE_SCOPE:-core}" != examples && -n "${SLACK_BUILDS_BOT_TOKEN:-}" && "$bot_channel" =~ ^C[A-Z0-9]+$ ]]; then
+  use_bot=true
+fi
+if [[ -z "$webhook_url" && "$use_bot" != true ]]; then
   echo "::warning::$webhook_secret is not set; skipping the $channel_label release notification."
   exit 0
 fi
@@ -233,8 +239,12 @@ if [[ "${SLACK_NOTIFY_DRY_RUN:-}" == "true" ]]; then
   exit 0
 fi
 
-curl --fail --silent --show-error --retry 3 \
-  --header "Content-Type: application/json" \
-  --data "$payload" \
-  "$webhook_url"
+if [[ "$use_bot" == true ]]; then
+  printf '%s\n' "$payload" | node "$(dirname -- "$0")/release-slack-message.mjs"
+else
+  curl --fail --silent --show-error --retry 3 \
+    --header "Content-Type: application/json" \
+    --data "$payload" \
+    "$webhook_url"
+fi
 echo

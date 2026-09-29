@@ -24,7 +24,7 @@ export function finalizedBeta() {
     "npm": (name) => `${name}@${plan.releaseIdentity}`,
     "maven-central": () => `com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`,
     "swift-package-manager": () => `Mentra-Community/mentra-bluetooth-sdk-ios@${plan.releaseIdentity}`,
-    "google-play": () => `com.mentra.mentra:${plan.native.buildNumber}:internal-app-sharing`,
+    "google-play": () => `com.mentra.mentra:${plan.native.buildNumber}:beta`,
     "app-store-connect": () =>
       `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:Mentra Staging`,
   }

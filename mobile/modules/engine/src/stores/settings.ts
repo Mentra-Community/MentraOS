@@ -47,6 +47,11 @@ export interface Setting {
    * Absent means the value is never invalidated automatically.
    */
   resetOnBuildEnvChange?: true
+  /**
+   * The value is a credential (for example a bearer token). Surfaces that show
+   * or hand settings to the user, such as Data Export, must redact it.
+   */
+  credential?: true
 }
 
 export const SETTINGS: Record<string, Setting> = {
@@ -286,7 +291,14 @@ export const SETTINGS: Record<string, Setting> = {
   // Volatile bearer synced to Bluetooth for glasses-side Cloud V2 calls. The
   // key name is kept for BLE compatibility, but the value must never be loaded
   // from or saved to the legacy Cloud V1 settings store.
-  core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: false, persist: false},
+  core_token: {
+    key: "core_token",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+    credential: true,
+  },
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   // Pairing identity is per-phone, not per-account: two phones on one account
   // can be paired to different glasses, so none of these keys may sync to the

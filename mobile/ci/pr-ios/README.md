@@ -2,8 +2,9 @@
 
 The final **#pr-builds** Slack message offers iPhone installation and iPhone/Mac
 downloads from one signed iOS Release app. These are ad hoc builds for registered test devices. They do not
-use TestFlight or require a source build or local re-signing. They use the dev
-backend and normal product defaults. Settings identifies the canonical app version and current PR branch/head. The
+use TestFlight or require a source build or local re-signing. Staging-targeted PR
+builds use staging services; other PR builds use dev services, with normal product
+defaults. Settings identifies the canonical app version and current PR branch/head. The
 receipt separately records the actual candidate checkout, original compilation
 revision, fingerprint and numeric native build.
 
@@ -93,8 +94,9 @@ retroactively.
 
 ## Request a recorded UI walkthrough
 
-Add `routine:no-glasses` to a same-repository PR targeting `dev` to request the
-walkthrough on its published Mac build. Wait for the iOS build and Mac artifact
+Add `routine:no-glasses` to a same-repository PR targeting `dev` or `staging` to
+request the walkthrough on its published Mac build. A staging-targeted PR app
+uses staging services; every other PR app uses dev. Wait for the iOS build and Mac artifact
 publication to finish. The request pins the PR revision and archive; a label or
 successful app build alone does not mean the walkthrough passed.
 

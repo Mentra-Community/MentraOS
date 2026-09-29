@@ -3,26 +3,46 @@ import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { TestAssetModel, TestRunModel } from "../models/test-run.model";
+import { TEST_RUN_COMPLETION_INDEX, TestAssetModel, TestRunModel } from "../models/test-run.model";
+import { testFailureOccurrenceIdSchema, type TestFailureOccurrence, type TestFailureProvenanceCorrection } from "../types/test-failure.types";
 import { testRunIdSchema, testRunSchema, type TestAsset, type TestRun, type TestRunQuery } from "../types/test-run.types";
+import { recordedAppPublicationSchema, testBuildSourceSchema } from "../types/test-dispatch.types";
+import { createTestFailureOccurrences } from "./test-failure-occurrence";
+import { RecoveryLineageError, testFailureProjection, type TestFailureProjection, type TestRecoveryLineage } from "./test-recovery-lineage";
 import { createStorageService, type StorageService } from "./storage/storage.service";
+import { ByteRangeError, parseSingleByteRange } from "./storage/byte-range";
 
 export class TestRunError extends Error {
-  constructor(readonly status: 400 | 404 | 409 | 413 | 416, message: string) { super(message); }
+  constructor(readonly status: 400 | 404 | 409 | 413 | 416 | 503, message: string) { super(message); }
 }
-export interface StoredTestRun { run: TestRun; payloadSha256: string }
+export interface StoredTestRun { run: TestRun; payloadSha256: string; failureOccurrences?: TestFailureOccurrence[];
+  provenanceCorrections?: TestFailureProvenanceCorrection[]; recoveryLineage?: TestRecoveryLineage }
+type CorrectionSettlement = Extract<TestFailureProvenanceCorrection["delivery"], { state: "acknowledged" | "refused" }>;
 export interface StoredTestAsset { runId: string; assetId: string; storageKey: string; sizeBytes: number; sha256: string }
 export interface TestRunRepository {
   get(runId: string): Promise<StoredTestRun | null>;
-  insert(run: TestRun, payloadSha256: string): Promise<{ stored: StoredTestRun; created: boolean }>;
+  insert(run: TestRun, payloadSha256: string, projection?: TestFailureProjection): Promise<{ stored: StoredTestRun; created: boolean }>;
   list(query: TestRunQuery): Promise<StoredTestRun[]>;
+  recent(): Promise<StoredTestRun[]>;
   assets(runId: string): Promise<StoredTestAsset[]>;
   insertAsset(asset: StoredTestAsset): Promise<StoredTestAsset>;
   markUploadsComplete(run: TestRun): Promise<void>;
+  reconcileFailures(stored: StoredTestRun, projection?: TestFailureProjection): Promise<StoredTestRun>;
+  failure(occurrenceId: string): Promise<StoredTestRun | null>;
+  pendingFailures(limit: number): Promise<StoredTestRun[]>;
+  noteFailureDeliveryAttempt(occurrenceId: string): Promise<void>;
+  acknowledgeFailure(occurrenceId: string, agentRunId: string): Promise<void>;
+  /** One conditional append pinned to the exact accepted payload, source absence and acknowledged anchor. */
+  addProvenanceCorrection(correction: TestFailureProvenanceCorrection): Promise<StoredTestRun | null>;
+  pendingProvenanceCorrections(limit: number): Promise<TestFailureProvenanceCorrection[]>;
+  noteProvenanceCorrectionAttempt(correctionId: string): Promise<void>;
+  /** Pending only; returns the stored correction afterwards so a racing settlement is visible. */
+  settleProvenanceCorrection(correctionId: string, delivery: CorrectionSettlement): Promise<TestFailureProvenanceCorrection | null>;
 }
 
 function duplicate(error: unknown): boolean { return (error as { code?: number })?.code === 11000; }
-function canonical(value: unknown): string {
+const failureWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
+export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
@@ -36,14 +56,23 @@ function decodeCursor(cursor: string) {
 
 export class MongoTestRunRepository implements TestRunRepository {
   async get(runId: string): Promise<StoredTestRun | null> {
-    const row = await TestRunModel.findOne({ runId }).lean();
-    return row ? { run: row.payload as TestRun, payloadSha256: row.payloadSha256 } : null;
+    const row = await TestRunModel.findOne({ runId }).read("primary").readConcern("majority").lean();
+    return row ? this.stored(row) : null;
   }
-  async insert(run: TestRun, payloadSha256: string) {
+  private stored(row: { payload: unknown; payloadSha256: string; failureOccurrences?: unknown[] | null; provenanceCorrections?: unknown[] | null; recoveryLineage?: unknown }): StoredTestRun {
+    return { run: row.payload as TestRun, payloadSha256: row.payloadSha256,
+      failureOccurrences: (row.failureOccurrences ?? undefined) as TestFailureOccurrence[] | undefined,
+      ...(row.provenanceCorrections ? { provenanceCorrections: row.provenanceCorrections as TestFailureProvenanceCorrection[] } : {}),
+      ...(row.recoveryLineage ? { recoveryLineage: row.recoveryLineage as TestRecoveryLineage } : {}) };
+  }
+  async insert(run: TestRun, payloadSha256: string, projection: TestFailureProjection = { failureOccurrences: createTestFailureOccurrences(run) }) {
     try {
-      await TestRunModel.create({ runId: run.runId, requestId: run.requestId, startedAt: new Date(run.startedAt), payloadSha256, payload: run,
-        uploadsComplete: run.assets.length === 0, outcome: run.outcome === "passed" && run.assets.length > 0 ? "blocked" : run.outcome });
-      return { stored: { run, payloadSha256 }, created: true };
+      await TestRunModel.create([{ runId: run.runId, requestId: run.requestId, startedAt: new Date(run.startedAt),
+        completedAt: new Date(run.finishedAt), completionProjectionVersion: 1, payloadSha256, payload: run,
+        ...projection,
+        uploadsComplete: run.assets.length === 0, outcome: run.outcome === "passed" && run.assets.length > 0 ? "blocked" : run.outcome }],
+      { writeConcern: failureWriteConcern });
+      return { stored: { run, payloadSha256, ...projection }, created: true };
     } catch (error) {
       if (!duplicate(error)) throw error;
       const stored = await this.get(run.runId);
@@ -53,6 +82,9 @@ export class MongoTestRunRepository implements TestRunRepository {
   }
   async list(query: TestRunQuery): Promise<StoredTestRun[]> {
     const filter: Record<string, unknown> = {};
+    if (query.occurrenceId) filter.$and = [{ $or: [
+      { "failureOccurrences.occurrenceId": query.occurrenceId }, { "recoveryLineage.inheritedFailures.occurrenceId": query.occurrenceId },
+    ] }];
     if (query.outcome) filter.outcome = query.outcome;
     for (const [input, path] of [["pr", "prNumber"], ["channel", "channel"],
       ["repository", "provenance.repository"], ["headSha", "provenance.headSha"], ["archiveSha256", "provenance.archiveSha256"],
@@ -69,7 +101,18 @@ export class MongoTestRunRepository implements TestRunRepository {
         { startedAt: new Date(cursor.startedAt), runId: { $lt: cursor.runId } }];
     }
     const rows = await TestRunModel.find(filter).sort({ startedAt: -1, runId: -1 }).limit(query.limit + 1).lean();
-    return rows.map(row => ({ run: row.payload as TestRun, payloadSha256: row.payloadSha256 }));
+    return rows.map(row => this.stored(row));
+  }
+  async recent(): Promise<StoredTestRun[]> {
+    // Startup backfills old rows. An old writer during a rolling deployment must not
+    // make history silently disappear; rerun the explicit migration after it retires.
+    const unprojected = await TestRunModel.findOne({ completionProjectionVersion: { $ne: 1 } }).select({ _id: 1 })
+      .hint(TEST_RUN_COMPLETION_INDEX).read("primary").readConcern("majority").maxTimeMS(5_000).lean();
+    if (unprojected) throw new TestRunError(503, "Recent runs await completion-date migration; retry after deployment finishes");
+    const rows = await TestRunModel.find({ completionProjectionVersion: 1, completedAt: { $type: "date" } })
+      .sort({ completedAt: -1, runId: -1 }).limit(6).hint(TEST_RUN_COMPLETION_INDEX)
+      .read("primary").readConcern("majority").maxTimeMS(5_000).lean();
+    return rows.map(row => this.stored(row));
   }
   async assets(runId: string): Promise<StoredTestAsset[]> {
     return TestAssetModel.find({ runId }).lean();
@@ -86,21 +129,102 @@ export class MongoTestRunRepository implements TestRunRepository {
   async markUploadsComplete(run: TestRun): Promise<void> {
     await TestRunModel.updateOne({ runId: run.runId }, { $set: { uploadsComplete: true, outcome: run.outcome } });
   }
+  async reconcileFailures(stored: StoredTestRun, projection: TestFailureProjection = { failureOccurrences: createTestFailureOccurrences(stored.run) }): Promise<StoredTestRun> {
+    if (stored.failureOccurrences !== undefined) return stored;
+    // Old accepted rows can be reconciled by replaying their exact metadata.
+    // Never reset a delivery acknowledgment during a replay or a racing retry.
+    await TestRunModel.updateOne({ runId: stored.run.runId, payloadSha256: stored.payloadSha256,
+      failureOccurrences: { $exists: false } }, { $set: projection },
+    { writeConcern: failureWriteConcern });
+    const reconciled = await this.get(stored.run.runId);
+    if (!reconciled || reconciled.failureOccurrences === undefined) throw new Error("failure occurrence reconciliation did not persist");
+    return reconciled;
+  }
+  async failure(occurrenceId: string): Promise<StoredTestRun | null> {
+    const row = await TestRunModel.findOne({ "failureOccurrences.occurrenceId": occurrenceId }).read("primary").readConcern("majority").lean();
+    return row ? this.stored(row) : null;
+  }
+  async pendingFailures(limit: number): Promise<StoredTestRun[]> {
+    const rows = await TestRunModel.aggregate([
+      { $match: { "failureOccurrences.delivery.state": "pending" } },
+      { $unwind: "$failureOccurrences" },
+      { $match: { "failureOccurrences.delivery.state": "pending" } },
+      { $sort: { "failureOccurrences.delivery.lastAttemptAt": 1, startedAt: 1, runId: 1, "failureOccurrences.occurrenceId": 1 } },
+      { $limit: limit },
+      { $project: { payload: 1, payloadSha256: 1, failureOccurrences: ["$failureOccurrences"] } },
+    ]).readConcern("majority");
+    return rows.map(row => this.stored(row));
+  }
+  async noteFailureDeliveryAttempt(occurrenceId: string): Promise<void> {
+    await TestRunModel.updateOne({ failureOccurrences: { $elemMatch: { occurrenceId, "delivery.state": "pending" } } }, {
+      $set: { "failureOccurrences.$.delivery.lastAttemptAt": new Date().toISOString() },
+    }, { writeConcern: failureWriteConcern });
+  }
+  async acknowledgeFailure(occurrenceId: string, agentRunId: string): Promise<void> {
+    await TestRunModel.updateOne({ failureOccurrences: { $elemMatch: { occurrenceId, "delivery.state": "pending" } } }, {
+      $set: { "failureOccurrences.$.delivery": { state: "acknowledged", agentRunId, acknowledgedAt: new Date().toISOString() } },
+    }, { writeConcern: failureWriteConcern });
+    const stored = await this.failure(occurrenceId);
+    const delivery = stored?.failureOccurrences?.find(item => item.occurrenceId === occurrenceId)?.delivery;
+    if (delivery?.state !== "acknowledged" || delivery.agentRunId !== agentRunId)
+      throw new TestRunError(409, "occurrence already has a different delivery receipt");
+  }
+  async addProvenanceCorrection(correction: TestFailureProvenanceCorrection): Promise<StoredTestRun | null> {
+    // Never touches payload, payloadSha256 or failureOccurrences: a separate field, one record per occurrence.
+    await TestRunModel.updateOne({ runId: correction.runId, payloadSha256: correction.payloadSha256, "payload.source": { $exists: false },
+      failureOccurrences: { $elemMatch: { occurrenceId: correction.occurrenceId, revision: correction.occurrenceRevision,
+        "delivery.state": "acknowledged", "delivery.agentRunId": correction.agentRunId } },
+      "provenanceCorrections.occurrenceId": { $ne: correction.occurrenceId } },
+    { $push: { provenanceCorrections: correction } }, { writeConcern: failureWriteConcern });
+    return this.get(correction.runId);
+  }
+  async pendingProvenanceCorrections(limit: number): Promise<TestFailureProvenanceCorrection[]> {
+    const rows = await TestRunModel.aggregate([
+      { $match: { "provenanceCorrections.delivery.state": "pending" } },
+      { $unwind: "$provenanceCorrections" },
+      { $match: { "provenanceCorrections.delivery.state": "pending" } },
+      { $sort: { "provenanceCorrections.delivery.lastAttemptAt": 1, startedAt: 1, runId: 1, "provenanceCorrections.correctionId": 1 } },
+      { $limit: limit },
+      { $project: { _id: 0, correction: "$provenanceCorrections" } },
+    ]).readConcern("majority");
+    return rows.map(row => row.correction as TestFailureProvenanceCorrection);
+  }
+  async noteProvenanceCorrectionAttempt(correctionId: string): Promise<void> {
+    await TestRunModel.updateOne({ provenanceCorrections: { $elemMatch: { correctionId, "delivery.state": "pending" } } }, {
+      $set: { "provenanceCorrections.$.delivery.lastAttemptAt": new Date().toISOString() },
+    }, { writeConcern: failureWriteConcern });
+  }
+  async settleProvenanceCorrection(correctionId: string, delivery: CorrectionSettlement): Promise<TestFailureProvenanceCorrection | null> {
+    await TestRunModel.updateOne({ provenanceCorrections: { $elemMatch: { correctionId, "delivery.state": "pending",
+      ...(delivery.state === "acknowledged" ? { agentRunId: delivery.agentRunId } : {}) } } },
+    { $set: { "provenanceCorrections.$.delivery": delivery } }, { writeConcern: failureWriteConcern });
+    const row = await TestRunModel.findOne({ "provenanceCorrections.correctionId": correctionId }).read("primary").readConcern("majority").lean();
+    return ((row?.provenanceCorrections ?? []) as TestFailureProvenanceCorrection[]).find(item => item.correctionId === correctionId) ?? null;
+  }
+}
+
+/** The reviewed correction a read may apply: never a refused one, and only while it still binds the exact
+ * accepted payload, the missing source and the occurrence's own acknowledged anchor. */
+export function activeProvenanceCorrection(stored: StoredTestRun, occurrence: TestFailureOccurrence): TestFailureProvenanceCorrection | undefined {
+  const correction = stored.provenanceCorrections?.find(item => item.occurrenceId === occurrence.occurrenceId);
+  return correction && correction.delivery.state !== "refused" && !stored.run.source && correction.payloadSha256 === stored.payloadSha256
+    && correction.runId === stored.run.runId && occurrence.delivery.state === "acknowledged" && occurrence.delivery.agentRunId === correction.agentRunId
+    ? correction : undefined;
+}
+/** Original assignments first, then the reviewed asset additions; incidents stay exactly the original ones. */
+export function effectiveFailureBindings(occurrence: TestFailureOccurrence, correction?: TestFailureProvenanceCorrection) {
+  return { assetIds: [...occurrence.failure.assetIds, ...(correction?.added?.assets ?? []).map(item => item.assetId)
+    .filter(id => !occurrence.failure.assetIds.includes(id))] };
 }
 
 /** Single HTTP byte range, inclusive. Invalid or multipart ranges are deliberately rejected. */
 export function parseTestAssetRange(header: string | null, size: number): { start: number; end: number } | undefined {
-  if (!header) return undefined;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header);
-  if (!match || (!match[1] && !match[2])) throw new TestRunError(416, "invalid byte range");
-  const suffix = match[1] === "";
-  const a = Number(match[1] || match[2]);
-  const b = match[2] ? Number(match[2]) : size - 1;
-  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || (suffix && a === 0)) throw new TestRunError(416, "invalid byte range");
-  const start = suffix ? Math.max(0, size - a) : a;
-  const end = suffix ? size - 1 : Math.min(b, size - 1);
-  if (start >= size || start > end) throw new TestRunError(416, "unsatisfiable byte range");
-  return { start, end };
+  try {
+    return parseSingleByteRange(header, size);
+  } catch (error) {
+    if (error instanceof ByteRangeError) throw new TestRunError(416, error.message);
+    throw error;
+  }
 }
 
 function mediaSignatureMatches(type: string, bytes: Buffer): boolean {
@@ -123,11 +247,24 @@ export class TestRunService {
     if (!parsed.success) throw new TestRunError(400, parsed.error.issues[0]?.message ?? "invalid test run");
     const run = parsed.data;
     const payloadSha256 = createHash("sha256").update(canonical(run)).digest("hex");
-    const { stored, created } = await this.repository.insert(run, payloadSha256);
+    const accepted = await this.repository.get(run.runId);
+    if (accepted && accepted.payloadSha256 !== payloadSha256) throw new TestRunError(409, "runId already belongs to a different immutable result");
+    let projection: TestFailureProjection | undefined;
+    if (accepted?.failureOccurrences === undefined) {
+      try { projection = await testFailureProjection(run, id => this.repository.get(id)); }
+      catch (error) {
+        if (error instanceof RecoveryLineageError) throw new TestRunError(409, error.message);
+        throw error;
+      }
+    }
+    const { stored, created } = accepted ? { stored: accepted, created: false } : await this.repository.insert(run, payloadSha256, projection);
     if (stored.payloadSha256 !== payloadSha256) throw new TestRunError(409, "runId already belongs to a different immutable result");
+    const reconciled = await this.repository.reconcileFailures(stored, projection);
     const uploaded = new Set((await this.repository.assets(run.runId)).map(asset => asset.assetId));
     if (run.assets.every(asset => uploaded.has(asset.assetId))) await this.repository.markUploadsComplete(run);
     return { runId: run.runId, reportPath: `/?testRun=${encodeURIComponent(run.runId)}`, created, payloadSha256,
+      occurrenceIds: [...(reconciled.failureOccurrences ?? []).map(item => item.occurrenceId),
+        ...(reconciled.recoveryLineage?.inheritedFailures ?? []).map(item => item.occurrenceId)],
       missingAssetIds: run.assets.filter(asset => !uploaded.has(asset.assetId)).map(asset => asset.assetId) };
   }
 
@@ -139,29 +276,172 @@ export class TestRunService {
   }
 
   async detail(runId: string) {
-    return this.present(await this.required(runId));
+    await this.required(runId);
+    const stored = await this.repository.get(runId);
+    if (!stored) throw new TestRunError(404, "test run not found");
+    return this.present(stored);
   }
 
-  private async present(run: TestRun) {
+  private async present(stored: StoredTestRun) {
+    const { run } = stored;
     const uploaded = new Set((await this.repository.assets(run.runId)).map(asset => asset.assetId));
     const complete = run.outcomes.evidence === "complete" && run.assets.every(asset => uploaded.has(asset.assetId));
-    return { ...run, outcome: run.outcome === "passed" && !complete ? "blocked" as const : run.outcome,
+    return { ...run, ...(run.release || run.provenance.releaseIdentity ? { release: run.release ?? run.provenance.releaseIdentity } : {}),
+      failureOccurrences: await this.presentFailureOccurrences(stored),
+      ...(stored.recoveryLineage ? { recoveryLineage: stored.recoveryLineage } : {}),
+      // Reviewed corrections stay separate from the accepted occurrences they amend.
+      ...(stored.provenanceCorrections?.length ? { provenanceCorrections: stored.provenanceCorrections } : {}),
+      outcome: run.outcome === "passed" && !complete ? "blocked" as const : run.outcome,
       outcomes: { ...run.outcomes, evidence: complete ? "complete" as const : "incomplete" as const },
       assets: run.assets.map(asset => ({ ...asset, uploaded: uploaded.has(asset.assetId) })) };
+  }
+
+  /** Inherited failures reuse the original live delivery receipt without duplicating its outbox row. */
+  private async presentFailureOccurrences(stored: StoredTestRun): Promise<TestFailureOccurrence[]> {
+    const failures = createTestFailureOccurrences(stored.run);
+    const owners = new Map<string, Promise<StoredTestRun | null>>();
+    const inherited = await Promise.all((stored.recoveryLineage?.inheritedFailures ?? []).map(async reference => {
+      if (!owners.has(reference.runId)) owners.set(reference.runId, this.repository.get(reference.runId));
+      const owner = await owners.get(reference.runId);
+      const occurrence = owner?.failureOccurrences?.find(item => item.occurrenceId === reference.occurrenceId);
+      const local = failures[reference.failureIndex];
+      if (!owner || owner.payloadSha256 !== reference.payloadSha256 || !occurrence || !local)
+        throw new TestRunError(503, "inherited failure occurrence is unavailable");
+      return { ...occurrence, failure: local.failure };
+    }));
+    return [...(stored.failureOccurrences ?? []), ...inherited];
+  }
+
+  private async summary(row: StoredTestRun) {
+    const { chapters, assets, firmwareAssertions, notes, failures, failureOccurrences, provenanceCorrections: _corrections, ...summary } = await this.present(row);
+    return { ...summary, failureOccurrences: failureOccurrences.map(item => ({ occurrenceId: item.occurrenceId,
+      phase: item.failure.phase, step: item.failure.step, delivery: item.delivery })) };
+  }
+
+  async recent() {
+    return { runs: await Promise.all((await this.repository.recent()).map(row => this.summary(row))) };
   }
 
   async list(query: TestRunQuery) {
     if (query.cursor) decodeCursor(query.cursor);
     const rows = await this.repository.list(query);
     const page = rows.slice(0, query.limit);
-    const runs = await Promise.all(page.map(async row => {
-      const { chapters, assets, firmwareAssertions, notes, ...summary } = await this.present(row.run);
-      return summary;
-    }));
+    const runs = await Promise.all(page.map(row => this.summary(row)));
     const last = page.at(-1)?.run;
     return { runs, nextCursor: rows.length > query.limit && last ? Buffer.from(JSON.stringify({
       startedAt: new Date(last.startedAt).toISOString(), runId: last.runId,
     })).toString("base64url") : null };
+  }
+
+  private async requiredFailure(occurrenceId: string) {
+    if (!testFailureOccurrenceIdSchema.safeParse(occurrenceId).success) throw new TestRunError(400, "invalid occurrenceId");
+    const stored = await this.repository.failure(occurrenceId);
+    const occurrence = stored?.failureOccurrences?.find(item => item.occurrenceId === occurrenceId);
+    if (!stored || !occurrence) throw new TestRunError(404, "failure occurrence not found");
+    return { stored, occurrence };
+  }
+
+  async failureDetail(occurrenceId: string) {
+    const { stored, occurrence } = await this.requiredFailure(occurrenceId);
+    const { run, payloadSha256 } = stored;
+    // Without a reviewed correction every field below is exactly the original packet.
+    const correction = activeProvenanceCorrection(stored, occurrence);
+    const bindings = effectiveFailureBindings(occurrence, correction);
+    const source = run.source ?? correction?.source ?? null;
+    const uploaded = new Set((await this.repository.assets(run.runId)).map(asset => asset.assetId));
+    const assets = run.assets.filter(asset => bindings.assetIds.includes(asset.assetId));
+    // Do not forward free-form notes/provenance, undeclared logs, account state or
+    // storage keys. Agent-visible diagnostics must be explicitly redacted inputs.
+    const hashes = Object.fromEntries(Object.entries(run.provenance).filter(([key, value]) =>
+      ["headSha", "baseSha", "buildSha", "mobileSourceCommit", "harnessSha", "harnessRevision", "archiveSha256", "receiptSha256", "manifestSha256", "requestSha256"].includes(key)
+      && /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(value)));
+    const workflowUrl = (value: string | undefined) => value && /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/\d+(\/attempts\/\d+)?$/.test(value) ? value : null;
+    const relatedRunId = (value: string | undefined) => testRunIdSchema.safeParse(value).success ? value! : null;
+    // Only this explicit app producer field is a publication hint. A local test
+    // remains local; neither a harness workflow nor a free-form URL is promoted.
+    const producer = /^https:\/\/github\.com\/Mentra-Community\/MentraOS\/actions\/runs\/([1-9]\d*)(?:\/attempts\/([1-9]\d*))?$/.exec(run.provenance.appActionsRunUrl ?? "");
+    const publication = producer && run.source?.channel === "local" ? recordedAppPublicationSchema.safeParse({
+      producerRunId: Number(producer[1]), ...(producer[2] ? { publicationAttempt: Number(producer[2]) } : {}),
+      executableSha256: run.provenance.appExecutableSha256, javascriptSha256: run.provenance.appJavascriptSha256,
+    }) : null;
+    // An independently published audit may name its exact app producer without
+    // consuming a routine request. Keep that origin; this is only a lookup hint
+    // until the build resolver verifies its source, publication and archive.
+    const recordedBuild = run.source && ["dev", "staging"].includes(run.source.channel)
+      && /^[1-9]\d*$/.test(run.provenance.producerRunId ?? "") && /^[1-9]\d*$/.test(run.provenance.publicationAttempt ?? "")
+      ? testBuildSourceSchema.safeParse({ channel: run.source.channel,
+        buildRunId: Number(run.provenance.producerRunId), publicationAttempt: Number(run.provenance.publicationAttempt) }) : null;
+    return { schemaVersion: 1 as const, occurrenceId, revision: occurrence.revision,
+      testRunId: run.runId, requestId: run.requestId, payloadSha256,
+      routine: { id: run.routineId, version: run.routineVersion }, platform: run.platform,
+      source, sourceStatus: run.source ? "recorded" as const : correction ? "corrected" as const : "missing" as const,
+      build: { channel: run.channel, prNumber: run.prNumber ?? null, hashes,
+        requestUrl: workflowUrl(run.provenance.requestUrl), producerUrl: workflowUrl(run.provenance.producerUrl),
+        ...(publication?.success ? { recordedAppPublication: publication.data } : {}),
+        ...(recordedBuild?.success ? { recordedAppBuild: recordedBuild.data } : {}) },
+      recovery: { originalRunId: relatedRunId(run.provenance.originalRunId), previousResultRunId: relatedRunId(run.provenance.previousResultRunId) },
+      originalOutcome: run.outcome, outcomes: run.outcomes,
+      failure: { ...occurrence.failure, ...(correction ? bindings : {}), missingEvidence: [
+        ...occurrence.failure.missingEvidence,
+        ...(!run.source ? [{ kind: "source" as const, reason: correction
+          ? "Authenticated branch and trigger provenance was not published with this result; the source above is an admin-reviewed provenance correction, not publisher provenance."
+          : "Authenticated branch and trigger provenance was not published; automatic editing is not admitted." }] : []),
+      ] },
+      // A correction never completes evidence: completeness still requires publisher-recorded source.
+      evidence: { complete: Boolean(run.source) && occurrence.failure.missingEvidence.length === 0
+          && run.outcomes.evidence === "complete" && assets.every(asset => uploaded.has(asset.assetId)),
+        assets: assets.map(asset => ({ ...asset, state: uploaded.has(asset.assetId) ? "uploaded" as const : "upload-pending" as const,
+          path: `/api/agent/test-failures/${occurrenceId}/assets/${asset.assetId}` })) },
+      delivery: occurrence.delivery,
+      ...(correction ? { provenanceCorrection: {
+        correctionId: correction.correctionId, correctionSha256: correction.correctionSha256, revision: correction.revision,
+        reviewedAt: correction.reviewedAt, reason: correction.reason, original: correction.original, added: correction.added,
+        review: correction.review, delivery: { state: correction.delivery.state } } } : {}),
+    };
+  }
+
+  async failureMedia(occurrenceId: string, assetId: string, request: Request) {
+    const { stored, occurrence } = await this.requiredFailure(occurrenceId);
+    if (!effectiveFailureBindings(occurrence, activeProvenanceCorrection(stored, occurrence)).assetIds.includes(assetId))
+      throw new TestRunError(404, "asset is not assigned to this occurrence");
+    return this.media(stored.run.runId, assetId, request);
+  }
+
+  async pendingFailureDeliveries(limit = 10) {
+    const rows = await this.repository.pendingFailures(Math.max(1, Math.min(10, limit)));
+    return rows.flatMap(({ run, failureOccurrences }) => (failureOccurrences ?? [])
+      .filter(item => item.delivery.state === "pending")
+      .map(item => ({ occurrenceId: item.occurrenceId, revision: item.revision, testRunId: run.runId, source: run.source ?? null }))).slice(0, limit);
+  }
+
+  async acknowledgeFailure(occurrenceId: string, agentRunId: string) {
+    await this.requiredFailure(occurrenceId);
+    await this.repository.acknowledgeFailure(occurrenceId, agentRunId);
+  }
+
+  async noteFailureDeliveryAttempt(occurrenceId: string) {
+    await this.repository.noteFailureDeliveryAttempt(occurrenceId);
+  }
+
+  /** Signed-transport references for pending reviewed corrections; the controller reads diagnostics from the packet. */
+  async pendingProvenanceCorrectionDeliveries(limit = 10) {
+    return (await this.repository.pendingProvenanceCorrections(Math.max(1, Math.min(10, limit)))).slice(0, limit).map(item => ({
+      occurrenceId: item.occurrenceId, revision: item.occurrenceRevision, testRunId: item.runId, payloadSha256: item.payloadSha256,
+      agentRunId: item.agentRunId, correctionId: item.correctionId, correctionSha256: item.correctionSha256, source: item.source }));
+  }
+  async noteProvenanceCorrectionAttempt(correctionId: string) {
+    await this.repository.noteProvenanceCorrectionAttempt(correctionId);
+  }
+  /** Only the occurrence's own acknowledged anchor can acknowledge its correction. */
+  async acknowledgeProvenanceCorrection(correctionId: string, agentRunId: string) {
+    const stored = await this.repository.settleProvenanceCorrection(correctionId,
+      { state: "acknowledged", agentRunId, acknowledgedAt: new Date().toISOString() });
+    if (stored?.delivery.state !== "acknowledged" || stored.delivery.agentRunId !== agentRunId || stored.agentRunId !== agentRunId)
+      throw new TestRunError(409, "correction has a different delivery receipt");
+  }
+  /** The controller's explicit refusal is terminal and visible; it never changes the occurrence. */
+  async refuseProvenanceCorrection(correctionId: string) {
+    await this.repository.settleProvenanceCorrection(correctionId, { state: "refused", refusedAt: new Date().toISOString() });
   }
 
   async upload(runId: string, assetId: string, body: ReadableStream<Uint8Array> | null, headers: Headers) {

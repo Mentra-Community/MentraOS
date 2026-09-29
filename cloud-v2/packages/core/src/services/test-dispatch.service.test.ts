@@ -8,6 +8,7 @@ import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from
 import { TestRunGithubApp } from "./test-run-github-app";
 import type { TestDispatchInput, TestDispatchReceipt, TestDispatchView } from "../types/test-dispatch.types";
 import type { AppEnv } from "../types/hono.types";
+import type { TestContinuationBinding } from "../types/test-continuation.types";
 
 const input: TestDispatchInput = { source: { channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1 }, routineId: "no-glasses",
   archiveSha256: "d".repeat(64), idempotencyKey: "ad616c04-c5e5-4dcd-b7c4-d9d4a626166d" };
@@ -159,6 +160,37 @@ describe("durable dispatch ownership", () => {
     expect((await f.service.create(input, "admin@example.test")).state).toBe("unavailable");
     expect(f.sends()).toBe(0);
   });
+  test("failed continuation admission keeps its unsent execution available for a fresh publication", async () => {
+    const f = fixture(), resolve = f.github.resolve;
+    const binding: TestContinuationBinding = { occurrenceId: "tfo_" + "e".repeat(64), agentRunId: "agent", executionAttempt: 1,
+      candidate: { repository: "Mentra-Community/MentraOS", pullRequest: 12, headSha: "a".repeat(40) }, expectedHeadSha: "a".repeat(40) };
+    f.github.resolve = async () => { throw new TestDispatchError(409, "Publication expired"); };
+    await expect(f.service.create(input, "agent", binding)).rejects.toThrow("Publication expired");
+    expect(f.repository.rows.size).toBe(0); expect(f.sends()).toBe(0);
+    f.github.resolve = resolve;
+    const selected = { ...input, source: { ...input.source, publicationAttempt: 2 } };
+    expect((await f.service.create(selected, "agent", binding)).sendState).toBe("accepted");
+    await f.service.create(selected, "agent", binding); expect(f.sends()).toBe(1);
+  });
+  for (const first of ["rejection", "send"]) test(`continuation ${first} cannot replace the concurrent sent receipt`, async () => {
+    const f = fixture(), valid = await f.github.resolve(input.source);
+    const binding: TestContinuationBinding = { occurrenceId: "tfo_" + "e".repeat(64), agentRunId: "agent", executionAttempt: 1,
+      candidate: { repository: "Mentra-Community/MentraOS", pullRequest: 12, headSha: "a".repeat(40) }, expectedHeadSha: "a".repeat(40) };
+    const pending = [deferred<typeof valid>(), deferred<typeof valid>()], entered = deferred<void>(); let calls = 0;
+    f.github.resolve = async () => { const index = calls++; if (calls === 2) entered.resolve(); return pending[index]!.promise; };
+    const sending = f.service.create(input, "agent", binding), rejecting = f.service.create(input, "agent", binding);
+    await entered.promise;
+    if (first === "rejection") {
+      pending[1]!.reject(new TestDispatchError(409, "Expired publication"));
+      await expect(rejecting).rejects.toThrow("Expired publication");
+      expect(f.repository.rows.size).toBe(0); pending[0]!.resolve(valid);
+      expect((await sending).sendState).toBe("accepted");
+    } else {
+      pending[0]!.resolve(valid); const sent = await sending;
+      pending[1]!.reject(new TestDispatchError(409, "Expired publication")); expect(await rejecting).toEqual(sent);
+    }
+    expect(f.repository.rows.size).toBe(1); expect(f.sends()).toBe(1);
+  });
   test("transient source validation leaves the same submission available for retry", async () => {
     for (const failure of [new TestDispatchError(503, "GitHub unavailable"), new Error("Network timeout")]) {
       const f = fixture(), resolve = f.github.resolve;
@@ -179,6 +211,20 @@ describe("durable dispatch ownership", () => {
     f.repository.state = { state: "recovery-required" };
     expect((await f.service.detail(input.idempotencyKey)).state).toBe("recovery-required");
   });
+  test.each([["android-refused-install-released", "Android refused the app update"],
+    ["preflight-abandoned-released", "preflight failed before setup"]] as const)(
+    "an original-owner %s closure resolves the request as failed, never finished, and sends nothing", async (kind, cause) => {
+      const f = fixture(); await f.service.create(input, "admin@example.test");
+      f.repository.state = { state: "recovery-required", closure: kind };
+      const result = await f.service.detail(input.idempotencyKey);
+      expect(result).toMatchObject({ state: "failed", requestId: "routine-70-1-12-no-glasses" });
+      expect(result.message).toContain(cause);
+      expect(result.message).toContain("not a pass"); expect(result.message).toContain("uncommissioned");
+      expect(result.message).not.toContain(kind === "preflight-abandoned-released" ? "Android" : "preflight");
+      expect(result.result).toBeUndefined();
+      expect(await f.service.create(input, "admin@example.test")).toEqual(result);
+      expect(f.sends()).toBe(1);
+    });
   test("recovery retains the worker evidence link without adopting the workflow verdict or resending", async () => {
     for (const state of ["running", "failed"] as const) {
       const f = fixture(); await f.service.create(input, "admin@example.test");
@@ -216,4 +262,64 @@ test("all dispatch endpoints require the same admin authentication as recorded r
     expect(response.status).toBe(401);
   }
   expect(f.sends()).toBe(0);
+});
+
+
+test("Android dispatch resolves the selected routine's APK before its single send", async () => {
+  const f = fixture();
+  const androidInput = { ...input, routineId: "no-glasses-android" as const };
+  let observed: unknown;
+  f.github.resolve = async (source, routineId) => {
+    observed = { source, routineId };
+    return { source, platform: "android", title: "Android candidate", headSha: "a".repeat(40),
+      buildUrl: "https://github.com/test", createdAt: new Date().toISOString(), availability: "available",
+      archive: { name: "candidate.apk", sha256: input.archiveSha256, size: 100 },
+      routines: [{ id: "no-glasses-android", available: true }] };
+  };
+  await f.service.create(androidInput, "admin@example.test");
+  expect(observed).toEqual({ source: input.source, routineId: "no-glasses-android" });
+  expect(f.sends()).toBe(1);
+  await f.service.create(androidInput, "admin@example.test");
+  expect(f.sends()).toBe(1);
+});
+
+test("Admin inventory forwards the optional routine selector and rejects arbitrary platforms", async () => {
+  const f = fixture(); let observed: unknown;
+  f.github.inventory = async query => { observed = query; return []; };
+  const api = createTestDispatchAdminApi(f.service, f.github);
+  expect((await api.request("/test-builds?channel=dev&routineId=no-glasses-android")).status).toBe(200);
+  expect(observed).toEqual({ channel: "dev", routineId: "no-glasses-android" });
+  expect((await api.request("/test-builds?channel=dev&platform=android")).status).toBe(400);
+  const routines = await (await api.request("/test-routines")).json() as { routines: { id: string }[] };
+  expect(routines.routines.some(routine => routine.id === "no-glasses-android")).toBe(true);
+});
+
+test("only original or revision-pinned harness continuations may replay an original request; Admin input never can", async () => {
+  const replay = { ...input, originalRequestRunId: 60 };
+  const binding = (candidate: TestContinuationBinding["candidate"]) => ({ occurrenceId: "tfo_" + "a".repeat(64), agentRunId: "run_1",
+    candidate, executionAttempt: 1, expectedHeadSha: "a".repeat(40) });
+  const admin = fixture();
+  await expect(admin.service.create(replay, "admin@example.test")).rejects.toThrow("Invalid routine dispatch request");
+  const candidate = fixture();
+  await expect(candidate.service.create(replay, "routine-fixer:run_1",
+    binding({ repository: "Mentra-Community/MentraOS", pullRequest: 12, headSha: "a".repeat(40) }))).rejects.toThrow("Invalid routine dispatch request");
+  expect(admin.sends() + candidate.sends()).toBe(0);
+  const original = fixture();
+  const seen: unknown[] = [];
+  original.github.resolve = async (source, routineId, requestRunId) => { seen.push(requestRunId);
+    return { source, title: "Original", headSha: "a".repeat(40), buildUrl: "https://github.com/test", createdAt: new Date().toISOString(),
+      availability: "available", archive: { name: "o.zip", sha256: input.archiveSha256, size: 100 }, routines: [{ id: "no-glasses", available: true }] }; };
+  await original.service.create(replay, "routine-fixer:run_1", binding({ repository: "Mentra-Community/MentraOS", headSha: "a".repeat(40), target: "original" }));
+  // The dispatcher re-resolves the same original request, then sends once.
+  expect(seen).toEqual([60]); expect(original.sends()).toBe(1);
+  const harness = { repository: "Mentra-Community/Mentra-Automated-Testing" as const, pullRequest: 231, headSha: "b".repeat(40) };
+  for (const pin of [undefined, "latest"]) {
+    const denied = fixture();
+    await expect(denied.service.create(replay, "routine-fixer:run_1", { ...binding(harness), expectedHarnessSha: pin }))
+      .rejects.toThrow("Invalid routine dispatch request");
+    expect(denied.sends()).toBe(0);
+  }
+  const allowed = fixture(); allowed.github.resolve = original.github.resolve;
+  await allowed.service.create(replay, "routine-fixer:run_1", { ...binding(harness), expectedHarnessSha: "c".repeat(40) });
+  expect(seen).toEqual([60, 60]); expect(allowed.sends()).toBe(1);
 });

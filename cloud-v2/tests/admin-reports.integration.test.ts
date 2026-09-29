@@ -17,13 +17,35 @@
  */
 
 import crypto from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, spyOn } from "bun:test";
 
 const STORAGE_DIR = join(tmpdir(), `mentra-admin-reports-test-${process.pid}`);
 const savedAdminEmails = process.env.CLOUD_CORE_ADMIN_EMAILS;
+const savedAdminDomains = process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS;
+const savedServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let directoryUsers: Array<{ id: string; email: string }> = [];
+let directoryFailure = false;
+let directoryNeverEnds = false;
+let directoryRequests = 0;
+// A local directory deliberately ignores filter, like older GoTrue deployments.
+// This verifies that the server still applies exact admin matching itself.
+const directory = Bun.serve({
+  hostname: "127.0.0.1", port: 0,
+  fetch(req) {
+    directoryRequests++;
+    const url = new URL(req.url);
+    if (url.pathname !== "/auth/v1/admin/users") return new Response(null, { status: 404 });
+    if (directoryFailure) return new Response(null, { status: 503 });
+    const page = Number(url.searchParams.get("page"));
+    const perPage = Number(url.searchParams.get("per_page"));
+    return Response.json({ users: directoryNeverEnds
+      ? Array.from({ length: perPage }, (_, i) => ({ id: `repeated-${i}`, email: "outside@example.test" }))
+      : directoryUsers.slice((page - 1) * perPage, page * perPage) });
+  },
+});
 {
   const { privateKey: nodePriv, publicKey: nodePub } =
     crypto.generateKeyPairSync("ed25519");
@@ -36,9 +58,10 @@ const savedAdminEmails = process.env.CLOUD_CORE_ADMIN_EMAILS;
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
   process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
-  process.env.SUPABASE_URL = "https://testproj.supabase.co";
+  process.env.SUPABASE_URL = directory.url.origin;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "local-directory-test-key";
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
-  // Pin the API-key environment label so minted keys validate deterministically.
+  // Pin the environment label for deterministic local requests.
   process.env.CLOUD_CORE_ENVIRONMENT = "local";
   process.env.WORKOS_API_KEY = "test-workos-service-secret";
   process.env.WORKOS_CLIENT_ID = "client_test";
@@ -65,6 +88,7 @@ const ADMIN_REPORTS_PATH = "http://localhost/api/admin/reports";
 
 let coreApp: ReturnType<typeof createApp>;
 let userAccessToken: string;
+const adminEmail = "admin@example.com";
 const adminBearer = "test-workos-admin-token";
 const nonAdminBearer = "test-workos-developer-token";
 let authSpy: ReturnType<typeof spyOn>;
@@ -99,14 +123,27 @@ afterAll(async () => {
   if (savedAdminEmails === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAILS;
   else process.env.CLOUD_CORE_ADMIN_EMAILS = savedAdminEmails;
   authSpy?.mockRestore();
+  if (savedAdminDomains === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS;
+  else process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = savedAdminDomains;
+  if (savedServiceKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  else process.env.SUPABASE_SERVICE_ROLE_KEY = savedServiceKey;
+  directory.stop(true);
+  await UserModel.deleteMany({ tenantUserId: /^internal-fixture-/ });
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
+  process.env.CLOUD_CORE_ADMIN_EMAILS = adminEmail;
+  process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "";
+  directoryUsers = [];
+  directoryFailure = false;
+  directoryNeverEnds = false;
+  directoryRequests = 0;
   await Promise.all([
     ReportModel.deleteMany({}),
     ReportAssetModel.deleteMany({}),
+    UserModel.deleteMany({ tenantUserId: /^internal-fixture-/ }),
   ]);
 });
 
@@ -123,6 +160,114 @@ describe("admin reports auth gate", () => {
 });
 
 describe("admin reports read surface", () => {
+  test("separates harness reports by their existing source without changing stored kinds", async () => {
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test";
+    directoryUsers = [{ id: "internal-fixture-harness", email: "admin@company.test" }];
+    await UserModel.create({ mentraUserId: "mu_harness_admin", tenantId: "mentra", tenantUserId: "internal-fixture-harness" });
+    const fixtures = [
+      { reportId: "rep_harness_old", kind: "automatic", source: "mentra_automated_testing", status: "ready", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_harness_bug", kind: "bug", source: "mentra_automated_testing", status: "closed", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_harness_new", kind: "automatic", source: "mentra_automated_testing", status: "ready", mentraUserId: "mu_harness_customer" },
+      { reportId: "rep_runtime", kind: "automatic", source: "runtime", status: "ready", mentraUserId: "mu_harness_admin" },
+      { reportId: "rep_untagged", kind: "automatic", source: undefined, status: "ready", mentraUserId: "mu_harness_customer" },
+      { reportId: "rep_human", kind: "bug", source: "feedback_screen", status: "ready", mentraUserId: "mu_harness_admin" },
+    ];
+    for (const [i, fixture] of fixtures.entries()) {
+      const { source, ...row } = fixture;
+      await ReportModel.create({ ...row, trigger: source ? { type: row.kind === "bug" ? "manual" : "automatic", source, reason: "test" } : null,
+        context: { source: "mentra_automated_testing" }, createdAt: new Date(1_700_000_000_000 + i * 1000) });
+    }
+    const testing = await listed("kind=testing");
+    expect(testing.map(row => row.reportId)).toEqual(["rep_harness_new", "rep_harness_bug", "rep_harness_old"]);
+    expect(testing.map(row => row.kind)).toEqual(["automatic", "bug", "automatic"]);
+    expect((await listed("kind=automatic")).map(row => row.reportId)).toEqual(["rep_untagged", "rep_runtime"]);
+    expect((await listed("kind=internal")).map(row => row.reportId)).toEqual(["rep_human"]);
+    expect(await listed("kind=bug")).toEqual([]);
+    expect((await listed("kind=testing&status=ready&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_new"]);
+    expect((await listed("kind=testing&before=2023-11-14T22:13:21.500Z&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_bug"]);
+    expect(await listed("")).toHaveLength(fixtures.length);
+    directoryFailure = true;
+    directoryRequests = 0;
+    expect(await listed("kind=testing")).toHaveLength(3);
+    expect(await listed("kind=automatic")).toHaveLength(2);
+    expect(directoryRequests).toBe(0);
+  });
+
+  test("separates historical human admin submissions while keeping automatic reports together", async () => {
+    const fixtures = [
+      { id: "internal-fixture-named", email: "NAMED@personal.test", internal: true },
+      { id: "internal-fixture-domain", email: "user@company.test", internal: true },
+      { id: "internal-fixture-second", email: "user@second.test", internal: true },
+      { id: "internal-fixture-outsider", email: "user@personal.test", internal: false },
+      { id: "internal-fixture-subdomain", email: "user@sub.company.test", internal: false },
+      { id: "internal-fixture-suffix", email: "user@company.test.evil.test", internal: false },
+    ];
+    directoryUsers = fixtures;
+    const internalIds: string[] = [];
+    const externalIds: string[] = [];
+    for (const [index, fixture] of fixtures.entries()) {
+      await UserModel.create({ mentraUserId: `mu_${fixture.id}`, tenantId: "mentra", tenantUserId: fixture.id });
+      for (const kind of ["bug", "feedback", "automatic"]) {
+        const reportId = `rep_${fixture.id}-${kind}`;
+        (fixture.internal ? internalIds : externalIds).push(reportId);
+        await ReportModel.create({
+          reportId, mentraUserId: `mu_${fixture.id}`, kind, status: "ready",
+          // Deliberately misleading client-provided email must not make this internal.
+          report: { actualBehavior: "fixture", contactEmail: "user@company.test" },
+          context: { email: "user@company.test" }, createdAt: new Date(1_700_000_000_000 + index * 1000),
+        });
+      }
+    }
+    // OEM identity collides with an admin's GoTrue subject; it stays external.
+    await UserModel.create({ mentraUserId: "mu_oem", tenantId: "other-oem", tenantUserId: fixtures[0].id });
+    await ReportModel.create({ reportId: "rep_oem", mentraUserId: "mu_oem", kind: "bug", status: "closed", context: {} });
+    // Change the allowlists AFTER all reports exist: no migration/re-submission required.
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `${adminEmail}, named@personal.test`;
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test, @SECOND.test";
+
+    const internal = await listed("kind=internal");
+    expect(internal.map(row => row.reportId).sort()).toEqual(internalIds.filter(id => !id.endsWith("-automatic")).sort());
+    expect(new Set(internal.map(row => row.kind))).toEqual(new Set(["bug", "feedback"]));
+    for (const kind of ["bug", "feedback"]) {
+      const rows = await listed(`kind=${kind}&status=ready`);
+      expect(rows.map(row => row.reportId).sort()).toEqual(externalIds.filter(id => id.endsWith(`-${kind}`)).sort());
+    }
+    expect((await listed("kind=automatic&status=ready")).map(row => row.reportId).sort()).toEqual(
+      [...internalIds, ...externalIds].filter(id => id.endsWith("-automatic")).sort(),
+    );
+    expect((await listed("kind=bug&status=closed")).map(row => row.reportId)).toEqual(["rep_oem"]);
+    expect(await listed("kind=internal&status=closed")).toEqual([]);
+    const limited = await listed("kind=internal&limit=2&before=2023-11-14T22:13:21.500Z");
+    expect(limited).toHaveLength(2);
+    expect(limited.every(row => row.mentraUserId === "mu_internal-fixture-domain")).toBe(true);
+    directoryRequests = 0;
+    expect(await listed("")).toHaveLength(19);
+    expect(directoryRequests).toBe(0);
+    process.env.CLOUD_CORE_ADMIN_EMAILS = adminEmail;
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "";
+    expect(await listed("kind=internal")).toEqual([]);
+    expect(await listed("kind=bug")).toHaveLength(7);
+  });
+
+  test("finds admins beyond the first directory page and rejects incomplete classification", async () => {
+    directoryUsers = Array.from({ length: 200 }, (_, i) => ({ id: `outside-${i}`, email: `outside-${i}@example.test` }));
+    directoryUsers.push({ id: "internal-fixture-late", email: "late@company.test" });
+    await UserModel.create({ mentraUserId: "mu_late", tenantId: "mentra", tenantUserId: "internal-fixture-late" });
+    await ReportModel.create({ reportId: "rep_late", mentraUserId: "mu_late", kind: "bug", context: {} });
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test";
+    expect((await listed("kind=internal")).map(row => row.reportId)).toEqual(["rep_late"]);
+    directoryFailure = true;
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?kind=internal`)).status).toBe(502);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?kind=bug`)).status).toBe(502);
+    // The unfiltered incident evidence remains usable during a directory outage.
+    expect(await listed("")).toHaveLength(1);
+    expect(await listed("kind=automatic")).toEqual([]);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}/rep_late`)).status).toBe(200);
+    directoryFailure = false;
+    directoryNeverEnds = true;
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?kind=internal`)).status).toBe(502);
+  });
+
   test("lists reports newest-first with artifact metadata and no context", async () => {
     const first = await seedReport("first crash");
     const second = await seedReport("second crash");
@@ -210,6 +355,190 @@ describe("admin reports read surface", () => {
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 
+  test("lists a host video and plays it inline for admins only, with its exact type and length", async () => {
+    const reportId = await seedReport("video attached");
+    // Genuine synthetic silent H264 MP4 (see tests/fixtures); playback itself is
+    // qualified in a browser, not here.
+    const video = await readFile(new URL("./fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url));
+    const form = new FormData();
+    form.append("type", "video");
+    form.append("source", "host");
+    form.append("files", new File([video], "recording.mp4", { type: "video/mp4" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+
+    const list = await adminGet(ADMIN_REPORTS_PATH);
+    const listed = ((await list.json()) as { reports: Array<{ reportId: string; artifacts: Array<{ type: string }> }> })
+      .reports.find(r => r.reportId === reportId)!;
+    expect(listed.artifacts.map(a => a.type).sort()).toEqual(["logs", "screenshot", "video"]);
+
+    const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
+    const { report, assets } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; type: string; source: string; filename: string; contentType: string; sizeBytes: number }> };
+      assets: Array<{ artifactId: string; contentType: string; sizeBytes: number; sha256: string }>;
+    };
+    const clip = report.artifacts.find(a => a.type === "video")!;
+    expect(clip).toMatchObject({ source: "host", filename: "recording.mp4", contentType: "video/mp4", sizeBytes: video.byteLength });
+    const asset = assets.find(a => a.artifactId === clip.artifactId)!;
+    expect(asset).toMatchObject({ contentType: "video/mp4", sizeBytes: video.byteLength });
+    expect(asset.sha256).toBe(crypto.createHash("sha256").update(video).digest("hex"));
+    const url = `${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${clip.artifactId}`;
+
+    const res = await adminGet(url);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("video/mp4");
+    expect(res.headers.get("content-length")).toBe(String(video.byteLength));
+    expect(res.headers.get("content-disposition")).toBe('inline; filename="recording.mp4"');
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=300");
+    expect(Buffer.from(await res.arrayBuffer()).equals(video)).toBe(true);
+
+    expect((await coreApp.fetch(new Request(url))).status).toBe(401);
+    const forbidden = await coreApp.fetch(
+      new Request(url, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
+  test("serves incident video byte ranges over a real socket to admins only, with exact lengths and security headers", async () => {
+    const reportId = await seedReport("ranged video");
+    const video = await readFile(new URL("./fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url));
+    const size = video.byteLength;
+    const form = new FormData();
+    form.append("type", "video");
+    form.append("source", "host");
+    form.append("files", new File([video], "recording.mp4", { type: "video/mp4" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+    const detailBefore = await (await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`)).json() as {
+      report: { artifacts: Array<{ artifactId: string; type: string }> };
+      assets: Array<{ artifactId: string; sha256: string }>;
+    };
+    const clip = detailBefore.report.artifacts.find(a => a.type === "video")!;
+    const sha256 = detailBefore.assets.find(a => a.artifactId === clip.artifactId)!.sha256;
+
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => coreApp.fetch(request) });
+    try {
+      const url = new URL(`/api/admin/reports/${reportId}/artifacts/${clip.artifactId}`, server.url);
+      const admin = { authorization: `Bearer ${adminBearer}` };
+      const expectMediaHeaders = (res: Response) => {
+        expect(res.headers.get("content-type")).toBe("video/mp4");
+        expect(res.headers.get("content-disposition")).toBe('inline; filename="recording.mp4"');
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+        expect(res.headers.get("cache-control")).toBe("private, max-age=300");
+        expect(res.headers.get("accept-ranges")).toBe("bytes");
+        expect(res.headers.get("etag")).toBe(`"${sha256}"`);
+      };
+
+      // Media players probe the start, then read the tail and seek.
+      for (const [range, start, end] of [
+        ["bytes=0-1", 0, 1],
+        ["bytes=-1024", size - 1024, size - 1],
+        ["bytes=100-", 100, size - 1],
+        ["bytes=4-7", 4, 7],
+      ] as const) {
+        const res = await fetch(url, { headers: { ...admin, range } });
+        expect(res.status).toBe(206);
+        expect(res.headers.get("content-length")).toBe(String(end - start + 1));
+        expect(res.headers.get("content-range")).toBe(`bytes ${start}-${end}/${size}`);
+        expect(res.headers.get("transfer-encoding")).toBeNull();
+        expectMediaHeaders(res);
+        expect(Buffer.from(await res.arrayBuffer()).equals(video.subarray(start, end + 1))).toBe(true);
+      }
+
+      const full = await fetch(url, { headers: admin });
+      expect(full.status).toBe(200);
+      expect(full.headers.get("content-length")).toBe(String(size));
+      expectMediaHeaders(full);
+      expect(Buffer.from(await full.arrayBuffer()).equals(video)).toBe(true);
+
+      const headRange = await fetch(url, { method: "HEAD", headers: { ...admin, range: "bytes=0-1" } });
+      expect(headRange.status).toBe(206);
+      expect(headRange.headers.get("content-length")).toBe("2");
+      expect((await headRange.arrayBuffer()).byteLength).toBe(0);
+      const head = await fetch(url, { method: "HEAD", headers: admin });
+      expect(head.status).toBe(200);
+      expect(head.headers.get("content-length")).toBe(String(size));
+      expect((await head.arrayBuffer()).byteLength).toBe(0);
+
+      const current = await fetch(url, { headers: { ...admin, range: "bytes=0-1", "if-range": `"${sha256}"` } });
+      expect(current.status).toBe(206);
+      await current.arrayBuffer();
+      const changed = await fetch(url, { headers: { ...admin, range: "bytes=0-1", "if-range": '"old"' } });
+      expect(changed.status).toBe(200);
+      expect(Buffer.from(await changed.arrayBuffer()).equals(video)).toBe(true);
+
+      for (const range of ["bytes=0-1,4-5", `bytes=${size}-`, "bytes=9-3"]) {
+        const res = await fetch(url, { headers: { ...admin, range } });
+        expect(res.status).toBe(416);
+        expect(res.headers.get("content-range")).toBe(`bytes */${size}`);
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        await res.arrayBuffer();
+      }
+
+      // Ranges and HEAD do not bypass the admin gate.
+      for (const method of ["GET", "HEAD"]) {
+        const anonymous = await fetch(url, { method, headers: { range: "bytes=0-1" } });
+        expect(anonymous.status).toBe(401);
+        expect(anonymous.headers.get("content-range")).toBeNull();
+        await anonymous.arrayBuffer();
+        const forbidden = await fetch(url, { method, headers: { authorization: `Bearer ${nonAdminBearer}`, range: "bytes=0-1" } });
+        expect(forbidden.status).toBe(403);
+        expect(forbidden.headers.get("content-range")).toBeNull();
+        await forbidden.arrayBuffer();
+      }
+    } finally {
+      await server.stop(true);
+    }
+
+    // Range reads leave the report metadata untouched.
+    const detailAfter = await (await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`)).json();
+    expect(detailAfter).toEqual(detailBefore);
+  });
+
+  test("a ranged read of an opaque artifact stays a nosniff attachment", async () => {
+    const reportId = await seedReport("ranged opaque");
+    const form = new FormData();
+    form.append("files", new File(["<script>document.title='pwned'</script>"], "evil.html", { type: "text/html" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+    const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
+    const { report } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; filename: string | null }> };
+    };
+    const hostile = report.artifacts.find(a => a.filename === "evil.html")!;
+
+    const res = await coreApp.fetch(new Request(`${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${hostile.artifactId}`, {
+      headers: { authorization: `Bearer ${adminBearer}`, range: "bytes=0-7" },
+    }));
+    expect(res.status).toBe(206);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toStartWith("attachment;");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(await res.text()).toBe("<script>");
+  });
+
   test("never renders a spoofed screenshot content type inline", async () => {
     const reportId = await seedReport("hostile upload");
 
@@ -251,6 +580,12 @@ function adminGet(url: string): Promise<Response> {
 }
 
 /** Submit a bug report with one log bundle and one screenshot; returns the reportId. */
+async function listed(query: string): Promise<Array<{ reportId: string; kind: string; mentraUserId: string }>> {
+  const response = await adminGet(`${ADMIN_REPORTS_PATH}?${query}`);
+  expect(response.status).toBe(200);
+  return (await response.json() as { reports: Array<{ reportId: string; kind: string; mentraUserId: string }> }).reports;
+}
+
 async function seedReport(actualBehavior: string, screenshot?: Buffer): Promise<string> {
   const submit = await coreApp.fetch(
     new Request(REPORTS_PATH, {

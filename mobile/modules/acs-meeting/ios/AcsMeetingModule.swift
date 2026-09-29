@@ -1,9 +1,12 @@
 import AVFoundation
 import AzureCommunicationCalling
 import AzureCommunicationCommon
+import CoreGraphics
+import CoreText
 import ExpoModulesCore
 import Foundation
 import GlassesMedia
+import ImageIO
 
 public class AcsMeetingModule: Module {
     private var session: AcsMeetingSession?
@@ -55,20 +58,29 @@ public class AcsMeetingModule: Module {
             let token = try requireString(options, "token")
             let meetingUrl = try requireString(options, "meetingUrl")
             let source = try parseMediaSource(options)
-            if source.kind == .softap, source.bindAddress != GlassesHotspotNetwork.wifiAddress() {
-                throw AcsMeetingError("The glasses hotspot address changed before join")
-            }
             let video = try parseAcsOutgoingVideo(options["video"])
-            self.meetingSession().join(
-                token: token, identityMode: options["identityMode"] as? String ?? "guest", meetingUrl: meetingUrl, sourceConfig: source,
-                displayName: options["displayName"] as? String,
-                dumpWav: options["dumpPcmWav"] as? Bool ?? false,
-                audioSource: options["audioSource"] as? String ?? "glasses", video: video
-            ) { result in
-                switch result {
-                case let .success(state): promise.resolve(state)
-                case let .failure(error): promise.reject(error)
+            let session = self.meetingSession()
+            let join = {
+                session.join(
+                    token: token, identityMode: options["identityMode"] as? String ?? "guest", meetingUrl: meetingUrl, sourceConfig: source,
+                    displayName: options["displayName"] as? String,
+                    dumpWav: options["dumpPcmWav"] as? Bool ?? false,
+                    audioSource: options["audioSource"] as? String ?? "glasses", video: video
+                ) { result in
+                    switch result {
+                    case let .success(state): promise.resolve(state)
+                    case let .failure(error): promise.reject(error)
+                    }
                 }
+            }
+            guard source.kind == .softap else { join(); return }
+            // Bind only to the address this module's hotspot session verified on its Wi-Fi interface.
+            self.hotspot.verifiedAddress { address in
+                guard let address, source.bindAddress == address else {
+                    promise.reject(AcsMeetingError("The glasses hotspot address changed before join"))
+                    return
+                }
+                join()
             }
         }
 
@@ -164,6 +176,18 @@ public class AcsMeetingModule: Module {
             session.setMuted(muted) { promise.resolve($0) }
         }
 
+        AsyncFunction("holdOutgoingVideo") { (kind: String, imageBase64: String?, promise: Promise) in
+            guard let session = self.session else {
+                promise.reject(AcsMeetingError("No active meeting"))
+                return
+            }
+            if session.setOutgoingHold(kind: kind, imageBase64: imageBase64) {
+                promise.resolve(nil)
+            } else {
+                promise.reject(AcsMeetingError("The outgoing card was not sent"))
+            }
+        }
+
         AsyncFunction("setVideoEnabled") { (enabled: Bool, promise: Promise) in
             guard let session = self.session else {
                 promise.reject(AcsMeetingError("No active meeting"))
@@ -197,10 +221,13 @@ public class AcsMeetingModule: Module {
                 promise.reject(AcsMeetingError("No active meeting to rebind"))
                 return
             }
-            session.rebindSoftApIngest { result in
-                switch result {
-                case let .success(url): promise.resolve(url)
-                case let .failure(error): promise.reject(error)
+            // The caller rejoins first; that session's verified Wi-Fi binding is the only valid address.
+            self.hotspot.verifiedAddress { address in
+                session.rebindSoftApIngest(address: address) { result in
+                    switch result {
+                    case let .success(url): promise.resolve(url)
+                    case let .failure(error): promise.reject(error)
+                    }
                 }
             }
         }
@@ -608,11 +635,12 @@ final class AcsMeetingSession {
             self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)
         }
         let source: DecodedGlassesMediaSource = sourceConfig.kind == .softap ? LocalWhipIngestSource() : WhepVideoSource()
-        source.onFrame = { [frameSender] buffer in
-            // Preview first, deliberately: the tap must see frames the ACS sender's pacing and
-            // readiness gates would otherwise hide, and it cannot delay or break this call.
+        source.onFrame = { [weak self] buffer in
+            guard let self else { return }
+            // A photo card or still owns the tile. Glasses frames stay off it until that hold ends.
+            if self.holdingOutgoing { return }
             DecodedFrameTap.shared.offer(buffer)
-            if frameSender.send(buffer) { DecodedFrameTap.shared.recordAcsSend() }
+            if self.frameSender.send(buffer) { DecodedFrameTap.shared.recordAcsSend() }
         }
         source.onPcm = { [weak self] pcm, rate, channels in
             self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)
@@ -675,8 +703,8 @@ final class AcsMeetingSession {
     }
 
     /// Destroy the current SoftAP listener generation and bind a new one on the
-    /// address the hotspot reports *now*. The caller rejoins first, then asks for this.
-    func rebindSoftApIngest(completion: @escaping (Result<String, Error>) -> Void) {
+    /// address the hotspot verified *now*. The caller rejoins first, then asks for this.
+    func rebindSoftApIngest(address: String?, completion: @escaping (Result<String, Error>) -> Void) {
         queue.async {
             guard MediaDiagnostics.softapRecoveryEnabled else {
                 completion(.failure(AcsMeetingError("SoftAP ingest rebind is disabled")))
@@ -686,7 +714,7 @@ final class AcsMeetingSession {
                 completion(.failure(AcsMeetingError("rebindSoftApIngest is only valid for a SoftAP call")))
                 return
             }
-            guard let address = GlassesHotspotNetwork.wifiAddress() else {
+            guard let address else {
                 completion(.failure(AcsMeetingError("scoped network has no IPv4 address after rejoin")))
                 return
             }
@@ -800,8 +828,48 @@ final class AcsMeetingSession {
         }
     }
 
+    private var holdingOutgoing = false
+    private var holdTimer: DispatchSourceTimer?
+    private var holdBuffer: CVPixelBuffer?
+
+    /// Drop glasses frames and keep sending a full-frame card so Teams does not freeze the last picture.
+    func setOutgoingHold(kind: String, imageBase64: String?) -> Bool {
+        if kind == "live" {
+            stopOutgoingHold()
+            return true
+        }
+        stopOutgoingHold()
+        // Render at the size ACS negotiated, not the profile ceiling: ACS renegotiates below the
+        // ceiling under load, and a hold frame built at 1280x720 would be dropped for a mismatch.
+        let size = frameSender.negotiatedSize() ?? (width: AcsOutgoingVideo.hd.width, height: AcsOutgoingVideo.hd.height)
+        guard let buffer = outgoingHoldPixelBuffer(kind: kind, imageBase64: imageBase64, width: size.width, height: size.height) else {
+            return false
+        }
+        holdBuffer = buffer
+        holdingOutgoing = true
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(100))
+        timer.setEventHandler { [weak self] in
+            guard let self, let buffer = self.holdBuffer, self.holdingOutgoing else { return }
+            _ = self.frameSender.send(buffer)
+        }
+        holdTimer = timer
+        timer.resume()
+        return frameSender.send(buffer)
+    }
+
+    private func stopOutgoingHold() {
+        holdingOutgoing = false
+        holdTimer?.cancel()
+        holdTimer = nil
+        holdBuffer = nil
+    }
+
     func leave() {
-        queue.async { self.leaveLocked() }
+        queue.async {
+            self.stopOutgoingHold()
+            self.leaveLocked()
+        }
     }
 
     func leaveAndAwait(timeout: TimeInterval, completion: @escaping (Bool) -> Void) {
@@ -1011,6 +1079,7 @@ final class AcsMeetingSession {
 
     private func leaveLocked(emitIdle: Bool = true) {
         dispatchPrecondition(condition: .onQueue(queue))
+        stopOutgoingHold()
         audioDiagnostics?.finish()
         audioDiagnostics = nil
         joinGeneration &+= 1
@@ -1470,4 +1539,154 @@ private func joinMeeting(agent: CommonCallAgent, locator: TeamsMeetingLinkLocato
     } else {
         completion(nil, AcsMeetingError("Unsupported meeting agent"))
     }
+}
+
+/// Card or still for the outgoing tile. A missing still falls back to the card, never the last live frame.
+func outgoingHoldPixelBuffer(kind: String, imageBase64: String?, width: Int, height: Int) -> CVPixelBuffer? {
+    let w = max(16, width)
+    let h = max(16, height)
+    if kind == "image",
+       let imageBase64,
+       let data = Data(base64Encoded: imageBase64),
+       let source = CGImageSourceCreateWithData(data as CFData, nil),
+       let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+       let buffer = nv12PixelBuffer(image: image, width: w, height: h) {
+        return buffer
+    }
+    return takingPhotoCardPixelBuffer(width: w, height: h) ?? takingPhotoPixelBuffer(width: w, height: h)
+}
+
+func takingPhotoCardPixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+    context.setFillColor(red: 18 / 255, green: 18 / 255, blue: 22 / 255, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    let font = CTFontCreateWithName("Helvetica" as CFString, CGFloat(max(24, height / 12)), nil)
+    let attrs = [
+        kCTFontAttributeName: font,
+        kCTForegroundColorAttributeName: CGColor(gray: 1, alpha: 1),
+    ] as CFDictionary
+    guard let attributed = CFAttributedStringCreate(nil, "Taking a photo" as CFString, attrs) else { return nil }
+    let line = CTLineCreateWithAttributedString(attributed)
+    var ascent: CGFloat = 0
+    let lineWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, nil, nil))
+    context.textPosition = CGPoint(x: (CGFloat(width) - lineWidth) / 2, y: (CGFloat(height) - ascent) / 2)
+    CTLineDraw(line, context)
+    guard let image = context.makeImage() else { return nil }
+    return nv12PixelBuffer(image: image, width: width, height: height)
+}
+
+func nv12PixelBuffer(image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
+    var rgba = [UInt8](repeating: 0, count: width * height * 4)
+    let drew = rgba.withUnsafeMutableBytes { raw -> Bool in
+        guard let base = raw.baseAddress else { return false }
+        guard let context = CGContext(
+            data: base,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+        context.setFillColor(red: 18 / 255, green: 18 / 255, blue: 22 / 255, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let scale = min(CGFloat(width) / CGFloat(image.width), CGFloat(height) / CGFloat(image.height))
+        let drawWidth = CGFloat(image.width) * scale
+        let drawHeight = CGFloat(image.height) * scale
+        context.interpolationQuality = .high
+        context.draw(
+            image,
+            in: CGRect(
+                x: (CGFloat(width) - drawWidth) / 2,
+                y: (CGFloat(height) - drawHeight) / 2,
+                width: drawWidth,
+                height: drawHeight
+            )
+        )
+        return true
+    }
+    guard drew else { return nil }
+    let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+    var buffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        width,
+        height,
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        attrs,
+        &buffer
+    )
+    guard status == kCVReturnSuccess, let buffer else { return nil }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+    guard let yPlane = CVPixelBufferGetBaseAddressOfPlane(buffer, 0),
+          let uvPlane = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) else { return nil }
+    let yRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+    let uvRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
+    let y = yPlane.assumingMemoryBound(to: UInt8.self)
+    let uv = uvPlane.assumingMemoryBound(to: UInt8.self)
+    for row in 0..<height {
+        for col in 0..<width {
+            let pixel = (row * width + col) * 4
+            let alpha = Int(rgba[pixel + 3])
+            var r = Int(rgba[pixel])
+            var g = Int(rgba[pixel + 1])
+            var b = Int(rgba[pixel + 2])
+            if alpha != 0 && alpha != 255 {
+                r = min(255, r * 255 / alpha)
+                g = min(255, g * 255 / alpha)
+                b = min(255, b * 255 / alpha)
+            }
+            y[row * yRow + col] = UInt8(clamping: ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16)
+            if row % 2 == 0 && col % 2 == 0 {
+                let index = (row / 2) * uvRow + col
+                uv[index] = UInt8(clamping: ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128)
+                uv[index + 1] = UInt8(clamping: ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128)
+            }
+        }
+    }
+    return buffer
+}
+
+/// Full-frame card sent while the glasses camera is busy with a photo. Dark, not the last live picture.
+func takingPhotoPixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+    let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+    var buffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        width,
+        height,
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        attrs,
+        &buffer
+    )
+    guard status == kCVReturnSuccess, let buffer else { return nil }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+    if let yPlane = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) {
+        let rowBytes = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+        let yHeight = CVPixelBufferGetHeightOfPlane(buffer, 0)
+        memset(yPlane, 18, rowBytes * yHeight)
+        let band = yHeight / 5
+        let bandY = (yHeight - band) / 2
+        let y = yPlane.assumingMemoryBound(to: UInt8.self)
+        for row in bandY..<(bandY + band) {
+            memset(y.advanced(by: row * rowBytes), 235, rowBytes)
+        }
+    }
+    if let uvPlane = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) {
+        let rowBytes = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
+        let uvHeight = CVPixelBufferGetHeightOfPlane(buffer, 1)
+        memset(uvPlane, 128, rowBytes * uvHeight)
+    }
+    return buffer
 }

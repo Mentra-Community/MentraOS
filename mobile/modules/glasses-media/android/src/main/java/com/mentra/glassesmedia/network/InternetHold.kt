@@ -447,13 +447,6 @@ class InternetHold(private val context: Context) {
     private fun cellularIsValidated(manager: ConnectivityManager): Boolean =
         findValidatedCellular(manager) != null
 
-    private fun findValidatedCellular(manager: ConnectivityManager): Network? =
-        manager.allNetworks.firstOrNull { network ->
-            val capabilities = manager.getNetworkCapabilities(network) ?: return@firstOrNull false
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
-                isValidatedInternet(capabilities)
-        }
-
     private fun connectivityManager(): ConnectivityManager? =
         context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
@@ -465,6 +458,14 @@ class InternetHold(private val context: Context) {
         const val DEFAULT_WAIT_MS = 8_000L
 
         private const val DEFAULT_POLL_MS = 200L
+
+        /** Exclude validated carrier IMS/DUN networks that do not provide app internet. */
+        internal fun findValidatedCellular(manager: ConnectivityManager): Network? =
+            manager.allNetworks.firstOrNull { network ->
+                val capabilities = manager.getNetworkCapabilities(network) ?: return@firstOrNull false
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                    isValidatedInternet(capabilities)
+            }
 
         fun isValidatedInternet(capabilities: NetworkCapabilities): Boolean =
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&

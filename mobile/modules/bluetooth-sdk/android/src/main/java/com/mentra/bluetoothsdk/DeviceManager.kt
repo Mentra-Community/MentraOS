@@ -1501,11 +1501,15 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             return
         }
 
+        // A new identity must never inherit the previous glasses' address when
+        // pairing supplied only a name. Same-device reconnects retain their cache.
+        val identityChanged = pendingDeviceName.isNotEmpty() &&
+            (pendingDeviceName != deviceName || sgc?.type != defaultWearable)
+        if (identityChanged || pendingDeviceAddress.isNotEmpty()) {
+            deviceAddress = pendingDeviceAddress
+        }
         if (pendingDeviceName.isNotEmpty()) {
             deviceName = pendingDeviceName
-        }
-        if (pendingDeviceAddress.isNotEmpty()) {
-            deviceAddress = pendingDeviceAddress
         }
         clearPendingConnection()
 

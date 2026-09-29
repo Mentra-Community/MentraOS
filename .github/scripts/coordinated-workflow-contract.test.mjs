@@ -88,6 +88,25 @@ test("release finalization reads the preserved OTA artifact layout", () => {
   )
 })
 
+test("coordinated release retries restore the finalized immutable result", () => {
+  const finalize = jobBlock(workflow("coordinated-release.yml"), "finalize")
+  const restore = finalize.indexOf("name: Restore finalized release result from an earlier attempt")
+  const resultDownload = finalize.indexOf("name: ${{ needs.cloud-v2.outputs.result_artifact }}")
+  const assemble = finalize.indexOf("name: Assemble complete publication evidence")
+  const persist = finalize.indexOf("name: coordinated-release-result-")
+  const publish = finalize.indexOf("name: Publish immutable plan, package, and manifest assets")
+
+  assert.ok(restore >= 0 && restore < resultDownload)
+  assert.ok(resultDownload < assemble)
+  assert.ok(assemble < persist && persist < publish)
+  assert.match(finalize, /cmp "\$plan" "restored-release\/\$plan_name"/)
+  assert.match(finalize, /\.releaseSetId/)
+  assert.match(finalize, /\.sourceCommit/)
+  assert.match(finalize, /Finalize release manifest\n        if: .*steps\.restore-result\.outputs\.restored != 'true'/)
+  assert.match(finalize, /name: Restore finalized release result from an earlier attempt\n        id: restore-result\n        if: needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(finalize, /actions\/upload-artifact@v4\n        if: needs\.plan\.outputs\.dry_run != 'true' && steps\.restore-result\.outputs\.restored != 'true'/)
+})
+
 test("completed releases publish a version page and example notices carry the main app links", () => {
   const core = workflow("coordinated-release.yml")
   const finalize = jobBlock(core, "finalize")
@@ -372,7 +391,10 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(privateDeployment, /coreApiClientId:\{value:\$coreApiClientId\}/)
   assert.match(privateDeployment, /MENTRA_JWT_PRIVATE_KEY/)
   assert.match(privateDeployment, /source_digest.*image_digest|image_digest.*source_digest/s)
-  assert.match(privateDeployment, /--arg workspaceHostname "enterprisedev\.mentraglass\.com"/)
+  assert.match(privateDeployment, /--arg workspaceHostname "mentra\.acmeworkspace\.com"/)
+  assert.match(privateDeployment, /workspaceCertificateName:\{value:"ca-mentra-enterprise-reference-acme-workspace"\}/)
+  assert.match(privateDeployment, /additionalWorkspaceDomains:\{value:\[\{hostname:"enterprisedev\.mentraglass\.com",certificateName:"ca-mentra-enterprise-reference-workspace"\}\]\}/)
+  assert.match(privateDeployment, /displayName:\{value:\$reference\[0\]\.displayName\}/)
   assert.match(privateDeployment, /az acr manifest show-metadata/)
   assert.match(privateDeployment, /latestReadyRevisionName/)
   assert.match(finalize, /needs\.private-deployment\.result == 'success'/)
@@ -492,10 +514,47 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(mobile, /play_install_url:\n        value: \$\{\{ jobs\.android\.outputs\.play_install_url \}\}/)
   assert.match(coordinator, /PLAY_INSTALL_URL: \$\{\{ needs\.mobile\.outputs\.play_install_url \}\}/)
   // The beta channel and the plan's expected coordinate name the same Play destination.
-  assert.match(coordinator, /play_track=internal-app-sharing/)
+  assert.match(coordinator, /play_track=beta/)
+  // The Android build resolves its own version code before building and the
+  // record carries it; verification and the track check use the same value.
+  assert.match(mobile, /- name: Resolve and reserve the Android version code\n        id: android-code/)
+  assert.match(mobile, /resolve-android-version-code\.mjs/)
+  assert.match(
+    mobile,
+    /--assets android-code-registry-assets\.json --owner "\$OWNER" --marker-dir android-version-code-marker/,
+  )
+  assert.match(mobile, /RESERVATION_RELEASE_TAG: mentra-coordinated-asg/)
+  assert.match(
+    mobile,
+    /RESERVE: \$\{\{ inputs\.dry_run != true && inputs\.compatibility_lab != true && needs\.prepare\.outputs\.android_assets_exist != 'true'/,
+  )
+  const reservation = mobile.slice(
+    mobile.indexOf("- name: Resolve and reserve the Android version code"),
+    mobile.indexOf("- name: Build signed coordinated APK and AAB"),
+  )
+  assert.match(reservation, /ARTIFACTS_R2_ACCESS_KEY_ID: \$\{\{ secrets\.ARTIFACTS_R2_ACCESS_KEY_ID \}\}/)
+  assert.match(reservation, /"\$tooling\/resolve-android-version-code\.mjs"/)
+  assert.match(reservation, /bundle exec fastlane used_version_codes/)
+  assert.match(reservation, /--used "\$GOOGLE_PLAY_USED_VERSION_CODES_OUTPUT"/)
+  assert.match(mobileFastfile("fastlane-android"), /lane :used_version_codes do/)
+  assert.match(reservation, /"\$tooling\/publish-immutable-release-asset\.mjs"/)
+  assert.doesNotMatch(reservation, /node \.github\/scripts\//)
+  assert.match(mobile, /but this release has no immutable Android pair; refusing to treat it as reused/)
+  assert.match(coordinator, /--play-track "\$\{\{ steps\.channel\.outputs\.play_track \}\}"/)
+  assert.match(mobile, /EXPECTED_BUILD: \$\{\{ steps\.android-code\.outputs\.code \}\}/)
+  assert.match(mobile, /--android-build-number "\$\{\{ steps\.android-code\.outputs\.code \}\}"/)
+  assert.ok(
+    mobile.indexOf("- name: Resolve and reserve the Android version code") <
+      mobile.indexOf("- name: Build signed coordinated APK and AAB"),
+  )
+  assert.ok(
+    mobile.indexOf("- name: Install Google Play upload tooling") <
+      mobile.indexOf("- name: Resolve and reserve the Android version code"),
+  )
+  assert.match(mobile, /url="https:\/\/play\.google\.com\/apps\/testing\/com\.mentra\.mentra"/)
   assert.match(
     readFileSync(new URL("./release-family.mjs", import.meta.url), "utf8"),
-    /beta: \{play: "internal-app-sharing"/,
+    /DEFAULT_PLAY_TRACKS = Object\.freeze\(\{dev: "internal", beta: "beta", production: "production"\}\)/,
   )
   assert.match(mobile, /COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/)
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
@@ -550,6 +609,9 @@ test("coordinated docs publish only after finalization to the matching channel",
   // the sequence, for the app plan and the ASG client alike.
   assert.match(plan, /allocate-family-build-sequence\.mjs allocate/)
   assert.match(plan, /--owner "coordinated-run:\$\{GITHUB_RUN_ID\}"/)
+  assert.match(plan, /mkdir -p family-build-number-markers/)
+  assert.match(plan, /release-assets\.mjs fetch \\\n[\s\S]{0,180}--asset-id "\$asset_id"/)
+  assert.match(plan, /--markers-dir family-build-number-markers/)
   assert.match(plan, /--native-build-number "\$\{\{ steps\.family-number\.outputs\.build_number \}\}"/)
   assert.match(plan, /Record the family build number in the release container/)
   assert.doesNotMatch(coordinator, /310000000|--native-build-sequence/)

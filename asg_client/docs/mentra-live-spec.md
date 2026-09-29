@@ -195,7 +195,12 @@ grace tolerates brief BLE outages. Reconnection cancels that deadline, while rep
 unknown-presence reports never extend it. Deadline work is scoped to a stream generation so an
 old callback cannot stop a replacement stream, even if its public id is reused.
 
-Starting a stream requires confirmed phone presence. BES builds that do not expose that signal
+Starting a stream requires confirmed phone presence. If the cached state is absent or unknown,
+ASG requests `cs_syvr` snapshots from BES every 400ms for up to two seconds before rejecting the
+start. Stop, replacement start and handler cleanup cancel that pending admission. Refreshes use
+the UART coordinator and cannot interrupt file/OTA ownership or baud recovery. `phone_ready`
+also requests a snapshot; receipt of a phone command never directly sets presence to connected.
+BES builds that do not expose that signal
 must be updated before starting phone-owned streaming; unknown presence must not authorize an
 indefinitely running camera. If presence becomes unknown during a stream (for example, during
 BES transport recovery), the same bounded grace applies.
@@ -205,14 +210,25 @@ BLE presence does not prove the controlling app is executing. Updated native SDK
 without that support, sends a fresh native controller challenge every two seconds, and stops
 after ten seconds without a matching response. Retransmissions and duplicate/late responses
 never renew this deadline. Challenges are answered directly in the native BLE receive path,
-without JavaScript, cloud connectivity, or a phone-side periodic timer. The controller identity
-survives BLE reconnects but changes after app termination; reopening the app cannot silently
+without JavaScript, cloud connectivity, or a phone-side periodic timer.
+Replies use the transport's MTK wake flag: BES can buffer non-waking phone commands after
+Android enters standby even while the stream's CPU wake lock keeps media running. A valid
+native challenge response must reach ASG before its existing deadline.
+The controller identity survives BLE reconnects but changes after app termination; reopening
+the app cannot silently
 take over the old session. Both phone-presence and controller-response checks must remain healthy.
 Physical qualification must verify screen-off/background operation, force-kill on both phone
 platforms, and short BLE outages before release; native callback wake behavior is not proven by
 unit tests.
 
 WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
+
+A full-size photo can be taken during a WHIP stream on the glasses hotspot without ending it. The
+phone requests it with `take_photo` whose upload target is its own local `/photo/<id>` endpoint on
+the WHIP listener. The WHIP capturer lends Camera2 to the still while black substitute frames keep
+the track flowing, reopens as soon as the JPEG is in memory, and the JPEG is uploaded to the phone
+over the hotspot. A watchdog returns the camera to the stream regardless of the photo's outcome. Any
+other photo request during a stream is still rejected as camera busy.
 
 Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
 
@@ -301,6 +317,12 @@ Unknown owners remain unknown. Ordinary query responses and compact terminal BLE
 frames retain their existing behavior; a terminal BES result alone is not proof
 that every updater is idle.
 
+The durable BES terminal result also settles its matching top-level OTA session's
+final BES install step, even when the phone is disconnected or ASG must replay the
+result after a process restart. A result from another session, an unfinished BES
+transaction, or an earlier step cannot finish the current session; existing session
+failures remain failures. This reconciliation starts no update or next step.
+
 MTK updates prefer an incremental patch whose start version matches the glasses.
 If no patch matches, a pinned `mtk_full_ota` can update a known older firmware
 directly. Full fallback requires a valid target version, URL, SHA-256, and size;
@@ -330,6 +352,13 @@ index, total count, and final marker. The phone waits for all declared chunks;
 it never reports partial version data as complete because the transport went quiet.
 Older firmware's `version_info_3` remains the immediate terminal boundary for a
 legacy sequence that began with `version_info_1`.
+
+Explicit `get_stream_status` queries can carry a bounded `request_id`, echoed only
+on that response so queued older snapshots cannot satisfy a fresh query. Actual
+current-session BES UART version diagnostics include `elapsed_realtime_ms`, sampled
+from Android's monotonic elapsed realtime before reading OTA state. Phone clock
+synchronization does not change these freshness signals. Neither field starts an
+update or changes stream state; clients omitting the request ID retain existing behavior.
 
 Mentra Live's canonical product serial is provisioned by the Android firmware in
 `ro.serialno`. `asg_client` reads that property directly and forwards a valid

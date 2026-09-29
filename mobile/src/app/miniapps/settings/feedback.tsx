@@ -33,8 +33,7 @@ export default function FeedbackPage() {
   const [savedContactEmail, setSavedContactEmail] = useSetting(SETTINGS.contact_email.key)
   const [email, setEmail] = useState((savedContactEmail as string) || "")
   const [feedbackType, setFeedbackType] = useState<"bug" | "feature">("bug")
-  const [expectedBehavior, setExpectedBehavior] = useState("")
-  const [actualBehavior, setActualBehavior] = useState("")
+  const [description, setDescription] = useState("")
   const [severityRating, setSeverityRating] = useState<number | null>(null)
   const [feedbackText, setFeedbackText] = useState("")
   const [experienceRating, setExperienceRating] = useState<number | null>(null)
@@ -126,8 +125,7 @@ export default function FeedbackPage() {
         sourceAppletName: sourceAppletName || undefined,
       })
       const report = buildReportDetails({
-        expectedBehavior,
-        actualBehavior,
+        actualBehavior: description,
         userSeverity: severityRating as 1 | 2 | 3 | 4 | 5,
         contactEmail: isApplePrivateRelay && email.trim() ? email.trim() : undefined,
       })
@@ -198,8 +196,7 @@ export default function FeedbackPage() {
 
     // Clear form
     setFeedbackText("")
-    setExpectedBehavior("")
-    setActualBehavior("")
+    setDescription("")
     setSeverityRating(null)
     setExperienceRating(null)
     setScreenshots([])
@@ -246,7 +243,7 @@ export default function FeedbackPage() {
       return false
     }
     if (feedbackType === "bug") {
-      return !!(actualBehavior.trim() && severityRating !== null)
+      return !!(description.trim() && severityRating !== null)
     } else {
       return !!(feedbackText.trim() && experienceRating !== null)
     }
@@ -305,33 +302,17 @@ export default function FeedbackPage() {
           {feedbackType === "bug" ? (
             <>
               <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:expectedBehavior")}
-                </Text>
+                <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:description")}</Text>
                 <TextInput
                   className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
                   multiline
                   numberOfLines={4}
-                  placeholder={translate("feedback:share")}
+                  testID="feedback.description"
+                  accessibilityLabel={translate("feedback:description")}
+                  placeholder={translate("feedback:descriptionPlaceholder")}
                   placeholderTextColor={theme.colors.muted_foreground}
-                  value={expectedBehavior}
-                  onChangeText={setExpectedBehavior}
-                  textAlignVertical="top"
-                />
-              </View>
-
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:actualBehavior")}
-                </Text>
-                <TextInput
-                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
-                  multiline
-                  numberOfLines={4}
-                  placeholder={translate("feedback:actualShare")}
-                  placeholderTextColor={theme.colors.muted_foreground}
-                  value={actualBehavior}
-                  onChangeText={setActualBehavior}
+                  value={description}
+                  onChangeText={setDescription}
                   textAlignVertical="top"
                 />
               </View>
@@ -410,6 +391,7 @@ export default function FeedbackPage() {
         </View>
         <View className="flex-1 min-h-6" />
         <Button
+          testID="feedback.submit"
           text={
             isSubmitting ? "" : feedbackType === "bug" ? translate("feedback:continue") : translate("feedback:submit")
           }

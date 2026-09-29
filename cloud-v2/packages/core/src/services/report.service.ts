@@ -1,7 +1,7 @@
 /**
  * @fileoverview Report service for Cloud V2 core.
  *
- * Artifact payloads (screenshot bytes, serialized log bundles) never live in
+ * Artifact payloads (screenshot/video bytes, serialized log bundles) never live in
  * the report document: each one is written to blob storage and described by a
  * `report_assets` row (same pattern as miniapp assets), while the report
  * embeds only artifact metadata. A report therefore stays a few KB no matter
@@ -13,8 +13,10 @@ import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
 import { notifyReportSlack } from "./report-slack.service";
+import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
 import { UserModel } from "../models/user.model";
-import { getUserById } from "./account/gotrue.client";
+import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
+import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
 import { createStorageService } from "./storage/storage.service";
 
 const logger = createLogger("core").child({ service: "report.service" });
@@ -85,6 +87,8 @@ export interface ReportLogEntry {
   message: string;
   source?: string;
 }
+
+export type ReportArtifactType = "logs" | "screenshot" | "state_snapshot" | "video";
 
 export interface ReportAttachmentInput {
   filename: string;
@@ -198,17 +202,23 @@ export async function addLogArtifact(input: {
   });
 }
 
-export async function addScreenshotArtifacts(input: {
+/**
+ * Multipart file attachments: screenshots, or MP4 videos with the capture
+ * source the uploader declared. The upload route validates type, MIME and size.
+ */
+export async function addAttachmentArtifacts(input: {
   mentraUserId: string;
   reportId: string;
+  type: Extract<ReportArtifactType, "screenshot" | "video">;
+  source: string;
   files: ReportAttachmentInput[];
 }): Promise<AddReportArtifactsResult | null> {
   return await addArtifacts({
     reportId: input.reportId,
     mentraUserId: input.mentraUserId,
     payloads: input.files.map((file) => ({
-      type: "screenshot" as const,
-      source: "phone",
+      type: input.type,
+      source: input.source,
       filename: file.filename,
       contentType: file.contentType,
       bytes: file.bytes,
@@ -250,7 +260,7 @@ export async function markReportReady(input: {
 }
 
 interface ReportArtifactPayload {
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: ReportArtifactType;
   source: string;
   filename: string | null;
   contentType: string;
@@ -363,7 +373,7 @@ async function addArtifacts(input: {
 
 export interface AdminReportArtifact {
   artifactId: string;
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: ReportArtifactType;
   source: string;
   filename: string | null;
   contentType: string | null;
@@ -399,7 +409,8 @@ export interface AdminReportAsset {
 }
 
 export interface ListReportsFilter {
-  kind?: ReportKind;
+  // Internal and Testing are triage categories, not submitted/stored report kinds.
+  kind?: ReportCategory;
   status?: ReportStatus;
   limit?: number;
   before?: Date;
@@ -407,7 +418,20 @@ export interface ListReportsFilter {
 
 export async function listReports(filter: ListReportsFilter = {}): Promise<AdminReportSummary[]> {
   const query: Record<string, unknown> = {};
-  if (filter.kind) query.kind = filter.kind;
+  if (filter.kind) {
+    // The incident automation contract uses this trigger source.
+    // Apply category membership before the database limit, including old reports.
+    query["trigger.source"] = filter.kind === "testing"
+      ? REPORT_TESTING_SOURCE
+      : { $ne: REPORT_TESTING_SOURCE };
+  }
+  if (filter.kind === "automatic") {
+    query.kind = "automatic";
+  } else if (filter.kind && filter.kind !== "testing") {
+    const internalUserIds = await internalReporterIds();
+    query.mentraUserId = filter.kind === "internal" ? { $in: internalUserIds } : { $nin: internalUserIds };
+    query.kind = filter.kind === "internal" ? { $in: ["bug", "feedback"] } : filter.kind;
+  }
   if (filter.status) query.status = filter.status;
   if (filter.before) query.createdAt = { $lt: filter.before };
   const limit = Math.min(Math.max(Math.trunc(filter.limit ?? 50), 1), 200);
@@ -418,6 +442,22 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
     .limit(limit)
     .lean();
   return rows.map(serializeReportSummary);
+}
+
+/** Resolve current admin accounts, including reporters of historical incidents.
+ * The report's contact email/context are user supplied and cannot identify an admin.
+ * All kinds, Automatic, Testing, and detail remain available without a directory lookup.
+ */
+async function internalReporterIds(): Promise<string[]> {
+  const allowlist = getAdminEmailAllowlist();
+  const filters = [...allowlist.emails, ...allowlist.domains.map(domain => `@${domain}`)];
+  if (filters.length === 0) return [];
+  const identities = await findUsersByEmailFilters(filters);
+  const adminIds = identities.filter(identity => isAdminEmail(identity.email, allowlist)).map(identity => identity.id);
+  if (adminIds.length === 0) return [];
+  // OEM subject IDs are a different identity namespace, even if the strings collide.
+  const users = await UserModel.find({ tenantId: "mentra", tenantUserId: { $in: adminIds } }, { mentraUserId: 1 }).lean();
+  return users.map(user => user.mentraUserId);
 }
 
 export async function getReport(
@@ -451,11 +491,11 @@ export async function getReport(
 export async function readReportArtifactPayload(
   reportId: string,
   artifactId: string,
-): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null } | null> {
+): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null; sha256: string } | null> {
   const asset = await ReportAssetModel.findOne({ reportId, artifactId }).lean();
   if (!asset) return null;
   const bytes = await getStorage().getObject(asset.storageKey);
-  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null };
+  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256 };
 }
 
 function serializeReportSummary(row: {

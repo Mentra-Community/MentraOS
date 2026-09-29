@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, RefreshCcw, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -9,16 +9,23 @@ import {
   readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
 import { TestRunsPage } from "./pages/test-runs";
+import { FixFlowsPage } from "./pages/fix-flows";
+import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
+import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
-type AdminPageKey = "incidents" | "test-runs";
+type AdminPageKey = "incidents" | "test-runs" | "fix-flows" | "system-health";
 
 const ADMIN_NAV: readonly NavItem[] = [
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
+  { key: "fix-flows", label: "Fix flows", icon: RotateCcw },
+  { key: "system-health", label: "System health", icon: ShieldCheck },
 ];
 
 const PAGE_META: Record<AdminPageKey, { title: string; body: string }> = {
+  "fix-flows": { title: "Fix flows", body: "Follow a failed routine through its incident, AI investigation, PR, review and verification." },
+  "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
   incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
   "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
 };
@@ -32,7 +39,7 @@ type ReportStatus = "collecting" | "ready" | "closed";
 
 interface ReportArtifact {
   artifactId: string;
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: "logs" | "screenshot" | "state_snapshot" | "video";
   source: string;
   filename: string | null;
   contentType: string | null;
@@ -117,11 +124,15 @@ export function App() {
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
+const initialFixFlowLink = readFixFlowLink(window.location.search);
+const initialFixFlows = new URLSearchParams(window.location.search).get("fixFlows") === "active";
+const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
 
 function AdminPage() {
   const [page, setPage] = useState<AdminPageKey>(
-    initialTestRunLink || initialTestRunListScope ? "test-runs" : "incidents",
+    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunLink || initialTestRunListScope ? "test-runs" : "incidents",
   );
+  const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
@@ -158,6 +169,12 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
+      if (new URLSearchParams(window.location.search).get("systemHealth") === "1") { setPage("system-health"); return; }
+      const fixFlow = readFixFlowLink(window.location.search);
+      setFixFlowLink(fixFlow);
+      if (fixFlow || new URLSearchParams(window.location.search).get("fixFlows") === "active") {
+        setPage("fix-flows"); return;
+      }
       const selection = readTestRunLink(window.location.search);
       const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
@@ -167,6 +184,12 @@ function AdminPage() {
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
+
+  function selectFixFlow(selection: FixFlowLink | null) {
+    setFixFlowLink(selection);
+    setPage("fix-flows");
+    window.history.pushState(null, "", fixFlowHref(selection));
+  }
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
     setTestRunLink(selection);
@@ -194,11 +217,19 @@ function AdminPage() {
       activeKey={page}
       onSelect={key => {
         setPage(key as AdminPageKey);
+        setFixFlowLink(null);
+        const location = new URL(window.location.href);
+        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth"]) location.searchParams.delete(param);
+        window.history.replaceState(null, "", location.pathname + location.search);
+        // Any navigation spends the deep link: coming back to the Incident
+        // system page starts unselected.
         setDeepLinkReportId(null);
         if (key !== "test-runs") {
           selectTestRun(null, true);
           clearTestRunListScope();
         }
+        if (key === "fix-flows") window.history.replaceState(null, "", fixFlowHref(null));
+        if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
       }}
       title={PAGE_META[page].title}
       description={PAGE_META[page].body}
@@ -209,6 +240,9 @@ function AdminPage() {
     >
       {signOutError ? <ErrorText error={signOutError} /> : null}
       {page === "incidents" ? <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} /> : null}
+      {page === "fix-flows" || page === "test-runs" ? <SystemHealthSummary /> : null}
+      {page === "system-health" ? <SystemHealthPage /> : null}
+      {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" ? (
         <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
           scope={testRunListScope} onClearScope={clearTestRunListScope} />
@@ -241,7 +275,7 @@ function EnvBadge({ env }: { env: Environment }) {
 }
 
 function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
-  const [kind, setKind] = useState<"all" | ReportKind>("all");
+  const [kind, setKind] = useState<"all" | ReportKind | "internal" | "testing">("all");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
   const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
@@ -264,14 +298,14 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
           <div>
             <h2 className="text-xl font-bold">User reports</h2>
             <p className="mt-1 text-sm text-[#68746d]">
-              Everything filed through the Mentra App reporting flow — open a report for its context, screenshots, and logs.
+              Internal contains bugs and feedback from admin accounts. Testing contains harness reports; other automatic reports stay in Automatic.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <FilterPills
               value={kind}
               onChange={setKind}
-              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["automatic", "Automatic"]]}
+              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["internal", "Internal"], ["testing", "Testing"], ["automatic", "Automatic"]]}
             />
             <FilterPills
               value={status}
@@ -295,7 +329,7 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
         ) : reports.isError ? (
           <div className="p-5"><ErrorText error={reports.error} /></div>
         ) : rows.length === 0 ? (
-          <EmptyState title="No reports" body="Bug reports and feedback submitted from the Mentra App will appear here." />
+          <EmptyState title="No reports" body={kind === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : kind === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
         ) : (
           <div className="divide-y divide-[#eceeeb]">
             {rows.map(report => (
@@ -344,12 +378,12 @@ function FilterPills<T extends string>(props: {
   options: ReadonlyArray<readonly [T, string]>;
 }) {
   return (
-    <div className="flex h-9 items-center gap-1 rounded-full border border-[#e0e4de] bg-[#f7f8f6] p-1">
+    <div className="flex min-h-9 flex-wrap items-center gap-1 rounded-[18px] border border-[#e0e4de] bg-[#f7f8f6] p-1">
       {props.options.map(([value, label]) => (
         <button
           key={value}
           onClick={() => props.onChange(value)}
-          className={`h-7 rounded-full px-3 text-xs font-semibold ${
+          className={`h-7 whitespace-nowrap rounded-full px-3 text-xs font-semibold ${
             props.value === value ? "bg-white text-[#14151b] shadow-sm" : "text-[#68746d] hover:text-[#14151b]"
           }`}
         >
@@ -417,7 +451,7 @@ function ReportDetailDrawer(props: { reportId: string; onClose: () => void }) {
                   Artifacts ({report.artifacts.length})
                 </div>
                 {report.artifacts.length === 0 ? (
-                  <p className="mt-2 text-sm text-[#68746d]">No screenshots or logs were attached.</p>
+                  <p className="mt-2 text-sm text-[#68746d]">No screenshots, videos or logs were attached.</p>
                 ) : (
                   <div className="mt-3 space-y-4">
                     {report.artifacts.map(artifact => (
@@ -454,7 +488,11 @@ function isPreviewableImage(contentType: string | null | undefined): boolean {
   return PREVIEWABLE_IMAGE_TYPES.has(contentType.split(";")[0].trim().toLowerCase());
 }
 
-function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact: ReportArtifact }) {
+function isPlayableVideo(contentType: string | null | undefined): boolean {
+  return contentType?.split(";")[0].trim().toLowerCase() === "video/mp4";
+}
+
+export function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact: ReportArtifact }) {
   const url = `/api/admin/reports/${reportId}/artifacts/${artifact.artifactId}`;
   const header = (
     <div className="flex flex-wrap items-center gap-2 text-xs text-[#68746d]">
@@ -476,6 +514,25 @@ function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact
             loading="lazy"
             className="mt-2 max-h-72 rounded-[10px] border border-[#e0e4de] bg-white"
           />
+        </a>
+      </div>
+    );
+  }
+  if (artifact.type === "video" && isPlayableVideo(artifact.contentType)) {
+    // Same-origin artifact URL, like screenshots: the browser sends the admin
+    // session cookie and the API serves the MP4 inline.
+    return (
+      <div className="rounded-[14px] bg-[#f5f7f4] p-3">
+        {header}
+        <video
+          src={url}
+          controls
+          playsInline
+          preload="metadata"
+          className="mt-2 max-h-96 w-full rounded-[10px] border border-[#e0e4de] bg-black"
+        />
+        <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-[#087d50]" href={url} download>
+          <FileText className="size-4" /> Download payload
         </a>
       </div>
     );

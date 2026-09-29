@@ -10,6 +10,27 @@ platform :android do
     File.write(output, JSON.generate(codes))
   end
 
+  desc "Read every version code Google Play has accepted for the app (APKs and bundles, any track or none)"
+  lane :used_version_codes do
+    output = ENV.fetch("GOOGLE_PLAY_USED_VERSION_CODES_OUTPUT")
+    package_name = ENV.fetch("APP_PACKAGE_NAME", "com.mentra.mentra")
+    # Play refuses a version code it has ever accepted, whether or not a track
+    # still serves it; supply lists both APKs and bundles inside one edit.
+    require "supply"
+    Supply.config = FastlaneCore::Configuration.create(
+      Supply::Options.available_options,
+      { package_name: package_name },
+    )
+    client = Supply::Client.make_from_config
+    client.begin_edit(package_name: package_name)
+    begin
+      codes = (client.apks_version_codes + client.aab_version_codes).map(&:to_i).uniq.sort
+    ensure
+      client.abort_current_edit
+    end
+    File.write(output, JSON.generate(codes))
+  end
+
   desc "Read Google Play track releases, status, rollout fraction, and version codes"
   lane :google_play_inventory do
     output = ENV.fetch("GOOGLE_PLAY_INVENTORY_OUTPUT")

@@ -92,7 +92,8 @@ runs:
           (command -v gradle >/dev/null 2>&1 && gradle --stop) >/dev/null 2>&1 || true
           pkill -f 'GradleDaemon' >/dev/null 2>&1 || true
           rm -rf ~/.bun/install/cache/* 2>/dev/null || true
-          rm -rf ~/Library/Caches/CocoaPods/* 2>/dev/null || true
+          # Include the isolated per-runner caches used by the iOS PR job.
+          rm -rf ~/Library/Caches/CocoaPods/* ~/Library/Caches/CocoaPods-*/* 2>/dev/null || true
           rm -rf ~/Library/Caches/org.swift.swiftpm/* 2>/dev/null || true
           rm -rf ~/Library/Caches/Homebrew/* 2>/dev/null || true
           rm -rf ~/.gradle/caches/build-cache-* ~/.gradle/caches/transforms-* ~/.gradle/caches/journal-* ~/.gradle/daemon 2>/dev/null || true

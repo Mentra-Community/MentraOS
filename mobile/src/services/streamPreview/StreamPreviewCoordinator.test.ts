@@ -36,6 +36,9 @@ class FakeNative implements StreamPreviewNative {
   transport: "webmessage" | "websocket" = "websocket"
   bindResult: {installReloadRequired: boolean; unavailableReason?: string} = {installReloadRequired: false}
   holdStop: ReturnType<typeof deferred> | null = null
+  holdUnbind: ReturnType<typeof deferred> | null = null
+  /** Native keeps one WebView binding; `unbind` clears whichever one is current. */
+  bound = false
   failStart: Error | null = null
   throwStopSync = false
   prepareError: {code: string} | null = null
@@ -47,12 +50,14 @@ class FakeNative implements StreamPreviewNative {
 
   async bind(options: {hostViewTag: number; packageName: string}) {
     this.calls.push(`bind:${options.packageName}`)
+    if (!this.bindResult.unavailableReason) this.bound = true
     return this.bindResult
   }
   async prepareDocument(options: {docGen: number}): Promise<StreamPreviewDocumentConfig> {
     this.prepared += 1
     this.calls.push(`prepare:${options.docGen}`)
     if (this.prepareError) throw Object.assign(new Error(this.prepareError.code), this.prepareError)
+    if (!this.bound) throw Object.assign(new Error("not_bound"), {code: "not_bound"})
     return {
       protocolVersion: this.protocolVersion,
       transport: this.transport,
@@ -75,6 +80,8 @@ class FakeNative implements StreamPreviewNative {
   }
   async unbind(reason: string) {
     this.calls.push(`unbind:${reason}`)
+    await this.holdUnbind?.promise
+    this.bound = false
   }
   async injectFault(options: {kind: string; ms?: number}) {
     if (this.rejectFault) throw Object.assign(new Error(this.rejectFault.code), this.rejectFault)
@@ -417,6 +424,21 @@ describe("races", () => {
     expect(native.count("start")).toBe(starts)
   })
 
+  test("a new WebView's bind waits for the old WebView's unbind, so the teardown cannot clear it", async () => {
+    await running()
+    native.holdUnbind = deferred()
+    coordinator.viewDestroyed(PKG, "miniapp-unmounted")
+    await flush()
+    const binding = coordinator.bindView({packageName: PKG, hostViewTag: 43})
+    await flush()
+    native.holdUnbind.resolve()
+    expect(await binding).toEqual({installReloadRequired: false, available: true})
+    coordinator.documentReady(PKG)
+    expect(result(await page({cmd: "handshake", docGen: 0, mountEpoch: 1}))).toMatchObject({t: "config", docGen: 2})
+    expect(native.calls.slice(-3)).toEqual(["unbind:miniapp-unmounted", "bind:com.test.call", "prepare:2"])
+    expect(native.bound).toBe(true)
+  })
+
   test("a component that unmounted while backgrounded is not restarted on foreground", async () => {
     const {identity} = await running()
     coordinator.setAppActive(false)
@@ -516,6 +538,7 @@ describe("unsupported", () => {
       binds += 1
       native.calls.push(`bind:${options.packageName}`)
       if (binds === 1) return {installReloadRequired: false, unavailableReason: "no_webview"}
+      native.bound = true
       return {installReloadRequired: false}
     }
     meetings.join(PKG)

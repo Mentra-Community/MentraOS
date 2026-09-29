@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.io.bes.log.BesLogManager;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.McuEventParser;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
@@ -277,54 +278,14 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Request BES firmware version and MAC address from BES chipset. Sends sh_syvr command to BES,
-     * which responds with hs_syvr containing: - version: BES firmware version (e.g., "17.26.1.14")
-     * - btaddr: Bluetooth MAC address - bleaddr: BLE MAC address
-     *
-     * <p>This ensures version info is cached before phone connects, making it available for OTA
-     * patch matching and version_info messages to the phone.
-     */
+    /** Refresh BES identity, capabilities and phone presence through its UART coordinator. */
     public boolean requestSystemVersion() {
-        Log.i(TAG, "🔧 Requesting BES system version (sh_syvr)");
-
-        if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
-            Log.w(TAG, "⚠️ ServiceManager or Bluetooth manager unavailable");
+        if (serviceManager == null
+                || !(serviceManager.getBluetoothManager() instanceof K900BluetoothManager)) {
             return false;
         }
-
-        if (!serviceManager.getBluetoothManager().isConnected()) {
-            Log.w(TAG, "⚠️ Bluetooth not connected; cannot request BES system version");
-            return false;
-        }
-
-        try {
-            // Build full K900 format: C, V, B (all three required to avoid double-wrapping!)
-            JSONObject k900Command = new JSONObject();
-            k900Command.put("C", "sh_syvr");
-            k900Command.put("V", 1);
-            k900Command.put("B", "");
-
-            String commandStr = k900Command.toString();
-            Log.d(TAG, "📤 Sending sh_syvr request: " + commandStr);
-
-            // Send via BluetoothManager - response handled by BesVersionEventSubscriber
-            boolean sent =
-                    serviceManager
-                            .getBluetoothManager()
-                            .sendMessage(
-                                    commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-
-            if (sent) {
-                Log.i(TAG, "✅ BES system version request (sh_syvr) sent successfully");
-            } else {
-                Log.e(TAG, "❌ Failed to send BES system version request");
-            }
-            return sent;
-        } catch (JSONException e) {
-            Log.e(TAG, "💥 Failed to build sh_syvr request", e);
-            return false;
-        }
+        return ((K900BluetoothManager)
+                serviceManager.getBluetoothManager()).requestSystemVersionRefresh();
     }
 
     /**

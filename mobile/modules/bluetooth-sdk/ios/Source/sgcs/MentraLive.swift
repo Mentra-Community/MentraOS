@@ -3016,7 +3016,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "stream_controller_probe":
             if let response = StreamControllerProbe.response(json) {
-                sendJson(response)
+                // BES buffers non-waking commands when MTK enters standby, even while
+                // its streaming CPU lease is held. The current probe needs a live reply.
+                sendJson(response, wakeUp: true)
             }
 
         case "pong":
@@ -5221,7 +5223,11 @@ class MentraLive: NSObject, SGCManager {
                             bridgeLogging: bridgeLogging
                         )
                     }
-                    transportLog("LIVE: Sending data to glasses: \(jsonString)", bridgeLogging: bridgeLogging)
+                    // Wi-Fi credentials are sent unchanged but never logged; the BLE trace
+                    // above records this command with the password redacted.
+                    let loggedPayload = json["password"] == nil
+                        ? jsonString : "<\(commandInfo.commandType) with credentials omitted>"
+                    transportLog("LIVE: Sending data to glasses: \(loggedPayload)", bridgeLogging: bridgeLogging)
                     let packedData =
                         packJson(
                             jsonString,
@@ -5284,7 +5290,8 @@ class MentraLive: NSObject, SGCManager {
         if let requestId {
             json["request_id"] = requestId
         }
-        sendJson(json)
+        // Wake ASG so the version request and its response can finish after idle.
+        sendJson(json, wakeUp: true)
     }
 
     private func sendCoreTokenToAsgClient() {
@@ -7481,7 +7488,7 @@ extension MentraLive {
             if fps > 0 { settings["fps"] = fps }
             json["settings"] = settings
         }
-        sendJson(json)
+        sendJson(json, wakeUp: true)
     }
 
     func stopVideoRecording(requestId: String) {
@@ -7496,7 +7503,7 @@ extension MentraLive {
         sendJson([
             "type": "get_video_recording_status",
             "requestId": requestId,
-        ])
+        ], wakeUp: true)
     }
 
     func stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
@@ -7521,7 +7528,7 @@ extension MentraLive {
         if let authToken, !authToken.isEmpty {
             json["authToken"] = authToken
         }
-        sendJson(json)
+        sendJson(json, wakeUp: true)
     }
 }
 

@@ -223,6 +223,41 @@ Error codes the handler can emit: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_
 
 Photo captures embed IMU payload directly into JPEG EXIF metadata when available.
 
+##### Stream photo (during a WHIP call on the glasses hotspot)
+
+While a WHIP stream is live, `take_photo` is normally rejected with `CAMERA_BUSY`. One shape is
+accepted instead: a `webhookUrl` of the form `http://<private IPv4>[:port]/photo/<id>`, which is the
+phone's local still endpoint on the same listener the glasses publish WHIP to. The phone sends it
+with `transferMethod: "direct"`, `size: "max"`, `compress: "none"`.
+
+The stream is not stopped. The WHIP capturer releases Camera2, black texture frames keep the video
+track flowing, the still is taken through the normal photo pipeline (in memory, never written to
+storage), and the capturer reopens as soon as the JPEG exists, before the upload. The JPEG is POSTed
+unmodified (EXIF orientation preserved) as `Content-Type: image/jpeg` to the `webhookUrl`. The camera
+is returned on every path; a 25 s watchdog (`STREAM_PHOTO_MAX_HOLD_MS`) reopens it even if the
+capture never reports back, and substitute frames stop once the reopened camera delivers a frame (or
+after three failed reopen attempts, so the phone sees the stall and republishes).
+
+Progress uses the usual `photo_status` values (`accepted`, `capturing`, `uploading`). The terminal
+success adds `streamPhoto`, `bytes`, and per-phase `timings`:
+
+```json
+{
+  "type": "photo_response",
+  "requestId": "st19a3f...",
+  "state": "success",
+  "success": true,
+  "uploadUrl": "http://192.168.43.117:40203/photo/st19a3f...",
+  "streamPhoto": true,
+  "bytes": 1186932,
+  "timings": {"cameraLendMs": 180, "captureMs": 2100, "uploadMs": 420, "totalMs": 2700}
+}
+```
+
+Failures are `photo_response` errors: `NOT_STREAMING`, `CAMERA_BUSY` (another photo or stream photo in
+flight, or HAL restart), `STREAM_CHANGED`, `CAMERA_CAPTURE_FAILED`, `PHOTO_SAVE_FAILED`, `UPLOAD_FAILED`.
+Any other upload target during WHIP keeps the `CAMERA_BUSY` rejection.
+
 ---
 
 ### Video recording
@@ -392,6 +427,13 @@ Response includes a `streaming` boolean and a `reconnecting` flag. When reconnec
 ```json
 {"type": "stream_status", "kind": "snapshot", "status": "streaming", "streaming": true, "reconnecting": false, "timestamp": 1708963201234}
 ```
+
+An optional `request_id` matching `[A-Za-z0-9][A-Za-z0-9_-]{0,119}` is echoed on
+that snapshot, before it enters the outbound BLE queue. For example,
+`{"type":"get_stream_status","request_id":"status-123"}` returns the existing
+snapshot with `"request_id":"status-123"`. Omitted or invalid IDs retain the
+uncorrelated response. The ID is not retained on later snapshots or stream events;
+`timestamp` remains display time and can change when the phone synchronizes the clock.
 
 #### `keep_stream_alive`
 

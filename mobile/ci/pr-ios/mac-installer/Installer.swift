@@ -57,11 +57,12 @@ func quitMentraNormally() async throws {
     }
 }
 
+/// Returns the PID of the opened Mentra process, which takes over the app lease (AppOwnershipLease.handOff).
 @MainActor
-func openMentra(_ url: URL) async throws {
+func openMentra(_ url: URL) async throws -> pid_t {
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = true
-    _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+    return try await NSWorkspace.shared.openApplication(at: url, configuration: configuration).processIdentifier
 }
 
 @MainActor
@@ -112,8 +113,8 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                         defer { setReplacing(false) }
                         let launch = options.launch
                         let destination = try await Task.detached {
-                            try await install(candidate, quit: { try await quitMentraNormally() }, launch: { destination in
-                                if launch { try await openMentra(destination) }
+                            try await install(candidate, opensApp: launch, quit: { try await quitMentraNormally() }, launch: { destination in
+                                launch ? try await openMentra(destination) : nil
                             })
                         }.value
                         print("Installed app: \(destination.path)")
@@ -288,16 +289,22 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         setReplacing(true)
         defer { setReplacing(false) }
         do {
-            try await withAppOwnership { await finishOpening(installed) }
+            try await withAppOwnership { lease in
+                if let launched = await finishOpening(installed) { try lease.handOff(to: launched) }
+            }
         } catch { statusLabel.stringValue = error.localizedDescription }
     }
 
-    private func finishOpening(_ destination: URL) async {
+    /// Returns the opened Mentra's PID, or nil when macOS did not open it.
+    private func finishOpening(_ destination: URL) async -> pid_t? {
         installed = destination
         installButton.title = "Open Mentra"
         statusLabel.stringValue = "Mentra is installed. Approve any macOS developer trust or Bluetooth request to finish first-time setup."
-        do { try await openMentra(destination) }
-        catch { statusLabel.stringValue = "Mentra is installed, but macOS did not open it. \(error.localizedDescription) You can finish first-time setup and click Open Mentra again." }
+        do { return try await openMentra(destination) }
+        catch {
+            statusLabel.stringValue = "Mentra is installed, but macOS did not open it. \(error.localizedDescription) You can finish first-time setup and click Open Mentra again."
+            return nil
+        }
     }
 
     private func showWindow() {

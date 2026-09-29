@@ -83,6 +83,36 @@ export function otaTargetText(manifest, identity) {
   return `ASG: *${escape(asg.versionName)}* · build ${asg.versionCode}\nBES: *${escape(manifest.bes_firmware.version)}*\nMTK: *${escape(manifest.mtk_full_ota.end_firmware)}*`
 }
 
+/** Report the failed job/step, never raw build logs or provider error bodies. */
+export async function releaseFailureDetail(env, fetchImpl = fetch) {
+  const fallback = env.MAC_URL
+    ? "Not requested: the release did not complete successfully."
+    : "Not requested: the release did not publish an installable iOS/Mac build."
+  if (env.REPOSITORY !== "Mentra-Community/MentraOS" || !/^[1-9]\d*$/.test(env.RUN_ID ?? "") ||
+    !/^[1-9]\d*$/.test(env.RUN_ATTEMPT ?? "")) return fallback
+  const run = `https://github.com/${env.REPOSITORY}/actions/runs/${env.RUN_ID}`
+  try {
+    const response = await fetchImpl(`https://api.github.com/repos/${env.REPOSITORY}/actions/runs/${env.RUN_ID}/attempts/${env.RUN_ATTEMPT}/jobs?per_page=100`, {
+      headers: {Accept: "application/vnd.github+json", ...(env.GH_TOKEN ? {Authorization: `Bearer ${env.GH_TOKEN}`} : {})},
+      redirect: "error", signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) throw new Error("Job metadata unavailable")
+    const {jobs} = await response.json()
+    const failed = jobs.filter(job => ["failure", "timed_out", "cancelled"].includes(job.conclusion))
+    const job = failed.find(job => job.name.endsWith("Build and distribute coordinated iOS app")) ??
+      failed.find(job => job.name.endsWith("Prepare immutable mobile release")) ?? failed[0]
+    if (job && Number.isSafeInteger(job.id) && job.id > 0) {
+      const clean = value => String(value).replace(/[\r\n]/g, " ").slice(0, 180)
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+      const step = job.steps?.find(step => ["failure", "timed_out", "cancelled"].includes(step.conclusion))
+      const stage = job.name.endsWith("Build and distribute coordinated iOS app") ? "iOS/Mac build" : clean(job.name.split(" / ").at(-1))
+      const outcome = {failure: "failed", timed_out: "timed out", cancelled: "was cancelled"}[job.conclusion]
+      return `Not requested: ${stage} ${outcome}${step ? ` during “${clean(step.name)}”` : ""}. <${run}/job/${job.id}|View failed job>`
+    }
+  } catch { /* Notification delivery must survive a GitHub API outage. */ }
+  return `${fallback} <${run}/attempts/${env.RUN_ATTEMPT}|View release jobs>`
+}
+
 /** Posted with the existing release notification, before its completion callback.
  * A request or release success is never reported as a device-test outcome. */
 export async function coordinatedRoutineLinks(env, fetchImpl = fetch) {
@@ -90,7 +120,7 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch) {
   const pipeline = new URL("https://github.com/Mentra-Community/MentraOS/actions/workflows/dispatch-device-routine.yml")
   if (/^[1-9]\d*$/.test(env.RUN_ID ?? "") && /^[1-9]\d*$/.test(env.RUN_ATTEMPT ?? ""))
     pipeline.searchParams.set("query", `\"Device request callback ${env.RUN_ID} / attempt ${env.RUN_ATTEMPT}\"`)
-  let detail = "Unavailable: no verified successful Mac publication."
+  let detail
   let results = ""
   if (env.FINALIZE_RESULT === "success" && env.MAC_URL && env.REPOSITORY === "Mentra-Community/MentraOS") {
     try {
@@ -104,11 +134,15 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch) {
       // still fail afterward, preventing the successful-workflow callback.
       detail = ["FINALIZE_RESULT", "RELEASE_PAGE_RESULT", "EXAMPLES_DISPATCH_RESULT"].every(key => env[key] === "success")
         ? "Automatic request follows successful workflow completion; execution and results are pending."
-        : "Not requested: the coordinated workflow has not met the successful-completion requirement."
-    } catch { detail = "Unavailable: published Mac metadata could not be verified." }
+        : await releaseFailureDetail(env, fetchImpl)
+    } catch { detail = "Not requested: the published Mac download could not be verified. Inspect the release publication job." }
   }
-  return [{type: "section", text: {type: "mrkdwn", text:
-    `*Requested tests*\nNo-glasses UI — ${detail}\n<${pipeline.href}|Request pipeline>${results}`}}]
+  if (!detail) detail = await releaseFailureDetail(env, fetchImpl)
+  const botConfigured = env.SLACK_BUILDS_BOT_TOKEN && /^C[A-Z0-9]+$/.test(env.BRANCH === "dev"
+    ? env.SLACK_DEV_BUILDS_CHANNEL_ID ?? "" : env.SLACK_STAGING_BUILDS_CHANNEL_ID ?? "")
+  const updates = botConfigured ? "" : "\nSlack result updates are not configured; use the results link when available."
+  return [{type: "section", block_id: "mentra-release-routines", text: {type: "mrkdwn", text:
+    `*Requested tests*\nNo-glasses UI — ${detail}\n<${pipeline.href}|Request pipeline>${results}${updates}`}}]
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

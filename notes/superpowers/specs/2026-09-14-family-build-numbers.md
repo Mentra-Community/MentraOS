@@ -104,25 +104,35 @@ reach.
 
 The pipeline therefore uses Play like this:
 
-- **Betas** distribute through Google Play Internal App Sharing, which has no
-  version-code floor and serves Play-signed builds: the record's `google-play`
-  publication carries the coordinate `com.mentra.mentra:<code>:internal-app-sharing`
-  and the Play download link, which the Slack notification also shows. This is
-  the same path the compatibility lab already used. Testers who hold a
-  pre-formula build uninstall once to take the lower code.
-- **Production candidates** upload straight to the `production` track as a
-  draft release that nothing in the pipeline rolls out. The prepare step's
-  guard (candidate above the served production release) is exactly Play's rule
-  for that track. Store submission verifies that draft and no longer promotes
-  from a testing track.
+- **Betas** publish to the open-testing track (`beta`), the track behind the
+  public beta link. While that track serves a code above the family window,
+  the Android build takes **the next code above the track's floor and every
+  code already reserved, skipping every code Play ever accepted** (the 3.1.0
+  betas left 310000213 to 310000227 behind the served 310000212) instead of
+  the family number
+  (`resolve-android-version-code.mjs`, run in the Android job before the
+  build); it reserves that code before building as an owner-bound marker
+  `mentra-android-version-code-<code>-<owner>.json` in the shared ASG release
+  `mentra-coordinated-asg`, the cross-family home of Android numbering, since
+  borrowed codes span families: a run that stops after building keeps its
+  code, no later run in any family takes it, and its retry finds it. A code
+  already on the track counts as this release's own upload only when the
+  release's immutable Android pair exists; otherwise the run stops. iOS and the
+  ASG client keep the family number. The plan freezes the Play destination
+  (`native.playTrack`), the record and the manifest carry the Android code
+  (`native.androidBuildNumber`), and the coordinate check accepts both; plans
+  from before the freeze still validate their archived Internal App Sharing
+  records. Once a family passes the floor (3.10.0 and
+  later, after its sequences climb past the last floor code), the family number
+  takes over on its own. Testers on the open-testing track do not receive a
+  production release whose code is lower; they leave the programme to move.
 - **Dev** on the dev branch keeps its Play upload paused (`googlePlayUpload`
-  in the plan) for the same reason.
-
-When a fresh closed testing track exists for betas (and one for candidates, if
-tester installs of the candidate are wanted again), point the channel at it in
-`coordinated-release.yml` and in the expected coordinate map in
-`release-family.mjs`; the contract test keeps the two in step. A new closed
-track starts with no served release, so its floor is empty.
+  in the plan); the same rule would give it `internal`'s floor plus one.
+- **Production candidates** upload straight to the `production` track as a
+  draft release that nothing in the pipeline rolls out, with the family number:
+  the prepare step's guard (candidate above the served production release) is
+  exactly Play's rule for that track. Store submission verifies that draft.
+- **Internal App Sharing** has no floor and stays the compatibility lab's path.
 
 ## Non-release builds (local and PR CI)
 

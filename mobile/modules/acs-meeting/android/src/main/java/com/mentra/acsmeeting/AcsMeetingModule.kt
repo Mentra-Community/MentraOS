@@ -7,6 +7,7 @@ import com.mentra.glassesmedia.network.InternetHold
 import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector
 import com.mentra.glassesmedia.network.ScopedNetworkError
 import com.mentra.glassesmedia.network.ScopedSoftApNetwork
+import com.mentra.glassesmedia.source.StillPhotoInbox
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
 import com.mentra.glassesmedia.trace.SoftApTrace
 import com.mentra.acsmeeting.video.VideoProfile
@@ -16,6 +17,11 @@ import expo.modules.kotlin.Promise
 
 class AcsMeetingModule : Module() {
   private var session: AcsMeetingSession? = null
+
+  /** Still timeouts and the decode into the outgoing hold, off the ingest connection thread. */
+  private val stillTimer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { runnable ->
+    Thread(runnable, "acs-glasses-still").apply { isDaemon = true }
+  }
 
   /**
    * Wrap one `AsyncFunction` body in an entry/exit trace.
@@ -427,6 +433,91 @@ class AcsMeetingModule : Module() {
 
     AsyncFunction("setMuted") { muted: Boolean ->
       session?.setMuted(muted) ?: mapOf("state" to "idle", "muted" to muted)
+    }
+
+    AsyncFunction("holdOutgoingVideo") { kind: String, imageBase64: String?, promise: Promise ->
+      val meeting = session
+      if (meeting == null) {
+        promise.reject("NO_MEETING", "No active meeting", null)
+      } else {
+        val bytes = imageBase64?.let { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }
+        meeting.setOutgoingHold(kind, bytes) { handed ->
+          if (handed) promise.resolve(null) else promise.reject("HOLD_FAILED", "The outgoing card was not sent", null)
+        }
+      }
+    }
+
+    /**
+     * Register a full-size still the glasses will upload during a Direct-link call, and return the
+     * URL they must POST it to. Must resolve before the glasses are asked to shoot, so the upload
+     * can never arrive for an id the listener does not know.
+     */
+    AsyncFunction("prepareGlassesStill") { requestId: String ->
+      traced("prepare_glasses_still", "requestId" to requestId) {
+        val meeting = session ?: throw IllegalStateException("No active meeting")
+        val uploadUrl = meeting.softApStillUrl(requestId)
+          ?: throw IllegalStateException("This call has no Direct link receiver")
+        StillPhotoInbox.expect(requestId)
+        mapOf("uploadUrl" to uploadUrl)
+      }
+    }
+
+    /**
+     * Wait for the prepared still, then hold it on the outgoing tile. The JPEG stays native: it is
+     * decoded straight into the hold rather than crossing the bridge. Resolves once the first still
+     * frame is handed to the Teams sender.
+     */
+    AsyncFunction("awaitGlassesStill") { requestId: String, timeoutMs: Int, promise: Promise ->
+      val pending = StillPhotoInbox.lookup(requestId)
+      if (pending == null) {
+        promise.reject("STILL_NOT_PREPARED", "No still is pending for $requestId", null)
+        return@AsyncFunction
+      }
+      val timeout = stillTimer.schedule({
+        pending.completeExceptionally(java.util.concurrent.TimeoutException("still_timeout"))
+      }, timeoutMs.toLong().coerceAtLeast(1L), java.util.concurrent.TimeUnit.MILLISECONDS)
+      pending.whenCompleteAsync({ bytes, error ->
+        timeout.cancel(false)
+        StillPhotoInbox.cancel(requestId)
+        val cause = (error as? java.util.concurrent.CompletionException)?.cause ?: error
+        when {
+          cause is java.util.concurrent.CancellationException ->
+            promise.reject("STILL_CANCELLED", "The still was cancelled", null)
+          cause is java.util.concurrent.TimeoutException ->
+            promise.reject("STILL_TIMEOUT", "The glasses did not upload the still in ${timeoutMs}ms", null)
+          cause != null -> promise.reject("STILL_FAILED", cause.message ?: "Still upload failed", cause)
+          else -> {
+            val meeting = session
+            if (meeting == null) {
+              promise.reject("NO_MEETING", "The meeting ended before the still arrived", null)
+            } else {
+              val holdStartedAt = android.os.SystemClock.elapsedRealtime()
+              SoftApTrace.stage("glasses_still_hold", "requestId" to requestId, "bytes" to bytes.size)
+              meeting.setOutgoingHold("image", bytes) { handed ->
+                val holdMs = android.os.SystemClock.elapsedRealtime() - holdStartedAt
+                SoftApTrace.stage(
+                  "glasses_still_handed",
+                  "requestId" to requestId,
+                  "bytes" to bytes.size,
+                  "handed" to handed,
+                  "holdMs" to holdMs,
+                )
+                if (handed) {
+                  meeting.noteStillHeld(bytes.size)
+                  promise.resolve(mapOf("bytes" to bytes.size, "shownAt" to System.currentTimeMillis()))
+                } else {
+                  promise.reject("HOLD_FAILED", "The still was not sent to the meeting", null)
+                }
+              }
+            }
+          }
+        }
+      }, stillTimer)
+    }
+
+    /** Drop one pending still, or every pending still when [requestId] is null. Idempotent. */
+    AsyncFunction("cancelGlassesStill") { requestId: String? ->
+      if (requestId == null) StillPhotoInbox.cancelAll() else StillPhotoInbox.cancel(requestId)
     }
 
     AsyncFunction("setVideoEnabled") { enabled: Boolean, promise: Promise ->

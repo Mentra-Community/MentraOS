@@ -54,6 +54,23 @@ object JSCPolyfillBridge {
 
     /** Shared OkHttp execution path for host cloud-client requests. */
     fun executeHttp(method: String, url: String, headers: Map<String, String>, bodyString: String?): HttpResult {
+        val request = buildHttpRequest(method, url, headers, bodyString)
+        httpClient.newCall(request).execute().use { response ->
+            val responseHeaders = mutableMapOf<String, String>()
+            for (name in response.headers.names()) {
+                responseHeaders[name.lowercase()] = response.headers.values(name).joinToString(", ")
+            }
+            return HttpResult(
+                status = response.code,
+                statusText = response.message,
+                headers = responseHeaders,
+                body = response.body?.string() ?: "",
+            )
+        }
+    }
+
+    /** Keep host HTTP and miniapp fetch body semantics identical, including empty POSTs. */
+    internal fun buildHttpRequest(method: String, url: String, headers: Map<String, String>, bodyString: String?): Request {
         val builder = Request.Builder().url(url)
         for ((name, value) in headers) builder.header(name, value)
         val contentType = headers.entries
@@ -66,18 +83,7 @@ object JSCPolyfillBridge {
             else -> null
         }
         builder.method(upperMethod, requestBody)
-        httpClient.newCall(builder.build()).execute().use { response ->
-            val responseHeaders = mutableMapOf<String, String>()
-            for (name in response.headers.names()) {
-                responseHeaders[name.lowercase()] = response.headers.values(name).joinToString(", ")
-            }
-            return HttpResult(
-                status = response.code,
-                statusText = response.message,
-                headers = responseHeaders,
-                body = response.body?.string() ?: "",
-            )
-        }
+        return builder.build()
     }
 
     /** Idempotent. Call once on host boot, after the dispatcher is created. */
@@ -220,20 +226,9 @@ object JSCPolyfillBridge {
             }?.toMap() ?: emptyMap()
             val bodyString = req["body"] as? String
 
-            val builder = Request.Builder().url(url)
-            for ((k, v) in headers) builder.header(k, v)
-            // HTTP header names are case-insensitive. The JS fetch caller will
-            // commonly provide `Content-Type`; a direct lowercase map lookup
-            // misses that value and causes OkHttp to emit application/octet-stream.
-            val contentType = headers.entries
-                .firstOrNull { (name, _) -> name.equals("content-type", ignoreCase = true) }
-                ?.value
-            val body = if (bodyString.isNullOrEmpty()) null else bodyString.toRequestBody(
-                (contentType ?: "application/octet-stream").toMediaTypeOrNull()
-            )
-            builder.method(method.uppercase(), body)
+            val request = buildHttpRequest(method, url, headers, bodyString)
 
-            httpClient.newCall(builder.build()).enqueue(object : Callback {
+            httpClient.newCall(request).enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     deliverError(runtime, packageName, reqId, "fetch: ${e.message}")
                 }

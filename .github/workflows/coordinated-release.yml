@@ -75,11 +75,12 @@ jobs:
               # promotion needs a follow-up design because signed mobile bytes
               # cannot have their embedded backend rewritten after this build.
               echo "backend_environment=staging" >> "$GITHUB_OUTPUT"
-              # The Play beta track still serves a pre-formula build number
-              # above every family window, so betas go through Internal App
-              # Sharing until a fresh closed track exists (see the family
-              # build numbers spec). Keep release-family.mjs in step.
-              echo "play_track=internal-app-sharing" >> "$GITHUB_OUTPUT"
+              # The open-testing track behind the public beta link. It serves
+              # a pre-formula code above the family window, so the Android
+              # build takes the track's floor plus one until the family passes
+              # it (resolve-android-version-code.mjs). Keep release-family.mjs
+              # in step.
+              echo "play_track=beta" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Staging Public" >> "$GITHUB_OUTPUT"
               echo "testflight_audience=external" >> "$GITHUB_OUTPUT"
               ;;
@@ -144,6 +145,19 @@ jobs:
             assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id")
           fi
           printf '%s\n' "$assets" > family-only-assets.json
+          # GitHub can remove attempt-scoped artifacts when a workflow is
+          # rerun. Recover this run's durable number reservation from the
+          # family container before allocating, so any already-published
+          # native artifacts keep the same build number on retry.
+          mkdir -p family-build-number-markers
+          while IFS=$'\t' read -r asset_id name; do
+            [[ -z "$asset_id" ]] && continue
+            node .github/scripts/release-assets.mjs fetch \
+              --repository "$GITHUB_REPOSITORY" --asset-id "$asset_id" \
+              > "family-build-number-markers/$name"
+          done < <(jq -r \
+            '.[] | select(.name | test("^mentra-build-number-[0-9]+\\.json$")) | [.id, .name] | @tsv' \
+            family-only-assets.json)
           # ASG pairs numbered before markers existed live in the shared ASG
           # release; their numbers are taken too. Inventories are merged through
           # files: a family inventory runs to hundreds of kilobytes, past the
@@ -157,6 +171,7 @@ jobs:
             --assets family-container-assets.json \
             --base-version "$base_version" \
             --owner "coordinated-run:${GITHUB_RUN_ID}" \
+            --markers-dir family-build-number-markers \
             --output family-build-number.json
           echo "build_number=$(jq -er .buildNumber family-build-number.json)" >> "$GITHUB_OUTPUT"
 
@@ -173,6 +188,7 @@ jobs:
             --sequence "${{ github.run_number }}" \
             --source-commit "${{ github.sha }}" \
             --native-build-number "${{ steps.family-number.outputs.build_number }}" \
+            --play-track "${{ steps.channel.outputs.play_track }}" \
             --ota-inputs ota-release-inputs.json \
             --require-version-mirrors true \
             --public-beta-testflight true \
@@ -187,6 +203,7 @@ jobs:
             --sequence "${{ github.run_number }}" \
             --source-commit "${{ github.sha }}" \
             --native-build-number "${{ steps.family-number.outputs.build_number }}" \
+            --play-track "${{ steps.channel.outputs.play_track }}" \
             --ota-inputs ota-release-inputs.json \
             --require-version-mirrors true \
             --public-beta-testflight true \
@@ -449,38 +466,82 @@ jobs:
           name: ${{ needs.plan.outputs.plan_artifact }}
           path: release-input/plan
 
+      - name: Restore finalized release result from an earlier attempt
+        id: restore-result
+        if: needs.plan.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_name="coordinated-release-result-${{ needs.plan.outputs.release_set_id }}"
+          artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100")
+          matches=$(jq --arg name "$artifact_name" '[.artifacts[] | select(.name == $name)]' <<< "$artifacts")
+          count=$(jq 'length' <<< "$matches")
+          if (( count > 1 )); then
+            echo "Run $GITHUB_RUN_ID has multiple finalized release results; refusing an ambiguous retry." >&2
+            exit 1
+          fi
+          if (( count == 0 )); then
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$(jq -r '.[0].expired' <<< "$matches")" != "false" ]]; then
+            echo "The finalized release result for run $GITHUB_RUN_ID has expired; refusing to regenerate immutable assets." >&2
+            exit 1
+          fi
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$artifact_name" --dir restored-release
+          plan=release-input/plan/release-plan.json
+          plan_name=$(jq -er .artifactNames.releasePlan "$plan")
+          manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")
+          cmp "$plan" "restored-release/$plan_name"
+          manifest="restored-release/$manifest_name"
+          [[ -s "$manifest" ]]
+          [[ "$(jq -er .releaseSetId "$manifest")" == "$(jq -er .releaseSetId "$plan")" ]]
+          [[ "$(jq -er .sourceCommit "$manifest")" == "${{ needs.plan.outputs.source_commit }}" ]]
+          [[ -s "restored-release/$(jq -er .artifactNames.enginePackage "$plan")" ]]
+          [[ -s restored-release/publication-results.json ]]
+          mkdir -p finalized-release
+          cp -a restored-release/. finalized-release/
+          echo "restored=true" >> "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@v4
+        if: steps.restore-result.outputs.restored != 'true'
         with:
           name: ${{ needs.cloud-v2.outputs.result_artifact }}
           path: release-input/cloud-v2
 
       - uses: actions/download-artifact@v4
+        if: steps.restore-result.outputs.restored != 'true'
         with:
           name: ${{ needs.runtime-image.outputs.result_artifact }}
           path: release-input/runtime-image
 
       - uses: actions/download-artifact@v4
-        if: needs.plan.outputs.cloud_environment == 'dev'
+        if: steps.restore-result.outputs.restored != 'true' && needs.plan.outputs.cloud_environment == 'dev'
         with:
           name: ${{ needs.private-deployment.outputs.result_artifact }}
           path: release-input/private-deployment
 
       - uses: actions/download-artifact@v4
+        if: steps.restore-result.outputs.restored != 'true'
         with:
           name: ${{ needs.ota.outputs.result_artifact }}
           path: release-input/ota
 
       - uses: actions/download-artifact@v4
+        if: steps.restore-result.outputs.restored != 'true'
         with:
           name: ${{ needs.plan.outputs.npm_artifact }}
           path: release-input/npm
 
       - uses: actions/download-artifact@v4
+        if: steps.restore-result.outputs.restored != 'true'
         with:
           name: ${{ needs.sdk-native.outputs.result_artifact }}
           path: release-input/sdk-native
 
       - uses: actions/download-artifact@v4
+        if: steps.restore-result.outputs.restored != 'true'
         with:
           name: ${{ needs.mobile.outputs.result_artifact }}
           path: release-input/mobile
@@ -493,37 +554,42 @@ jobs:
           plan=release-input/plan/release-plan.json
           identity=$(jq -er .releaseIdentity "$plan")
           tag=$(jq -er .artifactContainerTag "$plan")
-          asg_selection="release-input/ota/release-assets/$(jq -er .artifactNames.asgSelection "$plan")"
-          test -f "$asg_selection"
-          engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
-          test -n "$engine_package"
-          private_deployment_args=()
-          if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
-            private_deployment_args=(
-              --private-deployment release-input/private-deployment/private-deployment.json
-            )
+          plan_name=$(jq -er .artifactNames.releasePlan "$plan")
+          manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")
+          engine_name=$(jq -er .artifactNames.enginePackage "$plan")
+          if [[ "${{ steps.restore-result.outputs.restored }}" != "true" ]]; then
+            asg_selection="release-input/ota/release-assets/$(jq -er .artifactNames.asgSelection "$plan")"
+            test -f "$asg_selection"
+            engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
+            test -n "$engine_package"
+            private_deployment_args=()
+            if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
+              private_deployment_args=(
+                --private-deployment release-input/private-deployment/private-deployment.json
+              )
+            fi
+            node .github/scripts/assemble-coordinated-release-results.mjs \
+              --plan "$plan" \
+              --ota release-input/ota/ota-result.json \
+              --npm release-input/npm/npm-publications.json \
+              --native release-input/sdk-native/sdk-native-publications.json \
+              --mobile release-input/mobile/mobile-publications.json \
+              --cloud release-input/cloud-v2/cloud-v2-deployment.json \
+              --runtime-image release-input/runtime-image/runtime-image-publication.json \
+              "${private_deployment_args[@]}" \
+              --asg-selection "$asg_selection" \
+              --engine-package "$engine_package" \
+              --release-asset-base-url "https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag" \
+              --output finalized-release/publication-results.json
+            cp "$plan" "finalized-release/$plan_name"
+            cp "$engine_package" "finalized-release/$engine_name"
           fi
-          node .github/scripts/assemble-coordinated-release-results.mjs \
-            --plan "$plan" \
-            --ota release-input/ota/ota-result.json \
-            --npm release-input/npm/npm-publications.json \
-            --native release-input/sdk-native/sdk-native-publications.json \
-            --mobile release-input/mobile/mobile-publications.json \
-            --cloud release-input/cloud-v2/cloud-v2-deployment.json \
-            --runtime-image release-input/runtime-image/runtime-image-publication.json \
-            "${private_deployment_args[@]}" \
-            --asg-selection "$asg_selection" \
-            --engine-package "$engine_package" \
-            --release-asset-base-url "https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag" \
-            --output finalized-release/publication-results.json
-          cp "$plan" "finalized-release/$(jq -er .artifactNames.releasePlan "$plan")"
-          cp "$engine_package" "finalized-release/$(jq -er .artifactNames.enginePackage "$plan")"
           {
             echo "tag=$tag"
             echo "identity=$identity"
-            echo "plan_name=$(jq -er .artifactNames.releasePlan "$plan")"
-            echo "manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")"
-            echo "engine_name=$(jq -er .artifactNames.enginePackage "$plan")"
+            echo "plan_name=$plan_name"
+            echo "manifest_name=$manifest_name"
+            echo "engine_name=$engine_name"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve and verify the exact release container
@@ -542,13 +608,21 @@ jobs:
           echo "release_id=${{ needs.plan.outputs.release_id }}" >> "$GITHUB_OUTPUT"
 
       - name: Finalize release manifest
-        if: needs.plan.outputs.dry_run != 'true'
+        if: needs.plan.outputs.dry_run != 'true' && steps.restore-result.outputs.restored != 'true'
         run: >-
           node .github/scripts/finalize-release-manifest.mjs
           --plan release-input/plan/release-plan.json
           --results finalized-release/publication-results.json
           --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
           --output "finalized-release/${{ steps.results.outputs.manifest_name }}"
+
+      - uses: actions/upload-artifact@v4
+        if: needs.plan.outputs.dry_run != 'true' && steps.restore-result.outputs.restored != 'true'
+        with:
+          name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
+          path: finalized-release
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Publish immutable plan, package, and manifest assets
         if: needs.plan.outputs.dry_run != 'true'
@@ -586,13 +660,6 @@ jobs:
           node .github/scripts/verify-public-release-asset.mjs \
             --file "finalized-release/${{ steps.results.outputs.manifest_name }}" \
             --url "$url"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
-          path: finalized-release
-          if-no-files-found: error
-          retention-days: 90
 
       - name: Summarize completed release
         run: |
@@ -663,6 +730,7 @@ jobs:
 
   notify-slack:
     name: Notify release Slack channel
+    environment: build-notifications
     needs:
       [
         plan,
@@ -686,8 +754,12 @@ jobs:
       - name: Post coordinated release result
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           STAGING_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}
           DEV_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
+          SLACK_BUILDS_BOT_TOKEN: ${{ secrets.SLACK_BUILDS_BOT_TOKEN }}
+          SLACK_DEV_BUILDS_CHANNEL_ID: ${{ vars.SLACK_DEV_BUILDS_CHANNEL_ID }}
+          SLACK_STAGING_BUILDS_CHANNEL_ID: ${{ vars.SLACK_STAGING_BUILDS_CHANNEL_ID }}
           RELEASE_SCOPE: core
           RELEASE_PAGE_RESULT: ${{ needs.publish-release-page.result }}
           EXAMPLES_DISPATCH_RESULT: ${{ needs.dispatch-examples.result }}
@@ -729,3 +801,11 @@ jobs:
           ASG_APK_NAME: ${{ needs.ota.outputs.asg_apk_name }}
           ASG_APK_URL: ${{ needs.ota.outputs.asg_apk_url }}
         run: .github/scripts/notify-coordinated-release-slack.sh
+
+      - name: Retain the exact editable release message
+        if: always() && hashFiles('slack-release-message.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-slack-message-${{ github.run_id }}-${{ github.run_attempt }}
+          path: slack-release-message.json
+          if-no-files-found: error

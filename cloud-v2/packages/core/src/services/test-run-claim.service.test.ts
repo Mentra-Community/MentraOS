@@ -5,7 +5,9 @@ import { createTestRunClaimApi } from "../api/internal/test-run-claims.api";
 import { createTestRunIngestApi } from "../api/internal/test-runs.api";
 import { adminAuth } from "../api/middleware/admin-auth.middleware";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
-import type { TestRunClaimRequest, TestRunClaimResponse, TestRunClaimSettlement } from "../types/test-run-claim.types";
+import type {
+  TestRunClaimClosure, TestRunClaimClosureRecord, TestRunClaimRequest, TestRunClaimResponse, TestRunClaimSettlement, TestRunProgressCheckpoint,
+} from "../types/test-run-claim.types";
 import {
   MongoTestRunClaimRepository, TestRunClaimService,
   type StoredTestRunClaim, type TestRunClaimRepository,
@@ -25,6 +27,20 @@ class MemoryRepository implements TestRunClaimRepository {
     if (current.claim.state === "claimed" && current.executionTokenSha256 === token) {
       current.claim = { ...current.claim, state: settlement.state, settlement, settledAt };
     }
+    return structuredClone(current);
+  }
+  async progress(id: string, token: string, value: TestRunProgressCheckpoint) {
+    const current = this.claims.get(id)!;
+    const updated = current.executionTokenSha256 === token && current.claim.state !== "terminal" && !current.closure
+      && !(current.claim.state === "recovery-required" && value.mode === "running")
+      && (!current.progress || current.progress.sequence < value.sequence);
+    if (updated) current.progress = structuredClone(value);
+    return { stored: structuredClone(current), updated };
+  }
+  async close(id: string, token: string, closure: TestRunClaimClosureRecord) {
+    const current = this.claims.get(id)!;
+    if (current.executionTokenSha256 === token && current.claim.state === "recovery-required" && !current.closure)
+      current.closure = structuredClone(closure);
     return structuredClone(current);
   }
 }
@@ -55,6 +71,72 @@ const send = (method: string, path: string, body?: unknown, token = TOKEN) => ap
 const settle = (settlement: TestRunClaimSettlement, token = fixture().executionToken) =>
   send("PUT", "/request-1/state", { executionToken: token, settlement });
 const body = async (response: Response) => await response.json() as TestRunClaimResponse;
+
+describe("display-only progress checkpoints", () => {
+  const progress = (sequence = 1) => ({ executionToken: fixture().executionToken, sequence, mode: "running", phase: "test",
+    step: { id: "walkthrough", label: "Walk through settings" }, completedSteps: 0, totalSteps: 1,
+    action: { id: "open-settings", label: "Open Settings", completedActions: 2, totalActions: null } });
+  const update = (value: unknown, token = TOKEN) => send("PUT", "/request-1/progress", value, token);
+  test("requires both capabilities and a pre-existing owner; never grants execution", async () => {
+    expect((await update(progress(), "wrong")).status).toBe(401);
+    expect((await update(progress())).status).toBe(404);
+    await send("POST", "/", fixture());
+    expect((await update({ ...progress(), executionToken: "c".repeat(64) })).status).toBe(403);
+    const response = await update(progress());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accepted: true, sequence: 1 });
+    const read = await body(await send("GET", "/request-1"));
+    expect(read.executionGranted).toBe(false);
+    expect(read.claim).not.toHaveProperty("progress");
+    expect(JSON.stringify(read)).not.toContain(fixture().executionToken);
+  });
+  test("accepts the publisher's colon-bearing semantic step and action IDs", async () => {
+    await send("POST", "/", fixture());
+    expect((await update({ ...progress(), step: { id: "phase:walkthrough", label: "Walk through app" },
+      action: { id: "android:settings", label: "Open Settings", completedActions: 0, totalActions: null } })).status).toBe(200);
+    expect(repository.claims.get("request-1")?.progress?.action?.id).toBe("android:settings");
+  });
+  test("newer journal sequence wins; duplicate/older packets cannot refresh the server timestamp", async () => {
+    await send("POST", "/", fixture());
+    const first = await (await update(progress(5))).json() as { accepted: boolean; sequence: number; receivedAt: string };
+    const duplicate = await (await update(progress(5))).json();
+    expect(duplicate).toEqual({ ...first, accepted: false });
+    const old = await (await update(progress(2))).json();
+    expect(old).toEqual(duplicate);
+    expect((await update({ ...progress(5), phase: "teardown" })).status).toBe(409);
+    expect((await update(progress(6))).status).toBe(200);
+    expect(repository.claims.get("request-1")?.progress?.sequence).toBe(6);
+  });
+  test("concurrent equal sequence is idempotent and only one update is accepted", async () => {
+    await send("POST", "/", fixture());
+    const replies = await Promise.all([update(progress()), update(progress())]);
+    const values = await Promise.all(replies.map(async value => await value.json() as { accepted: boolean }));
+    expect(values.filter(value => value.accepted)).toHaveLength(1);
+    expect(repository.claims.get("request-1")?.claim.state).toBe("claimed");
+  });
+  test("recovery can report through its original owner but progress never changes settlement", async () => {
+    await send("POST", "/", fixture());
+    await update(progress());
+    await settle({ state: "recovery-required", reason: "fixture requires recovery" });
+    expect((await update(progress(2))).status).toBe(409);
+    expect((await update({ ...progress(2), mode: "recovering", phase: "teardown" })).status).toBe(200);
+    expect((await update({ ...progress(3), mode: "complete", phase: "evidence" })).status).toBe(200);
+    expect(repository.claims.get("request-1")?.claim.state).toBe("recovery-required");
+    expect(repository.claims.get("request-1")?.claim.settlement).toEqual({ state: "recovery-required", reason: "fixture requires recovery" });
+  });
+  test("terminal settlement refuses newer progress, and rejects unknown fields or invalid counts", async () => {
+    await send("POST", "/", fixture());
+    for (const value of [{ ...progress(), log: "private" }, { ...progress(), observedAt: "2020-01-01" },
+      { ...progress(), completedSteps: 2 }, { ...progress(), sequence: 0 }, { ...progress(), phase: "arbitrary" },
+      { ...progress(), step: { id: "/tmp/private", label: "invalid" } },
+      { ...progress(), action: { id: "action", label: "Action", completedActions: 2, totalActions: 1 } }])
+      expect((await update(value)).status).toBe(400);
+    await update(progress());
+    await settle({ state: "terminal", resultRunId: "result-1" });
+    expect((await update({ ...progress(2), mode: "complete" })).status).toBe(409);
+    expect((await update(progress())).status).toBe(200);
+  });
+});
 
 describe("claim capability and execution ownership", () => {
   test("the internal route mount preserves the grant/status contract", async () => {
@@ -160,6 +242,155 @@ describe("single grant and monotonic settlement", () => {
     const replay = await body(await settle(value));
     expect(replay).toEqual(await body(await send("GET", "/request-1")));
     expect(replay.executionGranted).toBe(false);
+  });
+});
+
+describe("original-owner claim closure", () => {
+  const closure = (): TestRunClaimClosure => ({ kind: "android-refused-install-released",
+    originalTerminal: { sequence: 26, sha256: "8a0305b246077c9b93162ebc7a653b8041e2e46ed1b9db9f6b3c3ac5a753bbb8" },
+    journalPrefix: { bytes: 90_210, sha256: "c".repeat(64) },
+    release: { type: "setup-abandoned-after-refusal", sequence: 27, eventSha256: "d".repeat(64),
+      revision: "1f82ab61b4b3c8c2787d3fdf0e9b0d8d825de147", implementationSha256: "e".repeat(64) },
+    fixture: "uncommissioned", selectedCandidateInstalled: false, candidateTestRun: false, recordingStarted: false });
+  const request = (patch: Record<string, unknown> = {}) => ({ ...fixture(), closure: closure(), ...patch });
+  const close = (value: unknown) => send("PUT", "/request-1/closure", value);
+  const recovery = { state: "recovery-required" as const, reason: "Android update refused in place; preserve original run" };
+  const settled = async () => { await send("POST", "/", fixture()); await settle(recovery); };
+
+  test("records one append-only closure for the settled original owner and replays it exactly", async () => {
+    await settled();
+    const before = await body(await send("GET", "/request-1"));
+    const first = await close(request());
+    expect(first.status).toBe(200);
+    expect(first.headers.get("cache-control")).toBe("no-store");
+    const saved = await first.json() as { executionGranted: boolean; claim: unknown; closure: TestRunClaimClosureRecord };
+    expect(saved).toEqual({ executionGranted: false, claim: before.claim, closure: { ...closure(), closedAt: expect.any(String) } });
+    expect(JSON.stringify(saved)).not.toContain(fixture().executionToken);
+    // A lost acknowledgement retries the same body without changing the server time.
+    expect(await (await close(request())).json()).toEqual(saved);
+    // The original settlement, claim time and replay semantics are unchanged; GET/claim responses keep their shape.
+    expect(await body(await send("GET", "/request-1"))).toEqual(before);
+    expect((await settle(recovery)).status).toBe(200);
+    expect((await settle({ state: "terminal", resultRunId: "request-1" })).status).toBe(409);
+    expect((await body(await send("POST", "/", fixture()))).executionGranted).toBe(false);
+    expect(repository.claims.get("request-1")!.claim.settlement).toEqual(recovery);
+  });
+
+  test("rejects a different closure, wrong owner, identity pins, unsupported evidence and incompatible state", async () => {
+    expect((await close(request())).status).toBe(404);
+    await send("POST", "/", fixture());
+    expect((await close(request())).status).toBe(409);
+    await settle(recovery);
+    expect((await close(request({ executionToken: "c".repeat(64) }))).status).toBe(403);
+    for (const patch of [{ requestSha256: "c".repeat(64) }, { workerId: "mini-2" }, { fixtureId: "glasses-2" },
+      { executionId: "execution-2" }, { requestId: "request-2" }])
+      expect((await close(request(patch))).status).toBe(409);
+    const unsupported: unknown[] = [
+      { ...closure(), kind: "arbitrary-recovery" }, { ...closure(), fixture: "ready" }, { ...closure(), candidateTestRun: true },
+      { ...closure(), recordingStarted: true }, { ...closure(), selectedCandidateInstalled: true },
+      { ...closure(), release: { ...closure().release, type: "preflight-abandoned" } },
+      { ...closure(), release: { ...closure().release, sequence: 28 } },
+      { ...closure(), release: { ...closure().release, revision: "1f82ab6" } },
+      { ...closure(), originalTerminal: { sequence: 26, sha256: "short" } },
+      { ...closure(), closedAt: "2026-01-01T00:00:00.000Z" }, { ...closure(), note: "private raw UI" },
+    ];
+    for (const value of unsupported) expect((await close(request({ closure: value }))).status).toBe(400);
+    expect((await close({ ...request(), extra: true })).status).toBe(400);
+    expect(repository.claims.get("request-1")!.closure).toBeUndefined();
+    expect((await close(request())).status).toBe(200);
+    const changed = { ...closure(), release: { ...closure().release, eventSha256: "f".repeat(64) } };
+    expect((await close(request({ closure: changed }))).status).toBe(409);
+    expect((await close(request({ executionToken: "c".repeat(64) }))).status).toBe(403);
+    expect(repository.claims.get("request-1")!.closure).toMatchObject(closure());
+  });
+
+  test("a terminal claim cannot be closed, and a closed claim accepts no newer recovery progress", async () => {
+    await send("POST", "/", fixture());
+    await settle({ state: "terminal", resultRunId: "result-1" });
+    expect((await close(request())).status).toBe(409);
+    repository.claims.clear();
+    await settled();
+    const progress = { executionToken: fixture().executionToken, sequence: 1, mode: "recovering", phase: "teardown",
+      step: null, completedSteps: 0, totalSteps: 1 };
+    expect((await send("PUT", "/request-1/progress", progress)).status).toBe(200);
+    expect((await close(request())).status).toBe(200);
+    expect((await send("PUT", "/request-1/progress", { ...progress, sequence: 2 })).status).toBe(409);
+    expect(repository.claims.get("request-1")!.progress?.sequence).toBe(1);
+  });
+
+  test("a closure committed before its response was lost is recovered by resending the same body", async () => {
+    await settled();
+    const original = repository.close.bind(repository);
+    const lost = spyOn(repository, "close").mockImplementation(async (...args) => { await original(...args); throw new Error("response lost"); });
+    const response = await close(request());
+    expect(response.status).toBe(503);
+    expect((await body(response)).executionGranted).toBe(false);
+    lost.mockRestore();
+    const committed = repository.claims.get("request-1")!.closure!;
+    const replay = await close(request());
+    expect(replay.status).toBe(200);
+    expect((await replay.json() as { closure: unknown }).closure).toEqual(committed);
+  });
+
+  // Day1 preflight failure released by the generic original-owner abandonment: zero operations.
+  const preflight = (): TestRunClaimClosure => ({ kind: "preflight-abandoned-released",
+    originalTerminal: { sequence: 20, sha256: "8a0305b246077c9b93162ebc7a653b8041e2e46ed1b9db9f6b3c3ac5a753bbb8" },
+    journalPrefix: { bytes: 61_440, sha256: "c".repeat(64) },
+    release: { type: "preflight-abandoned", sequence: 21, eventSha256: "d".repeat(64),
+      revision: "34ccd211fbe8b094471c5cd1c4ca4c4ebefd3eff", implementationSha256: "e".repeat(64) },
+    operations: 0, fixture: "uncommissioned", selectedCandidateInstalled: false, candidateTestRun: false, recordingStarted: false });
+
+  test("records one zero-operation preflight closure without changing the claim, settlement or execution grant", async () => {
+    await settled();
+    const before = await body(await send("GET", "/request-1"));
+    const first = await close(request({ closure: preflight() }));
+    expect(first.status).toBe(200);
+    const saved = await first.json() as { executionGranted: boolean; claim: unknown; closure: TestRunClaimClosureRecord };
+    expect(saved).toEqual({ executionGranted: false, claim: before.claim, closure: { ...preflight(), closedAt: expect.any(String) } });
+    expect(await (await close(request({ closure: preflight() }))).json()).toEqual(saved);
+    // One immutable closure: neither the Android kind nor changed preflight pins replace it.
+    expect((await close(request())).status).toBe(409);
+    expect((await close(request({ closure: { ...preflight(), journalPrefix: { bytes: 61_440, sha256: "f".repeat(64) } } }))).status).toBe(409);
+    expect((await close(request({ closure: preflight(), executionToken: "c".repeat(64) }))).status).toBe(403);
+    expect(await body(await send("GET", "/request-1"))).toEqual(before);
+    expect((await settle({ state: "terminal", resultRunId: "request-1" })).status).toBe(409);
+    expect((await body(await send("POST", "/", fixture()))).executionGranted).toBe(false);
+    expect(repository.claims.get("request-1")!.closure).toMatchObject(preflight());
+  });
+
+  test("rejects contradictory or mixed preflight closure evidence; the Android closure is still accepted", async () => {
+    await settled();
+    const value = preflight() as Extract<TestRunClaimClosure, { kind: "preflight-abandoned-released" }>;
+    const { operations: _, ...withoutOperations } = value;
+    const unsupported: unknown[] = [
+      { ...value, release: { ...value.release, type: "setup-abandoned-after-refusal" } },
+      { ...value, release: { ...value.release, type: "setup-abandoned-before-mutation" } },
+      { ...value, kind: "preflight-abandoned" }, withoutOperations, { ...value, operations: 1 },
+      { ...closure(), operations: 0 }, { ...value, release: { ...value.release, sequence: 22 } },
+      { ...value, fixture: "ready" }, { ...value, candidateTestRun: true }, { ...value, recordingStarted: true },
+      { ...value, selectedCandidateInstalled: true }, { ...value, release: { ...value.release, revision: "34ccd21" } },
+      { ...value, sourceObservation: { passed: true } }, { ...value, result: "passed" },
+    ];
+    for (const entry of unsupported) expect((await close(request({ closure: entry }))).status).toBe(400);
+    for (const patch of [{ workerId: "mini-2" }, { fixtureId: "glasses-2" }, { requestSha256: "c".repeat(64) }])
+      expect((await close(request({ ...patch, closure: preflight() }))).status).toBe(409);
+    expect(repository.claims.get("request-1")!.closure).toBeUndefined();
+    expect((await close(request())).status).toBe(200);
+    expect(repository.claims.get("request-1")!.closure).toMatchObject(closure());
+    expect((await close(request({ closure: preflight() }))).status).toBe(409);
+  });
+
+  test("Mongo closure is atomic on owner, recovery state and absence of an earlier closure", async () => {
+    const repository = new MongoTestRunClaimRepository();
+    const update = spyOn(TestRunClaimModel, "findOneAndUpdate").mockImplementation((() => ({ lean: async () => null })) as never);
+    const get = spyOn(repository, "get").mockResolvedValue({ claim: { ...fixture(), state: "claimed", claimedAt: "x" } as never, executionTokenSha256: "f".repeat(64) });
+    try {
+      const record = { ...closure(), closedAt: "2026-09-25T00:00:00.000Z" };
+      await repository.close("request-1", "f".repeat(64), record);
+      expect(update.mock.calls[0]!.slice(0, 3)).toEqual([
+        { requestId: "request-1", executionTokenSha256: "f".repeat(64), "claim.state": "recovery-required", closure: { $exists: false } },
+        { $set: { closure: record } }, { new: true, writeConcern: { w: "majority", j: true, wtimeout: 10_000 } }]);
+    } finally { update.mockRestore(); get.mockRestore(); }
   });
 });
 

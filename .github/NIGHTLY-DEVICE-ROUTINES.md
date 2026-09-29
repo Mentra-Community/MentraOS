@@ -1,121 +1,180 @@
 # Nightly device routine runbook
 
-The [nightly workflow](workflows/nightly-device-routines.yml) requests **day-one
-OTA** and **Mentra Call** from the latest verified coordinated **dev** and
-**staging** publications. This is separate from the no-glasses walkthrough
-requested when each coordinated build finishes. No commits or new builds are
-created on either channel by the scheduler.
+The [nightly workflow](workflows/nightly-device-routines.yml) targets five routines
+on each latest verified coordinated **dev** and **staging** publication:
 
-## Schedule and selection
+| Required routine | Platform | Current integration |
+| --- | --- | --- |
+| `day1-ota` | iOS on Mac | Registered; needs qualified enrolled runtime and fixture |
+| `mentra-call` | iOS on Mac | Registered; needs independent Call media/audio/network qualification |
+| `account-miniapps` | iOS on Mac | Registered in source; runs its full definition on the selected Mac build, where unobserved Safari Google provider cases fail or block by name; not qualified |
+| `connected-glasses` | Android | Registered in source; runs its full definition on the selected APK, where C8/C9 fail by name before input until their controllers exist; not qualified |
+| `livestreamer` | iOS on Mac | Registered in source (managed WebRTC **Stream here** and local RTMP); preparation refuses before any claim until its real enrollment and native/Share URL observations exist; not qualified |
 
-The workflow targets midnight in `America/Los_Angeles`. Two GitHub schedules,
-07:00 and 08:00 UTC, cover daylight saving time. Only the trigger corresponding
-to local midnight proceeds, including both DST transition dates. GitHub can
-delay scheduled jobs: the intended scheduled time determines the date, with a
-six-hour delivery window. A later delivery fails instead of moving a request
-silently to a different night.
+Planning, registration and qualification are separate steps. A planned target is
+catalogued in [`device-routines.mjs`](scripts/device-routines.mjs) with its name,
+label, platform and a `pending` reason. That wires its request choice, Slack row,
+terminal filename and PR result rendering, but every execution path refuses it:
+PR label and explicit requests, dispatch planning, the private callback and the
+nightly send all require `registeredRoutine`. The planner lists it as unavailable
+with its exact `pending` text and never requests it. Core lists it with a `planned`
+reason that deployment enablement cannot override, and the private worker refuses
+it during preparation before any claim. Registration is not a passing device result
+either. No-glasses tests requested after each coordinated build remain unchanged
+and stay the only successful-build defaults. The scheduler creates no commits or
+builds.
 
-For each channel, the planner examines the latest 20 successful coordinated
-runs, newest first. A green dry run is insufficient: the selected attempt must
-have successfully executed **Publish immutable plan, package, and manifest
-assets** in the finalize job. It must also have a retained, unambiguous Actions
-plan artifact, belong to the channel's current ancestry, and expose matching
-immutable release plan, Mac publication receipt, available Mac archive and OTA
-manifest. Missing or invalid newer publications can be skipped in favor of an
-older verified one within that bounded search. The summary names the exact
-release, run and publication attempt selected.
+`livestreamer` is registered in source: `worker/livestreamer.ts` exports
+`prepareLivestreamerWorker`, which authenticates the request and binds its selected
+Mac build for the managed Stream here and local RTMP flow with owned receiver and
+network cleanup. Its runtime is still pending: an enrolled worker lane and fixture,
+the recorded native state snapshots and an observed owned Stream here Share URL on
+the selected build. Until those exist its preparation refuses before any claim, and
+no run of it is qualified.
 
-An unavailable channel fails the separate **availability** job. Qualified
-requests for the other channel still run. A green scheduler or accepted request
-does not imply that a physical routine passed.
+`connected-glasses` is registered in source: `worker/connected-glasses.ts` exports
+`prepareConnectedGlassesWorker`, which authenticates dev and staging requests,
+verifies the exact selected APK and OTA manifest, and runs the full definition in one
+claimed lifecycle with claim-bound segmented recording, export and settlement. C14
+follows the observed Wi-Fi path with its protected entry omitted between owned
+recording segments. C8 and C9 have no controllers yet: their steps fail by name
+before any input, and later unvisited steps stay not-run. C3's physical report
+evidence, C8 route/reference/audio and C9 capture/sync remain unverified, so an
+attempted run is honest but not qualification. Fixture access and other runtime
+prerequisites stay the private worker's decisions.
 
-## Dispatch and duplicate protection
+`account-miniapps` is registered in source: `worker/account-miniapps.ts` exports
+`prepareAccountMiniappsWorker`, which authenticates dev and staging requests, verifies
+the exact selected Mac build and OTA manifest, and takes only the reviewed host of the
+selected app backend, whose feedback reader, Core origin and account identity must be
+that backend's. It runs the full definition in one claimed lifecycle with claim-bound
+recording, export and settlement. The recorded original account and paired fixture,
+the normal unpair, the customer account, SSO, pairing and miniapp sections and the
+original return all belong to that private lifecycle. The owned Safari Google provider
+completion, its Mentra callback and the selected provider window's close are
+unqualified, and no real eligible customer completion has been observed: missing
+observations yield failed or blocked results, so an attempted run is honest but not
+qualification. Registration adds no qualification gate before a requested run.
+Fixture access, credentials and other runtime prerequisites stay the private worker's
+decisions.
 
-The scheduler calls the existing **Request device routine** workflow on `dev`
-with `request_origin: workflow-dispatch`, a channel, routine, and exact source
-run/attempt. That trusted producer revalidates the publication and publishes its
-immutable request JSON. The normal callback dispatches the request to the
-private worker, which independently validates its own enrollment, request,
-fixture and artifacts. The scheduler never sends commands to the Mini.
+Registering one is a single reviewed change: remove its `pending` (public) and
+`planned` (Core), route its private enrolled configuration to the owner's completed
+lifecycle instead of `worker/planned-routine-intake.ts`, and add its label to
+`request-e2e-routine.yml`'s `pull_request` trigger and `REQUEST_ROUTINE` chain.
 
-The scheduler job name binds the local date, channel and routine. Its started
-send step is the durable fence before dispatch. An earlier started send, an
-ambiguous response, missing/partial history, or a workflow rerun cannot send
-that generation again automatically. A job cancelled before its send step
-does not consume the generation. History is checked across all attempts.
+## Schedule and exact selection
 
-Do not delete scheduler history or rerun a failed scheduler to repeat a physical
-test. Inspect the named job and any acknowledged request workflow first. A lost
-response can mean the request was already created. Reconcile the existing
-request and private claim before deliberately requesting a new generation
-through the normal request workflow or admin UI. Upload recovery remains
-separate from repeating device actions.
+Nightly starts at **04:00 America/Los_Angeles**. The 11:00 and 12:00 UTC triggers cover daylight
+saving time; only the applicable trigger proceeds, including transition dates.
+GitHub delivery can be delayed for at most six hours. Later delivery fails rather
+than silently changing the night.
 
-## Rollout and activation
+The schedule moved from 03:00 (10:00 and 11:00 UTC) and, before that, from midnight
+(07:00 and 08:00 UTC). Only the 04:00 triggers plan or send; any other trigger is
+refused, and an 11:00 UTC trigger in winter (03:00 Pacific) is a no-op. Sends from the
+03:00 and midnight generations stay verifiable: each generation reads a sender's
+creation time with its own intended Pacific hour, since 11:00 UTC was 03:00 in winter
+but is 04:00 in summer, and all readings must name one local date. The date/channel/routine
+send fence spans generations, so a member already sent on a local date by an earlier
+generation is never sent again that date.
 
-The scheduler is disabled unless the repository Actions variable
-`DEVICE_ROUTINE_NIGHTLY_ENABLED` is exactly `true`. This change does not set it.
+For each channel, inspect the latest 20 successful coordinated runs, newest first.
+A candidate needs the successful immutable-publication step, its retained Actions
+plan artifact, current channel ancestry and verified plan/receipt/archive/OTA
+metadata. A green dry run is insufficient. Select the newest candidate with a
+verified archive for at least one registered required platform, then **freeze that
+publication for every routine on the channel**. Mac and Android selections must
+share source commit, release identity, release-plan hash and OTA-manifest hash.
 
-Before enabling:
+A missing platform stays unavailable on that selected publication; it does not
+silently use an older build. A missing worker registration also stays unavailable,
+with no substitute walkthrough. The separate availability job reports these gaps
+while eligible members proceed. The summary names each routine, platform, release,
+source run and publication attempt. It is a request summary, not a test verdict.
 
-1. Merge the request/callback/nightly workflows into the repository's default
-   branch (`dev`), together with public support for `mentra-call`. Merge the
-   corresponding private request parser and Call adapter first; an unsupported
-   or unenrolled routine must fail without substituting another routine.
-2. Enroll the exact private worker revision and each routine's reviewed config.
-   Confirm the required physical fixture, permissions, recordings, independent
-   Call internet connection, setup/recovery and result publication work. The
-   Call recording must include the browser peer. Worker registration alone is
-   insufficient.
-3. Verify the ordinary no-glasses PR/dev request path and its matching uploaded
-   admin result. Staging supports the same path; do not make staging commits
-   just to verify activation.
-4. Configure `TEST_RUN_GITHUB_APP_ID` and `TEST_RUN_GITHUB_APP_PRIVATE_KEY` in
-   both repositories. The callback mints a private Actions-write token; the
-   worker mints a source-read token for each phase and has separate claim and
-   upload secrets. Confirm the default branch is `dev`. GitHub schedules only
-   run from the default branch.
-5. Enable the repository variable, then inspect the next applicable midnight
-   run and the four resulting request links. This command is an operator step,
-   not part of the workflow:
+## Independent requests and resource ownership
 
-   ```bash
-   gh variable set DEVICE_ROUTINE_NIGHTLY_ENABLED \
-     --repo Mentra-Community/MentraOS --body true
-   ```
+Each matrix member calls **Request device routine** on trusted `dev`, with its
+routine, exact source run/attempt and `request_origin: workflow-dispatch`. The
+optional schema-2 marker is authenticated against the scheduled run and that
+member's entered send step:
 
-To disable future scheduled requests:
-
-```bash
-gh variable set DEVICE_ROUTINE_NIGHTLY_ENABLED \
-  --repo Mentra-Community/MentraOS --body false
+```json
+{"sequence":{"kind":"nightly-routine","runId":123,"runAttempt":1,"member":"mentra-call"}}
 ```
 
-Disabling does not cancel already dispatched requests or interrupt a running
-firmware write. Let owned cleanup finish; use the existing worker reconciliation
-process if a fixture is retained for recovery. The Mini's queue and leases
-govern execution order and fixture ownership; there is no separate polling
-daemon or second scheduler service.
+The producer revalidates the selected publication and publishes immutable request
+JSON. Its ordinary trusted callback queues the usual private `device-routine.yml`
+job. The private worker independently verifies the request and enrolled runtime,
+then uses the existing shared claim, app/device/audio leases, setup, cleanup,
+verified return and result publisher. No extra queue or Mini polling daemon exists.
 
-## Results and validation
+One routine's failed test verdict does not gate another. Call requires its own
+fresh, manifest-compatible commissioned fixture and live preflight, including the
+checks repeated under its lease. A failed Day1 run with a verified usable return
+can therefore leave Call eligible; a retained/unknown fixture cannot. Independent
+resources may run concurrently. Shared app, glasses, network or audio resources
+must serialize through their existing ownership checks.
 
-Public Actions stores request JSON and scheduler summaries. The private worker
-stores raw recordings locally, uploads its immutable result/evidence to the
-configured Core deployment, and exposes the same recorded result through the
-admin viewer. The existing `#dev-builds` and `#staging-builds` posts remain build
-notifications; their results links do not imply that nightly work has finished.
-No credentials, firmware images, recordings or private harness code belong in
-this public scheduler.
+Each date/channel/routine has its own entered-send fence. Partial history, an
+ambiguous response, a prior entered send or an attempt rerun refuses another send.
+The generated request workflow must also remain attempt 1; rerunning it cannot
+bypass this fence. A cancellation before the send step does not consume the member. Legacy whole-pair
+sends fence both OTA and Call during migration. Other independent members remain
+eligible. Never delete scheduler history or rerun it to repeat hardware actions;
+reconcile the existing request/claim before a deliberate new request.
 
-The offline checks run in **E2E Setup Checks**:
+Already-published `nightly-ota-call` markers retain their original paired private
+workflow and strict OTA prerequisite. They are not reinterpreted as independent
+requests. New nightly requests use only the ordinary callback.
+
+## Activation and results
+
+`DEVICE_ROUTINE_NIGHTLY_ENABLED=true` activates the existing schedule. Run eligible
+registered routines even while other routines are still being qualified. A missing
+worker, artifact or usable fixture must remain visibly unavailable or failed;
+it must not suppress unrelated routines or be reported as a passing test.
+
+Before activation, confirm the trusted producer/callback, private enrolled runtime,
+scoped GitHub App dispatch credentials and Core claim/upload capabilities. Routine
+registration and fixture preconditions still apply. Enabling the schedule does not
+waive them or certify a routine. Keep the default per-build no-glasses coverage.
+
+Review the next applicable run's table for all ten targets (five on each channel).
+Each member links to its request workflow and Admin recording/result. A request
+success is not a device verdict; the result link appears when the worker publishes
+it. An unavailable member is shown explicitly while eligible members proceed.
+Verify integration on dev; do not create staging verification commits or manual
+staging qualification runs. Normal scheduled staging coverage remains enabled.
+
+Operator commands:
+
+```bash
+gh variable set DEVICE_ROUTINE_NIGHTLY_ENABLED --repo Mentra-Community/MentraOS --body true
+# Stop future schedules without interrupting existing writes or cleanup:
+gh variable set DEVICE_ROUTINE_NIGHTLY_ENABLED --repo Mentra-Community/MentraOS --body false
+```
+
+Public Actions retains request JSON and summaries. Private workers retain original
+local evidence and upload immutable results/assets to the configured Core/admin
+viewer. Every member has its own request, verdict and return state. Existing
+`#dev-builds` and `#staging-builds` posts remain build notifications; their result
+links do not imply nightly completion. Credentials, recordings and firmware bytes
+remain outside this public source.
+
+Focused offline checks:
 
 ```bash
 node --test .github/scripts/nightly-device-routines.test.mjs \
   .github/scripts/request-e2e-routine.test.mjs \
   .github/scripts/coordinated-routine-request.test.mjs \
   .github/scripts/dispatch-device-routine.test.mjs \
-  .github/scripts/notify-pr-builds.test.mjs
+  .github/scripts/notify-pr-builds.test.mjs \
+  .github/scripts/pr-routine-result.test.mjs \
+  .github/scripts/release-routine-slack.test.mjs
 ```
 
-These tests use synthetic GitHub and publication metadata. They do not dispatch
-hardware, authenticate to Slack, alter variables, or qualify a physical routine.
+These synthetic metadata checks exercise no hardware and do not enable scheduling.
+The five-by-two chain tests use a labelled model of a completed public registration
+for the planned routines; a pass there models wiring only and qualifies nothing.

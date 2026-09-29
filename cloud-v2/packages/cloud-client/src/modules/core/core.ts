@@ -31,6 +31,7 @@ export class Core {
     submit(input: SubmitReportInput): Promise<SubmitReportResult>
     addLogs(reportId: string, source: string, entries: ReportLogEntry[]): Promise<AddReportArtifactsResult>
     addScreenshots(reportId: string, images: ReportAttachmentInput[]): Promise<AddReportArtifactsResult>
+    addVideos(reportId: string, source: string, videos: ReportAttachmentInput[]): Promise<AddReportArtifactsResult>
     complete(reportId: string): Promise<{status: ReportStatus}>
   }
   readonly supportProfile: {
@@ -44,6 +45,7 @@ export class Core {
       submit: reports.submit.bind(reports),
       addLogs: reports.addLogs.bind(reports),
       addScreenshots: reports.addScreenshots.bind(reports),
+      addVideos: reports.addVideos.bind(reports),
       complete: reports.complete.bind(reports),
     }
     this.supportProfile = {update: supportProfiles.update.bind(supportProfiles)}

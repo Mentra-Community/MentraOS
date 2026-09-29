@@ -1,14 +1,5 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {
-  Dimensions,
-  FlatList,
-  LayoutChangeEvent,
-  Platform,
-  Pressable,
-  StyleSheet,
-  TouchableOpacity,
-  View,
-} from "react-native"
+import {Dimensions, FlatList, LayoutChangeEvent, Platform, Pressable, StyleSheet, View} from "react-native"
 import Animated, {
   cancelAnimation,
   Easing,
@@ -820,11 +811,18 @@ export function AppsGrid({
         return <View className="flex-1" />
       }
       return (
-        <TouchableOpacity
+        <Pressable
           ref={(ref) => {
             itemRefs.current[item.packageName] = ref
           }}
           testID={`${showAllApps ? "allApps" : "home"}.miniapp.${item.packageName}`}
+          onAccessibilityTap={() => {
+            void handlePress(item)
+          }}
+          accessibilityActions={[{name: "activate"}]}
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === "activate") void handlePress(item)
+          }}
           className="flex-1 items-center justify-center pt-3"
           accessibilityRole="button"
           accessibilityLabel={item.updating ? translate("home:miniappUpdatingLabel", {app: item.name}) : item.name}
@@ -842,7 +840,7 @@ export function AppsGrid({
               return
             }
           }}
-          activeOpacity={0.7}>
+          style={({pressed}) => ({opacity: pressed ? 0.7 : 1})}>
           <AppIcon app={item} className="w-16 h-16" instant />
           <View className="w-full h-9 my-1 items-center justify-start">
             <Text
@@ -860,7 +858,7 @@ export function AppsGrid({
             />
             {item.updating && <Text className="text-muted-foreground text-[10px]" tx="home:miniappUpdating" />}
           </View>
-        </TouchableOpacity>
+        </Pressable>
       )
     },
     [handlePress, showAllApps, showPopover],

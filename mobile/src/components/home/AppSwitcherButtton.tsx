@@ -13,7 +13,7 @@ import {
   useForegroundApp,
   type ClientApp,
 } from "@mentra/engine"
-import {RefObject, useEffect, useLayoutEffect, useRef, useState} from "react"
+import {RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState} from "react"
 import {scheduleOnRN} from "react-native-worklets"
 import {BlurView} from "expo-blur"
 import {LinearGradient} from "expo-linear-gradient"
@@ -37,12 +37,18 @@ const SWIPE_DISTANCE_MULTIPLIER = 1
 
 export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blurTargetRef}: AppSwitcherButtonProps) {
   const {theme} = useAppTheme()
-  const backgroundApps = useActiveBackgroundApps()
+  const activeBackgroundApps = useActiveBackgroundApps()
+  const closingPackageName = useMiniappPresentationStore((s) => s.closingPackageName)
+  const backgroundApps = useMemo(
+    () => activeBackgroundApps.filter((app) => app.packageName !== closingPackageName),
+    [activeBackgroundApps, closingPackageName],
+  )
   const foregroundApp = useActiveForegroundApp()
-  const trayForegroundApp = foregroundApp
+  const trayForegroundApp = foregroundApp?.packageName === closingPackageName ? null : foregroundApp
   const overlayApp = useForegroundApp()
   const revealedPackageName = useMiniappPresentationStore((s) => s.revealedPackageName)
-  const freezeTray = !!overlayApp && revealedPackageName !== overlayApp.packageName
+  const freezeTray =
+    !!overlayApp && revealedPackageName !== overlayApp.packageName && closingPackageName !== overlayApp.packageName
   const liveAppsCount = backgroundApps.length + (trayForegroundApp ? 1 : 0)
   const lastHomeCount = useRef(liveAppsCount)
   useLayoutEffect(() => {
@@ -51,7 +57,13 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   // Freeze only through launch; update behind the fully revealed miniapp.
   const appsCount = freezeTray ? lastHomeCount.current : liveAppsCount
   const hasBuzzedRef = useRef(false)
-  const [appsList, setAppsList] = useState<ClientApp[]>([])
+  const [sortedAppsList, setAppsList] = useState<ClientApp[]>([])
+  const appsList = sortedAppsList.filter(
+    (app) =>
+      app.packageName !== closingPackageName &&
+      (backgroundApps.some((active) => active.packageName === app.packageName) ||
+        trayForegroundApp?.packageName === app.packageName),
+  )
   const insets = useSaferAreaInsets()
   const translateY = useSharedValue(0)
   const [androidBlur] = useSetting(SETTINGS.android_blur.key)
@@ -318,7 +330,10 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
           <GlassView
             tintColor={buttonTint}
             className={`flex-1 pl-5 pr-1.5 rounded-2xl flex-row justify-between items-center min-h-16`}>
-            <Pressable accessible={false} style={({pressed}) => [{opacity: pressed ? 0.7 : 1}]} className="flex-1 flex-row">
+            <Pressable
+              accessible={false}
+              style={({pressed}) => [{opacity: pressed ? 0.7 : 1}]}
+              className="flex-1 flex-row">
               <View className="flex-row flex-1">
                 <View className="flex-col gap-1 flex-1 justify-center">
                   <Text

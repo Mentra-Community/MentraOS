@@ -13,6 +13,7 @@ on:
       - ".github/workflows/mentra-asg-client-build.yml"
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/ensure-android-ndk*"
       - ".github/scripts/pr_mobile_config.py"
       - ".github/scripts/prepare-pr-mobile.mjs"
       - ".github/scripts/repackage-pr-apk*"
@@ -21,6 +22,9 @@ on:
       - ".github/workflows/mentra-app-ios-build.yml"
       - ".github/workflows/reusable-pr-build-notification.yml"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/ios-*"
+      - ".github/actions/disk-guard/**"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
       - ".github/scripts/allocate-asg-version.mjs"
@@ -40,6 +44,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   PR_IOS_SIGNED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
@@ -60,6 +65,29 @@ jobs:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
     steps:
+      - name: Record job start and Actions cache state
+        id: job-start
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "IOS_BUILD_LOG_DIR=$RUNNER_TEMP/ios-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+          echo "Runner: ${RUNNER_NAME:-unknown}  event: ${{ github.event_name }}"
+          # Actions cache usage for the repo at job start. The configured
+          # storage limit is not exposed by the REST API for this repo
+          # (usage-policy returns 404); it is 10 GB unless changed in repo
+          # settings, so record usage and the largest entries instead.
+          usage="$(gh api "repos/${GITHUB_REPOSITORY}/actions/cache/usage" 2>/dev/null || echo '{}')"
+          size_bytes="$(printf '%s' "$usage" | jq -r '.active_caches_size_in_bytes // 0')"
+          count="$(printf '%s' "$usage" | jq -r '.active_caches_count // 0')"
+          printf 'Actions cache usage: %s entries, %s GB\n' "$count" "$(awk -v b="$size_bytes" 'BEGIN { printf "%.2f", b / 1073741824 }')"
+          echo "cache_size_bytes=$size_bytes" >> "$GITHUB_OUTPUT"
+          echo "cache_count=$count" >> "$GITHUB_OUTPUT"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/caches?per_page=100&sort=size_in_bytes&direction=desc" \
+            --jq '.actions_caches[] | "\(.size_in_bytes / 1048576 | floor) MB  \(.key)"' 2>/dev/null | head -12 > "$RUNNER_TEMP/cache-entries.txt" || true
+          cat "$RUNNER_TEMP/cache-entries.txt" || true
+
       - name: Kill stale build processes (this runner's prior job only)
         run: |
           # This is a SHARED self-hosted macOS runner. A blanket `killall xcodebuild`
@@ -94,8 +122,8 @@ jobs:
 
       - name: Clean previous build outputs only
         run: |
-          # Wipe build outputs from previous runs but preserve dependency caches
-          # (node_modules, Pods, DerivedData are kept and invalidated by lockfile keys below)
+          # Wipe this workspace's outputs. Dependency downloads remain on the
+          # host; no remote Pods or DerivedData cache is restored or saved.
           rm -rf mobile/ios/build mobile/ios/build-device
 
       - name: Checkout code
@@ -103,6 +131,22 @@ jobs:
 
       - name: Free disk space if low
         uses: ./.github/actions/disk-guard
+
+      - name: Isolate this runner's CocoaPods download cache
+        run: |
+          # Three runner processes share this Mac. With one shared
+          # ~/Library/Caches/CocoaPods, a job whose pod install self-heal runs
+          # `pod cache clean --all` deletes archives another job is reading at
+          # that moment (seen as "No such file or directory @ rb_file_s_lstat
+          # ... CocoaPods/Pods/Release/ZXingObjC/..." in a concurrent retry).
+          # CocoaPods honours CP_CACHE_DIR, so keep one download cache per
+          # runner process. Still under ~/Library/Caches, so the weekly Tier-2
+          # cleanup and disk-guard treat it like before; first run per
+          # process is cold once.
+          cache_dir="$HOME/Library/Caches/CocoaPods-${RUNNER_NAME:-runner}"
+          mkdir -p "$cache_dir"
+          echo "CP_CACHE_DIR=$cache_dir" >> "$GITHUB_ENV"
+          echo "CocoaPods download cache for this runner: $cache_dir ($(du -sh "$cache_dir" 2>/dev/null | cut -f1))"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -125,7 +169,7 @@ jobs:
           python3 mobile/ci/pr-ios/test_repackage.py
           python3 mobile/ci/pr-ios/test_keychain_search.py
           node --test mobile/ci/pr-ios/xcode-attempt.test.mjs
-          node --test .github/scripts/pr-mobile-build.test.mjs
+          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/ios-build-timings.test.mjs .github/scripts/ios-xcodebuild-attempt.test.mjs .github/scripts/ios-cache-cleanup.test.mjs
 
       - name: Setup environment
         working-directory: ./mobile
@@ -139,7 +183,8 @@ jobs:
           cp .env.example .env
           # Pin which cloud this binary talks to (OS-1875).
           #
-          # main is production-configured; dev, PRs and feature branches use dev
+          # main is production-configured; staging-targeted PRs use staging; dev,
+          # other PRs and feature branches use dev
           # cloud. Trusted PRs publish ad hoc iPhone/Mac downloads; other events
           # remain compile checks. No TestFlight export or upload occurs here.
           #
@@ -147,10 +192,21 @@ jobs:
           # A lane that produces a distributable must not inherit that silently.
           # Fatal on release-producing events, warning on pull_request, matching the
           # Sentry DSN rule (OS-1827).
-          case "${{ github.ref_name }}" in
-            main) CLOUD_ENV="prod" ;;
-            *) CLOUD_ENV="dev" ;;
-          esac
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # A PR app targets its base's services: staging-targeted PRs use
+            # staging, every other PR keeps dev. GITHUB_BASE_REF is GitHub's PR
+            # base, not PR-controlled input. The backend is part of the reuse
+            # fingerprint, so a dev binary is never repackaged as staging.
+            case "$GITHUB_BASE_REF" in
+              staging) CLOUD_ENV="staging" ;;
+              *) CLOUD_ENV="dev" ;;
+            esac
+          else
+            case "${{ github.ref_name }}" in
+              main) CLOUD_ENV="prod" ;;
+              *) CLOUD_ENV="dev" ;;
+            esac
+          fi
           case "$CLOUD_ENV" in
             dev)
               CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
@@ -345,44 +401,6 @@ jobs:
             const {selectMobile} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-mobile-build.mjs`);
             await selectMobile({github, context, core, platform: 'ios'});
 
-      - name: Get cache week number
-        id: cache-week
-        run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache CocoaPods downloads
-        if: steps.select-ipa.outputs.reused != 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/Library/Caches/CocoaPods
-            ~/.cocoapods
-          # Downloaded pod archives and specs are portable between runners.
-          key: cocoapods-downloads-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/package.json', 'mobile/bun.lock') }}
-          restore-keys: |
-            cocoapods-downloads-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            cocoapods-downloads-${{ runner.os }}-
-
-      - name: Cache installed CocoaPods
-        if: steps.select-ipa.outputs.reused != 'true'
-        uses: actions/cache@v4
-        with:
-          path: mobile/ios/Pods
-          # Generated pod support files can embed absolute node_modules and
-          # workspace paths. Keep them runner-local and exact so a runner never
-          # inherits another runner's Hermes or React Native build-script paths.
-          key: pods-installed-${{ runner.name }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json', 'mobile/bun.lock') }}
-
-      - name: Cache Xcode DerivedData (device build)
-        if: steps.select-ipa.outputs.reused != 'true'
-        id: xcode-derived-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: mobile/ios/build-device
-          # DerivedData and SwiftPM artifacts embed absolute workspace paths.
-          # Keep this cache runner-local and exact: restoring another runner's
-          # cache produced references to missing Mapbox XCFrameworks.
-          key: xcode-derived-device-${{ runner.name }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json', 'mobile/bun.lock') }}
-
       - name: Install dependencies
         if: steps.select-ipa.outputs.reused != 'true'
         id: bun-install
@@ -429,58 +447,23 @@ jobs:
           printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$MAPBOX_DOWNLOADS_TOKEN" >> "$HOME/.netrc"
           chmod 600 "$HOME/.netrc"
 
-      - name: Ensure a clean iOS prebuild (drop stale generated project, keep dep caches)
+      - name: Ensure a clean iOS prebuild (drop any stale generated project)
         if: steps.select-ipa.outputs.reused != 'true'
         run: |
-          # mobile/ios is gitignored (generated by prebuild). The CocoaPods +
-          # DerivedData cache restores above recreate mobile/ios/ containing only
-          # Pods/ and build-device/. `expo prebuild` then sees mobile/ios/ already
-          # exists ("reusing /ios") and SKIPS regenerating the native project, so
-          # there's no AppDelegate — which makes the withIosIcons config plugin
-          # fail with "Could not locate a valid AppDelegate at root: .../mobile".
-          # That's the intermittent iOS prebuild failure (it depends on whether the
-          # Pods cache hits this run).
-          #
-          # Force a clean, deterministic prebuild. The previous approach deleted
-          # everything in mobile/ios EXCEPT Pods/ and build-device/ — but leaving
-          # those behind means mobile/ios/ still EXISTS, so `expo prebuild` says
-          # "reusing /ios" and skips regenerating the native project (no
-          # AppDelegate) → the intermittent failure. Instead, move Pods/ OUT of
-          # mobile/ios, remove mobile/ios entirely so prebuild regenerates
-          # AppDelegate + the Xcode project from scratch, then restore Pods after.
-          # Preserve Pods/ and build-device/ (the DerivedData cache) by moving them
-          # OUT, then restore after prebuild. We do NOT use `expo prebuild --clean`
-          # (disallowed; also wipes caches).
-          rm -rf "$RUNNER_TEMP/ios-cache"
-          mkdir -p "$RUNNER_TEMP/ios-cache"
-          if [ -d mobile/ios ]; then
-            [ -d mobile/ios/Pods ] && mv mobile/ios/Pods "$RUNNER_TEMP/ios-cache/Pods" || true
-            [ -d mobile/ios/build-device ] && mv mobile/ios/build-device "$RUNNER_TEMP/ios-cache/build-device" || true
-            rm -rf mobile/ios
-          fi
+          # mobile/ios is gitignored (generated by prebuild). If anything left a
+          # partial mobile/ios/ behind, `expo prebuild` sees the directory,
+          # says "reusing /ios" and SKIPS regenerating the native project, so
+          # there is no AppDelegate and the withIosIcons config plugin fails
+          # with "Could not locate a valid AppDelegate at root: .../mobile"
+          # (#3239). Remove the directory outright so prebuild always
+          # regenerates AppDelegate + the Xcode project. We do NOT use
+          # `expo prebuild --clean` (disallowed).
+          rm -rf mobile/ios
 
       - name: Run Expo prebuild
         if: steps.select-ipa.outputs.reused != 'true'
         working-directory: ./mobile
         run: bun expo prebuild --platform ios
-
-      - name: Restore iOS dep caches (Pods + build-device)
-        if: steps.select-ipa.outputs.reused != 'true'
-        run: |
-          # Prebuild just regenerated a clean mobile/ios with a valid AppDelegate.
-          # Restore Pods/ and build-device/ so pod install + xcodebuild reuse them.
-          if [ -d "$RUNNER_TEMP/ios-cache/Pods" ]; then
-            rm -rf mobile/ios/Pods
-            mv "$RUNNER_TEMP/ios-cache/Pods" mobile/ios/Pods
-          fi
-          if [ -d "$RUNNER_TEMP/ios-cache/build-device" ]; then
-            rm -rf mobile/ios/build-device
-            mv "$RUNNER_TEMP/ios-cache/build-device" mobile/ios/build-device
-            # The cached SPM checkouts (e.g. mapbox-maps-ios) restore read-only,
-            # which makes the Podfile post-install hook fail with "Permission
-            # denied". Make them writable so pod install can process them.
-            chmod -R u+w mobile/ios/build-device/SourcePackages 2>/dev/null || true
-          fi
 
       - name: Setup Sherpa Onnx
         if: steps.select-ipa.outputs.reused != 'true'
@@ -496,7 +479,7 @@ jobs:
           # Self-heal a corrupted prebuilt-framework cache: the cached Pods can be
           # valid-by-lockfile-key yet missing the React-Core-prebuilt React.xcframework
           # Info.plist (a known RN-0.83 prebuilt + CocoaPods cache flake on the
-          # self-hosted runners). On failure, clear the project Pods + the global pod
+          # self-hosted runners). On failure, clear the project Pods + this runner's pod
           # cache and reinstall fresh. Happy path is unchanged.
           pod install || {
             echo "::warning::pod install failed (likely a stale/corrupt prebuilt cache) — clearing caches and retrying"
@@ -538,7 +521,7 @@ jobs:
       #                -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.0' \
       #                -derivedDataPath build
 
-      - name: Build iOS app for Device (cached attempt)
+      - name: Build iOS app for Device (first attempt)
         if: steps.select-ipa.outputs.reused != 'true'
         id: xcode-build
         working-directory: ./mobile/ios
@@ -546,17 +529,9 @@ jobs:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
         continue-on-error: true
         run: |
-          started_at="$(date +%s)"
-          record_duration() {
-            status=$?
-            echo "duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
-            trap - EXIT
-            exit "$status"
-          }
-          trap record_duration EXIT
-
           cd "$GITHUB_WORKSPACE"
-          node mobile/ci/pr-ios/build.mjs
+          "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-1 -- \
+            node mobile/ci/pr-ios/build.mjs
 
       - name: Retry build with clean caches (if first attempt failed)
         id: xcode-build-clean
@@ -565,15 +540,6 @@ jobs:
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
         run: |
-          started_at="$(date +%s)"
-          record_duration() {
-            status=$?
-            echo "duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
-            trap - EXIT
-            exit "$status"
-          }
-          trap record_duration EXIT
-
           echo "First build failed, nuking caches and retrying from scratch..."
 
           # Kill any hung xcodebuild from THIS job's failed attempt only — scoped to our
@@ -606,52 +572,36 @@ jobs:
           # Reinstall pods from scratch with fresh repo
           pod install --repo-update
 
-          # Retry serially. The fallback only runs after a failed cached build,
+          # Retry serially. The fallback only runs after a failed first build,
           # and limiting concurrency avoids the observed CocoaPods VFS overlay
           # disappearing while parallel compile and XCFramework copy jobs run.
           cd "$GITHUB_WORKSPACE"
-          node mobile/ci/pr-ios/build.mjs --serial
+          "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-2 -- \
+            node mobile/ci/pr-ios/build.mjs --serial
 
       - name: Summarize iOS build attempts
         if: always()
+        continue-on-error: true
         env:
           REUSED: ${{ steps.select-ipa.outputs.reused }}
-          DERIVED_CACHE_HIT: ${{ steps.xcode-derived-cache.outputs.cache-hit }}
-          CACHED_OUTCOME: ${{ steps.xcode-build.outcome }}
-          CACHED_DURATION_SECONDS: ${{ steps.xcode-build.outputs.duration_seconds }}
-          RETRY_OUTCOME: ${{ steps.xcode-build-clean.outcome }}
-          RETRY_DURATION_SECONDS: ${{ steps.xcode-build-clean.outputs.duration_seconds }}
+          GH_TOKEN: ${{ github.token }}
+          JOB_STARTED_AT: ${{ steps.job-start.outputs.started_at }}
+          CACHE_SIZE_BYTES: ${{ steps.job-start.outputs.cache_size_bytes }}
+          CACHE_COUNT: ${{ steps.job-start.outputs.cache_count }}
+          ATTEMPT1_OUTCOME: ${{ steps.xcode-build.outcome }}
+          ATTEMPT1_SECONDS: ${{ steps.xcode-build.outputs.duration_seconds }}
+          ATTEMPT1_TIMING: ${{ steps.xcode-build.outputs.timing_summary }}
+          ATTEMPT2_OUTCOME: ${{ steps.xcode-build-clean.outcome }}
+          ATTEMPT2_SECONDS: ${{ steps.xcode-build-clean.outputs.duration_seconds }}
+          ATTEMPT2_TIMING: ${{ steps.xcode-build-clean.outputs.timing_summary }}
+          ATTEMPT1_TIMELINE: ${{ steps.xcode-build.outputs.timeline }}
+          ATTEMPT1_MEMORY: ${{ steps.xcode-build.outputs.memory }}
+          ATTEMPT2_TIMELINE: ${{ steps.xcode-build-clean.outputs.timeline }}
+          ATTEMPT2_MEMORY: ${{ steps.xcode-build-clean.outputs.memory }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          format_duration() {
-            seconds="$1"
-            if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
-              echo "not recorded"
-              return
-            fi
-            printf '%dm %02ds\n' "$((seconds / 60))" "$((seconds % 60))"
-          }
-
-          cache_hit="${DERIVED_CACHE_HIT:-false}"
-          cached_outcome="${CACHED_OUTCOME:-not run}"
-          retry_outcome="${RETRY_OUTCOME:-not run}"
-          cached_duration="$(format_duration "$CACHED_DURATION_SECONDS")"
-          retry_duration="$(format_duration "$RETRY_DURATION_SECONDS")"
-
-          {
-            echo "## iOS device build attempts"
-            echo ""
-            echo "- Reused verified compiled app: ${REUSED:-false}"
-            echo "- DerivedData exact-key hit: $cache_hit"
-            echo ""
-            echo "| Attempt | Outcome | Duration |"
-            echo "| --- | --- | ---: |"
-            echo "| Cache-enabled build | $cached_outcome | $cached_duration |"
-            echo "| Clean-cache retry | $retry_outcome | $retry_duration |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$cached_outcome" = "failure" ]; then
-            echo "::warning::Cache-enabled iOS build failed after $cached_duration; clean-cache retry outcome: $retry_outcome ($retry_duration)."
-          fi
+          "$GITHUB_WORKSPACE/.github/scripts/ios-build-summary.sh"
 
       - name: Require a successful build attempt
         if: always()
@@ -724,19 +674,19 @@ jobs:
           python3 mobile/ci/pr-ios/keychain-search.py remove "$PR_IOS_KEYCHAIN"
           python3 mobile/ci/pr-ios/keychain-search.py locked security delete-keychain "$PR_IOS_KEYCHAIN"
 
-      - name: Save Xcode DerivedData (best effort)
-        if: >-
-          success() && steps.select-ipa.outputs.reused != 'true' &&
-          steps.xcode-derived-cache.outputs.cache-hit != 'true' &&
-          steps.xcode-derived-cache.outputs.cache-primary-key != ''
-        timeout-minutes: 3
+      - name: Upload xcodebuild logs
+        if: always()
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/upload-artifact@v4
         with:
-          path: mobile/ios/build-device
-          # Bound this optimization after the signed downloads are safe. Reuse
-          # the restore key even if CocoaPods changed generated files afterward.
-          key: ${{ steps.xcode-derived-cache.outputs.cache-primary-key }}
+          name: ios-xcodebuild-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.IOS_BUILD_LOG_DIR }}/xcodebuild-attempt-*.log
+            ${{ env.IOS_BUILD_LOG_DIR }}/xcodebuild-attempt-*.timing.txt
+            ${{ env.IOS_BUILD_LOG_DIR }}/xcodebuild-attempt-*.timeline
+            ${{ env.IOS_BUILD_LOG_DIR }}/xcodebuild-attempt-*.memory
+          if-no-files-found: ignore
+          retention-days: 7
 
   publish:
     needs: build

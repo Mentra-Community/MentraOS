@@ -1,14 +1,14 @@
+import {harnessVerificationArtifact, readHarnessVerification} from "./harness-verification.mjs"
 import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
-import {successfulMacPublication} from "./request-e2e-routine.mjs"
-import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
-import {validateNightlyMarker} from "./nightly-device-routines.mjs"
+import {admittedPrBase, currentBaseSha, successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
+import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel, isRegisteredRoutine, registeredRoutine} from "./device-routines.mjs"
+import {validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 
 const REPOSITORY = "Mentra-Community/MentraOS"
 const PRIVATE_REPOSITORY = "Mentra-Automated-Testing"
 const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
-const BUILD_WORKFLOW = ".github/workflows/mentra-app-ios-build.yml"
 const CALLBACK_WORKFLOW = ".github/workflows/dispatch-device-routine.yml"
 const SHA = /^[a-f0-9]{40}$/
 const positive = (value) => Number.isSafeInteger(value) && value > 0
@@ -19,13 +19,21 @@ export const publicationJobName = (runId, attempt, routine = "day1-ota", channel
   : `Request publication ${runId} / attempt ${attempt} / routine ${routine}`
 export const PUBLICATION_SEND_STEP = "Send trusted publication request"
 const callbackUrl = (id) => `https://github.com/${REPOSITORY}/actions/runs/${id}`
+// The jobs API can briefly lag the step that is running this code. Bounded re-reads
+// of this run's own jobs only; the send stays refused if its record never appears.
+const OWN_SEND_REREAD_MS = [1000, 2000, 4000, 8000]
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * The send step in a named, authenticated callback job is the pre-send fence.
  * Never delete its history to authorize replay. An unknown send or missing
  * history requires manual reconciliation, even if no child request is visible.
+ * The current send must be observable under the exact job name that later
+ * callbacks search. Other callbacks' jobs are read only after that observation,
+ * so waiting for it never leaves their job reads older than the wait. Duplicate
+ * prevention still relies on per-generation concurrency and earlier-send fences.
  */
-async function automaticGenerationFence(github, context, plan) {
+async function automaticGenerationFence(github, context, plan, wait) {
   const {callbackAttempt, sourceCreatedAt} = plan
   requireThat(positive(context.runId) && positive(callbackAttempt) && SHA.test(context.sha ?? ""), "Missing callback identity")
   if (callbackAttempt !== 1) return {mode: "reconcile", callbackUrl: callbackUrl(context.runId),
@@ -58,11 +66,21 @@ async function automaticGenerationFence(github, context, plan) {
   const enteredSend = (job) => job.name === name && job.steps?.some((step) =>
     step.name === PUBLICATION_SEND_STEP && ["in_progress", "completed"].includes(step.status) &&
     step.conclusion !== "skipped" && typeof step.started_at === "string" && Number.isFinite(Date.parse(step.started_at)))
+  const readJobs = (runId) => github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo, run_id: runId, filter: "all", per_page: 100,
+  })
+  const ownSend = (jobs) => jobs.some((job) => enteredSend(job) &&
+    job.run_attempt === callbackAttempt && job.status === "in_progress")
+  let ownJobs = await readJobs(current.id)
+  for (const delay of OWN_SEND_REREAD_MS) {
+    if (ownSend(ownJobs)) break
+    await wait(delay)
+    ownJobs = await readJobs(current.id)
+  }
+  requireThat(ownSend(ownJobs), "Current publication send is absent from callback history")
   const matching = []
   for (const item of history) {
-    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-      ...context.repo, run_id: item.id, filter: "all", per_page: 100,
-    })
+    const jobs = item.id === current.id ? ownJobs : await readJobs(item.id)
     // Earlier callback versions sent in their single "dispatch" job. Their
     // outcome cannot be reconstructed safely, so retain that legacy fence too.
     const legacy = !plan.channel && plan.routine === "day1-ota" &&
@@ -72,8 +90,6 @@ async function automaticGenerationFence(github, context, plan) {
         job.steps?.some((step) => step.name === PUBLICATION_SEND_STEP &&
           ["in_progress", "completed"].includes(step.status) && step.conclusion !== "skipped")))
     if (legacy || jobs.some(enteredSend)) matching.push(item)
-    if (item.id === current.id) requireThat(jobs.some((job) => enteredSend(job) &&
-      job.run_attempt === callbackAttempt && job.status === "in_progress"), "Current publication send is absent from callback history")
   }
   // Queued jobs cancelled by concurrency, or setup failures before this step,
   // have not sent anything. Once the send step starts, unknown sends stay fenced.
@@ -100,18 +116,19 @@ async function completedRun(github, context) {
 async function currentPr(github, context, number, headSha, routine, labelRequired = true) {
   if (!positive(number)) return null
   const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: number})
-  return pr.number === number && pr.state === "open" && pr.base?.ref === "dev" &&
+  return pr.number === number && pr.state === "open" && admittedPrBase(pr.base?.ref) &&
     pr.head?.repo?.full_name === REPOSITORY && pr.head.sha === headSha &&
     (!labelRequired || hasRoutineLabel(pr, routine)) ? pr : null
 }
 
 /** Runs only from the trusted default-branch workflow; reads PR metadata, never PR code. */
 export async function planDeviceDispatch({github, context, callbackAttempt, routine = "day1-ota"}) {
-  deviceRoutine(routine)
+  registeredRoutine(routine)
+  const buildWorkflow = `.github/workflows/${routineProducer(routine)}`
   const run = await completedRun(github, context)
   if (!run) return {mode: "skip", reason: "Workflow has not completed"}
   if (run.path === COORDINATED_WORKFLOW) {
-    if (routine !== "no-glasses" || !["dev", "staging"].includes(run.head_branch) ||
+    if (!["no-glasses", "no-glasses-android"].includes(routine) || !["dev", "staging"].includes(run.head_branch) ||
       !["push", "workflow_dispatch"].includes(run.event) || run.conclusion !== "success")
       return {mode: "skip", reason: "Automatic coordinated requests require successful dev/staging builds and no-glasses"}
     if (callbackAttempt !== 1) return {mode: "reconcile", callbackUrl: callbackUrl(context.runId),
@@ -124,12 +141,12 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
     ? {mode: "reconcile", callbackUrl: callbackUrl(context.runId), reason: "This callback was already attempted; reconcile manually"}
     : {mode: "request", routine, pr: pr.number, sourceRunId: build.id, publicationAttempt: publication.publicationAttempt,
       sourceCreatedAt: build.created_at, callbackRunId: context.runId, callbackAttempt}
-  if (run.path === BUILD_WORKFLOW && run.event === "pull_request") {
+  if (run.path === buildWorkflow && run.event === "pull_request") {
     // A Slack notification failure does not invalidate an already published app.
     const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
       ...context.repo, run_id: run.id, filter: "all", per_page: 100,
     })
-    const publication = successfulMacPublication(run, jobs)
+    const publication = successfulRoutinePublication(routine, run, jobs)
     if (!publication) return {mode: "skip", reason: "Build/publication has not succeeded"}
     if (publication.publicationAttempt !== run.run_attempt)
       return {mode: "skip", reason: "Notification-only retry retained an earlier publication; no new request generation"}
@@ -146,22 +163,22 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
     if (numbers.length !== 1) return {mode: "skip", reason: "Request wake-up has no unambiguous PR association"}
     const pr = await currentPr(github, context, numbers[0], run.head_sha, routine)
     if (!pr) return {mode: "skip", reason: "PR opt-in was removed or the wake-up was superseded"}
-    const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id: BUILD_WORKFLOW,
+    const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id: buildWorkflow,
       event: "pull_request", head_sha: pr.head.sha, per_page: 100})
     let candidates = data.workflow_runs
     while (candidates.length) {
       const build = matchingBuildRun(candidates, pr, pr.head.sha)
       if (!build) break
       candidates = candidates.filter((item) => item.id !== build.id)
-      if (build.path !== BUILD_WORKFLOW || build.repository?.full_name !== REPOSITORY ||
+      if (build.path !== buildWorkflow || build.repository?.full_name !== REPOSITORY ||
         !positive(build.id) || build.status !== "completed") continue
       const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
         ...context.repo, run_id: build.id, filter: "all", per_page: 100,
       })
-      const publication = successfulMacPublication(build, jobs)
+      const publication = successfulRoutinePublication(routine, build, jobs)
       if (publication) return requestPlan(build, publication, pr)
     }
-    return {mode: "skip", reason: "No successful Mac publication for the current PR revision"}
+    return {mode: "skip", reason: "No successful compatible app publication for the current PR revision"}
   }
   // Only the trusted dev producer's artifact can reach private dispatch.
   if (run.path === REQUEST_WORKFLOW && run.event === "workflow_dispatch" && run.head_branch === "dev" && run.conclusion === "success") {
@@ -174,8 +191,10 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
       /^sha256:[a-f0-9]{64}$/.test(matches[0].digest ?? "") &&
       matches[0].workflow_run?.id === run.id && matches[0].workflow_run.head_sha === run.head_sha,
     "Request artifact is missing, ambiguous or not bound to the workflow")
+    const constraint = await harnessVerificationArtifact(github, context.repo, run, artifacts)
     return {mode: "dispatch", runId: run.id, runAttempt: run.run_attempt,
-      sourceSha: run.head_sha, artifactId: matches[0].id, artifactName: name}
+      sourceSha: run.head_sha, artifactId: matches[0].id, artifactName: name,
+      ...(constraint ? {harnessVerification: true} : {})}
   }
   return {mode: "skip", reason: "Not an eligible build or trusted dev request workflow"}
 }
@@ -184,7 +203,8 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
  * request already names one routine, so its private callback remains singular. */
 export async function planDeviceDispatches(options) {
   const plans = []
-  for (const routine of Object.keys(DEVICE_ROUTINES)) {
+  // Planned routines have no registered worker: a label on them never becomes an automatic request.
+  for (const routine of Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id))) {
     const plan = await planDeviceDispatch({...options, routine})
     if (plan.mode === "dispatch") return [plan]
     plans.push(plan)
@@ -192,12 +212,12 @@ export async function planDeviceDispatches(options) {
   return plans
 }
 
-export async function requestAfterPublication({github, context, plan}) {
-  deviceRoutine(plan.routine)
+export async function requestAfterPublication({github, context, plan, wait = sleep}) {
+  registeredRoutine(plan.routine)
   const coordinated = ["dev", "staging"].includes(plan.channel)
-  requireThat(plan.mode === "request" && (coordinated ? !plan.pr && plan.routine === "no-glasses" : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
+  requireThat(plan.mode === "request" && (coordinated ? !plan.pr && ["no-glasses", "no-glasses-android"].includes(plan.routine) : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
     && plan.callbackRunId === context.runId && plan.callbackAttempt === 1, "Invalid request dispatch")
-  const prior = await automaticGenerationFence(github, context, plan)
+  const prior = await automaticGenerationFence(github, context, plan, wait)
   if (prior) return {status: "request-reconcile", ...prior}
   try {
     // The workflow disables SDK retry. The callback record already fences this send.
@@ -217,12 +237,12 @@ export async function requestAfterPublication({github, context, plan}) {
 }
 
 /** Read the downloaded JSON as data. The private worker independently authenticates it again. */
-export async function dispatchReadyRequest({github, privateGithub, context, plan, bytes, fetchImpl = fetch}) {
+export async function dispatchReadyRequest({github, privateGithub, context, plan, bytes, fetchImpl = fetch, routineCatalog}) {
   requireThat(plan.mode === "dispatch" && positive(plan.runId) && positive(plan.runAttempt) &&
     SHA.test(plan.sourceSha ?? ""), "Invalid private dispatch plan")
   requireThat(bytes.byteLength <= 1024 * 1024, "Request exceeds 1 MiB")
   const request = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(bytes))
-  deviceRoutine(request.routine?.id)
+  registeredRoutine(request.routine?.id, routineCatalog)
   const coordinated = request.schemaVersion === 2
   requireThat(request.routine.authorization === undefined ||
     ["pr-label", "workflow-dispatch", ...(coordinated ? ["successful-build"] : [])].includes(request.routine.authorization), "Unsupported request authorization")
@@ -238,27 +258,39 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
       : positive(request.pullRequest?.number) &&
         request.requestId === `routine-${plan.runId}-${plan.runAttempt}-${request.pullRequest.number}-${request.routine.id}`),
   "Request does not match its trusted producer")
-  if (validateNightlyMarker(request)) return {status: "not-dispatched", requestId: request.requestId,
+  const nightly = validateNightlyMarker(request)
+  if (nightly?.kind === "nightly-ota-call") return {status: "not-dispatched", requestId: request.requestId,
     reason: "Nightly sequence member; only the scheduled source may dispatch the paired OTA then Call job"}
+  if (nightly) await authenticateNightlyMarker({github, context, request})
   if (request.status === "no-artifact") return {status: "not-dispatched", reason: "No eligible artifact"}
   if (coordinated) {
-    requireThat(request.status === "ready" && request.selection?.platform === "ios-on-mac", "Invalid ready coordinated selection")
+    requireThat(request.status === "ready" && request.selection?.platform === deviceRoutine(request.routine.id).platform, "Invalid ready coordinated selection")
     await verifyCoordinatedReadyRequest({github, context, request, fetchImpl})
   } else {
-    requireThat(request.status === "ready" && request.selection?.platform === "ios-on-mac" &&
+    requireThat(request.status === "ready" && request.selection?.platform === deviceRoutine(request.routine.id).platform &&
       request.selection.build?.headSha === request.pullRequest.headSha &&
       request.selection.build?.baseSha === request.pullRequest.baseSha, "Invalid ready selection")
-    const pr = await currentPr(github, context, request.pullRequest.number, request.pullRequest.headSha,
-      request.routine.id, request.routine.authorization !== "workflow-dispatch")
-    const {data: base} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})
-    if (!pr || base.object?.sha !== request.pullRequest.baseSha)
-      return {status: "not-dispatched", reason: "Request was superseded or PR opt-in was removed"}
+    // Every schema 1 request records its PR base and selected app backend; they must agree.
+    const baseRef = request.pullRequest.baseRef
+    requireThat(admittedPrBase(baseRef) && request.selection.app?.backend === baseRef, "Ready selection destination is not admitted")
+    if (request.original !== undefined) {
+      // An exact replay is bound to its re-read original request and published build, not to today's PR.
+      const {verifyOriginalReplay} = await import("./original-routine-request.mjs")
+      await verifyOriginalReplay({github, context, request, fetchImpl})
+    } else {
+      const pr = await currentPr(github, context, request.pullRequest.number, request.pullRequest.headSha,
+        request.routine.id, request.routine.authorization !== "workflow-dispatch")
+      if (!pr || pr.base.ref !== baseRef || await currentBaseSha(github, context, baseRef) !== request.pullRequest.baseSha)
+        return {status: "not-dispatched", reason: "Request was superseded, retargeted or PR opt-in was removed"}
+    }
   }
+  const expectedHarnessSha = plan.harnessVerification ? await readHarnessVerification(github, context.repo,
+    {id: plan.runId, run_attempt: plan.runAttempt, head_sha: plan.sourceSha}, bytes, request.routine.id) : undefined
   requireThat(privateGithub, "Missing short-lived GitHub App dispatch token")
   await privateGithub.rest.actions.createWorkflowDispatch({owner: context.repo.owner, repo: PRIVATE_REPOSITORY,
     workflow_id: "device-routine.yml", ref: "main", inputs: {
       source_repository: REPOSITORY, request_run_id: String(plan.runId), request_attempt: String(plan.runAttempt),
-      routine_id: request.routine.id,
+      routine_id: request.routine.id, ...(expectedHarnessSha ? {expected_harness_sha: expectedHarnessSha} : {}),
     }})
   return {status: "private-job-requested", requestId: request.requestId,
     reason: "GitHub accepted the workflow dispatch; device execution and results are not yet known"}

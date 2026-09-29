@@ -3,6 +3,8 @@ export interface PhoneWifiPrompt {
   title: string
   message: string
   actionLabel: string
+  /** `still-off` is the same dialog after returning without enabling Wi-Fi. */
+  tone?: "ask" | "still-off"
 }
 
 let nextId = 0

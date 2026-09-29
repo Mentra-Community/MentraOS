@@ -7,6 +7,11 @@ import {TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {TestRunClaimModel} from "../models/test-run-claim.model"
 import {TestDispatchModel} from "../models/test-dispatch.model"
 
+import {TestRepairModel} from "../models/test-repair.model"
+import {TestResourceObservationModel} from "../models/test-resource-observation.model"
+import {TestHostLatestModel, TestHostSampleModel} from "../models/test-host-health.model"
+import {backfillTestRunCompletionDates} from "./test-run-completion.migration"
+
 const logger = createLogger("core").child({component: "startup-migrations"})
 const USERS = "users"
 const REFRESH_TOKENS = "refreshTokens"
@@ -26,10 +31,16 @@ export async function runStartupMigrations(): Promise<void> {
   await RefreshTokenModel.createIndexes()
   // Immutable evidence and execution grants require uniqueness before serving requests.
   await TestRunModel.createIndexes()
+  logger.info({migration: "test-run-completed-at", ...await backfillTestRunCompletionDates()}, "test-run completion projection ready")
   await TestAssetModel.createIndexes()
   await TestRunClaimModel.createIndexes()
   // The send receipt must be unique before any admin can submit a device request.
   await TestDispatchModel.createIndexes()
+  // Receipts and observations require uniqueness before serving requests.
+  await TestRepairModel.createIndexes()
+  await TestResourceObservationModel.createIndexes()
+  await TestHostSampleModel.createIndexes()
+  await TestHostLatestModel.createIndexes()
   await ensureMentraAccountOem()
 }
 

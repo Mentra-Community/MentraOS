@@ -248,6 +248,20 @@ export enum MiniappRequestType {
   MEETING_SET_VIDEO_ENABLED = "miniapp_meeting_set_video_enabled",
   MEETING_UPDATE_VIDEO_SOURCE = "miniapp_meeting_update_video_source",
   MEETING_GET_STATE = "miniapp_meeting_get_state",
+  /** Stop the glasses publisher for a photo. The meeting, hotspot, and audio stay up. */
+  MEETING_PAUSE_VIDEO_PUBLISHER = "miniapp_meeting_pause_video_publisher",
+  MEETING_RESUME_VIDEO_PUBLISHER = "miniapp_meeting_resume_video_publisher",
+  /** Full-frame "Taking a photo" card on the outgoing video. Resolves after the first card frame. */
+  MEETING_SHOW_CARD = "miniapp_meeting_show_card",
+  /** Replace the card with a still. `durationMs` is counted by the caller from `shownAt`. */
+  MEETING_SHOW_IMAGE = "miniapp_meeting_show_image",
+  /** Stop holding a card or still so glasses frames reach Teams again. */
+  MEETING_SHOW_LIVE = "miniapp_meeting_show_live",
+  /**
+   * Direct link only: card, full-size glasses photo, still, and live again, all run by the host
+   * without stopping the glasses publisher. Resolves after the still has been held `durationMs`.
+   */
+  MEETING_CAPTURE_STILL = "miniapp_meeting_capture_still",
 }
 
 // ============================================================================
@@ -312,6 +326,19 @@ export enum MiniappResponseType {
    * See MeetingModule.onState().
    */
   MEETING_STATE = "miniapp_meeting_state",
+
+  /**
+   * Push: a photo pause hit its ceiling and the publisher was started again.
+   * Carries {pauseId, status: "expired"}. A resume the miniapp sends itself is not this event.
+   */
+  MEETING_VIDEO_PUBLISHER = "miniapp_meeting_video_publisher",
+
+  /**
+   * Push: progress of one `meeting.captureStill`. Carries {stillId, phase} with phase `card`
+   * (card on the tile), `uploading` (the glasses captured and are uploading), or `shown` (the
+   * still is on the tile). The request result still settles the call.
+   */
+  MEETING_STILL = "miniapp_meeting_still",
 
   /**
    * Push: a preview lease changed state. Carries {handleId, state: "held" | "ended", reason?}.

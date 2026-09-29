@@ -84,6 +84,44 @@ assertion that uploads have completed. Recovery authorization and later result
 generations remain in the existing local lifecycle/results systems; they do not
 replace this original settlement or permit a fresh execution of the request.
 
+## Close a released recovery-required claim
+
+`PUT /api/internal/test-run-claims/:requestId/closure` lets the original owner
+record, after the fact, that a `recovery-required` request is resolved. The body
+is the owner's frozen claim request (the five identity fields and its private
+`executionToken`) plus one `closure` (`testRunClaimCloseRequestSchema`). Two
+closure kinds are supported:
+
+- `android-refused-install-released`: Android completed a refusal of the
+  in-place update, and the reviewed release appended
+  `setup-abandoned-after-refusal` directly after the original first terminal.
+- `preflight-abandoned-released`: preflight failed before setup, with zero
+  mutation operations. The original owner's release appended
+  `preflight-abandoned` directly after the original first terminal. This kind
+  also states `operations: 0`.
+
+Both kinds pin that terminal's sequence and SHA256, the journal prefix, the
+release event SHA256, its reviewed revision and implementation SHA256. Both state
+`fixture: "uncommissioned"`, and `selectedCandidateInstalled`, `candidateTestRun`
+and `recordingStarted` as `false`. A release type must match its kind. Unknown
+fields or other values return 400.
+
+The first closure is stored in a separate `closure` field with server `closedAt`.
+The claim, its settlement, token digest and progress are unchanged, and the
+response is `{executionGranted:false, claim, closure}`. An identical body replays
+the stored closure, so a lost acknowledgement is retried with the same body. A
+wrong execution token returns 403. Changed identity fields, an unsettled or
+`terminal` claim, and a different closure return 409. A closed claim does not
+accept newer progress. Claim, GET and settlement responses keep their shape.
+
+A closure is not a result, a recovery generation or a readiness check. Admin
+removes the request from active and blocked work. The request stays in fixture
+history with its failed result, and that fixture stays unverified until newer
+evidence. The dispatch detail reports it as `failed`, not as passed, and its
+message and Admin reason describe the closure kind.
+The private harness commands that publish these closures are documented in the
+Android no-glasses routine guide and the Day1 local worker guide.
+
 ## Persistence and validation
 
 Mongo `test_run_claims` is separate from `test_runs`: results intentionally allow

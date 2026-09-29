@@ -1364,17 +1364,18 @@ class G2 : SGCManager() {
     // Map device names to serial numbers (populated from manufacturer data during scan)
     private val deviceNameToSerialNumber = mutableMapOf<String, String>()
 
-    // Saved addresses for reconnection
+    // Scope each side's address to the selected serial. Legacy global addresses have
+    // no trustworthy owner, so the first connection after upgrading learns them by scan.
     private var leftGlassAddress: String?
         get() =
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(KEY_LEFT_ADDRESS, null)
+                .getString("$KEY_LEFT_ADDRESS:$DEVICE_SEARCH_ID", null)
         set(value) {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .apply {
-                    if (value != null) putString(KEY_LEFT_ADDRESS, value)
-                    else remove(KEY_LEFT_ADDRESS)
+                    if (value != null) putString("$KEY_LEFT_ADDRESS:$DEVICE_SEARCH_ID", value)
+                    else remove("$KEY_LEFT_ADDRESS:$DEVICE_SEARCH_ID")
                 }
                 .apply()
         }
@@ -1382,13 +1383,13 @@ class G2 : SGCManager() {
     private var rightGlassAddress: String?
         get() =
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(KEY_RIGHT_ADDRESS, null)
+                .getString("$KEY_RIGHT_ADDRESS:$DEVICE_SEARCH_ID", null)
         set(value) {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .apply {
-                    if (value != null) putString(KEY_RIGHT_ADDRESS, value)
-                    else remove(KEY_RIGHT_ADDRESS)
+                    if (value != null) putString("$KEY_RIGHT_ADDRESS:$DEVICE_SEARCH_ID", value)
+                    else remove("$KEY_RIGHT_ADDRESS:$DEVICE_SEARCH_ID")
                 }
                 .apply()
         }

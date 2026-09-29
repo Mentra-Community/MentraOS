@@ -16,6 +16,10 @@ export const MOBILE_INPUT_PATHS = [
   ".github/workflows/mentra-app-android-build.yml",
   ".github/workflows/mentra-app-ios-build.yml",
   ".github/actions/inject-signing",
+  ".github/actions/disk-guard",
+  ".github/scripts/ios-build-summary.sh",
+  ".github/scripts/ios-build-timeline.py",
+  ".github/scripts/ios-xcodebuild-attempt.sh",
   ".github/scripts/pr-mobile-build.mjs",
   ".github/scripts/prepare-pr-mobile.mjs",
   ".github/scripts/pr_mobile_config.py",
@@ -32,6 +36,7 @@ export const MOBILE_PR_PATHS = [
   ".github/workflows/mentra-asg-client-build.yml",
   ".github/actions/inject-signing/**",
   ".github/scripts/pr-mobile-build*",
+  ".github/scripts/ensure-android-ndk*",
   ".github/scripts/pr_mobile_config.py",
   ".github/scripts/prepare-pr-mobile.mjs",
   ".github/scripts/repackage-pr-apk*",
@@ -40,6 +45,9 @@ export const MOBILE_PR_PATHS = [
   ".github/workflows/mentra-app-ios-build.yml",
   ".github/workflows/reusable-pr-build-notification.yml",
   ".github/scripts/pr-ios-artifacts*",
+  ".github/scripts/ios-*",
+  ".github/actions/disk-guard/**",
+  ".github/scripts/pr-android-artifacts*",
   ".github/scripts/select-pr-asg.mjs",
   ".github/scripts/compute-asg-build-identity.mjs",
   ".github/scripts/allocate-asg-version.mjs",
@@ -47,6 +55,10 @@ export const MOBILE_PR_PATHS = [
 ]
 
 const packagingKeys = new Set(["EXPO_PUBLIC_ASG_OTA_VERSION_URL"])
+
+/** A staging-targeted PR app uses staging services; every other PR keeps dev.
+ * The backend is compiled in and fingerprinted, so reuse never crosses backends. */
+export const prBackend = (baseRef) => (baseRef === "staging" ? "staging" : "dev")
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 const transientNetworkCodes = new Set(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ECONNRESET", "EAI_AGAIN"])
 

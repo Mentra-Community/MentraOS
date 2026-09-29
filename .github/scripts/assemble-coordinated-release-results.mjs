@@ -123,6 +123,9 @@ export function assembleCoordinatedReleaseResults({
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
+    ...(mobile.native?.androidBuildNumber !== undefined
+      ? {native: {androidBuildNumber: mobile.native.androidBuildNumber}}
+      : {}),
     publications: merged.publications,
     otaManifest: {
       status: ota.manifest.status,

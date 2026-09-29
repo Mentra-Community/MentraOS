@@ -199,6 +199,20 @@ private struct DistributionTests {
             }
             try rejects { _ = try InstallRequest(url: URL(string: link.replacingOccurrences(of: head, with: "abc123"))!) }
         }
+        try test("accept only the admitted dev and staging PR backends") {
+            for backend in ["dev", "staging"] {
+                var receipt = receiptJSON()
+                var app = receipt["app"] as! [String: Any]
+                app["backend"] = backend
+                receipt["app"] = app
+                _ = try DistributionReceipt(data: encode(receipt), request: request)
+            }
+            var missing = receiptJSON()
+            var app = missing["app"] as! [String: Any]
+            app.removeValue(forKey: "backend")
+            missing["app"] = app
+            try rejects { _ = try DistributionReceipt(data: encode(missing), request: request) }
+        }
         try test("publication rerun selects original build attempt and archive") {
             let receipt = try DistributionReceipt(data: encode(receiptJSON()), request: request)
             try expect(receipt.archiveName.hasSuffix("-100-1.zip"), "Publication attempt changed source archive")

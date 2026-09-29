@@ -4,6 +4,8 @@ This is an immutable result index and media service, not an execution queue.
 The separate [shared claim API](TEST-RUN-CLAIMS.md) reserves requests across workers;
 the Mac worker retains its local claim, sequential fixture access and recovery.
 No schedules, credentials, remote storage or deployments are enabled by this code.
+Latest host guard reports are separate [local resource observations](TEST-RESOURCE-OBSERVATIONS.md);
+they never change results, claims or CI return evidence.
 
 The exact version-one payload is `src/types/test-run.types.ts`. It retains separate
 test, teardown, fixture and evidence outcomes, selected-build provenance, firmware
@@ -11,6 +13,21 @@ assertions, English chapters and private asset metadata. A missing CI artifact o
 unqualified routine uses `outcome: "blocked"`, test/teardown `"not-run"`, fixture
 `"unknown"` and a concrete explanation in `notes`; empty chapters, assets and
 firmware assertions are valid. Do not fabricate device identities or versions.
+
+### Optional backend deployment projection
+
+`backendDeployment` is optional; every existing producer may omit it, and absence
+means the exercised backend is unknown, never a test failure. Only the claimed Notes
+Phone worker's reviewed observation path produces it, for the fixed Notes production
+repository and origin. Ingestion requires the projection to name this run and
+request, carry the worker's immutable claim document hash (`claimSha256` equals
+the exporter's `provenance.claimSha256`; the registered request hash
+`provenance.requestSha256` is a different value and never substitutes for it),
+point at exactly one declared `metadata` asset with the
+same SHA256, and satisfy `startedAt <= observedBefore <= exerciseStartedAt <=
+exerciseFinishedAt <= observedAfter <= finishedAt`. The metadata asset holds the two
+authenticated observations; it never contains tokens, account identifiers, config
+paths or raw logs. A merge, client ZIP or later deployment read is not a substitute.
 
 ## Worker API
 
@@ -55,6 +72,68 @@ HTTP request limit or change proxy limits. Supported media are MP4, WebM, PNG,
 JPEG and WebP, plus JSON/plain-text logs. Uploaded HTML and SVG are rejected.
 
 ## Admin API
+
+### Dispatch an existing build
+
+In **Run a routine**, choose the routine first, then PR, dev or staging and **Find builds**.
+`no-glasses` selects the Mac UI walkthrough; `no-glasses-android` selects the dedicated
+Android phone. The latter requires no glasses paired. The worker preserves the
+phone's account and pairing state; it does not clear app data or unpair devices to
+make the prerequisite pass.
+
+- `GET /api/admin/test-routines` lists supported routine IDs.
+- `GET /api/admin/test-builds?channel=pr&pr=123&routineId=no-glasses-android`
+  lists the PR's Android builds. Use `channel=dev` or `channel=staging` without `pr`
+  for coordinated releases. Omitting `routineId` preserves the Mac inventory.
+- `POST /api/admin/test-dispatches` keeps the existing input: `source` (channel,
+  optional PR number, build run and publication attempt), `routineId`, the selected
+  `archiveSha256`, and an `idempotencyKey`. The routine determines the platform;
+  callers cannot supply an arbitrary platform, artifact URL, ref or command.
+
+Android PRs use the immutable `mentra-android-pr-…json` receipt and matching APK.
+Dev/staging use the coordinated release manifest's APK, bound to its release-plan
+hash. Core checks the producing workflow, exact revision/attempt, publication,
+manifest identity and APK size before sending. The worker then verifies the bytes
+and runs the test. An APK cannot qualify a Mac routine or vice versa.
+
+Deployment must include `no-glasses-android` in `TEST_RUN_DISPATCH_ROUTINES` only
+after its private worker lane is enrolled; `TEST_RUN_DISPATCH_CHANNELS` still
+controls PR/dev/staging availability. This code does not enable a new lane by itself.
+
+The nightly routines `account-miniapps`, `connected-glasses` and `livestreamer` are all
+registered, so `TEST_ROUTINES` currently carries no `planned` reason. A routine added
+later with a `planned` reason stays unavailable, and dispatch refuses it, even if a
+deployment adds it to `TEST_RUN_DISPATCH_ROUTINES`, until the reviewed change that
+registers its automatic worker removes `planned`.
+
+`livestreamer` (Mac) is registered: its private worker binds the request's selected Mac
+build and exports claim-bound CI evidence, and it is a nightly target. Like the other
+registered routines, it becomes requestable only once a deployment adds it to
+`TEST_RUN_DISPATCH_ROUTINES` after its worker lane is enrolled. Until its recorded
+managed-viewer and state observations are pinned, its preparation refuses before any
+claim. Its live CI qualification is still pending.
+
+`connected-glasses` (Android) is registered: its private worker verifies the request's
+exact selected APK and OTA manifest and exports claim-bound segmented CI evidence, and
+it is a nightly target. Like `no-glasses-android`, it needs a published Android APK
+and becomes requestable only once a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES`
+after its worker lane is enrolled. Its C8 and C9 sections have no controllers yet and
+fail by name; its live CI qualification is still pending.
+
+`account-miniapps` (Mac) is registered: its private worker verifies the request's
+exact selected Mac build and OTA manifest on a dev or staging backend, uses only that
+backend's reviewed host, and exports claim-bound CI evidence. It is a nightly target.
+Like `no-glasses-android`, it becomes requestable only once a deployment adds it to
+`TEST_RUN_DISPATCH_ROUTINES` after its worker lane is enrolled. Its Safari Google
+provider completion, callback and window close are unqualified and report failed or
+blocked results when unobserved; its live CI qualification is still pending.
+
+`captions-phone` and `notes-phone` (Mac, simulated glasses in Phone mode) are
+registered: their private worker installs the selected Mac build and exports
+claim-bound CI evidence. Like `no-glasses-android`, each becomes requestable only
+once a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES` after its worker lane is
+enrolled. Their live CI qualification is still pending. They are not nightly
+targets or successful-build requests.
 
 Existing `adminAuth` protects all three routes using the admin console session:
 

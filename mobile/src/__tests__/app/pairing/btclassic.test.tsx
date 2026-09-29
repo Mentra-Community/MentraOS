@@ -17,6 +17,8 @@ jest.mock("@/utils/SettingsNavigationUtils", () => ({
   },
 }))
 
+jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
+
 jest.mock("@/i18n", () => ({
   translate: jest.fn((key: string) => key),
 }))
@@ -36,15 +38,36 @@ jest.mock("@/components/ignite", () => {
   function MockScreen({children}: {children: ReactNode}) {
     return <View>{children}</View>
   }
-  function MockButton({text, onPress}: {text?: string; onPress?: () => void}) {
+  function MockButton({
+    text,
+    tx,
+    onPress,
+    disabled,
+  }: {
+    text?: string
+    tx?: string
+    onPress?: () => void
+    disabled?: boolean
+  }) {
     return (
-      <TouchableOpacity onPress={onPress}>
-        <RNText>{text}</RNText>
+      <TouchableOpacity onPress={onPress} disabled={disabled}>
+        <RNText>{text || tx}</RNText>
       </TouchableOpacity>
     )
   }
-  return {Screen: MockScreen, Button: MockButton}
+  function MockHeader({
+    onLeftPress,
+    leftIconAccessibilityLabel,
+  }: {
+    onLeftPress: () => void
+    leftIconAccessibilityLabel: string
+  }) {
+    return <TouchableOpacity accessibilityLabel={leftIconAccessibilityLabel} onPress={onLeftPress} />
+  }
+  return {Screen: MockScreen, Button: MockButton, Header: MockHeader}
 })
+
+jest.mock("@/components/brands/MentraLogoStandalone", () => ({MentraLogoStandalone: () => null}))
 
 jest.mock("@/components/onboarding/OnboardingGuide", () => {
   const {View} = require("react-native")
@@ -54,7 +77,7 @@ jest.mock("@/components/onboarding/OnboardingGuide", () => {
   return {OnboardingGuide: MockOnboardingGuide}
 })
 
-import {act, render, waitFor} from "@testing-library/react-native"
+import {act, fireEvent, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 
 import {engine} from "@mentra/engine"
@@ -65,6 +88,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+import {showAlert} from "@/utils/AlertUtils"
 
 const device = {id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}
 
@@ -72,9 +96,11 @@ describe("btclassic pairing screen", () => {
   const replace = jest.fn()
   const goBack = jest.fn()
   const pushPrevious = jest.fn()
+  const clearHistoryAndGoHome = jest.fn()
 
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(engine.pairing.abandonAttempt as jest.Mock).mockReset().mockResolvedValue(undefined)
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
     ;(useRoute as jest.Mock).mockReturnValue({params: {device: JSON.stringify(device)}})
@@ -85,6 +111,7 @@ describe("btclassic pairing screen", () => {
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
       goBack,
       replace,
+      clearHistoryAndGoHome,
       history: ["/pairing/scan", "/pairing/loading"],
     })
     ;(usePushPrevious as jest.Mock).mockReturnValue(pushPrevious)
@@ -102,6 +129,48 @@ describe("btclassic pairing screen", () => {
     })
     expect(engine.glasses.connect).not.toHaveBeenCalled()
     expect(replace).not.toHaveBeenCalled()
+  })
+
+  it("cancels the unfinished selection before returning Home and ignores late Classic readiness", async () => {
+    let finishCleanup!: () => void
+    ;(engine.pairing.abandonAttempt as jest.Mock).mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishCleanup = resolve
+      }),
+    )
+    const screen = render(<BtClassicPairingScreen />)
+
+    expect(screen.queryByText("pairing:cancelPairing")).toBeNull()
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
+    expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
+    expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
+    act(() => useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true}))
+    expect(pushPrevious).not.toHaveBeenCalled()
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
+    expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(1)
+
+    await act(async () => finishCleanup())
+    expect(clearHistoryAndGoHome).toHaveBeenCalledTimes(1)
+    expect(engine.glasses.connect).not.toHaveBeenCalled()
+    expect(engine.glasses.connectDefault).not.toHaveBeenCalled()
+  })
+
+  it("retains the screen and permits retry when cancellation fails", async () => {
+    ;(engine.pairing.abandonAttempt as jest.Mock).mockRejectedValueOnce(new Error("cleanup failed"))
+    const screen = render(<BtClassicPairingScreen />)
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
+    await waitFor(() => expect(showAlert).toHaveBeenCalledWith("pairing:errorTitle", "pairing:cancelFailed"))
+    expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
+
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalledTimes(1))
+    expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not offer unfinished-pairing cancellation in a paired audio recovery flow", () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {}})
+    const screen = render(<BtClassicPairingScreen />)
+    expect(screen.queryByLabelText("pairing:cancelPairing")).toBeNull()
   })
 
   it("routes a connectDefault rejection to the failure screen while loading is on top", async () => {

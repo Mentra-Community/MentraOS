@@ -5,13 +5,20 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { api } from "../lib/api";
 import { TestDispatchPanel } from "./test-dispatches";
+import { TestRunOverviewPanel } from "./test-run-overview";
+import { failedStepFlow, fixFlowHref } from "../lib/fix-flow-links";
 import { readRecordingTimeline, TestRunRecordings } from "./test-run-recordings";
-import { readTestRunLink, testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
+import { testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
 import {
   chapterSeekTime,
   EMPTY_FILTERS,
+  FAILURE_PHASE_LABELS,
+  failureRows,
   FIRMWARE_PHASE_LABELS,
   initialChapter,
+  preparationStop,
+  relatedRun,
+  runDuration,
   safeProducerUrl,
   testRunListPath,
   valueText,
@@ -61,6 +68,7 @@ export function TestRunsPage({
   const additionalFilters = !!(filters.outcome || filters.fixtureAlias || filters.startedAfter || filters.startedBefore);
   return (
     <section className={PANEL}>
+      <TestRunOverviewPanel onResult={runID => onSelect({ runID })} />
       <TestDispatchPanel onResult={runID => onSelect({ runID })} />
       <div className="border-b border-[#eceeeb] p-5">
         <div className="flex items-start justify-between gap-4">
@@ -256,7 +264,7 @@ export function TestRunsPage({
                     <h3 className="mt-2 font-semibold">{run.routineId}</h3>
                     <p className="mt-1 text-xs text-[#747780]">
                       {run.fixture.alias} · {run.release ?? short(run.provenance.buildSha ?? run.provenance.headSha)} ·{" "}
-                      {date(run.startedAt)}
+                      {date(run.startedAt)} · {durationText(run.startedAt, run.finishedAt)}
                     </p>
                   </div>
                   <span className="text-sm font-semibold text-[#087d50]">Review →</span>
@@ -283,6 +291,14 @@ export function TestRunsPage({
   );
 }
 
+/** The existing admin detail lookup, shared so a source link and its destination use one cache entry. */
+export function testRunDetailQuery(runId: string) {
+  return {
+    queryKey: ["admin-test-run", runId],
+    queryFn: () => api<TestRunDetail>(`/api/admin/test-runs/${encodeURIComponent(runId)}`),
+  };
+}
+
 function TestRunDetailPage({
   runId,
   stepId,
@@ -294,10 +310,7 @@ function TestRunDetailPage({
   onBack: () => void;
   onStep: (id: string) => void;
 }) {
-  const detail = useQuery({
-    queryKey: ["admin-test-run", runId],
-    queryFn: () => api<TestRunDetail>(`/api/admin/test-runs/${encodeURIComponent(runId)}`),
-  });
+  const detail = useQuery(testRunDetailQuery(runId));
   return (
     <div className="space-y-5">
       <div className="flex justify-between gap-3">
@@ -373,10 +386,7 @@ export function TestRunView({
     `${chapter.id} ${chapter.instruction}`.toLowerCase().includes(search.toLowerCase()),
   );
   const producer = safeProducerUrl(run.provenance.producerUrl);
-  const originalRunId =
-    typeof run.provenance.originalRunId === "string" && run.provenance.originalRunId !== run.runId
-      ? readTestRunLink(new URLSearchParams({ testRun: run.provenance.originalRunId }).toString())?.runID
-      : null;
+  const related = relatedRun(run);
   return (
     <>
       <section className={`${PANEL} p-5`}>
@@ -401,15 +411,17 @@ export function TestRunView({
             </a>
           ) : null}
         </div>
-        {originalRunId ? (
+        {related?.kind === "recovery" ? (
           <aside aria-label="Recovery result" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
             <span className="font-semibold">Recovery result.</span> The original test outcome is preserved.{" "}
             <a
-              href={`/?testRun=${encodeURIComponent(originalRunId)}`}
+              href={`/?testRun=${encodeURIComponent(related.runId)}`}
               className="font-semibold text-[#087d50] underline">
               View original run
             </a>
           </aside>
+        ) : related ? (
+          <SourceReference key={related.runId} runId={related.runId} />
         ) : null}
         <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
           {Object.entries(run.outcomes).map(([label, value]) => (
@@ -422,10 +434,12 @@ export function TestRunView({
         {run.notes ? <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[#4f5d54]">{run.notes}</p> : null}
       </section>
 
+      <FailureDetails run={run} />
+
       <section className={PANEL}>
         <div className="border-b border-[#eceeeb] px-5 py-4">
           <h3 className="font-semibold">Routine recording</h3>
-          <p className="mt-1 text-sm text-[#68746d]">Select an English step to jump to its recording and screenshot.</p>
+          <p className="mt-1 text-sm text-[#68746d]">Open a failed step to follow its fix, or watch the recording of any step.</p>
         </div>
         <div className="grid lg:grid-cols-[280px_minmax(0,1fr)]">
           <div className="border-b border-[#eceeeb] p-4 lg:border-r lg:border-b-0">
@@ -442,28 +456,30 @@ export function TestRunView({
             <div className="mt-3 max-h-[640px] space-y-1 overflow-y-auto">
               {chapters.length ? (
                 chapters.map((chapter) => (
-                  <button
+                  <div
                     key={chapter.id}
-                    type="button"
                     aria-current={selected?.id === chapter.id ? "step" : undefined}
-                    className={`w-full rounded-xl p-3 text-left ${selected?.id === chapter.id ? "bg-[#edf6f0] ring-1 ring-[#cde4d5]" : "hover:bg-[#f5f7f4]"}`}
-                    onClick={() => {
-                      setRecordingSeekSequence(value => value + 1);
-                      onStep(chapter.id);
-                      if (selected?.id === chapter.id) seek();
-                    }}>
+                    className={`w-full rounded-xl p-3 text-left ${selected?.id === chapter.id ? "bg-[#edf6f0] ring-1 ring-[#cde4d5]" : "hover:bg-[#f5f7f4]"}`}>
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-[#68746d]">
                         {chapter.phase}
                       </span>
                       <Outcome value={chapter.status} />
                     </div>
-                    <div className="text-sm leading-5">{chapter.instruction}</div>
+                    {["failed", "blocked"].includes(chapter.status) ? <a className="text-sm leading-5 font-medium text-[#087d50] underline underline-offset-2"
+                      href={fixFlowHref(failedStepFlow(run, chapter.id))}>{chapter.instruction}</a>
+                      : <button type="button" className="text-left text-sm leading-5" onClick={() => {
+                        setRecordingSeekSequence(value => value + 1); onStep(chapter.id); if (selected?.id === chapter.id) seek();
+                      }}>{chapter.instruction}</button>}
                     <div className="mt-1 text-[10px] text-[#747780]">
                       {chapter.id}
                       {chapter.videoStart !== undefined ? ` · ${time(chapter.videoStart)}` : ""}
                     </div>
-                  </button>
+                    <button type="button" className="mt-2 text-xs font-medium text-[#087d50] underline"
+                      aria-label={`Watch recording: ${chapter.id}`} onClick={() => {
+                        setRecordingSeekSequence(value => value + 1); onStep(chapter.id); if (selected?.id === chapter.id) seek();
+                      }}>Watch recording</button>
+                  </div>
                 ))
               ) : (
                 <p className="p-3 text-sm text-[#747780]">
@@ -613,6 +629,7 @@ export function TestRunView({
             ["Release", run.release],
             ["Started", date(run.startedAt)],
             ["Finished", date(run.finishedAt)],
+            ["Duration", runDuration(run.startedAt, run.finishedAt) ?? "Not available from the recorded times"],
             ...Object.entries(run.provenance).filter(([key]) => key !== "producerUrl"),
           ]
             .filter(([, value]) => value)
@@ -654,6 +671,97 @@ export function TestRunView({
         )}
       </section>
     </>
+  );
+}
+
+/** Recorded failure packets, their evidence gaps and Core occurrence delivery. Nothing here is inferred. */
+function FailureDetails({ run }: { run: TestRunDetail }) {
+  const rows = failureRows(run);
+  const stop = preparationStop(run);
+  if (!rows.length && !stop) return null;
+  return (
+    <section aria-label="Failure details" className={`${PANEL} p-5`}>
+      <h3 className="font-semibold">Failure details</h3>
+      {stop ? (
+        <p className="mt-3 text-sm leading-6 text-[#4f5d54]">
+          {/* Only recorded facts: the stage, the not-run test, the worker's hardware record and the exact-pair claim label.
+              The fixture outcome and firmware checks are shown as recorded by the outcome grid and firmware table. */}
+          <span className="font-semibold">The worker stopped at intake stage {stop.stage}.</span> The test did not
+          run and the worker recorded that hardware was not started. {stop.claimed}.
+          {stop.request ? (
+            <>
+              {" "}
+              <a href={stop.request} target="_blank" rel="noreferrer" className="font-semibold text-[#087d50] underline">
+                Request
+              </a>
+            </>
+          ) : null}
+          {stop.worker ? (
+            <>
+              {" "}
+              <a href={stop.worker} target="_blank" rel="noreferrer" className="font-semibold text-[#087d50] underline">
+                Worker attempt
+              </a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      <ul className="mt-3 space-y-3">
+        {rows.map(({ key, failure, delivery }) => (
+          <li key={key} className="rounded-xl bg-[#f5f7f4] p-3 text-sm">
+            <p className="font-medium">
+              {key.startsWith("tfo_") ? <a className="text-[#087d50] underline underline-offset-2" href={fixFlowHref({ occurrenceId: key })}>
+                {FAILURE_PHASE_LABELS[failure.phase] ?? failure.phase}{failure.step ? ` · ${failure.step.label}` : ""}
+              </a> : <>{FAILURE_PHASE_LABELS[failure.phase] ?? failure.phase}{failure.step ? ` · ${failure.step.label}` : ""}</>}
+            </p>
+            <p className="mt-1 leading-6 text-[#4f5d54]">{failure.message}</p>
+            <p className="mt-1 font-mono text-xs text-[#747780]">{failure.code}</p>
+            <p className="mt-2 text-xs text-[#4f5d54]">
+              {delivery?.state === "acknowledged"
+                ? `Delivered for investigation (${date(delivery.acknowledgedAt)})`
+                : delivery?.state === "pending"
+                  ? "Delivery for investigation pending"
+                  : "No delivery state recorded"}
+            </p>
+            {failure.missingEvidence.length ? (
+              <details className="mt-2 text-xs text-[#4f5d54]">
+                <summary className="cursor-pointer font-semibold">Missing evidence ({failure.missingEvidence.length})</summary>
+                <ul className="mt-2 space-y-1">
+                  {failure.missingEvidence.map((item, index) => (
+                    <li key={`${item.kind}-${index}`}>
+                      <span className="font-semibold">{item.kind}:</span> {item.reason}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * A source reference can be a local authoring ID that was never published. Link it only
+ * after the existing detail lookup returns that exact run; otherwise keep the ID as text.
+ * Lookup failures are not shown here: they describe the source, not this result.
+ */
+function SourceReference({ runId }: { runId: string }) {
+  const target = useQuery({ ...testRunDetailQuery(runId), retry: false });
+  const published = target.data?.runId === runId;
+  return (
+    <aside aria-label="Source reference" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
+      <span className="font-semibold">Source reference.</span> This result records source ID{" "}
+      <code className="break-all font-mono text-xs">{runId}</code>.{" "}
+      {published ? (
+        <a href={`/?testRun=${encodeURIComponent(runId)}`} className="font-semibold text-[#087d50] underline">
+          View source result
+        </a>
+      ) : (
+        "It may not be a published result."
+      )}
+    </aside>
   );
 }
 
@@ -731,6 +839,10 @@ function date(value: string) {
   return Number.isNaN(parsed.getTime())
     ? "Not recorded"
     : parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+function durationText(startedAt: string, finishedAt: string) {
+  const duration = runDuration(startedAt, finishedAt);
+  return duration ? `Took ${duration}` : "Duration not available";
 }
 function short(value?: string) {
   return value ? value.slice(0, 12) : "Build not recorded";
