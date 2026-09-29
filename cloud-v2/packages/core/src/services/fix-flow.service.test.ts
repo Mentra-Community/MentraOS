@@ -379,6 +379,17 @@ describe("exact failure-to-fixer projection", () => {
     expect(await service.chapter(stored.run.runId, "NOTES-08")).toMatchObject({ pending: true, runId: stored.run.runId, chapterId: "NOTES-08" });
     await expect(service.chapter(stored.run.runId, "unrelated-step")).rejects.toThrow("not found");
   });
+  test("a recovery chapter resolves the original case without another Fix Flows card", async () => {
+    const recovery: StoredTestRun = { ...structuredClone(stored), payloadSha256: "e".repeat(64), failureOccurrences: [],
+      run: { ...structuredClone(stored.run), runId: "recovery-synthetic", failures: [occurrence.failure] },
+      recoveryLineage: { schemaVersion: 1, generation: 2, originalRunId: stored.run.runId,
+        originalPayloadSha256: stored.payloadSha256, previousResultRunId: stored.run.runId,
+        previousPayloadSha256: stored.payloadSha256, inheritedFailures: [{ failureIndex: 0, occurrenceId,
+          runId: stored.run.runId, payloadSha256: stored.payloadSha256 }] } };
+    const service = new FixFlowService(repository([recovery, stored]), reader(), "dev");
+    expect((await service.list()).flows).toHaveLength(1);
+    expect(await service.chapter(recovery.run.runId, "NOTES-08")).toEqual(await service.detail(occurrenceId));
+  });
   test("multiple phase failures offer exact occurrences instead of choosing the first", async () => {
     const service = new FixFlowService(repository([{ ...stored, failureOccurrences: [occurrence, { ...occurrence, occurrenceId: `tfo_${"e".repeat(64)}`,
       failure: { ...occurrence.failure, phase: "teardown" } }] }]), reader(), "dev");

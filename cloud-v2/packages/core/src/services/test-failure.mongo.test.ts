@@ -4,6 +4,8 @@ import mongoose from "mongoose";
 import { TestRunModel } from "../models/test-run.model";
 import type { TestRun } from "../types/test-run.types";
 import { MongoTestRunRepository, TestRunService } from "./test-run.service";
+import { readFileSync } from "node:fs";
+import { testRunSchema } from "../types/test-run.types";
 import { TestFailureCorrectionService } from "./test-failure-correction.service";
 import { MongoEvidenceSupplementRepository } from "./test-failure-evidence.service";
 import type { EvidenceSupplement } from "../types/test-failure-evidence.types";
@@ -30,6 +32,36 @@ describe.skipIf(!uri)("Mongo failure occurrence durability", () => {
     outcomes: { test: "failed", teardown: "passed", fixture: "ready", evidence: "incomplete" },
     provenance: { repository: "Mentra-Community/MentraOS" }, fixture: { alias: "phone" },
     firmwareAssertions: [], chapters: [], assets: [],
+  });
+
+  test("concurrent recovery retries atomically persist references, never duplicate the original outbox or receipt", async () => {
+    const packet = (name: string) => testRunSchema.parse(JSON.parse(readFileSync(
+      new URL(`./fixtures/recovery-lineage/${name}.json`, import.meta.url), "utf8")));
+    const original = packet("original"), recovery = packet("recovery");
+    const service = new TestRunService(), first = await service.ingest(original);
+    await service.acknowledgeFailure(first.occurrenceIds[0]!, "original_agent");
+    const before = await TestRunModel.findOne({ runId: original.runId }).lean();
+    const results = await Promise.all(Array.from({ length: 12 }, () => new TestRunService().ingest(recovery)));
+    expect(results.filter(item => item.created)).toHaveLength(1);
+    for (const result of results) expect(result.occurrenceIds).toEqual(first.occurrenceIds);
+    const saved = await TestRunModel.findOne({ runId: recovery.runId }).lean();
+    expect(saved!.failureOccurrences).toEqual([]);
+    expect(saved!.recoveryLineage.inheritedFailures).toHaveLength(2);
+    expect((await new MongoTestRunRepository().failure(first.occurrenceIds[1]!))?.run.runId).toBe(original.runId);
+    const detail = await new TestRunService().detail(recovery.runId);
+    expect(detail.failureOccurrences[0]!.delivery).toMatchObject({ state: "acknowledged", agentRunId: "original_agent" });
+    expect((await service.list({ occurrenceId: first.occurrenceIds[1], limit: 25 })).runs.map(item => item.runId).sort())
+      .toEqual([original.runId, recovery.runId].sort());
+    expect((await service.pendingFailureDeliveries()).filter(item => item.testRunId === recovery.runId)).toEqual([]);
+    const after = await TestRunModel.findOne({ runId: original.runId }).lean();
+    expect(after!.payload).toEqual(before!.payload);
+    expect(after!.payloadSha256).toBe(before!.payloadSha256);
+    expect(after!.failureOccurrences).toEqual(before!.failureOccurrences);
+    await TestRunModel.updateOne({ runId: recovery.runId }, { $unset: { failureOccurrences: "", recoveryLineage: "" } });
+    await Promise.all(Array.from({ length: 8 }, () => new TestRunService().ingest(recovery)));
+    const replayed = await TestRunModel.findOne({ runId: recovery.runId }).lean();
+    expect(replayed!.failureOccurrences).toEqual([]);
+    expect(replayed!.recoveryLineage).toEqual(saved!.recoveryLineage);
   });
 
   test("concurrent evidence additions enforce the per-occurrence bound without touching the payload", async () => {

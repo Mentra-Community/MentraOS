@@ -337,7 +337,12 @@ export class FixFlowService {
       throw new TestRunError(400, "invalid failed step");
     const stored = await this.repository.run(runId), chapter = stored?.run.chapters.find(item => item.id === chapterId);
     if (!stored || !chapter || !["failed", "blocked"].includes(chapter.status)) throw new TestRunError(404, "Failed step not found in this run.");
-    const occurrences = stored.failureOccurrences?.filter(item => item.failure.step?.id === chapterId) ?? [];
+    const occurrences = (stored.failureOccurrences?.filter(item => item.failure.step?.id === chapterId) ?? [])
+      .map(item => ({ occurrenceId: item.occurrenceId, failure: item.failure }));
+    for (const reference of stored.recoveryLineage?.inheritedFailures ?? []) {
+      const failure = stored.run.failures?.[reference.failureIndex];
+      if (failure?.step?.id === chapterId) occurrences.push({ occurrenceId: reference.occurrenceId, failure });
+    }
     if (occurrences.length === 1) return this.detail(occurrences[0].occurrenceId);
     if (occurrences.length > 1) return { runId, chapterId, choices: occurrences.map(item => ({ occurrenceId: item.occurrenceId,
       phase: item.failure.phase, code: item.failure.code, message: item.failure.message })) };

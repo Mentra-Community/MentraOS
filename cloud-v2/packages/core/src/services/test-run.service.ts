@@ -8,6 +8,7 @@ import { testFailureOccurrenceIdSchema, type TestFailureOccurrence, type TestFai
 import { testRunIdSchema, testRunSchema, type TestAsset, type TestRun, type TestRunQuery } from "../types/test-run.types";
 import { recordedAppPublicationSchema } from "../types/test-dispatch.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
+import { RecoveryLineageError, testFailureProjection, type TestFailureProjection, type TestRecoveryLineage } from "./test-recovery-lineage";
 import { createStorageService, type StorageService } from "./storage/storage.service";
 import { ByteRangeError, parseSingleByteRange } from "./storage/byte-range";
 
@@ -15,18 +16,18 @@ export class TestRunError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 413 | 416 | 503, message: string) { super(message); }
 }
 export interface StoredTestRun { run: TestRun; payloadSha256: string; failureOccurrences?: TestFailureOccurrence[];
-  provenanceCorrections?: TestFailureProvenanceCorrection[] }
+  provenanceCorrections?: TestFailureProvenanceCorrection[]; recoveryLineage?: TestRecoveryLineage }
 type CorrectionSettlement = Extract<TestFailureProvenanceCorrection["delivery"], { state: "acknowledged" | "refused" }>;
 export interface StoredTestAsset { runId: string; assetId: string; storageKey: string; sizeBytes: number; sha256: string }
 export interface TestRunRepository {
   get(runId: string): Promise<StoredTestRun | null>;
-  insert(run: TestRun, payloadSha256: string): Promise<{ stored: StoredTestRun; created: boolean }>;
+  insert(run: TestRun, payloadSha256: string, projection?: TestFailureProjection): Promise<{ stored: StoredTestRun; created: boolean }>;
   list(query: TestRunQuery): Promise<StoredTestRun[]>;
   recent(): Promise<StoredTestRun[]>;
   assets(runId: string): Promise<StoredTestAsset[]>;
   insertAsset(asset: StoredTestAsset): Promise<StoredTestAsset>;
   markUploadsComplete(run: TestRun): Promise<void>;
-  reconcileFailures(stored: StoredTestRun): Promise<StoredTestRun>;
+  reconcileFailures(stored: StoredTestRun, projection?: TestFailureProjection): Promise<StoredTestRun>;
   failure(occurrenceId: string): Promise<StoredTestRun | null>;
   pendingFailures(limit: number): Promise<StoredTestRun[]>;
   noteFailureDeliveryAttempt(occurrenceId: string): Promise<void>;
@@ -58,20 +59,20 @@ export class MongoTestRunRepository implements TestRunRepository {
     const row = await TestRunModel.findOne({ runId }).read("primary").readConcern("majority").lean();
     return row ? this.stored(row) : null;
   }
-  private stored(row: { payload: unknown; payloadSha256: string; failureOccurrences?: unknown[] | null; provenanceCorrections?: unknown[] | null }): StoredTestRun {
+  private stored(row: { payload: unknown; payloadSha256: string; failureOccurrences?: unknown[] | null; provenanceCorrections?: unknown[] | null; recoveryLineage?: unknown }): StoredTestRun {
     return { run: row.payload as TestRun, payloadSha256: row.payloadSha256,
       failureOccurrences: (row.failureOccurrences ?? undefined) as TestFailureOccurrence[] | undefined,
-      ...(row.provenanceCorrections ? { provenanceCorrections: row.provenanceCorrections as TestFailureProvenanceCorrection[] } : {}) };
+      ...(row.provenanceCorrections ? { provenanceCorrections: row.provenanceCorrections as TestFailureProvenanceCorrection[] } : {}),
+      ...(row.recoveryLineage ? { recoveryLineage: row.recoveryLineage as TestRecoveryLineage } : {}) };
   }
-  async insert(run: TestRun, payloadSha256: string) {
-    const failureOccurrences = createTestFailureOccurrences(run);
+  async insert(run: TestRun, payloadSha256: string, projection: TestFailureProjection = { failureOccurrences: createTestFailureOccurrences(run) }) {
     try {
       await TestRunModel.create([{ runId: run.runId, requestId: run.requestId, startedAt: new Date(run.startedAt),
         completedAt: new Date(run.finishedAt), completionProjectionVersion: 1, payloadSha256, payload: run,
-        failureOccurrences,
+        ...projection,
         uploadsComplete: run.assets.length === 0, outcome: run.outcome === "passed" && run.assets.length > 0 ? "blocked" : run.outcome }],
       { writeConcern: failureWriteConcern });
-      return { stored: { run, payloadSha256, failureOccurrences }, created: true };
+      return { stored: { run, payloadSha256, ...projection }, created: true };
     } catch (error) {
       if (!duplicate(error)) throw error;
       const stored = await this.get(run.runId);
@@ -81,7 +82,9 @@ export class MongoTestRunRepository implements TestRunRepository {
   }
   async list(query: TestRunQuery): Promise<StoredTestRun[]> {
     const filter: Record<string, unknown> = {};
-    if (query.occurrenceId) filter["failureOccurrences.occurrenceId"] = query.occurrenceId;
+    if (query.occurrenceId) filter.$and = [{ $or: [
+      { "failureOccurrences.occurrenceId": query.occurrenceId }, { "recoveryLineage.inheritedFailures.occurrenceId": query.occurrenceId },
+    ] }];
     if (query.outcome) filter.outcome = query.outcome;
     for (const [input, path] of [["pr", "prNumber"], ["channel", "channel"],
       ["repository", "provenance.repository"], ["headSha", "provenance.headSha"], ["archiveSha256", "provenance.archiveSha256"],
@@ -126,12 +129,12 @@ export class MongoTestRunRepository implements TestRunRepository {
   async markUploadsComplete(run: TestRun): Promise<void> {
     await TestRunModel.updateOne({ runId: run.runId }, { $set: { uploadsComplete: true, outcome: run.outcome } });
   }
-  async reconcileFailures(stored: StoredTestRun): Promise<StoredTestRun> {
+  async reconcileFailures(stored: StoredTestRun, projection: TestFailureProjection = { failureOccurrences: createTestFailureOccurrences(stored.run) }): Promise<StoredTestRun> {
     if (stored.failureOccurrences !== undefined) return stored;
     // Old accepted rows can be reconciled by replaying their exact metadata.
     // Never reset a delivery acknowledgment during a replay or a racing retry.
     await TestRunModel.updateOne({ runId: stored.run.runId, payloadSha256: stored.payloadSha256,
-      failureOccurrences: { $exists: false } }, { $set: { failureOccurrences: createTestFailureOccurrences(stored.run) } },
+      failureOccurrences: { $exists: false } }, { $set: projection },
     { writeConcern: failureWriteConcern });
     const reconciled = await this.get(stored.run.runId);
     if (!reconciled || reconciled.failureOccurrences === undefined) throw new Error("failure occurrence reconciliation did not persist");
@@ -244,13 +247,24 @@ export class TestRunService {
     if (!parsed.success) throw new TestRunError(400, parsed.error.issues[0]?.message ?? "invalid test run");
     const run = parsed.data;
     const payloadSha256 = createHash("sha256").update(canonical(run)).digest("hex");
-    const { stored, created } = await this.repository.insert(run, payloadSha256);
+    const accepted = await this.repository.get(run.runId);
+    if (accepted && accepted.payloadSha256 !== payloadSha256) throw new TestRunError(409, "runId already belongs to a different immutable result");
+    let projection: TestFailureProjection | undefined;
+    if (accepted?.failureOccurrences === undefined) {
+      try { projection = await testFailureProjection(run, id => this.repository.get(id)); }
+      catch (error) {
+        if (error instanceof RecoveryLineageError) throw new TestRunError(409, error.message);
+        throw error;
+      }
+    }
+    const { stored, created } = accepted ? { stored: accepted, created: false } : await this.repository.insert(run, payloadSha256, projection);
     if (stored.payloadSha256 !== payloadSha256) throw new TestRunError(409, "runId already belongs to a different immutable result");
-    const reconciled = await this.repository.reconcileFailures(stored);
+    const reconciled = await this.repository.reconcileFailures(stored, projection);
     const uploaded = new Set((await this.repository.assets(run.runId)).map(asset => asset.assetId));
     if (run.assets.every(asset => uploaded.has(asset.assetId))) await this.repository.markUploadsComplete(run);
     return { runId: run.runId, reportPath: `/?testRun=${encodeURIComponent(run.runId)}`, created, payloadSha256,
-      occurrenceIds: (reconciled.failureOccurrences ?? []).map(item => item.occurrenceId),
+      occurrenceIds: [...(reconciled.failureOccurrences ?? []).map(item => item.occurrenceId),
+        ...(reconciled.recoveryLineage?.inheritedFailures ?? []).map(item => item.occurrenceId)],
       missingAssetIds: run.assets.filter(asset => !uploaded.has(asset.assetId)).map(asset => asset.assetId) };
   }
 
@@ -273,12 +287,29 @@ export class TestRunService {
     const uploaded = new Set((await this.repository.assets(run.runId)).map(asset => asset.assetId));
     const complete = run.outcomes.evidence === "complete" && run.assets.every(asset => uploaded.has(asset.assetId));
     return { ...run, ...(run.release || run.provenance.releaseIdentity ? { release: run.release ?? run.provenance.releaseIdentity } : {}),
-      failureOccurrences: stored.failureOccurrences ?? [],
+      failureOccurrences: await this.presentFailureOccurrences(stored),
+      ...(stored.recoveryLineage ? { recoveryLineage: stored.recoveryLineage } : {}),
       // Reviewed corrections stay separate from the accepted occurrences they amend.
       ...(stored.provenanceCorrections?.length ? { provenanceCorrections: stored.provenanceCorrections } : {}),
       outcome: run.outcome === "passed" && !complete ? "blocked" as const : run.outcome,
       outcomes: { ...run.outcomes, evidence: complete ? "complete" as const : "incomplete" as const },
       assets: run.assets.map(asset => ({ ...asset, uploaded: uploaded.has(asset.assetId) })) };
+  }
+
+  /** Inherited failures reuse the original live delivery receipt without duplicating its outbox row. */
+  private async presentFailureOccurrences(stored: StoredTestRun): Promise<TestFailureOccurrence[]> {
+    const failures = createTestFailureOccurrences(stored.run);
+    const owners = new Map<string, Promise<StoredTestRun | null>>();
+    const inherited = await Promise.all((stored.recoveryLineage?.inheritedFailures ?? []).map(async reference => {
+      if (!owners.has(reference.runId)) owners.set(reference.runId, this.repository.get(reference.runId));
+      const owner = await owners.get(reference.runId);
+      const occurrence = owner?.failureOccurrences?.find(item => item.occurrenceId === reference.occurrenceId);
+      const local = failures[reference.failureIndex];
+      if (!owner || owner.payloadSha256 !== reference.payloadSha256 || !occurrence || !local)
+        throw new TestRunError(503, "inherited failure occurrence is unavailable");
+      return { ...occurrence, failure: local.failure };
+    }));
+    return [...(stored.failureOccurrences ?? []), ...inherited];
   }
 
   private async summary(row: StoredTestRun) {

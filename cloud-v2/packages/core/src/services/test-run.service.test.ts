@@ -14,6 +14,7 @@ import { signTestFailureCorrectionDelivery, signTestFailureDelivery, signTestFai
 import { TestFailureCorrectionService } from "./test-failure-correction.service";
 import { testFailureSchema, type TestFailureProvenanceCorrection } from "../types/test-failure.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
+import { recoveryResultRunId, type TestFailureProjection } from "./test-recovery-lineage";
 import { TestFailureDeliveryService, startTestFailureDelivery } from "./test-failure-delivery.service";
 import { boundBackendDeployment, testRunBackendDeploymentSchema, testRunQuerySchema, testRunSchema, type TestRun,
   type TestRunBackendDeployment, type TestRunQuery } from "../types/test-run.types";
@@ -27,17 +28,18 @@ class MemoryRepository implements TestRunRepository {
   objects = new Map<string, StoredTestAsset>();
   outcomes = new Map<string, TestRun["outcome"]>();
   async get(id: string) { return this.runs.get(id) ?? null; }
-  async insert(run: TestRun, payloadSha256: string) {
+  async insert(run: TestRun, payloadSha256: string, projection: TestFailureProjection = { failureOccurrences: createTestFailureOccurrences(run) }) {
     const stored = this.runs.get(run.runId);
     if (stored) return { stored, created: false };
-    const value = structuredClone({ run, payloadSha256, failureOccurrences: createTestFailureOccurrences(run) });
+    const value = structuredClone({ run, payloadSha256, ...projection });
     this.runs.set(run.runId, value);
     this.outcomes.set(run.runId, run.outcome === "passed" && run.assets.length ? "blocked" : run.outcome);
     return { stored: value, created: true };
   }
   async list(query: TestRunQuery) { return [...this.runs.values()].filter(row =>
     (!query.outcome || this.outcomes.get(row.run.runId) === query.outcome)
-    && (!query.occurrenceId || row.failureOccurrences?.some(item => item.occurrenceId === query.occurrenceId))); }
+    && (!query.occurrenceId || row.failureOccurrences?.some(item => item.occurrenceId === query.occurrenceId)
+      || row.recoveryLineage?.inheritedFailures.some(item => item.occurrenceId === query.occurrenceId))); }
   async recent() { return [...this.runs.values()].filter(row => Number.isFinite(Date.parse(row.run.finishedAt)))
     .sort((a, b) => Date.parse(b.run.finishedAt) - Date.parse(a.run.finishedAt) || b.run.runId.localeCompare(a.run.runId)).slice(0, 6); }
   async assets(runId: string) { return [...this.objects.values()].filter(asset => asset.runId === runId); }
@@ -47,8 +49,8 @@ class MemoryRepository implements TestRunRepository {
     return this.objects.get(key)!;
   }
   async markUploadsComplete(run: TestRun) { this.outcomes.set(run.runId, run.outcome); }
-  async reconcileFailures(stored: StoredTestRun) {
-    stored.failureOccurrences ??= createTestFailureOccurrences(stored.run);
+  async reconcileFailures(stored: StoredTestRun, projection: TestFailureProjection = { failureOccurrences: createTestFailureOccurrences(stored.run) }) {
+    if (stored.failureOccurrences === undefined) Object.assign(stored, structuredClone(projection));
     return stored;
   }
   async failure(id: string) { return [...this.runs.values()].find(row => row.failureOccurrences?.some(item => item.occurrenceId === id)) ?? null; }
@@ -132,6 +134,141 @@ const post = (run: unknown = fixture(), token = TOKEN) => ingest.request("/", {
 });
 const put = (bytes: Uint8Array = video, id = "video-1") => ingest.request(`/run-example-1/assets/${id}`, {
   method: "PUT", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "video/mp4" }, body: bytes,
+});
+
+const recoveryPackets = () => ({
+  original: testRunSchema.parse(JSON.parse(readFileSync(new URL("./fixtures/recovery-lineage/original.json", import.meta.url), "utf8"))),
+  recovery: testRunSchema.parse(JSON.parse(readFileSync(new URL("./fixtures/recovery-lineage/recovery.json", import.meta.url), "utf8"))),
+});
+
+describe("validated recovery failure lineage", () => {
+  test("the actual nine-asset Notes return keeps original cases, failures and current delivery receipts", async () => {
+    const { original, recovery } = recoveryPackets();
+    expect(recovery.assets).toHaveLength(9);
+    expect(recovery.failures).toEqual(original.failures);
+    const first = await service.ingest(original), before = structuredClone(repository.runs.get(original.runId));
+    const result = await service.ingest(recovery);
+    expect(result.occurrenceIds).toEqual(first.occurrenceIds);
+    expect(result.occurrenceIds).toContain("tfo_c6585a2db39da0fe4992a649d59735360af4f9c420a46775522e523f9d43bea0");
+    const stored = repository.runs.get(recovery.runId)!;
+    expect(stored.failureOccurrences).toEqual([]);
+    expect(stored.recoveryLineage).toMatchObject({ generation: 2, originalRunId: original.runId,
+      originalPayloadSha256: first.payloadSha256, previousResultRunId: original.runId, previousPayloadSha256: first.payloadSha256 });
+    expect(repository.runs.get(original.runId)).toEqual(before);
+    expect(await service.pendingFailureDeliveries()).toHaveLength(2);
+    for (const id of first.occurrenceIds) await service.acknowledgeFailure(id, `agent_${id}`);
+    expect(await service.pendingFailureDeliveries()).toEqual([]);
+    const detail = await service.detail(recovery.runId);
+    expect(detail.failures).toEqual(original.failures);
+    expect(detail.outcomes).toEqual(recovery.outcomes);
+    expect(detail.failureOccurrences.map(item => item.delivery.state)).toEqual(["acknowledged", "acknowledged"]);
+    expect((await service.failureDetail(first.occurrenceIds[1]!)).testRunId).toBe(original.runId);
+    expect((await service.list({ occurrenceId: first.occurrenceIds[1], limit: 25 })).runs.map(item => item.runId))
+      .toEqual([original.runId, recovery.runId]);
+    const accepted = structuredClone(repository.runs);
+    expect((await service.ingest(recovery)).created).toBe(false);
+    expect(repository.runs).toEqual(accepted);
+  });
+
+  test("unordered failure bindings are semantic equals; changed causes and diagnostic bytes are new occurrences", async () => {
+    const { original, recovery } = recoveryPackets();
+    await service.ingest(original);
+    recovery.failures![0]!.assetIds.reverse();
+    recovery.failures![0]!.missingEvidence.reverse();
+    recovery.failures![1]!.message = "Recovery recording integrity failed for a different reason.";
+    const ingested = await service.ingest(recovery);
+    expect(repository.runs.get(recovery.runId)!.failureOccurrences).toHaveLength(1);
+    expect(repository.runs.get(recovery.runId)!.recoveryLineage!.inheritedFailures).toHaveLength(1);
+    expect(ingested.occurrenceIds).toHaveLength(2);
+    const third = structuredClone(recovery);
+    third.runId = recoveryResultRunId(original.runId, 3);
+    Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId, terminalSnapshotSha256: "f".repeat(64) });
+    third.assets[0]!.sha256 = "e".repeat(64);
+    await service.ingest(third);
+    expect(repository.runs.get(third.runId)!.failureOccurrences).toHaveLength(2);
+  });
+
+  test("later generations inherit failures introduced during recovery from their owning result", async () => {
+    const { original, recovery } = recoveryPackets();
+    await service.ingest(original);
+    recovery.failures!.push({ ...structuredClone(recovery.failures![0]!), phase: "return-verification",
+      step: { id: "new-return-failure", label: "Return failed" }, code: "return-failed", message: "A new recovery failure." });
+    const second = await service.ingest(recovery);
+    const third = structuredClone(recovery);
+    third.runId = recoveryResultRunId(original.runId, 3);
+    Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId, terminalSnapshotSha256: "f".repeat(64) });
+    await service.ingest(third);
+    const stored = repository.runs.get(third.runId)!;
+    expect(stored.failureOccurrences).toEqual([]);
+    expect(stored.recoveryLineage!.inheritedFailures.map(item => item.runId)).toEqual([original.runId, original.runId, recovery.runId]);
+    expect((await service.detail(third.runId)).failureOccurrences.map(item => item.occurrenceId).sort()).toEqual([...second.occurrenceIds].sort());
+    expect(await service.pendingFailureDeliveries()).toHaveLength(3);
+    const newId = repository.runs.get(recovery.runId)!.failureOccurrences![0]!.occurrenceId;
+    await service.acknowledgeFailure(newId, "new_error_agent");
+    expect((await service.detail(third.runId)).failureOccurrences.find(item => item.occurrenceId === newId)?.delivery)
+      .toMatchObject({ state: "acknowledged", agentRunId: "new_error_agent" });
+  });
+
+  test.each([
+    ["arbitrary recovery ID", (run: TestRun) => { run.runId = "arbitrary-recovery"; }],
+    ["wrong request", (run: TestRun) => { run.requestId = "other"; }],
+    ["wrong routine", (run: TestRun) => { run.routineVersion = "other"; }],
+    ["wrong source", (run: TestRun) => { run.source!.branch = "other"; }],
+    ["wrong parent", (run: TestRun) => { run.provenance.previousResultRunId = "other"; }],
+    ["skipped generation", (run: TestRun) => { run.provenance.resultGeneration = "3"; }],
+    ["forged terminal", (run: TestRun) => { run.provenance.originalTerminalSnapshotSha256 = "f".repeat(64); }],
+    ["reused terminal", (run: TestRun) => { run.provenance.terminalSnapshotSha256 = run.provenance.originalTerminalSnapshotSha256!; }],
+    ["omitted failure", (run: TestRun) => { run.failures!.pop(); }],
+    ["omitted failures", (run: TestRun) => { delete run.failures; }],
+    ["changed test outcome", (run: TestRun) => { run.outcomes.test = "passed"; }],
+    ["cleared evidence failure", (run: TestRun) => { run.outcomes.evidence = "complete"; }],
+    ["earlier finish", (run: TestRun) => { run.finishedAt = run.startedAt; }],
+  ] as const)("rejects %s before persistence", async (_label, mutate) => {
+    const { original, recovery } = recoveryPackets();
+    await service.ingest(original);
+    const before = structuredClone(repository.runs);
+    mutate(recovery);
+    await expect(service.ingest(recovery)).rejects.toMatchObject({ status: 409 });
+    expect(repository.runs).toEqual(before);
+  });
+
+  test("empty failures, missing parents and unvalidated generation parents cannot suppress intake", async () => {
+    const { original, recovery } = recoveryPackets();
+    await expect(service.ingest(recovery)).rejects.toMatchObject({ status: 409 });
+    await service.ingest(original);
+    await expect(service.ingest({ ...recovery, failures: [] })).rejects.toMatchObject({ status: 400 });
+    await service.ingest(recovery);
+    delete repository.runs.get(recovery.runId)!.recoveryLineage;
+    const third = structuredClone(recovery);
+    third.runId = recoveryResultRunId(original.runId, 3);
+    Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId, terminalSnapshotSha256: "f".repeat(64) });
+    await expect(service.ingest(third)).rejects.toMatchObject({ status: 409 });
+    expect(repository.runs.has(third.runId)).toBe(false);
+  });
+
+  test("legacy reconciliation persists lineage atomically; an accepted old projection is never rewritten", async () => {
+    const { original, recovery } = recoveryPackets();
+    await service.ingest(original);
+    await service.ingest(recovery);
+    const saved = structuredClone(repository.runs.get(recovery.runId)!);
+    delete repository.runs.get(recovery.runId)!.failureOccurrences;
+    delete repository.runs.get(recovery.runId)!.recoveryLineage;
+    await service.ingest(recovery);
+    expect(repository.runs.get(recovery.runId)).toEqual(saved);
+    const legacy = repository.runs.get(recovery.runId)!;
+    legacy.failureOccurrences = createTestFailureOccurrences(recovery);
+    delete legacy.recoveryLineage;
+    const before = structuredClone(legacy);
+    await service.ingest(recovery);
+    expect(repository.runs.get(recovery.runId)).toEqual(before);
+  });
+  test("an unavailable inherited owner fails visibly instead of hiding a recorded failure", async () => {
+    const { original, recovery } = recoveryPackets();
+    await service.ingest(original);
+    await service.ingest(recovery);
+    repository.runs.delete(original.runId);
+    await expect(service.detail(recovery.runId)).rejects.toMatchObject({ status: 503 });
+  });
 });
 
 test("history and detail show the export's release identity without rewriting its immutable payload", async () => {
