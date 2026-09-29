@@ -88,11 +88,11 @@ jest.mock("react-native-draggable-masonry", () => ({
 
 // Native geometry is irrelevant here; leaving the ref unset uses the menu's
 // existing fallback position while preserving the actual long-press handler.
-jest.mock("react-native/Libraries/Components/Touchable/TouchableOpacity", () => {
+jest.mock("react-native/Libraries/Components/Pressable/Pressable", () => {
   const {View} = require("react-native")
   return {
     __esModule: true,
-    default: function MockTouchableOpacity({ref: _ref, ...props}: Record<string, unknown>) {
+    default: function MockPressable({ref: _ref, ...props}: Record<string, unknown>) {
       return <View {...props} />
     },
   }
