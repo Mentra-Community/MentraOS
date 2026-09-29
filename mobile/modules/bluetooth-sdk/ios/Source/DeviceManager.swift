@@ -330,7 +330,7 @@ struct ViewState {
 
     /// STT:
     #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
-    private var transcriber: SherpaOnnxTranscriber?
+    private let transcriber = SherpaOnnxTranscriber()
     #endif
 
     var viewStates: [ViewState] = [
@@ -382,24 +382,6 @@ struct ViewState {
 
         // Start memory monitoring (logs every 30s to help detect leaks)
         // MemoryMonitor.start()
-
-        // Initialize SherpaOnnx Transcriber
-        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
-           let rootViewController = window.rootViewController
-        {
-            transcriber = SherpaOnnxTranscriber(context: rootViewController)
-        } else {
-            Bridge.log("Failed to create SherpaOnnxTranscriber - no root view controller found")
-        }
-
-        // Initialize the transcriber
-        if let transcriber = transcriber {
-            transcriber.initialize()
-            Bridge.log("SherpaOnnxTranscriber fully initialized")
-        }
-        #endif
 
         // Initialize persistent LC3 converter for unified audio encoding
         lc3Converter = PcmConverter()
@@ -542,7 +524,7 @@ struct ViewState {
         // Send PCM to local transcriber.
 #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         if shouldSendTranscript || localSttFallbackActive {
-            transcriber?.acceptAudio(pcm16le: pcmData)
+            transcriber.acceptAudio(pcm16le: pcmData)
         }
 #endif
     }
@@ -984,7 +966,7 @@ struct ViewState {
     func restartTranscriber() {
         #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
-        transcriber?.restart()
+        transcriber.restart()
         #else
         Bridge.log("MAN: Local STT is not included in this SwiftPM build")
         #endif
@@ -1762,6 +1744,9 @@ struct ViewState {
     func setMicState() {
         let willSendPcm = shouldSendPcm || shouldSendLc3
         let willSendTranscript = shouldSendTranscript || localSttFallbackActive
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
+        transcriber.setActive(willSendTranscript)
+        #endif
         micEnabled = willSendPcm || willSendTranscript
         updateMicState()
     }
@@ -2080,8 +2065,7 @@ struct ViewState {
         #endif
         // Clean up transcriber resources
 #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
-        transcriber?.shutdown()
-        transcriber = nil
+        transcriber.shutdown()
 #endif
 
         // Clean up LC3 converter
