@@ -18,6 +18,7 @@ import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRepairModel } from "../models/test-repair.model";
 import { TestResourceObservationModel } from "../models/test-resource-observation.model";
 import { backfillTestRunCompletionDates } from "./test-run-completion.migration";
+import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
 
@@ -63,6 +64,9 @@ export async function runStartupMigrations(): Promise<void> {
   await TestRepairModel.createIndexes();
   // One compare-and-set row per host resource requires the unique key before any report.
   await TestResourceObservationModel.createIndexes();
+  // Passive host observations require idempotent identity and indexed, expiring history before ingestion.
+  await TestHostSampleModel.createIndexes();
+  await TestHostLatestModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
   await dedupeDeveloperOrgMemberships();
   // Build the unique index BEFORE any upserts so concurrent Core startups can't

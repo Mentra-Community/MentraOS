@@ -6,14 +6,16 @@ import { TestRunOverviewService } from "../../services/test-run-overview.service
 import { TestRunFollowUpError, TestRunFollowUpService } from "../../services/test-run-follow-up.service";
 import { testRunQuerySchema } from "../../types/test-run.types";
 import type { AppEnv } from "../../types/hono.types";
+import { TestHostHealthError, TestHostHealthService } from "../../services/test-host-health.service";
 
 /** Mounted only behind preinstalled.api's existing adminAuth gate. */
 export function createTestRunAdminApi(service = new TestRunService(), overview = new TestRunOverviewService(), followUp = new TestRunFollowUpService(),
-  corrections = new TestFailureCorrectionService()) {
+  corrections = new TestFailureCorrectionService(), health = new TestHostHealthService()) {
   const app = new Hono<AppEnv>();
   app.onError((error, c) => {
     if (error instanceof TestRunError) return c.json({ error: "test_run_error", error_description: error.message }, error.status);
     if (error instanceof TestRunFollowUpError) return c.json({ error: "test_run_follow_up_error", error_description: error.message }, error.status);
+    if (error instanceof TestHostHealthError) return c.json({ error: "host_health_error", error_description: error.message }, error.status);
     throw error;
   });
   app.get("/", async c => {
@@ -28,6 +30,14 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
   app.get("/recent", async c => {
     c.header("Cache-Control", "no-store");
     return c.json(await service.recent());
+  });
+  app.get("/health", async c => {
+    c.header("Cache-Control", "no-store");
+    return c.json(await health.list());
+  });
+  app.get("/health/:hostId", async c => {
+    c.header("Cache-Control", "no-store");
+    return c.json(await health.history(c.req.param("hostId"), c.req.query("days")));
   });
   app.post("/claims/:requestId/cancel-follow-up", async c => {
     const admin = c.get("developer");
