@@ -25,6 +25,7 @@ const audioPlayer = {
   play: mock(() => {}),
   remove: mock(() => {}),
   replace: mock(() => {}),
+  seekTo: mock(async (_seconds: number) => {}),
   volume: 1,
 }
 
@@ -71,11 +72,46 @@ describe("AudioPlaybackService live PCM streams", () => {
     audioPlayer.play.mockClear()
     audioPlayer.remove.mockClear()
     audioPlayer.replace.mockClear()
+    audioPlayer.seekTo.mockClear()
+    audioPlayer.seekTo.mockImplementation(async () => {})
   })
 
   afterEach(async () => {
     await audioPlaybackService.stopAll()
     stopAudioCloudUplink()
+  })
+
+  test("seeks before playing and permits a new position in the same recording", async () => {
+    await audioPlaybackService.play(
+      {requestId: "seek-one", audioUrl: "file://seek.wav", startPositionMs: 5000},
+      () => {},
+    )
+    expect(audioPlayer.seekTo).toHaveBeenLastCalledWith(5)
+    await audioPlaybackService.play(
+      {requestId: "seek-two", audioUrl: "file://seek.wav", startPositionMs: 9000},
+      () => {},
+    )
+    expect(audioPlayer.seekTo).toHaveBeenLastCalledWith(9)
+    expect(audioPlayer.play).toHaveBeenCalledTimes(2)
+  })
+
+  test("a stopped pending seek cannot restart playback", async () => {
+    let completeSeek!: () => void
+    audioPlayer.seekTo.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          completeSeek = resolve
+        }),
+    )
+    const playing = audioPlaybackService.play(
+      {requestId: "seek-stop", audioUrl: "file://seek-stop.wav", startPositionMs: 1000},
+      () => {},
+    )
+    while (!completeSeek) await Promise.resolve()
+    await audioPlaybackService.stopAll()
+    completeSeek()
+    await playing
+    expect(audioPlayer.play).not.toHaveBeenCalled()
   })
 
   test("plays a cold Android URL without a silent PCM warmup", async () => {

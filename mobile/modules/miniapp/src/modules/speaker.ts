@@ -41,6 +41,8 @@ import type {UnsubscribeFn} from "./events"
 
 export interface PlayAudioOptions {
   audioUrl: string
+  /** Start playback at this offset in milliseconds. Defaults to zero. */
+  startPositionMs?: number
   volume?: number
   stopOtherAudio?: boolean
 }
@@ -116,10 +118,7 @@ export class SpeakerStreamWriter {
   private settled = false
   private writeChain: Promise<void> = Promise.resolve()
 
-  constructor(
-    private readonly session: MiniappSession,
-    readonly streamId: string,
-  ) {}
+  constructor(private readonly session: MiniappSession, readonly streamId: string) {}
 
   /**
    * Append raw PCM bytes (16-bit LE). Auto-chunked. Resolves with the host's
@@ -233,6 +232,12 @@ export class SpeakerModule {
 
   /** Play a URL. Resolves when playback completes on the phone. */
   async play(options: PlayAudioOptions): Promise<void> {
+    if (
+      options.startPositionMs !== undefined &&
+      (!Number.isFinite(options.startPositionMs) || options.startPositionMs < 0)
+    ) {
+      throw new RangeError("startPositionMs must be a finite, non-negative number")
+    }
     // Playback length is unbounded (a clip can run for minutes), and the host
     // only sends its REQUEST_RESULT when playback finishes or is interrupted, so
     // opt out of the default request timeout — otherwise a long clip would reject
@@ -241,6 +246,7 @@ export class SpeakerModule {
       {
         type: MiniappRequestType.PLAY_AUDIO,
         audioUrl: options.audioUrl,
+        ...(options.startPositionMs !== undefined ? {startPositionMs: options.startPositionMs} : {}),
         volume: options.volume,
         stopOtherAudio: options.stopOtherAudio ?? false,
       },

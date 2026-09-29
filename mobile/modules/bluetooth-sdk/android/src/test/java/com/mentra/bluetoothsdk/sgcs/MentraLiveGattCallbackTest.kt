@@ -79,6 +79,39 @@ class MentraLiveGattCallbackTest {
     }
 
     @Test
+    @Config(sdk = [33])
+    @Suppress("DEPRECATION")
+    fun `modern and legacy callbacks for one notification deliver one packet`() {
+        val queue = ArrayDeque<() -> Unit>()
+        val callback = RecordingCallback({ work -> queue.addLast(work) })
+        val gatt = gatt()
+        val characteristic = BluetoothGattCharacteristic(UUID.randomUUID(), 0, 0)
+        val value = byteArrayOf(0xf1.toByte(), 7, 1, 2)
+        characteristic.value = value
+        callback.onCharacteristicChanged(gatt, characteristic, value)
+        callback.onCharacteristicChanged(gatt, characteristic)
+        value[2] = 9
+        while (queue.isNotEmpty()) queue.removeFirst().invoke()
+        assertEquals(1, callback.packets.size)
+        assertArrayEquals(byteArrayOf(0xf1.toByte(), 7, 1, 2), callback.packets.single())
+    }
+
+    @Test
+    @Config(sdk = [33])
+    fun `separate modern notifications retain identical payloads`() {
+        val queue = ArrayDeque<() -> Unit>()
+        val callback = RecordingCallback({ work -> queue.addLast(work) })
+        val gatt = gatt()
+        val characteristic = BluetoothGattCharacteristic(UUID.randomUUID(), 0, 0)
+        val value = byteArrayOf(1, 2)
+        repeat(2) { callback.onCharacteristicChanged(gatt, characteristic, value) }
+        value[0] = 9
+        while (queue.isNotEmpty()) queue.removeFirst().invoke()
+        assertEquals(2, callback.packets.size)
+        callback.packets.forEach { assertArrayEquals(byteArrayOf(1, 2), it) }
+    }
+
+    @Test
     fun `replacement invalidates callbacks already waiting on the lifecycle queue`() {
         val queue = ArrayDeque<() -> Unit>()
         var epoch = 1
