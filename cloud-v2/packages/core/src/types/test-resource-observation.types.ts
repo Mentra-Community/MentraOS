@@ -109,10 +109,11 @@ export const testResourceObservationSchema = z.object({
     }).strict(),
   ]).optional(),
   /**
-   * Shared guard only (checked by the PUT schema): the per-glasses leases this host's shared app acquisition refuses on,
+   * Shared guard only (checked by the PUT schema): leases this host's unidentified/legacy app acquisition refuses on.
+   * Identified-pair acquisition checks only its selected pair, so another held pair does not block every Mac routine.
    * read with the same reader at this observation. `pairs` are held lease key digests (at most 16, sorted, unique);
    * `others` counts further held entries. `unreadable`: the lease root could not be listed. Absent from older producers,
-   * which means not reported. It is exclusion only: it names no owner, run or phone.
+   * which means not reported. It names no owner, run or phone and does not establish any pair's readiness.
    */
   glassesLeases: z.discriminatedUnion("state", [
     z.object({ state: z.literal("none") }).strict(),
