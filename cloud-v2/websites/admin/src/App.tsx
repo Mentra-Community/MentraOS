@@ -888,7 +888,7 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
 }
 
 function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
-  const [kind, setKind] = useState<"all" | ReportKind | "internal" | "testing">("all");
+  const [kind, setKind] = useState<"all" | ReportKind | "internal" | "testing">("bug");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
   const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
