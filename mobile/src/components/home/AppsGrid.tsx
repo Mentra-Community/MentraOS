@@ -269,6 +269,8 @@ interface AppsGridProps {
   showAllApps?: boolean
   onOpenApp?: (app: ClientApp) => void
   onAddToHome?: (app: ClientApp) => void
+  homePackageNames?: readonly string[]
+  onHomeAppsChange?: (packageNames: string[]) => void
   searchQuery?: string
   showPlaceholders?: boolean
   /**
@@ -291,6 +293,8 @@ export function AppsGrid({
   showAllApps = false,
   onOpenApp,
   onAddToHome,
+  homePackageNames = [],
+  onHomeAppsChange,
   searchQuery,
   showPlaceholders = false,
   gateOnIconsReady = false,
@@ -487,6 +491,15 @@ export function AppsGrid({
     () => (showAllApps && !showPlaceholders ? gridData : gridData.slice(0, PRIMARY_HOME_SLOT_COUNT)),
     [gridData, showAllApps, showPlaceholders],
   )
+
+  useEffect(() => {
+    if (showAllApps || !onHomeAppsChange) return
+    // Share the rendered Home slots so the drawer also accounts for overflow,
+    // empty slots, and apps that have not yet been assigned a saved position.
+    onHomeAppsChange(
+      visibleGridData.filter((app) => !app.packageName.startsWith("@empty")).map((app) => app.packageName),
+    )
+  }, [onHomeAppsChange, showAllApps, visibleGridData])
 
   // The remote icon URLs we need decoded before revealing the grid. Dummy
   // (@empty) slots, apps that render a React iconComponent, and non-remote
@@ -747,7 +760,8 @@ export function AppsGrid({
           },
         },
         showAllApps &&
-          liveSelectedApp?.hidden && {
+          liveSelectedApp &&
+          !homePackageNames.includes(liveSelectedApp.packageName) && {
             label: translate("appInfo:addToHome"),
             icon: "plus",
             onPress: () => {
@@ -767,7 +781,7 @@ export function AppsGrid({
           },
         },
       ].filter(Boolean) as PopoverAction[],
-    [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push],
+    [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push, homePackageNames],
   )
 
   const handlePress = useCallback(
