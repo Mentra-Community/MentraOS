@@ -66,8 +66,9 @@ const en = {
     infoDescription:
       'Most users should leave this set to "Automatic". Only change this if you need to use a Bluetooth lapel microphone to improve transcription quality.',
     glassesMicGates: "Glasses microphone gates",
-    vadLabel: "Voice activity detection",
-    vadSubtitle: "GX8002 speech detector. Off falls back to the loudness gate if Barrier is on.",
+    vadLabel: "Allow voice activity detection",
+    vadSubtitle:
+      "Off keeps audio flowing while a miniapp uses the microphone, even when speech isn't detected. On allows miniapps to use speech detection.",
     barrierLabel: "Barrier",
     barrierSubtitle: "Center-mic RMS loudness gate. Blocks quiet audio independently of VAD.",
     tuningTitle: "Mic tuning",

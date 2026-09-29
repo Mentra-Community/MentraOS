@@ -197,7 +197,7 @@ describe("MicStateCoordinator", () => {
     })
   })
 
-  test("restores an OS preference changed while a miniapp override is active", async () => {
+  test("disabling VAD beats an active miniapp enable request and stays off after disconnect", async () => {
     await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", true, {vadEnabled: true})
 
     expect(
@@ -205,7 +205,7 @@ describe("MicStateCoordinator", () => {
         voice_activity_detection_enabled: false,
       }),
     ).toEqual({
-      voice_activity_detection_enabled: true,
+      voice_activity_detection_enabled: false,
     })
 
     MicStateCoordinator.clearMiniappGateOverrides("com.voice")
@@ -213,6 +213,76 @@ describe("MicStateCoordinator", () => {
 
     expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
       expect.objectContaining({voice_activity_detection_enabled: false}),
+    )
+  })
+
+  test("a miniapp cannot enable VAD when the user disallows it, including on reconnect", async () => {
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", true, {vadEnabled: false})
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({voice_activity_detection_enabled: false}),
+    )
+
+    expect(
+      MicStateCoordinator.applyRuntimeOverrides({
+        voice_activity_detection_enabled: false,
+        loudness_gate_enabled: true,
+      }),
+    ).toEqual({voice_activity_detection_enabled: false, loudness_gate_enabled: true})
+
+    // A later unrelated settings change must not revive the miniapp's request.
+    expect(MicStateCoordinator.applyRuntimeOverrides({brightness: 50})).toEqual({
+      brightness: 50,
+      voice_activity_detection_enabled: false,
+    })
+  })
+
+  test("allowing VAD again restores a live miniapp request unless raw audio is needed", async () => {
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", true, {vadEnabled: false})
+    expect(MicStateCoordinator.applyRuntimeOverrides({voice_activity_detection_enabled: true})).toEqual({
+      voice_activity_detection_enabled: true,
+    })
+
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: true})
+    expect(MicStateCoordinator.applyRuntimeOverrides({voice_activity_detection_enabled: true})).toEqual({
+      voice_activity_detection_enabled: false,
+    })
+  })
+
+  test("a queued mic write cannot undo the user's newer VAD-off setting", async () => {
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", true, {vadEnabled: true})
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
+    MicStateCoordinator.applyRuntimeOverrides({voice_activity_detection_enabled: false})
+    mockUpdateBluetoothSettings.mockClear()
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({should_send_lc3: true, voice_activity_detection_enabled: false}),
+    )
+  })
+
+  test.each([false, true])("Recorder stops without interrupting transcription (VAD allowed: %s)", async (allowed) => {
+    // Captions/AI need LC3; Recorder adds raw PCM and temporarily disables VAD.
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: true, vadEnabled: allowed})
+    await flushMicWrite()
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({should_send_pcm: true, should_send_lc3: true, voice_activity_detection_enabled: false}),
+    )
+
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
+    await flushMicWrite()
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        should_send_pcm: false,
+        should_send_lc3: true,
+        voice_activity_detection_enabled: allowed,
+      }),
+    )
+
+    // VAD-off permits continuous audio only while a consumer needs the mic.
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
+    await flushMicWrite()
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({should_send_pcm: false, should_send_lc3: false}),
     )
   })
 
@@ -332,9 +402,7 @@ describe("MicStateCoordinator", () => {
     MicStateCoordinator.reset()
     await flushMicWrite()
 
-    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({should_send_pcm: false}),
-    )
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(expect.objectContaining({should_send_pcm: false}))
   })
 
   test("raw PCM keeps VAD disabled over a miniapp override", async () => {
@@ -378,9 +446,7 @@ describe("MicStateCoordinator", () => {
     test("a session profile is written to the glasses", async () => {
       MicStateCoordinator.setSessionMicTuning({gain: 14})
       await flushMicWrite()
-      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({mic_tuning: {gain: 14}}),
-      )
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(expect.objectContaining({mic_tuning: {gain: 14}}))
     })
 
     test("clearing the profile hands the OS value back", async () => {
@@ -388,9 +454,7 @@ describe("MicStateCoordinator", () => {
       await flushMicWrite()
       MicStateCoordinator.setSessionMicTuning(null)
       await flushMicWrite()
-      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({mic_tuning: {}}),
-      )
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(expect.objectContaining({mic_tuning: {}}))
     })
 
     test("a settings replay re-applies the profile", async () => {
@@ -423,9 +487,7 @@ describe("MicStateCoordinator", () => {
       await flushMicWrite()
       MicStateCoordinator.reset()
       await flushMicWrite()
-      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({mic_tuning: {}}),
-      )
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(expect.objectContaining({mic_tuning: {}}))
     })
   })
 
@@ -461,9 +523,9 @@ describe("MicStateCoordinator", () => {
       // after a walk-away mid-call.
       MicStateCoordinator.setSessionLoudnessGate(true)
       await flushMicWrite()
-      expect(
-        MicStateCoordinator.applyRuntimeOverrides({brightness: 50, loudness_gate_enabled: false}),
-      ).toEqual(expect.objectContaining({brightness: 50, loudness_gate_enabled: true}))
+      expect(MicStateCoordinator.applyRuntimeOverrides({brightness: 50, loudness_gate_enabled: false})).toEqual(
+        expect.objectContaining({brightness: 50, loudness_gate_enabled: true}),
+      )
       MicStateCoordinator.setSessionLoudnessGate(null)
       await flushMicWrite()
     })
