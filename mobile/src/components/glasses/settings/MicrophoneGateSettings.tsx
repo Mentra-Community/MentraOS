@@ -20,7 +20,6 @@ export function MicrophoneGateSettings() {
       <Text tx="microphoneSettings:glassesMicGates" className="text-text text-base font-semibold" />
       <ToggleSetting
         label={translate("microphoneSettings:vadLabel")}
-        subtitle={translate("microphoneSettings:vadSubtitle")}
         value={vadAllowed}
         onValueChange={(allowed) => {
           void setVadAllowed(allowed)
