@@ -14,7 +14,13 @@ import GlassView from "@/components/ui/GlassView"
 
 const GRID_COLUMNS = 4
 
-export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: React.RefObject<BottomSheet | null>}) {
+export default function AllAppsGridSheet({
+  bottomSheetRef,
+  homePackageNames,
+}: {
+  bottomSheetRef: React.RefObject<BottomSheet | null>
+  homePackageNames: readonly string[]
+}) {
   const {theme} = useAppTheme()
 
   const [searchQuery, setSearchQuery] = useState("")
@@ -200,6 +206,7 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
               skeletonPulse={isOpen}
               gateOnIconsReady={true}
               showAllApps={true}
+              homePackageNames={homePackageNames}
               searchQuery={searchQuery}
               onOpenApp={() => {
                 bottomSheetRef.current?.close()

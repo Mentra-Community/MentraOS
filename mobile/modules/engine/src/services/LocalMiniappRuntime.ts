@@ -819,6 +819,10 @@ class LocalMiniappRuntime {
     this.visibilityUnsubscribe = useAppStatusStore.subscribe(() => this.updateVisibility())
     this.appStateSubscription = AppState.addEventListener("change", () => this.updateVisibility())
     this.ensurePingLoop()
+    // Native background tasks can survive a previous JS runtime. Reconcile even
+    // when no miniapps register and the previous aggregate was already off.
+    this.lastAppliedLocationRate = null
+    this.recomputeLocationTier()
   }
 
   private currentVisiblePackage(): string | null {
@@ -6568,6 +6572,8 @@ class LocalMiniappRuntime {
       }
     }
     this.connectedApps.clear()
+    this.lastAppliedLocationRate = null
+    this.recomputeLocationTier()
     for (const timerId of this.foregroundProbeTimers.values()) {
       BgTimer.clearTimeout(timerId)
     }

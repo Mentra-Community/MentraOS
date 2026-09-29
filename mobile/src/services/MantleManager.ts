@@ -30,14 +30,12 @@ import {
   micStateCoordinator,
   miniappLauncher,
   offlineSpeechModelService,
-  phoneLocationService,
   saveLocalAppRunningState,
   ttsModelManager,
   useAppStatusStore,
 } from "@mentra/engine-host-internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
-import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
@@ -642,8 +640,6 @@ class MantleManager {
     this.subs = []
     this.activePhoneNotificationId = null
 
-    phoneLocationService.stopPhoneLocation()
-
     // Spoken notifications: a queued summary would otherwise synthesize and play
     // after the subscriptions that produced it are gone, or carry its count and
     // speaking flag into the next login in the same process. engine.stop() does
@@ -696,14 +692,14 @@ class MantleManager {
     const generation = this.miniappGeneration
     const deployment = deploymentStore.getActive()
     const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
+    // Reconcile resources before disk restoration, including an empty registry.
+    localMiniappRuntime.initialize()
+
     // Warm the local miniapp registry by reading lmas/ off disk. Cheap call —
     // it populates AppRegistry's cache so the first refreshApplets() doesn't
     // pay the disk-walk cost in the UI thread.
     await appRegistry.getInstalledMiniapps()
     if (!isCurrent()) return
-
-    // Initialize local miniapp runtime
-    localMiniappRuntime.initialize()
 
     await this.restoreMiniapps(background)
   }
@@ -908,18 +904,6 @@ class MantleManager {
       },
       60 * 60 * 1000,
     ) // 1 hour
-
-    try {
-      // only start location updates if we have the location permission (host UI gate);
-      // the island PhoneLocationService owns the background task + accuracy at the saved tier.
-      const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
-      if (hasLocation) {
-        const savedTier = await engine.settings.get<string>(SETTINGS.location_tier.key)
-        await phoneLocationService.setLocationTier(savedTier as string)
-      }
-    } catch (error) {
-      console.error("MANTLE: Error starting location updates", error)
-    }
 
     // check for requirements immediately, but only if we've passed through onboarding:
     // const onboardingCompleted = await engine.settings.get(SETTINGS.onboarding_completed.key)

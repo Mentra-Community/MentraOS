@@ -35,7 +35,8 @@ export function registerReportTools(server: McpServer, config: ConsoleMcpConfig)
         "List recent Cloud V2 bug reports / feedback / automatic reports (admin API), newest first. " +
         "Returns compact rows; set full: true for raw report documents.",
       inputSchema: {
-        kind: z.enum(["bug", "feedback", "automatic"]).optional(),
+        kind: z.enum(["bug", "feedback", "automatic"]).optional().describe("Stored report kind, including internal/testing reports"),
+        category: z.enum(["bug", "feedback", "internal", "testing", "automatic"]).optional().describe("Exclusive dashboard category; combined with kind when both are supplied"),
         status: z.enum(["collecting", "ready", "closed"]).optional(),
         limit: z.number().int().min(1).max(200).optional().describe("Default 25, max 200"),
         before: z
@@ -46,8 +47,8 @@ export function registerReportTools(server: McpServer, config: ConsoleMcpConfig)
         full: z.boolean().optional().describe("Return raw report documents instead of compact rows"),
       },
     },
-    async ({ kind, status, limit = 25, before, userId, full }) => {
-      const { reports } = await client().listReports({ kind, status, limit, before });
+    async ({ kind, category, status, limit = 25, before, userId, full }) => {
+      const { reports } = await client().listReports({ kind, category, status, limit, before });
       const filtered = userId
         ? reports.filter((r) => r.mentraUserId.includes(userId))
         : reports;
