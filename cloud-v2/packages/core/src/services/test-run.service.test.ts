@@ -409,6 +409,36 @@ describe("validated recovery failure lineage", () => {
     expect(repository.runs.get(original.runId)).toEqual(before.get(original.runId));
   });
 
+  test.each(["matching", "contradictory"] as const)("original published after a %s recovery parent is revalidated before child intake", async relation => {
+    const { original, recovery } = recoveryPackets();
+    const originalTerminal = recovery.provenance.originalTerminalSnapshotSha256!;
+    if (relation === "contradictory") recovery.provenance.originalTerminalSnapshotSha256 = "c".repeat(64);
+    const parent = await service.ingest(recovery);
+    expect(repository.runs.get(recovery.runId)!.recoveryLineage?.unavailableReason).toBe("original-not-published");
+    await service.acknowledgeFailure(parent.occurrenceIds[0]!, "early_parent_agent");
+    await service.ingest(original);
+    const before = structuredClone(repository.runs);
+    const pendingBefore = (await service.pendingFailureDeliveries()).map(item => item.occurrenceId);
+    const insert = spyOn(repository, "insert");
+    const third = structuredClone(recovery);
+    third.runId = recoveryResultRunId(original.runId, 3);
+    Object.assign(third.provenance, { resultGeneration: "3", previousResultRunId: recovery.runId,
+      originalTerminalSnapshotSha256: originalTerminal, terminalSnapshotSha256: "f".repeat(64) });
+    try {
+      if (relation === "contradictory") {
+        await expect(service.ingest(third)).rejects.toMatchObject({ status: 409 });
+        expect(insert).not.toHaveBeenCalled();
+        expect(repository.runs.has(third.runId)).toBe(false);
+        expect(repository.runs).toEqual(before);
+      } else {
+        expect((await service.ingest(third)).occurrenceIds).toEqual(parent.occurrenceIds);
+        expect(repository.runs.get(third.runId)!.failureOccurrences).toEqual([]);
+        for (const [id, row] of before) expect(repository.runs.get(id)).toEqual(row);
+      }
+      expect((await service.pendingFailureDeliveries()).map(item => item.occurrenceId)).toEqual(pendingBefore);
+    } finally { insert.mockRestore(); }
+  });
+
   test("legacy reconciliation persists lineage atomically; an accepted old projection is never rewritten", async () => {
     const { original, recovery } = recoveryPackets();
     await service.ingest(original);

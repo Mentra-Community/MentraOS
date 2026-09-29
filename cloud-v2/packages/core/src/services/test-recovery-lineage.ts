@@ -109,11 +109,8 @@ export async function testFailureProjection(run: TestRun, get: (id: string) => P
       // Validate legacy ancestry on demand, without replacing any already accepted
       // occurrences, receipts or payloads. Bound reads even for very long histories.
       if (remainingAncestors === 0) return unavailable("legacy-ancestry-unavailable");
-      try { lineage = (await testFailureProjection(previous.run, get, remainingAncestors - 1)).recoveryLineage; }
-      catch (error) {
-        if (!(error instanceof RecoveryLineageError)) throw error;
-        return unavailable("legacy-ancestry-unavailable");
-      }
+      // Missing ancestry returns an unavailable projection; known contradictions must propagate.
+      lineage = (await testFailureProjection(previous.run, get, remainingAncestors - 1)).recoveryLineage;
     }
     if (!lineage || lineage.unavailableReason) return unavailable("legacy-ancestry-unavailable");
     if (lineage.generation !== generation - 1 || lineage.originalRunId !== root.run.runId
