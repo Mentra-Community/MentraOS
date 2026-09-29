@@ -149,6 +149,104 @@ function renderRun(detail: TestRunDetail, client = new QueryClient()) {
   );
 }
 
+describe("customer development result presentation", () => {
+  function customer(): TestRunDetail {
+    return {
+      ...structuredClone(run),
+      outcome: "passed",
+      outcomes: { test: "passed", teardown: "passed", fixture: "ready", evidence: "complete" },
+      provenance: { ...run.provenance, executionMode: "manual-supervised",
+        qualificationScope: "prepared-customer-development", fullRoutinePassed: "false",
+        ciQualified: "false", commissioningPassed: "false" },
+      chapters: run.chapters.map(chapter => ({ ...chapter, status: "passed" })),
+      firmwareAssertions: run.firmwareAssertions.map(assertion => ({ ...assertion, status: "passed" })),
+    };
+  }
+
+  test("labels a passed customer phase in list and detail without claiming routine qualification", () => {
+    const detail = customer(), before = JSON.stringify(detail);
+    const markup = renderRun(detail);
+    expect(markup).toContain("Customer phase: passed");
+    expect(markup).toContain("Full routine, unattended CI and commissioning are not qualified.");
+    expect(markup).not.toContain("stored overall outcome is blocked");
+    const client = new QueryClient();
+    client.setQueryData(["admin-test-runs", EMPTY_FILTERS, null], {
+      pages: [{ runs: [detail], nextCursor: null }], pageParams: [undefined],
+    });
+    const list = renderToStaticMarkup(<QueryClientProvider client={client}>
+      <TestRunsPage selection={null} onSelect={() => {}} />
+    </QueryClientProvider>);
+    expect(list).toContain("Customer phase: passed");
+    expect(list).toContain("Full routine and unattended CI are not qualified.");
+    expect(JSON.stringify(detail)).toBe(before);
+    client.clear();
+  });
+
+  test("explains a historical blocked result without replacing its outcome or failure link", () => {
+    const detail = customer();
+    detail.outcome = "blocked";
+    const occurrenceId = `tfo_${"e".repeat(64)}`;
+    detail.failureOccurrences = [{ occurrenceId, delivery: { state: "pending" }, failure: {
+      phase: "unknown", step: null, code: "run_blocked", message: "Stored generic failure summary",
+      assetIds: [], incidentIds: [], missingEvidence: [], redactionPolicy: "core-generated-summary-v1",
+    } }];
+    const before = JSON.stringify(detail), markup = renderRun(detail);
+    expect(markup).toContain("stored overall outcome is blocked");
+    expect(markup).toContain("passed customer test, successful teardown and firmware checks, a ready fixture and complete evidence");
+    expect(markup).toContain(`/?fixFlow=${occurrenceId}`);
+    expect(markup).toContain("Stored generic failure summary");
+    expect(markup).not.toContain("Customer phase: passed");
+    expect(JSON.stringify(detail)).toBe(before);
+  });
+
+  test("does not explain blocked checks, missing uploads or adverse outcomes as passed", () => {
+    const changes: ((value: TestRunDetail) => void)[] = [
+      value => { value.outcomes.test = "not-run"; },
+      value => { value.outcomes.teardown = "failed"; },
+      value => { value.outcomes.fixture = "unavailable"; },
+      value => { value.outcomes.evidence = "incomplete"; },
+      value => { value.chapters[0].status = "failed"; },
+      value => { value.chapters = []; },
+      value => { value.firmwareAssertions[0].status = "blocked"; },
+      value => { value.firmwareAssertions = []; },
+      value => { value.assets[0].uploaded = false; },
+      value => { value.outcome = "failed"; },
+      value => { value.outcome = "aborted"; },
+    ];
+    for (const change of changes) {
+      const detail = customer(); detail.outcome = "blocked"; change(detail);
+      const markup = renderRun(detail);
+      expect(markup).toContain("Customer development phase.");
+      expect(markup).not.toContain("passed customer test, successful teardown and firmware checks, a ready fixture and complete evidence");
+    }
+  });
+
+  test("describes recorded outcomes without inventing separate return verification", () => {
+    for (const value of [undefined, "failed", "not-run"]) {
+      const detail = customer(); detail.outcome = "blocked";
+      detail.provenance.returnVerification = value;
+      const markup = renderRun(detail);
+      expect(markup).toContain("passed customer test, successful teardown and firmware checks, a ready fixture and complete evidence");
+      const notice = markup.match(/<aside aria-label="Customer development scope"[^>]*>(.*?)<\/aside>/s)?.[1];
+      expect(notice).toBeDefined();
+      expect(notice).not.toContain("return checks");
+      expect(markup).not.toContain("Customer phase: passed");
+    }
+  });
+
+  test("does not infer development scope from channel or incomplete and conflicting provenance", () => {
+    const keys = ["executionMode", "qualificationScope", "fullRoutinePassed", "ciQualified", "commissioningPassed"];
+    for (const key of keys) for (const replacement of [undefined, "true", "unknown"]) {
+      const detail = customer(); detail.provenance[key] = replacement;
+      const markup = renderRun(detail);
+      expect(markup).not.toContain("Customer development scope");
+      expect(markup).not.toContain("Customer phase: passed");
+    }
+    const ordinary = customer(); ordinary.provenance = { ...run.provenance, executionMode: "ci-registered" };
+    expect(renderRun(ordinary)).not.toContain("Customer development scope");
+  });
+});
+
 /** Source lookups this client has registered through the shared detail query. */
 function detailLookups(client: QueryClient) {
   return client.getQueryCache().findAll({ queryKey: ["admin-test-run"] }).map((query) => query.queryKey[1]);
