@@ -18,8 +18,11 @@ is unknown. Each card shows the reason and who can take the next action.
 
 The disk chart shows actual available bytes on the Data volume in GiB. Choose
 24 hours or seven days. Missing ticks and failed measurements leave gaps, not
-zeroes. The dashed 20 GiB line is the recording margin, not a device-readiness
-check. Cleanup markers show attempts, including refusals and dry runs. The
+zeroes. The dashed 5 GiB line marks the recorder minimum; capture requires at
+least 5 GiB free on both the artifact volume and the macOS system Data volume.
+Free space alone does not establish routine readiness. Cleanup has a separate
+default trigger below 30 GiB and target of 35 GiB. Cleanup markers show attempts,
+including refusals and dry runs. The
 before/after difference includes other host activity and is not claimed as
 space reclaimed by the cleanup itself.
 
