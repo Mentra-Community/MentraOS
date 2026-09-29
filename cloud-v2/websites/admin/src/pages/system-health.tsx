@@ -16,6 +16,7 @@ const reasonText: Record<HostReason, { summary: string; next: string }> = {
   "not-installed": { summary: "No installation was reported for this service.", next: "The host owner can install it if this host should run it." },
   "process-missing": { summary: "The enabled service's expected process was not found.", next: "The service owner should inspect its startup error and restore it." },
   "permission-denied": { summary: "The service could not access a required folder or resource.", next: "The host operator should repair its permissions, then verify the next scheduled run." },
+  "budget-limited": { summary: "The last pass reached its time limit before completing the pass.", next: "The next scheduled pass may continue. The cleanup owner should inspect remaining work if space stays low." },
   "held-custody": { summary: "Unfinished work is holding this worker.", next: "The owning agent must finish or reconcile that work before new jobs can start." },
   unsettled: { summary: "The previous worker operation has not settled.", next: "The owning agent must finish its recovery before admitting new work." },
   "startup-failed": { summary: "The service failed to start.", next: "The service owner should inspect its startup error and repair it." },
@@ -30,6 +31,8 @@ export function componentHealth(host: TestHostLatest, component: HostComponent |
   if (component.component === "triage-worker" && ["not-configured", "not-installed"].includes(component.reason))
     return { label: "Not configured", tone: "unknown", summary: "There is no separate triage worker on this host. Shared triage belongs to the general worker.",
       next: "Install this service when independent triage capacity is needed." };
+  if (component.component === "disk-cleanup" && component.reason === "budget-limited")
+    return { label: "Pass time limit reached", tone: "blocked", ...reasonText["budget-limited"] };
   return { label: { running: "Service running", scheduled: "Scheduled", stopped: "Intentionally stopped", blocked: "Blocked", unknown: "Unknown" }[component.state],
     tone: component.state === "blocked" ? "blocked" : component.state === "running" || component.state === "scheduled" ? "healthy" : "unknown",
     ...reasonText[component.reason] };
@@ -37,6 +40,8 @@ export function componentHealth(host: TestHostLatest, component: HostComponent |
 const tones: Record<string, string> = { healthy: "bg-[#e6f5ed] text-[#087d50]", blocked: "bg-[#fff0e9] text-[#a64235]", unknown: "bg-[#f0f2ef] text-[#59655e]" };
 const size = (bytes: number | null) => bytes === null ? "Unavailable" : (bytes / GiB).toFixed(1) + " GiB";
 const time = (iso: string) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const cleanupReason = (event: CleanupHealthEvent) => event.reason === "budget-limited" ? "Pass time limit reached; remaining work was deferred."
+  : event.reason === "none" ? "" : event.reason === "unknown" ? "Reason unavailable." : reasonText[event.reason].summary;
 function useClock() { const [now, setNow] = useState(Date.now); useEffect(() => { const id = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(id); }, []); return now; }
 function useHostHealth() { return useQuery({ queryKey: ["test-host-health"], queryFn: () => api<TestHostList>("/api/admin/test-runs/health"), refetchInterval: 60_000 }); }
 
@@ -89,7 +94,7 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
       {segments.map((segment, index) => <g key={index}><polyline points={segment.map(point => `${x(point.sampledAt)},${y(point.freeBytes!)}`).join(" ")} fill="none" stroke="#0c9667" strokeWidth="2" />
         {segment.length === 1 ? <circle cx={x(segment[0].sampledAt)} cy={y(segment[0].freeBytes!)} r="3" fill="#0c9667"><title>{`${time(segment[0].sampledAt)} · ${size(segment[0].freeBytes)}`}</title></circle> : null}</g>)}
       {history.cleanupEvents.map(event => <g key={event.receiptId}><line x1={x(event.startedAt)} x2={x(event.startedAt)} y1={top} y2={height - bottom} stroke={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"} strokeDasharray="2 5" />
-        <circle cx={x(event.startedAt)} cy={top + 4} r="4" fill={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"}><title>{`${time(event.startedAt)} · ${event.origin} cleanup · ${event.status} · ${event.removedCount} removed`}</title></circle></g>)}
+        <circle cx={x(event.startedAt)} cy={top + 4} r="4" fill={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"}><title>{`${time(event.startedAt)} · ${event.origin} cleanup · ${event.status} · ${event.removedCount} removed. ${cleanupReason(event)}`}</title></circle></g>)}
       {!segments.length ? <text x={width / 2} y={height / 2} textAnchor="middle" fontSize="14" fill="#68746d">No disk measurements in this period</text> : null}
     </svg>
     <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The threshold is a recording margin, not a readiness check.</p>
@@ -97,11 +102,11 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
   </div>;
 }
 
-function CleanupEvents({ events }: { events: CleanupHealthEvent[] }) {
+export function CleanupEvents({ events }: { events: CleanupHealthEvent[] }) {
   const recent = [...events].reverse().slice(0, 8);
   return <details className="mt-4 border-t border-[#e4e9e2] pt-3"><summary className="cursor-pointer text-sm font-medium">Recent cleanup attempts ({events.length})</summary>
     {!recent.length ? <p className="mt-2 text-xs text-[#68746d]">No cleanup receipt was reported for this period.</p> : <div className="mt-2 space-y-2">{recent.map(event => <div key={event.receiptId} className="flex flex-wrap justify-between gap-2 text-xs">
-      <div><strong>{event.origin === "pre-job" ? "Before a job" : event.origin} · {event.status.replaceAll("-", " ")}</strong><p className="text-[#68746d]">{time(event.startedAt)} · {event.removedCount} items removed</p></div>
+      <div><strong>{event.origin === "pre-job" ? "Before a job" : event.origin} · {event.status.replaceAll("-", " ")}</strong><p className="text-[#68746d]">{time(event.startedAt)} · {event.removedCount} items removed</p>{cleanupReason(event) ? <p className="mt-1 text-[#68746d]">{cleanupReason(event)}</p> : null}</div>
       <div className="text-right text-[#68746d]">{size(event.freeBefore)} → {size(event.freeAfter)}<p>{event.freeAfterSampledAt ? `After measured ${time(event.freeAfterSampledAt)}` : "After measurement time unavailable"}</p></div>
     </div>)}</div>}
     <p className="mt-2 text-xs text-[#68746d]">Space changes also include other host activity. A refused or dry run is not a successful cleanup.</p>

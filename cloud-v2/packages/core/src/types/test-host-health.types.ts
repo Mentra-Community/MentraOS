@@ -10,7 +10,7 @@ export const HOST_COMPONENTS = ["general-worker", "triage-worker", "disk-cleanup
 const timestamp = z.string().datetime({ offset: true });
 const bytes = z.number().int().nonnegative().safe().nullable();
 export const hostReasonSchema = z.enum(["none", "operator-drained", "disabled", "not-configured", "not-installed", "process-missing",
-  "permission-denied", "held-custody", "unsettled", "startup-failed", "inspection-unavailable", "unknown"]);
+  "permission-denied", "budget-limited", "held-custody", "unsettled", "startup-failed", "inspection-unavailable", "unknown"]);
 export type HostReason = z.infer<typeof hostReasonSchema>;
 const component = z.object({
   component: z.enum(HOST_COMPONENTS), enabled: z.boolean().nullable(),
@@ -19,7 +19,7 @@ const component = z.object({
   const valid = value.state === "running" ? value.reason === "none"
     : value.state === "scheduled" ? value.component === "disk-cleanup" && value.enabled === true && value.reason === "none"
     : value.state === "stopped" ? ["operator-drained", "disabled"].includes(value.reason)
-    : value.state === "blocked" ? ["process-missing", "permission-denied", "held-custody", "unsettled", "startup-failed"].includes(value.reason)
+    : value.state === "blocked" ? ["process-missing", "permission-denied", "budget-limited", "held-custody", "unsettled", "startup-failed"].includes(value.reason)
     : ["not-configured", "not-installed", "inspection-unavailable", "unknown"].includes(value.reason);
   if (!valid || (["running", "scheduled"].includes(value.state) && value.enabled === false)
     || value.reason === "process-missing" && value.enabled !== true || value.reason === "disabled" && value.enabled !== false)

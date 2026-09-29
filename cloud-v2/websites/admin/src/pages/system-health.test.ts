@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TestHostHistory, TestHostLatest } from "../../../../packages/core/src/types/test-host-health.types";
-import { componentHealth, DiskHistoryChart, diskSegments } from "./system-health";
+import { CleanupEvents, componentHealth, DiskHistoryChart, diskSegments } from "./system-health";
 
 const now = Date.parse("2026-09-29T00:00:00Z"), at = (offset: number) => new Date(now + offset).toISOString();
 const host: TestHostLatest = { schemaVersion: 1, hostId: "test-mini", sampleId: "sample", sampledAt: at(0), receivedAt: at(0), freeBytes: 19 * 1024 ** 3,
@@ -12,6 +12,7 @@ describe("system health presentation", () => {
     expect(componentHealth(host, { component: "general-worker", enabled: true, state: "stopped", reason: "operator-drained" }, now).label).toBe("Intentionally stopped");
     expect(componentHealth(host, { component: "disk-cleanup", enabled: true, state: "blocked", reason: "permission-denied" }, now)).toMatchObject({ label: "Blocked", tone: "blocked" });
     expect(componentHealth(host, { component: "disk-cleanup", enabled: true, state: "scheduled", reason: "none" }, now).label).toBe("Scheduled");
+    expect(componentHealth(host, { component: "disk-cleanup", enabled: true, state: "blocked", reason: "budget-limited" }, now)).toMatchObject({ label: "Pass time limit reached", tone: "blocked" });
     expect(componentHealth(host, undefined, now).label).toBe("Not reported");
     expect(componentHealth(host, { component: "general-worker", enabled: true, state: "running", reason: "none" }, now + 180_001).label).toBe("No recent report");
     expect(componentHealth(host, { component: "general-worker", enabled: true, state: "running", reason: "none" }, now, true).tone).toBe("unknown");
@@ -26,5 +27,12 @@ describe("system health presentation", () => {
     expect((markup.match(/<polyline/g) ?? []).length).toBe(3);
     expect(markup).toContain("20 GiB recording margin"); expect(markup).toContain("Gaps are missing measurements");
     expect(renderToStaticMarkup(createElement(DiskHistoryChart, { history: { ...history, points: [] } }))).toContain("No disk measurements in this period");
+  });
+  test("unknown-origin partial cleanup explains its time limit without claiming a scheduled success", () => {
+    const markup = renderToStaticMarkup(createElement(CleanupEvents, { events: [{ receiptId: "legacy", receiptSha256: "a".repeat(64),
+      origin: "unknown", startedAt: at(-60_000), finishedAt: null, status: "refused", reason: "budget-limited", removedCount: 2,
+      freeBefore: 20 * 1024 ** 3, freeAfter: 22 * 1024 ** 3, freeAfterSampledAt: null }] }));
+    expect(markup).toContain("unknown"); expect(markup).toContain("refused"); expect(markup).toContain("2 items removed");
+    expect(markup).toContain("Pass time limit reached; remaining work was deferred."); expect(markup).not.toContain("next scheduled pass");
   });
 });

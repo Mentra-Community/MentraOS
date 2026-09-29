@@ -67,6 +67,7 @@ describe("passive host health", () => {
       { ...base, components: [{ component: "triage-worker", enabled: true, state: "scheduled", reason: "none" }] },
     ];
     expect(testHostSampleSchema.safeParse(base).success).toBe(true);
+    expect(testHostSampleSchema.safeParse({ ...base, components: [{ component: "disk-cleanup", enabled: true, state: "blocked", reason: "budget-limited" }] }).success).toBe(true);
     for (const value of invalid) expect(testHostSampleSchema.safeParse(value).success).toBe(false);
     expect(testHostSampleSchema.safeParse({ ...base, components: [{ component: "general-worker", enabled: true, state: "stopped", reason: "operator-drained" }] }).success).toBe(true);
   });
