@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent, type HostComponent, type HostDiskPoint,
+import { DISK_FLOOR_BYTES, HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent, type HostComponent, type HostDiskPoint,
   type HostReason, type TestHostHistory, type TestHostLatest, type TestHostList } from "../../../../packages/core/src/types/test-host-health.types";
 import type { TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import type { FixFlowList } from "../../../../packages/core/src/types/fix-flow.types";
@@ -9,6 +9,7 @@ import { elapsed, laneCards, LaneOverview } from "./test-lanes";
 import { laneFailureRun } from "./test-lane-failure";
 
 const GiB = 1024 ** 3;
+const recordingFloorGiB = DISK_FLOOR_BYTES / GiB;
 const componentNames = { "general-worker": "General worker", "triage-worker": "Dedicated triage worker", "disk-cleanup": "Scheduled cleanup" };
 const reasonText: Record<HostReason, { summary: string; next: string }> = {
   none: { summary: "The service was observed on this host.", next: "No intervention reported." },
@@ -53,7 +54,7 @@ function useHostHealth() { return useQuery({ queryKey: ["test-host-health"], que
 export function SystemHealthSummary() {
   const query = useHostHealth(), now = useClock(), hosts = query.data?.hosts ?? [];
   const problems = hosts.flatMap(host => !hostIsFresh(host, now) ? [`${host.hostId}: no recent report`]
-    : [...(host.freeBytes !== null && host.freeBytes < 20 * GiB ? [`${host.hostId}: ${size(host.freeBytes)} free (below 20 GiB)`] : []),
+    : [...(host.freeBytes !== null && host.freeBytes < DISK_FLOOR_BYTES ? [`${host.hostId}: ${size(host.freeBytes)} free (below ${recordingFloorGiB} GiB recorder minimum)`] : []),
       ...host.components.filter(item => ["blocked", "stopped"].includes(item.state)).map(item => `${componentNames[item.component]}: ${item.state === "stopped" ? "paused" : "blocked"}`)]);
   const text = query.isError ? "System health could not refresh. Current service status is unknown."
     : query.isPending ? "Loading system health…" : !hosts.length ? "Host monitoring has not reported yet."
@@ -89,11 +90,11 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
   const y = (bytes: number) => height - bottom - (bytes / GiB / yMax) * (height - top - bottom);
   const segments = diskSegments(history.points, history.gapAfterMs);
   return <div ref={container}>
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="Available disk space over time. Gaps mean no measurement. Dashed line marks 20 GiB.">
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label={`Available disk space over time. Gaps mean no measurement. Dashed line marks the ${recordingFloorGiB} GiB recorder minimum.`}>
       {[0, yMax / 2, yMax].map(tick => <g key={tick}><line x1={left} x2={width - 16} y1={y(tick * GiB)} y2={y(tick * GiB)} stroke="#e4e9e2" />
         <text x={left - 9} y={y(tick * GiB) + 4} textAnchor="end" fontSize="11" fill="#68746d">{tick} GiB</text></g>)}
-      <line x1={left} x2={width - 16} y1={y(history.thresholdBytes)} y2={y(history.thresholdBytes)} stroke="#b57729" strokeDasharray="5 4" />
-      <text x={width - 20} y={y(history.thresholdBytes) - 5} textAnchor="end" fontSize="11" fill="#946024">20 GiB headroom target</text>
+      <line x1={left} x2={width - 16} y1={y(DISK_FLOOR_BYTES)} y2={y(DISK_FLOOR_BYTES)} stroke="#b57729" strokeDasharray="5 4" />
+      <text x={width - 20} y={y(DISK_FLOOR_BYTES) - 5} textAnchor="end" fontSize="11" fill="#946024">{recordingFloorGiB} GiB recorder minimum</text>
       {(width < 500 ? [0, 1] : [0, 0.5, 1]).map(ratio => <text key={ratio} x={left + ratio * (width - left - 16)} y={height - 10} textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fill="#68746d">{time(new Date(from + ratio * (to - from)).toISOString())}</text>)}
       {segments.map((segment, index) => <g key={index}><polyline points={segment.map(point => `${x(point.sampledAt)},${y(point.freeBytes!)}`).join(" ")} fill="none" stroke="#0c9667" strokeWidth="2" />
         {segment.length === 1 ? <circle cx={x(segment[0].sampledAt)} cy={y(segment[0].freeBytes!)} r="3" fill="#0c9667"><title>{`${time(segment[0].sampledAt)} · ${size(segment[0].freeBytes)}`}</title></circle> : null}</g>)}
@@ -101,7 +102,8 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
         <circle cx={x(event.startedAt)} cy={top + 4} r="4" fill={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"}><title>{`${time(event.startedAt)} · ${event.origin} cleanup · ${cleanupStatus(event)} · ${event.removedCount} removed. ${cleanupReason(event)}`}</title></circle></g>)}
       {!segments.length ? <text x={width / 2} y={height / 2} textAnchor="middle" fontSize="14" fill="#68746d">No disk measurements in this period</text> : null}
     </svg>
-    <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The 20 GiB guide is a headroom target, not a recording or readiness gate.</p>
+    <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The dashed line marks the {recordingFloorGiB} GiB recorder minimum. Free space alone does not establish routine readiness.</p>
+    <p className="mt-1 text-xs text-[#68746d]">Default cleanup policy is separate: trigger below 30 GiB, target 35 GiB.</p>
     {history.truncated ? <p className="mt-1 text-xs text-[#a64235]">Only the newest {history.points.length.toLocaleString()} measurements are shown.</p> : null}
   </div>;
 }
@@ -138,7 +140,7 @@ export function SystemHealthPage() {
           return <article key={role} className="rounded-xl border border-[#e0e6de] p-4"><h3 className="font-semibold">{componentNames[role]}</h3>{role === "general-worker" ? <p className="mt-1 text-xs text-[#68746d]">Fixes and shared triage</p> : null}<span className={`mt-2 inline-block rounded-md px-2 py-1 text-xs font-semibold ${tones[state.tone]}`}>{state.label}</span>
             <p className="mt-3 text-sm text-[#59655e]">{state.summary}</p><p className="mt-2 text-xs text-[#68746d]"><strong>Next:</strong> {state.next}</p>
             {component?.state === "running" && fresh ? <p className="mt-2 text-xs text-[#68746d]">The service is alive; this does not say a model or routine is working.</p> : null}</article>; })}</div> : null}
-        <div className="mt-6 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-base font-semibold">Available disk space</h3><p className={`mt-1 text-2xl font-semibold ${fresh && host?.freeBytes !== null && host!.freeBytes < 20 * GiB ? "text-[#a64235]" : "text-[#202820]"}`}>{host ? size(host.freeBytes) : "Unavailable"}<span className="ml-2 text-xs font-normal text-[#68746d]">{fresh ? "latest measurement" : "last reported, not current"}</span></p></div>
+        <div className="mt-6 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-base font-semibold">Available disk space</h3><p className={`mt-1 text-2xl font-semibold ${fresh && host?.freeBytes !== null && host!.freeBytes < DISK_FLOOR_BYTES ? "text-[#a64235]" : "text-[#202820]"}`}>{host ? size(host.freeBytes) : "Unavailable"}<span className="ml-2 text-xs font-normal text-[#68746d]">{fresh ? "latest measurement" : "last reported, not current"}</span></p></div>
           <div className="flex gap-1 rounded-lg bg-[#f0f3ee] p-1">{([1, 7] as const).map(value => <button key={value} aria-pressed={days === value} onClick={() => setDays(value)} className={`rounded-md px-3 py-1 text-sm ${days === value ? "bg-white font-semibold shadow-sm" : "text-[#68746d]"}`}>{value === 1 ? "24 hours" : "7 days"}</button>)}</div></div>
         {history.isError ? <p className="mt-3 text-sm text-[#a64235]">Disk history could not refresh.</p> : null}
         {history.data ? <div className="mt-4"><DiskHistoryChart history={history.data} /><CleanupEvents events={history.data.cleanupEvents} /></div> : <p className="mt-4 text-sm text-[#68746d]">Loading recorded measurements…</p>}

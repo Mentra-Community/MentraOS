@@ -3,7 +3,7 @@ import { testResourceHostIdSchema } from "./test-resource-observation.types";
 
 export const HOST_FRESH_MS = 180_000;
 export const DISK_GAP_MS = 90_000; // A missed 60-second tick is a gap; permit ordinary scheduling jitter.
-export const DISK_FLOOR_BYTES = 20 * 1024 ** 3;
+export const DISK_FLOOR_BYTES = 5 * 1024 ** 3; // Recorder minimum; cleanup uses separate trigger/target settings.
 export const HOST_HISTORY_DAYS = 7;
 export const HOST_SAMPLE_LIMIT = 10_081; // One real sample/minute over seven days, plus a boundary sample.
 export const HOST_COMPONENTS = ["general-worker", "triage-worker", "disk-cleanup"] as const;
