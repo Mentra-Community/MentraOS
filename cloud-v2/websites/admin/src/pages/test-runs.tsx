@@ -811,7 +811,7 @@ function CustomerPhaseNotice({ run }: { run: TestRunDetail }) {
   const passedChecks = run.outcomes.test === "passed" && run.outcomes.teardown === "passed"
     && run.outcomes.fixture === "ready" && run.outcomes.evidence === "complete"
     && run.chapters.length > 0 && run.chapters.every(chapter => chapter.status === "passed")
-    && run.firmwareAssertions.every(assertion => assertion.status === "passed")
+    && run.firmwareAssertions.length > 0 && run.firmwareAssertions.every(assertion => assertion.status === "passed")
     && run.assets.every(asset => asset.uploaded);
   return (
     <aside aria-label="Customer development scope" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
@@ -819,7 +819,7 @@ function CustomerPhaseNotice({ run }: { run: TestRunDetail }) {
       Full routine, unattended CI and commissioning are not qualified.
       {run.outcome === "blocked" && passedChecks ? (
         <p className="mt-2">
-          This record reports passed customer steps, firmware and return checks with complete evidence,
+          This record reports a passed customer test, successful teardown and firmware checks, a ready fixture and complete evidence,
           while its stored overall outcome is blocked. The recorded outcome and existing failure links remain unchanged.
         </p>
       ) : null}

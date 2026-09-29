@@ -192,7 +192,7 @@ describe("customer development result presentation", () => {
     } }];
     const before = JSON.stringify(detail), markup = renderRun(detail);
     expect(markup).toContain("stored overall outcome is blocked");
-    expect(markup).toContain("passed customer steps, firmware and return checks with complete evidence");
+    expect(markup).toContain("passed customer test, successful teardown and firmware checks, a ready fixture and complete evidence");
     expect(markup).toContain(`/?fixFlow=${occurrenceId}`);
     expect(markup).toContain("Stored generic failure summary");
     expect(markup).not.toContain("Customer phase: passed");
@@ -208,6 +208,7 @@ describe("customer development result presentation", () => {
       value => { value.chapters[0].status = "failed"; },
       value => { value.chapters = []; },
       value => { value.firmwareAssertions[0].status = "blocked"; },
+      value => { value.firmwareAssertions = []; },
       value => { value.assets[0].uploaded = false; },
       value => { value.outcome = "failed"; },
       value => { value.outcome = "aborted"; },
@@ -216,7 +217,20 @@ describe("customer development result presentation", () => {
       const detail = customer(); detail.outcome = "blocked"; change(detail);
       const markup = renderRun(detail);
       expect(markup).toContain("Customer development phase.");
-      expect(markup).not.toContain("passed customer steps, firmware and return checks with complete evidence");
+      expect(markup).not.toContain("passed customer test, successful teardown and firmware checks, a ready fixture and complete evidence");
+    }
+  });
+
+  test("describes recorded outcomes without inventing separate return verification", () => {
+    for (const value of [undefined, "failed", "not-run"]) {
+      const detail = customer(); detail.outcome = "blocked";
+      detail.provenance.returnVerification = value;
+      const markup = renderRun(detail);
+      expect(markup).toContain("passed customer test, successful teardown and firmware checks, a ready fixture and complete evidence");
+      const notice = markup.match(/<aside aria-label="Customer development scope"[^>]*>(.*?)<\/aside>/s)?.[1];
+      expect(notice).toBeDefined();
+      expect(notice).not.toContain("return checks");
+      expect(markup).not.toContain("Customer phase: passed");
     }
   });
 
