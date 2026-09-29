@@ -15,6 +15,7 @@ function fixture(harness = false) {
   const gateway = new GithubContinuationSource({ app: { token: async (scope: string) => { expect(scope).toBe(harness ? "harness" : "source"); return "fixture"; } } as TestRunGithubApp,
     fetch: (async (url: string, init?: RequestInit) => { calls.push(url); expect(init?.method).toBeUndefined();
       if (url.endsWith("/pulls/12")) return Response.json(pr);
+      if (url.includes(`/commits/${tested}/pulls`)) return Response.json([]);
       if (url.includes(`/compare/${merged}...`)) return Response.json({ status: mainStatus,
         ...(largeMainFiles && new URL(url).searchParams.get("page") !== "2" ? {files: [{patch: "x".repeat(3 * 1024 * 1024)}]} : {}) });
       if (url.includes("/compare/")) return Response.json({ status });
@@ -84,6 +85,96 @@ test("private main containment omits oversized unrelated patches while preservin
   // Omitting the patch list must not weaken rejection of a rewritten main history.
   f.excludeMerge("diverged");
   await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("no longer contains");
+});
+function squashedHarnessFixture() {
+  const f = fixture(true), main = "d".repeat(40), originMerge = "e".repeat(40);
+  f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-29T13:00:00Z";
+  const origin = { ...structuredClone(f.pr), number: 219, merge_commit_sha: originMerge,
+    head: { sha: tested, ref: "codex/previous-harness-fix", repo: { full_name: HARNESS } },
+    base: { ref: "main", repo: { full_name: HARNESS } } };
+  const state = { listed: structuredClone([origin]) as unknown, direct: "diverged", candidateFromOrigin: "ahead",
+    mainFromOrigin: "ahead", mainContainsCandidate: "ahead" };
+  const calls: string[] = [];
+  const gateway = new GithubContinuationSource({ app: { token: async (scope: string) => { expect(scope).toBe("harness"); return "fixture"; } } as TestRunGithubApp,
+    fetch: (async (url: string, init?: RequestInit) => {
+      calls.push(url); expect(init?.method).toBeUndefined();
+      expect(url.startsWith(`https://api.github.com/repos/${HARNESS}/`)).toBe(true);
+      if (url.endsWith("/pulls/12")) return Response.json(f.pr);
+      if (url.endsWith("/pulls/219")) return Response.json(origin);
+      if (url.endsWith(`/commits/${tested}/pulls?per_page=100`)) return Response.json(state.listed);
+      if (url.endsWith("/git/ref/heads/main")) return Response.json({ ref: "refs/heads/main", object: { type: "commit", sha: main } });
+      const statuses: Record<string, string> = { [`${tested}...${head}`]: state.direct,
+        [`${originMerge}...${head}`]: state.candidateFromOrigin, [`${originMerge}...${main}`]: state.mainFromOrigin,
+        [`${merged}...${main}`]: state.mainContainsCandidate };
+      const comparison = new URL(url).pathname.split("/compare/")[1];
+      if (comparison && comparison in statuses) return Response.json({ status: statuses[comparison],
+        // Every comparison used by this harness-only proof must omit unrelated patches.
+        ...(new URL(url).search !== "?per_page=1&page=2" ? {files: [{patch: "x".repeat(3 * 1024 * 1024)}]} : {}) });
+      throw new Error(`Unexpected endpoint: ${url}`);
+    }) as typeof fetch });
+  return { ...f, gateway, calls, origin, state };
+}
+test("an exact squash-merged harness origin keeps the recorded app and tested hash, while selecting only the reviewed candidate merge", async () => {
+  for (const direct of ["behind", "diverged"]) {
+    const f = squashedHarnessFixture(); f.state.direct = direct;
+    f.packet.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: PUB, branch: "dev", headSha: "f".repeat(40) };
+    f.packet.sourceStatus = "recorded"; f.packet.platform = "ios-mac"; f.packet.routine = { id: "notes-phone", version: "1" };
+    f.packet.build.recordedAppPublication = { producerRunId: 36496912774, executableSha256: "1".repeat(64), javascriptSha256: "2".repeat(64) };
+    const before = structuredClone({ packet: f.packet, grant: f.grant });
+    expect(await f.gateway.target(f.packet, f.grant, "notes-phone")).toEqual({ query: { channel: "dev" },
+      expectedHeadSha: f.packet.source.headSha, expectedHarnessSha: merged, requestNotBefore: f.pr.merged_at!, automaticExpected: false,
+      localPublication: { ...f.packet.build.recordedAppPublication, channel: "dev" } });
+    expect({ packet: f.packet, grant: f.grant }).toEqual(before);
+    expect(f.calls.filter(url => url.includes("/compare/"))).toHaveLength(4);
+    expect(f.calls.some(url => url.endsWith("/pulls/219"))).toBe(true);
+  }
+});
+test("direct harness ancestry needs no originating PR lookup", async () => {
+  for (const direct of ["ahead", "identical"]) {
+    const f = squashedHarnessFixture(); f.state.direct = direct; f.state.listed = [];
+    expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ expectedHarnessSha: merged });
+    expect(f.calls.some(url => url.includes("/commits/"))).toBe(false);
+  }
+});
+test("squashed harness origins refuse incomplete, ambiguous, unmerged or changed GitHub relations", async () => {
+  for (const mismatch of ["missing", "invalid-list", "full-page", "ambiguous", "fork-listed", "base-listed", "head-listed",
+    "number", "head", "head-repository", "base-repository", "base", "unmerged", "open", "missing-merge", "invalid-merge", "missing-time"]) {
+    const f = squashedHarnessFixture();
+    if (mismatch === "missing") f.state.listed = [];
+    if (mismatch === "invalid-list") f.state.listed = {};
+    if (mismatch === "full-page") f.state.listed = Array.from({ length: 100 }, () => structuredClone(f.origin));
+    if (mismatch === "ambiguous") f.state.listed = [f.origin, { ...f.origin, number: 220 }];
+    if (mismatch === "fork-listed") f.state.listed = [{ ...f.origin, head: { ...f.origin.head, repo: { full_name: "other/repo" } } }];
+    if (mismatch === "base-listed") f.state.listed = [{ ...f.origin, base: { ...f.origin.base, ref: "dev" } }];
+    if (mismatch === "head-listed") f.state.listed = [{ ...f.origin, head: { ...f.origin.head, sha: head } }];
+    // List/detail races must fail the independent detail check too.
+    if (mismatch === "number") f.origin.number = 220;
+    if (mismatch === "head") f.origin.head.sha = head;
+    if (mismatch === "head-repository") f.origin.head.repo.full_name = "other/repo";
+    if (mismatch === "base-repository") f.origin.base.repo.full_name = "other/repo";
+    if (mismatch === "base") f.origin.base.ref = "dev";
+    if (mismatch === "unmerged") f.origin.merged = false;
+    if (mismatch === "open") f.origin.state = "open";
+    if (mismatch === "missing-merge") (f.origin as { merge_commit_sha: string | null }).merge_commit_sha = null;
+    if (mismatch === "invalid-merge") f.origin.merge_commit_sha = "main";
+    if (mismatch === "missing-time") f.origin.merged_at = null;
+    await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow();
+    expect(f.calls.some(url => url.includes(`/compare/${"e".repeat(40)}...`))).toBe(false);
+  }
+});
+test("squash origin proof cannot bypass candidate ancestry, current main or the reviewed candidate merge", async () => {
+  for (const field of ["candidateFromOrigin", "mainFromOrigin", "mainContainsCandidate"] as const) {
+    for (const status of ["behind", "diverged", "unknown"]) {
+      const f = squashedHarnessFixture(); f.state[field] = status;
+      await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow();
+    }
+  }
+  const unmerged = squashedHarnessFixture(); unmerged.pr.merged = false; unmerged.pr.state = "open";
+  await expect(unmerged.gateway.target(unmerged.packet, unmerged.grant, "no-glasses")).rejects.toThrow("review and merge");
+  expect(unmerged.calls.some(url => url.includes("/commits/"))).toBe(false);
+  const app = fixture(); app.diverged();
+  await expect(app.gateway.target(app.packet, app.grant, "no-glasses")).rejects.toThrow("descend");
+  expect(app.calls.some(url => url.includes("/commits/"))).toBe(false);
 });
 test("an adopted harness candidate uses only the recorded same-case owner's branch", async () => {
   const f = fixture(true); f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
