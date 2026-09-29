@@ -1,0 +1,30 @@
+import { describe, expect, test } from "bun:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { TestHostHistory, TestHostLatest } from "../../../../packages/core/src/types/test-host-health.types";
+import { componentHealth, DiskHistoryChart, diskSegments } from "./system-health";
+
+const now = Date.parse("2026-09-29T00:00:00Z"), at = (offset: number) => new Date(now + offset).toISOString();
+const host: TestHostLatest = { schemaVersion: 1, hostId: "test-mini", sampleId: "sample", sampledAt: at(0), receivedAt: at(0), freeBytes: 19 * 1024 ** 3,
+  components: [], cleanupEvents: [] };
+describe("system health presentation", () => {
+  test("independent fresh host reporting can show paused/blocked components without claiming the computer is offline", () => {
+    expect(componentHealth(host, { component: "general-worker", enabled: true, state: "stopped", reason: "operator-drained" }, now).label).toBe("Intentionally stopped");
+    expect(componentHealth(host, { component: "disk-cleanup", enabled: true, state: "blocked", reason: "permission-denied" }, now)).toMatchObject({ label: "Blocked", tone: "blocked" });
+    expect(componentHealth(host, { component: "disk-cleanup", enabled: true, state: "scheduled", reason: "none" }, now).label).toBe("Scheduled");
+    expect(componentHealth(host, undefined, now).label).toBe("Not reported");
+    expect(componentHealth(host, { component: "general-worker", enabled: true, state: "running", reason: "none" }, now + 180_001).label).toBe("No recent report");
+    expect(componentHealth(host, { component: "general-worker", enabled: true, state: "running", reason: "none" }, now, true).tone).toBe("unknown");
+  });
+  test("missing samples and unavailable stat split the plot; no interpolation, synthetic zero, or untimed receipt measurement", () => {
+    const points = [0, 60_000, 400_000, 460_000, 520_000].map((offset, index) => ({ sampleId: String(index), sampledAt: at(offset), freeBytes: index === 3 ? null : (25 - index) * 1024 ** 3 }));
+    expect(diskSegments(points, 180_000).map(segment => segment.map(point => point.sampleId))).toEqual([["0", "1"], ["2"], ["4"]]);
+    expect(diskSegments([points[0], { ...points[1], sampledAt: at(120_000) }], 90_000)).toHaveLength(2);
+    const history: TestHostHistory = { hostId: host.hostId, generatedAt: at(600_000), from: at(-86_400_000), to: at(600_000), points,
+      cleanupEvents: [], truncated: false, thresholdBytes: 20 * 1024 ** 3, gapAfterMs: 180_000 };
+    const markup = renderToStaticMarkup(createElement(DiskHistoryChart, { history }));
+    expect((markup.match(/<polyline/g) ?? []).length).toBe(3);
+    expect(markup).toContain("20 GiB recording margin"); expect(markup).toContain("Gaps are missing measurements");
+    expect(renderToStaticMarkup(createElement(DiskHistoryChart, { history: { ...history, points: [] } }))).toContain("No disk measurements in this period");
+  });
+});

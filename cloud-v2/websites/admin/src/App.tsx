@@ -10,11 +10,12 @@ import {
 } from "./lib/test-run-links";
 import { TestRunsPage } from "./pages/test-runs";
 import { FixFlowsPage } from "./pages/fix-flows";
+import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
 import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "fix-flows";
+type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "fix-flows" | "system-health";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
@@ -133,6 +134,7 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
   { key: "fix-flows", label: "Fix flows", icon: RotateCcw },
+  { key: "system-health", label: "System health", icon: ShieldCheck },
 ];
 
 /**
@@ -167,12 +169,13 @@ const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialFixFlowLink = readFixFlowLink(window.location.search);
 const initialFixFlows = new URLSearchParams(window.location.search).get("fixFlows") === "active";
+const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
   );
   const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
@@ -212,6 +215,7 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
+      if (new URLSearchParams(window.location.search).get("systemHealth") === "1") { setPage("system-health"); return; }
       const fixFlow = readFixFlowLink(window.location.search);
       setFixFlowLink(fixFlow);
       if (fixFlow || new URLSearchParams(window.location.search).get("fixFlows") === "active") {
@@ -358,6 +362,7 @@ function AdminPage() {
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
     "fix-flows": { title: "Fix flows", body: "Follow a failed routine through its incident, AI investigation, PR, review and verification." },
+    "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
   };
 
   if (me.isLoading) return <Splash label="Checking admin session" />;
@@ -378,7 +383,7 @@ function AdminPage() {
         setPage(key as AdminPageKey);
         setFixFlowLink(null);
         const location = new URL(window.location.href);
-        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep"]) location.searchParams.delete(param);
+        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -388,6 +393,7 @@ function AdminPage() {
           clearTestRunListScope();
         }
         if (key === "fix-flows") window.history.replaceState(null, "", fixFlowHref(null));
+        if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
       }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
@@ -445,6 +451,8 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
+      {page === "fix-flows" || page === "test-runs" ? <SystemHealthSummary /> : null}
+      {page === "system-health" ? <SystemHealthPage /> : null}
       {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" ? (
         <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
