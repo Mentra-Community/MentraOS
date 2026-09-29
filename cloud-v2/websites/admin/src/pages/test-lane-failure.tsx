@@ -39,12 +39,14 @@ function inputStatus(state: FixFlowCurrentState) {
 }
 
 /** Reuses Core's exact occurrence/ACK/owner projection; never derives agent activity from a lane or CI state. */
-export function LaneFailureContext({ card, feed, now, onResult }: {
-  card: LaneCard; feed?: FixFlowList; now: number; onResult: (id: string) => void;
+export function LaneFailureContext({ card, feed, onResult }: {
+  card: LaneCard; feed?: FixFlowList; onResult: (id: string) => void;
 }) {
   const runId = laneFailureRun(card);
   if (!runId) return null;
-  const flows = laneFailureFlows(card, feed, now);
+  // A query response can arrive after the page's last timer tick. Judge its freshness
+  // at this render, not against that older tick (which could make the response look future-dated).
+  const flows = laneFailureFlows(card, feed, Date.now());
   return <section className="mt-3 space-y-2 rounded-lg border border-[#dec694] bg-[#fffaf0] p-2.5 text-[11px]" aria-label="Recorded failure follow-up">
     <p className="font-semibold">Last recorded run · <button className={LINK} onClick={() => onResult(runId)}>Open result</button></p>
     {flows.length ? flows.map(flow => {

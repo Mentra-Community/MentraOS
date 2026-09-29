@@ -4,7 +4,7 @@ import type { FixFlowList } from "../../../../packages/core/src/types/fix-flow.t
 import type { OverviewJob, OverviewRequest, TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import { displayState, elapsed, laneCards, laneKind, phaseNames, type LaneCard, type LaneState } from "./test-lanes";
 import { runDuration, type TestRunSummary } from "./test-runs-data";
-import { LaneFailureContext, laneFailureRun } from "./test-lane-failure";
+import { LaneFailureContext, laneFailureFlows } from "./test-lane-failure";
 
 const BOX = "rounded-xl border border-[#e0e4de] bg-white p-3";
 const MUTED = "text-[11px] text-[#68746d]";
@@ -85,9 +85,9 @@ function FlowLane({ card, now, onResult, fixFlows }: { card: LaneCard; now: numb
     </div> : null}
     <LaneProgress card={card} />
     <p className="mt-3 text-xs">{card.summary}</p>
-    {card.state !== "available" && card.state !== "running" && !laneFailureRun(card) ? <div className="mt-2 border-l-2 border-[#dec694] pl-2 text-[11px]">
+    {card.state !== "available" && card.state !== "running" && !laneFailureFlows(card, fixFlows, now).length ? <div className="mt-2 border-l-2 border-[#dec694] pl-2 text-[11px]">
       <p>{card.responsible}</p><p className="mt-1">{card.next}</p></div> : null}
-    <LaneFailureContext card={card} feed={fixFlows} now={now} onResult={onResult} />
+    <LaneFailureContext card={card} feed={fixFlows} onResult={onResult} />
     {card.pairing ? <p className={`mt-2 ${MUTED}`}>{card.pairing}</p> : null}
     <p className={`mt-2 ${MUTED}`}>{fixture.checked && fixture.record === "valid" ? `${fixture.fixtureID} · ` : ""}
       Reported {elapsed(card.item.receivedAt, now)} ago{card.fresh ? "" : " · stale"}</p>

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { FixFlow, FixFlowList } from "../../../../packages/core/src/types/fix-flow.types";
 import { noOwnerObservation, retainedObservation } from "../../../../packages/core/src/types/test-resource-observation.examples";
@@ -9,6 +9,8 @@ import { TestRunOverviewView } from "./test-run-overview";
 
 const at = "2026-09-29T19:00:00.000Z", now = Date.parse(at), runId = "routine-123-1-dev-no-glasses";
 const occurrenceId = `tfo_${"a".repeat(64)}`;
+beforeEach(() => setSystemTime(now));
+afterEach(() => setSystemTime());
 const flow: FixFlow = { occurrenceId, runId, routineId: "no-glasses", channel: "dev", build: "3.3.0-dev.468",
   step: { id: "unpaired-source", label: "Check source" },
   failure: { code: "phase-failed", message: "The lifecycle phase failed before it could complete.", detailUnpublished: true },
@@ -44,6 +46,35 @@ test("reported concrete errors are shown verbatim without being inferred from fi
   const rendered = html(data(), feed([{ ...flow, failure: { code: "app-not-running", message: "Expected one running com.mentra.mentra process, found 0" } }]));
   expect(rendered).toContain("Expected one running com.mentra.mentra process, found 0");
   expect(rendered).not.toContain("Detailed cause is not included");
+});
+
+test("a published run without a matching occurrence keeps the recorded fixture recovery guidance", () => {
+  for (const response of [undefined, feed([]), { ...feed([]), activity: "unavailable" as const },
+    { ...feed([]), limited: true }, feed([{ ...flow, runId: "other-run" }])]) {
+    const rendered = renderToStaticMarkup(<TestRunOverviewView data={data()} fixFlows={response} now={now} onResult={() => {}} />);
+    expect(rendered).toContain("Test runner / operator");
+    expect(rendered).toContain("Recover the fixture and publish verified return evidence before routines use it.");
+    expect(rendered).toContain("Responsible party and input needs are unconfirmed.");
+    expect(rendered).not.toContain("No input request reported.");
+  }
+});
+
+test("responses arriving between page timer ticks remain current at render time", () => {
+  for (const tick of [0, 1000, 15_000]) {
+    const response = { ...feed(), refreshedAt: new Date(now + tick + 500).toISOString() };
+    setSystemTime(now + tick + 750);
+    // The parent retains its previous timer sample while the query response triggers a render.
+    const rendered = renderToStaticMarkup(<TestRunOverviewView data={data()} fixFlows={response}
+      now={now + tick} onResult={() => {}} />);
+    expect(rendered).toContain(">Queued</a>");
+    expect(rendered).toContain("No input request reported.");
+    expect(rendered).not.toContain(">Status unavailable</a>");
+  }
+  setSystemTime(now + 120_501);
+  const old = { ...feed(), refreshedAt: new Date(now + 500).toISOString() };
+  expect(html(data(), old)).toContain(">Status unavailable</a>");
+  setSystemTime(now + 750);
+  expect(html(data(), { ...old, activity: "unavailable" })).toContain(">Status unavailable</a>");
 });
 
 test("only the exact published last-run or retained owner joins; fixture aliases and older runs never do", () => {

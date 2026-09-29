@@ -3,7 +3,7 @@ import type { FixFlowList } from "../../../../packages/core/src/types/fix-flow.t
 import { CHECKPOINT_FRESH_MS, type OverviewClaim, type OverviewJob, type OverviewRequest, type OverviewResourceObservation,
   type TestRunOverview } from "../../../../packages/core/src/types/test-run-overview.types";
 import type { TestResourceProgressCheckpoint, TestResourceReason } from "../../../../packages/core/src/types/test-resource-observation.types";
-import { LaneFailureContext, laneFailureRun } from "./test-lane-failure";
+import { LaneFailureContext, laneFailureFlows } from "./test-lane-failure";
 
 /**
  * One card per host lane (a reported guard), built only from the overview Core already returns: the latest
@@ -292,14 +292,14 @@ function Lane({ card, now, onResult, fixFlows }: { card: LaneCard; now: number; 
       {row("Status", card.summary)}
       {row("Last report", <span className={card.fresh ? "" : "text-[#805619]"}>{elapsed(item.receivedAt, now)} ago{card.fresh ? ""
         : value.state === "retained-recovery-required" ? "; not current. The lane stays held until its recovery is verified." : "; not current"}</span>)}
-      {state !== "available" && state !== "running" && !laneFailureRun(card) ? <>{row("Responsible", card.responsible)}{row("Next", card.next)}</> : null}
+      {state !== "available" && state !== "running" && !laneFailureFlows(card, fixFlows, now).length ? <>{row("Responsible", card.responsible)}{row("Next", card.next)}</> : null}
       {card.pairing ? row(kind === "glasses" ? "Phone" : "Glasses", card.pairing) : null}
       {row("Queue", kind === "glasses" ? "CI requests are not queued per glasses pair."
         : !card.queue ? "No CI run was seen on this lane, so no CI queue is shown."
         : !card.queue.length ? "No queued " + platform + " requests."
         : card.queue.length + " queued " + platform + " " + (card.queue.length === 1 ? "request" : "requests") + ". GitHub assigns runners; this lane is not confirmed for them.")}
     </dl>
-    <LaneFailureContext card={card} feed={fixFlows} now={now} onResult={onResult} />
+    <LaneFailureContext card={card} feed={fixFlows} onResult={onResult} />
     <details className="mt-2"><summary className="cursor-pointer text-[#68746d]">Lane details</summary>
       <div className="mt-1 space-y-1 text-[#59655e]">
         <p>Resource {item.resourceKey}{scope}{fixture ? " · fixture " + fixture.fixtureID + ", recorded " + fixture.status : ""}</p>
