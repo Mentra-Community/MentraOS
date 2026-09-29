@@ -40,13 +40,10 @@ const STORAGE_DIR = join(tmpdir(), `mentra-reports-test-${process.pid}`);
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
   process.env.SUPABASE_URL = "https://testproj.supabase.co";
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
-  // Only the Slack notification tests opt in to a (mocked) webhook; everything
-  // else must run with the notifier disabled, whatever the shell env says. The
-  // bot-token transport is a second way to switch it on, so it is cleared too.
+  // Only the Slack notification tests opt in to the mocked bot. Everything
+  // else must run with the notifier disabled, whatever the shell env says.
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
-  delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_INTERNAL_URL;
-  delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_TESTING_URL;
   delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
   delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
   delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC;
@@ -490,26 +487,27 @@ describe("report MP4 video artifacts", () => {
 });
 
 describe("report Slack notifications", () => {
-  const SLACK_WEBHOOK = "https://hooks.slack.test/services/T0/B0/reports";
+  const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
   const realFetch = globalThis.fetch;
-  const routingKeys = ["CLOUD_REPORTS_SLACK_WEBHOOK_INTERNAL_URL", "CLOUD_REPORTS_SLACK_WEBHOOK_TESTING_URL",
-    "CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL", "CLOUD_CORE_ADMIN_EMAILS", "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
+  const routingKeys = ["CLOUD_REPORTS_SLACK_BOT_TOKEN", "CLOUD_REPORTS_SLACK_CHANNEL_ID",
+    "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC", "CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL", "CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING", "CLOUD_CORE_ADMIN_EMAILS", "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
     "SUPABASE_SERVICE_ROLE_KEY"] as const;
   const savedRoutingEnv = Object.fromEntries(routingKeys.map(key => [key, process.env[key]]));
   let directoryEmail: string | null;
-  let slackCalls: Array<{ url: string; payload: { text: string; blocks: unknown[] } }>;
-  // Resolves when the mocked webhook receives its first POST. The service
+  let slackCalls: Array<{ url: string; payload: { channel: string; text: string; blocks: unknown[] } }>;
+  // Resolves when the mocked bot receives its first POST. The service
   // notifies fire-and-forget after an async account-email lookup, so the
-  // response can return before the webhook call starts.
+  // response can return before the bot call starts.
   let delivered: Promise<void>;
 
   // The in-process app is invoked via coreApp.fetch (a plain handler call),
   // so replacing globalThis.fetch intercepts only the notifier's outbound
-  // webhook POST and the mocked account-directory lookup.
+  // bot POST and the mocked account-directory lookup.
   beforeEach(() => {
     for (const key of routingKeys) delete process.env[key];
     directoryEmail = null;
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = SLACK_WEBHOOK;
+    process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = "xoxb-test-reports-bot";
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = "C_MAIN";
     slackCalls = [];
     let markDelivered!: () => void;
     delivered = new Promise((resolve) => {
@@ -526,13 +524,13 @@ describe("report Slack notifications", () => {
           return Response.json({ users: directoryEmail ? [identity] : [] });
         }
       }
-      if (url.hostname !== "hooks.slack.test") throw new Error("Unexpected notification test destination");
+      if (url.href !== SLACK_POST_MESSAGE_URL) throw new Error("Unexpected notification test destination");
       slackCalls.push({
         url: String(input),
-        payload: JSON.parse(String(init?.body)) as { text: string; blocks: unknown[] },
+        payload: JSON.parse(String(init?.body)) as { channel: string; text: string; blocks: unknown[] },
       });
       markDelivered();
-      return new Response("ok", { status: 200 });
+      return Response.json({ ok: true, ts: "1.2" });
     }) as typeof fetch;
   });
 
@@ -543,7 +541,6 @@ describe("report Slack notifications", () => {
       else process.env[key] = value;
     }
     globalThis.fetch = realFetch;
-    delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   });
 
   test("notifies Slack when feedback is submitted", async () => {
@@ -562,10 +559,11 @@ describe("report Slack notifications", () => {
     const body = (await res.json()) as { reportId: string; status: string };
     expect(body.status).toBe("ready");
 
-    // Wait for the webhook POST itself, before afterEach clears the webhook env.
+    // Wait for the bot POST itself, before afterEach clears the bot env.
     await delivered;
     expect(slackCalls).toHaveLength(1);
-    expect(slackCalls[0].url).toBe(SLACK_WEBHOOK);
+    expect(slackCalls[0].url).toBe(SLACK_POST_MESSAGE_URL);
+    expect(slackCalls[0].payload.channel).toBe("C_MAIN");
     expect(slackCalls[0].payload.text).toContain("feedback");
     expect(slackCalls[0].payload.text).toContain(body.reportId);
     expect(slackCalls[0].payload.text).toContain(mentraUserId);
@@ -616,7 +614,7 @@ describe("report Slack notifications", () => {
       process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@personal.test";
       process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "mentra.glass";
       for (const category of ["internal", "automatic", "testing"]) {
-        process.env[`CLOUD_REPORTS_SLACK_WEBHOOK_${category.toUpperCase()}_URL`] = `https://hooks.slack.test/${category}`;
+        process.env[`CLOUD_REPORTS_SLACK_CHANNEL_ID_${category.toUpperCase()}`] = `C_${category.toUpperCase()}`;
       }
       directoryEmail = scenario.email;
       const payload = scenario.kind === "feedback"
@@ -635,7 +633,8 @@ describe("report Slack notifications", () => {
       } else expect(status).toBe("ready");
       await delivered;
       expect(slackCalls).toHaveLength(1);
-      expect(slackCalls[0]!.url).toBe(scenario.channel === "main" ? SLACK_WEBHOOK : `https://hooks.slack.test/${scenario.channel}`);
+      expect(slackCalls[0]!.url).toBe(SLACK_POST_MESSAGE_URL);
+      expect(slackCalls[0]!.payload.channel).toBe(`C_${scenario.channel.toUpperCase()}`);
       // Exercise the database filters and the notifier against the same trusted directory.
       for (const kind of ["bug", "feedback", "internal", "automatic", "testing"] as const) {
         const ids = (await listReports({ kind })).map(report => report.reportId);
@@ -644,8 +643,8 @@ describe("report Slack notifications", () => {
     });
   }
 
-  test("submits successfully with no Slack call when the webhook env is unset", async () => {
-    delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
+  test("submits successfully with no Slack call when the bot token is unset", async () => {
+    delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
 
     const res = await coreApp.fetch(
       new Request(REPORTS_PATH, {

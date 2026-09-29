@@ -1,16 +1,9 @@
 /**
- * @fileoverview Slack notifications for Cloud V2 reports.
- *
- * Cloud V2 replacement for the retired V1 feedback Slack path: bug reports
- * and feedback submitted through /api/client/reports post a summary to the
- * team channels via a Slack bot or Incoming Webhooks. Routing matches the
- * dashboard: Testing first, then Automatic, then human admin submissions as
- * Internal, with other bugs/feedback on the main channel. Unconfigured splits
- * fall back to the main destination for compatibility.
- *
- * Best-effort by design: an unset webhook (local dev, tests) is a silent
- * skip, and send failures are logged, never thrown, so a notification can
- * never delay or fail the report API response. Callers fire-and-forget.
+ * Slack notifications for Cloud V2 reports, posted through the existing report
+ * bot so the agent can update its messages. Each dashboard category has one
+ * configured channel. Missing configuration or a failed post is logged and
+ * returned as a failure; there is no webhook or cross-channel fallback.
+ * Callers fire-and-forget so Slack never blocks report submission.
  */
 
 import { createLogger } from "@mentra/cloud-shared";
@@ -68,7 +61,6 @@ export interface ReportSlackNotification {
 
 export interface ReportSlackResult {
   ok: boolean;
-  skipped?: boolean;
 }
 
 interface SlackBlock {
@@ -87,113 +79,70 @@ type SlackButton = {
   | { action_id: string; value: string; url?: never }
 );
 
-/**
- * Post a report summary to the reports Slack channel. Resolves with
- * `{ok: false, skipped: true}` when no destination is configured and
- * `{ok: false}` on send failure; it never rejects.
- */
+const CHANNEL_ENV_BY_CATEGORY: Record<ReportCategory, string> = {
+  bug: "CLOUD_REPORTS_SLACK_CHANNEL_ID",
+  feedback: "CLOUD_REPORTS_SLACK_CHANNEL_ID",
+  automatic: "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
+  internal: "CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL",
+  testing: "CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING",
+};
+
+/** Post to exactly one category channel. Configuration/send failures never reject. */
 export async function notifyReportSlack(
   notification: ReportSlackNotification,
 ): Promise<ReportSlackResult> {
   const category = reportCategory(notification);
-  const destination = slackDestinationFor(category);
-  if (!destination) {
-    logger.debug(
-      { reportId: notification.reportId, kind: notification.kind, category },
-      "no Slack destination configured for this report category; skipping notification",
+  const channelKey = CHANNEL_ENV_BY_CATEGORY[category];
+  const token = process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN?.trim();
+  const channel = process.env[channelKey]?.trim();
+  if (!token || !channel) {
+    logger.error(
+      { reportId: notification.reportId, category,
+        missing: [!token && "CLOUD_REPORTS_SLACK_BOT_TOKEN", !channel && channelKey].filter(Boolean) },
+      "report Slack notification not sent: missing configuration",
     );
-    return { ok: false, skipped: true };
+    return { ok: false };
   }
 
   try {
     const message = buildSlackMessage(notification);
-    const res =
-      destination.transport === "bot"
-        ? await fetch(SLACK_POST_MESSAGE_URL, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json; charset=utf-8",
-              authorization: `Bearer ${destination.token}`,
-            },
-            body: JSON.stringify({ channel: destination.channel, ...message }),
-            signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
-          })
-        : await fetch(destination.url, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(message),
-            signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
-          });
+    const res = await fetch(SLACK_POST_MESSAGE_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ channel, ...message }),
+      signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+    });
     if (!res.ok) {
       logger.error(
-        {
-          reportId: notification.reportId,
-          transport: destination.transport,
-          status: res.status,
-          body: await res.text().catch(() => ""),
-        },
+        { reportId: notification.reportId, category, channel, status: res.status,
+          body: await res.text().catch(() => "") },
         "report Slack notification failed",
       );
       return { ok: false };
     }
-    // The Web API answers 200 with {ok:false} on refusal, so a bot post that
-    // only checks the status code would report success for a dropped message.
-    if (destination.transport === "bot") {
-      const body = (await res.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; ts?: string }
-        | null;
-      if (!body?.ok) {
-        logger.error(
-          { reportId: notification.reportId, error: body?.error ?? "unknown_error" },
-          "report Slack notification rejected by chat.postMessage",
-        );
-        return { ok: false };
-      }
-      logger.info(
-        { reportId: notification.reportId, ts: body.ts },
-        "report Slack notification sent",
+    // The Web API also answers 200 with {ok:false} on refusal.
+    const body = (await res.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; ts?: string }
+      | null;
+    if (!body?.ok) {
+      logger.error(
+        { reportId: notification.reportId, category, channel, error: body?.error ?? "unknown_error" },
+        "report Slack notification rejected by chat.postMessage",
       );
-      return { ok: true };
+      return { ok: false };
     }
-    logger.info({ reportId: notification.reportId }, "report Slack notification sent");
+    logger.info({ reportId: notification.reportId, category, channel, ts: body.ts }, "report Slack notification sent");
     return { ok: true };
   } catch (error) {
     logger.error(
-      { reportId: notification.reportId, error: (error as Error)?.message },
+      { reportId: notification.reportId, category, channel, error: (error as Error)?.message },
       "report Slack notification error",
     );
     return { ok: false };
   }
-}
-
-type SlackDestination =
-  | { transport: "bot"; token: string; channel: string }
-  | { transport: "webhook"; url: string };
-
-/**
- * Slack cannot edit a message posted through an incoming webhook: it arrives as
- * a bare `bot_message` carrying no app identity, so `chat.update` answers
- * `cant_update_message` no matter which token asks or what scopes it holds. The
- * dev agent edits the original report to show run progress, so a configured bot
- * token and channel take precedence — `chat.postMessage` stamps the app identity
- * that makes the message editable. The webhook stays as the fallback so local
- * and unconfigured environments keep working unchanged.
- */
-function slackDestinationFor(category: ReportCategory): SlackDestination | undefined {
-  const token = process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
-  const suffix = category === "bug" || category === "feedback" ? undefined : category.toUpperCase();
-  if (suffix) {
-    const channel = process.env[`CLOUD_REPORTS_SLACK_CHANNEL_ID_${suffix}`];
-    if (token && channel) return { transport: "bot", token, channel };
-    const url = process.env[`CLOUD_REPORTS_SLACK_WEBHOOK_${suffix}_URL`];
-    if (url) return { transport: "webhook", url };
-  }
-  // Resolve the category across both transports before falling back. A main-channel
-  // bot must not override a configured category-specific webhook.
-  const channel = process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
-  if (token && channel) return { transport: "bot", token, channel };
-  const url = process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
-  return url ? { transport: "webhook", url } : undefined;
 }
 
 function buildSlackMessage(notification: ReportSlackNotification): {
