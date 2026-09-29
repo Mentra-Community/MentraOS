@@ -162,6 +162,7 @@ export class Runtime implements RuntimeModule {
   private udpProbeTimer: unknown | null = null;
   private udpProbeStartedAt = 0;
   private lastUdpAckAt = 0;
+  private readonly pendingUdpProbes = new Map<string, number>();
 
   /**
    * Whether the inbound-message routing has been wired to the connection yet.
@@ -548,12 +549,18 @@ export class Runtime implements RuntimeModule {
     }
     this.udpProbeStartedAt = 0;
     this.lastUdpAckAt = 0;
+    this.pendingUdpProbes.clear();
   }
 
   private sendUdpProbe(): void {
     const tag = this.audio.sessionTag;
     if (tag === null) return;
-    const probeId = `${tag}-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    const now = Date.now();
+    for (const [id, sentAt] of this.pendingUdpProbes) {
+      if (now - sentAt >= UDP_LIVENESS_TIMEOUT_MS) this.pendingUdpProbes.delete(id);
+    }
+    const probeId = `${tag}-${now}-${Math.floor(Math.random() * 1_000_000)}`;
+    this.pendingUdpProbes.set(probeId, now);
     this.audio.sendProbe(probeId);
   }
 
@@ -564,7 +571,9 @@ export class Runtime implements RuntimeModule {
     this.updateStatus({ audioTransport: this.connection.isOpen ? "ws" : "none" });
     // Connected UDP sockets retain their resolved peer and route. Recreate one
     // after a missed liveness window so DNS/network changes can recover even
-    // when the WebSocket stayed open. Keep audio on WS until an ack arrives.
+    // when the WebSocket stayed open. Only this replacement's probes may restore
+    // UDP: an old socket's delayed ack does not establish the new route works.
+    this.pendingUdpProbes.clear();
     this.audio.resetSocket();
     this.lastUdpAckAt = 0;
     this.udpProbeStartedAt = Date.now();
@@ -577,6 +586,9 @@ export class Runtime implements RuntimeModule {
     receivedAt: number;
   }): void {
     if (payload.sessionTag !== this.audio.sessionTag) return;
+    const sentAt = this.pendingUdpProbes.get(payload.probeId);
+    this.pendingUdpProbes.delete(payload.probeId);
+    if (sentAt === undefined || Date.now() - sentAt >= UDP_LIVENESS_TIMEOUT_MS) return;
     this.lastUdpAckAt = Date.now();
     if (this.status.status === "connected") {
       this.updateStatus({ audioTransport: "udp" });

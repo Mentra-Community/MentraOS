@@ -1,6 +1,3 @@
-diff --git a/node_modules/react-native-udp/.bun-tag-a07a95ec0a41a2ec b/.bun-tag-a07a95ec0a41a2ec
-new file mode 100644
-index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/ios/UdpSocketClient.h b/ios/UdpSocketClient.h
 index 7c43af6771b5731bc50ebac22c7d2d82cc7bdffc..633032492007bb00a6b475ef51a33dcc302c53c9 100644
 --- a/ios/UdpSocketClient.h

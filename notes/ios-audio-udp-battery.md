@@ -34,7 +34,8 @@ the unconnected send path. Encryption, nonces and packet format are unchanged.
 Cloud liveness recreates a UDP socket after a missed three-second ack window,
 while sending audio through the existing WebSocket fallback. This refreshes a
 stale peer/route even if the WebSocket remains alive. Session tag, key and packet
-sequence survive this socket replacement. A new UDP ack restores UDP audio.
+sequence survive this socket replacement. Only a recent, pending probe from the
+replacement socket can restore UDP audio; delayed old acknowledgments are ignored.
 Ordinary cloud reconnects still create a fresh session and socket.
 
 ## Repeatable validation
