@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TestHostHistory, TestHostLatest } from "../../../../packages/core/src/types/test-host-health.types";
-import { CleanupEvents, componentHealth, DiskHistoryChart, diskSegments } from "./system-health";
+import { CleanupEvents, componentHealth, DiskHistoryChart, diskSegments, SystemHealthPage, SystemHealthSummary } from "./system-health";
 
 const now = Date.parse("2026-09-29T00:00:00Z"), at = (offset: number) => new Date(now + offset).toISOString();
 const host: TestHostLatest = { schemaVersion: 1, hostId: "test-mini", sampleId: "sample", sampledAt: at(0), receivedAt: at(0), freeBytes: 19 * 1024 ** 3,
@@ -25,9 +26,25 @@ describe("system health presentation", () => {
       cleanupEvents: [], truncated: false, thresholdBytes: 20 * 1024 ** 3, gapAfterMs: 180_000 };
     const markup = renderToStaticMarkup(createElement(DiskHistoryChart, { history }));
     expect((markup.match(/<polyline/g) ?? []).length).toBe(3);
-    expect(markup).toContain("20 GiB headroom target"); expect(markup).toContain("not a recording or readiness gate");
+    expect(markup).toContain("5 GiB recorder minimum"); expect(markup).toContain("Free space alone does not establish routine readiness");
+    expect(markup).toContain('y1="152.6" y2="152.6" stroke="#b57729"'); // 5 GiB, including an older Core response with thresholdBytes=20 GiB.
+    expect(markup).toContain("trigger below 30 GiB, target 35 GiB"); expect(markup).not.toContain("20 GiB");
     expect(markup).not.toContain("recording margin"); expect(markup).toContain("Gaps are missing measurements");
     expect(renderToStaticMarkup(createElement(DiskHistoryChart, { history: { ...history, points: [] } }))).toContain("No disk measurements in this period");
+  });
+  test("only free space below the 5 GiB recorder minimum receives the low-space summary and color", () => {
+    for (const gib of [4.9, 5, 7.3, 19]) {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const at = new Date().toISOString();
+      client.setQueryData(["test-host-health"], { hosts: [{ ...host, freeBytes: gib * 1024 ** 3, sampledAt: at, receivedAt: at }] });
+      const render = (page: typeof SystemHealthPage | typeof SystemHealthSummary) => renderToStaticMarkup(
+        createElement(QueryClientProvider, { client }, createElement(page)));
+      const summary = render(SystemHealthSummary), page = render(SystemHealthPage);
+      expect(summary.includes("below 5 GiB recorder minimum")).toBe(gib < 5);
+      expect(page.includes('text-2xl font-semibold text-[#a64235]')).toBe(gib < 5);
+      expect(summary).not.toContain("20 GiB");
+      client.clear();
+    }
   });
   test("unknown-origin partial cleanup explains its time limit without claiming a scheduled success", () => {
     const markup = renderToStaticMarkup(createElement(CleanupEvents, { events: [{ receiptId: "legacy", receiptSha256: "a".repeat(64),

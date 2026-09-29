@@ -41,6 +41,7 @@ describe("passive host health", () => {
       new Date(start - 60_000).toISOString(), original.sampledAt, recent.sampledAt,
     ]);
     expect(repo.requestedLimit).toBe(HOST_SAMPLE_LIMIT + 1);
+    expect((await service.history("mini-1", "1")).thresholdBytes).toBe(5 * 1024 ** 3);
   });
   test("future/expired samples and invalid windows are refused; stale disk never becomes a zero sample", async () => {
     const repo = new MemoryHealth(), service = new TestHostHealthService(repo, () => new Date(start));
