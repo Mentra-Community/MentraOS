@@ -8,7 +8,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
-import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
+import {getG2ResetInstructions, isG2RecoveryError} from "@/utils/pairing/g2Recovery"
 
 export default function UnpairEvenScreen() {
   const route = useRoute()
@@ -44,7 +44,9 @@ export default function UnpairEvenScreen() {
       transition: false,
       compactHeader: Boolean(recoveryError),
       title: translate(recoveryError ? "pairing:g2ReconnectTitle" : "onboarding:unpairEvenTitle"),
-      subtitle: translate(recoveryError ?? "onboarding:unpairEvenSubtitle"),
+      subtitle: recoveryError
+        ? `${translate(recoveryError)}\n\n${getG2ResetInstructions()}`
+        : translate("onboarding:unpairEvenSubtitle"),
     },
   ]
 
@@ -59,7 +61,7 @@ export default function UnpairEvenScreen() {
         showSkipButton={false}
       />
 
-      <View className="absolute bottom-16 w-full">
+      <View className={recoveryError ? "mt-3 w-full" : "absolute bottom-16 w-full"}>
         <Button
           text={translate(recoveryError ? "onboarding:openSettings" : "onboarding:unpairEvenTryAgain")}
           preset="secondary"

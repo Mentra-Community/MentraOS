@@ -163,6 +163,15 @@ const en = {
     g2WaitingForLeft: "Right arm connected. Waiting for left arm…",
     g2WaitingForRight: "Left arm connected. Waiting for right arm…",
     g2ReconnectTitle: "Reconnect your G2s",
+    g2ResetTitle: "Reset using the touchpads",
+    g2ResetInstructions:
+      "While wearing your G2s, quickly tap both touchpads 5 times simultaneously. You will hear a low tone confirming the reset. Then try pairing again.",
+    g2ResetOlderHardware: "Older hardware may not play a confirmation tone, but the glasses will still reset.",
+    r1ResetTitle: "Reset using the ring touchpad",
+    r1ResetInstructions:
+      "Place your R1 in its charger and keep the charger plugged into power. Tap the ring's touchpad 5 times, then try pairing again.",
+    r1PreviousPhone:
+      "If your ring was previously paired with another phone, forget the ring in that phone's Bluetooth settings first. Then try pairing with this phone.",
     simulatedGlassesDescription: "Simulated Glasses allows you to run MentraOS without physical smart glasses.",
     permissionRequired: "Permission Required",
     bluetoothPermissionRequiredTitle: "Permission Required",
@@ -1182,12 +1191,9 @@ const en = {
     invalidEmail: "Invalid email address.",
     pairNeedDisconnect:
       "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
-    g2LeftArmUnavailable:
-      "The right arm connected, but the left arm didn't. Put your G2s in their case, close it for 10 seconds, then take them out and try again.",
-    g2RightArmUnavailable:
-      "The left arm connected, but the right arm didn't. Put your G2s in their case, close it for 10 seconds, then take them out and try again.",
-    g2ConnectionTimedOut:
-      "Couldn't finish connecting both G2 arms. Put your G2s in their case, close it for 10 seconds, then take them out and try again.",
+    g2LeftArmUnavailable: "The right arm connected, but the left arm didn't.",
+    g2RightArmUnavailable: "The left arm connected, but the right arm didn't.",
+    g2ConnectionTimedOut: "Couldn't finish connecting both G2 arms.",
     pairingCouldNotStart:
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
