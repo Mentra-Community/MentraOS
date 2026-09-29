@@ -1098,7 +1098,6 @@ class Nimo: NSObject, SGCManager {
             return false
         }
 
-        guard peripheral == nil else { return true }
         // Fast path: reconnect to the cached peripheral UUID.
         if connectByUUID() {
             stopScan()
@@ -1126,6 +1125,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func connectByUUID() -> Bool {
+        guard peripheral == nil else { return false }
         guard DEVICE_SEARCH_ID != "NOT_SET", !DEVICE_SEARCH_ID.isEmpty else { return false }
         guard lastDeviceName == DEVICE_SEARCH_ID,
               let uuidString = lastDeviceUUID,
