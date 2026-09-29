@@ -255,7 +255,7 @@ export function TestRunsPage({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Outcome value={run.outcome} />
+                      <RunOutcome run={run} />
                       <span className="text-xs font-semibold uppercase tracking-wide text-[#68746d]">
                         {run.channel} · {platformName(run.platform)}
                       </span>
@@ -275,6 +275,11 @@ export function TestRunsPage({
                   <Outcome label="Fixture" value={run.outcomes.fixture} />
                   <Outcome label="Evidence" value={run.outcomes.evidence} />
                 </div>
+                {isCustomerDevelopment(run) ? (
+                  <p className="mt-3 text-sm text-[#68746d]">
+                    Customer development phase. Full routine and unattended CI are not qualified.
+                  </p>
+                ) : null}
               </button>
             ))}
           </div>
@@ -393,7 +398,7 @@ export function TestRunView({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <Outcome value={run.outcome} />
+              <RunOutcome run={run} />
               <span className="text-xs font-semibold uppercase tracking-wide text-[#68746d]">
                 {run.channel} · {platformName(run.platform)}
               </span>
@@ -411,6 +416,7 @@ export function TestRunView({
             </a>
           ) : null}
         </div>
+        <CustomerPhaseNotice run={run} />
         {related?.kind === "recovery" ? (
           <aside aria-label="Recovery result" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
             <span className="font-semibold">Recovery result.</span> The original test outcome is preserved.{" "}
@@ -786,6 +792,38 @@ function Screenshot({ runId, asset, description }: { runId: string; asset: TestR
         className="mt-4 max-h-80 rounded-xl border border-[#e0e4de] bg-[#f5f7f4]"
       />
     </a>
+  );
+}
+
+/** Scope is a publisher-recorded fact, not inferred from the channel or verdict. */
+function isCustomerDevelopment(run: TestRunSummary) {
+  const p = run.provenance;
+  return p.executionMode === "manual-supervised" && p.qualificationScope === "prepared-customer-development"
+    && p.fullRoutinePassed === "false" && p.ciQualified === "false" && p.commissioningPassed === "false";
+}
+
+function RunOutcome({ run }: { run: TestRunSummary }) {
+  return <Outcome value={run.outcome} label={isCustomerDevelopment(run) && run.outcome === "passed" ? "Customer phase" : undefined} />;
+}
+
+function CustomerPhaseNotice({ run }: { run: TestRunDetail }) {
+  if (!isCustomerDevelopment(run)) return null;
+  const passedChecks = run.outcomes.test === "passed" && run.outcomes.teardown === "passed"
+    && run.outcomes.fixture === "ready" && run.outcomes.evidence === "complete"
+    && run.chapters.length > 0 && run.chapters.every(chapter => chapter.status === "passed")
+    && run.firmwareAssertions.every(assertion => assertion.status === "passed")
+    && run.assets.every(asset => asset.uploaded);
+  return (
+    <aside aria-label="Customer development scope" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
+      <span className="font-semibold">Customer development phase.</span>{" "}
+      Full routine, unattended CI and commissioning are not qualified.
+      {run.outcome === "blocked" && passedChecks ? (
+        <p className="mt-2">
+          This record reports passed customer steps, firmware and return checks with complete evidence,
+          while its stored overall outcome is blocked. The recorded outcome and existing failure links remain unchanged.
+        </p>
+      ) : null}
+    </aside>
   );
 }
 
