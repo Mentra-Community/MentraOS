@@ -52,9 +52,16 @@ const requestFields = z.object({ kind: z.literal("mentra-routine-request"),
   // Present only on an exact replay of an earlier original request.
   original: z.object({ requestId: z.string(), runId: positive, runAttempt: positive, artifactDigest: digest }).strict().optional(),
 });
+const publishedRequestSchema = z.discriminatedUnion("schemaVersion", [
+  requestFields.extend({ schemaVersion: z.literal(1) }),
+  requestFields.extend({ schemaVersion: z.literal(2), source: z.object({ kind: z.literal("coordinated-release"),
+    channel: z.enum(["dev", "staging"]), buildRunId: positive, publicationAttempt: positive }) }),
+]);
 /** The exact build an original request selected, read from the issuer's immutable request artifact. */
 export interface OriginalSelection {
   source: TestBuildSource; archiveSha256: string; headSha: string;
+  /** A replay failure keeps its occurrence, but the next issuer must name the authenticated initial request. */
+  initialRequestRunId?: number;
   /** For a PR original: its recorded PR identity, which a replay keeps after the PR moves, closes or merges. */
   pullRequest?: { number: number; headSha: string; baseSha: string; baseRef: PrBase };
 }
@@ -502,6 +509,23 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   async originalSelection(requestRunId: number, routineId: TestRoutineId): Promise<OriginalSelection> {
     const { request } = await this.publishedRequest(requestRunId);
     requireThat(request, "The original request did not complete successfully");
+    if (request.original) {
+      const marker = request.original;
+      requireThat(request.schemaVersion === 1 && request.status === "ready" && request.routine.id === routineId
+        && request.routine.authorization === "workflow-dispatch" && marker.runAttempt === 1 && marker.runId !== requestRunId
+        && request.requestId === `routine-${requestRunId}-1-${request.pullRequest?.number}-${routineId}`,
+      "Invalid original replay request");
+      // One direct marker, never an unbounded chain: the issuer always points to the initial request.
+      const initial = await this.publishedRequest(marker.runId);
+      requireThat(initial.request && initial.request.schemaVersion === 1 && initial.request.original === undefined
+        && marker.requestId === initial.request.requestId && marker.artifactDigest === initial.artifactDigest
+        && isDeepStrictEqual(request.pullRequest, initial.request.pullRequest)
+        && isDeepStrictEqual(request.selection, initial.request.selection), "Replay differs from its original request");
+      return { ...this.selectedOriginal(initial.request, marker.runId, routineId), initialRequestRunId: marker.runId };
+    }
+    return this.selectedOriginal(request, requestRunId, routineId);
+  }
+  private selectedOriginal(request: z.infer<typeof publishedRequestSchema>, requestRunId: number, routineId: TestRoutineId): OriginalSelection {
     const suffix = request.schemaVersion === 1 ? /^routine-[1-9]\d*-1-([1-9]\d*)-/.exec(request.requestId)?.[1] : request.source.channel;
     requireThat(request.status === "ready" && request.selection && request.routine.id === routineId && request.original === undefined
       && request.selection.platform === testRoutinePlatform(routineId)
@@ -547,14 +571,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     // Never forward the GitHub token to the signed artifact URL.
     const bytes = await readTestMetadata(await this.fetcher(location.href), 2 * 1024 * 1024);
     requireThat(`sha256:${hash(bytes)}` === artifact.digest, "Request artifact digest changed");
-    const request = z.discriminatedUnion("schemaVersion", [
-      requestFields.extend({ schemaVersion: z.literal(1) }),
-      requestFields.extend({ schemaVersion: z.literal(2), source: z.object({ kind: z.literal("coordinated-release"),
-        channel: z.enum(["dev", "staging"]), buildRunId: positive, publicationAttempt: positive }) }),
-    ]).parse(readRequestZip(bytes));
+    const request = publishedRequestSchema.parse(readRequestZip(bytes));
     requireThat(request.trigger.runId === run.id && request.trigger.runAttempt === 1 && request.trigger.sha === run.head_sha
       && request.trigger.workflowSha === run.head_sha, "Published request identity differs");
-    return { run, request };
+    return { run, request, artifactDigest: artifact.digest.slice("sha256:".length) };
   }
   async progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress> {
     const { run, request } = await this.publishedRequest(requestRunId);

@@ -932,6 +932,48 @@ const failureFixture = (): TestRun => ({
     redactionPolicy: "qualification-redaction-v1", missingEvidence: [] }],
 });
 
+describe("publisher-recorded exact app producer", () => {
+  const audit = (): TestRun => {
+    const run = failureFixture();
+    run.runId = "verifier-audit-36603857426-android-settings-return"; run.requestId = run.runId;
+    run.channel = "dev"; delete run.prNumber; run.platform = "android"; run.routineId = "no-glasses-android";
+    run.source = { schemaVersion: 1, trigger: "manual", channel: "dev", repository: "Mentra-Community/MentraOS",
+      headSha: "d6c74c857015fac95fbc6195dbf009acfab65eeb", branch: "dev" };
+    Object.assign(run.provenance, { producerRunId: "36496912774", publicationAttempt: "1",
+      archiveSha256: "c74909c3bab3c1f1ba1e7db44aa8ecf9cdc8ac3ed8e8761614e72ebf549cc3c9",
+      executionMode: "offline-post-run-evidence-audit", requestRelationship: "independent-audit" });
+    return run;
+  };
+  test("an independent audit exposes its exact producer without becoming a consumed CI request", async () => {
+    const run = audit(), accepted = await service.ingest(run), id = accepted.occurrenceIds[0]!;
+    await service.acknowledgeFailure(id, "agent_audit");
+    const before = structuredClone(repository.runs.get(run.runId));
+    const detail = await service.failureDetail(id);
+    expect(detail.build.recordedAppBuild).toEqual({ channel: "dev", buildRunId: 36496912774, publicationAttempt: 1 });
+    expect(detail).toMatchObject({ requestId: run.requestId, source: run.source, sourceStatus: "recorded",
+      payloadSha256: accepted.payloadSha256, originalOutcome: "failed", delivery: { state: "acknowledged", agentRunId: "agent_audit" } });
+    expect(detail.build.hashes.archiveSha256).toBe(run.provenance.archiveSha256);
+    expect((await service.ingest(run)).created).toBe(false);
+    const changed = structuredClone(run); changed.provenance.producerRunId = "36496912775";
+    await expect(service.ingest(changed)).rejects.toMatchObject({ status: 409 });
+    expect(repository.runs.get(run.runId)).toEqual(before);
+  });
+  test("incomplete or malformed producer metadata and absent publisher source are not exact build hints", async () => {
+    for (const [index, fields] of [
+      { producerRunId: "" }, { publicationAttempt: "" }, { producerRunId: "0" }, { producerRunId: "1.5" },
+      { producerRunId: "9007199254740992" }, { publicationAttempt: "-1" }, { publicationAttempt: "1x" },
+      { producerRunId: "https://github.com/other/repo/actions/runs/12" },
+    ].entries()) {
+      const run = audit(); run.runId += `-${index}`; Object.assign(run.provenance, fields);
+      const result = await service.ingest(run);
+      expect((await service.failureDetail(result.occurrenceIds[0]!)).build).not.toHaveProperty("recordedAppBuild");
+    }
+    const run = audit(); delete run.source;
+    const result = await service.ingest(run);
+    expect((await service.failureDetail(result.occurrenceIds[0]!)).build).not.toHaveProperty("recordedAppBuild");
+  });
+});
+
 describe("publisher-recorded local app publication", () => {
   const producerUrl = "https://github.com/Mentra-Community/MentraOS/actions/runs/468";
   const localRun = (): TestRun => {

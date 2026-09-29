@@ -128,6 +128,89 @@ test("harness candidate never adopts an automatic request lacking its revision f
   await f.service.request(grant, input); expect(f.sends()).toBe(1);
 });
 
+function ciHarnessFixture(channel: "dev" | "staging" | "pr") {
+  const f = fixture(), harnessVerification = { pullRequest: 235, mergeCommitSha: "f".repeat(40) };
+  const candidateGrant: ContinuationGrant = { ...grant, harnessVerification,
+    candidate: { repository: "Mentra-Community/Mentra-Automated-Testing", pullRequest: 231, headSha: "a".repeat(40) } };
+  const source = channel === "pr" ? input.source : { channel, buildRunId: 80, publicationAttempt: 1 };
+  const query = channel === "pr" ? { channel, pr: 44 } : { channel };
+  f.target({ query, original: { archiveSha256, requestRunId: 70 }, expectedHarnessSha: harnessVerification.mergeCommitSha });
+  f.builds.originalSelection = async (id, routine) => {
+    expect(id).toBe(70); expect(routine).toBe("no-glasses"); return { source, archiveSha256, headSha };
+  };
+  const resolve = f.builds.resolve, resolutions: (number | undefined)[] = [];
+  f.builds.resolve = async (selected, routine, originalRequest) => {
+    expect(selected).toEqual(source); resolutions.push(originalRequest); return resolve(selected, routine, originalRequest);
+  };
+  return { ...f, source, candidateGrant, resolutions, request: { ...input, source } };
+}
+test.each(["dev", "staging", "pr"] as const)("%s harness inventory resolves the original artifact outside the latest ten and preserves the selected worker", async channel => {
+  const f = ciHarnessFixture(channel), before = structuredClone(f.packet);
+  const originalBuild = await f.builds.resolve(f.source, "no-glasses", channel === "pr" ? 70 : undefined);
+  const recent = Array.from({ length: 10 }, (_, index) => ({ ...originalBuild, headSha: String(index).repeat(40) }));
+  expect(recent.some(build => build.headSha === headSha)).toBe(false);
+  let listings = 0; f.builds.inventory = async () => { listings++; return recent; };
+  expect(await f.service.inventory(f.candidateGrant, "no-glasses")).toEqual({ candidate: f.candidateGrant.candidate,
+    expectedHeadSha: headSha, expectedHarnessSha: f.candidateGrant.harnessVerification!.mergeCommitSha,
+    harnessVerification: f.candidateGrant.harnessVerification, builds: [originalBuild] });
+  expect(listings).toBe(0); expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+  f.existing();
+  await f.service.request(f.candidateGrant, f.request);
+  await f.service.request(f.candidateGrant, f.request);
+  expect(f.sends()).toBe(1); expect(f.since()).toBe(""); expect(f.packet).toEqual(before);
+  expect(f.sentHarness()).toBe(f.candidateGrant.harnessVerification!.mergeCommitSha);
+  expect(f.resolutions.every(id => id === (channel === "pr" ? 70 : undefined))).toBe(true);
+  const saved = [...f.rows.values()][0]!.receipt;
+  expect(saved.input.source).toEqual(f.source);
+  expect(saved.input.originalRequestRunId).toBe(channel === "pr" ? 70 : undefined);
+  expect(saved.continuation).toMatchObject({ candidate: f.candidateGrant.candidate, expectedHeadSha: headSha,
+    expectedHarnessSha: f.candidateGrant.harnessVerification!.mergeCommitSha, harnessVerification: f.candidateGrant.harnessVerification });
+  await expect(f.service.request({ ...f.candidateGrant, harnessVerification: { pullRequest: 236, mergeCommitSha: "e".repeat(40) } }, f.request))
+    .rejects.toThrow("not found");
+  f.result.provenance.harnessSha = "0".repeat(40); f.results();
+  await expect(f.service.detail(f.candidateGrant, saved.dispatchId)).rejects.toThrow("worker revision");
+});
+test("CI harness lookup refuses missing, changed or unavailable original evidence without falling back to recent builds", async () => {
+  for (const problem of ["missing", "head", "archive", "channel", "unavailable", "caller-build", "caller-attempt"]) {
+    const f = ciHarnessFixture("dev");
+    f.builds.inventory = async () => { throw new Error("Must not fall back to latest"); };
+    if (problem === "missing") f.builds.originalSelection = undefined;
+    if (["head", "archive", "channel"].includes(problem)) f.builds.originalSelection = async () => ({
+      source: { ...f.source, channel: problem === "channel" ? "staging" : "dev" },
+      headSha: problem === "head" ? "e".repeat(40) : headSha, archiveSha256: problem === "archive" ? "e".repeat(64) : archiveSha256 });
+    if (problem === "unavailable") { const resolve = f.builds.resolve; f.builds.resolve = async (...args) => ({ ...await resolve(...args), availability: "unavailable", reason: "Archive unavailable" }); }
+    if (problem.startsWith("caller-")) {
+      const source = { ...f.source, ...(problem === "caller-build" ? { buildRunId: 81 } : { publicationAttempt: 2 }) };
+      await expect(f.service.request(f.candidateGrant, { ...f.request, source })).rejects.toThrow("original recorded artifact");
+    } else await expect(f.service.inventory(f.candidateGrant, "no-glasses")).rejects.toThrow();
+    expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+  }
+});
+test("an independent audit's exact old producer verifies the app archive and selected worker without consuming its audited request", async () => {
+  const f = ciHarnessFixture("dev"), before = structuredClone(f.packet);
+  f.target({ original: undefined, recordedBuild: { source: f.source, archiveSha256 } });
+  f.builds.originalSelection = async () => { throw new Error("Independent audit did not consume a routine request"); };
+  f.builds.inventory = async () => { throw new Error("Never select a latest build"); };
+  const inventory = await f.service.inventory(f.candidateGrant, "no-glasses");
+  expect(inventory.builds).toHaveLength(1); expect(inventory.builds[0]!.source).toEqual(f.source);
+  expect(inventory.expectedHarnessSha).toBe(f.candidateGrant.harnessVerification!.mergeCommitSha);
+  for (const source of [{ ...f.source, buildRunId: 81 }, { ...f.source, publicationAttempt: 2 }])
+    await expect(f.service.request(f.candidateGrant, { ...f.request, source })).rejects.toThrow("original recorded artifact");
+  const resolve = f.builds.resolve;
+  for (const problem of ["head", "archive", "unavailable"]) {
+    f.builds.resolve = async (...args) => ({ ...await resolve(...args),
+      ...(problem === "head" ? { headSha: "0".repeat(40) } : problem === "archive" ? { archive: { name: "wrong.zip", sha256: "0".repeat(64), size: 12 } }
+        : { availability: "unavailable" }) });
+    await expect(f.service.request(f.candidateGrant, f.request)).rejects.toThrow();
+    expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+  }
+  f.builds.resolve = resolve;
+  const sent = await f.service.request(f.candidateGrant, f.request);
+  expect(f.rows.get(sent.dispatchId)!.receipt.input).not.toHaveProperty("originalRequestRunId");
+  expect(f.sentHarness()).toBe(f.candidateGrant.harnessVerification!.mergeCommitSha);
+  expect(f.packet).toEqual(before); expect(f.sends()).toBe(1);
+});
+
 function localNotesFixture() {
   const f = fixture(), appHead = "d6c74c857015fac95fbc6195dbf009acfab65eeb", harness = "f".repeat(40);
   const candidateGrant: ContinuationGrant = { ...grant, routineIds: ["notes-phone"],

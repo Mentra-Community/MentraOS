@@ -6,7 +6,7 @@ import { z } from "zod";
 import { TEST_RUN_COMPLETION_INDEX, TestAssetModel, TestRunModel } from "../models/test-run.model";
 import { testFailureOccurrenceIdSchema, type TestFailureOccurrence, type TestFailureProvenanceCorrection } from "../types/test-failure.types";
 import { testRunIdSchema, testRunSchema, type TestAsset, type TestRun, type TestRunQuery } from "../types/test-run.types";
-import { recordedAppPublicationSchema } from "../types/test-dispatch.types";
+import { recordedAppPublicationSchema, testBuildSourceSchema } from "../types/test-dispatch.types";
 import { createTestFailureOccurrences } from "./test-failure-occurrence";
 import { RecoveryLineageError, testFailureProjection, type TestFailureProjection, type TestRecoveryLineage } from "./test-recovery-lineage";
 import { createStorageService, type StorageService } from "./storage/storage.service";
@@ -364,13 +364,21 @@ export class TestRunService {
       producerRunId: Number(producer[1]), ...(producer[2] ? { publicationAttempt: Number(producer[2]) } : {}),
       executableSha256: run.provenance.appExecutableSha256, javascriptSha256: run.provenance.appJavascriptSha256,
     }) : null;
+    // An independently published audit may name its exact app producer without
+    // consuming a routine request. Keep that origin; this is only a lookup hint
+    // until the build resolver verifies its source, publication and archive.
+    const recordedBuild = run.source && ["dev", "staging"].includes(run.source.channel)
+      && /^[1-9]\d*$/.test(run.provenance.producerRunId ?? "") && /^[1-9]\d*$/.test(run.provenance.publicationAttempt ?? "")
+      ? testBuildSourceSchema.safeParse({ channel: run.source.channel,
+        buildRunId: Number(run.provenance.producerRunId), publicationAttempt: Number(run.provenance.publicationAttempt) }) : null;
     return { schemaVersion: 1 as const, occurrenceId, revision: occurrence.revision,
       testRunId: run.runId, requestId: run.requestId, payloadSha256,
       routine: { id: run.routineId, version: run.routineVersion }, platform: run.platform,
       source, sourceStatus: run.source ? "recorded" as const : correction ? "corrected" as const : "missing" as const,
       build: { channel: run.channel, prNumber: run.prNumber ?? null, hashes,
         requestUrl: workflowUrl(run.provenance.requestUrl), producerUrl: workflowUrl(run.provenance.producerUrl),
-        ...(publication?.success ? { recordedAppPublication: publication.data } : {}) },
+        ...(publication?.success ? { recordedAppPublication: publication.data } : {}),
+        ...(recordedBuild?.success ? { recordedAppBuild: recordedBuild.data } : {}) },
       recovery: { originalRunId: relatedRunId(run.provenance.originalRunId), previousResultRunId: relatedRunId(run.provenance.previousResultRunId) },
       originalOutcome: run.outcome, outcomes: run.outcomes,
       failure: { ...occurrence.failure, ...(correction ? bindings : {}), missingEvidence: [

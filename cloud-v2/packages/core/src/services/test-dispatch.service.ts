@@ -82,10 +82,14 @@ export class TestDispatchService {
     const existingWork = binding && "kind" in binding ? testExistingWorkBindingSchema.safeParse(binding) : undefined;
     if (existingWork && !existingWork.success) throw new TestDispatchError(400, "Invalid routine dispatch request");
     const verification = existingWork?.data, continuation = verification ? undefined : binding as TestContinuationBinding | undefined;
-    // Admin input is unchanged; only a continuation for an original target may replay an original request.
+    // Admin input is unchanged. Only original targets or revision-pinned harness
+    // continuations may replay the app artifact selected by an original request.
     const parsed = (continuation ? continuationDispatchInputSchema : testDispatchInputSchema).safeParse(input);
     const data: TestDispatchInput | undefined = parsed.success ? parsed.data : undefined;
-    if (!data || !requestedBy || (data.originalRequestRunId !== undefined && !("target" in (continuation?.candidate ?? {})))
+    const originalArtifact = continuation && ("target" in continuation.candidate
+      || (continuation.candidate.repository === "Mentra-Community/Mentra-Automated-Testing"
+        && /^[a-f0-9]{40}$/.test(continuation.expectedHarnessSha ?? "")));
+    if (!data || !requestedBy || (data.originalRequestRunId !== undefined && !originalArtifact)
       || (verification && (adopt || data.source.channel !== verification.bundle.baseBranch || data.routineId !== verification.routineId)))
       throw new TestDispatchError(400, "Invalid routine dispatch request");
     const inputSha256 = createHash("sha256").update(JSON.stringify({ input: data, requestedBy,
