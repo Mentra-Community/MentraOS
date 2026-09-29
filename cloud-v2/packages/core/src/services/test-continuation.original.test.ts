@@ -173,13 +173,19 @@ test("a caller-named run, publication, source or archive, or a changed receipt, 
   }
 });
 
-for (const channel of ["dev", "staging"] as const) test(`a retained older ${channel} original outside the newest listing is selected and dispatched exactly`, async () => {
+for (const channel of ["dev", "staging"] as const) test(`a retained older ${channel} original remains selectable with dispatch respecting the channel pause`, async () => {
   const f = fixture(channel);
   const inventory = await f.service.inventory(grant, "no-glasses");
   expect(inventory.builds.map(build => [build.source, build.availability])).toEqual([[f.input.source, "available"]]);
   expect(f.calls.some(call => call.includes("coordinated-release.yml/runs?"))).toBe(false);
-  const sent = await f.service.request(grant, f.input);
-  expect(sent.sendState).toBe("accepted"); expect(f.sends()).toBe(1);
+  if (channel === "staging") {
+    await expect(f.service.request(grant, f.input)).rejects.toMatchObject({ status: 409,
+      message: expect.stringContaining("Tests of published staging builds are temporarily paused") });
+    expect(f.sends()).toBe(0); expect(f.receipts.size).toBe(0);
+  } else {
+    const sent = await f.service.request(grant, f.input);
+    expect(sent.sendState).toBe("accepted"); expect(f.sends()).toBe(1);
+  }
   // The release backend must be this channel's; a local or other-channel source is not promoted.
   const g = fixture(channel);
   (g.packet.source as { channel: string; branch: string; trigger: string }) = { ...(g.packet.source as object), channel: "local", branch: "feature", trigger: "local" } as never;

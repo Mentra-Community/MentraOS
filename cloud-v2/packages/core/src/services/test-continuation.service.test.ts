@@ -257,34 +257,34 @@ test("registered failure asset links are followable with the same narrow continu
 });
 
 const HARNESS = "Mentra-Community/Mentra-Automated-Testing" as const;
-const caseId = "mfc_" + "5".repeat(64), devOccurrence = "tfo_" + "1".repeat(64), stagingOccurrence = "tfo_" + "2".repeat(64);
+const caseId = "mfc_" + "5".repeat(64), devOccurrence = "tfo_" + "1".repeat(64), otherOccurrence = "tfo_" + "2".repeat(64);
 const shared = { repository: HARNESS, pullRequest: 7, headSha: "7".repeat(40) };
 const adopted = (occurrence: string, agentRunId: string, owner = "run_owner"): ContinuationGrant => ({ ...grant, occurrenceId: occurrence, agentRunId,
   candidate: shared, caseBinding: { caseId, candidateOwnerRunId: owner } });
 
 test("same-case branches adopting one shared harness head keep separate operations, receipts and verdicts", async () => {
-  const f = fixture(); f.anchor(devOccurrence, "run_dev"); f.anchor(stagingOccurrence, "run_staging");
+  const f = fixture(); f.anchor(devOccurrence, "run_dev"); f.anchor(otherOccurrence, "run_other");
   f.target({ expectedHarnessSha: "e".repeat(40), requestNotBefore: "2026-09-25T09:00:00Z" });
-  const dev = adopted(devOccurrence, "run_dev"), staging = adopted(stagingOccurrence, "run_staging");
-  const stagingInput = { ...input, source: { channel: "staging" as const, buildRunId: 81, publicationAttempt: 1 } };
+  const dev = adopted(devOccurrence, "run_dev"), other = adopted(otherOccurrence, "run_other");
+  const otherInput = { ...input, source: { channel: "pr" as const, prNumber: 45, buildRunId: 81, publicationAttempt: 1 } };
   const one = await f.service.request(dev, input);
   // Each branch selects its own recorded original app build (Core resolves it from that occurrence's source).
-  f.target({ query: { channel: "staging" } });
-  const two = await f.service.request(staging, stagingInput);
-  expect(f.rows.get(two.dispatchId)!.receipt.input.source).toEqual(stagingInput.source);
+  f.target({ query: { channel: "pr", pr: 45 } });
+  const two = await f.service.request(other, otherInput);
+  expect(f.rows.get(two.dispatchId)!.receipt.input.source).toEqual(otherInput.source);
   expect(f.rows.get(one.dispatchId)!.receipt.input.source).toEqual(input.source);
   expect(one.dispatchId).toBe(continuationOperationId(dev, "no-glasses"));
   expect(two.dispatchId).not.toBe(one.dispatchId); expect(f.sends()).toBe(2);
   // The signed binding reaches the lease callback before the owner-branch lookup and again at the send fence.
-  expect(f.leaseChecks.map(item => item.caseBinding)).toEqual([dev.caseBinding, dev.caseBinding, staging.caseBinding, staging.caseBinding]);
+  expect(f.leaseChecks.map(item => item.caseBinding)).toEqual([dev.caseBinding, dev.caseBinding, other.caseBinding, other.caseBinding]);
   expect(f.targets.every(item => item.caseBinding?.candidateOwnerRunId === "run_owner")).toBe(true);
   expect(f.rows.get(one.dispatchId)!.receipt.continuation).toMatchObject({ occurrenceId: devOccurrence, agentRunId: "run_dev",
     candidate: shared, caseBinding: dev.caseBinding, expectedHarnessSha: "e".repeat(40) });
-  expect(f.rows.get(two.dispatchId)!.receipt.continuation).toMatchObject({ occurrenceId: stagingOccurrence, agentRunId: "run_staging" });
+  expect(f.rows.get(two.dispatchId)!.receipt.continuation).toMatchObject({ occurrenceId: otherOccurrence, agentRunId: "run_other" });
   // Neither branch can read, list or replay the other's operation, so a pass is never borrowed.
-  await expect(f.service.detail(staging, one.dispatchId)).rejects.toThrow("not found");
+  await expect(f.service.detail(other, one.dispatchId)).rejects.toThrow("not found");
   await expect(f.service.detail(dev, two.dispatchId)).rejects.toThrow("not found");
-  expect((await f.service.list(staging)).reruns.map(item => [item.dispatchId, item.recordedResults.length])).toEqual([[two.dispatchId, 0]]);
+  expect((await f.service.list(other)).reruns.map(item => [item.dispatchId, item.recordedResults.length])).toEqual([[two.dispatchId, 0]]);
   f.results();
   // The dev result must carry the exact merged worker revision; otherwise it is refused, never adopted.
   await expect(f.service.detail(dev, one.dispatchId)).rejects.toThrow("worker revision");
