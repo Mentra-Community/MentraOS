@@ -72,13 +72,12 @@ function fixture(incidents?: IncidentReportStore) {
     claim: (value: typeof claim) => { claim = value; }, results: (additional: typeof result[] = []) => { extraResults = additional; ids = [result.runId, ...additional.map(item => item.runId)]; },
     existing: () => { existing = { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; } };
 }
-test("a signed continuation retains an occurrence ACK distinct from the executing case", async () => {
-  const acknowledgedAgentRunId = "22222222-2222-4222-8222-222222222222";
+test.each(["22222222-2222-4222-8222-222222222222", "run_linked_123"])("a signed continuation retains the original %s ACK distinct from the editor", async acknowledgedAgentRunId => {
   const f = fixture();
   f.packet.delivery = { state: "acknowledged", agentRunId: acknowledgedAgentRunId, acknowledgedAt: new Date().toISOString() };
   const linked = { ...grant, acknowledgedAgentRunId };
   expect(verifyTestContinuationGrant(signTestContinuationGrant(linked, secret), occurrenceId, secret, "dev")).toEqual(linked);
-  expect(() => signTestContinuationGrant({ ...linked, acknowledgedAgentRunId: "invalid" }, secret)).toThrow();
+  expect(() => signTestContinuationGrant({ ...linked, acknowledgedAgentRunId: "invalid/id" }, secret)).toThrow();
   expect((await acknowledgedCase(f.runs, linked)).delivery).toMatchObject({ state: "acknowledged", agentRunId: acknowledgedAgentRunId });
   await expect(acknowledgedCase(f.runs, grant)).rejects.toThrow("acknowledged case");
   await expect(acknowledgedCase(f.runs, { ...linked, acknowledgedAgentRunId: "33333333-3333-4333-8333-333333333333" }))

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { testFailureOccurrenceIdSchema } from "./test-failure.types";
+import { testFailureDeliveryAckSchema, testFailureOccurrenceIdSchema } from "./test-failure.types";
 import { testDispatchInputSchema, testRoutineIdSchema } from "./test-dispatch.types";
 
 const candidateRepository = z.enum(["Mentra-Community/MentraOS", "Mentra-Community/Mentra-Automated-Testing"]);
@@ -53,7 +53,7 @@ export const continuationGrantSchema = z.object({
   agentRunId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/),
   // Triage may acknowledge an occurrence before attaching it to an existing editor.
   // The signed issuer retains that ACK; the lease callback proves the exact link.
-  acknowledgedAgentRunId: z.string().uuid().optional(),
+  acknowledgedAgentRunId: testFailureDeliveryAckSchema.shape.agentRunId.optional(),
   candidate: continuationCandidateSchema,
   caseBinding: continuationCaseBindingSchema.optional(),
   executionDestination: continuationExecutionDestinationSchema.optional(),
