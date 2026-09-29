@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isOriginalCandidate, type ContinuationCandidate, type ContinuationExecutionDestination, type ContinuationGrant } from "../types/test-continuation.types";
-import { recordedAppPublicationSchema, type RecordedAppPublication, type TestBuildQuery } from "../types/test-dispatch.types";
+import { recordedAppPublicationSchema, testBuildSourceSchema, type RecordedAppPublication, type TestBuildQuery, type TestBuildSource } from "../types/test-dispatch.types";
 import { TestDispatchError, UnsupportedReplayError, readTestMetadata } from "./test-builds.service";
 import { TestRunGithubApp } from "./test-run-github-app";
 import type { TestRunService } from "./test-run.service";
@@ -15,6 +15,7 @@ export interface ContinuationTarget {
   /** The original CI app artifact, for an original target or a harness candidate.
    * Requests are never adopted, so the original (or any earlier) one cannot stand in for the rerun. */
   original?: { archiveSha256: string; requestRunId: number };
+  recordedBuild?: { source: TestBuildSource; archiveSha256: string };
   localPublication?: RecordedAppPublication & { channel: "dev" | "staging" };
 }
 export interface ContinuationSourceGateway {
@@ -138,10 +139,21 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
         ensure(approvedVerificationHead(await this.api(HARNESS, `pulls/${selected.pullRequest}/reviews?per_page=100`), verification.head.sha),
           "Selected harness verification head requires a current approved review");
       }
+      const recordedBuild = packet.build.recordedAppBuild;
+      let app: Pick<ContinuationTarget, "localPublication" | "recordedBuild" | "original">;
+      if (localPublication) app = { localPublication };
+      else if (recordedBuild) {
+        const selected = testBuildSourceSchema.parse(recordedBuild), archiveSha256 = packet.build.hashes.archiveSha256;
+        ensure(packet.sourceStatus === "recorded" && packet.routine.id === routineId
+          && ["dev", "staging"].includes(selected.channel) && selected.channel === source!.channel,
+        "Recorded app producer must belong to this occurrence's published channel and routine");
+        ensure(typeof archiveSha256 === "string" && /^[a-f0-9]{64}$/.test(archiveSha256), "The original artifact identity was not recorded");
+        app = { recordedBuild: { source: selected, archiveSha256: archiveSha256! } };
+      } else app = { original: this.originalRequest(packet, routineId) };
       return { query: localPublication ? { channel: localPublication.channel } : source!.channel === "pr" ? { channel: "pr", pr: source!.pullRequest!.number }
         : { channel: source!.channel as "dev" | "staging" }, expectedHeadSha: source!.headSha,
         expectedHarnessSha: verification.merge_commit_sha!, requestNotBefore: verification.merged_at!, automaticExpected: false,
-        ...(localPublication ? { localPublication } : { original: this.originalRequest(packet, routineId) }) };
+        ...app };
     }
     if (pr.merged) {
       ensure(pr.merge_commit_sha, "Merged candidate has no merge commit");

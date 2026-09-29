@@ -104,6 +104,29 @@ test("CI harness candidates bind the consuming occurrence's original request and
     }
   }
 });
+test("a manual audit harness candidate uses its recorded exact app producer, not an invented original request", async () => {
+  const setup = () => {
+    const f = fixture(true); f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
+    f.packet.source = { schemaVersion: 1, trigger: "manual", channel: "dev", repository: PUB, branch: "dev", headSha: tested };
+    f.packet.sourceStatus = "recorded"; f.packet.requestId = "verifier-audit-36603857426-android-settings-return";
+    f.packet.build.recordedAppBuild = { channel: "dev", buildRunId: 36496912774, publicationAttempt: 1 };
+    return f;
+  };
+  const f = setup(), before = structuredClone(f.packet);
+  const target = await f.gateway.target(f.packet, f.grant, "no-glasses");
+  expect(target).toMatchObject({ expectedHeadSha: tested, expectedHarnessSha: merged,
+    recordedBuild: { source: f.packet.build.recordedAppBuild, archiveSha256: "d".repeat(64) } });
+  expect(target).not.toHaveProperty("original"); expect(f.packet).toEqual(before);
+  for (const problem of ["missing", "channel", "archive", "corrected", "routine", "attempt"]) {
+    const g = setup();
+    if (problem === "missing") delete g.packet.build.recordedAppBuild;
+    if (problem === "channel") g.packet.build.recordedAppBuild!.channel = "staging";
+    if (problem === "archive") delete g.packet.build.hashes.archiveSha256;
+    if (problem === "corrected") g.packet.sourceStatus = "corrected";
+    if (problem === "attempt") g.packet.build.recordedAppBuild!.publicationAttempt = 0;
+    await expect(g.gateway.target(g.packet, g.grant, problem === "routine" ? "day1-ota" : "no-glasses")).rejects.toThrow();
+  }
+});
 test("an adopted harness candidate uses only the recorded same-case owner's branch", async () => {
   const f = fixture(true); f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
   f.pr.head.ref = "fix/routine-run_owner";

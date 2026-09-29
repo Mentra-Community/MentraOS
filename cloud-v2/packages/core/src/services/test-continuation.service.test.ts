@@ -186,6 +186,30 @@ test("CI harness lookup refuses missing, changed or unavailable original evidenc
     expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
   }
 });
+test("an independent audit's exact old producer verifies the app archive and selected worker without consuming its audited request", async () => {
+  const f = ciHarnessFixture("dev"), before = structuredClone(f.packet);
+  f.target({ original: undefined, recordedBuild: { source: f.source, archiveSha256 } });
+  f.builds.originalSelection = async () => { throw new Error("Independent audit did not consume a routine request"); };
+  f.builds.inventory = async () => { throw new Error("Never select a latest build"); };
+  const inventory = await f.service.inventory(f.candidateGrant, "no-glasses");
+  expect(inventory.builds).toHaveLength(1); expect(inventory.builds[0]!.source).toEqual(f.source);
+  expect(inventory.expectedHarnessSha).toBe(f.candidateGrant.harnessVerification!.mergeCommitSha);
+  for (const source of [{ ...f.source, buildRunId: 81 }, { ...f.source, publicationAttempt: 2 }])
+    await expect(f.service.request(f.candidateGrant, { ...f.request, source })).rejects.toThrow("original recorded artifact");
+  const resolve = f.builds.resolve;
+  for (const problem of ["head", "archive", "unavailable"]) {
+    f.builds.resolve = async (...args) => ({ ...await resolve(...args),
+      ...(problem === "head" ? { headSha: "0".repeat(40) } : problem === "archive" ? { archive: { name: "wrong.zip", sha256: "0".repeat(64), size: 12 } }
+        : { availability: "unavailable" }) });
+    await expect(f.service.request(f.candidateGrant, f.request)).rejects.toThrow();
+    expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+  }
+  f.builds.resolve = resolve;
+  const sent = await f.service.request(f.candidateGrant, f.request);
+  expect(f.rows.get(sent.dispatchId)!.receipt.input).not.toHaveProperty("originalRequestRunId");
+  expect(f.sentHarness()).toBe(f.candidateGrant.harnessVerification!.mergeCommitSha);
+  expect(f.packet).toEqual(before); expect(f.sends()).toBe(1);
+});
 
 function localNotesFixture() {
   const f = fixture(), appHead = "d6c74c857015fac95fbc6195dbf009acfab65eeb", harness = "f".repeat(40);
