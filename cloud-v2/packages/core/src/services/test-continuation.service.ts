@@ -153,12 +153,12 @@ export class TestContinuationService {
       executionAttempt, ...(retryReason ? { retryReason } : {}), expectedHeadSha: target.expectedHeadSha,
       ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
     const request: TestDispatchInput = { ...data, idempotencyKey, ...(originalRequestRunId !== undefined ? { originalRequestRunId } : {}) };
-    if (!this.builds.findExisting) throw new TestDispatchError(503, "Trusted request reconciliation is unavailable");
+    if (!target.original && !target.expectedHarnessSha && !this.builds.findExisting) throw new TestDispatchError(503, "Trusted request reconciliation is unavailable");
     const since = target.requestNotBefore && Date.parse(target.requestNotBefore) > Date.parse(build.createdAt)
       ? target.requestNotBefore : build.createdAt;
-    // An original-target rerun is a fresh execution of the recorded artifact: adopting an
-    // existing request could return the original (pre-repair) run as its own result.
-    const existing = target.original ? null : await this.builds.findExisting(request, since, excludeRequestRunIds);
+    // Originals need a new execution; harness verification additionally needs its own
+    // immutable private-revision fence. Older automatic requests have no such fence.
+    const existing = target.original || target.expectedHarnessSha ? null : await this.builds.findExisting!(request, since, excludeRequestRunIds);
     if (!existing && target.automaticExpected && executionAttempt === 1)
       throw new TestDispatchError(503, "Waiting for the existing automatic request; no duplicate was sent");
     await this.dispatch.create(request, `routine-fixer:${grant.agentRunId}`, binding, existing ?? undefined, () => this.checkLease(grant, routineId));

@@ -131,7 +131,7 @@ export interface TestBuildGateway {
   /** With `originalRequestRunId`, a PR build is resolved for that original request's recorded PR identity. */
   resolve(source: TestBuildSource, routineId?: TestRoutineId, originalRequestRunId?: number): Promise<TestBuild>;
   resolveRecordedApp?(publication: RecordedAppPublication & { channel: "dev" | "staging"; headSha: string }, routineId: TestRoutineId): Promise<TestBuild>;
-  dispatch(input: TestDispatchInput): Promise<{ requestRunId: number; requestUrl: string }>;
+  dispatch(input: TestDispatchInput, expectedHarnessSha?: string): Promise<{ requestRunId: number; requestUrl: string }>;
   progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
   findExisting?(input: TestDispatchInput, since: string, excludeRequestRunIds?: number[]): Promise<{ requestRunId: number; requestUrl: string } | null>;
   originalSelection?(requestRunId: number, routineId: TestRoutineId): Promise<OriginalSelection>;
@@ -477,11 +477,13 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     }
     return { merged, heads };
   }
-  async dispatch(input: TestDispatchInput) {
+  async dispatch(input: TestDispatchInput, expectedHarnessSha?: string) {
+    if (expectedHarnessSha !== undefined) sha.parse(expectedHarnessSha);
     const source = input.source;
     // An original replay names only its original request; the trusted issuer re-reads that request's selection.
     requireThat(input.originalRequestRunId === undefined || source.channel === "pr", "Only a PR original is replayed by its request");
     const inputs = { routine: input.routineId, request_origin: "workflow-dispatch",
+      ...(expectedHarnessSha ? { expected_harness_sha: expectedHarnessSha } : {}),
       ...(input.originalRequestRunId !== undefined ? { original_request_run_id: String(input.originalRequestRunId) }
         : { source_build_run_id: String(source.buildRunId), source_publication_attempt: String(source.publicationAttempt) }),
       ...(source.channel === "pr" ? { pr: String(source.prNumber) } : { channel: source.channel }) };

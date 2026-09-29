@@ -20,6 +20,7 @@ const input = { source: { channel: "pr" as const, prNumber: 44, buildRunId: 80, 
 function fixture(incidents?: IncidentReportStore) {
   const packet = { schemaVersion: 1, occurrenceId, sourceStatus: "recorded", source: { repository: "Mentra-Community/MentraOS", headSha },
     delivery: { state: "acknowledged", agentRunId: "run_123" }, evidence: { complete: true, assets: [{ assetId: "asset" }] } } as unknown as Awaited<ReturnType<TestRunService["failureDetail"]>>;
+  let sentHarness: string | undefined;
   let sends = 0, since = "", existing: { requestRunId: number; requestUrl: string } | null = null;
   let target: ContinuationTarget = { query: { channel: "pr", pr: 44 }, expectedHeadSha: headSha, automaticExpected: false };
   let claim: { state: string; resultRunId?: string } | null = null;
@@ -41,7 +42,7 @@ function fixture(incidents?: IncidentReportStore) {
   const builds: TestBuildGateway = { inventory: async () => [], resolve: async source => ({ source, title: "Candidate", headSha,
     availability: "available", archive: { name: "app.zip", sha256: archiveSha256, size: 12 }, buildUrl: "https://github.com/build",
     createdAt: "2026-09-25T08:00:00Z", routines: [{ id: "no-glasses", available: true }] }),
-    dispatch: async () => { sends++; return { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; },
+    dispatch: async (_, pin) => { sentHarness = pin; sends++; return { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; },
     progress: async () => ({ state: "running", requestId: "routine-90-1-44-no-glasses", message: "Running" }),
     findExisting: async (_, value) => { since = value; return existing; },
     // The original request's immutable selection (the real gateway reads it from GitHub).
@@ -67,7 +68,7 @@ function fixture(incidents?: IncidentReportStore) {
         : { state: "recovery-required", reason: "Retained for recovery" } } as TestRunClaim) : null,
   }, async value => { leaseChecks.push(value); if (!leaseValid) throw new Error("Stale lease"); }, incidents ? new TestFailureIncidentService(runs, incidents) : undefined);
   return { packet, rows, builds, runs, service, result, leaseChecks, targets, anchor: (id: string, agentRunId: string) => { anchors.set(id, agentRunId); },
-    loseLease: () => { leaseValid = false; }, sends: () => sends, since: () => since,
+    loseLease: () => { leaseValid = false; }, sends: () => sends, sentHarness: () => sentHarness, since: () => since,
     target: (value: Partial<ContinuationTarget>) => { target = { ...target, ...value }; },
     claim: (value: typeof claim) => { claim = value; }, results: (additional: typeof result[] = []) => { extraResults = additional; ids = [result.runId, ...additional.map(item => item.runId)]; },
     existing: () => { existing = { requestRunId: 90, requestUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/90" }; } };
@@ -118,9 +119,13 @@ test("matching automatic request is adopted; pending automatic work never duplic
   expect(f.rows.size).toBe(0); f.existing();
   expect(await f.service.request(grant, input)).toMatchObject({ adopted: true, sendState: "accepted" }); expect(f.sends()).toBe(0);
 });
-test("new harness candidate excludes requests created before its merge", async () => {
+test("harness candidate never adopts an automatic request lacking its revision fence", async () => {
   const f = fixture(); f.target({ expectedHarnessSha: "e".repeat(40), requestNotBefore: "2026-09-25T09:00:00Z" });
-  await f.service.request(grant, input); expect(f.since()).toBe("2026-09-25T09:00:00Z"); expect(f.sends()).toBe(1);
+  f.existing();
+  await f.service.request(grant, input); expect(f.since()).toBe(""); expect(f.sends()).toBe(1);
+  expect(f.sentHarness()).toBe("e".repeat(40));
+  expect([...f.rows.values()][0]!.receipt.adopted).not.toBe(true);
+  await f.service.request(grant, input); expect(f.sends()).toBe(1);
 });
 
 function localNotesFixture() {
@@ -154,7 +159,7 @@ test("local Notes selects its old exact publication and uses the same case-bound
   const f = localNotesFixture(), original = structuredClone(f.packet);
   expect((await f.service.inventory(f.candidateGrant, "notes-phone")).builds).toEqual([f.selected]);
   await Promise.all([f.service.request(f.candidateGrant, f.request), f.service.request(f.candidateGrant, f.request)]);
-  expect(f.sends()).toBe(1); expect(f.rows.size).toBe(1); expect(f.since()).toBe("2026-09-29T13:00:00Z");
+  expect(f.sends()).toBe(1); expect(f.rows.size).toBe(1); expect(f.since()).toBe(""); expect(f.sentHarness()).toBe(f.harness);
   const stored = [...f.rows.values()][0]!.receipt;
   expect(stored.input).not.toHaveProperty("originalRequestRunId");
   expect(stored.continuation).toMatchObject({ occurrenceId, agentRunId: grant.agentRunId, expectedHeadSha: f.selected.headSha, expectedHarnessSha: f.harness });

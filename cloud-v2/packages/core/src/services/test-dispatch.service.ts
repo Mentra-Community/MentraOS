@@ -129,7 +129,7 @@ export class TestDispatchService {
     if (!inserted.created) return replay(inserted.stored);
     if (value.sendState === "rejected") return this.present(value);
     let response;
-    try { response = adopt ?? await this.github.dispatch(data); }
+    try { response = adopt ?? await this.github.dispatch(data, continuation?.expectedHarnessSha); }
     catch {
       return this.present(await this.repository.acknowledge(dispatchId, null));
     }

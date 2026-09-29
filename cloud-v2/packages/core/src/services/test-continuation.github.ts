@@ -96,7 +96,8 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
       ensure(pr.merged && pr.merge_commit_sha && pr.merged_at, "Harness changes require review and merge before device execution");
       const ref = z.object({ ref: z.literal("refs/heads/main"), object: z.object({ type: z.literal("commit"), sha }) }).parse(
         await this.api(HARNESS, "git/ref/heads/main"));
-      ensure(ref.object.sha === pr.merge_commit_sha, "Private main changed; qualify an explicitly reviewed worker revision");
+      const contained = comparisonSchema.parse(await this.api(HARNESS, `compare/${pr.merge_commit_sha}...${ref.object.sha}?per_page=1`));
+      ensure(["ahead", "identical"].includes(contained.status), "Private main no longer contains the reviewed harness merge");
       return { query: localPublication ? { channel: localPublication.channel } : source!.channel === "pr" ? { channel: "pr", pr: source!.pullRequest!.number }
         : { channel: source!.channel as "dev" | "staging" }, expectedHeadSha: source!.headSha,
         expectedHarnessSha: pr.merge_commit_sha!, requestNotBefore: pr.merged_at!, automaticExpected: false,

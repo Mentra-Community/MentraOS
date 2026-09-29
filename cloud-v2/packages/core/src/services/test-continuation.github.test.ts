@@ -11,14 +11,15 @@ function fixture(harness = false) {
   const pr = { number: 12, state: "open", merged: false, merge_commit_sha: null as string | null, merged_at: null as string | null,
     head: { sha: head, ref: harness ? "fix/routine-run_123" : "candidate", repo: { full_name: grant.candidate.repository } },
     base: { ref: harness ? "main" : "dev", repo: { full_name: grant.candidate.repository } }, labels: [] as { name: string }[] };
-  const calls: string[] = []; let status = "ahead", main = merged;
+  const calls: string[] = []; let status = "ahead", mainStatus = "identical", main = merged;
   const gateway = new GithubContinuationSource({ app: { token: async (scope: string) => { expect(scope).toBe(harness ? "harness" : "source"); return "fixture"; } } as TestRunGithubApp,
     fetch: (async (url: string, init?: RequestInit) => { calls.push(url); expect(init?.method).toBeUndefined();
       if (url.endsWith("/pulls/12")) return Response.json(pr);
+      if (url.includes(`/compare/${merged}...`)) return Response.json({ status: mainStatus });
       if (url.includes("/compare/")) return Response.json({ status });
       if (url.endsWith("/git/ref/heads/main")) return Response.json({ ref: "refs/heads/main", object: { type: "commit", sha: main } });
       throw new Error("Unexpected endpoint"); }) as typeof fetch });
-  return { grant, packet, pr, gateway, calls, diverged: () => { status = "diverged"; }, moveMain: () => { main = head; } };
+  return { grant, packet, pr, gateway, calls, diverged: () => { status = "diverged"; }, moveMain: () => { main = head; mainStatus = "ahead"; }, excludeMerge: (value = "diverged") => { mainStatus = value; } };
 }
 test("originating PR retains exact branch/base/repository/head and tested ancestry", async () => {
   const good = fixture(); expect(await good.gateway.target(good.packet, good.grant, "no-glasses")).toMatchObject({ query: { channel: "pr", pr: 12 }, expectedHeadSha: head });
@@ -57,7 +58,7 @@ test("dev fixes use the saved case branch; staging cannot silently test a dev ar
   f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
   expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ query: { channel: "staging" }, expectedHeadSha: merged });
 });
-test("harness route requires recorded tested revision and the merged current private worker", async () => {
+test("harness route requires recorded tested revision and the reviewed merge still contained in private main", async () => {
   const f = fixture(true);
   await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("review and merge");
   f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
@@ -65,7 +66,12 @@ test("harness route requires recorded tested revision and the merged current pri
   delete f.packet.build.hashes.harnessSha;
   await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("revision is missing");
   f.packet.build.hashes.harnessSha = tested; f.moveMain();
-  await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow("Private main changed");
+  expect(await f.gateway.target(f.packet, f.grant, "no-glasses")).toMatchObject({ expectedHarnessSha: merged });
+  expect(f.calls.at(-1)).toContain(`/compare/${merged}...${head}?per_page=1`);
+  for (const status of ["behind", "diverged", "unknown"]) {
+    f.excludeMerge(status);
+    await expect(f.gateway.target(f.packet, f.grant, "no-glasses")).rejects.toThrow();
+  }
 });
 test("an adopted harness candidate uses only the recorded same-case owner's branch", async () => {
   const f = fixture(true); f.pr.merged = true; f.pr.state = "closed"; f.pr.merge_commit_sha = merged; f.pr.merged_at = "2026-09-25T09:00:00Z";
@@ -129,7 +135,7 @@ test("harness candidates and adopted owners admit the exact codex or legacy owne
     const open = fixture(true); open.pr.head.ref = ref;
     await expect(open.gateway.target(open.packet, open.grant, "no-glasses")).rejects.toThrow("review and merge");
     const moved = mergedHarness(ref); moved.moveMain();
-    await expect(moved.gateway.target(moved.packet, moved.grant, "no-glasses")).rejects.toThrow("Private main changed");
+    expect(await moved.gateway.target(moved.packet, moved.grant, "no-glasses")).toMatchObject({ expectedHarnessSha: merged });
     const diverged = mergedHarness(ref); diverged.diverged();
     await expect(diverged.gateway.target(diverged.packet, diverged.grant, "no-glasses")).rejects.toThrow("descend");
   }
@@ -220,7 +226,7 @@ test("local Notes uses its recorded publication only after the exact harness can
     return f;
   };
   for (const channel of ["dev", "staging"] as const) {
-    const f = setup(channel), before = structuredClone(f.packet);
+    const f = setup(channel), before = structuredClone(f.packet); f.moveMain();
     expect(await f.gateway.target(f.packet, f.grant, "notes-phone")).toEqual({ query: { channel },
       expectedHeadSha: f.packet.source!.headSha, expectedHarnessSha: merged, requestNotBefore: f.pr.merged_at!,
       automaticExpected: false, localPublication: { ...publication, channel } });
@@ -236,7 +242,7 @@ test("local Notes uses its recorded publication only after the exact harness can
     if (mismatch === "branch") f.packet.source!.branch = "feature";
     if (mismatch === "routine") f.packet.routine.id = "captions-phone";
     if (mismatch === "unmerged") f.pr.merged = false;
-    if (mismatch === "main") f.moveMain();
+    if (mismatch === "main") f.excludeMerge();
     if (mismatch === "ancestry") f.diverged();
     await expect(f.gateway.target(f.packet, f.grant, "notes-phone")).rejects.toThrow();
   }
