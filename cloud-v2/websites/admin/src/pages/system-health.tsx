@@ -93,7 +93,7 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
       {[0, yMax / 2, yMax].map(tick => <g key={tick}><line x1={left} x2={width - 16} y1={y(tick * GiB)} y2={y(tick * GiB)} stroke="#e4e9e2" />
         <text x={left - 9} y={y(tick * GiB) + 4} textAnchor="end" fontSize="11" fill="#68746d">{tick} GiB</text></g>)}
       <line x1={left} x2={width - 16} y1={y(history.thresholdBytes)} y2={y(history.thresholdBytes)} stroke="#b57729" strokeDasharray="5 4" />
-      <text x={width - 20} y={y(history.thresholdBytes) - 5} textAnchor="end" fontSize="11" fill="#946024">20 GiB recording margin</text>
+      <text x={width - 20} y={y(history.thresholdBytes) - 5} textAnchor="end" fontSize="11" fill="#946024">20 GiB headroom target</text>
       {(width < 500 ? [0, 1] : [0, 0.5, 1]).map(ratio => <text key={ratio} x={left + ratio * (width - left - 16)} y={height - 10} textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fill="#68746d">{time(new Date(from + ratio * (to - from)).toISOString())}</text>)}
       {segments.map((segment, index) => <g key={index}><polyline points={segment.map(point => `${x(point.sampledAt)},${y(point.freeBytes!)}`).join(" ")} fill="none" stroke="#0c9667" strokeWidth="2" />
         {segment.length === 1 ? <circle cx={x(segment[0].sampledAt)} cy={y(segment[0].freeBytes!)} r="3" fill="#0c9667"><title>{`${time(segment[0].sampledAt)} · ${size(segment[0].freeBytes)}`}</title></circle> : null}</g>)}
@@ -101,7 +101,7 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
         <circle cx={x(event.startedAt)} cy={top + 4} r="4" fill={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"}><title>{`${time(event.startedAt)} · ${event.origin} cleanup · ${cleanupStatus(event)} · ${event.removedCount} removed. ${cleanupReason(event)}`}</title></circle></g>)}
       {!segments.length ? <text x={width / 2} y={height / 2} textAnchor="middle" fontSize="14" fill="#68746d">No disk measurements in this period</text> : null}
     </svg>
-    <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The threshold is a recording margin, not a readiness check.</p>
+    <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The 20 GiB guide is a headroom target, not a recording or readiness gate.</p>
     {history.truncated ? <p className="mt-1 text-xs text-[#a64235]">Only the newest {history.points.length.toLocaleString()} measurements are shown.</p> : null}
   </div>;
 }
