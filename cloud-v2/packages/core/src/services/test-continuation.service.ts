@@ -69,6 +69,11 @@ export class TestContinuationService {
   async inventory(grant: ContinuationGrant, routine: unknown) {
     const routineId = this.routine(grant, routine), packet = await this.case(grant);
     const target = await this.source.target(packet, grant, routineId);
+    if (target.localPublication) {
+      const build = await this.recordedAppBuild(target, routineId);
+      return { candidate: grant.candidate, builds: [build], expectedHeadSha: target.expectedHeadSha,
+        expectedHarnessSha: target.expectedHarnessSha };
+    }
     if (target.original) {
       // Exactly the recorded build, however old: never the newest listing or a current head.
       const selection = await this.originalSelection(target, routineId);
@@ -79,6 +84,10 @@ export class TestContinuationService {
     const builds = await this.builds.inventory({ ...target.query, routineId });
     return { candidate: grant.candidate, builds: builds.filter(build => build.headSha === target.expectedHeadSha),
       expectedHeadSha: target.expectedHeadSha, ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
+  }
+  private recordedAppBuild(target: ContinuationTarget, routineId: TestRoutineId): Promise<TestBuild> {
+    if (!this.builds.resolveRecordedApp) throw new TestDispatchError(503, "Recorded app publication verification is unavailable");
+    return this.builds.resolveRecordedApp({ ...target.localPublication!, headSha: target.expectedHeadSha }, routineId);
   }
   /** The issuer's immutable selection for the original request, cross-checked with the recorded result. */
   private async originalSelection(target: ContinuationTarget, routineId: TestRoutineId) {
@@ -133,9 +142,11 @@ export class TestContinuationService {
     }
     // A PR original is replayed by its request run through the trusted issuer, for its recorded PR identity.
     const originalRequestRunId = target.original && data.source.channel === "pr" ? target.original.requestRunId : undefined;
-    const build = target.original ? await this.originalBuild(data.source, routineId, originalRequestRunId) : await this.builds.resolve(data.source, routineId);
+    const build = target.localPublication ? await this.recordedAppBuild(target, routineId)
+      : target.original ? await this.originalBuild(data.source, routineId, originalRequestRunId) : await this.builds.resolve(data.source, routineId);
+    if (target.localPublication && !same(data.source, build.source)) fail("Build is not the local test's recorded app publication");
     if (build.headSha !== target.expectedHeadSha || build.archive?.sha256 !== data.archiveSha256 || build.availability !== "available")
-      fail("Published build does not match the candidate");
+      fail(build.reason ?? "Published build does not match the candidate");
     const binding: TestContinuationBinding = { occurrenceId: grant.occurrenceId, agentRunId: grant.agentRunId,
       candidate: grant.candidate, ...(grant.caseBinding ? { caseBinding: grant.caseBinding } : {}),
       ...(grant.executionDestination ? { executionDestination: grant.executionDestination } : {}),

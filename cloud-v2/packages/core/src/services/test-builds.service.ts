@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { unzipSync } from "fflate";
 import { z } from "zod";
-import { TEST_ROUTINES, testRoutinePlatform, type TestBuildPlatform, type TestRoutineId, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
+import { TEST_ROUTINES, recordedAppPublicationSchema, testRoutinePlatform, type RecordedAppPublication, type TestBuildPlatform, type TestRoutineId, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
 import type { ExistingWorkBundleTarget } from "../types/test-existing-work.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
@@ -130,6 +130,7 @@ export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
   /** With `originalRequestRunId`, a PR build is resolved for that original request's recorded PR identity. */
   resolve(source: TestBuildSource, routineId?: TestRoutineId, originalRequestRunId?: number): Promise<TestBuild>;
+  resolveRecordedApp?(publication: RecordedAppPublication & { channel: "dev" | "staging"; headSha: string }, routineId: TestRoutineId): Promise<TestBuild>;
   dispatch(input: TestDispatchInput): Promise<{ requestRunId: number; requestUrl: string }>;
   progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
   findExisting?(input: TestDispatchInput, since: string, excludeRequestRunIds?: number[]): Promise<{ requestRunId: number; requestUrl: string } | null>;
@@ -257,6 +258,24 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const result = await this.describe(run, source.channel, platform, pr, pr ? await this.baseSha(pr) : undefined, true);
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
+  }
+  /** A local test may have used a published app without consuming a CI request.
+   * Resolve only its named producer, then prove the installed bytes against the
+   * ordinary immutable release receipt. No recent-build search or branch tip. */
+  async resolveRecordedApp(input: RecordedAppPublication & { channel: "dev" | "staging"; headSha: string }, routineId: TestRoutineId): Promise<TestBuild> {
+    const publication = recordedAppPublicationSchema.extend({ channel: z.enum(["dev", "staging"]), headSha: sha }).parse(input);
+    requireThat(testRoutinePlatform(routineId) === "ios-on-mac", "Local app publication verification supports recorded Mac app bytes only");
+    const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${publication.producerRunId}`
+      + (publication.publicationAttempt ? `/attempts/${publication.publicationAttempt}` : "")));
+    requireThat(run.id === publication.producerRunId && run.head_sha === publication.headSha
+      && (!publication.publicationAttempt || run.run_attempt === publication.publicationAttempt)
+      && this.matches(run, publication.channel, "ios-on-mac"), "Recorded app producer does not match the local source and channel");
+    const build = await this.describe(run, publication.channel, "ios-on-mac", undefined, undefined, true);
+    requireThat(!publication.publicationAttempt || build.source.publicationAttempt === publication.publicationAttempt,
+      "Recorded app attempt retained a different publication");
+    if (build.availability === "available") requireThat(build.app?.executableSha256 === publication.executableSha256
+      && build.app?.javascriptSha256 === publication.javascriptSha256, "Published app bytes differ from the local test's recorded app");
+    return build;
   }
   private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PrIdentity, baseSha?: string, exact = false): Promise<TestBuild> {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
@@ -407,7 +426,8 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
     return { attempt, tag, archive: data.artifacts.mac,
-      result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+      result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256,
+        app: { executableSha256: data.app.executableSha256, javascriptSha256: data.app.javascriptSha256 } } };
   }
   async findExisting(input: TestDispatchInput, since: string, excludeRequestRunIds: number[] = []) {
     requireThat(Number.isFinite(Date.parse(since)), "Invalid candidate publication time");

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { createTestFailureAgentApi } from "../api/agent/test-failures.api";
 import type { ContinuationGrant } from "../types/test-continuation.types";
-import type { TestDispatchReceipt } from "../types/test-dispatch.types";
+import type { TestBuild, TestDispatchReceipt } from "../types/test-dispatch.types";
 import { TestDispatchService, type TestDispatchRepository } from "./test-dispatch.service";
 import { TestContinuationService, acknowledgedCase, continuationOperationId } from "./test-continuation.service";
 import { signTestContinuationGrant, signTestFailureReadGrant, verifyTestContinuationGrant } from "./test-failure-auth";
@@ -121,6 +121,75 @@ test("matching automatic request is adopted; pending automatic work never duplic
 test("new harness candidate excludes requests created before its merge", async () => {
   const f = fixture(); f.target({ expectedHarnessSha: "e".repeat(40), requestNotBefore: "2026-09-25T09:00:00Z" });
   await f.service.request(grant, input); expect(f.since()).toBe("2026-09-25T09:00:00Z"); expect(f.sends()).toBe(1);
+});
+
+function localNotesFixture() {
+  const f = fixture(), appHead = "d6c74c857015fac95fbc6195dbf009acfab65eeb", harness = "f".repeat(40);
+  const candidateGrant: ContinuationGrant = { ...grant, routineIds: ["notes-phone"],
+    candidate: { repository: "Mentra-Community/Mentra-Automated-Testing", pullRequest: 217,
+      headSha: "f9a7d7bfd6d7e764866d367120338dd93000259f" } };
+  const publication = { channel: "dev" as const, producerRunId: 36496912774,
+    executableSha256: "3cd22e5a9ec9b62c55d0cf79df0aec71c721c3110e712127b3c131a46b4f1842",
+    javascriptSha256: "f3bd02020c7b5d4d44d7768888be90e549ebdf15526e14c65532dcc990a8c423" };
+  const selected: TestBuild = { source: { channel: "dev", buildRunId: publication.producerRunId, publicationAttempt: 1 },
+    headSha: appHead, title: "dev468", buildUrl: `https://github.com/Mentra-Community/MentraOS/actions/runs/${publication.producerRunId}`,
+    createdAt: "2026-09-28T23:14:20Z", availability: "available", platform: "ios-on-mac",
+    archive: { name: "mentraos-3.3.0-dev.468-mac.zip", sha256: "3da1733469e7e298907db294397dd7a7b41f3b73735cb5b517513ef3e6cfadd5", size: 121702007 },
+    app: { executableSha256: publication.executableSha256, javascriptSha256: publication.javascriptSha256 },
+    routines: [{ id: "notes-phone", available: true }] };
+  f.packet.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: "Mentra-Community/MentraOS", branch: "dev", headSha: appHead };
+  f.packet.requestId = "notes-phone-22c2da8c-b863-4a03-b37f-4780f49d7fa0";
+  f.target({ query: { channel: "dev" }, expectedHeadSha: appHead, expectedHarnessSha: harness,
+    localPublication: publication, requestNotBefore: "2026-09-29T13:00:00Z" });
+  f.builds.inventory = async () => { throw new Error("Local replay must not search latest builds"); };
+  f.builds.originalSelection = async () => { throw new Error("Local replay has no consumed original CI request"); };
+  f.builds.resolveRecordedApp = async (value, routine) => {
+    expect(value).toEqual({ ...publication, headSha: appHead }); expect(routine).toBe("notes-phone"); return selected;
+  };
+  f.builds.resolve = async source => { expect(source).toEqual(selected.source); return selected; };
+  f.builds.progress = async () => ({ state: "running", requestId: "routine-90-1-dev-notes-phone", message: "Running" });
+  return { ...f, selected, candidateGrant, harness, request: { source: selected.source, routineId: "notes-phone" as const, archiveSha256: selected.archive!.sha256 } };
+}
+test("local Notes selects its old exact publication and uses the same case-bound one-send/result path", async () => {
+  const f = localNotesFixture(), original = structuredClone(f.packet);
+  expect((await f.service.inventory(f.candidateGrant, "notes-phone")).builds).toEqual([f.selected]);
+  await Promise.all([f.service.request(f.candidateGrant, f.request), f.service.request(f.candidateGrant, f.request)]);
+  expect(f.sends()).toBe(1); expect(f.rows.size).toBe(1); expect(f.since()).toBe("2026-09-29T13:00:00Z");
+  const stored = [...f.rows.values()][0]!.receipt;
+  expect(stored.input).not.toHaveProperty("originalRequestRunId");
+  expect(stored.continuation).toMatchObject({ occurrenceId, agentRunId: grant.agentRunId, expectedHeadSha: f.selected.headSha, expectedHarnessSha: f.harness });
+  expect(f.packet).toEqual(original); expect(f.packet.source!.channel).toBe("local");
+  f.result.requestId = "routine-90-1-dev-notes-phone"; f.result.routineId = "notes-phone";
+  f.result.source.headSha = f.selected.headSha; f.result.provenance.archiveSha256 = f.selected.archive!.sha256;
+  f.result.provenance.harnessSha = "0".repeat(40); f.results();
+  const id = continuationOperationId(f.candidateGrant, "notes-phone");
+  await expect(f.service.detail(f.candidateGrant, id)).rejects.toThrow("worker revision");
+  f.result.provenance.harnessSha = f.harness;
+  expect((await f.service.detail(f.candidateGrant, id)).recordedResults[0]!.provenance.harnessSha).toBe(f.harness);
+});
+test("local publication cannot be exchanged for a newer build, attempt, channel or archive", async () => {
+  for (const changed of [
+    { source: { channel: "dev", buildRunId: 36496912775, publicationAttempt: 1 } },
+    { source: { channel: "dev", buildRunId: 36496912774, publicationAttempt: 2 } },
+    { source: { channel: "staging", buildRunId: 36496912774, publicationAttempt: 1 } },
+    { archiveSha256: "0".repeat(64) },
+  ]) {
+    const f = localNotesFixture();
+    await expect(f.service.request(f.candidateGrant, { ...f.request, ...changed })).rejects.toThrow();
+    expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+  }
+});
+test("unavailable local publication, disabled routine and stale custody refuse without consuming the send identity", async () => {
+  for (const state of ["archive", "routine", "lease", "resolver"] as const) {
+    const f = localNotesFixture();
+    if (state === "archive") { f.selected.availability = "unavailable"; f.selected.reason = "Published app archive is missing"; }
+    if (state === "routine") f.selected.routines = [{ id: "notes-phone", available: false, reason: "This routine is not enabled on the test workers yet" }];
+    if (state === "lease") f.loseLease();
+    if (state === "resolver") delete f.builds.resolveRecordedApp;
+    await expect(f.service.request(f.candidateGrant, f.request)).rejects.toThrow(state === "archive" ? "archive is missing"
+      : state === "routine" ? "not enabled" : state === "resolver" ? "verification is unavailable" : "Stale lease");
+    expect(f.sends()).toBe(0); expect(f.rows.size).toBe(0);
+  }
 });
 test("cross-candidate reads and arbitrary result IDs are refused", async () => {
   const f = fixture(); await f.service.request(grant, input); const id = continuationOperationId(grant, input.routineId);

@@ -602,6 +602,93 @@ const failureFixture = (): TestRun => ({
     redactionPolicy: "qualification-redaction-v1", missingEvidence: [] }],
 });
 
+describe("publisher-recorded local app publication", () => {
+  const producerUrl = "https://github.com/Mentra-Community/MentraOS/actions/runs/468";
+  const localRun = (): TestRun => {
+    const run = failureFixture();
+    run.channel = "local"; delete run.prNumber;
+    run.source = { schemaVersion: 1, trigger: "local", channel: "local", repository: "Mentra-Community/MentraOS",
+      headSha: "a".repeat(40), branch: "dev" };
+    run.outcomes = { test: "failed", teardown: "blocked", fixture: "unavailable", evidence: "incomplete" };
+    Object.assign(run.provenance, { headSha: run.source.headSha, appActionsRunUrl: producerUrl,
+      appExecutableSha256: "c".repeat(64), appJavascriptSha256: "d".repeat(64),
+      appDownloadUrl: "https://private.invalid/unreviewed-archive", operatorNote: "private publication note" });
+    return run;
+  };
+
+  test.each([undefined, 3])("projects only the recorded publication identity (attempt %s) without changing the accepted failure", async attempt => {
+    const run = localRun();
+    if (attempt) run.provenance.appActionsRunUrl += `/attempts/${attempt}`;
+    const response = await post(run);
+    expect(response.status).toBe(201);
+    const accepted = await response.json() as Awaited<ReturnType<TestRunService["ingest"]>>;
+    expect(accepted.occurrenceIds).toHaveLength(1);
+    const id = accepted.occurrenceIds[0]!;
+    await service.acknowledgeFailure(id, "agent_local_publication");
+    const before = structuredClone(repository.runs.get(run.runId)!);
+    const detail = await service.failureDetail(id);
+    expect(detail.build.recordedAppPublication).toEqual({ producerRunId: 468,
+      ...(attempt ? { publicationAttempt: attempt } : {}), executableSha256: "c".repeat(64), javascriptSha256: "d".repeat(64) });
+    expect(detail).toMatchObject({ occurrenceId: id, revision: 1, source: run.source, sourceStatus: "recorded",
+      originalOutcome: "failed", outcomes: run.outcomes, payloadSha256: accepted.payloadSha256,
+      failure: run.failures![0], delivery: before.failureOccurrences![0]!.delivery, evidence: { complete: false } });
+    expect(detail.build.channel).toBe("local");
+    expect(JSON.stringify(detail)).not.toContain(run.provenance.appActionsRunUrl);
+    expect(JSON.stringify(detail)).not.toMatch(/private publication note|private\.invalid|appDownloadUrl/);
+    const repeated = await post(run);
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({ created: false, payloadSha256: accepted.payloadSha256, occurrenceIds: [id] });
+    expect(await service.failureDetail(id)).toEqual(detail);
+    const changed = structuredClone(run); changed.provenance.appExecutableSha256 = "e".repeat(64);
+    expect((await post(changed)).status).toBe(409);
+    expect(repository.runs.get(run.runId)).toEqual(before);
+  });
+
+  test("missing, unrelated or malformed publication hints never become replay identities", async () => {
+    const invalid: Record<string, string | undefined>[] = [
+      { appActionsRunUrl: undefined },
+      { appActionsRunUrl: undefined, producerUrl, requestUrl: producerUrl },
+      { appActionsRunUrl: "https://github.com/Mentra-Community/Mentra-Automated-Testing/actions/runs/468" },
+      { appActionsRunUrl: "https://github.com/Other/MentraOS/actions/runs/468" },
+      { appActionsRunUrl: "https://github.com.invalid/Mentra-Community/MentraOS/actions/runs/468" },
+      { appActionsRunUrl: producerUrl.replace("https:", "http:") },
+      { appActionsRunUrl: `${producerUrl}?attempt=3` }, { appActionsRunUrl: `${producerUrl}#summary` },
+      { appActionsRunUrl: `${producerUrl}/attempts/0` }, { appActionsRunUrl: `${producerUrl}/attempts/3.5` },
+      { appActionsRunUrl: `${producerUrl}/attempts/9007199254740992` },
+      { appActionsRunUrl: producerUrl.replace("/468", "/0") },
+      { appActionsRunUrl: producerUrl.replace("/468", "/9007199254740992") },
+      { appExecutableSha256: undefined }, { appJavascriptSha256: undefined },
+      { appExecutableSha256: "c".repeat(63) }, { appJavascriptSha256: "D".repeat(64) },
+    ];
+    for (const [index, fields] of invalid.entries()) {
+      const run = localRun(); run.runId += `-invalid-${index}`;
+      for (const [key, value] of Object.entries(fields)) {
+        if (value === undefined) delete run.provenance[key]; else run.provenance[key] = value;
+      }
+      const accepted = await service.ingest(run), before = structuredClone(repository.runs.get(run.runId));
+      const detail = await service.failureDetail(accepted.occurrenceIds[0]!);
+      expect(detail.build).not.toHaveProperty("recordedAppPublication");
+      expect(detail.source).toEqual(run.source!);
+      expect(detail.originalOutcome).toBe("failed");
+      expect(repository.runs.get(run.runId)).toEqual(before);
+    }
+  });
+
+  test("publication hints require publisher-recorded local source", async () => {
+    for (const source of ["missing", "pr", "dev"] as const) {
+      const run = localRun(); run.runId += `-${source}`;
+      if (source === "missing") delete run.source;
+      else if (source === "pr") { run.channel = "pr"; run.prNumber = 123; run.source = failureFixture().source; }
+      else { run.channel = "dev"; run.source = { ...run.source!, trigger: "dev", channel: "dev" }; }
+      const accepted = await service.ingest(run);
+      const detail = await service.failureDetail(accepted.occurrenceIds[0]!);
+      expect(detail.build).not.toHaveProperty("recordedAppPublication");
+      expect(detail.sourceStatus).toBe(source === "missing" ? "missing" : "recorded");
+      expect(detail.source).toEqual(run.source ?? null);
+    }
+  });
+});
+
 describe("canonical failure occurrences and existing agent queue delivery", () => {
   const secret = "fixture-action-signing-key-" + "x".repeat(32);
   const environmentKeys = ["CLOUD_REPORT_AGENT_SIGNING_SECRET", "CLOUD_CORE_ENVIRONMENT", "CLOUD_REPORT_AGENT_URL", "CLOUD_TEST_FAILURE_DELIVERY_ENABLED"] as const;

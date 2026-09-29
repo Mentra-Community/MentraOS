@@ -182,6 +182,63 @@ function releaseFixture(channel: "dev" | "staging", attempt = 1) {
   return { ...f, identity, publicationJobs, releaseRun };
 }
 
+describe("a local test's recorded published Mac app", () => {
+  const recorded = { producerRunId: 50, executableSha256: HASH, javascriptSha256: HASH, headSha: HEAD };
+  for (const channel of ["dev", "staging"] as const) test(`resolves the exact old ${channel} producer and checks both installed hashes`, async () => {
+    const f = releaseFixture(channel);
+    f.rows.set(`${API}/actions/runs/50`, f.releaseRun);
+    const gateway = new GithubTestBuildGateway({ token: "test-only", fetch: f.fetch, channels: [channel], routines: ["notes-phone"] });
+    const build = await gateway.resolveRecordedApp({ ...recorded, channel }, "notes-phone");
+    expect(build.source).toEqual({ channel, buildRunId: 50, publicationAttempt: 1 });
+    expect(build.app).toEqual({ executableSha256: HASH, javascriptSha256: HASH });
+    expect(build.archive?.sha256).toBe(HASH);
+    expect(build.routines.find(row => row.id === "notes-phone")).toEqual({ id: "notes-phone", available: true });
+    expect(f.calls.some(call => /\/workflows\/|\/pulls\//.test(call.url))).toBe(false);
+    expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
+    for (const field of ["executableSha256", "javascriptSha256"] as const)
+      await expect(gateway.resolveRecordedApp({ ...recorded, channel, [field]: "e".repeat(64) }, "notes-phone"))
+        .rejects.toThrow("Published app bytes differ");
+  });
+  test("producer, source, channel, explicit attempt and repository cannot be substituted", async () => {
+    for (const change of [{ id: 51 }, { head_sha: BASE }, { head_branch: "staging" }, { event: "pull_request" },
+      { repository: { full_name: "another/repo" } }, { head_repository: { full_name: "another/repo" } },
+      { path: ".github/workflows/untrusted.yml" }, { run_attempt: 2 }]) {
+      const f = releaseFixture("dev");
+      f.rows.set(`${API}/actions/runs/50/attempts/1`, { ...f.releaseRun, ...change });
+      await expect(f.gateway.resolveRecordedApp({ ...recorded, channel: "dev", publicationAttempt: 1 }, "notes-phone"))
+        .rejects.toThrow("producer");
+    }
+    const f = releaseFixture("dev");
+    await expect(f.gateway.resolveRecordedApp({ ...recorded, channel: "dev" }, "no-glasses-android"))
+      .rejects.toThrow("Mac app bytes only");
+    expect(f.calls).toEqual([]);
+  });
+  test("a notification-only retry retains the real publication attempt; an explicitly different attempt refuses", async () => {
+    const f = releaseFixture("dev");
+    f.rows.set(`${API}/actions/runs/50`, { ...f.releaseRun, run_attempt: 2 });
+    f.rows.set(`${API}/actions/runs/50/attempts/2`, { ...f.releaseRun, run_attempt: 2 });
+    expect((await f.gateway.resolveRecordedApp({ ...recorded, channel: "dev" }, "notes-phone")).source.publicationAttempt).toBe(1);
+    await expect(f.gateway.resolveRecordedApp({ ...recorded, channel: "dev", publicationAttempt: 2 }, "notes-phone"))
+      .rejects.toThrow("different publication");
+  });
+  test("disabled enrollment and missing or ambiguous publication stay unavailable with their existing reasons", async () => {
+    const f = releaseFixture("dev"); f.rows.set(`${API}/actions/runs/50`, f.releaseRun);
+    const selected = await f.gateway.resolveRecordedApp({ ...recorded, channel: "dev" }, "notes-phone");
+    expect(selected.routines.find(row => row.id === "notes-phone")?.available).toBe(false);
+    expect(selected.routines.find(row => row.id === "notes-phone")?.reason).toContain("channel is not enabled");
+    const enabled = new GithubTestBuildGateway({ token: "test-only", fetch: f.fetch, channels: ["dev"], routines: [] });
+    expect((await enabled.resolveRecordedApp({ ...recorded, channel: "dev" }, "notes-phone"))
+      .routines.find(row => row.id === "notes-phone")?.reason).toContain("not enabled on the test workers");
+    const artifacts = f.rows.get(`${API}/actions/runs/50/artifacts?per_page=100`) as { artifacts: unknown[] };
+    artifacts.artifacts.push(artifacts.artifacts[0]);
+    const ambiguous = await enabled.resolveRecordedApp({ ...recorded, channel: "dev" }, "notes-phone");
+    expect(ambiguous.availability).toBe("unavailable"); expect(ambiguous.reason).toContain("ambiguous");
+    artifacts.artifacts.pop(); f.rows.delete(`HEAD ${CDN}mentra-builds-v3.3.0/mentraos-${f.identity}-mac.zip`);
+    const missing = await enabled.resolveRecordedApp({ ...recorded, channel: "dev" }, "notes-phone");
+    expect(missing.availability).toBe("unavailable"); expect(missing.reason).toContain("archive is missing");
+  });
+});
+
 for (const channel of ["dev", "staging"] as const) test(`${channel} inventories coordinated Mac receipts without fabricating PR provenance`, async () => {
   const f = releaseFixture(channel);
   const builds = await f.gateway.inventory({ channel });
