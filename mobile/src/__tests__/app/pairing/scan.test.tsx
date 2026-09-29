@@ -189,6 +189,32 @@ describe("pairing scan screen", () => {
     setPlatformOS(originalPlatformOS)
   })
 
+  it.each([false, true])("pairs when tapping the chevron, including after timeout (%s)", async (timedOut) => {
+    jest.useFakeTimers()
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "a",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_E7FA",
+          address: "a",
+          pairingMode: false,
+          securePairingCapable: true,
+        },
+      ],
+    })
+    const screen = render(<SelectGlassesBluetoothScreen />)
+    if (timedOut) await act(async () => jest.advanceTimersByTime(15_000))
+    // The chevron itself, not the label, must bubble the press to the whole card.
+    fireEvent.press(screen.getByTestId("pairing-device-chevron"))
+    // This idle device shows pairing-mode help, proving the row's handler ran.
+    expect(require("@/utils/AlertUtils").default).toHaveBeenCalledWith(
+      "pairing:notInPairingModeAlertTitle",
+      "pairing:notInPairingModeAlertMessage",
+      [{text: "OK"}],
+    )
+  })
+
   it("routes Mentra Live through btclassic on iOS even without phone microphone permission", async () => {
     ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(false)
     useCoreStore.setState({

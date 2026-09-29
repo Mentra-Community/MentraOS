@@ -2,11 +2,13 @@ import BluetoothSdk, {type Device, type DeviceModel, type ScanDiagnostic} from "
 import {engine, DeviceTypes} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
+import {ActivityIndicator, Image, Platform, ScrollView, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
-import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
+import {Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
+import {DiscoveredGlassesRow} from "@/components/pairing/DiscoveredGlassesRow"
+import {NimoBluetoothSetup} from "@/components/pairing/NimoBluetoothSetup"
 import {Group} from "@/components/ui/Group"
 import GlassView from "@/components/ui/GlassView"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
@@ -26,6 +28,14 @@ const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((opt
 const PAIRING_SCAN_TIMEOUT_MS = 15_000
 
 export default function SelectGlassesBluetoothScreen() {
+  const {deviceModel} = useLocalSearchParams<{deviceModel: DeviceModel}>()
+  if (Platform.OS === "ios" && deviceModel === DeviceTypes.NIMO && isGlassesModelAllowedByDeployment(deviceModel)) {
+    return <NimoBluetoothSetup />
+  }
+  return <GlassesScanScreen />
+}
+
+function GlassesScanScreen() {
   const {deviceModel, ar99ProjectName} = useLocalSearchParams() as {deviceModel: DeviceModel; ar99ProjectName?: string}
   const {theme} = useAppTheme()
   const {goBack, replace, push} = useNavigationStore.getState()
@@ -266,7 +276,7 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: Device) => {
     const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
-    const resolvedProjectName = deviceModel === DeviceTypes.AR99 ? device.projectName ?? ar99ProjectName : undefined
+    const resolvedProjectName = deviceModel === DeviceTypes.AR99 ? (device.projectName ?? ar99ProjectName) : undefined
     if (
       Platform.OS === "android" ||
       bluetoothClassicConnected ||
@@ -417,10 +427,10 @@ export default function SelectGlassesBluetoothScreen() {
                   hasConnectedDeviceHint
                     ? translate("pairing:connectedOnPhoneHint")
                     : !isMentraLivePairingScan || !securePairingEnabled
-                    ? translate("pairing:liveScanHelpInfo")
-                    : hasNearbyNotInPairingMode
-                    ? translate("pairing:nearbyNotInPairingModeHint")
-                    : translate("pairing:noGlassesFoundHint")
+                      ? translate("pairing:liveScanHelpInfo")
+                      : hasNearbyNotInPairingMode
+                        ? translate("pairing:nearbyNotInPairingModeHint")
+                        : translate("pairing:noGlassesFoundHint")
                 }
               />
               {shouldShowDeviceList ? (
@@ -433,20 +443,15 @@ export default function SelectGlassesBluetoothScreen() {
                         deviceModel === DeviceTypes.AR99
                           ? formatAr99Subtitle(res)
                           : isMentraLivePairingScan
-                          ? formatLiveSubtitle(res)
-                          : filterDeviceName(res.name)
+                            ? formatLiveSubtitle(res)
+                            : filterDeviceName(res.name)
                       return (
-                        <View
+                        <DiscoveredGlassesRow
                           key={res.id}
-                          className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
-                          <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
-                            <View className="flex-1 px-2.5 flex-col">
-                              <Text text={deviceTitle} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
-                              <Text text={deviceSubtitle} className="text-xs text-muted-foreground" numberOfLines={2} />
-                            </View>
-                          </TouchableOpacity>
-                          <Icon name="chevron-right" size={24} color={theme.colors.text} />
-                        </View>
+                          title={deviceTitle}
+                          subtitle={deviceSubtitle}
+                          onPress={() => triggerGlassesPairingGuide(res)}
+                        />
                       )
                     })}
                   </Group>
@@ -474,20 +479,15 @@ export default function SelectGlassesBluetoothScreen() {
                     deviceModel === DeviceTypes.AR99
                       ? formatAr99Subtitle(res)
                       : isMentraLivePairingScan
-                      ? formatLiveSubtitle(res)
-                      : filterDeviceName(res.name)
+                        ? formatLiveSubtitle(res)
+                        : filterDeviceName(res.name)
                   return (
-                    <View
+                    <DiscoveredGlassesRow
                       key={res.id}
-                      className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
-                      <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
-                        <View className="flex-1 px-2.5 flex-col">
-                          <Text text={deviceTitle} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
-                          <Text text={deviceSubtitle} className="text-xs text-muted-foreground" numberOfLines={2} />
-                        </View>
-                      </TouchableOpacity>
-                      <Icon name="chevron-right" size={24} color={theme.colors.text} />
-                    </View>
+                      title={deviceTitle}
+                      subtitle={deviceSubtitle}
+                      onPress={() => triggerGlassesPairingGuide(res)}
+                    />
                   )
                 })}
               </Group>

@@ -1,0 +1,61 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - no-glasses
+---
+# Start signed in at unpaired Home with no available NIMO. This covers the
+# platform-specific preparation and return from Settings. Real-device automatic
+# connection and Android pairing are checked separately (see README).
+- launchApp
+- tapOn: "Pair glasses"
+- tapOn:
+    text: "Continue"
+    optional: true
+- tapOn:
+    id: "pairing-model-nimo"
+- assertVisible: "Open your glasses"
+- assertVisible: "Unfold both arms. Your NIMO will turn on automatically."
+- assertNotVisible: "Step 1/2"
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: "They're open"
+      - tapOn:
+          text: "Allow"
+          optional: true
+      - tapOn:
+          text: "OK"
+          optional: true
+      - assertVisible: "Connect your NIMO"
+      - assertVisible: "Open Settings"
+      - assertNotVisible: "Already connected?"
+      - assertNotVisible: "Step 2/2"
+      - assertNotVisible: "Example Bluetooth settings"
+      - takeScreenshot: "nimo-bluetooth-preparation"
+      - tapOn: "Open Settings"
+      - launchApp:
+          stopApp: false
+      - assertVisible: "Connect your NIMO"
+      - tapOn:
+          id: "navigation.back"
+      - assertVisible: "Open your glasses"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn: "Find my glasses"
+      - tapOn:
+          text: "Allow"
+          optional: true
+      - tapOn:
+          text: "While using the app"
+          optional: true
+      - tapOn:
+          text: "Allow"
+          optional: true
+      - assertNotVisible: "Connect your NIMO"
+      - assertVisible: "Scanning for NIMO"
+      - takeScreenshot: "nimo-android-scan"
+      - tapOn:
+          id: "navigation.back"
+      - assertVisible: "Open your glasses"

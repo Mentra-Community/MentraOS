@@ -83,7 +83,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <Screen preset="fixed">
+    <Screen preset="auto">
       <View className="flex-1">
         <View className="flex-1 justify-center p-4">
           <View className="items-center justify-center mb-4">
@@ -129,7 +129,7 @@ export default function LoginScreen() {
           </View>
 
           {/* Already have an account? Log in */}
-          <View className="flex-row justify-center items-center gap-1 mt-2">
+          <View className="flex-row flex-wrap justify-center items-center gap-1 mt-2">
             <Text className="text-sm text-muted-foreground">{translate("login:alreadyHaveAccount")}</Text>
             <TouchableOpacity
               onPress={async () => {

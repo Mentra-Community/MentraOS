@@ -1,8 +1,9 @@
 import {DeviceTypes, engine} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
-import {Image, Platform, ScrollView, View} from "react-native"
+import {Image, ScrollView, View} from "react-native"
 import type {ImageStyle, ViewStyle} from "react-native"
 
+import {NimoPreparation} from "@/components/pairing/NimoPreparation"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -270,40 +271,6 @@ export default function PairingPrepScreen() {
     )
   }
 
-  const NimoPairingGuide = () => {
-    return (
-      <View className="flex-1 mt-6">
-        <ScrollView showsVerticalScrollIndicator={false}>
-          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
-          {Platform.OS === "ios" && (
-            <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:nimoIosSettingsPairing" />
-          )}
-          <Text
-            className="text-lg text-secondary-foreground mb-2"
-            text="1. Make sure your NIMO glasses are fully charged and turned on."
-          />
-          <Text
-            className="text-lg text-secondary-foreground mb-2"
-            text="2. Disconnect your glasses from the NIMO app, or uninstall the NIMO app."
-          />
-          <Text
-            className="text-lg text-secondary-foreground mb-2"
-            text="3. If your glasses were previously connected to the NIMO app, force stop that app, then try connecting again."
-          />
-          <Text
-            className="text-lg text-secondary-foreground mb-2"
-            text="4. If the glasses aren't responding, close both arms for about 8 seconds, then try again."
-          />
-          <Text
-            className="text-lg text-secondary-foreground mb-2"
-            text="5. If nothing else works, reset the glasses by holding the left and right touch areas at the same time for a few seconds, then restart them."
-          />
-          <View className="h-6" />
-        </ScrollView>
-      </View>
-    )
-  }
-
   const Ar99PairingGuide = () => {
     return (
       <View className="flex-1 mt-6">
@@ -338,7 +305,7 @@ export default function PairingPrepScreen() {
       case DeviceTypes.NEX:
         return <MentraDisplayGlassesPairingGuide />
       case DeviceTypes.NIMO:
-        return <NimoPairingGuide />
+        return <NimoPreparation onContinue={advanceToPairing} />
       case DeviceTypes.AR99:
         return <Ar99PairingGuide />
     }
@@ -353,6 +320,7 @@ export default function PairingPrepScreen() {
       case DeviceTypes.G2:
         return <G2Buttons />
       case DeviceTypes.LIVE:
+      case DeviceTypes.NIMO:
         return null
       default:
         return <Button tx="common:continue" onPress={advanceToPairing} />
