@@ -103,7 +103,7 @@ export function projectFixFlow(stored: StoredTestRun, occurrence: TestFailureOcc
   const currentlyLeased = (status === "mini_running" && lease?.state === "active"
     && !!lease.expiresAt && Date.parse(lease.expiresAt) > now)
     || (triaging && !!triage?.leaseExpiresAt && Date.parse(triage.leaseExpiresAt) > now);
-  const work = activityState === "available" ? currentWork(activity, currentlyLeased && !triaging, now)
+  const work = activityState === "available" && !cancelled && !completedStatuses.has(status!) ? currentWork(activity, currentlyLeased && !triaging, now)
     ?? (triaging && currentlyLeased ? triage?.state === "running" && triage.launched ? "investigating" : "preparing" : null) : null;
   let state: FixFlow["state"] = occurrence.delivery.state === "pending" ? "waiting" : "unknown";
   let stage = occurrence.delivery.state === "pending" ? "Awaiting fixer intake" : "Fixer status unavailable";
