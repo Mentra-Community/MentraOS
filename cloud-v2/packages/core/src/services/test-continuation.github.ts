@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isOriginalCandidate, type ContinuationCandidate, type ContinuationGrant } from "../types/test-continuation.types";
+import { isOriginalCandidate, type ContinuationCandidate, type ContinuationExecutionDestination, type ContinuationGrant } from "../types/test-continuation.types";
 import type { TestBuildQuery } from "../types/test-dispatch.types";
 import { TestDispatchError, UnsupportedReplayError, readTestMetadata } from "./test-builds.service";
 import { TestRunGithubApp } from "./test-run-github-app";
@@ -26,6 +26,10 @@ const prSchema = z.object({ number: z.number().int().positive(), state: z.string
   head: z.object({ sha, ref: z.string(), repo: z.object({ full_name: z.string() }).nullable() }),
   base: z.object({ ref: z.string(), repo: z.object({ full_name: z.string() }) }),
   labels: z.array(z.object({ name: z.string() })) });
+// GitHub lists at most 100 pull requests for a commit per page; a full page may hide another, so it is refused as incomplete.
+const associatedSchema = z.array(z.object({ number: z.number().int().positive(),
+  head: z.object({ ref: z.string(), repo: z.object({ full_name: z.string() }).nullable() }) })).max(99);
+const comparisonSchema = z.object({ status: z.enum(["ahead", "identical", "behind", "diverged"]) });
 const ensure = (value: unknown, message: string): void => { if (!value) throw new TestDispatchError(409, message); };
 
 /** Fixed repositories and read-only App scopes. Model text cannot choose a host or ref. */
@@ -52,6 +56,9 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     if (source!.channel === "local" && (isOriginalCandidate(candidate) || harness))
       throw new UnsupportedReplayError("Unsupported replay: a local run has no immutable published artifact or dispatch path "
         + "for its exact tested build. Investigate from its evidence and verify app fixes on their own PR builds.");
+    const destination = grant.executionDestination;
+    ensure(!destination || (!isOriginalCandidate(candidate) && !harness && !grant.caseBinding),
+      "An execution destination applies only to this case's own app candidate");
     if (isOriginalCandidate(candidate)) return this.original(packet, grant, candidate, routineId);
     const tested = harness ? packet.build.hashes.harnessSha ?? packet.build.hashes.harnessRevision : source!.headSha;
     ensure(typeof tested === "string" && /^[a-f0-9]{40}$/.test(tested), "The tested component revision is missing");
@@ -60,20 +67,23 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     // through the lease callback before this lookup.
     const owner = grant.caseBinding?.candidateOwnerRunId;
     ensure(!owner || (harness && owner !== grant.agentRunId), "A case candidate binding applies only to an adopted shared harness candidate");
+    // A local feature-branch source's destination is proven separately from the source, which stays unchanged.
+    if (destination) await this.originRoute(source!, tested, destination);
     const pr = prSchema.parse(await this.api(candidate.repository, `pulls/${candidate.pullRequest}`));
-    const base = harness ? "main" : source!.pullRequest?.baseBranch ?? source!.branch;
-    // An originating PR keeps its recorded branch. A newly allocated case branch is
-    // exactly `codex/routine-<anchor>`, or the legacy `fix/routine-<anchor>` of frozen cases.
+    const base = harness ? "main" : destination?.baseBranch ?? source!.pullRequest?.baseBranch ?? source!.branch;
+    // An originating PR (recorded, or the proven open origin of a local build) keeps its own branch. A newly
+    // allocated case branch is exactly `codex/routine-<anchor>`, or the legacy `fix/routine-<anchor>` of frozen cases.
     const anchor = owner ?? grant.agentRunId;
-    const branches = !harness && source!.pullRequest ? [source!.branch] : [`codex/routine-${anchor}`, `fix/routine-${anchor}`];
+    const branches = !harness && (source!.pullRequest || destination?.sourceOrigin.state === "open") ? [source!.branch]
+      : [`codex/routine-${anchor}`, `fix/routine-${anchor}`];
     ensure(pr.number === candidate.pullRequest && pr.head.repo?.full_name === candidate.repository
       && pr.base.repo.full_name === candidate.repository && pr.head.sha === candidate.headSha
       && branches.includes(pr.head.ref) && pr.base.ref === base, "Candidate repository, branch, base or current head differs");
     ensure(harness || !source!.pullRequest || source!.pullRequest.number === pr.number, "Use the originating PR");
+    ensure(destination?.sourceOrigin.state !== "open" || destination.sourceOrigin.pullRequest === pr.number, "Use the originating PR");
     ensure(["dev", "staging"].includes(base) || harness, "Candidate destination is not admitted");
     ensure(pr.state === "open" || pr.merged, "Candidate PR closed without merging");
-    const comparison = z.object({ status: z.enum(["ahead", "identical", "behind", "diverged"]) }).parse(
-      await this.api(candidate.repository, `compare/${tested}...${candidate.headSha}`));
+    const comparison = comparisonSchema.parse(await this.api(candidate.repository, `compare/${tested}...${candidate.headSha}`));
     ensure(["ahead", "identical"].includes(comparison.status), "Candidate does not descend from the tested source");
     if (harness) {
       ensure(pr.merged && pr.merge_commit_sha && pr.merged_at, "Harness changes require review and merge before device execution");
@@ -93,6 +103,39 @@ export class GithubContinuationSource implements ContinuationSourceGateway {
     // its merge to the PR's current base tip and its app to that base's backend.
     return { query: { channel: "pr", pr: pr.number }, expectedHeadSha: candidate.headSha,
       automaticExpected: pr.labels.some(label => label.name === `routine:${routineId}`) };
+  }
+  /**
+   * Proves the controller's saved route for a local build of a feature branch, independently. The route belongs to the
+   * branch and was proven from the tested commit it was saved for (`sourceOrigin.testedHeadSha`, the anchor's), so the
+   * origin is re-proven from that immutable commit, never from a later occurrence's head: its complete association names
+   * exactly one pull request from this repository's recorded branch, the signed one, still into the saved base (a
+   * retarget refuses). A merged origin must have that commit as its final head, the saved merge commit, and both
+   * contained in the destination. An open origin may since have merged (its candidate then follows the merged-candidate
+   * path) but never closed unmerged. The consuming occurrence keeps its own exact source on that same branch; a later
+   * one must continue the origin (its head descends from the origin's), and the candidate must descend from it as usual.
+   */
+  private async originRoute(source: NonNullable<FailurePacket["source"]>, tested: string, destination: ContinuationExecutionDestination) {
+    ensure(source.channel === "local" && !source.pullRequest && source.repository === destination.repository && !["dev", "staging"].includes(source.branch),
+      "An execution destination applies only to a local feature-branch source");
+    const origin = destination.sourceOrigin, proven = origin.testedHeadSha;
+    const listed = associatedSchema.safeParse(await this.api(PUBLIC, `commits/${proven}/pulls?per_page=100`));
+    ensure(listed.success, "The originating pull request list is incomplete or invalid");
+    const associated = listed.data!.filter(item => item.head.repo?.full_name === PUBLIC && item.head.ref === source.branch);
+    ensure(associated.length === 1 && associated[0]!.number === origin.pullRequest, "The originating pull request is not uniquely proven");
+    const pr = prSchema.parse(await this.api(PUBLIC, `pulls/${origin.pullRequest}`));
+    ensure(pr.number === origin.pullRequest && pr.head.repo?.full_name === PUBLIC && pr.head.ref === source.branch
+      && pr.base.repo.full_name === PUBLIC, "The originating pull request differs from the recorded source");
+    ensure(pr.base.ref === destination.baseBranch, "The originating pull request was retargeted; its saved destination no longer holds");
+    if (origin.state === "open") ensure(pr.state === "open" || pr.merged, "The originating pull request closed without merging");
+    else {
+      ensure(pr.merged && pr.head.sha === proven && pr.merge_commit_sha === origin.mergeCommitSha, "The merged originating pull request differs from the saved route");
+      for (const contained of [proven, origin.mergeCommitSha])
+        ensure(["ahead", "identical"].includes(comparisonSchema.parse(await this.api(PUBLIC, `compare/${contained}...${destination.baseBranch}`)).status),
+          "The destination does not contain the tested source and its merge");
+    }
+    if (tested !== proven)
+      ensure(["ahead", "identical"].includes(comparisonSchema.parse(await this.api(PUBLIC, `compare/${proven}...${tested}`)).status),
+        "The consuming occurrence does not continue the saved route's origin");
   }
   /** The occurrence's own recorded source, channel, routine and artifact. Nothing is looked
    * up by branch or PR, so a newer head or another environment's build cannot substitute. */
