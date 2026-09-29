@@ -7,6 +7,7 @@ import {useLocalSearchParams} from "expo-router"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
+import {useNimoCompanionDiscovery} from "@/hooks/pairing/useNimoCompanionDiscovery"
 import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
 import {useCoreStore, useSettingsStore} from "@mentra/engine-host-internal"
 // The glasses store is private to the local engine workspace and has no public test export.
@@ -22,6 +23,8 @@ jest.mock("@mentra/bluetooth-sdk", () => {
     ...bluetoothSdkMock,
   }
 })
+
+jest.mock("@/hooks/pairing/useNimoCompanionDiscovery", () => ({useNimoCompanionDiscovery: jest.fn()}))
 
 jest.mock("expo-router", () => ({
   useLocalSearchParams: jest.fn(),
@@ -187,6 +190,24 @@ describe("pairing scan screen", () => {
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
     jest.useRealTimers()
     setPlatformOS(originalPlatformOS)
+  })
+
+  it("keeps the remaining NIMO selectable after the chooser has been shown", () => {
+    const device = {id: "nimo-a", name: "Nimo-4027", model: "NIMO", address: "nimo-a"}
+    const select = jest.fn()
+    ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "NIMO"})
+    ;(useNimoCompanionDiscovery as jest.Mock).mockReturnValue({
+      devices: [device],
+      requiresSelection: true,
+      needsRetry: false,
+      retry: jest.fn(),
+      select,
+    })
+    const screen = render(<SelectGlassesBluetoothScreen />)
+    expect(screen.getByRole("button", {name: "NIMO, Nimo-4027"})).toBeTruthy()
+    expect(screen.queryByText("onboarding:openSettings")).toBeNull()
+    fireEvent.press(screen.getByTestId("pairing-device-chevron"))
+    expect(select).toHaveBeenCalledWith(device)
   })
 
   it.each([false, true])("pairs when tapping the chevron, including after timeout (%s)", async (timedOut) => {

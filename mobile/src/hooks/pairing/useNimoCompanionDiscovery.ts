@@ -12,6 +12,9 @@ const SCAN_MS = 60_000
 export function useNimoCompanionDiscovery(onSelect: (device: Device) => void) {
   const [devices, setDevices] = useState<Device[]>([])
   const [needsRetry, setNeedsRetry] = useState(false)
+  const [requiresSelection, setRequiresSelection] = useState(false)
+  // Once multiple glasses are seen, keep the user in control across rescans.
+  const requiresSelectionRef = useRef(false)
   const selectRef = useRef<(device: Device) => void>(() => {})
   const retryRef = useRef<() => void>(() => {})
   const onSelectRef = useRef(onSelect)
@@ -69,7 +72,11 @@ export function useNimoCompanionDiscovery(onSelect: (device: Device) => void) {
               results = found.filter((device) => device.model === DeviceTypes.NIMO && !/_ble$/i.test(device.name))
               setDevices(results)
               clearTimeout(timer)
-              if (results.length === 1) {
+              if (results.length > 1) {
+                requiresSelectionRef.current = true
+                setRequiresSelection(true)
+              }
+              if (results.length === 1 && !requiresSelectionRef.current) {
                 timer = setTimeout(() => void select(results[0]), SETTLE_MS)
               }
             },
@@ -114,6 +121,7 @@ export function useNimoCompanionDiscovery(onSelect: (device: Device) => void) {
   return {
     devices,
     needsRetry,
+    requiresSelection,
     retry: () => retryRef.current(),
     select: (device: Device) => selectRef.current(device),
   }

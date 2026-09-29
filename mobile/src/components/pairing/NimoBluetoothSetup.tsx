@@ -14,11 +14,12 @@ import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 
 export function NimoBluetoothSetup() {
   const {goBack, replace} = useNavigationStore.getState()
-  const {devices, needsRetry, retry, select} = useNimoCompanionDiscovery((device) => {
+  const {devices, needsRetry, requiresSelection, retry, select} = useNimoCompanionDiscovery((device) => {
     engine.pairing.markPendingSelection(DeviceTypes.NIMO)
     // The loading screen owns the actual connection and readiness handshake.
     replace("/pairing/loading", {device: JSON.stringify(device), deviceModel: device.model, deviceName: device.name})
   })
+  const showDevicePicker = requiresSelection && devices.length > 0
   const isMac = CrustModule.isIOSAppOnMac === true
   const openSettings = async () => {
     if (!(await SettingsNavigationUtils.openBluetoothSettings())) {
@@ -36,10 +37,10 @@ export function NimoBluetoothSetup() {
       />
       <ScrollView contentContainerClassName="grow pt-6 pb-6" showsVerticalScrollIndicator={false}>
         <Text
-          tx={devices.length > 1 ? "pairing:nimoChooseTitle" : "pairing:nimoConnectTitle"}
+          tx={showDevicePicker ? "pairing:nimoChooseTitle" : "pairing:nimoConnectTitle"}
           className="text-3xl font-semibold text-foreground"
         />
-        {devices.length > 1 ? (
+        {showDevicePicker ? (
           <View className="gap-2 mt-8">
             {devices.map((device) => (
               <DiscoveredGlassesRow
@@ -74,7 +75,7 @@ export function NimoBluetoothSetup() {
         )}
       </ScrollView>
       {needsRetry && <Button tx="pairing:scanAgain" preset="secondary" onPress={retry} className="mb-3" />}
-      {devices.length < 2 && <Button tx="onboarding:openSettings" onPress={openSettings} />}
+      {!showDevicePicker && <Button tx="onboarding:openSettings" onPress={openSettings} />}
       <NimoHelp />
     </Screen>
   )

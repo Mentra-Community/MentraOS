@@ -2,7 +2,7 @@ import BluetoothSdk, {type Device} from "@mentra/bluetooth-sdk"
 import {act, renderHook} from "@testing-library/react-native"
 import {AppState, type AppStateStatus} from "react-native"
 
-import {useNimoCompanionDiscovery} from "../useNimoCompanionDiscovery"
+import {useNimoCompanionDiscovery} from "@/hooks/pairing/useNimoCompanionDiscovery"
 
 jest.mock("expo-router", () => ({
   useFocusEffect: (effect: () => () => void) => require("react").useEffect(effect, [effect]),
@@ -94,6 +94,21 @@ describe("NIMO Companion discovery", () => {
     await settle()
     expect(selected).not.toHaveBeenCalled()
     expect(hook.result.current.devices).toEqual([nimo, second])
+    await act(async () => hook.result.current.select(second))
+    expect(selected).toHaveBeenCalledWith(second)
+  })
+
+  it("keeps explicit selection after returning from Settings with only one NIMO", async () => {
+    const hook = await setup()
+    act(() => scans[0].emit([nimo, second]))
+    expect(hook.result.current.requiresSelection).toBe(true)
+    await act(async () => changeAppState("background"))
+    await act(async () => changeAppState("active"))
+    act(() => scans[1].emit([second]))
+    await settle()
+    expect(hook.result.current.requiresSelection).toBe(true)
+    expect(hook.result.current.devices).toEqual([second])
+    expect(selected).not.toHaveBeenCalled()
     await act(async () => hook.result.current.select(second))
     expect(selected).toHaveBeenCalledWith(second)
   })
