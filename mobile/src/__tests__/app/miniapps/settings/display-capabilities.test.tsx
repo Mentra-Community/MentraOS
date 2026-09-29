@@ -55,18 +55,21 @@ describe("display settings use model capabilities", () => {
     expect(screen.getByText(`Display Height: ${height}`)).toBeTruthy()
   })
 
-  test("an unsupported model cannot expose sliders through a direct route", async () => {
-    await select("Mentra Live")
+  test.each(["Mentra Live", "AR99"])("%s cannot expose unsupported sliders through a direct route", async (model) => {
+    await select(model)
     const screen = render(<ScreenSettingsScreen />)
     expect(screen.queryByText(/Display Depth:/)).toBeNull()
     expect(screen.queryByText(/Display Height:/)).toBeNull()
   })
 
-  test("having an IMU does not expose an unsupported head-angle control", async () => {
-    await select("Mentra Live")
-    const screen = render(<DashboardSettingsScreen />)
-    expect(screen.queryByText("settings:adjustHeadAngleLabel")).toBeNull()
-  })
+  test.each(["Mentra Live", "AR99"])(
+    "%s having an IMU does not expose an unsupported head-angle control",
+    async (model) => {
+      await select(model)
+      const screen = render(<DashboardSettingsScreen />)
+      expect(screen.queryByText("settings:adjustHeadAngleLabel")).toBeNull()
+    },
+  )
 
   test("NIMO uses the firmware's 90-degree head-angle range", async () => {
     await select("NIMO")

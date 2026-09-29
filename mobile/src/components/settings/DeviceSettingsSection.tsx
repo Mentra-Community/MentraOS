@@ -155,7 +155,7 @@ export function DeviceSettingsSection() {
       {!glassesConnected && <ConnectDeviceButton />}
       {!glassesConnected && <NotConnectedInfo />}
 
-      {/* Display position — binocular glasses only */}
+      {/* Display position — models with physical display adjustment */}
       {defaultWearable && features?.display?.position && (
         <RouteButton
           icon={<Icon name="locate" size={24} color={theme.colors.secondary_foreground} />}

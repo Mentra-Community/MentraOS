@@ -99,7 +99,7 @@ export const glasses = {
   /** Connect to a specific (discovered) device. */
   connect: async (device: Device, options?: ConnectOptions): Promise<void> => {
     try {
-      await pushAllBluetoothSettings()
+      await pushAllBluetoothSettings(device.model)
       await BluetoothSdk.connect(device, options)
     } catch (error) {
       recordSupportProfileConnectionFailure(error, "connect")

@@ -54,5 +54,7 @@ describe("device settings capabilities", () => {
     expect(getModelCapabilities(DeviceTypes.LIVE).hasIMU).toBe(true)
     expect(getModelCapabilities(DeviceTypes.LIVE).imu?.headUpAngle).toBeUndefined()
     expect(getModelCapabilities(DeviceTypes.SIMULATED).display?.position).toBeUndefined()
+    expect(getModelCapabilities(DeviceTypes.AR99).display?.position).toBeUndefined()
+    expect(getModelCapabilities(DeviceTypes.AR99).imu?.headUpAngle).toBeUndefined()
   })
 })

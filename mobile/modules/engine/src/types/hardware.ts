@@ -198,7 +198,9 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
     display: {
       ...evenRealitiesG1.display,
       canDisplayBitmap: false,
+      position: undefined,
     },
+    imu: {...evenRealitiesG1.imu, headUpAngle: undefined},
     hasMicrophone: true,
     hasOta: true,
     microphone: {
