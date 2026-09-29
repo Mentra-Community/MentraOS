@@ -66,11 +66,16 @@ configuration. See [PR result history](../../.github/DEVICE-ROUTINES.md#results-
 
 One exception has no receipt by construction: a request cancelled while queued.
 The private callback forwards a cancelled `device-routine.yml` attempt only when
-its single job has no runner and no steps. The public resolver then re-proves it
-from GitHub metadata:
+its device job has explicitly empty runner fields and no steps. It accepts the
+legacy single-job layout or exactly one successful Blacksmith `runner-preflight`
+alongside `prepared-mac-routine`. The public resolver then re-proves it from
+GitHub metadata:
 
 - the exact private `main` attempt completed as cancelled with no terminal
-  artifact; its only job has no runner or step;
+  artifact; its device job completed as cancelled with explicitly empty runner
+  fields and zero steps. In the two-job layout, the preflight and its availability
+  check succeeded, both jobs match the run/attempt/revision, and the preflight has
+  only the Blacksmith label. Any other layout or possible device execution is refused;
 - private `main` makes GitHub derive the run name from the `request_run_id` and
   `request_attempt` inputs and the job labels from `routine_id`. These name the
   candidate request, which must be the trusted successful dev request with its
