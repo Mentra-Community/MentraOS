@@ -2,12 +2,15 @@ import { z } from "zod";
 
 const text = z.string().max(4000);
 const stamp = z.string().datetime().nullable().optional();
-const triage = z.object({ state: text, reason: text.optional(), nextAction: text.optional() });
+const triage = z.object({ state: text, reason: text.optional(), nextAction: text.optional(), leaseExpiresAt: stamp, launched: z.boolean().optional() });
 const workerLease = z.object({ state: z.enum(["active", "reconciliation-required", "inactive"]), expiresAt: z.string().datetime().optional() });
 const progressPhase = z.enum(["collecting_report", "inspecting_code", "implementing_fix", "running_tests", "reviewing_pr", "addressing_feedback"]);
+const currentActivity = z.object({ phase: z.enum(["preparing", "agent-working", "investigating", "fixing", "testing", "reviewing", "addressing-feedback", "finalizing"]),
+  attempt: z.number().int().nonnegative(), reportedAt: z.string().datetime() });
 const pr = z.object({ repository: z.string().regex(/^Mentra-Community\/[A-Za-z0-9_.-]+$/),
   pullRequestNumber: z.number().int().positive(), headSha: z.string().regex(/^[a-f0-9]{40}$/),
-  pullRequestLifecycle: z.object({ state: z.enum(["open", "closed", "merged"]), mergedAt: stamp }).optional() });
+  pullRequestLifecycle: z.object({ state: z.enum(["open", "closed", "merged"]), mergedAt: stamp,
+    headSha: z.string().regex(/^[a-f0-9]{40}$/).optional() }).optional() });
 const checkpoint = z.object({ action: text, intentId: text.optional(), repository: pr.shape.repository.optional(),
   pullRequest: pr.shape.pullRequestNumber.optional(), headSha: pr.shape.headSha.optional(),
   reviewId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/).optional(), verdict: text.optional(), summary: text.optional(), components: z.array(text).optional(),
@@ -23,6 +26,10 @@ export const fixActivitySchema = z.object({
   executionOwnerUpdatedAt: z.string().datetime().optional(), executionOwnerHeartbeatAt: stamp,
   executionOwnerTriage: triage.optional(), executionOwnerWorkerLease: workerLease.optional(),
   executionOwnerProgressPhase: progressPhase.optional(), workerLease: workerLease.optional(), progressPhase: progressPhase.optional(),
+  attempt: z.number().int().nonnegative().optional(), executionOwnerAttempt: z.number().int().nonnegative().optional(),
+  currentActivity: currentActivity.optional(), executionOwnerCurrentActivity: currentActivity.optional(),
+  verifiedReruns: z.array(z.object({ occurrenceId: z.string().regex(/^tfo_[a-f0-9]{64}$/),
+    routineId: text, headSha: pr.shape.headSha, resultIds: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/)).min(1).max(100) })).max(100).optional(),
   routineFailure: z.object({ intake: z.object({ occurrenceId: z.string().regex(/^tfo_[a-f0-9]{64}$/),
     testRunId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/) }) }),
   routineCase: z.object({ caseId: z.string().regex(/^mfc_[a-f0-9]{64}$/), anchorRunId: z.string().uuid() }).optional(),

@@ -13,9 +13,13 @@ export const FLOW_STAGES = [
 export const FLOW_CURRENT_STATES = [
   { id: "queued", label: "Queued", branch: "main", description: "The failure is waiting for a worker. It starts when a worker becomes available and takes the job." },
   { id: "worker-active", label: "Worker active", branch: "main", description: "The worker is processing this failure. Its exact task is not currently reported." },
-  { id: "waiting-review", label: "Waiting for review", branch: "main", description: "The agent is waiting for a review result. It continues when that result is recorded." },
-  { id: "waiting-build", label: "Waiting for build", branch: "main", description: "The agent is waiting for build output. Open the linked build or PR for progress." },
-  { id: "waiting-routine", label: "Waiting for rerun", branch: "main", description: "The agent is waiting for a routine rerun to verify this failure. It continues when the result is recorded." },
+  { id: "investigating", label: "Investigating", branch: "main", description: "An active agent reports that it is diagnosing the failure and identifying the responsible code." },
+  { id: "fixing", label: "Implementing fix", branch: "main", description: "An active agent reports that it is making the fix." },
+  { id: "testing", label: "Testing", branch: "main", description: "An active agent reports that it is validating the fix. A passing routine is confirmed separately by its recorded result." },
+  { id: "reviewing", label: "Reviewing", branch: "main", description: "An active agent reports that it is running or checking the PR review." },
+  { id: "waiting-review", label: "Waiting for review", branch: "waiting", description: "The agent is waiting for a review result. It continues when that result is recorded." },
+  { id: "waiting-build", label: "Waiting for build", branch: "waiting", description: "The agent is waiting for build output. Open the linked build or PR for progress." },
+  { id: "waiting-routine", label: "Waiting for rerun", branch: "waiting", description: "The agent is waiting for a routine rerun to verify this failure. It continues when the result is recorded." },
   { id: "merged", label: "Merged and verified", branch: "main", description: "The fix PR has merged and a rerun has verified this failure. A merged PR alone remains waiting for a rerun." },
   { id: "waiting-merge", label: "Waiting for merge decision", branch: "waiting", description: "The agent has handed the fix over for a merge decision. It continues after that decision is recorded." },
   { id: "waiting-input", label: "Waiting for input", branch: "waiting", description: "The agent needs an answer before it can continue. The question and response action should appear in the flow details." },
@@ -40,7 +44,7 @@ const rank = Object.fromEntries(FLOW_STATUSES.map((status, index) => [status.id,
 // An older Core's broad `active` enum is never evidence of a running worker.
 export const flowStatus = (flow: FixFlow): FlowStatus => {
   const current = flowCurrentState(flow);
-  return current === "worker-active" ? "running" : ["stopped", "worker-repair", "waiting-input"].includes(current) ? "attention"
+  return ["worker-active", "investigating", "fixing", "testing", "reviewing"].includes(current) ? "running" : ["stopped", "worker-repair", "waiting-input"].includes(current) ? "attention"
     : ["merged", "closed"].includes(current) ? "completed" : current === "unknown" ? "unknown" : "waiting";
 };
 export const flowStage = (flow: FixFlow): FlowStage => flow.pipelineStage ?? "unknown";

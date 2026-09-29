@@ -74,7 +74,7 @@ export function FixFlowOverview({ data, filter, onFilter, onSelect }: {
         <p className="mt-1 text-xs text-[#68746d]">Each flow is counted once. Select a state to see what it means and which flows are there.</p>
       </div></div>
       <ol className="fix-flow-track" aria-label="Current work and result states">{states("main")}</ol>
-      <div className="fix-flow-branch"><h3>Waiting for a decision or input</h3>
+      <div className="fix-flow-branch"><h3>Waiting for a result, decision or input</h3>
         <ol className="fix-flow-track fix-flow-track-branch" aria-label="Waiting branches">{states("waiting")}</ol></div>
       <div className="fix-flow-branch fix-flow-branch-stopped"><h3>Stopped or unresolved</h3>
         <ol className="fix-flow-track fix-flow-track-branch" aria-label="Stopped branches">{states("stopped")}</ol></div>

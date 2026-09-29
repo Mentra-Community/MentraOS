@@ -108,7 +108,7 @@ describe("Fix flows navigation and recorded states", () => {
       expect(html).toContain(`aria-label="${label}: 1 flow groups"`);
     expect(html).toContain("Last recorded progress: Diagnosis");
     expect(html).not.toContain('aria-label="Diagnosis:');
-    expect(html).toContain("Stopped or unresolved"); expect(html).toContain("Waiting for a decision or input");
+    expect(html).toContain("Stopped or unresolved"); expect(html).toContain("Waiting for a result, decision or input");
   });
   test("every selected current state explains its meaning above the list even when empty", () => {
     const data = { flows: [flow], activity: "available" as const, refreshedAt: flow.updatedAt, limited: false };
@@ -124,7 +124,7 @@ describe("Fix flows navigation and recorded states", () => {
       const row: FixFlow = { ...flow, currentState: state.id, stage: "Investigating", pipelineStage: "investigation" };
       const html = renderToStaticMarkup(<FixFlowDetail flow={row} />);
       expect(html).toContain(state.label); expect(html).toContain(state.description);
-      expect(html).not.toContain(">Investigating<");
+      if (state.id !== "investigating") expect(html).not.toContain(">Investigating<");
       expect(flowCurrentState(row)).toBe(state.id);
     }
     for (const state of ["active", "running", "waiting"] as const) expect(flowCurrentState({ ...flow, state })).toBe("unknown");
