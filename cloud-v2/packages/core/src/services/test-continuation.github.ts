@@ -39,7 +39,8 @@ const verificationReviewsSchema = z.array(z.object({ id: z.number().int().positi
   submitted_at: z.string().datetime({ offset: true }).nullable() })).max(99);
 function approvedVerificationHead(input: unknown, head: string): boolean {
   const latest = new Map<string, string>();
-  for (const row of verificationReviewsSchema.parse(input).sort((a, b) => a.id - b.id)) {
+  for (const row of verificationReviewsSchema.parse(input).sort((a, b) =>
+    Date.parse(a.submitted_at ?? "1970-01-01T00:00:00Z") - Date.parse(b.submitted_at ?? "1970-01-01T00:00:00Z") || a.id - b.id)) {
     if (row.commit_id !== head || !row.submitted_at) continue;
     const trusted = ["PhilippeFerreiraDeSousa", "mentra-release-coordinator[bot]"].includes(row.user.login);
     let verdict = row.state;

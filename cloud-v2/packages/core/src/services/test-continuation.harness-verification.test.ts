@@ -73,6 +73,11 @@ test("formal approval supersedes that reviewer's earlier change request; ordinar
   f.reviews.push({ ...f.reviews[0]!, id: 3, state: "COMMENTED", body: "Additional context" });
   expect((await f.gateway.target(f.packet, f.grant, "notes-phone")).expectedHarnessSha).toBe(selectedMerge);
 });
+test("the latest submitted verdict takes precedence without inferring submission order from review IDs", async () => {
+  const f = fixture(); f.reviews[0]!.id = 2;
+  f.reviews.push({ ...f.reviews[0]!, id: 1, submitted_at: "2026-09-29T16:30:00Z", state: "CHANGES_REQUESTED" });
+  await expect(f.gateway.target(f.packet, f.grant, "notes-phone")).rejects.toThrow("current approved review");
+});
 test("original and app candidates cannot select another harness", async () => {
   for (const candidate of [{ repository, headSha: head, target: "original" },
     { repository: "Mentra-Community/MentraOS", headSha: head, pullRequest: 217 }]) {
