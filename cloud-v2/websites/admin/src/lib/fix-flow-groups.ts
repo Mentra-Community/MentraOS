@@ -26,9 +26,8 @@ export const FLOW_CURRENT_STATES = [
 ] as const satisfies ReadonlyArray<{ id: FixFlowCurrentState; label: string; branch: string; description: string }>;
 export const flowCurrentState = (flow: FixFlow): FixFlowCurrentState => {
   if (flow.currentState && FLOW_CURRENT_STATES.some(item => item.id === flow.currentState)) return flow.currentState;
-  // Older Core responses can establish a broad stop or wait, never current execution or a verified fix.
+  // Older Core responses can establish a broad stop, never a specific wait reason or current execution.
   if (flow.state === "attention") return "stopped";
-  if (flow.state === "waiting") return "queued";
   if (flow.state === "completed" && flow.pipelineStage === "closed") return "closed";
   return "unknown";
 };

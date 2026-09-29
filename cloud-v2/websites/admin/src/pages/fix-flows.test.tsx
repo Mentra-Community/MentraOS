@@ -81,7 +81,7 @@ describe("Fix flows navigation and recorded states", () => {
   });
   test("a completed occurrence cannot hide pending verification or attention in its case group", () => {
     const completed: FixFlow = { ...flow, state: "completed", currentState: "merged", pipelineStage: "merged", updatedAt: "2026-09-28T19:00:00Z" };
-    const pending: FixFlow = { ...flow, occurrenceId: `tfo_${"2".repeat(64)}`, state: "waiting", pipelineStage: "verification" };
+    const pending: FixFlow = { ...flow, occurrenceId: `tfo_${"2".repeat(64)}`, state: "waiting", currentState: "waiting-routine", pipelineStage: "verification" };
     const attention: FixFlow = { ...flow, occurrenceId: `tfo_${"3".repeat(64)}`, pipelineStage: "review" };
     const waitingGroups = groupFixFlows([completed, pending]);
     expect(waitingGroups).toHaveLength(1);
@@ -127,7 +127,7 @@ describe("Fix flows navigation and recorded states", () => {
       expect(html).not.toContain(">Investigating<");
       expect(flowCurrentState(row)).toBe(state.id);
     }
-    for (const state of ["active", "running"] as const) expect(flowCurrentState({ ...flow, state })).toBe("unknown");
+    for (const state of ["active", "running", "waiting"] as const) expect(flowCurrentState({ ...flow, state })).toBe("unknown");
   });
   test("legacy broad active responses are unverified, never Running", () => {
     const result = groupFixFlows([{ ...flow, state: "active", pipelineStage: undefined }]);
