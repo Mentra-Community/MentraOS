@@ -72,7 +72,7 @@ export class TestContinuationService {
     if (target.localPublication) {
       const build = await this.recordedAppBuild(target, routineId);
       return { candidate: grant.candidate, builds: [build], expectedHeadSha: target.expectedHeadSha,
-        expectedHarnessSha: target.expectedHarnessSha };
+        expectedHarnessSha: target.expectedHarnessSha, ...(grant.harnessVerification ? { harnessVerification: grant.harnessVerification } : {}) };
     }
     if (target.original) {
       // Exactly the recorded build, however old: never the newest listing or a current head.
@@ -83,7 +83,8 @@ export class TestContinuationService {
     }
     const builds = await this.builds.inventory({ ...target.query, routineId });
     return { candidate: grant.candidate, builds: builds.filter(build => build.headSha === target.expectedHeadSha),
-      expectedHeadSha: target.expectedHeadSha, ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
+      expectedHeadSha: target.expectedHeadSha, ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}),
+      ...(grant.harnessVerification ? { harnessVerification: grant.harnessVerification } : {}) };
   }
   private recordedAppBuild(target: ContinuationTarget, routineId: TestRoutineId): Promise<TestBuild> {
     if (!this.builds.resolveRecordedApp) throw new TestDispatchError(503, "Recorded app publication verification is unavailable");
@@ -126,7 +127,10 @@ export class TestContinuationService {
     const excludeRequestRunIds: number[] = [];
     if (executionAttempt > 1) {
       const previousId = continuationOperationId({ ...grant, executionAttempt: executionAttempt - 1 }, routineId);
-      const previous = await this.detail(grant, previousId);
+      // An earlier attempt keeps its own saved verification revision. Checking its
+      // cleanup must not reinterpret that result with this attempt's selection.
+      const previousReceipt = await this.dispatch.receipt(previousId);
+      const previous = await this.detail({ ...grant, harnessVerification: previousReceipt?.continuation?.harnessVerification }, previousId);
       if (!previous.verifiedRecovery) fail("Additional execution requires a completed request with verified fixture cleanup");
       if (previous.requestRunId) excludeRequestRunIds.push(previous.requestRunId);
     }
@@ -150,6 +154,7 @@ export class TestContinuationService {
     const binding: TestContinuationBinding = { occurrenceId: grant.occurrenceId, agentRunId: grant.agentRunId,
       candidate: grant.candidate, ...(grant.caseBinding ? { caseBinding: grant.caseBinding } : {}),
       ...(grant.executionDestination ? { executionDestination: grant.executionDestination } : {}),
+      ...(grant.harnessVerification ? { harnessVerification: grant.harnessVerification } : {}),
       executionAttempt, ...(retryReason ? { retryReason } : {}), expectedHeadSha: target.expectedHeadSha,
       ...(target.expectedHarnessSha ? { expectedHarnessSha: target.expectedHarnessSha } : {}) };
     const request: TestDispatchInput = { ...data, idempotencyKey, ...(originalRequestRunId !== undefined ? { originalRequestRunId } : {}) };
@@ -182,6 +187,7 @@ export class TestContinuationService {
     if (!binding || binding.occurrenceId !== grant.occurrenceId || binding.agentRunId !== grant.agentRunId
       || !same(binding.candidate, grant.candidate) || !same(binding.caseBinding ?? null, grant.caseBinding ?? null)
       || !same(binding.executionDestination ?? null, grant.executionDestination ?? null)
+      || !same(binding.harnessVerification ?? null, grant.harnessVerification ?? null)
       || !grant.routineIds.includes(receipt.input.routineId))
       throw new TestDispatchError(404, "Registered routine request not found");
     return binding;
@@ -191,7 +197,8 @@ export class TestContinuationService {
     const receipts = await this.repository.list(grant);
     return { reruns: await Promise.all(receipts.filter(receipt => grant.routineIds.includes(receipt.input.routineId)
       && same(receipt.continuation?.caseBinding ?? null, grant.caseBinding ?? null)
-      && same(receipt.continuation?.executionDestination ?? null, grant.executionDestination ?? null))
+      && same(receipt.continuation?.executionDestination ?? null, grant.executionDestination ?? null)
+      && same(receipt.continuation?.harnessVerification ?? null, grant.harnessVerification ?? null))
       .map(receipt => this.detail(grant, receipt.dispatchId))) };
   }
   async detail(grant: ContinuationGrant, operationId: string) {

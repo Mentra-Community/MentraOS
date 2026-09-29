@@ -21,6 +21,7 @@ export async function requireContinuationLease(grant: ContinuationGrant, routine
     ...(grant.acknowledgedAgentRunId ? { acknowledgedAgentRunId: grant.acknowledgedAgentRunId } : {}),
     // The controller compares it with its current stored route, as it does the candidate and reservation.
     ...(grant.executionDestination ? { executionDestination: grant.executionDestination } : {}),
+    ...(grant.harnessVerification ? { harnessVerification: grant.harnessVerification } : {}),
     executionAttempt: grant.executionAttempt, leaseGeneration: grant.leaseGeneration,
     leaseTokenSha256: grant.leaseTokenSha256, routineId,
     ...(repair ? { repair: { operation: repair.operation, operationId: repair.operationId } } : {}) });
