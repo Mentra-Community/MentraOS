@@ -9,6 +9,7 @@
  *
  *   test-oem : http://127.0.0.1:3102   (mint OEM JWTs)
  *   core     : http://127.0.0.1:3000   (client auth, REST)
+ *   Store runs separately from Mentra-Community/miniapp-store (optional).
  *   auth     : http://127.0.0.1:3002   (local-dev runtime tokens)
  *   runtime  : ws://127.0.0.1:3001/ws/session   (+ UDP :8000)
  *
@@ -139,6 +140,7 @@ console.log("[dev-stack] booting test-oem, core, runtime…");
 
 const testOem = await startTestOem({ port: PORT_TEST_OEM, tenantId: OEM_ID });
 const core = await startCore({ port: PORT_CORE });
+process.env.MENTRA_STORE_INTERNAL_URL ??= "http://127.0.0.1:3003";
 const localAuth = startLocalAuthIssuer(PORT_LOCAL_AUTH);
 const runtime = await startRuntime({
   httpPort: PORT_RUNTIME_HTTP,
@@ -161,6 +163,7 @@ console.log("");
 console.log("[dev-stack] cloud-v2 is up:");
 console.log(`  test-oem : ${testOem.url}`);
 console.log(`  core     : ${core.url}`);
+console.log(`  store (external, optional): ${process.env.MENTRA_STORE_INTERNAL_URL}`);
 console.log(`  auth     : ${localAuth.url}`);
 console.log(`  runtime WS : ws://${ADVERTISE_HOST}:${PORT_RUNTIME_HTTP}/ws/session`);
 console.log(`  runtime UDP: ${ADVERTISE_HOST}:${PORT_RUNTIME_UDP}`);

@@ -7,25 +7,23 @@
 
 The Admin Console is an internal Mentra operations surface. It is not a
 developer console and not an enterprise customer portal. It exists so Mentra
-admins can review miniapp submissions, manage the preinstalled miniapp registry,
-and triage incidents.
+admins can review miniapp submissions and triage incidents.
 
 Normal developers publish miniapps through the CLI and view status in the
-Developer Console. Only Mentra admins can approve submissions, publish into the
-public store, or modify the preinstalled registry.
+Developer Console. Only Mentra admins can approve submissions or publish into
+the public Store.
 
 ## Primary Users
 
 - Mentra app reviewer.
-- Mentra registry/admin operator.
+- Mentra admin operator.
 - Mentra support or incident responder.
 - Mentra internal admin owner.
 
 ## Product Principles
 
 - Admin actions must be explicit and auditable.
-- Review and registry workflows should be hard to confuse.
-- Preinstalled registry is not the normal public miniapp store.
+- Review and incident workflows should be hard to confuse.
 - The interface should feel like an internal operations console: dense enough to
   move quickly, but not cluttered.
 - Do not expose developer-facing or enterprise-facing terminology unless it helps
@@ -56,14 +54,6 @@ release, not the entire miniapp identity.
 The public store review flow determines whether a release can be accepted,
 rejected, or published for normal discovery/install.
 
-### Preinstalled Miniapp Registry
-
-The preinstalled registry controls which miniapps come installed by default for
-MentraOS users, and lets Mentra update those miniapps without shipping a new
-mobile app through iOS/Google Play.
-
-This registry is internal-only. Normal developers do not self-publish into it.
-
 ### Incident System
 
 Incident management replaces the old internal incident/review workflows over
@@ -89,19 +79,6 @@ time. It can be partially designed now even if implementation is phased.
 - As an app reviewer, I can publish an accepted release when appropriate.
 - As an app reviewer, I can see prior decisions for the same miniapp.
 
-### Preinstalled Registry
-
-- As a registry admin, I can see the current preinstalled miniapps.
-- As a registry admin, I can add an approved/published release to the
-  preinstalled registry.
-- As a registry admin, I can update the preinstalled version for a miniapp.
-- As a registry admin, I can remove or disable a preinstalled miniapp.
-- As a registry admin, I can create a new registry revision.
-- As a registry admin, I can promote a registry revision.
-- As a registry admin, I can roll back to a previous registry revision.
-- As a registry admin, I can see which hostname-bound environment I am operating
-  in.
-
 ### Incidents
 
 - As an incident responder, I can see a list of incidents.
@@ -110,14 +87,13 @@ time. It can be partially designed now even if implementation is phased.
   when available.
 - As an incident responder, I can add timeline notes.
 - As an incident responder, I can update incident status.
-- As a support viewer, I can inspect incidents without mutating review or
-  registry state.
+- As a support viewer, I can inspect incidents without mutating review state.
 
 ### Audit
 
 - As an admin owner, I can see a log of admin mutations.
-- As an admin owner, I can see who approved, rejected, published, promoted, or
-  rolled back something.
+- As an admin owner, I can see who approved, rejected, published, or moderated
+  something.
 - As an admin owner, I can inspect reason text attached to sensitive actions.
 
 ## Required Pages
@@ -126,11 +102,9 @@ time. It can be partially designed now even if implementation is phased.
 2. Admin home.
 3. Miniapp review queue.
 4. Submission/release detail.
-5. Preinstalled miniapps.
-6. Preinstalled registry revisions.
-7. Incidents.
-8. Incident detail.
-9. Audit log.
+5. Incidents.
+6. Incident detail.
+7. Audit log.
 
 ## Page Notes
 
@@ -139,7 +113,6 @@ time. It can be partially designed now even if implementation is phased.
 Home should summarize operational queues, not marketing metrics:
 
 - Pending reviews.
-- Active preinstalled registry revision.
 - Open incidents.
 - Recent admin actions.
 
@@ -165,12 +138,6 @@ The detail page should make the decision easy:
 - Prior release history.
 - Approve/reject/request changes actions.
 
-### Preinstalled Miniapps
-
-This should not look like a general app store. It is a controlled registry list.
-Avoid unclear options like "install behavior" unless the exact operational
-meaning is defined.
-
 ### Incidents
 
 Incidents may be WIP in v1, but the IA should reserve space for:
@@ -187,12 +154,9 @@ Incidents may be WIP in v1, but the IA should reserve space for:
 - Billing.
 - Public app store browsing.
 - Full incident migration if implementation is not ready.
-- Normal developers publishing directly into the preinstalled registry.
 
 ## Designer Questions
 
-- What is the clearest visual separation between review queue and preinstalled
-  registry?
 - How should dangerous admin actions be confirmed without slowing routine review?
 - What is the right density for internal tables?
 - How should read-only environment context be presented so admins do not

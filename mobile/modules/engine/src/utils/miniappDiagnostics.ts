@@ -141,7 +141,7 @@ function safeReleaseIdentity(value: unknown): Record<string, string> | undefined
   const identity = recordValue(value)
   if (!identity) return undefined
   const out: Record<string, string> = {}
-  for (const key of ["source", "releaseId", "bundleSha256", "channel"] as const) {
+  for (const key of ["source", "releaseId", "bundleSha256", "channel", "publisherKeyFingerprint"] as const) {
     const field = boundedString(identity[key])
     if (field) out[key] = field
   }

@@ -1,6 +1,6 @@
 ---
 title: Example miniapps
-description: "Working miniapps to start from: the scaffolder starter, the in-repo reference, and first-party apps shipped in this repo."
+description: "Working miniapps to start from: the scaffolder starter, the in-repo reference, and first-party miniapp repositories."
 icon: "code"
 ---
 
@@ -10,7 +10,7 @@ import BetaNote from '/snippets/beta-note.mdx'
 
 There are three ways to get working code in front of you: scaffold a fresh
 project, read the in-repo reference miniapp, or browse the first-party miniapps
-that ship in this repo.
+maintained by Mentra.
 
 ## Start from the scaffolder
 
@@ -57,32 +57,32 @@ and prints a QR code. In the Mentra App, scan it from **Settings → Miniapp
 Developer Settings → Scan Miniapp QR Code** (phone and laptop on the same Wi-Fi,
 or `bun dev --usb` on Android to go over the cable instead).
 
-## First-party miniapps in this repo
+## First-party miniapps
 
-These are apps Mentra ships, all under `miniapps/`. Read them when you want a
-real feature rather than a demo. Each builds with `bun dev` the same way the
-example does.
+These miniapps ship with the Mentra App and are maintained in their own repositories.
+Some repositories require organization access. Public starter and reference miniapps
+remain in MentraOS; use each product repository’s README for its development commands.
 
 <CardGroup cols={2}>
-  <Card title="Teleprompter" icon="scroll">
-    `miniapps/teleprompter`: paste a script and read it off the glasses;
+  <Card href="https://github.com/Mentra-Community/teleprompter-miniapp" title="Teleprompter" icon="scroll">
+    paste a script and read it off the glasses;
     scrolling follows your voice or runs at a set speed.
   </Card>
-  <Card title="Mentra Maps" icon="map">
-    `miniapps/navigation`: turn-by-turn walking navigation with compass heading
-    and Google Maps, driven by `session.location`.
+  <Card href="https://github.com/Mentra-Community/maps-miniapp" title="Mentra Maps" icon="map">
+    turn-by-turn walking navigation with compass heading
+    and Mapbox maps, driven by `session.location`.
   </Card>
-  <Card title="Recorder" icon="microphone">
-    `miniapps/recorder`: capture the glasses microphone to a WAV file on your
+  <Card href="https://github.com/Mentra-Community/recorder-miniapp" title="Recorder" icon="microphone">
+    capture the glasses microphone to a WAV file on your
     phone, play it back, and export it. Built on `session.recorder` +
     `session.blob`.
   </Card>
-  <Card title="Captions" icon="closed-captioning">
-    `miniapps/captions`: live transcription rendered on the display, with a
+  <Card href="https://github.com/Mentra-Community/captions-miniapp" title="Captions" icon="closed-captioning">
+    live transcription rendered on the display, with a
     WebView for language and display settings.
   </Card>
-  <Card title="Translation" icon="language">
-    `miniapps/translation`: translate a detected source language into a target
+  <Card href="https://github.com/Mentra-Community/translation-miniapp" title="Translation" icon="language">
+    translate a detected source language into a target
     language and render it on the display.
   </Card>
 </CardGroup>

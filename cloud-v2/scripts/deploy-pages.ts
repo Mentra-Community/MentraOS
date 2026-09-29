@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 
 const environments = ["dev", "staging", "prod"] as const;
 const sites = {
-  console: "mentra-console2",
   admin: "mentra-admin",
   portal: "mentra-enterprise-portal",
 } as const;
@@ -31,16 +30,12 @@ const coreUrls: Record<Environment, string> = {
 for (const site of selectedSites) {
   const project = `${sites[site]}-${env}`;
   run(["bun", "--cwd", `websites/${site}`, "build"]);
-  run([
-    "bunx",
-    "wrangler",
-    "pages",
-    "secret",
-    "put",
-    "CORE_URL",
-    "--project-name",
-    project,
-  ], { cwd: `websites/${site}`, input: coreUrls[env] });
+  // Public websites use Core; the Developer Console deploys from miniapp-store.
+  if (site === "portal" || site === "admin") {
+    run([
+      "bunx", "wrangler", "pages", "secret", "put", "CORE_URL", "--project-name", project,
+    ], { cwd: `websites/${site}`, input: coreUrls[env] });
+  }
   run([
     "bunx",
     "wrangler",

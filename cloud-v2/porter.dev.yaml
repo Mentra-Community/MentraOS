@@ -4,6 +4,12 @@ name: cloud-dev
 envGroups:
   - cloud-v2-dev-doppler
 
+# Porter applies environment variables at application level.
+env:
+  ADMIN_URL: "https://admin.dev.mentraglass.com"
+  PORTAL_URL: "https://portal.dev.mentraglass.com"
+  MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
+
 build:
   method: docker
   context: ../

@@ -9,7 +9,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {decideDevOpenRoute, engine} from "@mentra/engine"
-import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
+import {installMiniappFromJsonUrl, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@mentra/engine"
@@ -41,7 +41,7 @@ export default function MiniappDeveloperScannerScreen() {
         const baseUrl = decodeURIComponent(url.searchParams.get("url") || "")
         if (!baseUrl) throw new Error("release QR missing url param")
 
-        const res = await appRegistry.installFromJsonUrl(baseUrl)
+        const res = await installMiniappFromJsonUrl(baseUrl)
         if (res.is_error()) {
           showAlert("Install failed", res.error.message ?? String(res.error), [
             {text: "OK", onPress: () => setScanned(false)},
@@ -115,9 +115,7 @@ export default function MiniappDeveloperScannerScreen() {
       ).replace(/\/$/, "")
       let iconUrl: string | undefined
       if (iconPath) {
-        iconUrl = /^https?:\/\//.test(iconPath)
-          ? iconPath
-          : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
+        iconUrl = /^https?:\/\//.test(iconPath) ? iconPath : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
       }
 
       const portNum = devPort ? parseInt(devPort, 10) : NaN

@@ -126,6 +126,8 @@ describe("cloud.auth.getMiniappToken (real core)", () => {
     expect(second.token).toBe(first.token);
     expect(second.expiresAt).toBe(first.expiresAt);
   });
+
+
 });
 
 // === Helpers ===

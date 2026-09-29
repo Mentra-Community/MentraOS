@@ -71,6 +71,7 @@ function PortalPage() {
   const qc = useQueryClient();
   const [page, setPage] = useState<PortalPageKey>("overview");
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<unknown>(null);
   const me = useQuery({
     queryKey: ["portal-me"],
     queryFn: () => api<{ authenticated: true; user: PortalUser; onboardingRequired: boolean; org: EnterpriseOrg | null }>("/api/portal/me"),
@@ -92,12 +93,14 @@ function PortalPage() {
 
   async function signOut() {
     setSigningOut(true);
+    setSignOutError(null);
     try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; reload still drops us at the login gate
+      const {logoutUrl} = await api<{logoutUrl: string | null}>("/api/console/auth/logout", {method: "POST"});
+      window.location.assign(logoutUrl ?? "/");
+    } catch (error) {
+      setSignOutError(error);
+      setSigningOut(false);
     }
-    window.location.reload();
   }
 
   // Onboarding (no org) and pending approval are focused, nav-free states —
@@ -105,6 +108,7 @@ function PortalPage() {
   if (!org) {
     return (
       <FocusShell userLabel={displayName} onSignOut={signOut} signingOut={signingOut}>
+        {signOutError ? <ErrorText error={signOutError} /> : null}
         <EnterpriseOnboarding
           user={me.data?.user ?? { id: "preview", email: displayName }}
           onSaved={async () => {
@@ -121,6 +125,7 @@ function PortalPage() {
   if (!approved) {
     return (
       <FocusShell userLabel={displayName} onSignOut={signOut} signingOut={signingOut}>
+        {signOutError ? <ErrorText error={signOutError} /> : null}
         <ApprovalPending org={org} />
       </FocusShell>
     );
@@ -148,6 +153,7 @@ function PortalPage() {
       onSignOut={signOut}
       signingOut={signingOut}
     >
+      {signOutError ? <ErrorText error={signOutError} /> : null}
       {page === "overview" ? <EnterpriseOverview org={org} issuers={issuers.data?.issuers ?? []} /> : null}
       {page === "environments" ? (
         <EnvironmentsPage

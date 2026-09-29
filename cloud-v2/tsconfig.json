@@ -1,14 +1,35 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/shared" },
-    { "path": "./packages/auth" },
-    { "path": "./packages/cli" },
-    { "path": "./packages/core" },
-    { "path": "./packages/runtime" },
-    { "path": "./packages/cloud-client" },
-    { "path": "./packages/proxy" },
-    { "path": "./test/test-oem" },
-    { "path": "./test/test-client" }
+    {
+      "path": "./packages/shared"
+    },
+    {
+      "path": "./packages/auth"
+    },
+    {
+      "path": "./packages/developer-auth"
+    },
+    {
+      "path": "./packages/cli"
+    },
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/runtime"
+    },
+    {
+      "path": "./packages/cloud-client"
+    },
+    {
+      "path": "./packages/proxy"
+    },
+    {
+      "path": "./test/test-oem"
+    },
+    {
+      "path": "./test/test-client"
+    }
   ]
 }

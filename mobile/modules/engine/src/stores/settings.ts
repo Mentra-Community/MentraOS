@@ -916,10 +916,13 @@ export interface SettingsState {
 }
 
 const getDefaultSettings = () =>
-  Object.keys(SETTINGS).reduce((acc, key) => {
-    acc[key] = SETTINGS[key].defaultValue()
-    return acc
-  }, {} as Record<string, any>)
+  Object.keys(SETTINGS).reduce(
+    (acc, key) => {
+      acc[key] = SETTINGS[key].defaultValue()
+      return acc
+    },
+    {} as Record<string, any>,
+  )
 
 // Single-flight for loadAllSettings: the host fires it at module load and
 // engine.start()'s device-store hydration awaits it — without the memo the

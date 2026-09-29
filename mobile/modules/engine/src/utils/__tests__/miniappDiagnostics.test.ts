@@ -142,7 +142,7 @@ describe("miniapp diagnostics", () => {
           : undefined,
       getReleaseIdentity: (candidate) =>
         candidate.packageName === "com.mentra.ai"
-          ? {source: "preinstalled_registry", bundleSha256: "abc123", channel: "stable", ignored: "no"}
+          ? {source: "store", bundleSha256: "abc123", channel: "stable", ignored: "no"}
           : undefined,
     }) as {
       running: string[]
@@ -166,7 +166,7 @@ describe("miniapp diagnostics", () => {
       executionMode: "installed_bundle",
       foregrounded: true,
       manifest: {packageName: "com.mentra.ai", version: "1.4.9", sdkVersion: "0.3.0"},
-      releaseIdentity: {source: "preinstalled_registry", bundleSha256: "abc123", channel: "stable"},
+      releaseIdentity: {source: "store", bundleSha256: "abc123", channel: "stable"},
       runtime: {handshakeComplete: true, subscriptions: ["button_press", "transcription:auto"]},
     })
     expect(context.runningMiniapps[1]).toMatchObject({

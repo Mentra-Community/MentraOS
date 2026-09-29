@@ -16,7 +16,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {navigationService} from "@mentra/engine-host-internal"
-import showAlert from "@/utils/AlertUtils"
+import {showAlert} from "@/utils/AlertUtils"
 
 // Hardcoded test destination for the nav POC. SF Ferry Building.
 const TEST_NAV_DESTINATION = {lat: 37.7956, lng: -122.3933}

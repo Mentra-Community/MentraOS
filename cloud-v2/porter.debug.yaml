@@ -4,6 +4,10 @@ name: cloud-debug
 envGroups:
   - cloud-v2-debug-doppler
 
+# Porter applies environment variables at application level.
+env:
+  MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
+
 build:
   method: docker
   context: ../

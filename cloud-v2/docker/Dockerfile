@@ -1,7 +1,7 @@
 # Cloud-v2 image: builds the whole monorepo, no entrypoint.
 #
 # Each Porter service in porter.yaml overrides `run:` to launch a different
-# process from this same image (core / audio / proxy). Workspace symlinks
+# process from this same image (core / runtime / proxy). Workspace symlinks
 # mean we copy the whole tree and `bun install` resolves everything in one
 # pass.
 
@@ -21,6 +21,7 @@ WORKDIR /app/cloud-v2
 COPY cloud-v2/bun.lock cloud-v2/package.json ./
 COPY cloud-v2/packages/shared/package.json ./packages/shared/
 COPY cloud-v2/packages/auth/package.json ./packages/auth/
+COPY cloud-v2/packages/developer-auth/package.json ./packages/developer-auth/
 COPY cloud-v2/packages/cli/package.json ./packages/cli/
 COPY cloud-v2/packages/core/package.json ./packages/core/
 COPY cloud-v2/packages/protocol/package.json ./packages/protocol/
@@ -31,7 +32,6 @@ COPY cloud-v2/packages/console-mcp/package.json ./packages/console-mcp/
 COPY cloud-v2/test/test-oem/package.json ./test/test-oem/
 COPY cloud-v2/test/test-client/package.json ./test/test-client/
 COPY cloud-v2/websites/admin/package.json ./websites/admin/
-COPY cloud-v2/websites/console/package.json ./websites/console/
 COPY cloud-v2/websites/portal/package.json ./websites/portal/
 COPY sdk/miniapp-cli/ ../sdk/miniapp-cli/
 
@@ -45,7 +45,7 @@ COPY cloud-v2/ ./
 # Typecheck as a build-time gate so we don't deploy broken type code.
 RUN bun run typecheck
 
-# All three service ports (HTTP/WS) + audio UDP. Porter's port mapping picks
+# All service ports (HTTP/WS) + audio UDP. Porter's port mapping picks
 # the right one per-service from porter.yaml.
 EXPOSE 3000 3001 3002 8000
 

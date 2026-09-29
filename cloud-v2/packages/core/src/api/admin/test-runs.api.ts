@@ -9,7 +9,7 @@ import type { AppEnv } from "../../types/hono.types";
 import { TestHostHealthError, TestHostHealthService } from "../../services/test-host-health.service";
 import { TestFailureEvidenceService } from "../../services/test-failure-evidence.service";
 
-/** Mounted only behind preinstalled.api's existing adminAuth gate. */
+/** Mounted only behind Core admin.api's existing adminAuth gate. */
 export function createTestRunAdminApi(service = new TestRunService(), overview = new TestRunOverviewService(), followUp = new TestRunFollowUpService(),
   corrections = new TestFailureCorrectionService(), health = new TestHostHealthService(), evidence = new TestFailureEvidenceService()) {
   const app = new Hono<AppEnv>();

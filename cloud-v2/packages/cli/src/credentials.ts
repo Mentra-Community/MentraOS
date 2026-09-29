@@ -1,44 +1,44 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import {existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from "node:fs"
+import {homedir} from "node:os"
+import {join} from "node:path"
+import {getConfig, normalizeUrl} from "./config"
 
-const SERVICE = "mentra-cli-v2";
-const LEGACY_NAME = "credentials";
-const MENTRA_DIR = join(homedir(), ".mentra");
-const CREDS_DIR = join(MENTRA_DIR, "cli-v2");
-const LEGACY_CREDS_FILE = join(CREDS_DIR, "credentials.json");
-const SIGNING_KEY_SERVICE = "mentra-cli-v2-signing";
+const SERVICE = "mentra-store-cli"
+const MENTRA_DIR = join(homedir(), ".mentra")
+const CREDS_DIR = join(MENTRA_DIR, "cli-v2")
+const SIGNING_KEY_SERVICE = "mentra-cli-v2-signing"
 
 export type CliJwk = Record<string, unknown> & {
-  kty?: string;
-  crv?: string;
-  x?: string;
-  d?: string;
-};
+  kty?: string
+  crv?: string
+  x?: string
+  d?: string
+}
 
 export interface CliCredentials {
-  token: string;
-  refreshToken?: string;
-  workosUserId: string;
-  email: string;
-  organizationId?: string | null;
-  authenticationMethod?: string;
-  coreUrl: string;
-  storedAt: string;
-  expiresAt?: string;
+  token: string
+  refreshToken?: string
+  workosUserId: string
+  email: string
+  organizationId?: string | null
+  developerOrgId?: string | null
+  authenticationMethod?: string
+  storeUrl: string
+  storedAt: string
+  expiresAt?: string
 }
 
 export interface CliSigningKey {
-  coreUrl: string;
-  signingKeyId: string;
-  publicKeyJwk: CliJwk;
-  privateKeyJwk: CliJwk;
-  createdAt: string;
+  storeUrl: string
+  signingKeyId: string
+  publicKeyJwk: CliJwk
+  privateKeyJwk: CliJwk
+  createdAt: string
 }
 
 export async function saveCredentials(credentials: CliCredentials): Promise<"keychain" | "file"> {
-  const payload = JSON.stringify(credentials);
-  const name = credentialName(credentials.coreUrl);
+  const payload = JSON.stringify(credentials)
+  const name = credentialName(credentials.storeUrl)
 
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
@@ -46,85 +46,72 @@ export async function saveCredentials(credentials: CliCredentials): Promise<"key
         service: SERVICE,
         name,
         value: payload,
-      });
-      return "keychain";
+      })
+      return "keychain"
     }
   } catch {
     // Fall through to file storage.
   }
 
-  mkdirSync(CREDS_DIR, { recursive: true });
-  writeFileSync(credentialsFile(credentials.coreUrl), `${payload}\n`, { mode: 0o600 });
-  return "file";
+  mkdirSync(CREDS_DIR, {recursive: true})
+  writeFileSync(credentialsFile(credentials.storeUrl), `${payload}\n`, {mode: 0o600})
+  return "file"
 }
 
-export async function loadCredentials(coreUrl?: string): Promise<CliCredentials | null> {
-  const targetCoreUrl = coreUrl ? normalizeCoreUrl(coreUrl) : undefined;
+/** Login sessions belong to one Store. Selecting another Store never forwards a saved token. */
+export async function loadCredentials(storeUrl = getConfig().storeUrl): Promise<CliCredentials | null> {
+  const targetStoreUrl = normalizeUrl(storeUrl)
   if (process.env.MENTRA_CLI_TOKEN) {
     return {
       token: process.env.MENTRA_CLI_TOKEN,
       workosUserId: process.env.MENTRA_CLI_WORKOS_USER_ID || "unknown",
       email: process.env.MENTRA_CLI_EMAIL || "unknown",
       organizationId: process.env.MENTRA_CLI_ORGANIZATION_ID,
-      coreUrl: targetCoreUrl || process.env.MENTRA_CORE_URL || "http://localhost:3000",
+      developerOrgId: process.env.MENTRA_CLI_DEVELOPER_ORG_ID,
+      storeUrl: targetStoreUrl,
       storedAt: new Date().toISOString(),
-    };
+    }
   }
-
-  const scoped = targetCoreUrl ? await loadScopedCredentials(targetCoreUrl) : null;
-  if (scoped) return scoped;
-
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
-      const value = await Bun.secrets.get({
-        service: SERVICE,
-        name: LEGACY_NAME,
-      });
-      if (value) {
-        const legacy = JSON.parse(value) as CliCredentials;
-        if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return legacy;
-      }
+      const value = await Bun.secrets.get({service: SERVICE, name: credentialName(targetStoreUrl)})
+      if (value) return matchingCredentials(value, targetStoreUrl)
     }
   } catch {
-    // Fall through.
+    // Fall through to file storage.
   }
-
   try {
-    if (existsSync(LEGACY_CREDS_FILE)) {
-      const legacy = JSON.parse(readFileSync(LEGACY_CREDS_FILE, "utf8")) as CliCredentials;
-      if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return legacy;
-    }
+    const path = credentialsFile(targetStoreUrl)
+    if (existsSync(path)) return matchingCredentials(readFileSync(path, "utf8"), targetStoreUrl)
   } catch {
     // Treat corrupt credentials as logged out.
   }
-
-  return null;
+  return null
 }
 
-export async function clearCredentials(coreUrl?: string): Promise<void> {
-  const targetCoreUrl = coreUrl ? normalizeCoreUrl(coreUrl) : undefined;
-
+export async function clearCredentials(storeUrl = getConfig().storeUrl): Promise<void> {
+  const targetStoreUrl = normalizeUrl(storeUrl)
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
-      await Bun.secrets.set({
-        service: SERVICE,
-        name: targetCoreUrl ? credentialName(targetCoreUrl) : LEGACY_NAME,
-        value: "",
-      });
+      await Bun.secrets.set({service: SERVICE, name: credentialName(targetStoreUrl), value: ""})
     }
   } catch {
-    // Ignore keychain failures; remove file fallback below.
+    // Remove the file fallback even if the keychain is unavailable.
   }
+  const path = credentialsFile(targetStoreUrl)
+  if (existsSync(path)) rmSync(path)
+}
 
-  const path = targetCoreUrl ? credentialsFile(targetCoreUrl) : LEGACY_CREDS_FILE;
-  if (existsSync(path)) {
-    rmSync(path);
-  }
+function matchingCredentials(value: string, storeUrl: string): CliCredentials | null {
+  const credentials = JSON.parse(value) as CliCredentials
+  return credentials.storeUrl && normalizeUrl(credentials.storeUrl) === storeUrl && credentials.token
+    ? {...credentials, storeUrl}
+    : null
 }
 
 export async function saveSigningKey(key: CliSigningKey): Promise<"keychain" | "file"> {
-  const payload = JSON.stringify(key);
-  const name = credentialName(key.coreUrl);
+  const payload = JSON.stringify(key)
+  const name = credentialName(key.storeUrl)
 
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
@@ -132,85 +119,54 @@ export async function saveSigningKey(key: CliSigningKey): Promise<"keychain" | "
         service: SIGNING_KEY_SERVICE,
         name,
         value: payload,
-      });
-      return "keychain";
+      })
+      return "keychain"
     }
   } catch {
     // Fall through to file storage.
   }
 
-  mkdirSync(CREDS_DIR, { recursive: true });
-  writeFileSync(signingKeyFile(key.coreUrl), `${payload}\n`, { mode: 0o600 });
-  return "file";
+  mkdirSync(CREDS_DIR, {recursive: true})
+  writeFileSync(signingKeyFile(key.storeUrl), `${payload}\n`, {mode: 0o600})
+  return "file"
 }
 
-export async function loadSigningKey(coreUrl: string): Promise<CliSigningKey | null> {
-  const targetCoreUrl = normalizeCoreUrl(coreUrl);
+export async function loadSigningKey(storeUrl: string): Promise<CliSigningKey | null> {
+  const targetStoreUrl = normalizeUrl(storeUrl)
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
       const value = await Bun.secrets.get({
         service: SIGNING_KEY_SERVICE,
-        name: credentialName(targetCoreUrl),
-      });
-      if (value) return JSON.parse(value) as CliSigningKey;
+        name: credentialName(targetStoreUrl),
+      })
+      if (value) return JSON.parse(value) as CliSigningKey
     }
   } catch {
     // Fall through.
   }
 
   try {
-    const path = signingKeyFile(targetCoreUrl);
-    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as CliSigningKey;
+    const path = signingKeyFile(targetStoreUrl)
+    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as CliSigningKey
   } catch {
     // Treat corrupt key storage as missing.
   }
 
-  return null;
+  return null
 }
 
-async function loadScopedCredentials(coreUrl: string): Promise<CliCredentials | null> {
-  try {
-    if (typeof Bun !== "undefined" && Bun.secrets) {
-      const value = await Bun.secrets.get({
-        service: SERVICE,
-        name: credentialName(coreUrl),
-      });
-      if (value) return JSON.parse(value) as CliCredentials;
-    }
-  } catch {
-    // Fall through.
-  }
-
-  try {
-    const path = credentialsFile(coreUrl);
-    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as CliCredentials;
-  } catch {
-    // Treat corrupt credentials as logged out.
-  }
-
-  return null;
+function credentialName(storeUrl: string): string {
+  return `credentials:${credentialKey(storeUrl)}`
 }
 
-function credentialName(coreUrl: string): string {
-  return `credentials:${credentialKey(coreUrl)}`;
+function credentialsFile(storeUrl: string): string {
+  return join(CREDS_DIR, `store-credentials-${credentialKey(storeUrl)}.json`)
 }
 
-function credentialsFile(coreUrl: string): string {
-  return join(CREDS_DIR, `credentials-${credentialKey(coreUrl)}.json`);
+function signingKeyFile(storeUrl: string): string {
+  return join(CREDS_DIR, `signing-key-${credentialKey(storeUrl)}.json`)
 }
 
-function signingKeyFile(coreUrl: string): string {
-  return join(CREDS_DIR, `signing-key-${credentialKey(coreUrl)}.json`);
-}
-
-function credentialKey(coreUrl: string): string {
-  return Buffer.from(normalizeCoreUrl(coreUrl)).toString("base64url");
-}
-
-function normalizeCoreUrl(coreUrl: string): string {
-  const url = new URL(coreUrl);
-  url.pathname = url.pathname.replace(/\/+$/, "");
-  url.search = "";
-  url.hash = "";
-  return url.toString().replace(/\/$/, "");
+function credentialKey(storeUrl: string): string {
+  return Buffer.from(normalizeUrl(storeUrl)).toString("base64url")
 }
