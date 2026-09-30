@@ -17,6 +17,11 @@ closest flow and platform adapter in the selected private checkout. Extend an
 existing routine when the behavior belongs in it; create an ID for independently
 selectable coverage. Published catalog links may precede the working source.
 
+Confirm the example's actual platform and resources: an Android phone-only
+walkthrough does not demonstrate physical glasses setup or firmware restoration.
+Read its adapter as well as its flow. Record the selected checkout and revision,
+and identify the first unsupported operation before expanding shared support.
+
 Reuse a suitable checkout; isolate concurrent source changes when needed. Follow
 the task's source revision and PR timing. Develop locally until the requested
 qualification boundary; do not require a merge for each iteration. Coordinate
@@ -75,6 +80,12 @@ capability is missing, extend the shared adapter/helper once and demonstrate it;
 never silently skip it or add a separate lifecycle/recovery fork for the routine.
 Keep shared tools, credentials and native agent histories outside run cleanup.
 
+For Android, exercise driver startup through the same subprocess environment as
+the adapter before installing or resetting the app. A working interactive shell
+does not prove the runner forwards its Java/Android tool configuration. Use the
+selected revision's pinned tools and a minimal semantic observation to check the
+assigned device; keep account entry and firmware operations in setup.
+
 ## Discover with AI, then encode the observed flow
 
 Use AI computer use to traverse the real flow as a person would. Capture actions,
@@ -88,6 +99,14 @@ During authoring, retry the failed step or smallest dependent section from usabl
 state. Re-establish only prerequisites that changed; do not reinstall, reset or
 repeat a long successful prefix for every edit. Coordinate in-flight actions and
 recorders through the existing owner. Section runs remain development evidence.
+
+Prove the smallest new physical section before building the rest of the flow.
+Use the selected checkout's section entry point if one exists; do not invent a
+CLI flag. If it lacks one, invoke the same shared action under the existing
+session/ownership contract and retain the section's inputs, source revision and
+result. Extend a shared entry point only when needed; do not create a second
+runner or replay an uncertain firmware write. Once teardown has reset the app,
+the next section must re-establish the prerequisites it removed.
 
 After a complete successful real traversal, encode its observed actions and
 assertions for deterministic replay without AI. Keep flow files small and
@@ -110,9 +129,12 @@ shared driver capability only for a demonstrated gap, not a new driver per routi
 - Add focused tests for meaningful failure modes or shared logic; avoid a fixed
   test count, implementation-mirroring tests and redundant suites. Run the relevant
   typecheck and checks for the files changed.
-- Trace registration through catalog, request validation, worker dispatch, Admin,
-  result publication and PR result links. Ensure the exact `routine:<id>` label
-  exists; a catalog entry or label alone does not make a routine executable.
+- For local development coverage, publish a complete passing run and recording
+  before listing it as a Development pass in Admin. Report CI enrollment
+  separately. When enabling PR/CI requests, trace the exact ID through catalog,
+  request validation, worker dispatch, Admin, result publication and PR result
+  links, and create its `routine:<id>` label. Do not enable a request label for a
+  local-only adapter; preserve unknown-ID refusal on unsupported routes.
 - Use [select-pr-routines](../select-pr-routines/SKILL.md) to label relevant PRs.
   Apply the user's PR/review timing; when preparing a PR, include the evidence and
   follow [codex-pr-review](../codex-pr-review/SKILL.md). Enable requested triggers
