@@ -9,6 +9,7 @@
  */
 
 import { ulid } from "ulid";
+import { createHash } from "node:crypto";
 import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
@@ -17,9 +18,10 @@ import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
 import { UserModel } from "../models/user.model";
 import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
 import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
-import { createStorageService } from "./storage/storage.service";
+import { createStorageService, type StorageService } from "./storage/storage.service";
 
 const logger = createLogger("core").child({ service: "report.service" });
+const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
 
 // Same provider selection as miniapp assets: local disk in dev, S3/R2 when
 // CLOUD_STORAGE_PROVIDER says so. Created on first use, not at import, so the
@@ -98,6 +100,38 @@ export interface ReportAttachmentInput {
 
 export interface AddReportArtifactsResult {
   stored: number;
+  receipt?: { artifactId: string; sha256: string; sizeBytes: number };
+}
+
+export class ReportArtifactError extends Error {
+  constructor(readonly status: 409 | 503, message: string) { super(message); }
+}
+
+// 128 digest bits in the existing short alphanumeric ID shape. Keeping IDs short
+// also preserves the scoped incident reader's credential-shaped-text guard.
+function stableReportId(prefix: "rep" | "art", binding: string): string {
+  const hex = createHash("sha256").update(binding).digest("hex").slice(0, 32);
+  return `${prefix}_${BigInt(`0x${hex}`).toString(32).padStart(26, "0").toUpperCase()}`;
+}
+
+/** Server-owned incident for a published run without a device-filed report. The unique
+ * reportId deduplicates concurrent creation and retries without changing the TestRun. */
+export async function ensureTestRunReport(testRunId: string, payloadSha256: string) {
+  const reportId = stableReportId("rep", `test-run\n${testRunId}\n${payloadSha256}`);
+  const mentraUserId = "automation:test-run";
+  const document = { reportId, mentraUserId, kind: "automatic", status: "collecting", artifacts: [],
+    trigger: { type: "automatic", source: REPORT_TESTING_SOURCE, reason: "worker-diagnostics" },
+    report: { actualBehavior: "Automation worker diagnostics for a completed test run." },
+    context: { testRunId, payloadSha256 } };
+  try {
+    await ReportModel.updateOne({ reportId }, { $setOnInsert: document }, { upsert: true, writeConcern: attachmentWriteConcern });
+  } catch (error) { if ((error as { code?: number }).code !== 11000) throw error; }
+  const row = await ReportModel.findOne({ reportId }).lean();
+  const context = row?.context as Record<string, unknown> | undefined;
+  if (!row || row.mentraUserId !== mentraUserId || row.kind !== "automatic"
+    || context?.testRunId !== testRunId || context.payloadSha256 !== payloadSha256)
+    throw new ReportArtifactError(409, "automation incident binding conflicts");
+  return { reportId, mentraUserId };
 }
 
 /**
@@ -186,7 +220,8 @@ export async function addLogArtifact(input: {
   reportId: string;
   source: string;
   entries: ReportLogEntry[];
-}): Promise<AddReportArtifactsResult | null> {
+}, retry?: { key: string; storage?: StorageService }): Promise<AddReportArtifactsResult | null> {
+  if (retry) return addRetryableLogArtifact(input, retry.key, retry.storage ?? getStorage());
   return await addArtifacts({
     reportId: input.reportId,
     mentraUserId: input.mentraUserId,
@@ -200,6 +235,47 @@ export async function addLogArtifact(input: {
       },
     ],
   });
+}
+
+/** Worker retry path through the same report/asset models and blob provider. Reserve the
+ * digest before writing: a concurrent different body cannot overwrite the winning blob.
+ * Interrupted uploads keep their reservation so an identical retry can finish it. */
+async function addRetryableLogArtifact(input: {
+  mentraUserId: string; reportId: string; source: string; entries: ReportLogEntry[];
+}, key: string, storage: StorageService): Promise<AddReportArtifactsResult | null> {
+  const { reportId, mentraUserId } = input;
+  if (!await ReportModel.exists({ reportId, mentraUserId })) return null;
+  const bytes = Buffer.from(JSON.stringify({ entries: input.entries }), "utf8");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const artifactId = stableReportId("art", `${reportId}\n${key}`);
+  const storageKey = `reports/${reportId}/${artifactId}`, contentType = "application/json";
+  try {
+    await ReportAssetModel.create([{ artifactId, reportId, mentraUserId, storageKey, fileName: null,
+      contentType, sizeBytes: bytes.byteLength, sha256 }], { writeConcern: attachmentWriteConcern });
+  } catch (error) { if ((error as { code?: number }).code !== 11000) throw error; }
+  const asset = await ReportAssetModel.findOne({ artifactId }).lean();
+  if (!asset || asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey
+    || asset.sha256 !== sha256 || asset.sizeBytes !== bytes.byteLength || asset.contentType !== contentType)
+    throw new ReportArtifactError(409, "attachment key already binds different content");
+  // Published metadata proves an earlier verified write. A retry only reads it;
+  // an unavailable/corrupt completed object must not trigger a destructive rewrite.
+  const completed = await ReportModel.exists({ reportId, mentraUserId, "artifacts.artifactId": artifactId })
+    .read("primary").readConcern("majority");
+  if (!completed) {
+    const object = await storage.putObject({ key: storageKey, body: bytes, contentType });
+    if (object.key !== storageKey || object.sha256 !== sha256 || object.sizeBytes !== bytes.byteLength || object.contentType !== contentType)
+      throw new ReportArtifactError(503, "attachment storage receipt did not match");
+  }
+  const readback = await storage.getObject(storageKey);
+  if (readback.byteLength !== bytes.byteLength || createHash("sha256").update(readback).digest("hex") !== sha256)
+    throw new ReportArtifactError(503, "attachment storage verification failed");
+  const metadata = { artifactId, type: "logs", source: input.source, filename: null, contentType,
+    sizeBytes: bytes.byteLength, createdAt: asset.createdAt };
+  // Same reservation timestamp means concurrent/repeated metadata writes are identical.
+  const result = await ReportModel.updateOne({ reportId, mentraUserId }, { $addToSet: { artifacts: metadata } },
+    { writeConcern: attachmentWriteConcern });
+  if (result.matchedCount !== 1) return null;
+  return { stored: 1, receipt: { artifactId, sha256, sizeBytes: bytes.byteLength } };
 }
 
 /**
@@ -229,12 +305,13 @@ export async function addAttachmentArtifacts(input: {
 export async function markReportReady(input: {
   mentraUserId: string;
   reportId: string;
+  onlyCollecting?: boolean;
 }): Promise<ReportStatus | null> {
   // The pre-update document shows whether this call actually finished
   // collection (repeated /complete calls find "ready" and stay silent) and
   // carries the snapshot the Slack notification summarizes.
   const before = await ReportModel.findOneAndUpdate(
-    { reportId: input.reportId, mentraUserId: input.mentraUserId },
+    { reportId: input.reportId, mentraUserId: input.mentraUserId, ...(input.onlyCollecting ? { status: "collecting" } : {}) },
     { $set: { status: "ready", updatedAt: new Date() } },
     { returnDocument: "before" },
   ).lean();

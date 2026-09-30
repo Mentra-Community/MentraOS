@@ -1,5 +1,8 @@
 import { Hono, type MiddlewareHandler } from "hono";
-import { testFailureEnvironment, verifyTestFailureReadGrant, verifyTestContinuationGrant, verifyTestExistingWorkGrant } from "../../services/test-failure-auth";
+import { bodyLimit } from "hono/body-limit";
+import { testFailureEnvironment, verifyTestFailureReadGrant, verifyTestContinuationGrant, verifyTestExistingWorkGrant, verifyWorkerDiagnosticsGrant } from "../../services/test-failure-auth";
+import { WorkerDiagnosticsService } from "../../services/worker-diagnostics.service";
+import { WORKER_DIAGNOSTICS_MAX_BYTES } from "../../types/worker-diagnostics.types";
 import { TestRunError, TestRunService } from "../../services/test-run.service";
 import { TestContinuationService } from "../../services/test-continuation.service";
 import { TestExistingWorkService } from "../../services/test-existing-work.service";
@@ -20,7 +23,8 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
   incidents: Pick<TestFailureIncidentService, "metadata" | "artifact"> = new TestFailureIncidentService(service),
   repairs: Pick<TestRepairService, "request" | "detail"> = new TestRepairService(service),
   existingWork: Pick<TestExistingWorkService, "inventory" | "request" | "detail"> = new TestExistingWorkService(service),
-  evidence: Pick<TestFailureEvidenceService, "metadata" | "media"> = new TestFailureEvidenceService()) {
+  evidence: Pick<TestFailureEvidenceService, "metadata" | "media"> = new TestFailureEvidenceService(),
+  diagnostics: Pick<WorkerDiagnosticsService, "forOccurrence"> = new WorkerDiagnosticsService()) {
   type Env = AppEnv & { Variables: AppEnv["Variables"] & { continuationGrant: ContinuationGrant; existingWorkGrant: ExistingWorkGrant } };
   const app = new Hono<Env>();
   // Purpose-separated: neither the read nor the continuation grant reaches these routes, and this grant reaches only them.
@@ -58,6 +62,18 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
     if (error instanceof TestRunError) return c.json({ error: "test_failure_error", error_description: error.message }, error.status);
     throw error;
   });
+  app.post("/:occurrenceId/diagnostics", async (c, next) => {
+    const token = /^Bearer (\S+)$/.exec(c.req.header("authorization") ?? "")?.[1] ?? "";
+    if (!verifyWorkerDiagnosticsGrant(token, c.req.param("occurrenceId") ?? "",
+      process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET ?? "", testFailureEnvironment()))
+      return c.json({ error: "unauthorized", error_description: "occurrence diagnostics write grant required" }, 401);
+    c.header("Cache-Control", "private, no-store");
+    return next();
+  }, bodyLimit({ maxSize: WORKER_DIAGNOSTICS_MAX_BYTES, onError: c => c.json({ error: "too_large" }, 413) }), async c => {
+    let input: unknown;
+    try { input = await c.req.json(); } catch { throw new TestRunError(400, "invalid JSON"); }
+    return c.json(await diagnostics.forOccurrence(c.req.param("occurrenceId"), input));
+  });
   app.get("/:occurrenceId/builds", capability("read-results"), c =>
     continuation.inventory(c.get("continuationGrant"), c.req.query("routineId")).then(value => c.json(value)));
   app.get("/:occurrenceId/reruns", capability("read-results"), c => continuation.list(c.get("continuationGrant")).then(value => c.json(value)));
@@ -75,7 +91,7 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
     continuation.media(c.get("continuationGrant"), c.req.param("operationId"), c.req.param("failureId"), c.req.param("assetId"), c.req.raw));
   app.get("/:occurrenceId/reruns/:operationId/failures/:failureId/incidents/:reportId", capability("read-results"), c => {
     c.header("X-Content-Type-Options", "nosniff");
-    return continuation.incident(c.get("continuationGrant"), c.req.param("operationId"), c.req.param("failureId"), c.req.param("reportId"))
+    return continuation.incident(c.get("continuationGrant"), c.req.param("operationId"), c.req.param("failureId"), c.req.param("reportId"), c.req.query("offset"))
       .then(value => c.json(value));
   });
   app.on(["GET", "HEAD"], "/:occurrenceId/reruns/:operationId/failures/:failureId/incidents/:reportId/artifacts/:artifactId", capability("read-results"), c =>
@@ -111,7 +127,7 @@ export function createTestFailureAgentApi(service = new TestRunService(), contin
   app.get("/:occurrenceId/incidents/:reportId", authorize, c => {
     c.header("X-Content-Type-Options", "nosniff");
     const occurrenceId = c.req.param("occurrenceId"), reportId = c.req.param("reportId");
-    return incidents.metadata(occurrenceId, reportId, `/api/agent/test-failures/${occurrenceId}/incidents/${reportId}`).then(value => c.json(value));
+    return incidents.metadata(occurrenceId, reportId, `/api/agent/test-failures/${occurrenceId}/incidents/${reportId}`, c.req.query("offset")).then(value => c.json(value));
   });
   app.on(["GET", "HEAD"], "/:occurrenceId/incidents/:reportId/artifacts/:artifactId", authorize, c =>
     incidents.artifact(c.req.param("occurrenceId"), c.req.param("reportId"), c.req.param("artifactId"), c.req.raw));

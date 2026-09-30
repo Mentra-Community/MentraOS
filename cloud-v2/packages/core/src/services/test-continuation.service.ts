@@ -233,10 +233,10 @@ export class TestContinuationService {
     return this.runs.failureMedia(occurrenceId, assetId, request);
   }
   /** Registered result binding first; the incident service then checks exact incident membership. */
-  async incident(grant: ContinuationGrant, operationId: string, occurrenceId: string, reportId: string) {
+  async incident(grant: ContinuationGrant, operationId: string, occurrenceId: string, reportId: string, offset?: string) {
     await this.failure(grant, operationId, occurrenceId);
     return this.incidents.metadata(occurrenceId, reportId,
-      `/api/agent/test-failures/${grant.occurrenceId}/reruns/${operationId}/failures/${occurrenceId}/incidents/${reportId}`);
+      `/api/agent/test-failures/${grant.occurrenceId}/reruns/${operationId}/failures/${occurrenceId}/incidents/${reportId}`, offset);
   }
   async incidentArtifact(grant: ContinuationGrant, operationId: string, occurrenceId: string, reportId: string, artifactId: string, request: Request) {
     await this.failure(grant, operationId, occurrenceId);

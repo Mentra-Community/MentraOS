@@ -183,6 +183,7 @@ describe("occurrence-scoped incident diagnostics", () => {
     return { ...memory, app, base: `/${occurrenceId}/incidents` };
   }
   type Metadata = { availability: string; logs: { state: string; artifacts: Array<Record<string, any>> };
+    pagination: { offset: number; limit: number; nextPath: string | null };
     omittedArtifacts: Array<{ type: string; reason: string }>; missingEvidence: Array<{ kind: string; reason: string }>; report: any };
   const metadata = async (f: ReturnType<typeof setup>, reportId = assigned) => {
     const response = await f.app.request(`${f.base}/${reportId}`, { headers: read() });
@@ -335,13 +336,47 @@ describe("occurrence-scoped incident diagnostics", () => {
     expect(meta.logs.state).toBe("unreadable");
     expect(meta.logs.artifacts.map(item => [item.artifactId, item.state])).toEqual([["art_NOTJSON", "unreadable"], ["art_BINARY", "unreadable"],
       ["art_DEEP", "unreadable"], ["art_SHAPE", "unreadable"], ["art_TEXT", "unsupported"], ["art_NOROW", "asset-missing"],
-      ["art_HUGE", "oversized"], ["art_BLOB", "unreadable"], ["art_NINTH", "over-limit"]]);
+      ["art_HUGE", "oversized"], ["art_BLOB", "unreadable"], ["art_NINTH", "not-previewed"]]);
     expect(meta.logs.artifacts.every(item => typeof item.reason === "string" && !item.representation)).toBe(true);
-    // Oversized and over-limit payloads are rejected from metadata without reading them.
+    // Metadata does not read oversized payloads or logs beyond its preview limit.
     expect(f.calls).not.toContain(`read:${assigned}/art_HUGE`); expect(f.calls).not.toContain(`read:${assigned}/art_NINTH`);
     const status = async (artifact: string) => (await f.app.request(`${f.base}/${assigned}/artifacts/${artifact}`, { headers: read() })).status;
     expect(await status("art_NOTJSON")).toBe(409); expect(await status("art_HUGE")).toBe(413);
-    expect(await status("art_TEXT")).toBe(404); expect(await status("art_NOROW")).toBe(404); expect(await status("art_NINTH")).toBe(404);
+    expect(await status("art_TEXT")).toBe(404); expect(await status("art_NOROW")).toBe(404); expect(await status("art_NINTH")).toBe(200);
+  });
+
+  test("all assigned logs are discoverable and readable beyond the bounded metadata preview and page", async () => {
+    const f = setup();
+    f.add(assigned, {}, Array.from({ length: 52 }, (_, index) => ({ artifactId: `art_LOG${index}`, type: "logs", source: "phone",
+      bytes: bundle([{ timestamp: index, level: "info", message: "contact synthetic.person@example.test" }]) })));
+    const first = await metadata(f), route = (path: string) => path.replace("/api/agent/test-failures", "");
+    expect(first.logs.artifacts).toHaveLength(50);
+    expect(f.calls.filter(call => call.startsWith("read:"))).toHaveLength(8);
+    expect(first.pagination).toEqual({ offset: 0, limit: 50,
+      nextPath: `/api/agent/test-failures${f.base}/${assigned}?offset=50` });
+    const ninth = first.logs.artifacts[8]!;
+    expect(ninth).toMatchObject({ artifactId: "art_LOG8", state: "not-previewed",
+      path: `/api/agent/test-failures${f.base}/${assigned}/artifacts/art_LOG8` });
+    expect(ninth).not.toHaveProperty("representation");
+    const fetched = await f.app.request(route(ninth.path), { headers: read() });
+    expect(fetched.status).toBe(200);
+    expect((await fetched.json() as { entries: Array<{ message: string }> }).entries[0]!.message).toBe(`contact ${REDACTED_EMAIL}`);
+    // Exact membership, not whether a metadata page has been read, permits this later artifact.
+    expect((await f.app.request(`${f.base}/${assigned}/artifacts/art_LOG51`, { headers: read() })).status).toBe(200);
+    f.calls.length = 0;
+    const response = await f.app.request(route(first.pagination.nextPath!), { headers: read() });
+    expect(response.status).toBe(200);
+    const second = await response.json() as Metadata;
+    expect(second.logs.artifacts.map(item => item.artifactId)).toEqual(["art_LOG50", "art_LOG51"]);
+    expect(second.pagination).toEqual({ offset: 50, limit: 50, nextPath: null });
+    expect(f.calls.filter(call => call.startsWith("read:"))).toHaveLength(2);
+    expect(second.logs.artifacts[1]!.representation.path).toEndWith("/artifacts/art_LOG51");
+    f.calls.length = 0;
+    for (const offset of ["-1", "1.5", "1e2", "9007199254740992"])
+      expect((await f.app.request(`${f.base}/${assigned}?offset=${offset}`, { headers: read() })).status).toBe(400);
+    expect((await f.app.request(`${f.base}/${unrelated}?offset=50`, { headers: read() })).status).toBe(404);
+    expect((await f.app.request(`${f.base}/${assigned}/artifacts/art_LOG52`, { headers: read() })).status).toBe(404);
+    expect(f.calls).toEqual([`get:${assigned}`]);
   });
 
   test("entry count, message length and emitted bytes are bounded, keeping the newest entries", async () => {

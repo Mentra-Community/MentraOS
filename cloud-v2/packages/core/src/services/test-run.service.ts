@@ -16,7 +16,9 @@ export class TestRunError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 413 | 416 | 503, message: string) { super(message); }
 }
 export interface StoredTestRun { run: TestRun; payloadSha256: string; failureOccurrences?: TestFailureOccurrence[];
-  provenanceCorrections?: TestFailureProvenanceCorrection[]; recoveryLineage?: TestRecoveryLineage }
+  provenanceCorrections?: TestFailureProvenanceCorrection[]; recoveryLineage?: TestRecoveryLineage; diagnosticsReportId?: string;
+  /** Read-only projection from accepted recovery results that inherit this exact occurrence. */
+  recoveryDiagnosticsReportIds?: string[] }
 type CorrectionSettlement = Extract<TestFailureProvenanceCorrection["delivery"], { state: "acknowledged" | "refused" }>;
 export interface StoredTestAsset { runId: string; assetId: string; storageKey: string; sizeBytes: number; sha256: string }
 export interface TestRunRepository {
@@ -59,11 +61,12 @@ export class MongoTestRunRepository implements TestRunRepository {
     const row = await TestRunModel.findOne({ runId }).read("primary").readConcern("majority").lean();
     return row ? this.stored(row) : null;
   }
-  private stored(row: { payload: unknown; payloadSha256: string; failureOccurrences?: unknown[] | null; provenanceCorrections?: unknown[] | null; recoveryLineage?: unknown }): StoredTestRun {
+  private stored(row: { payload: unknown; payloadSha256: string; failureOccurrences?: unknown[] | null; provenanceCorrections?: unknown[] | null; recoveryLineage?: unknown; diagnosticsReportId?: string | null }): StoredTestRun {
     return { run: row.payload as TestRun, payloadSha256: row.payloadSha256,
       failureOccurrences: (row.failureOccurrences ?? undefined) as TestFailureOccurrence[] | undefined,
       ...(row.provenanceCorrections ? { provenanceCorrections: row.provenanceCorrections as TestFailureProvenanceCorrection[] } : {}),
-      ...(row.recoveryLineage ? { recoveryLineage: row.recoveryLineage as TestRecoveryLineage } : {}) };
+      ...(row.recoveryLineage ? { recoveryLineage: row.recoveryLineage as TestRecoveryLineage } : {}),
+      ...(row.diagnosticsReportId ? { diagnosticsReportId: row.diagnosticsReportId } : {}) };
   }
   async insert(run: TestRun, payloadSha256: string, projection: TestFailureProjection = { failureOccurrences: createTestFailureOccurrences(run) }) {
     try {
@@ -142,7 +145,12 @@ export class MongoTestRunRepository implements TestRunRepository {
   }
   async failure(occurrenceId: string): Promise<StoredTestRun | null> {
     const row = await TestRunModel.findOne({ "failureOccurrences.occurrenceId": occurrenceId }).read("primary").readConcern("majority").lean();
-    return row ? this.stored(row) : null;
+    if (!row) return null;
+    const recoveryDiagnosticsReportIds = await TestRunModel.distinct("diagnosticsReportId", {
+      "recoveryLineage.inheritedFailures": { $elemMatch: { occurrenceId, runId: row.runId, payloadSha256: row.payloadSha256 } },
+      uploadsComplete: true, diagnosticsReportId: { $type: "string" },
+    }).read("primary").readConcern("majority").maxTimeMS(5_000);
+    return { ...this.stored(row), recoveryDiagnosticsReportIds };
   }
   async pendingFailures(limit: number): Promise<StoredTestRun[]> {
     const rows = await TestRunModel.aggregate([
@@ -381,7 +389,12 @@ export class TestRunService {
         ...(recordedBuild?.success ? { recordedAppBuild: recordedBuild.data } : {}) },
       recovery: { originalRunId: relatedRunId(run.provenance.originalRunId), previousResultRunId: relatedRunId(run.provenance.previousResultRunId) },
       originalOutcome: run.outcome, outcomes: run.outcomes,
-      failure: { ...occurrence.failure, ...(correction ? bindings : {}), missingEvidence: [
+      failure: { ...occurrence.failure, ...(correction ? bindings : {}),
+        // Effective read association only; never rewrite the accepted occurrence or
+        // treat worker diagnostics as missing phone logs/source/qualification evidence.
+        incidentIds: [...new Set([...occurrence.failure.incidentIds, ...(stored.diagnosticsReportId ? [stored.diagnosticsReportId] : []),
+          ...(stored.recoveryDiagnosticsReportIds ?? [])])],
+        missingEvidence: [
         ...occurrence.failure.missingEvidence,
         ...(!run.source ? [{ kind: "source" as const, reason: correction
           ? "Authenticated branch and trigger provenance was not published with this result; the source above is an admin-reviewed provenance correction, not publisher provenance."

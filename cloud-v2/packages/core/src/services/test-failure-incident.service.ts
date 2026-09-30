@@ -61,7 +61,7 @@ const defaultStore: IncidentReportStore = { getReport, readReportArtifactPayload
 type Runs = Pick<TestRunService, "failureDetail">;
 type StoredReport = NonNullable<Awaited<ReturnType<typeof getReport>>>;
 type MissingKind = "phone-logs" | "glasses-logs" | "incident" | "other";
-type LogState = "usable" | "empty" | "unreadable" | "oversized" | "unsupported" | "asset-missing" | "over-limit";
+type LogState = "usable" | "empty" | "unreadable" | "oversized" | "unsupported" | "asset-missing";
 
 // ── Redaction ────────────────────────────────────────────────────────────────
 // Same policy as the Mentra App's MentraJSLogPipeline.redactSecrets: a string
@@ -337,7 +337,7 @@ function bounded(value: unknown, max = INCIDENT_DIAGNOSTIC_LIMITS.maxFieldChars)
 
 interface LogArtifactPlan {
   artifactId: string; source: string; sizeBytes: number | null;
-  asset: StoredReport["assets"][number] | undefined; withinLimit: boolean;
+  asset: StoredReport["assets"][number] | undefined;
 }
 
 export class TestFailureIncidentService {
@@ -351,23 +351,19 @@ export class TestFailureIncidentService {
       throw new TestRunError(404, "incident is not assigned to this occurrence");
   }
 
-  private plan(stored: StoredReport) {
-    const listed = stored.report.artifacts.slice(0, INCIDENT_DIAGNOSTIC_LIMITS.maxListedArtifacts);
-    let logs = 0;
-    return listed.map(artifact => {
+  private plan(stored: StoredReport, artifacts: StoredReport["report"]["artifacts"]) {
+    return artifacts.map(artifact => {
       // Stored artifact fields are unconstrained strings; only reviewed labels are described or addressable.
       const artifactId = artifactIdLabel(artifact.artifactId);
       const source = sourceLabel(artifact.source) ?? UNKNOWN_LABEL;
       const type = ARTIFACT_TYPES.has(artifact.type) ? artifact.type : UNKNOWN_LABEL;
       const isLog = type === "logs" && artifactId !== null;
-      const withinLimit = isLog && ++logs <= INCIDENT_DIAGNOSTIC_LIMITS.maxLogArtifacts;
-      return { artifactId, type, source, plan: isLog ? { artifactId, source, sizeBytes: artifact.sizeBytes, withinLimit,
+      return { artifactId, type, source, plan: isLog ? { artifactId, source, sizeBytes: artifact.sizeBytes,
         asset: stored.assets.find(asset => asset.artifactId === artifactId) } satisfies LogArtifactPlan : null };
     });
   }
 
   private async project(reportId: string, plan: LogArtifactPlan): Promise<LogProjection | { state: Exclude<LogState, "usable" | "empty" | "unreadable" | "oversized">; reason: string }> {
-    if (!plan.withinLimit) return { state: "over-limit", reason: `Only the first ${INCIDENT_DIAGNOSTIC_LIMITS.maxLogArtifacts} log artifacts are projected.` };
     if (!plan.asset) return { state: "asset-missing", reason: "Log artifact metadata exists but its stored payload row is missing." };
     if ((plan.asset.contentType || "").split(";")[0]!.trim().toLowerCase() !== "application/json")
       return { state: "unsupported", reason: "Only JSON log bundles are part of this diagnostic representation." };
@@ -383,12 +379,16 @@ export class TestFailureIncidentService {
     return projectIncidentLog(payload.bytes, { reportId, artifactId: plan.artifactId, source: plan.source, sourceSha256 });
   }
 
-  async metadata(occurrenceId: string, reportId: string, basePath: string) {
+  async metadata(occurrenceId: string, reportId: string, basePath: string, offsetText = "0") {
+    if (offsetText.length > 16 || !/^(0|[1-9]\d*)$/.test(offsetText) || !Number.isSafeInteger(Number(offsetText)))
+      throw new TestRunError(400, "invalid artifact offset");
+    const offset = Number(offsetText), limit = INCIDENT_DIAGNOSTIC_LIMITS.maxListedArtifacts;
     await this.assigned(occurrenceId, reportId);
     const common = { schemaVersion: 1 as const, occurrenceId, reportId, redactionPolicy: INCIDENT_DIAGNOSTIC_REDACTION_POLICY,
-      note: "Incident diagnostics never change the failure outcome or its evidence completeness." };
+      note: "Incident diagnostics never change the failure outcome or its evidence completeness. Log states describe this page's bounded preview; other logs can be fetched through their artifact paths." };
     const stored = await this.store.getReport(reportId);
     if (!stored) return { ...common, availability: "missing" as const, report: null,
+      pagination: { offset, limit, nextPath: null },
       logs: { state: "missing" as const, artifacts: [] }, omittedArtifacts: [],
       missingEvidence: [{ kind: "incident" as const, reason: "The incident is recorded on this failure but no report exists in this environment." }] };
 
@@ -396,7 +396,8 @@ export class TestFailureIncidentService {
     const missingEvidence: Array<{ kind: MissingKind; reason: string }> = [];
     const logArtifacts: Array<Record<string, unknown>> = [];
     const omittedArtifacts: Array<{ artifactId: string | null; type: string; source: string; reason: string }> = [];
-    for (const { artifactId, type, source, plan } of this.plan(stored)) {
+    let previewedLogs = 0;
+    for (const { artifactId, type, source, plan } of this.plan(stored, report.artifacts.slice(offset, offset + limit))) {
       if (!plan) {
         omittedArtifacts.push({ artifactId, type, source,
           reason: artifactId === null ? "Artifact identifier is not a reviewed diagnostic ID; the artifact is omitted."
@@ -405,32 +406,34 @@ export class TestFailureIncidentService {
               : type === "state_snapshot" ? "Raw state snapshots are omitted." : "Unknown artifact formats are omitted." });
         continue;
       }
-      const result = await this.project(reportId, plan);
+      const path = `${basePath}/artifacts/${plan.artifactId}`;
+      const result = ++previewedLogs <= INCIDENT_DIAGNOSTIC_LIMITS.maxLogArtifacts ? await this.project(reportId, plan)
+        : { state: "not-previewed" as const, reason: `This page previews at most ${INCIDENT_DIAGNOSTIC_LIMITS.maxLogArtifacts} log artifacts; fetch this artifact's path to inspect it.` };
       const descriptor: Record<string, unknown> = { artifactId: plan.artifactId, source, state: result.state,
-        sourceSizeBytes: plan.asset?.sizeBytes ?? plan.sizeBytes ?? null };
+        sourceSizeBytes: plan.asset?.sizeBytes ?? plan.sizeBytes ?? null, path };
       if ("bytes" in result) Object.assign(descriptor, { counts: result.counts, representation: {
         contentType: REPRESENTATION_CONTENT_TYPE, sizeBytes: result.bytes.byteLength, sha256: result.sha256,
-        path: `${basePath}/artifacts/${plan.artifactId}` } });
+        path } });
       else {
         descriptor.reason = result.reason;
-        missingEvidence.push({ kind: missingKind(source), reason: `Log artifact ${plan.artifactId} is ${result.state}: ${result.reason}` });
+        if (result.state !== "not-previewed")
+          missingEvidence.push({ kind: missingKind(source), reason: `Log artifact ${plan.artifactId} is ${result.state}: ${result.reason}` });
       }
       if (result.state === "empty") missingEvidence.push({ kind: missingKind(source), reason: `Log artifact ${plan.artifactId} has no valid entries.` });
       logArtifacts.push(descriptor);
     }
-    if (report.artifacts.length > INCIDENT_DIAGNOSTIC_LIMITS.maxListedArtifacts)
-      missingEvidence.push({ kind: "other", reason: `Only the first ${INCIDENT_DIAGNOSTIC_LIMITS.maxListedArtifacts} incident artifacts are described.` });
     const states = logArtifacts.map(item => item.state);
     const state = states.includes("usable") ? "usable" as const
       : report.status === "collecting" ? "collecting" as const
-        : states.some(item => ["unreadable", "oversized", "asset-missing", "over-limit", "empty"].includes(item as string)) ? "unreadable" as const
+        : states.some(item => ["unreadable", "oversized", "asset-missing", "empty"].includes(item as string)) ? "unreadable" as const
           : states.includes("unsupported") ? "unsupported" as const : "missing" as const;
     if (report.status === "collecting")
       missingEvidence.unshift({ kind: "incident", reason: "The incident is still collecting artifacts; its logs may be incomplete." });
     if (!logArtifacts.some(item => item.state === "usable" && missingKind(item.source as string) === "phone-logs"))
-      missingEvidence.push({ kind: "phone-logs", reason: `No usable phone logs in this incident (logs: ${state}).` });
+      missingEvidence.push({ kind: "phone-logs", reason: `No usable phone logs in this page's preview (logs: ${state}).` });
 
     return { ...common, availability: "found" as const,
+      pagination: { offset, limit, nextPath: offset + limit < report.artifacts.length ? `${basePath}?offset=${offset + limit}` : null },
       report: { kind: REPORT_KINDS.has(report.kind) ? report.kind : UNKNOWN_LABEL,
         status: REPORT_STATUSES.has(report.status) ? report.status : UNKNOWN_LABEL,
         createdAt: timestampLabel(report.createdAt), updatedAt: timestampLabel(report.updatedAt),
@@ -448,7 +451,8 @@ export class TestFailureIncidentService {
     const stored = await this.store.getReport(reportId);
     if (!stored) throw new TestRunError(404, "incident report not found");
     // Only artifacts listed on this exact report are addressable.
-    const plan = this.plan(stored).find(item => item.artifactId === artifactId)?.plan;
+    const member = stored.report.artifacts.find(item => item.artifactId === artifactId);
+    const plan = member && this.plan(stored, [member])[0]?.plan;
     if (!plan) throw new TestRunError(404, "artifact is not a diagnostic log of this incident");
     const result = await this.project(reportId, plan);
     if (!("bytes" in result)) throw new TestRunError(result.state === "oversized" ? 413 : result.state === "unreadable" ? 409 : 404,
