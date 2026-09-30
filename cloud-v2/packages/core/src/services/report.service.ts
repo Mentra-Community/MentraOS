@@ -257,9 +257,15 @@ async function addRetryableLogArtifact(input: {
   if (!asset || asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey
     || asset.sha256 !== sha256 || asset.sizeBytes !== bytes.byteLength || asset.contentType !== contentType)
     throw new ReportArtifactError(409, "attachment key already binds different content");
-  const object = await storage.putObject({ key: storageKey, body: bytes, contentType });
-  if (object.key !== storageKey || object.sha256 !== sha256 || object.sizeBytes !== bytes.byteLength || object.contentType !== contentType)
-    throw new ReportArtifactError(503, "attachment storage receipt did not match");
+  // Published metadata proves an earlier verified write. A retry only reads it;
+  // an unavailable/corrupt completed object must not trigger a destructive rewrite.
+  const completed = await ReportModel.exists({ reportId, mentraUserId, "artifacts.artifactId": artifactId })
+    .read("primary").readConcern("majority");
+  if (!completed) {
+    const object = await storage.putObject({ key: storageKey, body: bytes, contentType });
+    if (object.key !== storageKey || object.sha256 !== sha256 || object.sizeBytes !== bytes.byteLength || object.contentType !== contentType)
+      throw new ReportArtifactError(503, "attachment storage receipt did not match");
+  }
   const readback = await storage.getObject(storageKey);
   if (readback.byteLength !== bytes.byteLength || createHash("sha256").update(readback).digest("hex") !== sha256)
     throw new ReportArtifactError(503, "attachment storage verification failed");

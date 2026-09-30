@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import mongoose from "mongoose";
 import { createTestRunIngestApi } from "../api/internal/test-runs.api";
 import { createTestFailureAgentApi } from "../api/agent/test-failures.api";
@@ -13,6 +16,7 @@ import { recoveryResultRunId } from "./test-recovery-lineage";
 import { getReport, submitReport } from "./report.service";
 import { TestFailureIncidentService } from "./test-failure-incident.service";
 import { StorageService } from "./storage/storage.service";
+import { LocalStorageProvider } from "./storage/providers/local-storage.provider";
 import type { TestRun } from "../types/test-run.types";
 
 const secret = "synthetic-diagnostic-signing-" + "x".repeat(32);
@@ -167,6 +171,36 @@ describe.skipIf(!uri)("worker diagnostics report persistence", () => {
     const assets = await ReportAssetModel.find({ reportId: row!.diagnosticsReportId }).lean();
     expect(assets).toHaveLength(1);
     expect(digest(objects.get(assets[0]!.storageKey)!)).toBe(assets[0]!.sha256);
+  });
+  test("completed local diagnostics retry verifies the original bytes without another write", async () => {
+    const root = await mkdtemp(join(tmpdir(), "worker-diagnostic-retry-"));
+    let interruptWrite = false, localWrites = 0;
+    class InterruptedLocalStorage extends LocalStorageProvider {
+      override async putObject(input: Parameters<LocalStorageProvider["putObject"]>[0]) {
+        localWrites++;
+        if (interruptWrite) {
+          await writeFile(join(root, input.key), "truncated retry");
+          throw new Error("synthetic interrupted write");
+        }
+        return super.putObject(input);
+      }
+    }
+    try {
+      const local = new WorkerDiagnosticsService(new StorageService(new InterruptedLocalStorage({ rootDir: root })));
+      const accepted = await runs.ingest(fixture("local-completed-retry")), input = body(accepted.payloadSha256);
+      const first = await local.forRun("local-completed-retry", input);
+      const asset = await ReportAssetModel.findOne({ artifactId: first.artifactId }).lean();
+      const path = join(root, asset!.storageKey), bytes = await readFile(path);
+      interruptWrite = true;
+      expect(await local.forRun("local-completed-retry", input)).toEqual(first);
+      expect(localWrites).toBe(1);
+      expect(await readFile(path)).toEqual(bytes);
+      // A completed artifact that can no longer be verified refuses ACK, without rewriting it.
+      await writeFile(path, "corrupt stored data");
+      await expect(local.forRun("local-completed-retry", input)).rejects.toMatchObject({ status: 503 });
+      expect(localWrites).toBe(1);
+      expect(await readFile(path, "utf8")).toBe("corrupt stored data");
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
   test("recovery diagnostics remain readable through every exact owner across generations and retries", async () => {
     const original = recoverable("recovery-owners"), first = await runs.ingest(original);
