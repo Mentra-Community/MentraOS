@@ -170,3 +170,9 @@ flag survived a fresh Retry and immediately labeled the next install as Verifyin
 attempt admission now resets that flag, while reconciliation-only Retry preserves it. The
 existing disconnected-terminal regression failed with Verifying before this fix and now
 checks Installing -> Restarting -> Verifying for the next attempt; all 143 phone tests pass.
+
+Exact-head CI and the fourth review caught invalid disconnected-state fixture fields that
+Jest does not type-check. The fixtures now use the discriminated union's disconnected
+shape. After provisioning this checkout's own frozen dependencies, the full mobile
+`bun run compile` and all 143 focused Jest tests pass. Earlier temporary shared-dependency
+type-check output is not treated as validation of this checkout.

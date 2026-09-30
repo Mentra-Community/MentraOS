@@ -723,7 +723,7 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
         await flushNativeStartPromise()
         // Recovery settles while disconnected and the ordinary ASG session expires.
         // A later reconnect/query replays the independently retained terminal result.
-        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected", fullyBooted: false}})
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
         await jest.advanceTimersByTimeAsync(31 * 60_000)
         setGlassesConnected()
         expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
@@ -736,7 +736,7 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
         GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
         useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install"}))
         expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("installing")
-        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected", fullyBooted: false}})
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
         expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("restarting")
         setGlassesConnected()
         expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("verifying")
