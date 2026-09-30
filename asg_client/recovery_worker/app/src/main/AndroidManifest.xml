@@ -49,6 +49,7 @@
             <intent-filter>
                 <action android:name="com.mentra.recovery.ACTION_START_RECOVERY" />
                 <action android:name="com.mentra.recovery.ACTION_REQUEST_DOWNGRADE" />
+                <action android:name="com.mentra.recovery.ACTION_QUERY_DOWNGRADE_STATUS" />
             </intent-filter>
         </receiver>
     </application>

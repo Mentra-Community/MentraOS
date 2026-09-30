@@ -628,7 +628,7 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     // Ack + apk/install status latch the detour: recovery now owns the transaction.
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
     useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
-    expect(otaInstallCoordinator.snapshot().versionChangePhase).not.toBeNull()
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("installing")
 
     // Retry must NOT re-drive the glasses (a second ota_start would start a
     // parallel install and a second handoff would REPLACE the live transaction);
@@ -641,28 +641,30 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
-  it.each(["downgrade_handoff_refused", "downgrade_handoff_failed", "downgrade_transaction_stalled"])(
-    "non-ownership error %s releases the latch so retry can re-drive",
-    async (errorCode) => {
-      setGlassesConnected()
-      useGlassesStore.getState().setOtaUpdateAvailable({
-        updateAvailable: true,
-        isDowngrade: true,
-        versionCode: 49000000,
-      } as never)
-      otaInstallCoordinator.attach()
-      GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-      useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
-      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  it.each([
+    "downgrade_not_owned",
+    "downgrade_handoff_refused",
+    "downgrade_handoff_failed",
+    "downgrade_transaction_stalled",
+  ])("non-ownership error %s releases the latch so retry can re-drive", async (errorCode) => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: 49000000,
+    } as never)
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
 
-      await flushNativeStartPromise()
+    await flushNativeStartPromise()
 
-      useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: errorCode}))
-      expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
-      otaInstallCoordinator.retry()
-      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
-    },
-  )
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: errorCode}))
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+  })
 
   it("a re-observed failed install status arms the latch at most once and releases it once", async () => {
     setGlassesConnected()
@@ -698,26 +700,49 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     logSpy.mockRestore()
   })
 
-  it("a generic failure during a latched detour does NOT release the latch (accepted-but-slow)", async () => {
-    setGlassesConnected()
-    useGlassesStore.getState().setOtaUpdateAvailable({
-      updateAvailable: true,
-      isDowngrade: true,
-      versionCode: 49000000,
-    } as never)
-    otaInstallCoordinator.attach()
-    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  it.each(["install_failed", "downgrade_status_unknown"])(
+    "failure %s retains recovery ownership on retry",
+    async (errorCode) => {
+      setGlassesConnected()
+      useGlassesStore.getState().setOtaUpdateAvailable({
+        updateAvailable: true,
+        isDowngrade: true,
+        versionCode: 49000000,
+      } as never)
+      otaInstallCoordinator.attach()
+      GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
 
-    // Some other failure (not a non-ownership code): the transaction may well be alive and
-    // own the staged artifact — retry must stay in reconcile mode, not re-drive.
-    useGlassesStore
-      .getState()
-      .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "install_failed"}))
-    otaInstallCoordinator.retry()
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
-  })
+      // Some other failure (not a non-ownership code): the transaction may well be alive and
+      // own the staged artifact — retry must stay in reconcile mode, not re-drive.
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: errorCode}))
+      otaInstallCoordinator.retry()
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+      if (errorCode === "downgrade_status_unknown") {
+        await flushNativeStartPromise()
+        // Recovery settles while disconnected and the ordinary ASG session expires.
+        // A later reconnect/query replays the independently retained terminal result.
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+        await jest.advanceTimersByTimeAsync(31 * 60_000)
+        setGlassesConnected()
+        expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+        useGlassesStore
+          .getState()
+          .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "downgrade_not_owned"}))
+        otaInstallCoordinator.retry()
+        expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+        await flushNativeStartPromise()
+        GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+        useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install"}))
+        expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("installing")
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+        expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("restarting")
+        setGlassesConnected()
+        expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("verifying")
+      }
+    },
+  )
 
   it("backstop: a direct (ungated) send during a latched detour is refused and logged", async () => {
     setGlassesConnected()
