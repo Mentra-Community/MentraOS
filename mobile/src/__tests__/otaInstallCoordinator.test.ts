@@ -8,10 +8,19 @@
  * driven by mutating the real island glasses store and emitting on island's
  * GlobalEventEmitter (what OtaService does with the BLE events).
  */
+import type {NativeFirmwareUpdateSnapshot} from "@mentra/bluetooth-sdk/firmware-updates"
+import {ota as legacyOta} from "@/../modules/engine/src/facades/ota"
+import {acquireLegacyLiveOwner, acquireManagedLiveOwner} from "@/../modules/engine/src/devices/mentra-live/ownership"
+
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
-import {otaInstallCoordinator} from "../../modules/engine/src/services/OtaInstallCoordinator"
-import type {OtaCheckCurrentGlassesResult} from "../../modules/engine/src/services/OtaUpdateCheckService"
+import {otaInstallCoordinator} from "@/../modules/engine/src/services/OtaInstallCoordinator"
+import {
+  CLOCK_SETTLE_MS,
+  handleOtaClockSkewFromGlasses,
+  resetOtaClockFixCooldownForTests,
+} from "@/../modules/engine/src/services/glassesClockSync"
+import type {OtaCheckCurrentGlassesResult} from "@/../modules/engine/src/services/OtaUpdateCheckService"
 import {
   BES_CONTINUE_LOCKOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
@@ -28,25 +37,25 @@ import {
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
-} from "../../modules/engine/src/services/otaInstallPolicy"
+} from "@/../modules/engine/src/services/otaInstallPolicy"
 import {
   legacyOtaProgressFromOtaStatusEvent,
   normalizeOtaStatusEvent,
   otaStatusFromNormalized,
-} from "../../modules/engine/src/services/otaLegacyMapping"
-import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
-import GlobalEventEmitter from "../../modules/engine/src/utils/GlobalEventEmitter"
+} from "@/../modules/engine/src/services/otaLegacyMapping"
+import {useGlassesStore} from "@/../modules/engine/src/stores/glasses"
+import GlobalEventEmitter from "@/../modules/engine/src/utils/GlobalEventEmitter"
 
-import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
+import {bluetoothSdkMock, emitBluetoothSdkEvent} from "@/test-utils/mockBluetoothSdk"
 
-jest.mock("../../modules/engine/src/services/HotspotOtaTransport", () => ({
+jest.mock("@/../modules/engine/src/services/HotspotOtaTransport", () => ({
   hotspotOtaTransport: {
     prepare: jest.fn(),
     teardown: jest.fn(),
   },
 }))
 
-const mockedHotspotTransport = jest.requireMock("../../modules/engine/src/services/HotspotOtaTransport")
+const mockedHotspotTransport = jest.requireMock("@/../modules/engine/src/services/HotspotOtaTransport")
   .hotspotOtaTransport as {prepare: jest.Mock; teardown: jest.Mock}
 const mockHotspotPrepare = mockedHotspotTransport.prepare
 const mockHotspotTeardown = mockedHotspotTransport.teardown
@@ -161,6 +170,26 @@ afterEach(() => {
 })
 
 describe("OtaInstallCoordinator hotspot transport selection", () => {
+  it("cold recovery only queries across fallback, retry and reconnect without restoring Start approval", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}, buildNumber: "40"})
+    otaInstallCoordinator.attach({observationOnly: true})
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS + RETRY_INTERVAL_MS)
+    otaInstallCoordinator.retry()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS + RETRY_INTERVAL_MS)
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    expect(mockHotspotPrepare).not.toHaveBeenCalled()
+    otaInstallCoordinator.detach()
+    useGlassesStore.getState().setGlassesInfo({wifi: {state: "connected", ssid: "test"}})
+    otaInstallCoordinator.prepare(checkResult())
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it("preserves the current file context and clears percentages between files and phases", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
@@ -853,7 +882,7 @@ describe("OtaInstallCoordinator finish()", () => {
     expect(finished).toBe(true)
   })
 
-  it("after an APK step clears the update prompt and the stale build number", () => {
+  it("after an APK step clears the update prompt and the stale build number", async () => {
     setGlassesConnected()
     useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
     useGlassesStore.getState().setOtaUpdateAvailable({
@@ -866,13 +895,13 @@ describe("OtaInstallCoordinator finish()", () => {
     otaInstallCoordinator.attach()
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepType: "apk", stepPercent: 30, overallPercent: 30}))
 
-    otaInstallCoordinator.finish()
+    await otaInstallCoordinator.finish()
 
     expect(useGlassesStore.getState().buildNumber).toBe("")
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
   })
 
-  it("without an APK step leaves the build number alone", () => {
+  it("without an APK step leaves the build number alone", async () => {
     setGlassesConnected()
     useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
     otaInstallCoordinator.attach()
@@ -880,7 +909,7 @@ describe("OtaInstallCoordinator finish()", () => {
       .getState()
       .setOtaStatus(inProgressStatus({stepType: "bes", phase: "install", stepPercent: 30, overallPercent: 30}))
 
-    otaInstallCoordinator.finish()
+    await otaInstallCoordinator.finish()
 
     expect(useGlassesStore.getState().buildNumber).toBe("40")
   })
@@ -1461,7 +1490,7 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
     })
   }
 
-  it("legacy apk session completes on build-number increase when no explicit status arrives", () => {
+  it("legacy apk session completes on build-number increase when no explicit status arrives", async () => {
     setLegacyGlassesConnected("33")
     seedLegacyApkUpdateAvailable()
     otaInstallCoordinator.attach()
@@ -1477,7 +1506,7 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
 
     // finish() must clear the stale build number exactly like an explicit APK step.
-    otaInstallCoordinator.finish()
+    await otaInstallCoordinator.finish()
     expect(useGlassesStore.getState().buildNumber).toBe("")
   })
 
@@ -1534,7 +1563,7 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
 
     useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
-    otaInstallCoordinator.finish()
+    await otaInstallCoordinator.finish()
 
     bluetoothSdkMock.startOtaUpdate.mockRejectedValue(new Error("fresh native rejection"))
     otaInstallCoordinator.retry()
@@ -1884,5 +1913,490 @@ describe("OtaInstallCoordinator legacy APK completion settle hold (WP 8C-g)", ()
     emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "apk"})
 
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+})
+
+describe("Live coordinator completion reconciles native ownership", () => {
+  it.each([
+    {step: "bes", controller: "managed"},
+    {step: "apk", controller: "managed"},
+    {step: "bes", controller: "legacy"},
+    {step: "apk", controller: "legacy"},
+  ] as const)(
+    "$controller releases the matching native record after the established $step proof",
+    async ({step, controller}) => {
+      let native: NativeFirmwareUpdateSnapshot = {
+        schemaVersion: 1,
+        integrationId: "mentra-live",
+        deviceId: "live",
+        updaterId: "updater",
+        revision: 0,
+        connectionGeneration: 1,
+        phase: "idle",
+        safeToRelease: true,
+        canCancel: false,
+        canReconcile: false,
+        inventory: {},
+      }
+      const read = bluetoothSdkMock.getFirmwareUpdateSnapshot as jest.Mock
+      read.mockImplementation(async () => native)
+      bluetoothSdkMock.reconcileFirmwareUpdateCompletion.mockImplementation(async (evidence) => {
+        expect(evidence).toEqual({
+          deviceId: "live",
+          updaterId: "updater",
+          sessionId: "native-session",
+          connectionGeneration: 2,
+          revision: native.revision,
+          kind: step === "bes" ? "live-bes-reboot" : "live-apk-build-increase",
+        })
+        native = {...native, safeToRelease: true, phase: "complete", revision: native.revision + 1}
+        emitBluetoothSdkEvent("firmware_update", native)
+        return native
+      })
+      bluetoothSdkMock.startOtaUpdate.mockImplementation(async () => {
+        native = {...native, sessionId: "native-session", phase: "installing", safeToRelease: false, revision: 1}
+        emitBluetoothSdkEvent("firmware_update", native)
+      })
+      let legacyDeviceId: string | null = null
+      const release =
+        controller === "managed"
+          ? acquireManagedLiveOwner(
+              async () => {},
+              () => {},
+              "live",
+            )
+          : acquireLegacyLiveOwner(
+              async () => {
+                legacyDeviceId = "live"
+              },
+              () => {},
+              () => legacyDeviceId,
+            )
+      try {
+        setLegacyGlassesConnected(step === "bes" ? "39" : "33")
+        useGlassesStore
+          .getState()
+          .setOtaUpdateAvailable({available: true, versionCode: 45, versionName: "45", updates: [step], totalSize: 0})
+        otaInstallCoordinator.attach()
+        await flushNativeStartPromise()
+        if (step === "bes") {
+          useGlassesStore.getState().setOtaStatus(
+            inProgressStatus({
+              stepType: "bes",
+              phase: "install",
+              status: "step_complete",
+              stepPercent: 100,
+              overallPercent: 100,
+            }),
+          )
+          expect(otaInstallCoordinator.snapshot().displayState).not.toBe("complete")
+          expect(bluetoothSdkMock.reconcileFirmwareUpdateCompletion).not.toHaveBeenCalled()
+          useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+          native = {...native, connectionGeneration: 2, revision: 2, phase: "interrupted"}
+          emitBluetoothSdkEvent("firmware_update", native)
+          setGlassesConnected()
+        } else {
+          emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 80, currentUpdate: "apk"})
+          native = {...native, connectionGeneration: 2, revision: 2, phase: "interrupted"}
+          emitBluetoothSdkEvent("firmware_update", native)
+          useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+        }
+        expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+        expect(native.safeToRelease).toBe(false)
+        expect(otaInstallCoordinator.snapshot().safeToRelease).toBe(false)
+        await otaInstallCoordinator.finish()
+        expect(native.safeToRelease).toBe(true)
+        expect(otaInstallCoordinator.snapshot().safeToRelease).toBe(true)
+        expect(bluetoothSdkMock.reconcileFirmwareUpdateCompletion).toHaveBeenCalledTimes(1)
+      } finally {
+        otaInstallCoordinator.detach()
+        release()
+        read.mockReset().mockRejectedValue(Object.assign(new Error("No native updater"), {code: "unsupported"}))
+        bluetoothSdkMock.reconcileFirmwareUpdateCompletion.mockReset()
+      }
+    },
+  )
+})
+
+describe("legacy facade preparation cleanup", () => {
+  const mockGetDefaultDevice = bluetoothSdkMock.getDefaultDevice as jest.Mock
+  const acquireNext = () =>
+    acquireManagedLiveOwner(
+      async () => {},
+      () => {},
+      "next-live",
+    )
+
+  it.each([
+    ["bes", "wifi"],
+    ["bes", "hotspot"],
+    ["apk", "wifi"],
+    ["apk", "hotspot"],
+  ] as const)("binds legacy %s completion to the clock-recovery attempt over %s", async (step, transport) => {
+    resetOtaClockFixCooldownForTests()
+    let native: NativeFirmwareUpdateSnapshot = {
+      schemaVersion: 1,
+      integrationId: "mentra-live",
+      deviceId: "live",
+      updaterId: "updater",
+      revision: 0,
+      connectionGeneration: 1,
+      phase: "idle",
+      safeToRelease: true,
+      canCancel: false,
+      canReconcile: false,
+      inventory: {},
+    }
+    const publish = (patch: Partial<NativeFirmwareUpdateSnapshot>) => {
+      native = {...native, ...patch, revision: native.revision + 1}
+      emitBluetoothSdkEvent("firmware_update", native)
+    }
+    const read = bluetoothSdkMock.getFirmwareUpdateSnapshot as jest.Mock
+    mockGetDefaultDevice.mockResolvedValue({id: "live", model: "Mentra Live"})
+    read.mockImplementation(async () => native)
+    let starts = 0
+    bluetoothSdkMock.startOtaUpdate.mockImplementation(async () => {
+      publish({sessionId: `attempt-${++starts}`, phase: "installing", safeToRelease: false})
+    })
+    bluetoothSdkMock.reconcileFirmwareUpdateCompletion.mockImplementation(async (evidence) => {
+      expect(evidence).toMatchObject({
+        deviceId: "live",
+        updaterId: "updater",
+        sessionId: "attempt-2",
+        connectionGeneration: 2,
+        kind: step === "bes" ? "live-bes-reboot" : "live-apk-build-increase",
+      })
+      publish({phase: "complete", safeToRelease: true})
+      return native
+    })
+    try {
+      setLegacyGlassesConnected(step === "bes" ? "39" : "33")
+      useGlassesStore.getState().setGlassesInfo({
+        hotspotOtaVersion: 1,
+        wifi: transport === "hotspot" ? {state: "disconnected"} : {state: "connected", ssid: "test"},
+      })
+      useGlassesStore.getState().setOtaUpdateAvailable({
+        available: true,
+        versionCode: 45,
+        versionName: "45",
+        updates: [step],
+        totalSize: 0,
+      })
+      legacyOta.installSession.prepare({...checkResult(), updates: [step]})
+      legacyOta.installSession.attach()
+      await flushNativeStartPromise()
+      expect(starts).toBe(1)
+      const selectedUrl = (bluetoothSdkMock.startOtaUpdate as jest.Mock).mock.calls[0][0] as string
+      if (transport === "hotspot") expect(selectedUrl).toBe("http://192.168.43.2:8791/version.json")
+      publish({phase: "failed", safeToRelease: true})
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({stepType: step, status: "failed", error: "clock_skew"}))
+      const fixed = handleOtaClockSkewFromGlasses("clock_skew", Date.now() - 86_400_000)
+      await jest.advanceTimersByTimeAsync(CLOCK_SETTLE_MS)
+      expect(await fixed).toBe(true)
+      await flushNativeStartPromise()
+      expect(starts).toBe(2)
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenLastCalledWith(selectedUrl)
+      if (step === "bes") {
+        useGlassesStore.getState().setOtaStatus(
+          inProgressStatus({
+            stepType: "bes",
+            phase: "install",
+            status: "step_complete",
+            stepPercent: 100,
+            overallPercent: 100,
+          }),
+        )
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+        publish({phase: "interrupted", connectionGeneration: 2, safeToRelease: false})
+        setGlassesConnected()
+      } else {
+        emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 80, currentUpdate: "apk"})
+        publish({phase: "interrupted", connectionGeneration: 2, safeToRelease: false})
+        useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+      }
+      expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+      expect(native.safeToRelease).toBe(false)
+      await expect(legacyOta.installSession.finish()).resolves.toBeUndefined()
+      expect(bluetoothSdkMock.reconcileFirmwareUpdateCompletion).toHaveBeenCalledTimes(1)
+      expect(otaInstallCoordinator.isSafeToRelease()).toBe(true)
+      legacyOta.installSession.detach()
+      const release = acquireNext()
+      release()
+      expect(starts).toBe(2)
+    } finally {
+      publish({phase: "complete", safeToRelease: true})
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "complete", phase: "install"}))
+      if (!otaInstallCoordinator.isSafeToRelease()) await legacyOta.installSession.finish()
+      legacyOta.installSession.detach()
+      read.mockReset().mockRejectedValue(Object.assign(new Error("No native updater"), {code: "unsupported"}))
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+      bluetoothSdkMock.reconcileFirmwareUpdateCompletion.mockReset()
+      resetOtaClockFixCooldownForTests()
+    }
+  })
+
+  it.each(["missing", "rejected"])("can leave after a %s identity lookup without a delayed Start", async (failure) => {
+    mockGetDefaultDevice.mockImplementation(async () => {
+      if (failure === "rejected") throw new Error("Identity unavailable")
+      return null
+    })
+    setGlassesConnected()
+    legacyOta.installSession.attach()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    legacyOta.installSession.detach()
+    const release = acquireNext()
+    try {
+      await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS + QUERY_REPLY_TIMEOUT_MS)
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+      setGlassesConnected()
+      await flushNativeStartPromise()
+      expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    } finally {
+      release()
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+    }
+  })
+
+  it("fences a pending identity lookup when the legacy host leaves", async () => {
+    let resolveIdentity!: (device: {id: string; model: string}) => void
+    const pending = new Promise<{id: string; model: string}>((resolve) => {
+      resolveIdentity = resolve
+    })
+    mockGetDefaultDevice.mockImplementation(() => pending)
+    setGlassesConnected()
+    legacyOta.installSession.attach()
+    legacyOta.installSession.detach()
+    const release = acquireNext()
+    try {
+      resolveIdentity({id: "legacy-live", model: "Mentra Live"})
+      await flushNativeStartPromise()
+      await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS + QUERY_REPLY_TIMEOUT_MS)
+      expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+      expect(mockHotspotPrepare).not.toHaveBeenCalled()
+    } finally {
+      release()
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+    }
+  })
+
+  it("releases a failed real prepare before any progress host attaches", () => {
+    useGlassesStore.setState({wifiStatusKnown: false})
+    expect(() => legacyOta.installSession.prepare(checkResult())).toThrow("Wi-Fi status")
+    const release = acquireNext()
+    release()
+  })
+
+  it("keeps admitted native ownership when another prepare fails and the host leaves", async () => {
+    let native: NativeFirmwareUpdateSnapshot = {
+      schemaVersion: 1,
+      integrationId: "mentra-live",
+      deviceId: "live",
+      updaterId: "updater",
+      revision: 0,
+      connectionGeneration: 1,
+      phase: "idle",
+      safeToRelease: true,
+      canCancel: false,
+      canReconcile: false,
+      inventory: {},
+    }
+    const read = bluetoothSdkMock.getFirmwareUpdateSnapshot as jest.Mock
+    mockGetDefaultDevice.mockResolvedValue({id: "live", model: "Mentra Live"})
+    read.mockImplementation(async () => native)
+    bluetoothSdkMock.startOtaUpdate.mockImplementation(async () => {
+      native = {...native, revision: 1, sessionId: "admitted", phase: "installing", safeToRelease: false}
+      emitBluetoothSdkEvent("firmware_update", native)
+    })
+    try {
+      setGlassesConnected()
+      useGlassesStore.getState().setGlassesInfo({wifi: {state: "connected", ssid: "test"}})
+      legacyOta.installSession.prepare(checkResult())
+      legacyOta.installSession.attach()
+      await flushNativeStartPromise()
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+      expect(otaInstallCoordinator.isSafeToRelease()).toBe(false)
+      useGlassesStore.setState({wifiStatusKnown: false})
+      expect(() => legacyOta.installSession.prepare(checkResult())).toThrow("Wi-Fi status")
+      legacyOta.installSession.detach()
+      expect(() => acquireNext()).toThrow("already owns")
+    } finally {
+      native = {...native, revision: 2, phase: "failed", safeToRelease: true}
+      emitBluetoothSdkEvent("firmware_update", native)
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "failed"}))
+      await legacyOta.installSession.finish()
+      legacyOta.installSession.detach()
+      read.mockReset().mockRejectedValue(Object.assign(new Error("No native updater"), {code: "unsupported"}))
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+    }
+    const release = acquireNext()
+    release()
+  })
+
+  it.each([
+    "unmount",
+    "remount",
+    "cleanup-failure",
+    "late-native",
+    "late-native-remount",
+    "late-native-remount-unmount",
+    "fresh-install",
+  ])("coalesces completion and honors the latest legacy host (%s)", async (mode) => {
+    const remount = mode === "remount" || mode === "fresh-install" || mode.startsWith("late-native-remount")
+    const remountLeaves = mode === "late-native-remount-unmount"
+    const lateNative = mode.startsWith("late-native")
+    let native: NativeFirmwareUpdateSnapshot = {
+      schemaVersion: 1,
+      integrationId: "mentra-live",
+      deviceId: "live",
+      updaterId: "updater",
+      revision: 0,
+      connectionGeneration: 1,
+      phase: "idle",
+      safeToRelease: true,
+      canCancel: false,
+      canReconcile: false,
+      inventory: {},
+    }
+    const read = bluetoothSdkMock.getFirmwareUpdateSnapshot as jest.Mock
+    mockGetDefaultDevice.mockResolvedValue({id: "live", model: "Mentra Live"})
+    read.mockImplementation(async () => native)
+    bluetoothSdkMock.startOtaUpdate.mockImplementation(async () => {
+      native = {
+        ...native,
+        revision: native.revision + 1,
+        sessionId: `admitted-${native.revision + 1}`,
+        phase: "installing",
+        safeToRelease: false,
+      }
+      emitBluetoothSdkEvent("firmware_update", native)
+    })
+    let stopTransport!: () => void
+    let failTransport!: (error: Error) => void
+    let finish: Promise<void> | undefined
+    try {
+      setGlassesConnected()
+      useGlassesStore.getState().setGlassesInfo({hotspotOtaVersion: 1, wifi: {state: "disconnected"}})
+      legacyOta.installSession.prepare(checkResult())
+      legacyOta.installSession.attach()
+      await flushNativeStartPromise()
+      native = {...native, revision: 2, phase: "complete", safeToRelease: true}
+      emitBluetoothSdkEvent("firmware_update", native)
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "complete", phase: "install"}))
+      // The terminal reaction also requests teardown; count the two explicit
+      // Finish calls below independently of that existing automatic request.
+      mockHotspotTeardown.mockClear()
+      mockHotspotTeardown.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            stopTransport = resolve
+            failTransport = reject
+          }),
+      )
+      finish = legacyOta.installSession.finish()
+      const sameCompletion = legacyOta.installSession.finish()
+      // Attach rejection handlers before injecting a teardown failure.
+      const outcomes = Promise.allSettled([finish, sameCompletion])
+      await flushNativeStartPromise()
+      expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+      expect(otaInstallCoordinator.isSafeToRelease()).toBe(false)
+
+      useGlassesStore.getState().setOtaStatus(inProgressStatus())
+      legacyOta.installSession.retry()
+      legacyOta.installSession.detach()
+      expect(() => acquireNext()).toThrow("already owns")
+      expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+      if (remount && !lateNative) legacyOta.installSession.attach()
+      if (lateNative) {
+        native = {...native, revision: 3, phase: "installing", safeToRelease: false}
+        emitBluetoothSdkEvent("firmware_update", native)
+      }
+
+      if (mode === "cleanup-failure") {
+        failTransport(new Error("Transport cleanup failed"))
+        expect((await outcomes).map((result) => result.status)).toEqual(["rejected", "rejected"])
+        expect(otaInstallCoordinator.isSafeToRelease()).toBe(false)
+        expect(() => acquireNext()).toThrow("already owns")
+        legacyOta.installSession.retry()
+        await flushNativeStartPromise()
+        expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+        await legacyOta.installSession.finish()
+      } else {
+        stopTransport()
+        expect((await outcomes).map((result) => result.status)).toEqual(["fulfilled", "fulfilled"])
+      }
+      if (lateNative) {
+        expect(otaInstallCoordinator.isSafeToRelease()).toBe(false)
+        expect(() => acquireNext()).toThrow("already owns")
+        if (remount) legacyOta.installSession.attach()
+        if (remountLeaves) {
+          legacyOta.installSession.detach()
+          legacyOta.installSession.attach()
+          legacyOta.installSession.detach()
+        }
+        native = {...native, revision: 4, phase: "complete", safeToRelease: true}
+        emitBluetoothSdkEvent("firmware_update", native)
+        await flushNativeStartPromise()
+      }
+      expect(otaInstallCoordinator.isSafeToRelease()).toBe(true)
+      // Unmount only runs once. Completion must honor the already requested
+      // detach without requiring the vanished host to issue another one.
+      if (mode === "fresh-install") {
+        useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "failed"}))
+        legacyOta.installSession.retry()
+        await flushNativeStartPromise()
+        expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+        legacyOta.installSession.detach()
+        native = {...native, revision: native.revision + 1, phase: "complete", safeToRelease: true}
+        emitBluetoothSdkEvent("firmware_update", native)
+        useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "complete", phase: "install"}))
+        await flushNativeStartPromise()
+        // Prior cleanup cannot authorize detachment of this newly admitted pass.
+        expect(() => acquireNext()).toThrow("already owns")
+        await legacyOta.installSession.finish()
+      } else if (remount && !remountLeaves) {
+        expect(() => acquireNext()).toThrow("already owns")
+        legacyOta.installSession.detach()
+      }
+      const release = acquireNext()
+      release()
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(mode === "fresh-install" ? 2 : 1)
+    } finally {
+      stopTransport?.()
+      await finish?.catch(() => undefined)
+      native = {...native, revision: native.revision + 1, phase: "complete", safeToRelease: true}
+      emitBluetoothSdkEvent("firmware_update", native)
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "complete", phase: "install"}))
+      if (!otaInstallCoordinator.isSafeToRelease()) await legacyOta.installSession.finish()
+      legacyOta.installSession.detach()
+      read.mockReset().mockRejectedValue(Object.assign(new Error("No native updater"), {code: "unsupported"}))
+      mockGetDefaultDevice.mockReset().mockReturnValue(null)
+    }
+  })
+
+  it.each([false, true])("unwinds a partially failed attachment (prepared=%s)", async (prepared) => {
+    setGlassesConnected()
+    if (prepared) {
+      useGlassesStore.getState().setGlassesInfo({wifi: {state: "connected", ssid: "test"}})
+      legacyOta.installSession.prepare(checkResult())
+    }
+    const attach = otaInstallCoordinator.attach.bind(otaInstallCoordinator)
+    const spy = jest.spyOn(otaInstallCoordinator, "attach").mockImplementationOnce(() => {
+      attach()
+      throw new Error("Attach failed")
+    })
+    try {
+      expect(() => legacyOta.installSession.attach()).toThrow("Attach failed")
+      const release = acquireNext()
+      try {
+        await flushNativeStartPromise()
+        expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+      } finally {
+        release()
+      }
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

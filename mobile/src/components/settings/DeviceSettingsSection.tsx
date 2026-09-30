@@ -1,5 +1,5 @@
-import {useEffect, useState} from "react"
 import {Image, View} from "react-native"
+import {useEffect, useState} from "react"
 
 import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
 import {NotConnectedInfo} from "@/components/glasses/info/NotConnectedInfo"
@@ -11,13 +11,13 @@ import {showAlert} from "@/contexts/ModalContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
-import {deploymentStore} from "@/services/deployment"
 import {SETTINGS, useSetting, Capabilities, DeviceTypes, getModelCapabilities, engine} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
-import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
+import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
+import {deploymentStore} from "@/services/deployment"
 
 const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
 
@@ -76,26 +76,24 @@ export function DeviceSettingsSection() {
 
   const {push} = useNavigationStore.getState()
   const features: Capabilities = getModelCapabilities(defaultWearable)
+  const managedFirmware = engine.firmwareUpdates.supports(defaultWearable, "settings")
+  const showLegacyAr99Ota =
+    !managedFirmware &&
+    deploymentStore.getActive().kind === "consumer" &&
+    glassesConnected &&
+    (isAr99Identifier(defaultWearable) ||
+      isAr99Identifier(glassesInfo.model) ||
+      isAr99Identifier(glassesInfo.bluetoothName))
+  useEffect(() => {
+    if (!showLegacyAr99Ota) setAr99OtaVisible(false)
+  }, [showLegacyAr99Ota])
 
   const otaProgress = otaSnapshot.legacyProgress
   const isAr99Family =
     isAr99Identifier(defaultWearable) ||
     isAr99Identifier(glassesInfo.model) ||
     isAr99Identifier(glassesInfo.bluetoothName)
-  const isMentraLive =
-    defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
-  const showAr99OtaEntry =
-    deploymentStore.getActive().kind === "consumer" &&
-    glassesConnected &&
-    (isAr99Identifier(defaultWearable) ||
-      isAr99Identifier(glassesInfo.model) ||
-      isAr99Identifier(glassesInfo.bluetoothName))
-
-  useEffect(() => {
-    if (!showAr99OtaEntry && ar99OtaVisible) {
-      setAr99OtaVisible(false)
-    }
-  }, [ar99OtaVisible, showAr99OtaEntry])
+  const isMentraLive = defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
 
   const confirmForgetGlasses = async () => {
     let result = await showAlert({
@@ -236,11 +234,19 @@ export function DeviceSettingsSection() {
       )}
 
       {/* WiFi — connected glasses that support WiFi */}
-      {showAr99OtaEntry && (
+      {managedFirmware && (
+        <RouteButton
+          icon={<Icon name="refresh" size={24} color={theme.colors.secondary_foreground} />}
+          label={translate("deviceSettings:checkForUpdates")}
+          onPress={() => push("/ota/check-for-updates", {entryPoint: "settings"})}
+        />
+      )}
+
+      {showLegacyAr99Ota && (
         <>
           <RouteButton
             icon={<Icon name="world-download" size={24} color={theme.colors.secondary_foreground} />}
-            label="Firmware Update"
+            label={translate("deviceSettings:checkForUpdates")}
             onPress={() => setAr99OtaVisible(true)}
           />
           <Ar99OtaModal visible={ar99OtaVisible} onClose={() => setAr99OtaVisible(false)} />
@@ -258,9 +264,11 @@ export function DeviceSettingsSection() {
       )}
 
       {/* OTA Progress — OTA-capable glasses in super mode */}
-      {superMode && glassesConnected && features?.hasOta && otaProgress?.progress && otaProgress?.progress < 100 && (
-        <OtaProgressSection otaProgress={otaProgress} />
-      )}
+      {superMode &&
+        glassesConnected &&
+        defaultWearable === DeviceTypes.LIVE &&
+        otaProgress?.progress &&
+        otaProgress?.progress < 100 && <OtaProgressSection otaProgress={otaProgress} />}
 
       {/* Nex Developer Settings — Mentra Display only */}
       {defaultWearable && defaultWearable.includes(DeviceTypes.NEX) && (

@@ -117,6 +117,8 @@ export {phoneLocationService, stopPhoneLocation} from "./services/PhoneLocationS
 export {fixGlassesClockIfSkewed, maybeFixGlassesClockFromVersionInfo} from "./services/glassesClockSync"
 // OTA manifest-URL resolution (dev-override/legacy-build/env/prod).
 export {resolveOtaManifestUrl} from "./services/otaManifestUrl"
+export {liveAvailability, startLiveAvailability} from "./devices/mentra-live/availabilityRuntime"
+export {getPendingUpdatePromptAction} from "./devices/mentra-live/availability"
 // Flat OTA check helpers (network + BLE state). Host usage is a tracked
 // burn-down surface (§F); the sanctioned path is engine.ota.checkForUpdates().
 export {

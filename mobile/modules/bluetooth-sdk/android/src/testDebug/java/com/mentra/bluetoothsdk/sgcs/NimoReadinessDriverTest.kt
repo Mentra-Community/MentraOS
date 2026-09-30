@@ -79,6 +79,8 @@ class NimoReadinessDriverTest {
       true
     }, { failures.add(it) }, { rejections.add(it) })
     field("canvas").set(nimo, canvas)
+    // These readiness cases run after firmware compatibility has been established.
+    field("firmwareOperational").set(nimo, true)
   }
 
   @After fun dispose() {
@@ -154,6 +156,15 @@ class NimoReadinessDriverTest {
     assertKeys(1)
     oldGatt.close()
     assertTrue(failures.isEmpty())
+  }
+
+  @Test fun unknownFirmwareCannotLaunchEvenWhenBothPeersAreReady() {
+    field("firmwareOperational").set(nimo, false)
+    canvas.offer(byteArrayOf(0, 0, 1), "pending-compatible-firmware")
+    finishHandshake(peer = true)
+    emit(heartbeat())
+    assertEquals(true, field("peerCompanionReady").get(nimo))
+    assertKeys()
   }
 
   private fun finishHandshake(peer: Boolean?) {

@@ -144,6 +144,16 @@ describe("pairing success screen", () => {
     expect(engine.pairing.waitForBluetoothClassic).not.toHaveBeenCalled()
   })
 
+  it("checks NIMO firmware without Live Bluetooth Classic or onboarding steps", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "NIMO"}})
+    const {getAllByText} = render(<PairingSuccessScreen />)
+    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
+    expect(pushUnder).not.toHaveBeenCalled()
+    expect(engine.pairing.waitForBluetoothClassic).not.toHaveBeenCalled()
+  })
+
   it("opens MentraOS onboarding after pairing non-Live glasses when it is incomplete", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
 

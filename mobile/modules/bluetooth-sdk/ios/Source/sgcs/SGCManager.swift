@@ -46,6 +46,12 @@ struct SceneFrame {
 
 @MainActor
 protocol SGCManager {
+    /// Optional device-owned updater; absence means unsupported, never a Live fallback.
+    var firmwareUpdater: FirmwareUpdater? { get }
+    var firmwareUpdateOwnsDevice: Bool { get }
+    /// Reconnect only the retained firmware owner; never replace its SGC or start a flash.
+    func reconnectFirmwareOwner()
+
     // MARK: - hard coded device properties:
 
     var type: String { get set }
@@ -262,6 +268,16 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
+    func reconnectFirmwareOwner() {}
+
+    var firmwareUpdateOwnsDevice: Bool {
+        false
+    }
+
+    var firmwareUpdater: FirmwareUpdater? {
+        nil
+    }
+
     var showBrightnessConfirmation: Bool {
         true
     }

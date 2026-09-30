@@ -25,6 +25,7 @@ import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
 import {Platform} from "react-native"
+import {acquireGlassesHotspot} from "../../../modules/engine/src/services/GlassesHotspotLease"
 import WifiManager from "react-native-wifi-reborn"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -307,8 +308,39 @@ async function startFileDownload(): Promise<void> {
   ).startFileDownload(HOTSPOT_INFO)
 }
 
+function connectAdmittedHotspot(): Promise<void> {
+  const service = gallerySyncService as unknown as {
+    releaseHotspot: (() => void) | null
+    connectToHotspotWifi(info: typeof HOTSPOT_INFO): Promise<void>
+  }
+  service.releaseHotspot = acquireGlassesHotspot()
+  return service.connectToHotspotWifi(HOTSPOT_INFO)
+}
+
 describe("GallerySyncService", () => {
   const originalPlatformOS = Platform.OS
+
+  it("does not disconnect a hotspot owned by OTA or another feature during inactive cleanup", async () => {
+    const release = acquireGlassesHotspot()
+    const disconnect = jest.spyOn(localNetworkTransport, "disconnect")
+    try {
+      gallerySyncService.cleanup()
+      await Promise.resolve()
+      expect(disconnect).not.toHaveBeenCalled()
+    } finally {
+      release()
+    }
+  })
+
+  it("rejects a conflicting start before changing either feature's Wi-Fi connection", async () => {
+    const release = acquireGlassesHotspot()
+    try {
+      await expect(gallerySyncService.startSync()).rejects.toThrow("already in use")
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    } finally {
+      release()
+    }
+  })
 
   beforeEach(() => {
     // Pin Date.now() to match EMPTY_SYNC_RESPONSE.server_time so detectClockSkew stays quiet
@@ -320,14 +352,84 @@ describe("GallerySyncService", () => {
     useGallerySyncStore.getState().reset()
     useGlassesStore.getState().reset()
     gallerySyncService.cleanup()
+    // These fixtures also exercise private download phases directly, without startSync's fresh controller.
+    ;(gallerySyncService as unknown as {abortController: AbortController | null}).abortController = null
   })
 
-  afterEach(() => {
-    jest.restoreAllMocks()
+  afterEach(async () => {
     gallerySyncService.cleanup()
+    await (gallerySyncService as unknown as {releaseNetwork(): Promise<void>}).releaseNetwork()
+    jest.restoreAllMocks()
     Object.defineProperty(Platform, "OS", {value: originalPlatformOS, configurable: true, writable: true})
     jest.clearAllTimers()
     jest.useRealTimers()
+  })
+
+  it("does not start a hotspot after cleanup during a permission prompt", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    let finish!: () => void
+    const prompt = new Promise<boolean>((resolve) => {
+      finish = () => resolve(true)
+    })
+    const permission = jest.spyOn(gallerySyncNotifications, "requestPermissions").mockImplementationOnce(() => prompt)
+    const pending = gallerySyncService.startSync()
+    for (let count = 0; count < 10; count++) await Promise.resolve()
+    expect(permission).toHaveBeenCalled()
+    gallerySyncService.cleanup()
+    finish()
+    await pending
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    const release = acquireGlassesHotspot()
+    release()
+  })
+
+  it("holds hotspot ownership until a late native join is disconnected", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    let completeJoin!: () => void
+    const join = new Promise<string | undefined>((resolve) => {
+      completeJoin = () => resolve(undefined)
+    })
+    const connect = jest.spyOn(localNetworkTransport, "connect").mockReturnValue(join)
+    const disconnect = jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+    const download = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+    const pending = connectAdmittedHotspot()
+    for (let count = 0; count < 10; count++) await Promise.resolve()
+    expect(connect).toHaveBeenCalled()
+    gallerySyncService.cleanup()
+    expect(() => acquireGlassesHotspot()).toThrow("already in use")
+    completeJoin()
+    await pending
+    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(download).not.toHaveBeenCalled()
+    const release = acquireGlassesHotspot()
+    release()
+  })
+
+  it("a dismissed old Wi-Fi explanation cannot join or close a new owner's hotspot", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    let dismiss!: () => void
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          dismiss = resolve
+        }),
+    )
+    const connect = jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
+    jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+    const pending = connectAdmittedHotspot()
+    gallerySyncService.cleanup()
+    await (gallerySyncService as unknown as {releaseNetwork(): Promise<void>}).releaseNetwork()
+    const release = acquireGlassesHotspot()
+    try {
+      dismiss()
+      await pending
+      expect(connect).not.toHaveBeenCalled()
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+      expect(() => acquireGlassesHotspot()).toThrow("already in use")
+    } finally {
+      release()
+    }
   })
 
   it.each([
@@ -342,7 +444,7 @@ describe("GallerySyncService", () => {
     const fetchSpy = jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
     const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
 
-    await (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+    await connectAdmittedHotspot()
 
     expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO.ssid, HOTSPOT_INFO.password)
     expect(fetchSpy).toHaveBeenCalledWith(
@@ -369,7 +471,7 @@ describe("GallerySyncService", () => {
     const notices: string[] = []
     const unsubscribe = onGalleryNotice((notice) => notices.push(notice.code))
     try {
-      const pending = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+      const pending = connectAdmittedHotspot()
       // 5 attempts x (15s verify + 10s probe + 3s retry delay)
       await jest.advanceTimersByTimeAsync(200_000)
       await pending
@@ -393,7 +495,7 @@ describe("GallerySyncService", () => {
     const fetchSpy = jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
     const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
 
-    const pending = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+    const pending = connectAdmittedHotspot()
     // 5 attempts x (30 verify polls x 500ms + a 3s retry delay)
     await jest.advanceTimersByTimeAsync(120_000)
     await pending

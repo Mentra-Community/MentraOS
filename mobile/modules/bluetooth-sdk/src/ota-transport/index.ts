@@ -109,8 +109,12 @@ export const otaServer = Object.freeze({
   stop: (): Promise<void> => MentraOtaServer.stopOtaServer(),
   waitForWifiAddress: (gateway: string, timeoutMs: number): Promise<string> =>
     MentraOtaServer.waitForWifiAddress(gateway, timeoutMs),
-  downloadArtifact: (source: string, destination: string): Promise<{statusCode: number; bytesWritten: number}> =>
-    MentraOtaServer.downloadArtifact(source, destination),
+  downloadArtifact: (
+    source: string,
+    destination: string,
+    headers?: Readonly<Record<string, string>>,
+  ): Promise<{statusCode: number; bytesWritten: number}> =>
+    MentraOtaServer.downloadArtifact(source, destination, headers),
   onArtifactDownloadProgress: (listener: (event: OtaArtifactDownloadProgress) => void): OtaTransportSubscription =>
     MentraOtaServer.addListener("artifactDownloadProgress", listener),
 })

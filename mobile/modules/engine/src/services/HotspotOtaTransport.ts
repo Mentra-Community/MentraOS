@@ -15,6 +15,7 @@ import {
 } from "./OtaArtifactDownloader"
 import {disableHotspotWithRetry} from "./HotspotShutdown"
 import {localNetworkTransport} from "./asg/localNetworkTransport"
+import {acquireGlassesHotspot} from "./GlassesHotspotLease"
 
 export type HotspotOtaPhase = "idle" | "downloading" | "starting_hotspot" | "joining_hotspot" | "serving"
 
@@ -30,10 +31,7 @@ export type HotspotOtaErrorCode =
   | "hotspot_server_failed"
 
 export class HotspotOtaTransportError extends Error {
-  constructor(
-    public readonly code: HotspotOtaErrorCode,
-    message: string,
-  ) {
+  constructor(public readonly code: HotspotOtaErrorCode, message: string) {
     super(message)
     this.name = "HotspotOtaTransportError"
   }
@@ -47,18 +45,20 @@ class HotspotOtaTransport {
   private localNetworkConnected = false
   private serverStarted = false
   private teardownPromise: Promise<void> | null = null
+  private releaseHotspot: (() => void) | null = null
 
   async prepare(
     checkResult: OtaCheckCurrentGlassesResult,
     onProgress?: (progress: HotspotOtaProgress) => void,
   ): Promise<string> {
     if (this.teardownPromise) await this.teardownPromise
-    if (this.active) {
+    if (this.active || this.releaseHotspot) {
       throw new Error("A hotspot OTA transport is already active")
     }
     if (!checkResult.manifestBody) {
       throw new Error("The selected OTA check has no manifest body")
     }
+    this.releaseHotspot = acquireGlassesHotspot()
 
     let phase: HotspotOtaPhase = "downloading"
     try {
@@ -173,6 +173,8 @@ class HotspotOtaTransport {
       this.serverStarted = false
       this.localNetworkConnected = false
       this.hotspotRequested = false
+      this.releaseHotspot?.()
+      this.releaseHotspot = null
     })()
     try {
       await this.teardownPromise

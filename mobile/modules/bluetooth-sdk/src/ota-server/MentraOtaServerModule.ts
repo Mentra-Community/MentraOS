@@ -17,7 +17,11 @@ declare class MentraOtaServerModule extends NativeModule<MentraOtaServerModuleEv
   stopOtaServer(): Promise<void>
   /** Wait for iPhone Wi-Fi (`en0`) to acquire an address on the glasses gateway subnet. */
   waitForWifiAddress(gateway: string, timeoutMs: number): Promise<string>
-  downloadArtifact(source: string, destination: string): Promise<{statusCode: number; bytesWritten: number}>
+  downloadArtifact(
+    source: string,
+    destination: string,
+    headers?: Readonly<Record<string, string>>,
+  ): Promise<{statusCode: number; bytesWritten: number}>
 }
 
 export default requireNativeModule<MentraOtaServerModule>("MentraOtaServer")

@@ -11,6 +11,7 @@ import Toast from "react-native-toast-message"
 
 // import {ErrorBoundary} from "@/components/error"
 import {Text} from "@/components/ignite"
+import {FirmwareRecoveryStatus} from "@/components/ota/FirmwareRecoveryStatus"
 import {AuthProvider} from "@/contexts/AuthContext"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
 import {SplashLoaderProvider} from "@/contexts/SplashLoaderProvider"
@@ -80,6 +81,12 @@ export const AllProviders = withWrappers(
   KeyboardProvider,
   DeploymentProvider,
   AuthProvider,
+  (props) => (
+    <View style={{flex: 1}}>
+      <FirmwareRecoveryStatus />
+      {props.children}
+    </View>
+  ),
   SplashLoaderProvider,
   DeeplinkProvider,
   (props) => {

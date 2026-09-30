@@ -153,7 +153,7 @@ export default function DebugSettingsScreen() {
               label="OTA Check for Updates"
               subtitle="Open the OTA check for updates screen"
               onPress={() => {
-                push("/ota/check-for-updates")
+                push("/ota/check-for-updates", {entryPoint: "settings"})
               }}
             />
 

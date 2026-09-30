@@ -40,6 +40,11 @@ data class SceneFrame(
 )
 
 abstract class SGCManager {
+    /** Optional device-owned updater. Unsupported devices never fall back to Live. */
+    open val firmwareUpdateOwnsDevice: Boolean get() = false
+    open val firmwareUpdater: com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdater? get() = null
+    /** Reconnect only the retained firmware owner; never replace its SGC or start a flash. */
+    open fun reconnectFirmwareOwner() {}
     // Hard coded device properties:
     @JvmField var type: String = ""
     @JvmField var hasMic: Boolean = false

@@ -1,7 +1,9 @@
-import React from "react"
-import {render, act, fireEvent, waitFor} from "@testing-library/react-native"
+import {render, act, fireEvent} from "@testing-library/react-native"
 
+// eslint-disable-next-line no-restricted-imports -- Use the real Engine store, not the public test mock.
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+// eslint-disable-next-line no-restricted-imports -- Share the same real settings store as the Engine hooks.
+import {useSettingsStore} from "../../../../modules/engine/src/stores/settings"
 import {useNavigationStore} from "@/stores/navigation"
 
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
@@ -10,17 +12,27 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {initI18n} from "@/i18n"
 
 import OtaProgressScreen from "@/app/ota/progress"
+// eslint-disable-next-line no-restricted-imports -- Exercise the real retained session behind the public test mock.
+import {
+  getMentraLiveOtaSession,
+  resolveMentraLiveOtaProvider,
+  releaseMentraLiveOtaSession,
+} from "../../../../modules/engine/src/devices/mentra-live/sessionRegistry"
 import {BES_RESTART_TIMEOUT_MS, MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
-import {beginOtaAutoChain, isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
 
 const mockReplace = jest.fn()
 const AUTO_CHAIN_RELEASE_RANGE = {fromVersion: "3.0.0", toVersion: "3.1.0-dev.1"}
+async function beginOtaAutoChain(fingerprint: string, downgrade: boolean, range: typeof AUTO_CHAIN_RELEASE_RANGE) {
+  const provider = await resolveMentraLiveOtaProvider()
+  provider.session.chain.beginOtaAutoChain(fingerprint, downgrade, range)
+}
+const isOtaAutoChainActive = () => getMentraLiveOtaSession()?.chain.isOtaAutoChainActive() ?? false
+const stopOtaAutoChain = () => getMentraLiveOtaSession()?.chain.stopOtaAutoChain()
 
 // super_mode is controlled through the REAL settings store — the screen's
 // useSetting comes from the global @mentra/engine mock, which passes the real
 // store-backed hook through.
-import {useSettingsStore} from "../../../../modules/engine/src/stores/settings"
 const setSuperMode = (enabled: boolean) => useSettingsStore.getState().setSetting("super_mode", enabled, false)
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
@@ -90,6 +102,8 @@ beforeAll(async () => {
 
 beforeEach(() => {
   jest.useFakeTimers()
+  BluetoothSdk.getDefaultDevice.mockReturnValue({id: "live-progress-fixture", model: "Mentra Live", name: "Live"})
+  useSettingsStore.getState().setSetting("default_wearable", "Mentra Live", false)
   setSuperMode(false)
   useGlassesStore.getState().reset()
   useConnectionOverlayConfig.getState().clearConfig()
@@ -99,21 +113,49 @@ beforeEach(() => {
   stopOtaAutoChain()
 })
 
-afterEach(() => {
-  stopOtaAutoChain()
+afterEach(async () => {
+  // Each test is a separate native lifetime. End the simulated transaction explicitly;
+  // unmount alone intentionally no longer destroys the headless provider.
+  await act(async () => {
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    stopOtaAutoChain()
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "test-end",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "install",
+      stepPercent: 0,
+      overallPercent: 0,
+      status: "failed",
+    })
+  })
+  await act(async () => {
+    const provider = await resolveMentraLiveOtaProvider()
+    provider.session.suspendNewWork()
+    await provider.session.finishSuspendedWork()
+    provider.suspendNewWork()
+  })
+  releaseMentraLiveOtaSession()
   jest.useRealTimers()
 })
 
+async function renderProgress() {
+  const view = render(<OtaProgressScreen />)
+  await act(async () => {})
+  return view
+}
+
 describe("progress.tsx display states", () => {
-  it("starts in starting state", () => {
+  it("starts in starting state", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
     expect(getByText("Starting update…")).toBeDefined()
   })
 
-  it("transitions to updating on in_progress ota_status", () => {
+  it("transitions to updating on in_progress ota_status", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -132,9 +174,9 @@ describe("progress.tsx display states", () => {
     expect(getByText("25%")).toBeDefined()
   })
 
-  it("clamps displayed percent to 100 when overallPercent exceeds 100", () => {
+  it("clamps displayed percent to 100 when overallPercent exceeds 100", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -152,7 +194,7 @@ describe("progress.tsx display states", () => {
     expect(getByText("100%")).toBeDefined()
   })
 
-  it("transitions to complete on complete ota_status even when a target build is known in store", () => {
+  it("transitions to complete on complete ota_status even when a target build is known in store", async () => {
     const nextBuild = MINIMUM_OTA_STATUS_BUILD + 1
     useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD)}))
     useGlassesStore.getState().setOtaUpdateAvailable({
@@ -162,7 +204,7 @@ describe("progress.tsx display states", () => {
       updates: ["apk"],
       totalSize: 0,
     })
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -181,9 +223,9 @@ describe("progress.tsx display states", () => {
     expect(getByText("Done")).toBeDefined()
   })
 
-  it("transitions to complete on complete ota_status when no target build is set", () => {
+  it("transitions to complete on complete ota_status when no target build is set", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -204,10 +246,10 @@ describe("progress.tsx display states", () => {
 
   it("automatically returns to update checking after a chained pass completes", async () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
+    await beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      const {getByText, queryByText} = render(<OtaProgressScreen />)
+      const {getByText, queryByText} = await renderProgress()
 
       act(() => {
         useGlassesStore.getState().setOtaStatus({
@@ -238,7 +280,7 @@ describe("progress.tsx display states", () => {
 
   it("waits for a rebooting chained pass to reconnect before checking again", async () => {
     setGlassesDisconnected()
-    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
+    await beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     useGlassesStore.getState().setOtaStatus({
       sessionId: "s1",
       totalSteps: 1,
@@ -251,7 +293,7 @@ describe("progress.tsx display states", () => {
     })
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      const {getByText} = render(<OtaProgressScreen />)
+      const {getByText} = await renderProgress()
 
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
@@ -273,10 +315,10 @@ describe("progress.tsx display states", () => {
 
   it("reschedules chained navigation when a reboot starts during the success delay", async () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
+    await beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      const {getByText} = render(<OtaProgressScreen />)
+      const {getByText} = await renderProgress()
       act(() => {
         useGlassesStore.getState().setOtaStatus({
           sessionId: "s1",
@@ -316,8 +358,8 @@ describe("progress.tsx display states", () => {
 
   it("keeps a chained BES reboot non-actionable until the glasses reconnect", async () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
-    const {getByText, queryByTestId} = render(<OtaProgressScreen />)
+    await beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
+    const {getByText, queryByTestId} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -354,9 +396,9 @@ describe("progress.tsx display states", () => {
     expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
   })
 
-  it("transitions to failed on failed ota_status with error", () => {
+  it("transitions to failed on failed ota_status with error", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -377,12 +419,12 @@ describe("progress.tsx display states", () => {
     expect(getByText("Retry")).toBeDefined()
   })
 
-  it("stops automatic chaining when leaving a failed pass to change WiFi", () => {
+  it("stops automatic chaining when leaving a failed pass to change WiFi", async () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
+    await beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const pushSpy = jest.spyOn(useNavigationStore.getState(), "push")
     try {
-      const {getByText} = render(<OtaProgressScreen />)
+      const {getByText} = await renderProgress()
 
       act(() => {
         useGlassesStore.getState().setOtaStatus({
@@ -398,19 +440,26 @@ describe("progress.tsx display states", () => {
         })
       })
 
-      fireEvent.press(getByText("Change Wi-Fi"))
+      await act(async () => {
+        fireEvent.press(getByText("Change Wi-Fi"))
+      })
 
       expect(isOtaAutoChainActive()).toBe(false)
       expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
-      expect(pushSpy).toHaveBeenCalledWith("/wifi/scan")
+      expect(pushSpy).toHaveBeenCalledWith("/wifi/scan", {
+        firmwareReturn: "true",
+        firmwareEntryPoint: "recovery",
+        firmwareDeviceId: "live-progress-fixture",
+        firmwareIntegrationId: "mentra-live",
+      })
     } finally {
       pushSpy.mockRestore()
     }
   })
 
-  it("restores overlay suppression when retrying after WiFi setup", () => {
+  it("restores overlay suppression when retrying after WiFi setup", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -426,16 +475,20 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    fireEvent.press(getByText("Change Wi-Fi"))
+    await act(async () => {
+      fireEvent.press(getByText("Change Wi-Fi"))
+    })
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
 
-    fireEvent.press(getByText("Retry"))
+    await act(async () => {
+      fireEvent.press(getByText("Retry"))
+    })
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(true)
   })
 
-  it("requires a glasses restart for the existing generic BES install failure", () => {
+  it("requires a glasses restart for the existing generic BES install failure", async () => {
     setGlassesConnected()
-    const {getByText, queryByText} = render(<OtaProgressScreen />)
+    const {getByText, queryByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -456,9 +509,9 @@ describe("progress.tsx display states", () => {
     expect(queryByText("Retry")).toBeNull()
   })
 
-  it("explains a failed downgrade handoff instead of echoing the glasses code", () => {
+  it("explains a failed downgrade handoff instead of echoing the glasses code", async () => {
     setGlassesConnected()
-    const {getByText, getByTestId, queryByText} = render(<OtaProgressScreen />)
+    const {getByText, getByTestId, queryByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -484,9 +537,9 @@ describe("progress.tsx display states", () => {
     expect(getByText("Retry")).toBeDefined()
   })
 
-  it("falls back to generic glasses-error copy for an unknown code and keeps the code visible", () => {
+  it("falls back to generic glasses-error copy for an unknown code and keeps the code visible", async () => {
     setGlassesConnected()
-    const {getByText, getByTestId} = render(<OtaProgressScreen />)
+    const {getByText, getByTestId} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -506,13 +559,13 @@ describe("progress.tsx display states", () => {
     expect(getByTestId("ota-error-code").props.children).toBe("Error code: brand_new_code")
   })
 
-  it("shows disconnected state when not connected and not terminal", () => {
+  it("shows disconnected state when not connected and not terminal", async () => {
     setGlassesDisconnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
     expect(getByText("Glasses disconnected")).toBeDefined()
   })
 
-  it("shows Skip (super) when disconnected in super mode", async () => {
+  it("does not allow Super Mode to discard an uncertain in-progress native update", async () => {
     setSuperMode(true)
     setGlassesDisconnected()
     useGlassesStore.getState().setOtaStatus({
@@ -526,14 +579,13 @@ describe("progress.tsx display states", () => {
       status: "in_progress",
     })
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
-    const {getByText, getByTestId} = render(<OtaProgressScreen />)
-    expect(getByText("Skip (super)")).toBeDefined()
-    fireEvent.press(getByTestId("button-Skip (super)"))
-    await waitFor(() => expect(replaceSpy).toHaveBeenCalled())
+    const {queryByText} = await renderProgress()
+    expect(queryByText("Skip (super)")).toBeNull()
+    expect(replaceSpy).not.toHaveBeenCalled()
     replaceSpy.mockRestore()
   })
 
-  it("hides Skip (super) when disconnected without super mode", () => {
+  it("hides Skip (super) when disconnected without super mode", async () => {
     setGlassesDisconnected()
     useGlassesStore.getState().setOtaStatus({
       sessionId: "s1",
@@ -545,11 +597,11 @@ describe("progress.tsx display states", () => {
       overallPercent: 10,
       status: "in_progress",
     })
-    const {queryByText} = render(<OtaProgressScreen />)
+    const {queryByText} = await renderProgress()
     expect(queryByText("Skip (super)")).toBeNull()
   })
 
-  it("does NOT override complete state on disconnect", () => {
+  it("does NOT override complete state on disconnect", async () => {
     const nextBuild = MINIMUM_OTA_STATUS_BUILD + 1
     useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD)}))
     useGlassesStore.getState().setOtaUpdateAvailable({
@@ -559,7 +611,7 @@ describe("progress.tsx display states", () => {
       updates: ["apk"],
       totalSize: 0,
     })
-    const {getByText, rerender} = render(<OtaProgressScreen />)
+    const {getByText, rerender} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -588,9 +640,9 @@ describe("progress.tsx display states", () => {
     expect(getByText("Update complete!")).toBeDefined()
   })
 
-  it("does NOT override failed state on disconnect", () => {
+  it("does NOT override failed state on disconnect", async () => {
     setGlassesConnected()
-    const {getByText, rerender} = render(<OtaProgressScreen />)
+    const {getByText, rerender} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -621,7 +673,7 @@ describe("progress.tsx watchdog timers", () => {
   it("fails after max serialized native ota_start failures", async () => {
     setGlassesConnected()
     BluetoothSdk.startOtaUpdate.mockRejectedValue(new Error("native timeout"))
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(16_000)
@@ -641,7 +693,7 @@ describe("progress.tsx watchdog timers", () => {
           resolveStart = resolve
         }),
     )
-    const {queryByText} = render(<OtaProgressScreen />)
+    const {queryByText} = await renderProgress()
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(16_000)
@@ -658,7 +710,7 @@ describe("progress.tsx watchdog timers", () => {
 
   it("fails stuck-at-zero after DOWNLOAD_STUCK_TIMEOUT_MS in starting", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText} = await renderProgress()
 
     act(() => {
       GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
@@ -671,9 +723,9 @@ describe("progress.tsx watchdog timers", () => {
     expect(getByText(OtaProgressMessages.stalledOrStuck)).toBeDefined()
   })
 
-  it("fails progress stall after PROGRESS_TIMEOUT_MS with frozen ota_status", async () => {
+  it("retains BES restart guidance after a progress stall until authoritative status allows exit", async () => {
     setGlassesConnected()
-    const {getByText, queryByText} = render(<OtaProgressScreen />)
+    const {getByText, queryByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -694,13 +746,33 @@ describe("progress.tsx watchdog timers", () => {
 
     expect(getByText("Update Failed")).toBeDefined()
     expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
+    expect(queryByText("Done")).toBeNull()
+    expect(queryByText("Retry")).toBeNull()
+
+    // The phone's watchdog cannot release ownership. A fresh terminal status
+    // from the glasses restores the established safe Done action.
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 10,
+        overallPercent: 10,
+        status: "failed",
+        error: "install_failed",
+      })
+    })
+    expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
     expect(getByText("Done")).toBeDefined()
     expect(queryByText("Retry")).toBeNull()
+    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
   it("queries the resumed session without starting a second OTA after a multi-step APK reconnect", async () => {
     useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD + 3)}))
-    render(<OtaProgressScreen />)
+    await renderProgress()
     BluetoothSdk.startOtaUpdate.mockClear()
 
     act(() => {
@@ -737,7 +809,7 @@ describe("progress.tsx watchdog timers", () => {
 
   it("pings periodically while updating", async () => {
     setGlassesConnected()
-    render(<OtaProgressScreen />)
+    await renderProgress()
     BluetoothSdk.ping.mockClear()
 
     act(() => {
@@ -765,7 +837,7 @@ describe("progress.tsx watchdog timers", () => {
 describe("progress.tsx progress heartbeat", () => {
   it("does NOT fail global timeout before PROGRESS_TIMEOUT when progress keeps updating", async () => {
     setGlassesConnected()
-    const {queryByText} = render(<OtaProgressScreen />)
+    const {queryByText} = await renderProgress()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -804,15 +876,15 @@ describe("progress.tsx progress heartbeat", () => {
 })
 
 describe("progress.tsx reconnect", () => {
-  it("starts OTA on mount when connected (no session yet)", () => {
+  it("starts OTA on mount when connected (no session yet)", async () => {
     setGlassesConnected()
-    render(<OtaProgressScreen />)
+    await renderProgress()
     expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalled()
   })
 
   it("retry button starts OTA after the previous native request ended", async () => {
     setGlassesConnected()
-    const {getByTestId} = render(<OtaProgressScreen />)
+    const {getByTestId} = await renderProgress()
 
     await act(async () => {
       await Promise.resolve()
@@ -834,22 +906,24 @@ describe("progress.tsx reconnect", () => {
       })
     })
 
-    fireEvent.press(getByTestId("button-Retry"))
+    await act(async () => {
+      fireEvent.press(getByTestId("button-Retry"))
+    })
     expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 })
 
 describe("progress.tsx overlay suppression", () => {
-  it("sets suppressOverlay on mount", () => {
+  it("sets suppressOverlay on mount", async () => {
     setGlassesConnected()
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
-    render(<OtaProgressScreen />)
+    await renderProgress()
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(true)
   })
 
-  it("clears config on unmount", () => {
+  it("clears config on unmount", async () => {
     setGlassesConnected()
-    const {unmount} = render(<OtaProgressScreen />)
+    const {unmount} = await renderProgress()
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(true)
     unmount()
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)

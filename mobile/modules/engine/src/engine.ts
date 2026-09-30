@@ -45,6 +45,8 @@ import {settings} from "./facades/settings"
 import {dev} from "./facades/dev"
 import {reports} from "./facades/reports"
 import {ota} from "./facades/ota"
+import {firmwareUpdates} from "./facades/firmwareUpdates"
+import {startLiveAvailability} from "./devices/mentra-live/availabilityRuntime"
 import {gallery} from "./facades/gallery"
 import {miniapps} from "./facades/miniapps"
 import {pairing} from "./facades/pairing"
@@ -102,6 +104,7 @@ export const engine = {
     }
     // Project the glasses' OTA events into the store for the engine.ota read surface.
     startOtaService()
+    void startLiveAvailability()
     // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
     // works for any host (not just the Mentra app's host-side MantleManager fork).
     if (getConfigValues().runtimeRealtimeSession !== false && getConfigValues().features?.cloudSpeech !== false) {
@@ -145,6 +148,7 @@ export const engine = {
    * Each step is guarded so one failing teardown can't skip the rest and leak
    * the remaining runtime services. */
   async stop() {
+    firmwareUpdates.suspendNewWork()
     const safely = async (label: string, step: () => unknown): Promise<void> => {
       try {
         await step()
@@ -180,6 +184,7 @@ export const engine = {
   reports,
   /** Firmware OTA read/observe surface (updateAvailable/status + on* subscriptions). */
   ota,
+  firmwareUpdates,
   /** Gallery sync: status/onStatus · onNotice (host renders) · sync/cancel. */
   gallery,
   /** Miniapp lifecycle (the WebView bridge primitives are exported separately). */

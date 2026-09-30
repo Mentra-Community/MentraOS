@@ -22,7 +22,10 @@ export default function DeviceInfoScreen() {
   const connectedWifi = deviceInfo.wifi.state === "connected" ? deviceInfo.wifi : null
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [projectName] = useSetting<string>(SETTINGS.project_name.key)
-  const displayModel = defaultWearable === DeviceTypes.AR99 ? getAr99DisplayName(projectName) : deviceInfo.model || defaultWearable || "Unknown"
+  const displayModel =
+    defaultWearable === DeviceTypes.AR99
+      ? getAr99DisplayName(projectName)
+      : deviceInfo.model || defaultWearable || "Unknown"
   const isAr99Family = [defaultWearable, deviceInfo.model, deviceInfo.bluetoothName].some(
     (value) => typeof value === "string" && value.toUpperCase().includes(DeviceTypes.AR99),
   )
@@ -47,6 +50,7 @@ export default function DeviceInfoScreen() {
     }
 
     try {
+      engine.firmwareUpdates.assertSafeToRelease()
       await BluetoothSdk.sendAr99FactoryReset()
     } catch (error) {
       console.error("AR99 factory reset failed:", error)
@@ -65,11 +69,10 @@ export default function DeviceInfoScreen() {
         <View className="flex flex-col gap-6 pt-6">
           {/* Device Identity */}
           <Group title={translate("deviceInfo:deviceIdentity")}>
-            <RouteButton
-              label={translate("deviceInfo:model")}
-              text={displayModel}
-            />
-            {!!bluetoothId && !isAr99Family && <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />}
+            <RouteButton label={translate("deviceInfo:model")} text={displayModel} />
+            {!!bluetoothId && !isAr99Family && (
+              <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />
+            )}
             {!!deviceInfo.serialNumber && (
               <RouteButton label={translate("deviceInfo:serialNumber")} text={deviceInfo.serialNumber} />
             )}

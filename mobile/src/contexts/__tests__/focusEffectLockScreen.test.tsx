@@ -37,6 +37,12 @@ function LockedScreen() {
   return null
 }
 
+let admitCompletedExit: () => void
+function CompletedScreen() {
+  admitCompletedExit = focusEffectLockScreen()
+  return null
+}
+
 /** A screen that only asks the navigator not to go back, as most screens do. */
 function PreviousScreen({onBack}: {onBack: () => void}) {
   const {incPreventBack, decPreventBack, setAndroidBackFn} = useNavigationStore.getState()
@@ -99,6 +105,13 @@ describe("focusEffectLockScreen", () => {
     render(<LockedScreen />)
     expect(dispatchRemoval("GO_BACK")).toHaveBeenCalled()
     expect(dispatchRemoval("POP")).toHaveBeenCalled()
+  })
+
+  it("admits the completed screen's explicit back action without unlocking ordinary back", () => {
+    render(<CompletedScreen />)
+    expect(dispatchRemoval("GO_BACK")).toHaveBeenCalled()
+    admitCompletedExit()
+    expect(dispatchRemoval("GO_BACK")).not.toHaveBeenCalled()
   })
 
   it("still lets the screen's own controls leave", () => {

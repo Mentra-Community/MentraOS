@@ -1,4 +1,5 @@
 import {useState} from "react"
+import {engine} from "@mentra/engine"
 import {View, Image, ActivityIndicator, ScrollView, ImageStyle, ViewStyle, Modal} from "react-native"
 import Svg, {Path} from "react-native-svg"
 
@@ -138,6 +139,15 @@ export default function ProfileSettingsPage() {
   }
 
   const handleSignOut = async () => {
+    try {
+      // Admit teardown while Settings is still visible, then stop optional work
+      // during the awaited close/navigation sequence below.
+      engine.firmwareUpdates.assertSafeToRelease()
+      engine.firmwareUpdates.suspendNewWork()
+    } catch (error) {
+      showAlert(translate("common:error"), error instanceof Error ? error.message : translate("settings:signOutError"))
+      return
+    }
     try {
       console.log("Profile: Starting sign-out process")
       setIsSigningOut(true)

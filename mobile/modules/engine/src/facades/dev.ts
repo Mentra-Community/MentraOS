@@ -8,6 +8,7 @@
  * facade manages the explicit overrides + reconnect.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {firmwareUpdates} from "./firmwareUpdates"
 import {isGlassesReady} from "../services/GlassesReadiness"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {useConnectionStore} from "../stores/connection"
@@ -97,6 +98,7 @@ export const dev = {
   },
   /** Override the cloud-v2 URLs and reconnect the live client onto them. */
   setCloudUrls: (urls: {core?: string; runtime?: string}) => {
+    firmwareUpdates.assertSafeToRelease()
     const config = getConfigValues()
     if (config.resolveCloudEndpoints) {
       const scope = config.cloudDebugScope ?? ""

@@ -122,6 +122,10 @@ final class NimoWriteQueue<Characteristic: AnyObject> {
     private var current: Write?
     private var cancelDeadline: (() -> Void)?
 
+    var isIdle: Bool {
+        connection != nil && current == nil && queue.isEmpty
+    }
+
     init(schedule: @escaping NimoScheduler, write: @escaping (Characteristic, Data) -> Bool, failure: @escaping (String) -> Void) {
         self.schedule = schedule; self.write = write; self.failure = failure
     }

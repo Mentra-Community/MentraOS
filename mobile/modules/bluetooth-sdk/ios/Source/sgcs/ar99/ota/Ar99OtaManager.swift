@@ -71,15 +71,13 @@ private enum Ar99OtaByteUtils {
 }
 
 private enum Ar99OtaCrc32 {
-    private static let table: [UInt32] = {
-        (0 ..< 256).map { index in
-            var crc = UInt32(index)
-            for _ in 0 ..< 8 {
-                crc = (crc & 1) == 1 ? (0xEDB88320 ^ (crc >> 1)) : (crc >> 1)
-            }
-            return crc
+    private static let table: [UInt32] = (0 ..< 256).map { index in
+        var crc = UInt32(index)
+        for _ in 0 ..< 8 {
+            crc = (crc & 1) == 1 ? (0xEDB8_8320 ^ (crc >> 1)) : (crc >> 1)
         }
-    }()
+        return crc
+    }
 
     static func calculate(_ data: Data?) -> UInt32 {
         var crc: UInt32 = 0xFFFF_FFFF
@@ -156,14 +154,17 @@ final class Ar99OtaManager {
     static let shared = Ar99OtaManager()
 
     private static let defaultBlockSize = 200
-    private static let timeoutMs = 5_000
-    private static let reconnectTimeoutMs = 90_000
+    private static let timeoutMs = 5000
+    private static let reconnectTimeoutMs = 90000
 
     private weak var transport: Ar99OtaGattTransport?
     private var callbacks: Ar99OtaCallbacks?
     private var timeoutItem: DispatchWorkItem?
     private var reconnectTimeoutItem: DispatchWorkItem?
 
+    private var operationGeneration = 0
+    private var timeoutGeneration = 0
+    private var reconnectGeneration = 0
     private var state = Ar99OtaState.idle
     private var firmwareData: Data?
     private var firmwareSize = 0
@@ -172,7 +173,7 @@ final class Ar99OtaManager {
     private var currentOffset = 0
     private var otaNotifyEnabled = false
 
-    private init() {}
+    init() {}
 
     func setTransport(_ transport: Ar99OtaGattTransport?) {
         self.transport = transport
@@ -183,7 +184,7 @@ final class Ar99OtaManager {
     }
 
     func isOTAInProgress() -> Bool {
-        state != Ar99OtaState.idle && state != Ar99OtaState.completed && state != Ar99OtaState.failed
+        (state != Ar99OtaState.idle || firmwareData != nil) && state != Ar99OtaState.completed && state != Ar99OtaState.failed
     }
 
     func isPausedWaitingReconnect() -> Bool {
@@ -210,7 +211,7 @@ final class Ar99OtaManager {
         }
 
         do {
-            return startOTA(data: try Data(contentsOf: url))
+            return try startOTA(data: Data(contentsOf: url))
         } catch {
             notifyError(Ar99OtaErrorCode.unknownError, "Failed to read firmware file")
             return false
@@ -227,6 +228,7 @@ final class Ar99OtaManager {
             return false
         }
 
+        operationGeneration += 1
         state = Ar99OtaState.idle
         otaNotifyEnabled = false
         cancelTimeout()
@@ -239,10 +241,12 @@ final class Ar99OtaManager {
 
         guard let transport else {
             notifyError(Ar99OtaErrorCode.unknownError, "OTA transport is not initialized")
+            cleanupFirmware()
             return false
         }
         guard transport.enableOtaNotification() else {
             notifyError(Ar99OtaErrorCode.unknownError, "OTA service was not found")
+            cleanupFirmware()
             return false
         }
         return true
@@ -256,13 +260,15 @@ final class Ar99OtaManager {
         currentOffset = 0
         cancelTimeout()
         cancelReconnectTimeout()
-        callbacks?.onCancelled()
+        let callback = callbacks
         cleanupFirmware()
+        callback?.onCancelled()
     }
 
     func onBleDisconnected() {
         guard isOTAInProgress(), firmwareData != nil, firmwareSize > 0 else { return }
         guard state != Ar99OtaState.pausedDisconnected else { return }
+        operationGeneration += 1
         state = Ar99OtaState.pausedDisconnected
         otaNotifyEnabled = false
         cancelTimeout()
@@ -282,10 +288,11 @@ final class Ar99OtaManager {
         guard firmwareData != nil, firmwareSize > 0 else { return }
         guard state == Ar99OtaState.idle || state == Ar99OtaState.pausedDisconnected else { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1_000)) { [weak self] in
+        let generation = operationGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1000)) { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                guard self.state == Ar99OtaState.idle || self.state == Ar99OtaState.pausedDisconnected else { return }
+                guard self.operationGeneration == generation, self.state == Ar99OtaState.idle || self.state == Ar99OtaState.pausedDisconnected else { return }
                 _ = self.sendUpgradeRequest()
             }
         }
@@ -302,7 +309,7 @@ final class Ar99OtaManager {
     }
 
     func handleOTAResponse(_ data: Data) {
-        guard data.count >= 5 else { return }
+        guard isOTAInProgress(), state != Ar99OtaState.idle, state != Ar99OtaState.pausedDisconnected, data.count >= 5 else { return }
         guard let header = Ar99OtaProtocol.parseFrameHeader(data),
               header.serviceId == Ar99OtaCommand.serviceId
         else {
@@ -332,7 +339,6 @@ final class Ar99OtaManager {
             handleValidateImageResponse(payload)
         default:
             startTimeout()
-            break
         }
     }
 
@@ -357,9 +363,10 @@ final class Ar99OtaManager {
     }
 
     private func onMtuNegotiated() {
+        let generation = operationGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self] in
             Task { @MainActor in
-                guard let self, self.state == Ar99OtaState.requesting else { return }
+                guard let self, self.operationGeneration == generation, self.state == Ar99OtaState.requesting else { return }
                 self.sendOtaData(
                     Ar99OtaProtocol.buildRequestUpgrade(
                         packageSize: self.firmwareSize,
@@ -567,24 +574,29 @@ final class Ar99OtaManager {
         currentOffset = firmwareSize
         cancelTimeout()
         cancelReconnectTimeout()
-        notifyProgress(offset: firmwareSize, progress: 100)
-        callbacks?.onCompleted(false)
+        let total = firmwareSize
+        let callback = callbacks
         cleanupFirmware()
+        callback?.onProgress(total, total, 100)
+        callback?.onCompleted(false)
     }
 
     private func handleOTAFailure(_ code: Int, _ message: String) {
         state = Ar99OtaState.failed
         cancelTimeout()
         cancelReconnectTimeout()
-        notifyError(code, message)
+        let callback = callbacks
         cleanupFirmware()
+        callback?.onError(code, message)
     }
 
     private func startTimeout() {
         cancelTimeout()
+        let generation = timeoutGeneration
         let item = DispatchWorkItem { [weak self] in
             Task { @MainActor in
-                self?.handleOTAFailure(Ar99OtaErrorCode.unknownError, "OTA timed out")
+                guard let self, self.timeoutGeneration == generation else { return }
+                self.handleOTAFailure(Ar99OtaErrorCode.unknownError, "OTA timed out")
             }
         }
         timeoutItem = item
@@ -592,15 +604,17 @@ final class Ar99OtaManager {
     }
 
     private func cancelTimeout() {
+        timeoutGeneration += 1
         timeoutItem?.cancel()
         timeoutItem = nil
     }
 
     private func startReconnectTimeout() {
         cancelReconnectTimeout()
+        let generation = reconnectGeneration
         let item = DispatchWorkItem { [weak self] in
             Task { @MainActor in
-                guard let self, self.state == Ar99OtaState.pausedDisconnected else { return }
+                guard let self, self.reconnectGeneration == generation, self.state == Ar99OtaState.pausedDisconnected else { return }
                 self.handleOTAFailure(
                     Ar99OtaErrorCode.unknownError,
                     "Bluetooth disconnected during AR99 OTA. Reconnect timed out; please try the update again."
@@ -612,6 +626,7 @@ final class Ar99OtaManager {
     }
 
     private func cancelReconnectTimeout() {
+        reconnectGeneration += 1
         reconnectTimeoutItem?.cancel()
         reconnectTimeoutItem = nil
     }
@@ -625,6 +640,7 @@ final class Ar99OtaManager {
     }
 
     private func cleanupFirmware() {
+        operationGeneration += 1
         firmwareData = nil
         firmwareSize = 0
         firmwareCrc32 = 0

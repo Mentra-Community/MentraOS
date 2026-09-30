@@ -16,6 +16,8 @@ export class LogoutUtils {
    * This should be used for both regular logout and account deletion scenarios
    */
   public static async performCompleteLogout(options: {skipAuthSignOut?: boolean} = {}): Promise<void> {
+    // User-requested teardown must be admitted before credentials or pairing identity are cleared.
+    engine.firmwareUpdates.assertSafeToRelease()
     console.log(`${this.TAG}: Starting complete logout process...`)
 
     try {

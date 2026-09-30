@@ -286,6 +286,8 @@ public final class MentraBluetoothSDK {
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>?
+    private var pendingOtaStartContext: [String: Any] = [:]
+    private var pendingOtaQueryContext: [String: Any] = [:]
     private var pendingWifiScan: PendingWifiScan?
     private var pendingSavedWifiNetworks: PendingSavedWifiNetworks?
     private var wifiScanTask: Task<[WifiScanResult], Error>?
@@ -379,7 +381,30 @@ public final class MentraBluetoothSDK {
         currentDefaultDevice()
     }
 
+    /// Returns the SGC-owned optional updater; native clients use the same session as React Native.
+    public func getFirmwareUpdater(deviceId: String) throws -> FirmwareUpdater {
+        guard let updater = DeviceManager.shared.sgc?.firmwareUpdater else {
+            throw FirmwareUpdaterError("unsupported", "This device has no firmware updater")
+        }
+        guard updater.snapshot.deviceId == deviceId else { throw FirmwareUpdaterError("wrong_device", "The selected updater belongs to another device") }
+        if let live = updater as? LiveFirmwareUpdater {
+            live.launch = { [weak self] request in
+                guard let self else { throw FirmwareUpdaterError("unavailable", "The Bluetooth SDK was closed") }
+                let command = try self.beginOtaCommand(otaVersionUrl: request.manifestUrl!, request: request)
+                Task { _ = try? await self.awaitOtaCommand(command) }
+            }
+        }
+        return updater
+    }
+
+    public func assertFirmwareReplacementAllowed() throws {
+        guard DeviceManager.shared.firmwareReplacementAllowed else {
+            throw FirmwareUpdaterError("busy", "A firmware update still owns the glasses")
+        }
+    }
+
     public func setDefaultDevice(_ device: Device?) {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         guard let device else {
             clearDefaultDevice()
             return
@@ -398,6 +423,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func clearDefaultDevice() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         defaultDeviceApplyGeneration += 1
         let generation = defaultDeviceApplyGeneration
         suppressDefaultDeviceEvents = true
@@ -412,6 +438,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func startScan(model: DeviceModel) throws {
+        try assertFirmwareReplacementAllowed()
         if model != .simulated {
             try BluetoothAvailability.shared.requirePoweredOn(operation: "scan for glasses")
         }
@@ -425,6 +452,7 @@ public final class MentraBluetoothSDK {
     }
 
     private func stopScan(reason: ScanStopReason) {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         DeviceManager.shared.stopScan()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searching", false)
         delegate?.mentraBluetoothSDK(self, didStopScan: reason)
@@ -482,6 +510,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func connect(to device: Device, options: ConnectOptions = ConnectOptions()) throws {
+        try assertFirmwareReplacementAllowed()
         clearBluetoothRestoreIntent()
         if device.model != .simulated {
             try BluetoothAvailability.shared.requirePoweredOn(operation: "connect to glasses")
@@ -513,6 +542,17 @@ public final class MentraBluetoothSDK {
     }
 
     public func connectDefault(options: ConnectOptions = ConnectOptions()) throws {
+        if !DeviceManager.shared.firmwareReplacementAllowed {
+            guard let device = currentDefaultDevice(),
+                  device.id == DeviceManager.shared.sgc?.firmwareUpdater?.snapshot.deviceId else {
+                try assertFirmwareReplacementAllowed()
+                return
+            }
+            try BluetoothAvailability.shared.requirePoweredOn(operation: "reconnect updating glasses")
+            // A reconnect cannot cancel or replace the active firmware owner's connection attempt.
+            DeviceManager.shared.connectDefault(requiresAncs: options.requiresAncs)
+            return
+        }
         clearBluetoothRestoreIntent()
         requiresAncsForBluetoothRestore = options.requiresAncs
         guard let device = currentDefaultDevice() else {
@@ -531,6 +571,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func cancelConnectionAttempt() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         clearBluetoothRestoreIntent()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
@@ -539,11 +580,13 @@ public final class MentraBluetoothSDK {
     }
 
     func connectSimulated() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         clearBluetoothRestoreIntent()
         DeviceManager.shared.connectSimulated()
     }
 
     public func disconnect() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         clearBluetoothRestoreIntent()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
@@ -552,6 +595,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func forget() {
+        guard DeviceManager.shared.firmwareReplacementAllowed else { return }
         clearBluetoothRestoreIntent()
         DeviceManager.shared.forget()
     }
@@ -1482,6 +1526,7 @@ public final class MentraBluetoothSDK {
         }
         let pending = PendingResponse<OtaQueryResult>(operation: operation)
         pendingOtaQuery = pending
+        pendingOtaQueryContext = (DeviceManager.shared.sgc as? MentraLive)?.otaSourceContext ?? [:]
         sendRequest()
         do {
             let result = try await pending.wait()
@@ -1499,33 +1544,57 @@ public final class MentraBluetoothSDK {
 
     /// Start the OTA flow after your app has presented the available update to the user.
     public func startOtaUpdate() async throws -> OtaStartAckEvent {
+        let intended = currentDefaultDevice()?.id
         let status = await getFreshGlassesStatus()
+        guard let intended, currentDefaultDevice()?.id == intended else {
+            throw FirmwareUpdaterError("stale_offer", "The paired glasses changed during firmware lookup")
+        }
         let otaVersionUrl = try resolveOtaVersionUrl(status: status)
         return try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
     }
 
-    private func startOtaCommand(otaVersionUrl: String) async throws -> OtaStartAckEvent {
-        if pendingOtaStart != nil {
-            throw BluetoothSdkError(
-                code: "request_in_flight",
-                message: "An OTA start command is already waiting for a glasses response."
-            )
+    private typealias LiveStartCommand = (pending: PendingResponse<OtaStartAckEvent>, updater: LiveFirmwareUpdater, token: UUID)
+
+    private func beginOtaCommand(otaVersionUrl: String, request: FirmwareStartRequest? = nil) throws -> LiveStartCommand {
+        guard pendingOtaStart == nil else {
+            throw BluetoothSdkError(code: "request_in_flight", message: "An OTA start command is already waiting for a glasses response.")
+        }
+        guard let live = DeviceManager.shared.sgc as? MentraLive, let updater = live.liveFirmwareUpdater else {
+            throw FirmwareUpdaterError("disconnected", "Connect the intended Live glasses before starting an update")
         }
         let pending = PendingResponse<OtaStartAckEvent>(operation: "OTA start command")
         pendingOtaStart = pending
-        DeviceManager.shared.sendOtaStart(otaVersionUrl: otaVersionUrl)
+        pendingOtaStartContext = live.otaSourceContext
         do {
-            let event = try await pending.wait()
-            if pendingOtaStart === pending {
-                pendingOtaStart = nil
-            }
-            return event
+            let token = try updater.commandStarted(manifestUrl: otaVersionUrl, request: request)
+            live.sendOtaStart(otaVersionUrl: otaVersionUrl)
+            return (pending, updater, token)
         } catch {
-            if pendingOtaStart === pending {
-                pendingOtaStart = nil
-            }
+            if pendingOtaStart === pending { pendingOtaStart = nil }
             throw error
         }
+    }
+
+    private func awaitOtaCommand(_ command: LiveStartCommand) async throws -> OtaStartAckEvent {
+        defer { if pendingOtaStart === command.pending { pendingOtaStart = nil } }
+        do {
+            let event = try await command.pending.wait()
+            command.updater.commandSettled(command.token, error: nil)
+            return event
+        } catch {
+            command.updater.commandSettled(command.token, error: error)
+            throw error
+        }
+    }
+
+    private func startOtaCommand(otaVersionUrl: String) async throws -> OtaStartAckEvent {
+        try await awaitOtaCommand(beginOtaCommand(otaVersionUrl: otaVersionUrl))
+    }
+
+    private func otaResponseMatches(_ data: [String: Any], context: [String: Any]) -> Bool {
+        guard let device = context["source_device_id"] as? String,
+              let generation = context["source_connection_generation"] as? Int else { return false }
+        return data["source_device_id"] as? String == device && data["source_connection_generation"] as? Int == generation
     }
 
     func startOtaUpdate(otaVersionUrl: String) async throws -> OtaStartAckEvent {
@@ -1546,6 +1615,7 @@ public final class MentraBluetoothSDK {
     }
 
     func sendAr99FactoryReset() throws {
+        try assertFirmwareReplacementAllowed()
         try requireGlassesConnected(operation: "factory reset AR99")
         try DeviceManager.shared.sendAr99FactoryReset()
     }
@@ -2506,14 +2576,14 @@ public final class MentraBluetoothSDK {
             var values = data
             values["type"] = "ota_start_ack"
             let event = OtaStartAckEvent(values: values)
-            pendingOtaStart?.resolve(event)
+            if otaResponseMatches(data, context: pendingOtaStartContext) { pendingOtaStart?.resolve(event) }
             delegate?.mentraBluetoothSDK(self, didReceive: .otaStartAck(event))
         case "ota_status":
             var resultValues = data
             resultValues["type"] = "ota_status"
-            pendingOtaQuery?.resolve(OtaQueryResult(values: resultValues))
+            if otaResponseMatches(data, context: pendingOtaQueryContext) { pendingOtaQuery?.resolve(OtaQueryResult(values: resultValues)) }
             let event = OtaStatusEvent(values: resultValues)
-            if let errorCode = otaStartRejectionErrorCode(event) {
+            if otaResponseMatches(data, context: pendingOtaStartContext), let errorCode = otaStartRejectionErrorCode(event) {
                 pendingOtaStart?.reject(
                     BluetoothSdkError(code: errorCode, message: "Glasses rejected OTA start: \(errorCode)")
                 )

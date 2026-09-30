@@ -16,6 +16,15 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import com.mentra.bluetoothsdk.sgcs.MentraLive
+import com.mentra.bluetoothsdk.sgcs.firmware.LiveFirmwareUpdater
+import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareStartRequest
+import com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -69,6 +78,9 @@ class MentraBluetoothSdk private constructor(
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
+    private var pendingOtaStartContext: Map<String, Any> = emptyMap()
+    private var pendingOtaQueryContext: Map<String, Any> = emptyMap()
+    private val firmwareCommandScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var pendingStreamStop: PendingStreamStop? = null
     private var pendingWifiScan: PendingWifiScan? = null
     private var pendingSavedWifiNetworks: PendingSavedWifiNetworks? = null
@@ -294,6 +306,23 @@ class MentraBluetoothSdk private constructor(
 
     fun getDefaultDevice(): Device? = currentDefaultDevice()
 
+    /** The same SGC-owned updater is available to native clients and React Native. */
+    fun getFirmwareUpdater(deviceId: String): com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdater {
+        check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) { "Firmware updater access requires the main executor" }
+        val updater = deviceManager.sgc?.firmwareUpdater
+            ?: throw com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException("unsupported", "This device has no firmware updater")
+        if (updater.snapshot.deviceId != deviceId) throw com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException("wrong_device", "The selected updater belongs to another device")
+        if (updater is LiveFirmwareUpdater) updater.launch = { request ->
+            val command = beginOtaCommand(request.manifestUrl!!, request)
+            firmwareCommandScope.launch { runCatching { awaitOtaCommand(command) } }
+        }
+        return updater
+    }
+
+    fun assertFirmwareReplacementAllowed() {
+        if (!deviceManager.firmwareReplacementAllowed) throw com.mentra.bluetoothsdk.sgcs.firmware.FirmwareUpdaterException("busy", "A firmware update still owns the glasses")
+    }
+
     private fun requireGlassesConnected(operation: String) {
         if (!getRawGlassesStatus().connected) {
             throw BluetoothSdkException(
@@ -304,6 +333,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun setDefaultDevice(device: Device?) {
+        assertFirmwareReplacementAllowed()
         if (device == null) {
             clearDefaultDevice()
             return
@@ -324,6 +354,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun clearDefaultDevice() {
+        assertFirmwareReplacementAllowed()
         suppressDefaultDeviceEvents = true
         try {
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", "")
@@ -340,6 +371,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startScan(model: DeviceModel) {
+        assertFirmwareReplacementAllowed()
         if (model != DeviceModel.SIMULATED) {
             requireBluetoothReady("scan for glasses")
         }
@@ -353,6 +385,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     private fun stopScan(reason: ScanStopReason) {
+        if (!deviceManager.firmwareReplacementAllowed) return
         deviceManager.stopScan()
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "searching", false)
         dispatchToListeners { it.onScanStopped(reason) }
@@ -446,6 +479,7 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connect(device: Device, options: ConnectOptions = ConnectOptions()) {
+        assertFirmwareReplacementAllowed()
         if (device.model != DeviceModel.SIMULATED) {
             requireBluetoothReady("connect to glasses")
         }
@@ -487,6 +521,17 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connectDefault(options: ConnectOptions = ConnectOptions()) {
+        if (!deviceManager.firmwareReplacementAllowed) {
+            val device = currentDefaultDevice()
+            if (device == null || device.id != deviceManager.sgc?.firmwareUpdater?.snapshot?.deviceId) {
+                assertFirmwareReplacementAllowed()
+                return
+            }
+            requireBluetoothReady("reconnect updating glasses")
+            // A reconnect cannot cancel or replace the active firmware owner's connection attempt.
+            deviceManager.connectDefault()
+            return
+        }
         val defaultDevice =
             currentDefaultDevice()
                 ?: throw BluetoothSdkException(
@@ -503,6 +548,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun cancelConnectionAttempt() {
+        assertFirmwareReplacementAllowed()
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
@@ -510,10 +556,12 @@ class MentraBluetoothSdk private constructor(
     }
 
     internal fun connectSimulated() {
+        assertFirmwareReplacementAllowed()
         deviceManager.connectSimulated()
     }
 
     fun disconnect() {
+        assertFirmwareReplacementAllowed()
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
@@ -521,6 +569,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun forget() {
+        assertFirmwareReplacementAllowed()
         deviceManager.forget()
     }
 
@@ -1414,6 +1463,7 @@ class MentraBluetoothSdk private constructor(
                 )
             }
             pendingOtaQuery = pending
+            pendingOtaQueryContext = (deviceManager.sgc as? MentraLive)?.otaSourceContext ?: emptyMap()
         }
         try {
             sendRequest()
@@ -1429,32 +1479,58 @@ class MentraBluetoothSdk private constructor(
 
     /** Start the OTA flow after your app has presented the available update to the user. */
     suspend fun startOtaUpdate(): OtaStartAckEvent {
-        val otaVersionUrl = resolveOtaVersionUrl(getFreshGlassesStatus())
+        val intended = currentDefaultDevice()?.id
+        val status = getFreshGlassesStatus()
+        if (intended == null || currentDefaultDevice()?.id != intended)
+            throw FirmwareUpdaterException("stale_offer", "The paired glasses changed during firmware lookup")
+        val otaVersionUrl = resolveOtaVersionUrl(status)
         return startOtaUpdate(otaVersionUrl)
     }
 
-    private suspend fun startOtaCommand(otaVersionUrl: String): OtaStartAckEvent {
+    private data class LiveStartCommand(val pending: PendingResponse<OtaStartAckEvent>, val updater: LiveFirmwareUpdater, val token: String)
+
+    private fun beginOtaCommand(otaVersionUrl: String, request: FirmwareStartRequest? = null): LiveStartCommand {
+        check(Looper.myLooper() == Looper.getMainLooper())
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
-            if (pendingOtaStart != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "An OTA start command is already waiting for a glasses response.",
-                )
-            }
+            if (pendingOtaStart != null) throw BluetoothSdkException("request_in_flight", "An OTA start command is already waiting for a glasses response.")
             pendingOtaStart = pending
         }
         try {
-            deviceManager.sendOtaStart(otaVersionUrl)
-            return pending.await()
-        } finally {
-            synchronized(oneShotLock) {
-                if (pendingOtaStart === pending) {
-                    pendingOtaStart = null
-                }
-            }
+            val live = deviceManager.sgc as? MentraLive
+                ?: throw FirmwareUpdaterException("disconnected", "Connect the intended Live glasses before starting an update")
+            val updater = live.liveFirmwareUpdater
+                ?: throw FirmwareUpdaterException("disconnected", "Connect the intended Live glasses before starting an update")
+            pendingOtaStartContext = live.otaSourceContext
+            val token = updater.commandStarted(otaVersionUrl, request)
+            live.sendOtaStart(otaVersionUrl)
+            return LiveStartCommand(pending, updater, token)
+        } catch (error: Exception) {
+            synchronized(oneShotLock) { if (pendingOtaStart === pending) pendingOtaStart = null }
+            throw error
         }
     }
+
+    private suspend fun awaitOtaCommand(command: LiveStartCommand): OtaStartAckEvent {
+        try {
+            val result = command.pending.await()
+            command.updater.commandSettled(command.token, null)
+            return result
+        } catch (error: Throwable) {
+            command.updater.commandSettled(command.token, error)
+            throw error
+        } finally {
+            synchronized(oneShotLock) { if (pendingOtaStart === command.pending) pendingOtaStart = null }
+        }
+    }
+
+    private suspend fun startOtaCommand(otaVersionUrl: String): OtaStartAckEvent =
+        withContext(Dispatchers.Main.immediate) { awaitOtaCommand(beginOtaCommand(otaVersionUrl)) }
+
+    private fun otaResponseMatches(data: Map<String, Any>, context: Map<String, Any>): Boolean =
+        context["source_device_id"] != null && context["source_connection_generation"] != null &&
+            data["source_device_id"] == context["source_device_id"] &&
+            data["source_connection_generation"] == context["source_connection_generation"]
 
     internal suspend fun startOtaUpdate(otaVersionUrl: String): OtaStartAckEvent =
         startOtaCommand(otaVersionUrl)
@@ -1471,6 +1547,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun sendAr99FactoryReset() {
+        assertFirmwareReplacementAllowed()
         requireGlassesConnected("factory reset AR99")
         deviceManager.sendAr99FactoryReset()
     }
@@ -1913,7 +1990,7 @@ class MentraBluetoothSdk private constructor(
             "ota_start_ack" -> {
                 val event = OtaStartAckEvent.fromMap(data + mapOf("type" to "ota_start_ack"))
                 synchronized(oneShotLock) {
-                    pendingOtaStart?.resolve(event)
+                    if (otaResponseMatches(data, pendingOtaStartContext)) pendingOtaStart?.resolve(event)
                 }
                 dispatchToListeners { it.onOtaStartAck(event) }
             }
@@ -1921,8 +1998,8 @@ class MentraBluetoothSdk private constructor(
                 val resultValues = data + mapOf("type" to "ota_status")
                 val event = OtaStatusEvent.fromMap(resultValues)
                 synchronized(oneShotLock) {
-                    pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
-                    otaStartRejectionErrorCode(event)?.let { errorCode ->
+                    if (otaResponseMatches(data, pendingOtaQueryContext)) pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                    if (otaResponseMatches(data, pendingOtaStartContext)) otaStartRejectionErrorCode(event)?.let { errorCode ->
                         pendingOtaStart?.reject(
                             BluetoothSdkException(errorCode, "Glasses rejected OTA start: $errorCode")
                         )

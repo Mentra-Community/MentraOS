@@ -52,6 +52,8 @@ export interface IslandConfigValues {
   otaManifestUrl?: string | null
   /** Official deployments retain the legacy-device and embedded release fallback. */
   allowLegacyOtaFallback?: boolean
+  /** Per-integration source policy. Live continues to use otaManifestUrl and its established fallback rules. */
+  firmwareSources?: import("../ota/sourcePolicy").FirmwareSourcePolicy
   /** Deployment capability policy. Omitted entries preserve consumer behavior. */
   features?: Partial<Record<IslandFeatureName, boolean>>
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */

@@ -118,6 +118,8 @@ export interface OtaCheckCurrentGlassesResult extends OtaCheckResult {
 }
 
 export interface OtaCheckCurrentGlassesOptions {
+  /** Owner/generation guard, evaluated immediately before publishing availability. */
+  canPublish?: () => boolean
   waitForBuildNumberMs?: number
   waitForBesVersionMs?: number
   waitForMtkVersionMs?: number
@@ -658,7 +660,7 @@ export async function checkCurrentGlassesForUpdate(
       }
     : null
 
-  useGlassesStore.getState().setOtaUpdateAvailable(updateInfo)
+  if (options.canPublish?.() !== false) useGlassesStore.getState().setOtaUpdateAvailable(updateInfo)
 
   return {
     ...result,
@@ -675,8 +677,8 @@ export async function checkCurrentGlassesForUpdate(
       result.latestVersionInfo?.isRequired === true
         ? true
         : result.latestVersionInfo?.isRequired === false
-          ? false
-          : !isApkDowngrade,
+        ? false
+        : !isApkDowngrade,
     manifestUrl,
     buildNumber,
     mtkFirmwareVersion,
