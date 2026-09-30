@@ -108,9 +108,87 @@ public class OtaRecoveryOwnershipTest {
         Bundle idle = new Bundle(); idle.putBoolean("active", false);
         helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(idle));
         assertEquals(false, get("isUpdating"));
-        assertFalse(context.getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).contains("request_id"));
+        assertEquals("failed", context.getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).getString("terminal_status", ""));
         verify(phone).sendOtaStatus(argThat(status -> "downgrade_not_owned".equals(status.optString("err"))));
         verify(phone, never()).sendOtaMessage(any());
+    }
+
+    @Test public void expiredSessionAndDisconnectedIdleRemainQueryableAfterAnotherProcessDeath() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        OtaSessionManager session = helper.getSessionManager();
+        session.createSession(new String[]{"apk"}, "https://example.com/manifest.json");
+        session.advanceStep(0, "install");
+        assertTrue(helper.persistPendingDowngrade());
+        set("mDowngradeWaitStarted", helper, -31_000L);
+        helper.applyRecoveryStatus(null);
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMinutes(31));
+        assertNull(session.getSessionState());
+
+        // Recovery settles while there is no connected phone and no ordinary OTA session.
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        assertEquals("downgrade_not_owned", helper.getOtaSessionState().getString("err"));
+        helper.cleanup();
+        set("handoffOwner", null, null);
+        set("isUpdating", null, false);
+        helper = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        assertNull(get("handoffOwner"));
+        assertNull(get("handoffWatchdog"));
+        assertEquals(false, get("isUpdating"));
+        assertEquals("downgrade_not_owned", helper.getOtaSessionState().getString("err"));
+        assertEquals("current", context.getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).getString("request_id", ""));
+        assertEquals(302010058L, context.getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).getLong("target_version", -1L));
+        assertEquals("sha", context.getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).getString("sha256", ""));
+
+        OtaHelper.PhoneConnectionProvider phone = mock(OtaHelper.PhoneConnectionProvider.class);
+        when(phone.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+        helper.onPhoneConnected();
+        helper.onPhoneConnected();
+        verify(phone, times(2)).sendOtaStatus(argThat(status -> "downgrade_not_owned".equals(status.optString("err"))));
+        assertEquals("downgrade_not_owned", helper.getOtaSessionState().getString("err"));
+        verify(phone, never()).sendOtaMessage(any());
+    }
+
+    @Test public void terminalCommitFailureKeepsPendingOwnership() throws Exception {
+        assertTrue(helper.persistPendingDowngrade());
+        OtaHelper original = helper;
+        helper = spy(helper);
+        original.cleanup();
+        set("handoffOwner", null, helper);
+        doReturn(false).when(helper).persistDowngradeTerminal(false);
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        assertSame(helper, get("handoffOwner"));
+        assertEquals(true, get("isUpdating"));
+        assertFalse(RuntimeEnvironment.getApplication().getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).contains("terminal_status"));
+    }
+
+    @Test public void admittedRetryRetiresOutcomeBeforeManifestFailure() throws Exception {
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        OtaHelper.PhoneConnectionProvider phone = mock(OtaHelper.PhoneConnectionProvider.class);
+        when(phone.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+        // Malformed URL fails locally, before createSession or any artifact download.
+        assertTrue(helper.startVersionCheckWithUrl(RuntimeEnvironment.getApplication(), "invalid-url"));
+        verify(phone, timeout(5000)).sendOtaStatus(argThat(status -> "download_failed".equals(status.optString("error_message"))));
+        java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
+        assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
+        permit.release();
+        assertFalse(RuntimeEnvironment.getApplication().getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).contains("terminal_status"));
+        assertFalse("downgrade_not_owned".equals(helper.getOtaSessionState().optString("err")));
+    }
+
+    @Test public void exactVersionConvergenceRetainsCompletionWithoutRearmingPolling() throws Exception {
+        long installed = RuntimeEnvironment.getApplication().getPackageManager()
+                .getPackageInfo("com.mentra.asg_client", 0).getLongVersionCode();
+        set("mDowngradeTarget", helper, installed);
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        assertEquals("complete", helper.getOtaSessionState().getString("status"));
+        helper.cleanup();
+        helper = new OtaHelper(RuntimeEnvironment.getApplication(), mock(IBesOtaRegistry.class));
+        assertEquals("complete", helper.getOtaSessionState().getString("status"));
+        assertNull(get("handoffOwner"));
     }
 
     @Test public void lateOrMismatchedVerdictCannotChangeCurrentAttempt() throws Exception {

@@ -201,7 +201,8 @@ public class OtaHelper {
                 String pendingId = mPendingDowngradePrefs.getString("request_id", "");
                 long pendingTarget = mPendingDowngradePrefs.getLong("target_version", -1L);
                 String pendingSha = mPendingDowngradePrefs.getString("sha256", "");
-                if (!pendingId.isEmpty() && pendingTarget > 0 && !pendingSha.isEmpty()) {
+                if (!mPendingDowngradePrefs.contains("terminal_status")
+                        && !pendingId.isEmpty() && pendingTarget > 0 && !pendingSha.isEmpty()) {
                     mDowngradeRequestId = pendingId;
                     mDowngradeTarget = pendingTarget;
                     mDowngradeSha = pendingSha;
@@ -281,6 +282,10 @@ public class OtaHelper {
      *   "complete"      → shows "Update installed"
      */
     public void onPhoneConnected() {
+        if (getRetainedDowngradeStatus() != null) {
+            sendOtaStatus();
+            return;
+        }
         // Durable BES truth is read at delivery time; EventBus and process-local retry timers are
         // only wake-ups and never become a second terminal store.
         sendAuthoritativeBesStatusToPhone();
@@ -298,6 +303,8 @@ public class OtaHelper {
 
     public JSONObject getOtaSessionState() {
         try {
+            JSONObject downgradeStatus = getRetainedDowngradeStatus();
+            if (downgradeStatus != null) return downgradeStatus;
             JSONObject besStatus = getAuthoritativeBesStatus();
             if (besStatus != null) {
                 return besStatus;
@@ -728,6 +735,12 @@ public class OtaHelper {
                     return;
                 }
 
+                // A newly admitted command supersedes the settled result, including when its
+                // manifest fails before createSession. Queries/reconnects never consume it.
+                if (!retireSettledDowngrade()) {
+                    sendOtaStartRejection("apk_restart_guard_not_persisted");
+                    return;
+                }
                 currentUpdateStage = "download";
                 stage[0] = "fetch_version_info";
                 // Fetch version info from URL
@@ -1354,13 +1367,64 @@ public class OtaHelper {
         return true;
     }
 
-    /** Persist intent before handoff; only an authenticated idle result may clear it. */
+    /** Persist intent before handoff; authenticated idle replaces it with a durable outcome. */
     @SuppressWarnings("ApplySharedPref")
     boolean persistPendingDowngrade() {
-        return mPendingDowngradePrefs.edit()
+        return mPendingDowngradePrefs.edit().clear()
                 .putString("request_id", mDowngradeRequestId)
                 .putLong("target_version", mDowngradeTarget)
                 .putString("sha256", mDowngradeSha).commit();
+    }
+
+    /** Retain the terminal identity and result before relinquishing ownership. */
+    @SuppressWarnings("ApplySharedPref")
+    boolean persistDowngradeTerminal(boolean converged) {
+        return mPendingDowngradePrefs.edit()
+                .putString("request_id", mDowngradeRequestId)
+                .putLong("target_version", mDowngradeTarget)
+                .putString("sha256", mDowngradeSha)
+                .putString("terminal_status", converged ? "complete" : "failed").commit();
+    }
+
+    /** Called only by an admitted OTA worker, before any network or installer work. */
+    @SuppressWarnings("ApplySharedPref")
+    boolean retireSettledDowngrade() {
+        synchronized (OtaHelper.class) {
+            if (handoffOwner != null) return false;
+            if (!mPendingDowngradePrefs.contains("terminal_status")) return true;
+            if (!mPendingDowngradePrefs.edit().clear().commit()) return false;
+            if (sessionManager != null) sessionManager.clear();
+            lastOtaPhoneEventStatus = null;
+            return true;
+        }
+    }
+
+    private JSONObject getRetainedDowngradeStatus() {
+        synchronized (OtaHelper.class) {
+            // SharedPreferences updates memory even when its disk commit fails. Do not
+            // publish that result until applyRecoveryStatus has released the owner.
+            if (handoffOwner != null) return null;
+            String terminal = mPendingDowngradePrefs.getString("terminal_status", null);
+            if (terminal == null) return null;
+            try {
+                // Compact wire shape, independent of the ordinary session's 30-minute expiry.
+                JSONObject state = new JSONObject();
+                state.put("type", "ota_status");
+                state.put("sid", "");
+                state.put("ts", 1);
+                state.put("cs", 1);
+                state.put("st", "apk");
+                state.put("phase", "install");
+                state.put("sp", "complete".equals(terminal) ? 100 : 0);
+                state.put("op", "complete".equals(terminal) ? 100 : 0);
+                state.put("status", terminal);
+                if ("failed".equals(terminal)) state.put("err", "downgrade_not_owned");
+                return state;
+            } catch (JSONException e) {
+                Log.e(TAG, "Failed to project retained downgrade outcome", e);
+                return null;
+            }
+        }
     }
 
     private void scheduleRecoveryReconcile() {
@@ -1392,7 +1456,8 @@ public class OtaHelper {
         synchronized (OtaHelper.class) {
             if (handoffOwner != this) return;
             if (status != null && !status.active && !status.busy) {
-                if (!mPendingDowngradePrefs.edit().clear().commit()) {
+                boolean converged = getInstalledVersion(OtaConstants.ASG_PACKAGE, context) == mDowngradeTarget;
+                if (!persistDowngradeTerminal(converged)) {
                     sendProgressToPhone("install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
                     return;
                 }
@@ -1400,7 +1465,6 @@ public class OtaHelper {
                 if (handoffWatchdog != null) HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
                 handoffWatchdog = null;
                 isUpdating = false;
-                boolean converged = getInstalledVersion(OtaConstants.ASG_PACKAGE, context) == mDowngradeTarget;
                 sendProgressToPhone("install", converged ? 100 : 0, 0, 0,
                         converged ? "FINISHED" : "FAILED", converged ? null : "downgrade_not_owned");
                 return;
@@ -3061,7 +3125,8 @@ public class OtaHelper {
     }
 
     private JSONObject buildOtaStatusForPhone() {
-        JSONObject sessionState = getAuthoritativeBesStatus();
+        JSONObject sessionState = getRetainedDowngradeStatus();
+        if (sessionState == null) sessionState = getAuthoritativeBesStatus();
         if (sessionState == null && sessionManager != null) {
             sessionState = sessionManager.getSessionState();
         }

@@ -721,7 +721,12 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
       expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
       if (errorCode === "downgrade_status_unknown") {
         await flushNativeStartPromise()
-        // ASG restarted and its restored poller reports authenticated idle without ota_start.
+        // Recovery settles while disconnected and the ordinary ASG session expires.
+        // A later reconnect/query replays the independently retained terminal result.
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected", fullyBooted: false}})
+        await jest.advanceTimersByTimeAsync(31 * 60_000)
+        setGlassesConnected()
+        expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
         useGlassesStore
           .getState()
           .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "downgrade_not_owned"}))

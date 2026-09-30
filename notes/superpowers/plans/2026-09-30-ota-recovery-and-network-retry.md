@@ -77,7 +77,7 @@ The local evidence summary is `incident-logs/ota-investigation-20260930/summary.
 
 ## Implementation validation, September 30
 
-- ASG Java compile and release-signed APK build passed; 155 focused ASG JVM tests passed.
+- ASG Java compile and release-signed APK build passed; 159 focused ASG JVM tests passed.
 - Recovery v11 release-signed build and 29 JVM tests passed. The signing certificate matches
   the existing release worker/ASG certificate. CI builds and bundles this worker before ASG.
 - 143 focused phone tests passed (coordinator, error mapping and OTA presentation).
@@ -137,7 +137,7 @@ The first independent review found that debug-entry retry had bypassed a normal-
 restart dead end: after ASG process death, the phone's detour latch suppresses another
 `ota_start`, so a new process must resume polling without it. ASG now synchronously
 persists the pending request/target/hash before handoff and restores polling at startup.
-Only authenticated idle clears that marker. The phone regression covers unknown -> wait
+Only authenticated idle settles that marker. The phone regression covers unknown -> wait
 without another start -> recovered idle -> safe Retry. The ASG regression reconstructs
 a fresh helper from persisted state and checks the unsolicited idle verdict.
 
@@ -151,3 +151,16 @@ query timeout, a separate adoption path that never stages bytes and reports pers
 failure, and preservation of Android's message-only clock-skew diagnosis. Recovery also
 backfills a durable identity when v11 encounters an active v10 transaction. The missing-
 worker physical test successfully deployed the bundled worker before the artifact GET.
+
+
+The second independent review identified that a terminal idle result could be lost while
+BLE was disconnected after ordinary session expiry. The handoff record now retains its
+request/target/hash and terminal outcome independently of the expiring session, committing
+before releasing ownership. Both reconnect and status query replay it without consuming
+it or rearming polling. A newly admitted OTA worker retires it before even fetching the
+next manifest, so a failed new manifest cannot expose the previous outcome. Regression
+coverage exercises expiry, disconnected idle, another ASG restart, repeated reconnect/query,
+terminal persistence failure, exact-version completion, and admission before manifest failure.
+The phone regression reconnects after 31 minutes and permits Retry only after the retained
+idle outcome. This edge is covered by automated tests; the earlier physical process-death
+run did not include session expiry while disconnected.
