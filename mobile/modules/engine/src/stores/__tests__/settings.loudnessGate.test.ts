@@ -3,8 +3,8 @@
 import {afterEach, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 import {result as Res} from "typesafe-ts"
 
-const GATE_KEY = "loudness_gate_enabled"
-const MIGRATION_KEY = "migration:loudness_gate_default_off_v1"
+let GATE_KEY: string
+let MIGRATION_KEY: string
 const saved = new Map<string, unknown>()
 let failGateSave = false
 let logSpy: ReturnType<typeof spyOn>
@@ -28,8 +28,13 @@ function restartSettings() {
   return require("../settings") as typeof import("../settings")
 }
 
-describe("loudness gate settings migration", () => {
+describe.each([
+  ["loudness_gate_enabled", "migration:loudness_gate_default_off_v1"],
+  ["voice_activity_detection_enabled", "migration:vad_default_off_v1"],
+])("%s settings migration", (gateKey, migrationKey) => {
   beforeEach(() => {
+    GATE_KEY = gateKey
+    MIGRATION_KEY = migrationKey
     logSpy = spyOn(console, "log").mockImplementation(() => {})
     Object.assign(globalThis, {__DEV__: false})
     saved.clear()

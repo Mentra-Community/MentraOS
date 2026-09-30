@@ -1383,7 +1383,7 @@ class AcsMeetingService {
    *
    * This class is a sink: it never names a gain, a pin or a setting. It does take a semantic
    * voice_call lease first, because reading the glasses mic without one is what put this call on
-   * the OS default of VAD-on — a speech gate that drops the wearer's uplink whenever the GX8002
+   * the former OS default of VAD-on — a speech gate that drops the wearer's uplink whenever the GX8002
    * disagrees, which during a call is most of the time the far end is talking. The lease is a
    * backstop: when the miniapp already holds one this simply merges with it, and micPolicy still
    * decides what voice_call means for the hardware.
@@ -1556,7 +1556,7 @@ class AcsMeetingService {
    *
    * The miniapp asking for one is the intended path; this covers the builds where it cannot,
    * because a bundled Call that predates MIC_ACQUIRE joins anyway rather than failing. Without
-   * this the uplink runs under whatever the OS settings say, and the shipped default is VAD-on.
+   * this the uplink runs under the OS settings, which can include a user opt-in to VAD.
    */
   private acquireMicSession(): void {
     if (this.micSession) return
