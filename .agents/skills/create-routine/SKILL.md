@@ -1,217 +1,126 @@
 ---
 name: create-routine
-description: Create or extend a Mentra automated testing routine through AI-guided exploration, editable actions and assertions, deterministic replay and CI qualification. Use when adding test coverage or authoring routines in parallel. To request an existing routine on a PR, use select-pr-routines instead.
+description: Create or extend a Mentra automated testing routine using the shared setup, test and teardown foundation. Use for new coverage, readable step additions, AI-guided discovery and deterministic replay. To request existing coverage on a PR, use select-pr-routines instead.
 ---
 
-# Add a testing routine
+# Add or extend a routine
 
-**Author the routine in the private [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing). Register its `routine:<id>` label in MentraOS so people and agents can request it on a PR.**
+**Optimize for reliability, readability and maintainability. Adding a check should
+usually mean adding a named step to a small flow, not another runner.** Author
+routines in the private [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing).
+MentraOS contains their public catalog and `routine:<id>` request labels.
 
-This skill is the entry point from MentraOS. Keep harness implementation, device
-configuration and recordings in the private testing system.
+## Find the closest working example
 
-## Authoring workflow
+Read the [routine catalog](../../../.github/scripts/device-routines.mjs), then the
+closest flow and platform adapter in the selected private checkout. Extend an
+existing routine when the behavior belongs in it; create an ID for independently
+selectable coverage. Published catalog links may precede the working source.
 
-1. **Plan.** Define the human checks and expected outcomes in the brief below
-   before choosing selectors or writing replay code.
-2. **Explore and capture.** Use AI computer use to traverse the whole real flow
-   in the Mentra App as a person would. Capture video, screenshots and action
-   notes that show the actions and observed outcomes. When a real
-   product bug appears, attempt an incident with the available evidence through
-   the shared reporting path; retain its ID or submission failure. Keep the
-   affected path failed or blocked and continue independent exploration whose
-   prerequisites still hold. Bug fixing proceeds separately; it does not gate
-   all discovery or turn the failed check into a pass. Acoustic calibration and
-   probes are prerequisites for automated audio measurement, not for using or
-   exploring the app: without them, keep audio assertions unverified and
-   continue UI exploration that is otherwise valid. Permission, resource
-   ownership, in-flight operation and recording/cleanup restrictions still apply.
-3. **Encode the observed flow.** After a complete successful real traversal,
-   turn its captured actions and outcomes into editable English steps and
-   observable assertions using the existing flow helpers. Do not substitute
-   scripted assumptions for paths that discovery has not completed successfully.
-4. **Replay and qualify.** Replay the captured flow deterministically without
-   AI for faster repeated coverage. Iterate from usable live state as
-   described below, then qualify the complete flow with one clean recording
-   against the exact source and build. Partial exploration remains development
-   evidence, not a full routine pass.
+Reuse a suitable checkout; isolate concurrent source changes when needed. Follow
+the task's source revision and PR timing. Develop locally until the requested
+qualification boundary; do not require a merge for each iteration. Coordinate
+shared app/device/account/network use with its current owner. Source work can
+proceed in parallel without competing for the same UI or changing another run.
 
-## 1. Find the closest routine
+## Describe the behavior before choosing selectors
 
-Read the [routine catalog](../../../.github/scripts/device-routines.mjs). Follow
-its revision-pinned definition and implementation links to understand existing
-coverage. Extend an existing routine when the new behavior belongs in its flow;
-create an ID when the behavior needs independent selection, resources or setup.
+Write a brief in the routine's existing definition or task, without adding a
+parallel documentation system:
 
-Work in a separate private-repository worktree. Use current `main` for new work
-unless the task specifies another base; record that source revision. Catalog
-links describe the published definition and may precede the current source.
-If private access is missing, prepare the brief below and report that dependency;
-do not recreate the private harness in MentraOS.
-
-In the selected private revision, use `docs/ROUTINE-AUTHORING.md` and
-`templates/routine-brief.md` when present. Read the closest working flow and
-platform adapter before choosing commands. Authoring and development tools can
-arrive separately from their documentation: verify the checkout's supported
-entry point and help rather than assuming a command is implemented.
-
-## 2. Define what a pass means
-
-Write a short brief before selectors. Resolve choices from the request and
-existing routines; ask only for missing product expectations that matter.
-
-| Decision | Record |
+| Declare | Include |
 | --- | --- |
-| Identity | Routine ID, platform and user behavior it proves |
-| Inputs | Exact selected PR/dev/staging build and its artifacts; OTA manifest when applicable |
-| Resources | App, account, phone/glasses, browser, network or audio devices actually required |
-| Starting state | Required app/account/pairing state and, for glasses routines, software versions |
-| Return state | Usable state to leave behind, verified against this run's selected build |
-| Steps | Stable ID, English action, expected result and observable assertion for each step |
-| Evidence | Recording, screenshots, logs or device checks needed to substantiate the result |
-| Limits | Prerequisites and behavior this routine does not exercise |
+| Coverage | Routine ID, platform and behavior it proves; explicit exclusions |
+| Inputs | Requested PR/dev/staging build, firmware start/return targets if needed |
+| Resources | Required account, phone/glasses, browser, network, media or audio |
+| Entry | Sign-in page or Home; optional authentication and owned fixture data |
+| Steps | Stable ID, plain-English name/action and observable expected result |
 
-The next job establishes its own starting state. Teardown need not predict that
-job's versions: reuse the selected build's return target, check the actual state,
-and restore only what differs. A successful test may already satisfy it.
+Use private runtime account references and existing secret-input/redaction
+helpers. Keep credentials out of source, prompts and evidence; use separate
+accounts for concurrent sessions when their state could interfere.
 
-Declare the account needed, then use the platform's runtime account loader and
-the worker recipe's account reference. Reuse its secret-input and report-redaction
-helpers. Keep passwords out of routine definitions, prompts, request JSON and
-evidence. Provision separate accounts for concurrent authenticated sessions.
-Account files belong to host configuration, outside Git; credential rotation
-must also refresh any pinned copy/reference used by that worker.
+## Use the shared foundation
 
-## 3. Reuse the lifecycle
+These paths are relative to the private repository; inspect the selected revision
+before using its APIs or commands:
 
-When encoding deterministic replay, compose
-**setup → test → final checks → cleanup → return verification** using
-the existing platform lifecycle. Mac flows use the `Step` contract in
-`tools/mentra-e2e/runner/suite.ts`; use the corresponding Android adapter for
-Android execution. Reuse artifact preparation, fixture ownership, progress,
-recording, incident submission and result publication.
+| Entry point | Purpose |
+| --- | --- |
+| `tools/mentra-e2e/runner/routine-plan.ts` | Build, platform, entry, account, fixtures and resources |
+| `tools/mentra-e2e/runner/standard-routine.ts` | Common setup/test/teardown composition |
+| `worker/local.ts` | Local run, cleanup and publication commands; inspect `--help` |
+| `worker/local-mac.ts`, `worker/local-android.ts` | Platform implementation of that contract |
+| `tools/mentra-e2e/flows/` | Small flow definitions, including walkthrough, Captions and Notes |
 
-- Put an observable outcome after each meaningful action. A click succeeding
-  does not establish navigation, media delivery or a firmware update.
-- Prefer existing stable selectors and state-based waits. Add a shared driver
-  capability only when the routine cannot express its behavior with current ones.
-- Preserve the original failed assertion when cleanup succeeds. Capture the
-  failure and submit its incident through the shared path before cleanup loses
-  useful app state. Route product defects to
-  [fix-routine-failure](../fix-routine-failure/SKILL.md).
-- Keep one owner for a shared harness defect. Other authors can continue their
-  independent flows instead of adding per-routine workarounds.
+The contract for every routine is:
 
-## 4. Develop with recorded evidence
+1. **Setup:** install the requested Mentra App build; establish requested glasses
+   software when applicable; reset/seed owned data; launch; optionally sign in;
+   verify Home or the sign-in page. Start the recording there. Preflight checks
+   host/input readiness; it must not require the app already running or signed in.
+2. **Test:** perform named actions and check their observable results. The test
+   may finish on any page. A successful click alone does not prove the outcome.
+3. **Teardown:** settle recording, clean owned data and resources, leave the app
+   stopped, and restore the requested firmware target if the routine changed it.
+   Verify cleanup from any ending page, including failure. The next run establishes
+   its own inputs; do not carry forward app backups or arbitrary prior state.
+4. **Publish and dispose:** use existing result/incident attachment paths to upload
+   diagnostics and evidence, then dispose of owned run payloads, downloads and
+   temporary copies. Preserve the failed verdict even when cleanup succeeds.
+   Report any pending upload or unsettled resource that prevents disposal.
 
-**Before the first complete pass, iterate from usable live state rather than
-restarting the routine after every fix.** Preserve the failed observation and
-retry the failed step or smallest dependent section. Do not repeat downloads,
-installation, OTA preparation or an already-passed prefix merely because a later
-step changed. Re-establish only prerequisites that changed or are no longer
-proven. Keep the existing ownership and command-completion rules: an unanswered
-writer needs reconciliation, and owned recorders still need confirmed cleanup.
+Plan fields do not prove adapter support. If seeding, firmware or another needed
+capability is missing, extend the shared adapter/helper once and demonstrate it;
+never silently skip it or add a separate lifecycle/recovery fork for the routine.
+Keep shared tools, credentials and native agent histories outside run cleanup.
 
-For scripted iteration, run focused checks for the changed flow/helper and the
-relevant typecheck, and use the supported development entry in the selected
-private revision. For AI discovery, use the available authorized computer-use
-surface; a replay entry is not a prerequisite. Preserve the exact harness
-snapshot, selected app artifacts, steps, assertions, recording and cleanup
-outcome with the result. Inspect playback and the failure evidence, not just
-the process exit code.
+## Discover with AI, then encode the observed flow
 
-Label section runs **development evidence**, recording their starting state,
-executed steps and ending state. Do not combine successful sections into a full
-pass. Once the flow works, perform one clean recorded end-to-end qualification
-against the exact source and build. Normal CI and nightly runs retain their full
-setup, assertions, teardown and verified return state.
+Use AI computer use to traverse the real flow as a person would. Capture actions,
+expected versus observed behavior, screenshots and recording. File genuine bugs
+through the existing incident path, retaining its ID or submission failure; keep
+the affected check failed and continue independent exploration where possible.
+Do not gate basic exploration on unnecessary calibration or measurement probes;
+leave measurements unverified until their required evidence exists.
 
-Check the selected revision's actual commands. At private `e20dbb9` they are
-the [`develop.ts` usage](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/e20dbb96b93696d681e7e06f5ddb90b580e86bfd/worker/develop.ts#L60-L90)
-and the [development entry guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/e20dbb96b93696d681e7e06f5ddb90b580e86bfd/docs/DEVELOPMENT-ENTRY.md#development-segments);
-copy invocations from there, not from memory.
+During authoring, retry the failed step or smallest dependent section from usable
+state. Re-establish only prerequisites that changed; do not reinstall, reset or
+repeat a long successful prefix for every edit. Coordinate in-flight actions and
+recorders through the existing owner. Section runs remain development evidence.
 
-- **Full `run`/`recover` (Mac unpaired only).** `run`, from private
-  [PR #105](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/105),
-  wraps the frozen flow in install, account setup and Home cleanup. `recover`
-  reconciles that original execution; it is not a failed-step retry.
-- **`segment` (`mac-unpaired-ui` and `android-no-glasses` only).** It runs one
-  authored `--section`, or a stable `--from`/`--through` step range, once with
-  `--mode execute` (sends actions) or `--mode observe` (no input; recheck a
-  corrected assertion after an answered action). The snapshot and flow export
-  are hash-pinned. A first segment names a platform-specific settled `--origin`;
-  each later one names the previous immutable result with `--parent`.
-  Before any input it requires the pinned previous owner settled (writer and
-  recorder included), the actual pinned app and driver/tools, and fresh entry
-  assertions. It never installs, signs in or runs setup: if the app moved or
-  needs setup it is refused, so use full `run` or the existing setup instead.
-  Each segment has its own recording and result; a failed result is kept and
-  never rewritten by a later success.
-- `inspect-segment` verifies a result receipt without device access.
-  `recover-segment` reconciles the same original owner and never resends
-  unknown input or recorder work. `end` closes the session with the declared
-  return cleanup.
+After a complete successful real traversal, encode its observed actions and
+assertions for deterministic replay without AI. Keep flow files small and
+readable: stable named steps, data for routine-specific choices, shared helpers
+for repeated mechanics. Prefer stable selectors and state-based waits. Avoid
+copying setup, authentication, recording, publication or cleanup into flows.
 
-Segments are local UI development evidence, not Day1 firmware or Call
-continuation. Merged source does not mean a host's runtime is ready or
-authorized to run them, and the private guide records only offline tests; no
-live segment or full routine pass is implied. Missing scripted replay, segment
-or observer support does not itself stop authorized AI computer-use discovery
-on available resources. State the automation gap, continue the real flow and
-retain video, screenshots and action notes; leave assertions unverified when
-their required evidence is unavailable. Do not invent flags or present a
-full-lifecycle rerun as continuation.
+Use the maintained driver path that fits the platform. Existing Mac flows use
+TypeScript `Step` definitions with Swift/native helpers; Android uses shared
+semantic actions/UIAutomator with Maestro for some input/keyboard operations.
+Maestro is neither mandatory for every step nor excluded from further use. Add a
+shared driver capability only for a demonstrated gap, not a new driver per routine.
 
-Separate worktrees allow parallel authoring; execution still uses shared resource
-ownership. Independent Mac and Android fixtures can run together. Routines using
-the same app, glasses, account or network/audio configuration must coordinate.
-Use the existing ownership/admission and cleanup rules for the resource; do not
-clear another run's lock, change global enrollment or invoke a legacy runner to
-bypass an unavailable development entry. If a resource is owned or an operation
-remains in flight, wait for its normal handoff or reconciliation; continue
-independent discovery on available resources or source work while that dependency
-is resolved.
+## Qualify and make the coverage usable
 
-Local development proves the tested snapshot. It is not a CI qualification of a
-different revision or platform.
+- Run a functional replay through full setup/test/teardown and inspect the video,
+  assertions and cleanup. Successful sections, a source review or one platform's
+  result do not establish a full pass elsewhere. Interleave with another working
+  routine to expose leaked state or disk growth when validating shared changes.
+- Add focused tests for meaningful failure modes or shared logic; avoid a fixed
+  test count, implementation-mirroring tests and redundant suites. Run the relevant
+  typecheck and checks for the files changed.
+- Trace registration through catalog, request validation, worker dispatch, Admin,
+  result publication and PR result links. Ensure the exact `routine:<id>` label
+  exists; a catalog entry or label alone does not make a routine executable.
+- Use [select-pr-routines](../select-pr-routines/SKILL.md) to label relevant PRs.
+  Apply the user's PR/review timing; when preparing a PR, include the evidence and
+  follow [codex-pr-review](../codex-pr-review/SKILL.md). Enable requested triggers
+  only with an executable worker path and report any unqualified coverage honestly.
 
-## 5. Register, review and qualify
-
-1. Open the private routine PR with the brief, focused validation and recorded
-   development result. Run the [Codex PR review skill](../codex-pr-review/SKILL.md)
-   for PRs created or updated and address its findings.
-2. Trace the closest routine through the private worker's supported IDs/dispatch
-   and MentraOS request/Admin selection. Add the new ID wherever required. In
-   [device-routines.mjs](../../../.github/scripts/device-routines.mjs), provide
-   coverage, platform, prerequisites, exclusions and links pinned to the reviewed
-   private implementation. Coordinate the private worker rollout before public
-   requests can reach the new ID; a label alone cannot make it executable.
-3. Ensure the exact `routine:<id>` label exists in MentraOS. Catalog registration
-   does not create it. Check with `gh label list --repo Mentra-Community/MentraOS
-   --search 'routine:gallery'`; inspect the exact name. Only if absent, create it:
-
-   ```bash
-   gh label create routine:gallery --repo Mentra-Community/MentraOS \
-     --color 0E8A16 --description 'Request the registered gallery routine'
-   ```
-
-   Substitute the actual registered ID. Preserve existing labels and their
-   settings; do not use `--force` to overwrite them.
-4. Once registered and admitted by the worker, request the routine against an
-   exact existing build. Use [select-pr-routines](../select-pr-routines/SKILL.md)
-   to append its label to a relevant PR, or use Admin for a selected PR/dev/staging
-   artifact. For example, after `gallery` is registered:
-
-   ```bash
-   gh pr edit PR --repo Mentra-Community/MentraOS --add-label routine:gallery
-   ```
-
-5. Check the resulting run: tested build and harness revision, assertions,
-   recordings, duration, failure/incident details and verified return state.
-   Report pending or failed qualification explicitly. Registration does not
-   automatically opt the routine into dev/staging defaults or nightly schedules;
-   change those only when included in the task and after qualification.
-
-Finish with the routine ID/label, covered behavior, implementation PRs and exact
-qualification result or remaining gap. Public PRs should link approved result
-pages; keep credentials, private logs and raw recordings out of their bodies.
+Deliver the routine ID/label, covered behavior, exact harness source and tested
+build/platform, and links to the result and passing recording. Include run start,
+setup/test/teardown durations and cleanup/publication outcome. Report remaining
+gaps explicitly. Public PRs link approved result pages; private diagnostics stay
+in the incident/result system. Remove disposable authoring/fixer workspaces when
+no active task depends on them, using the existing workspace cleanup mechanism.
