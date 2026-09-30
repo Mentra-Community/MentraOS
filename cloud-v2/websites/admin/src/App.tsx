@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -9,13 +9,14 @@ import {
   readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
 import { TestRunsPage } from "./pages/test-runs";
+import { RoutineCatalogPage } from "./pages/routine-catalog";
 import { FixFlowsPage } from "./pages/fix-flows";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
 import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "fix-flows" | "system-health";
+type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "routine-catalog" | "fix-flows" | "system-health";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
@@ -133,6 +134,7 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "audit", label: "Audit log", icon: History },
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
+  { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
   { key: "fix-flows", label: "Fix flows", icon: RotateCcw },
   { key: "system-health", label: "System health", icon: ShieldCheck },
 ];
@@ -170,12 +172,13 @@ const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialFixFlowLink = readFixFlowLink(window.location.search);
 const initialFixFlows = new URLSearchParams(window.location.search).get("fixFlows") === "active";
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
+const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
   const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
@@ -226,6 +229,7 @@ function AdminPage() {
       setTestRunLink(selection);
       setTestRunListScope(scope);
       if (selection || scope) setPage("test-runs");
+      else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -361,6 +365,7 @@ function AdminPage() {
     audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or promoted something." },
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
+    "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
     "fix-flows": { title: "Fix flows", body: "Follow a failed routine through its incident, AI investigation, PR, review and verification." },
     "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
   };
@@ -383,7 +388,7 @@ function AdminPage() {
         setPage(key as AdminPageKey);
         setFixFlowLink(null);
         const location = new URL(window.location.href);
-        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth"]) location.searchParams.delete(param);
+        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth", "routineCatalog"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -394,6 +399,7 @@ function AdminPage() {
         }
         if (key === "fix-flows") window.history.replaceState(null, "", fixFlowHref(null));
         if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
+        if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
       }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
@@ -453,6 +459,11 @@ function AdminPage() {
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       {page === "fix-flows" || page === "test-runs" ? <SystemHealthSummary /> : null}
       {page === "system-health" ? <SystemHealthPage /> : null}
+      {page === "routine-catalog" ? <RoutineCatalogPage onResult={runID => {
+        setPage("test-runs");
+        setTestRunLink({ runID });
+        window.history.pushState(null, "", `/?testRun=${encodeURIComponent(runID)}`);
+      }} /> : null}
       {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" ? (
         <TestRunsPage selection={testRunLink} onSelect={selectTestRun}

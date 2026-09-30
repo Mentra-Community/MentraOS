@@ -44,7 +44,7 @@ export function TestBuildOption({ build, checked, locked, onSelect }: { build: T
   </label>;
 }
 
-export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => void }) {
+export function TestDispatchPanel({ onResult, routineIds }: { onResult: (runId: string) => void; routineIds?: readonly TestRoutineId[] }) {
   const [open, setOpen] = useState(false);
   const [channel, setChannel] = useState("pr");
   const [pr, setPr] = useState("");
@@ -107,7 +107,7 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
           } catch (failure) { setError((failure as Error).message); }
         }}>
           <label className="grid gap-1 text-xs font-medium">Routine<select aria-label="Routine to run" className={SELECT} value={routineId} disabled={!!dispatchId} onChange={event => { setRoutineId(event.target.value as TestRoutineId); clearSelection(); }}>
-            {routines.data?.routines.map(routine => <option key={routine.id} value={routine.id}>{routine.name}</option>)}
+            {routines.data?.routines.filter(routine => !routineIds || routineIds.includes(routine.id)).map(routine => <option key={routine.id} value={routine.id}>{routine.name}</option>)}
           </select></label>
           <label className="grid gap-1 text-xs font-medium">Build channel<select aria-label="Build channel" className={SELECT} value={channel} disabled={!!dispatchId} onChange={event => { setChannel(event.target.value); clearSelection(); }}>
             <option value="pr">Pull request</option><option value="dev">Dev</option><option value="staging">Staging</option>
