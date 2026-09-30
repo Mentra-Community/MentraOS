@@ -3,17 +3,14 @@ import { TestDispatchPanel } from "./test-dispatches";
 import { CATALOG_ROUTINE_IDS, ROUTINE_CATALOG, catalogPassingRunHref, type CatalogRoutine } from "./routine-catalog-data";
 
 const PANEL = "rounded-2xl border border-[#e0e4de] bg-white";
-const REQUIREMENTS = { software: "Software", account: "Account", network: "Network", physical: "Physical setup", data: "Test data" } as const;
+const REQUIREMENTS = { software: "Software", firmware: "Glasses and firmware", account: "Account", network: "Network", physical: "Physical setup", data: "Test data" } as const;
 
 export function RoutineCatalogPage({ onResult }: { onResult: (runId: string) => void }) {
   return <div className="space-y-5">
     <section className={`${PANEL} p-5`} aria-label="Catalog scope">
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-semibold">{ROUTINE_CATALOG.length} supported routine and platform combinations</h2>
-        <span className="rounded-full bg-[#edf7f0] px-3 py-1 text-xs font-semibold text-[#087d50]">Shared foundation</span>
-      </div>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-[#4f5d54]">These routines have a published full development run through shared setup, testing and cleanup. Each example includes a passing test, completed cleanup, a ready fixture and a recording.</p>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-[#68746d]">The examples qualify the recorded development run. They do not establish CI enrollment, nightly coverage or a pass on another PR or build. All four run without physical glasses; no glasses firmware is required or qualified.</p>
+      <h2 className="text-lg font-semibold">{ROUTINE_CATALOG.length} routines on the new foundation</h2>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-[#4f5d54]">Each has a passing recording with setup, testing and cleanup verified.</p>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-[#68746d]">These are local development passes. CI, nightly runs and other builds need their own qualification.</p>
     </section>
 
     <div className="grid items-start gap-5 lg:grid-cols-2">

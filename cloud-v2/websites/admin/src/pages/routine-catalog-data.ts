@@ -5,7 +5,7 @@ export interface CatalogRoutine {
   name: string;
   platform: "iOS on Mac" | "Android";
   purpose: string;
-  requirements: { software: string; account: string; network: string; physical: string; data: string };
+  requirements: { software: string; firmware: string; account: string; network: string; physical: string; data: string };
   cleanup: string;
   exclusions: string;
   passingRun: {
@@ -29,6 +29,7 @@ const macBuild = {
 };
 const macSoftware = "The selected Mentra App build for iOS on Mac, in English. The worker installs the build and signs in before the test.";
 const testAccount = "An existing, dedicated test account for the selected app backend. The worker holds its credentials.";
+const noFirmware = "No physical glasses or glasses firmware required or qualified.";
 const phonePhysical = "A reserved Mac with microphone permission, declared input and speaker routes, and the worker’s audio tools. Keep the speaker and microphone path unobstructed.";
 
 export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
@@ -36,7 +37,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     id: "no-glasses", name: "App navigation without glasses", platform: "iOS on Mac",
     purpose: "Check Home, All Apps search, Settings and account forms, glasses-required messages, sign-out, sign-in and relaunch.",
     requirements: {
-      software: macSoftware, account: testAccount,
+      software: macSoftware, firmware: noFirmware, account: testAccount,
       network: "Internet access to the selected app backend, sign-in and miniapp services.",
       physical: "A reserved Mac with UI automation and screen-recording permission. No glasses paired; the worker establishes unpaired Home.",
       data: "Fixed search text and the existing test account. Account forms are opened without changing credentials or submitting feedback.",
@@ -50,6 +51,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     purpose: "Check Home, All Apps search, Settings, account forms, Feedback navigation, the miniapp switcher and glasses-required messages.",
     requirements: {
       software: "The selected signed Android APK, in English, on an enrolled Android 13 or later test phone. The worker installs it and establishes signed-in Home.",
+      firmware: noFirmware,
       account: testAccount,
       network: "Internet access to the selected app backend, sign-in and miniapp services.",
       physical: "A dedicated USB-connected phone with authorized ADB access, available screen recording and no paired glasses. The run clears this test app’s data.",
@@ -65,6 +67,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     purpose: "Play a controlled speech sample and verify that both expected sentences appear in the actual Captions transcript.",
     requirements: {
       software: `${macSoftware} Captions must be available; setup selects simulated glasses and the Phone microphone.`,
+      firmware: noFirmware,
       account: testAccount,
       network: "Internet access to sign-in, miniapp and transcription services for the selected backend.",
       physical: phonePhysical,
@@ -79,6 +82,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     purpose: "Transcribe a controlled discussion, find its automatically generated note, edit the title and body, then verify persistence and search.",
     requirements: {
       software: `${macSoftware} Notes must be available; setup selects simulated glasses and the Phone microphone.`,
+      firmware: noFirmware,
       account: "A dedicated test account with Notes access and permission to clean up only this run’s transcript, conversation and note. Existing notes and conversations are preserved.",
       network: "Internet access to sign-in, transcription, Notes and note-generation services for the selected backend.",
       physical: phonePhysical,

@@ -10,8 +10,8 @@ test("the human catalog includes only the four full foundation combinations", ()
     <RoutineCatalogPage onResult={() => {}} />
   </QueryClientProvider>);
   expect(markup.match(/<article /g)).toHaveLength(4);
-  expect(markup).toContain("They do not establish CI enrollment, nightly coverage or a pass on another PR or build.");
-  expect(markup).toContain("no glasses firmware is required or qualified");
+  expect(markup).toContain("These are local development passes. CI, nightly runs and other builds need their own qualification.");
+  expect(markup).toContain("No physical glasses or glasses firmware required or qualified");
   expect(markup).toContain("Run routine");
   expect(markup).toContain("gh pr edit 123 --repo Mentra-Community/MentraOS --add-label routine:captions-phone");
   for (const id of ["day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer"])
@@ -27,7 +27,7 @@ test("each platform has requirements, a label and a dev result link independent 
     expect(markup).toContain(`href="https://admin.dev.mentraglass.com/?testRun=${routine.passingRun.id}"`);
     expect(markup).toContain(`https://github.com/Mentra-Community/MentraOS/commit/${routine.passingRun.appSha}`);
   }
-  for (const label of ["Software", "Account", "Network", "Physical setup", "Test data", "Cleanup", "Outside this routine"])
+  for (const label of ["Software", "Glasses and firmware", "Account", "Network", "Physical setup", "Test data", "Cleanup", "Outside this routine"])
     expect(markup.match(new RegExp(`>${label}</`, "g"))).toHaveLength(4);
   expect(markup).toContain("Samsung Galaxy A54");
   expect(markup).toContain("mini-samsung-a54");
