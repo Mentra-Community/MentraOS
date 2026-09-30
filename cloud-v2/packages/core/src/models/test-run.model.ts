@@ -24,6 +24,8 @@ const schema = new Schema({
   provenanceCorrections: { type: [Schema.Types.Mixed], default: undefined },
   // Bounded reviewed diagnostic additions; original payload, source, outcome and assets remain immutable.
   evidenceSupplements: { type: [Schema.Types.Mixed], default: undefined },
+  // Server-resolved report for append-only worker diagnostics, separate from accepted payload.
+  diagnosticsReportId: { type: String },
 }, { collection: "test_runs", timestamps: true });
 schema.index({ startedAt: -1, runId: -1 });
 schema.index({ completionProjectionVersion: 1, completedAt: -1, runId: -1 }, { name: TEST_RUN_COMPLETION_INDEX });

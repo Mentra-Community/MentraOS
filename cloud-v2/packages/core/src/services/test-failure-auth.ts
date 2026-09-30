@@ -4,6 +4,7 @@ import { continuationGrantSchema, type ContinuationGrant } from "../types/test-c
 import { existingWorkGrantSchema, type ExistingWorkGrant } from "../types/test-existing-work.types";
 import { testFailureOccurrenceIdSchema } from "../types/test-failure.types";
 import { EVIDENCE_SUPPLEMENT_PURPOSE } from "../types/test-failure-evidence.types";
+import { workerDiagnosticsGrantSchema, type WorkerDiagnosticsGrant } from "../types/worker-diagnostics.types";
 
 export function testFailureEnvironment(): "dev" | "staging" | "prod" | null {
   const value = process.env.CLOUD_CORE_ENVIRONMENT;
@@ -89,4 +90,13 @@ export function signTestExistingWorkGrant(grant: ExistingWorkGrant, secret: stri
 export function verifyTestExistingWorkGrant(token: string, occurrenceId: string, secret: string,
   environment: string | null, now = Date.now()): ExistingWorkGrant | null {
   return verifyGrant(existingWorkGrantSchema, token, occurrenceId, secret, environment, now);
+}
+
+export function signWorkerDiagnosticsGrant(grant: WorkerDiagnosticsGrant, secret: string): string {
+  return signGrant(workerDiagnosticsGrantSchema, grant, secret, "worker diagnostics");
+}
+
+export function verifyWorkerDiagnosticsGrant(token: string, occurrenceId: string, secret: string,
+  environment: string | null, now = Date.now()): WorkerDiagnosticsGrant | null {
+  return verifyGrant(workerDiagnosticsGrantSchema, token, occurrenceId, secret, environment, now);
 }

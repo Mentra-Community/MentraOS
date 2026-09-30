@@ -648,6 +648,9 @@ test("registered rerun incidents require the exact result binding before the inc
   const artifact = await app.request(path.replace("/api/agent/test-failures", ""), { headers });
   expect(artifact.status).toBe(200);
   expect(createHash("sha256").update(new Uint8Array(await artifact.arrayBuffer())).digest("hex")).toBe(meta.logs.artifacts[0]!.representation.sha256);
+  const page = await app.request(`${rerun}/rep_01RERUN?offset=1`, { headers });
+  expect(page.status).toBe(200);
+  expect(await page.json()).toMatchObject({ pagination: { offset: 1, limit: 50, nextPath: null }, logs: { artifacts: [] } });
   calls.length = 0;
   // The original occurrence's incident, another failure, another candidate and other credentials are all denied.
   expect((await app.request(`${rerun}/rep_01ORIGINAL`, { headers })).status).toBe(404);
