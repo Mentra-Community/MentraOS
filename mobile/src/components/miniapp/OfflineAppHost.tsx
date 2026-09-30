@@ -28,7 +28,7 @@
 
 import {engine} from "@mentra/engine"
 import {useCallback, useEffect, useRef, useState} from "react"
-import {StyleSheet, View} from "react-native"
+import {Platform, StyleSheet, View} from "react-native"
 import {Screen as NativeScreen, ScreenStack} from "react-native-screens"
 
 import CapsuleMenu from "@/effects/CapsuleMenu"
@@ -210,15 +210,14 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
     // glass surfaces in the hosted screens sample whatever is behind them —
     // without this they'd pick up the home screen instead of the app
     // background they sat on when pushed as routes.
-    // Rounded corners match LocalMiniappView's surface (same radius). Unlike
-    // the WebView there — which clips itself — the hosted screens are plain
-    // views, so the root must clip them via overflow:hidden for the radius
-    // to show.
+    // Keep the iOS surface rounded. Android fills the display: forcing an
+    // iPhone-sized radius here clips gallery photos on square-cornered phones
+    // and reveals the home screen behind the bottom corners.
     <View
       style={{
         flex: 1,
         backgroundColor: theme.colors.background,
-        borderRadius: theme.spacing.s12,
+        borderRadius: Platform.OS === "android" ? 0 : theme.spacing.s12,
         borderCurve: "continuous",
         overflow: "hidden",
       }}
