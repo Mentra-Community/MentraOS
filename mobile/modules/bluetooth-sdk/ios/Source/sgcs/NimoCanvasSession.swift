@@ -15,12 +15,14 @@ final class NimoCanvasSession {
     }
 
     private var ready = false
+    private var transportReady = false
     private var active = false
     private var locked = false
     private var launchBlocked = false
     private var waitingReadiness = false
     private var observedNotReady = false
     private var readinessRetries = 0
+    private var probeRetries = 0
     private var exitRequested = false
     private var desired: Data?
     private var accepted: Data?
@@ -39,9 +41,27 @@ final class NimoCanvasSession {
         return pump()
     }
 
+    /// Enter a blank canvas unless a newer host scene survived the connection change.
+    func activate() -> [Action] {
+        if desired == nil { desired = Data([0, 0, 1]) }
+        exitRequested = false
+        return pump()
+    }
+
+    /// The firmware validates peer readiness on Launch. Only an explicit NOT_READY
+    /// permits a bounded retry; an ambiguous ACK still requires a new transport.
+    func retryNotReady() -> [Action] {
+        guard transportReady, waitingReadiness, desired != nil, probeRetries < 3 else { return [] }
+        probeRetries += 1
+        waitingReadiness = false
+        ready = true
+        return pump()
+    }
+
     /// Only a fresh heartbeat samples both TWS and peer Companion readiness.
     func readiness(_ value: Bool, confirmed: Bool = false) -> [Action] {
-        if !value { readinessRetries = 0 }
+        transportReady = value
+        if !value { readinessRetries = 0; probeRetries = 0 }
         if !value, flight != nil { return resetLink("Readiness lost during canvas command") }
         if waitingReadiness {
             if !value { observedNotReady = true }
@@ -58,8 +78,8 @@ final class NimoCanvasSession {
 
     /// Keep only the latest desired scene across a new transport generation.
     func disconnected() {
-        ready = false; active = false; locked = false; launchBlocked = false
-        waitingReadiness = false; observedNotReady = false; readinessRetries = 0
+        ready = false; transportReady = false; active = false; locked = false; launchBlocked = false
+        waitingReadiness = false; observedNotReady = false; readinessRetries = 0; probeRetries = 0
         accepted = nil; rejected = nil; flight = nil
         ticket &+= 1; forceRevision &+= 1
     }
@@ -69,16 +89,12 @@ final class NimoCanvasSession {
         return pump()
     }
 
+    /// Stock UI reports do not relinquish host ownership. Replay after the current ACK.
     func nativeApp(_ appId: Int, entered: Bool) -> [Action] {
         if (appId == NimoCanvasCodec.appId && !entered) || (appId != NimoCanvasCodec.appId && entered) {
-            if flight?.key == 3 {
-                active = false; accepted = nil
-                if appId != NimoCanvasCodec.appId, entered { desired = nil; rejected = nil; scope = nil }
-                return []
-            }
-            let ambiguous = flight != nil
-            desired = nil; accepted = nil; rejected = nil; active = false; exitRequested = false; scope = nil
-            if ambiguous { return resetLink("Native app transition interrupted canvas command") }
+            active = false
+            accepted = nil
+            return pump()
         }
         return []
     }
@@ -112,8 +128,8 @@ final class NimoCanvasSession {
             return [.rejected(status)] + pump()
         }
         switch key {
-        case 1: active = true
-        case 4: accepted = current.frame; rejected = nil; readinessRetries = 0
+        case 1: active = true; accepted = nil
+        case 4: accepted = current.frame; rejected = nil; readinessRetries = 0; probeRetries = 0
         case 3: active = false; accepted = nil; exitRequested = false
         default: break
         }
@@ -126,7 +142,7 @@ final class NimoCanvasSession {
     }
 
     private func resetLink(_ reason: String) -> [Action] {
-        ready = false; active = false; accepted = nil; flight = nil
+        ready = false; transportReady = false; active = false; accepted = nil; flight = nil
         ticket &+= 1; forceRevision &+= 1
         return [.reconnect(reason)]
     }

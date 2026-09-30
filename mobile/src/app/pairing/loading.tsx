@@ -13,6 +13,7 @@ import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
+import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
 import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 
 // Secure pairing info should arrive immediately after Mentra Live finishes booting.
@@ -170,8 +171,8 @@ export default function GlassesPairingLoadingScreen() {
       void engine.pairing.abandonAttempt().catch((cleanupError) => {
         console.warn("Pairing failure cleanup failed:", cleanupError)
       })
-      if (error === "errors:pairNeedDisconnect") {
-        replace("/pairing/unpair-even", {deviceModel: deviceModel})
+      if (error === "errors:pairNeedDisconnect" || (deviceModel === DeviceTypes.G2 && isG2RecoveryError(error))) {
+        replace("/pairing/unpair-even", {deviceModel, error})
         return
       }
       replace("/pairing/failure", {error: error, deviceModel: deviceModel})

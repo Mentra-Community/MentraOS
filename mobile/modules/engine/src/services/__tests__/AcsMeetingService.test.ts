@@ -1037,7 +1037,7 @@ describe("glasses LC3 microphone uplink", () => {
     expect(acsMeetingService.glassesLc3UplinkActive()).toBe(true)
     expect(micListeners.has("mic_pcm")).toBe(true)
     expect(native.join).toHaveBeenCalledWith(expect.objectContaining({audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS}))
-    // Reading the mic with no session leaves the call on the OS default of VAD-on, and the GX8002
+    // Reading the mic with no session can leave the call on a user VAD opt-in, and the GX8002
     // then gates the wearer out whenever it disagrees. The sink names the use case and nothing
     // else: micPolicy still decides what voice_call costs the hardware.
     expect(micSessionManager.hasGlassesSession("engine:acs-uplink")).toBe(true)

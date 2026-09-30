@@ -299,6 +299,22 @@ which the phone offers a downgrade already supports the downgrade/recovery contr
 has the downgrade floor enabled. Phone-side availability checks therefore rely on this
 release invariant rather than a separate minimum-installed-version or capability gate.
 
+Recovery worker v11 adds a permission-protected readiness/status query before staging
+an APK downgrade. The updater checks the worker package, signature, permissions and
+receiver availability, then observes its durable transaction identity. An existing
+transaction cannot be replaced by Retry. ASG persists its pending handoff before
+sending it and resumes reconciliation on startup without another phone install request. A missing acknowledgement retains admission
+until recovery confirms it is idle; a verified unclaimed APK can then be reused. A
+disabled or incompatible worker needs a specific support repair, not an instruction
+that promises reboot will fix it. Older source builds need the signed worker repair
+or a source-side bridge release before they can benefit from the new updater.
+
+OTA HTTP requests distinguish DNS, connect, response timeout, HTTP and TLS failures.
+Every request closes its streams and connection on failure. A bounded, credential-free
+request history joins incident logs and survives ordinary ASG process restarts; like
+other ASG preferences, it is reset by the uninstall used for an APK downgrade. Network
+validation is diagnostic, not an admission requirement for phone-local hotspot OTA.
+
 The shipped downgrade floor must never decrease. It may increase to retire older targets,
 but any increase must be coordinated across ASG, the recovery worker, Engine, and the Swift
 and Kotlin SDK defaults so the phone only offers targets accepted by the aligned glasses.

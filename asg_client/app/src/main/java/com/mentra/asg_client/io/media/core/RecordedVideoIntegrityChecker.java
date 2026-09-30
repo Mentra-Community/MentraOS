@@ -5,11 +5,11 @@ import android.media.MediaFormat;
 import android.util.Log;
 
 import java.io.File;
-import java.nio.ByteBuffer;
 
 /**
- * Lightweight validation that a recorded MP4 is readable by the platform muxer
- * (has a video track and at least one decodable sample). Runs off the recording thread.
+ * Lightweight validation that a recorded MP4 is readable by the platform extractor
+ * (has a video track and at least one readable sample). Does not decode the video.
+ * Runs off the recording thread.
  */
 public final class RecordedVideoIntegrityChecker {
 
@@ -60,8 +60,10 @@ public final class RecordedVideoIntegrityChecker {
             }
 
             extractor.selectTrack(videoTrackIndex);
-            ByteBuffer buffer = ByteBuffer.allocate(256 * 1024);
-            int sampleSize = extractor.readSampleData(buffer, 0);
+            // getSampleSize loads the current sample through the extractor. Avoid copying it
+            // into a fixed-size buffer: valid high-detail keyframes can exceed 256 KiB, causing
+            // readSampleData to throw and the caller to delete an otherwise readable recording.
+            long sampleSize = extractor.getSampleSize();
             if (sampleSize <= 0) {
                 Log.w(TAG, "No readable video samples: " + absolutePath);
                 return false;

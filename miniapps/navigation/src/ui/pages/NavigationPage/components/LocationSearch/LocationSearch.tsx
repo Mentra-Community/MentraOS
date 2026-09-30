@@ -46,9 +46,9 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   const [, setOpen] = useState(false)
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [, setError] = useState<string | null>(null)
-  // `open`/`error` are tracked via their setters above; suggestion-list
-  // visibility uses the derived `showSuggestions` instead.
+  const [error, setError] = useState<string | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  // Suggestion-list visibility uses the derived `showSuggestions`.
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -109,28 +109,36 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
       setSuggestions([])
       setOpen(false)
       setLoading(false)
+      setError(null)
       return
     }
+    let cancelled = false
+    setError(null)
     setLoading(true)
     const t = setTimeout(() => {
-      setError(null)
       const c = coordsRef.current
       autocomplete({query: trimmed, near: c ? {lat: c.lat, lng: c.lng} : undefined})
         .then((results) => {
+          if (cancelled) return
           setSuggestions(results)
           setOpen(true)
           setLoading(false)
         })
         .catch((err) => {
+          if (cancelled) return
           if ((err as Error)?.name === "AbortError") return
-          setError((err as Error).message)
+          console.error("Place search failed:", err)
+          setError("Search is unavailable. Please try again.")
           setSuggestions([])
           setLoading(false)
         })
     }, DEBOUNCE_MS)
-    return () => clearTimeout(t)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, selected, disabled, focused, autocomplete])
+  }, [query, selected, disabled, focused, autocomplete, retryCount])
 
   async function pick(s: PlaceSuggestion) {
     setOpen(false)
@@ -300,6 +308,17 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                   <Loader2 size={16} className="animate-spin" />
                   <span className="text-[13px]">Searching…</span>
                 </div>
+              ) : error ? (
+                <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-neutral-500 dark:text-zinc-400">
+                  <p role="alert" className="text-[13px]">{error}</p>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setRetryCount((count) => count + 1)}
+                    className="rounded-full bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">
+                    Try again
+                  </button>
+                </div>
               ) : isQueryEmpty ? (
                 // Empty input — saved places chips + recent searches
                 <>
@@ -371,6 +390,10 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                   </div>
                   ) : null}
                 </>
+              ) : suggestions.length === 0 ? (
+                <div role="status" className="px-4 py-8 text-center text-[13px] text-neutral-500 dark:text-zinc-400">
+                  No places found. Try another name or address.
+                </div>
               ) : (
                 // Active query — show autocomplete results
                 <ul>

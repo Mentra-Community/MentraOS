@@ -60,6 +60,7 @@ export interface RecorderSnapshot {
   usage: Usage
   /** Id of the recording currently playing back, or null. */
   playingId: string | null
+  playPositionMs?: number
   /** True when a glasses microphone is available to record from. */
   hasMic: boolean
   /** Accumulated live transcript (final + interim) for an in-progress capture. */

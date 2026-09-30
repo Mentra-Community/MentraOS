@@ -550,6 +550,8 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("forget") { -> sdk?.forget() }
 
+        SdkCoroutineFunction("unpair") { -> deviceManager?.unpair() }
+
         AsyncFunction("connectDefaultController") { deviceManager?.connectDefaultController() }
 
         AsyncFunction("disconnectController") { deviceManager?.disconnectController() }

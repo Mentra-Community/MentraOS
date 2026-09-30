@@ -8,7 +8,7 @@ interface Props {
   view: View
   onViewChange: (view: View) => void
   status: RecorderStatus
-  levels: number[]
+  levels: Array<{ms: number; level: number}>
   transcript: string
   transcriptLang: string
   paused: boolean

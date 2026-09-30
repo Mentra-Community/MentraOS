@@ -1,5 +1,5 @@
 import {useFocusEffect} from "@react-navigation/native"
-import {useCallback, useEffect, useRef} from "react"
+import {useCallback, useEffect, useRef, useState} from "react"
 import {Platform, ScrollView, View} from "react-native"
 import {LinearGradient} from "expo-linear-gradient"
 import MaskedView from "@react-native-masked-view/masked-view"
@@ -36,6 +36,14 @@ export default function Homepage() {
   const bottomSheetRef = useRef<BottomSheet>(null)
   const blurTargetRef = useRef<View | null>(null)
   const [androidBlur] = useSetting(SETTINGS.android_blur.key)
+  const [homePackageNames, setHomePackageNames] = useState<string[]>([])
+  const handleHomeAppsChange = useCallback((packageNames: string[]) => {
+    setHomePackageNames((current) =>
+      current.length === packageNames.length && current.every((pkg) => packageNames.includes(pkg))
+        ? current
+        : packageNames,
+    )
+  }, [])
 
   useFocusEffect(
     useCallback(() => {
@@ -71,7 +79,7 @@ export default function Homepage() {
           </Group>
           <View className="h-2" />
           <View className="flex-1" />
-          <AppsGrid />
+          <AppsGrid onHomeAppsChange={handleHomeAppsChange} />
         </>
       )
     }
@@ -85,7 +93,7 @@ export default function Homepage() {
           <ControllerStatus />
         </Group>
         <View className="h-2" />
-        <AppsGrid />
+        <AppsGrid onHomeAppsChange={handleHomeAppsChange} />
       </>
     )
   }
@@ -180,7 +188,7 @@ export default function Homepage() {
 
         <AppSwitcher swipeProgress={swipeProgress} blurTargetRef={blurTargetRef} />
       </Screen>
-      <AllAppsGridSheet bottomSheetRef={bottomSheetRef} />
+      <AllAppsGridSheet bottomSheetRef={bottomSheetRef} homePackageNames={homePackageNames} />
     </>
   )
 }

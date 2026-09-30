@@ -226,6 +226,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("unpair") {
+            try await DeviceManager.shared.unpair()
+        }
+
         AsyncFunction("forgetController") {
             await MainActor.run {
                 DeviceManager.shared.forgetController()
