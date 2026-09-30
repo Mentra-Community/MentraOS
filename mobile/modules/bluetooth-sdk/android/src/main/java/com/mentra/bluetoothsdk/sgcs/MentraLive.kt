@@ -777,7 +777,8 @@ class MentraLive : SGCManager() {
     }
 
     // Inner class to track incoming file transfers
-    private class FileTransferSession(var fileName: String, var fileSize: Int) {
+    internal class FileTransferSession(var fileName: String, var fileSize: Int, flags: Int = 0) {
+        private val dynamicPayload = (flags and 0x0002) != 0
         // NOTE: fileSize may be "fake" (inflated) due to BES firmware workaround
         var actualPackSize =
                 0 // Actual pack size from first received packet (for BES lie detection)
@@ -806,9 +807,8 @@ class MentraLive : SGCManager() {
          * Recalculate total packets based on actual pack size from received packet. Called when
          * first packet is received to handle variable pack sizes.
          *
-         * NOTE: Due to BES firmware workaround, fileSize in header may be "fake" (inflated). We
-         * detect this by checking if fileSize is a multiple of 400 (BES_HARDCODED_PACK_SIZE). If
-         * so, totalPackets = fileSize / 400, regardless of actual pack size.
+         * Dynamic-payload headers carry the true byte count. Only legacy small packs use
+         * the inflated-size workaround (multiples of BES_HARDCODED_PACK_SIZE).
          */
         fun recalculateTotalPackets(actualPackSize: Int) {
             if (actualPackSize <= 0 || actualPackSize > K900ProtocolUtils.FILE_PACK_SIZE) {
@@ -819,8 +819,8 @@ class MentraLive : SGCManager() {
 
             // Detect BES lie: if fileSize is exact multiple of 400, glasses used the lie strategy
             val isBesLie =
-                    (fileSize % BES_HARDCODED_PACK_SIZE == 0) &&
-                            (actualPackSize != BES_HARDCODED_PACK_SIZE)
+                    !dynamicPayload && (fileSize % BES_HARDCODED_PACK_SIZE == 0) &&
+                            (actualPackSize < BES_HARDCODED_PACK_SIZE)
 
             val newTotalPackets: Int
             if (isBesLie) {
@@ -858,6 +858,10 @@ class MentraLive : SGCManager() {
         }
 
         fun addPacket(index: Int, data: ByteArray): Boolean {
+            if (dynamicPayload && (index < 0 || index >= totalPackets || actualPackSize <= 0 ||
+                            data.size != minOf(actualPackSize, fileSize - index * actualPackSize))) {
+                return false
+            }
             if (index >= 0 && index < totalPackets && !receivedPackets.containsKey(index)) {
                 receivedPackets[index] = data
 
@@ -10219,7 +10223,7 @@ class MentraLive : SGCManager() {
             if (incidentRelay.session == null) {
                 activeFileTransfers.remove(packetInfo.fileName)
                 incidentRelay.session =
-                        FileTransferSession(packetInfo.fileName, packetInfo.fileSize)
+                        FileTransferSession(packetInfo.fileName, packetInfo.fileSize, packetInfo.flags)
                 incidentRelay.session!!.recalculateTotalPackets(packetInfo.packSize)
                 Bridge.log(
                         "LIVE: 📦 Started BLE incident log transfer: " +
@@ -10270,7 +10274,7 @@ class MentraLive : SGCManager() {
             // Get or create session for this transfer
             if (photoTransfer.session == null) {
                 photoTransfer.session =
-                        FileTransferSession(packetInfo.fileName, packetInfo.fileSize)
+                        FileTransferSession(packetInfo.fileName, packetInfo.fileSize, packetInfo.flags)
                 // Recalculate total packets based on actual pack size (handles variable MTU)
                 photoTransfer.session!!.recalculateTotalPackets(packetInfo.packSize)
                 Bridge.log(
@@ -10356,7 +10360,7 @@ class MentraLive : SGCManager() {
         var session = activeFileTransfers[packetInfo.fileName]
         if (session == null) {
             // New file transfer
-            session = FileTransferSession(packetInfo.fileName, packetInfo.fileSize)
+            session = FileTransferSession(packetInfo.fileName, packetInfo.fileSize, packetInfo.flags)
             // Recalculate total packets based on actual pack size (handles variable MTU)
             session.recalculateTotalPackets(packetInfo.packSize)
             activeFileTransfers[packetInfo.fileName] = session
