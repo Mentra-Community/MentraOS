@@ -677,145 +677,13 @@ enum K900ProtocolUtils {
     }
 }
 
-private struct FileTransferSession {
-    let fileName: String
-    let fileSize: Int // NOTE: May be "fake" (inflated) due to BES firmware workaround
-    var actualPackSize: Int = 0 // Actual pack size from first received packet
-    var totalPackets: Int
-    var expectedNextPacket: Int = 0
-    var receivedPackets: [Int: Data] = [:]
-    let startTime: Date
-    var isComplete: Bool = false
-    var isAnnounced: Bool = false
-
-    /// BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack.
-    /// Android glasses "lie" about fileSize to make BES expect correct packet count.
-    private static let BES_HARDCODED_PACK_SIZE = 400
-
-    init(fileName: String, fileSize: Int, announcedPackets: Int? = nil) {
-        self.fileName = fileName
-        self.fileSize = fileSize
-        let computedPackets =
-            (fileSize + K900ProtocolUtils.FILE_PACK_SIZE - 1) / K900ProtocolUtils.FILE_PACK_SIZE
-        if let announced = announcedPackets, announced > 0 {
-            totalPackets = announced
-            isAnnounced = true
-        } else {
-            totalPackets = computedPackets
-            isAnnounced = false
-        }
-        startTime = Date()
-    }
-
-    mutating func updateAnnouncedPackets(_ announced: Int) {
-        guard announced > 0 else { return }
-        totalPackets = announced
-        isAnnounced = true
-        if expectedNextPacket >= totalPackets {
-            expectedNextPacket = min(expectedNextPacket, max(totalPackets - 1, 0))
-        }
-    }
-
-    /// Recalculate total packets based on actual pack size from received packet.
-    /// Detects BES lie: if fileSize is multiple of 400 but actual pack size differs.
-    mutating func recalculateTotalPackets(actualPackSize: Int) {
-        guard actualPackSize > 0, actualPackSize <= K900ProtocolUtils.FILE_PACK_SIZE else { return }
-
-        self.actualPackSize = actualPackSize
-
-        // Detect BES lie: if fileSize is exact multiple of 400, glasses used the lie strategy
-        let isBesLie =
-            (fileSize % Self.BES_HARDCODED_PACK_SIZE == 0)
-                && (actualPackSize != Self.BES_HARDCODED_PACK_SIZE)
-
-        let newTotalPackets: Int
-        if isBesLie {
-            // BES lie detected: totalPackets = fileSize / 400
-            newTotalPackets = fileSize / Self.BES_HARDCODED_PACK_SIZE
-            Bridge.log(
-                "📦 BES Lie detected! fakeFileSize=\(fileSize), totalPackets=\(newTotalPackets), actualPackSize=\(actualPackSize)"
-            )
-        } else {
-            // Normal case: calculate based on actual pack size
-            newTotalPackets = (fileSize + actualPackSize - 1) / actualPackSize
-        }
-
-        if newTotalPackets != totalPackets {
-            Bridge.log(
-                "📦 Recalculating totalPackets: \(totalPackets) -> \(newTotalPackets) (packSize=\(actualPackSize), fileSize=\(fileSize))"
-            )
-            totalPackets = newTotalPackets
-        }
-    }
-
-    mutating func addPacket(_ index: Int, data: Data) -> Bool {
-        guard index >= 0 else { return false }
-
-        // On first packet, recalculate total packets only when we do not already
-        // have an authoritative pack size from protocol metadata.
-        if receivedPackets.isEmpty && actualPackSize == 0 && !data.isEmpty {
-            recalculateTotalPackets(actualPackSize: data.count)
-        }
-
-        if index >= totalPackets {
-            totalPackets = index + 1
-        }
-
-        guard receivedPackets[index] == nil else {
-            return false
-        }
-
-        receivedPackets[index] = data
-
-        while receivedPackets[expectedNextPacket] != nil, expectedNextPacket < totalPackets {
-            expectedNextPacket += 1
-        }
-
-        isComplete = (receivedPackets.count == totalPackets)
-        return true
-    }
-
-    func isFinalPacket(_ index: Int) -> Bool {
-        index == totalPackets - 1
-    }
-
-    func missingPacketIndices() -> [Int] {
-        guard totalPackets > receivedPackets.count else { return [] }
-        return (0 ..< totalPackets).compactMap { receivedPackets[$0] == nil ? $0 : nil }
-    }
-
-    /// Assemble file from received packets.
-    /// NOTE: Calculates actual file size from received data, NOT from header fileSize,
-    /// because fileSize may be "fake" (inflated) due to BES firmware workaround.
-    func assembleFile() -> Data? {
-        guard isComplete else { return nil }
-
-        // Calculate actual file size by summing all received packet sizes
-        let actualFileSize = receivedPackets.values.reduce(0) { $0 + $1.count }
-
-        Bridge.log(
-            "📦 Assembling file: headerFileSize=\(fileSize), actualFileSize=\(actualFileSize), totalPackets=\(totalPackets)"
-        )
-
-        var fileData = Data(capacity: actualFileSize)
-
-        for i in 0 ..< totalPackets {
-            if let packet = receivedPackets[i] {
-                fileData.append(packet)
-            }
-        }
-
-        return fileData
-    }
-}
-
 private struct BlePhotoTransfer {
     var isThumbnail = false
     let bleImgId: String
     let requestId: String
     let webhookUrl: String
     var authToken: String?
-    var session: FileTransferSession?
+    var session: MentraLiveFileTransferSession?
     let phoneStartTime: Date
     var bleTransferStartTime: Date?
     var glassesCompressionDurationMs: Int64 = 0
@@ -838,7 +706,7 @@ private final class BleIncidentLogRelayEntry {
     let incidentId: String
     let apiBaseUrl: String
     let kind: BleIncidentLogRelayKind
-    var session: FileTransferSession?
+    var session: MentraLiveFileTransferSession?
 
     init(
         fileBaseKey: String, incidentId: String, apiBaseUrl: String, kind: BleIncidentLogRelayKind
@@ -1602,7 +1470,7 @@ class MentraLive: NSObject, SGCManager {
     // NEW: File transfer properties
     private var fileReadCharacteristic: CBCharacteristic?
     private var fileWriteCharacteristic: CBCharacteristic?
-    private var activeFileTransfers = [String: FileTransferSession]()
+    private var activeFileTransfers = [String: MentraLiveFileTransferSession]()
     private var blePhotoTransfers = [String: BlePhotoTransfer]()
     private var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
     private var l2capFileChannel: MentraLiveL2capChannel?
@@ -2639,7 +2507,8 @@ class MentraLive: NSObject, SGCManager {
                 // The reader thread keeps draining the stream (and returning CoC credits)
                 // while the existing transfer state remains serialized on the main actor.
                 DispatchQueue.main.async {
-                    self?.processReceivedData(frame)
+                    guard let self, self.l2capFileChannelId == channelId else { return }
+                    self.processReceivedData(frame)
                 }
             },
             onClose: { [weak self] in
@@ -2666,7 +2535,7 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Data Processing
 
-    // Internal so native integration tests can replay the actual BLE receive path.
+    /// Internal so native integration tests can replay the actual BLE receive path.
     func processReceivedData(_ data: Data) {
         guard data.count > 0 else { return }
 
@@ -4161,7 +4030,7 @@ class MentraLive: NSObject, SGCManager {
             activeFileTransfers.removeValue(forKey: fileName)
         }
 
-        var session = FileTransferSession(
+        var session = MentraLiveFileTransferSession(
             fileName: fileName, fileSize: fileSize, announcedPackets: totalPackets
         )
         session.isAnnounced = true
@@ -4171,7 +4040,7 @@ class MentraLive: NSObject, SGCManager {
         if var bleTransfer = blePhotoTransfers[bleImgId] {
             var bleSession =
                 bleTransfer.session
-                    ?? FileTransferSession(
+                    ?? MentraLiveFileTransferSession(
                         fileName: fileName, fileSize: fileSize, announcedPackets: totalPackets
                     )
             bleSession.updateAnnouncedPackets(totalPackets)
@@ -4264,8 +4133,8 @@ class MentraLive: NSObject, SGCManager {
 
             if incidentRelay.session == nil {
                 activeFileTransfers.removeValue(forKey: packetInfo.fileName)
-                var session = FileTransferSession(
-                    fileName: packetInfo.fileName, fileSize: Int(packetInfo.fileSize)
+                var session = MentraLiveFileTransferSession(
+                    fileName: packetInfo.fileName, fileSize: Int(packetInfo.fileSize), flags: packetInfo.flags
                 )
                 session.recalculateTotalPackets(actualPackSize: Int(packetInfo.packSize))
                 incidentRelay.session = session
@@ -4316,10 +4185,11 @@ class MentraLive: NSObject, SGCManager {
 
             // Get or create session for this transfer
             if photoTransfer.session == nil {
-                var session = FileTransferSession(
+                var session = MentraLiveFileTransferSession(
                     fileName: packetInfo.fileName,
-                    fileSize: Int(packetInfo.fileSize)
+                    fileSize: Int(packetInfo.fileSize), flags: packetInfo.flags
                 )
+                session.recalculateTotalPackets(actualPackSize: Int(packetInfo.packSize))
                 photoTransfer.session = session
                 blePhotoTransfers[bleImgId] = photoTransfer
                 Bridge.log(
@@ -4392,9 +4262,10 @@ class MentraLive: NSObject, SGCManager {
         var session = activeFileTransfers[packetInfo.fileName]
         if session == nil {
             // New file transfer
-            session = FileTransferSession(
-                fileName: packetInfo.fileName, fileSize: Int(packetInfo.fileSize)
+            session = MentraLiveFileTransferSession(
+                fileName: packetInfo.fileName, fileSize: Int(packetInfo.fileSize), flags: packetInfo.flags
             )
+            session?.recalculateTotalPackets(actualPackSize: Int(packetInfo.packSize))
             activeFileTransfers[packetInfo.fileName] = session
 
             Bridge.log(
