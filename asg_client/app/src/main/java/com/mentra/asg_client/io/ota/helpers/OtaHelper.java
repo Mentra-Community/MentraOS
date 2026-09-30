@@ -290,13 +290,14 @@ public class OtaHelper {
         // only wake-ups and never become a second terminal store.
         boolean sentBesStatus = sendAuthoritativeBesStatusToPhone();
         if (sessionManager == null || phoneConnectionProvider == null) return;
-        String pendingStatus = sessionManager.consumePendingApkStatus();
-        if (pendingStatus == null) {
-            // Manifest failures can occur before there is an install or APK-done signal.
-            // Replay the persisted failure even when its original BLE delivery was missed.
-            if (!sentBesStatus && "failed".equals(sessionManager.getStatus())) sendOtaStatus();
+        // A later failed step supersedes an APK completion queued before disconnect.
+        if ("failed".equals(sessionManager.getStatus())) {
+            sessionManager.consumePendingApkStatus();
+            if (!sentBesStatus) sendOtaStatus();
             return;
         }
+        String pendingStatus = sessionManager.consumePendingApkStatus();
+        if (pendingStatus == null) return;
         JSONObject apkDoneJson = sessionManager.buildApkDoneJson(pendingStatus);
         if (apkDoneJson == null) {
             Log.w(TAG, "onPhoneConnected: buildApkDoneJson returned null, skipping APK done signal");

@@ -257,6 +257,45 @@ public class OtaRecoveryOwnershipTest {
         assertEquals(true, get("isUpdating"));
         assertSame(helper, get("handoffOwner"));
     }
+    @Test public void queuedApkCompletionCannotMaskDisconnectedContinuationFailure() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        assertTrue(helper.retireSettledDowngrade());
+        OtaSessionManager session = new OtaSessionManager(context);
+        assertTrue(session.createSession(new String[]{"apk", "mtk", "bes"}, "invalid-url"));
+        session.advanceStep(0, "install");
+        session.setPendingApkStatus("step_complete");
+        set("sessionManager", helper, session);
+        OtaHelper.PhoneConnectionProvider phone = mock(OtaHelper.PhoneConnectionProvider.class);
+        helper.setPhoneConnectionProvider(phone);
+        assertTrue(helper.continueSessionAfterStepComplete(context));
+        java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
+        assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
+        permit.release();
+        helper.cleanup();
+        helper = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        when(phone.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(phone);
+        verify(phone).sendOtaStatus(argThat(status -> "failed".equals(status.optString("status"))
+                && "mtk".equals(status.optString("st"))));
+        verify(phone, never()).sendOtaStatus(argThat(status -> "step_complete".equals(status.optString("status"))));
+    }
+
+    @Test public void queuedApkCompletionIsScopedToItsSession() {
+        OtaSessionManager session = new OtaSessionManager(RuntimeEnvironment.getApplication());
+        session.clear();
+        assertTrue(session.createSession(new String[]{"apk"}, "first"));
+        session.setPendingApkStatus("complete");
+        OtaSessionManager restarted = new OtaSessionManager(RuntimeEnvironment.getApplication());
+        assertEquals("complete", restarted.consumePendingApkStatus());
+        restarted.setPendingApkStatus("complete");
+        restarted.clear();
+        assertTrue(restarted.createSession(new String[]{"apk"}, "second"));
+        assertNull(restarted.consumePendingApkStatus());
+        restarted.setPendingApkStatus("complete");
+        restarted.setFailed("manifest failure");
+        assertNull(new OtaSessionManager(RuntimeEnvironment.getApplication()).consumePendingApkStatus());
+    }
     private static void set(String name, Object target, Object value) throws Exception {
         Field field = OtaHelper.class.getDeclaredField(name); field.setAccessible(true); field.set(target, value);
     }
