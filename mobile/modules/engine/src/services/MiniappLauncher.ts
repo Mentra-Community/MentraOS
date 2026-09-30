@@ -25,7 +25,8 @@
 
 import {File} from "expo-file-system"
 
-import {isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtime/bootstrap"
+import {isDevMiniappAllowed, isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtime/bootstrap"
+import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
@@ -101,9 +102,15 @@ class MiniappLauncher {
    */
   async resolveBundle(packageName: string, hints?: LaunchHints): Promise<ResolvedBundle | null> {
     const devUrl = hints?.devUrl ?? this.storedDevUrl(packageName)
+    const devAllowed = isDevMiniappAllowed(
+      packageName,
+      useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
+    )
 
     // --- Dev: live HTTP, then the last on-disk snapshot if the laptop is gone. ---
-    if (devUrl) {
+    // A stored URL from a scan that this workspace will not run must fall
+    // through to the released bundle, or the home tile disappears.
+    if (devUrl && devAllowed) {
       const source = await resolveDevBundleSource(packageName, devUrl)
       if (source.kind === "live") {
         const live = await this.resolveLiveHttp(packageName, source.resolvedUrl, source.manifest, hints)
@@ -278,12 +285,19 @@ class MiniappLauncher {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
     }
     const version = resolved.installedManifest?.version
+    // A live dev server sets devUrl. A snapshot keeps the directory name `dev-*`
+    // as the active version. Either one is the scanned build; a release fallback is neither.
+    const activeVersion = await appRegistry.getActiveVersion(packageName)
+    const devBuild = Boolean(resolved.devUrl) || activeVersion.startsWith("dev-")
+    const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     if (
-      !isInstalledMiniappAllowed(
-        packageName,
-        version,
-        version ? appRegistry.getReleaseIdentity(packageName, version) : null,
-      )
+      devBuild
+        ? !isDevMiniappAllowed(packageName, superMode)
+        : !isInstalledMiniappAllowed(
+            packageName,
+            version,
+            version ? appRegistry.getReleaseIdentity(packageName, version) : null,
+          )
     ) {
       throw new Error(`MiniappLauncher: ${packageName} bundle is not authorized by deployment policy`)
     }

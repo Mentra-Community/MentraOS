@@ -29,7 +29,8 @@ import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../ty
 import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
-import {isInstalledMiniappAllowed, isOfflineSystemMiniappAllowed} from "../runtime/bootstrap"
+import {isDevMiniappAllowed, isInstalledMiniappAllowed, isOfflineSystemMiniappAllowed} from "../runtime/bootstrap"
+import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
@@ -741,24 +742,33 @@ class AppRegistry {
 
   public async getActiveVersion(packageName: string): Promise<string> {
     let versions = this.getInstalledVersions(packageName)
+    // A scanned build only stands in for a workspace miniapp while super mode
+    // allows it. Leaving the stored pointer alone lets turning super mode on
+    // bring that scan back; until then the released version stays on screen.
+    const devAllowed = isDevMiniappAllowed(
+      packageName,
+      useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
+    )
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
-    let res = storage.load<string>(`${packageName}_active_version`)
-    if (res.is_ok() && versions.includes(res.value)) {
+    const res = storage.load<string>(`${packageName}_active_version`)
+    if (res.is_ok() && versions.includes(res.value) && (!res.value.startsWith("dev-") || devAllowed)) {
       return res.value
     }
     // Dev versions take precedence over semver-installed versions.
-    const devVersions = versions
-      .filter((v) => v.startsWith("dev-"))
-      .sort()
-      .reverse()
-    if (devVersions.length > 0) {
-      this.setActiveVersion(packageName, devVersions[0])
-      return devVersions[0]
+    if (devAllowed) {
+      const devVersions = versions
+        .filter((v) => v.startsWith("dev-"))
+        .sort()
+        .reverse()
+      if (devVersions.length > 0) {
+        this.setActiveVersion(packageName, devVersions[0])
+        return devVersions[0]
+      }
     }
     versions = versions.filter((v) => semver.valid(v))
     versions.sort((a, b) => semver.rcompare(a, b))
-    this.setActiveVersion(packageName, versions[0])
+    if (!(res.is_ok() && res.value.startsWith("dev-"))) this.setActiveVersion(packageName, versions[0])
     return versions[0]
   }
 
@@ -837,17 +847,20 @@ class AppRegistry {
   private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
     const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
+    const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     const dev = this.projectDevApps().filter(
-      (app) => isInstalledMiniappAllowed(app.packageName, undefined, null) && !offlinePackages.has(app.packageName),
+      (app) => isDevMiniappAllowed(app.packageName, superMode) && !offlinePackages.has(app.packageName),
     )
     const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
       (app) =>
-        isInstalledMiniappAllowed(
-          app.packageName,
-          app.version,
-          app.version ? this.getReleaseIdentity(app.packageName, app.version) : null,
-        ) &&
+        (app.version?.startsWith("dev-")
+          ? isDevMiniappAllowed(app.packageName, superMode)
+          : isInstalledMiniappAllowed(
+              app.packageName,
+              app.version,
+              app.version ? this.getReleaseIdentity(app.packageName, app.version) : null,
+            )) &&
         !offlinePackages.has(app.packageName) &&
         !devPackages.has(app.packageName),
     )

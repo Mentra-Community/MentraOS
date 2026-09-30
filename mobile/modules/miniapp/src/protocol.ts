@@ -245,7 +245,7 @@ export enum MiniappRequestType {
   /** Stop the glasses publisher for a photo. The meeting, hotspot, and audio stay up. */
   MEETING_PAUSE_VIDEO_PUBLISHER = "miniapp_meeting_pause_video_publisher",
   MEETING_RESUME_VIDEO_PUBLISHER = "miniapp_meeting_resume_video_publisher",
-  /** Full-frame "Taking a photo" card on the outgoing video. Resolves after the first card frame. */
+  /** Full-frame "Taking a photo..." card on the outgoing video. Resolves after the first card frame. */
   MEETING_SHOW_CARD = "miniapp_meeting_show_card",
   /** Replace the card with a still. `durationMs` is counted by the caller from `shownAt`. */
   MEETING_SHOW_IMAGE = "miniapp_meeting_show_image",

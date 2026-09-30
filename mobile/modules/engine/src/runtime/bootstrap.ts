@@ -169,6 +169,17 @@ export function isInstalledMiniappAllowed(
   )
 }
 
+/**
+ * A developer build from the Miniapp Developer scanner. A workspace admits one
+ * only in super mode, and only in place of a miniapp it already manages, so a
+ * scanned QR can stand in for its Call but never add a package it lacks.
+ */
+export function isDevMiniappAllowed(packageName: string, superMode: boolean): boolean {
+  const policy = options?.config?.localMiniappPolicy
+  if (!policy) return isLocalMiniappPackageAllowed(packageName)
+  return superMode && policy.managed.some((entry) => entry.packageName === packageName)
+}
+
 /** Read a defensive package-scoped configuration snapshot. */
 export function getMiniappConfiguration(packageName: string): Record<string, string> {
   const configuration = options?.config?.miniappConfiguration?.[packageName]

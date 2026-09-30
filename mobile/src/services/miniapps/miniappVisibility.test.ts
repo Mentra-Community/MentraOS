@@ -66,6 +66,13 @@ describe("live iOS miniapp visibility policy", () => {
     release.mockReturnValue(identity)
     expect(shouldHideMiniapp(mentraCallPackageName, "2.1.29")).toBe(false)
     expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
+    expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(true)
+    expect(shouldHideMiniapp(mentraCallPackageName, "dev-1790681811411")).toBe(true)
+    await engine.settings.set(SETTINGS.super_mode.key, true)
+    expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(false)
+    expect(shouldHideMiniapp(mentraCallPackageName, "dev-1790681811411")).toBe(false)
+    expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
+    await engine.settings.set(SETTINGS.super_mode.key, false)
     for (const mismatch of [
       {deploymentId: "another-workspace"},
       {deploymentOrigin: "https://another.example"},

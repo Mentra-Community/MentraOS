@@ -2,6 +2,7 @@ import {afterEach, describe, expect, test} from "bun:test"
 
 import {
   configure,
+  isDevMiniappAllowed,
   isFeatureEnabled,
   isInstalledMiniappAllowed,
   isOfflineSystemMiniappAllowed,
@@ -71,5 +72,35 @@ describe("deployment feature policy", () => {
         deploymentOrigin: "https://acme.example",
       }),
     ).toBe(false)
+  })
+
+  test("admits a developer build only in super mode, and only for a managed package", () => {
+    configure({
+      auth: {},
+      config: {
+        localMiniappPolicy: {
+          systemPackageNames: ["com.mentra.settings"],
+          managed: [
+            {
+              packageName: "com.example.call",
+              version: "1.2.0",
+              sha256: "abc",
+              deploymentId: "acme",
+              deploymentOrigin: "https://acme.example",
+            },
+          ],
+        },
+      },
+    })
+
+    expect(isDevMiniappAllowed("com.example.call", true)).toBe(true)
+    expect(isDevMiniappAllowed("com.example.call", false)).toBe(false)
+    expect(isDevMiniappAllowed("com.example.other", true)).toBe(false)
+    expect(isDevMiniappAllowed("com.mentra.settings", true)).toBe(false)
+  })
+
+  test("keeps consumer developer builds independent of super mode", () => {
+    configure({auth: {}})
+    expect(isDevMiniappAllowed("com.example.call", false)).toBe(true)
   })
 })

@@ -52,21 +52,49 @@ object JSCPolyfillBridge {
         val body: String,
     )
 
-    /** Shared OkHttp execution path for host cloud-client requests. */
-    fun executeHttp(method: String, url: String, headers: Map<String, String>, bodyString: String?): HttpResult {
-        val request = buildHttpRequest(method, url, headers, bodyString)
-        httpClient.newCall(request).execute().use { response ->
-            val responseHeaders = mutableMapOf<String, String>()
-            for (name in response.headers.names()) {
-                responseHeaders[name.lowercase()] = response.headers.values(name).joinToString(", ")
-            }
-            return HttpResult(
-                status = response.code,
-                statusText = response.message,
-                headers = responseHeaders,
-                body = response.body?.string() ?: "",
-            )
+    /**
+     * Shared OkHttp path for host cloud-client requests. Asynchronous because Expo runs every
+     * module's AsyncFunction on one shared thread: a blocking call here stalls miniapp delivery
+     * and every other native module for the length of the request, up to [callTimeout].
+     */
+    fun enqueueHttp(
+        method: String,
+        url: String,
+        headers: Map<String, String>,
+        bodyString: String?,
+        onResult: (HttpResult) -> Unit,
+        onError: (Throwable) -> Unit,
+    ) {
+        val request = try {
+            buildHttpRequest(method, url, headers, bodyString)
+        } catch (e: Throwable) {
+            onError(e)
+            return
         }
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = onError(e)
+
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    response.use { r ->
+                        val responseHeaders = mutableMapOf<String, String>()
+                        for (name in r.headers.names()) {
+                            responseHeaders[name.lowercase()] = r.headers.values(name).joinToString(", ")
+                        }
+                        onResult(
+                            HttpResult(
+                                status = r.code,
+                                statusText = r.message,
+                                headers = responseHeaders,
+                                body = r.body?.string() ?: "",
+                            )
+                        )
+                    }
+                } catch (e: Throwable) {
+                    onError(e)
+                }
+            }
+        })
     }
 
     /** Keep host HTTP and miniapp fetch body semantics identical, including empty POSTs. */

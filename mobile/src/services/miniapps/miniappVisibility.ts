@@ -25,11 +25,16 @@ export const shouldSkipMiniappInstall = (packageName: string): boolean => {
   })
 }
 
-/** Also gate cached home/All Apps entries on the verified workspace release. */
-export const shouldHideMiniapp = (packageName: string, version?: string): boolean => {
+/**
+ * Also gate cached home/All Apps entries on the verified workspace release. A
+ * scanned developer Call stands in for it only in super mode, matching the
+ * engine's `isDevMiniappAllowed`.
+ */
+export const shouldHideMiniapp = (packageName: string, version?: string, options?: {dev?: boolean}): boolean => {
   if (shouldSkipMiniappInstall(packageName)) return true
   const deployment = deploymentStore.getActive()
   if (packageName !== mentraCallPackageName || deployment.kind !== "workspace") return false
+  if (options?.dev || version?.startsWith("dev-")) return engine.settings.get(SETTINGS.super_mode.key) !== true
   const entry = deployment.manifest.miniapps.managed.find((item) => item.packageName === packageName)
   if (!entry || (version !== undefined && version !== entry.version)) return true
   const identity = appRegistry.getReleaseIdentity(packageName, entry.version)

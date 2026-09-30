@@ -1574,7 +1574,7 @@ func takingPhotoCardPixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
         kCTFontAttributeName: font,
         kCTForegroundColorAttributeName: CGColor(gray: 1, alpha: 1),
     ] as CFDictionary
-    guard let attributed = CFAttributedStringCreate(nil, "Taking a photo" as CFString, attrs) else { return nil }
+    guard let attributed = CFAttributedStringCreate(nil, "Taking a photo..." as CFString, attrs) else { return nil }
     let line = CTLineCreateWithAttributedString(attributed)
     var ascent: CGFloat = 0
     let lineWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, nil, nil))
