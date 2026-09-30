@@ -218,6 +218,38 @@ public class OtaRecoveryOwnershipTest {
         assertEquals(false, get("isUpdating"));
     }
 
+    @Test public void disconnectedFirmwareContinuationRetainsManifestFailure() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        assertTrue(helper.retireSettledDowngrade());
+        OtaSessionManager session = new OtaSessionManager(context);
+        assertTrue(session.createSession(new String[]{"mtk", "bes"}, "invalid-url"));
+        session.advanceStep(0, "install");
+        set("sessionManager", helper, session);
+        OtaHelper.PhoneConnectionProvider phone = mock(OtaHelper.PhoneConnectionProvider.class);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+
+        assertTrue(helper.continueSessionAfterStepComplete(context));
+        java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
+        assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
+        permit.release();
+        verify(phone, never()).sendOtaStatus(any());
+        assertEquals("failed", helper.getOtaSessionState().getString("status"));
+        assertEquals("bes", helper.getOtaSessionState().getString("st"));
+
+        helper.cleanup();
+        helper = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        assertEquals("download_failed", helper.getOtaSessionState().getString("err"));
+        assertEquals("bes", helper.getOtaSessionState().getString("st"));
+        when(phone.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+        helper.onPhoneConnected();
+        verify(phone).sendOtaStatus(argThat(status -> "failed".equals(status.optString("status"))
+                && "bes".equals(status.optString("st"))));
+    }
+
     @Test public void lateOrMismatchedVerdictCannotChangeCurrentAttempt() throws Exception {
         OtaHelper.onDowngradeHandoffResult(false, "rejected", "old", 302010058L);
         OtaHelper.onDowngradeHandoffResult(false, "rejected", "current", 999L);

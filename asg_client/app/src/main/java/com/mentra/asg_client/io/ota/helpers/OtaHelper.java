@@ -747,7 +747,11 @@ public class OtaHelper {
                     return;
                 }
                 currentUpdateStage = "download";
-                currentUpdateType = "apk";
+                // Firmware continuation refetches the same manifest after advancing its
+                // durable step. Attribute a fetch failure to that step, even without APK.
+                String sessionStep = sessionManager == null ? null
+                        : sessionManager.getStepType(sessionManager.getCurrentStepIndex());
+                currentUpdateType = sessionStep != null ? sessionStep : "apk";
                 stage[0] = "fetch_version_info";
                 // Fetch version info from URL
                 String versionInfo = fetchVersionInfo(resolvedVersionJsonUrl);
