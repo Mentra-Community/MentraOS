@@ -59,8 +59,9 @@ current one. Local callback isolation does not solve that protocol limitation.
    consistently report the next required UART packet; currently checksum failures
    and unexpected-index failures have different index semantics.
 2. Surface terminal BES queue/CoC send failures to ASG. Validate packet zero before
-   resetting firmware state. Bind firmware channel callbacks to connection/channel
-   identity, and reject a second channel while the first owns the transfer.
+   resetting firmware state. Preserve the callback ownership, second-channel
+   rejection, and bounded backlog protections already merged in
+   [BES #78](https://github.com/Mentra-Community/mentra-live-bes/pull/78).
 3. Retain bounded completion receipts on both ends so losing the final confirmation
    cannot create a duplicate photo or an unrelated generic-file transfer.
 4. Measure capture, UART acceptance, last phone byte, phone confirmation, and upload
@@ -111,6 +112,12 @@ deadline cannot prove that BES has switched back to GATT while an open remains
 unresolved. Do not describe this work as a demonstrated iPhone CoC opening fix. Qualify
 physical iPhone and Android, old/new pairings, GATT-only transfer, and incident
 logs before broad rollout.
+
+After rebasing onto `dev`, the PR version without the exploratory policy passed
+all 12 sender/receiver regression tests, the ASG debug APK build, the Android
+Bluetooth SDK build, and the complete iOS Release build. Hardware measurements
+below retain their earlier artifact identities; the final binary was compiled
+but was not reinstalled for another physical test cycle during PR preparation.
 
 ## 2026-09-29 local results
 
