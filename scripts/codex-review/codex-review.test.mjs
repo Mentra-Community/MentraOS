@@ -46,6 +46,7 @@ esac
 
 const FAKE_CODEX = `#!/usr/bin/env bash
 # Fake codex exec: honours -o <file>, streams JSON events, and behaves per FAKE_CODEX_MODE.
+if [[ "$2" == "--help" ]]; then echo '--json --stdio'; exit 0; fi
 printf '%s\\0' "$@" > "$FAKE_STATE/codex-args"
 if [[ "$1" == "app-server" ]]; then exec node "$FAKE_APP_SERVER"; fi
 out=""
