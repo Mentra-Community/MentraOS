@@ -541,7 +541,8 @@ const en = {
     downloading: "Downloading Update",
     installing: "Installing Update",
     doNotDisconnect: "Please keep your glasses connected and do not close the app.",
-    downgradeDuration: "Your glasses will restart twice \u2014 this may take up to 2 minutes.",
+    downgradeDuration:
+      "Changing versions can take several minutes. Keep your glasses nearby while they install and reconnect.",
     versionChangeRestarting: "Installing a different version\u2026",
     versionChangeVerifying: "Verifying your glasses\u2026",
     versionChangeKeepNearby: "Keep your glasses nearby and connected. They will restart on their own.",
@@ -562,6 +563,22 @@ const en = {
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     // Glasses-reported OTA failure codes. Keys mirror OTA_ERROR_ENGLISH_COPY in the engine's
     // OtaErrorMapping; the raw code is shown under the message via errorCode.
+    errorDnsFailed: "Could not find the update server — retry, or check glasses Wi-Fi if this continues",
+    errorConnectionFailed: "Could not connect to the update server — please retry",
+    errorConnectTimeout: "The update server took too long to connect — please retry",
+    errorDownloadTimeout: "The update stopped responding — please retry",
+    errorHttpError: "The update server returned an error — retry later or contact support",
+    errorDowngradeRecoveryDisabled:
+      "The recovery service is disabled. Contact support to restore it before changing versions.",
+    errorDowngradeRecoveryIncompatible:
+      "The recovery service is incompatible. Contact support to restore it before changing versions.",
+    errorDowngradeRecoveryUnavailable:
+      "The recovery service is not ready. Wait a moment and retry; contact support if this continues.",
+    errorDowngradeRecoveryBusy:
+      "Another glasses recovery is still running. Keep your glasses nearby and retry after it finishes.",
+    errorDowngradeStatusUnknown:
+      "Still checking the version change on your glasses. Keep them nearby. Contact support if this continues.",
+    errorDowngradeNotOwned: "The version change did not finish. Recovery has stopped; you can safely retry.",
     errorNoInternet: "Glasses Wi-Fi has no internet connection",
     errorClockSkew: "Glasses clock is wrong — syncing time from your phone, then retrying update check",
     errorSslError: "Secure connection failed — try a different Wi-Fi network",

@@ -24,10 +24,9 @@ public final class DowngradeTransactionStore {
    * complete, not merely dispatched: {@code RecoveryWorker} holds it across its pre-reinstall
    * check, the reinstall dispatch, and a bounded wait for the backup versionCode to be installed;
    * {@code DowngradeWorker} holds it for its whole state-machine run. The handoff itself
-   * ({@link #begin(long, String, String)}) deliberately does NOT take the lock — it runs on a
-   * broadcast receiver's main thread where blocking risks an ANR, and persisting the transaction
-   * is safe at any time because the workers, not the handoff, dispatch installs. Both workers run
-   * on WorkManager threads in the recovery app's single process, so a process-wide lock is a true
+   * is serialized on the control executor, uses tryLock(), and holds the lock through artifact
+   * validation, persistence and enqueue. Both workers run in the recovery app's single process,
+   * so this lock provides true install
    * serialization.
    */
   private static final ReentrantLock INSTALL_LOCK = new ReentrantLock();
@@ -60,12 +59,18 @@ public final class DowngradeTransactionStore {
    */
   @SuppressWarnings("ApplySharedPref")
   public boolean begin(long targetVersion, String apkPath, String apkSha256) {
+    return begin(java.util.UUID.randomUUID().toString(), targetVersion, apkPath, apkSha256);
+  }
+
+  @SuppressWarnings("ApplySharedPref")
+  public boolean begin(String requestId, long targetVersion, String apkPath, String apkSha256) {
     if (targetVersion <= 0 || apkPath == null || apkPath.isEmpty()) {
       return false;
     }
     return preferences
         .edit()
         .clear()
+        .putString(RecoveryConstants.KEY_REQUEST_ID, requestId)
         .putLong(KEY_TARGET_VERSION, targetVersion)
         .putString(KEY_APK_PATH, apkPath)
         .putString(KEY_APK_SHA256, apkSha256 == null ? "" : apkSha256)
@@ -73,6 +78,30 @@ public final class DowngradeTransactionStore {
         .putInt(KEY_INSTALL_ATTEMPTS, 0)
         .putLong(KEY_STARTED_AT_MS, System.currentTimeMillis())
         .commit();
+  }
+
+  public String getRequestId() {
+    return preferences.getString(RecoveryConstants.KEY_REQUEST_ID, "");
+  }
+
+  /** Snapshot one atomic preference commit; active identity survives ASG uninstall/restart. */
+  public android.os.Bundle snapshot() {
+    java.util.Map<String, ?> values = preferences.getAll();
+    android.os.Bundle result = new android.os.Bundle();
+    Object target = values.get(KEY_TARGET_VERSION);
+    result.putLong("target_version", target instanceof Long ? (Long) target : -1L);
+    result.putString("transaction_id", (String) values.get(RecoveryConstants.KEY_REQUEST_ID));
+    result.putString("sha256", (String) values.get(KEY_APK_SHA256));
+    result.putString("terminal_reason", (String) values.get(RecoveryConstants.KEY_TERMINAL_REASON));
+    result.putBoolean("active", target instanceof Long && (Long) target > 0);
+    return result;
+  }
+
+  /** Retain the last terminal identity while releasing ownership in a single durable commit. */
+  @SuppressWarnings("ApplySharedPref")
+  public boolean finish(String reason) {
+    return preferences.edit().remove(KEY_TARGET_VERSION).remove(KEY_APK_PATH)
+        .putString(RecoveryConstants.KEY_TERMINAL_REASON, reason).commit();
   }
 
   public boolean isActive() {

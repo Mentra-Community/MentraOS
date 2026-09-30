@@ -2,6 +2,12 @@ package com.mentra.recovery.util;
 
 public final class RecoveryConstants {
   private RecoveryConstants() {}
+  public static final String ACTION_QUERY_DOWNGRADE_STATUS = "com.mentra.recovery.ACTION_QUERY_DOWNGRADE_STATUS";
+  public static final int STATUS_PROTOCOL = 1;
+  public static final String EXTRA_REQUEST_ID = "request_id";
+  public static final String KEY_REQUEST_ID = "request_id";
+  public static final String KEY_TERMINAL_REASON = "terminal_reason";
+
 
   public static final String TAG = "MentraRecovery";
   public static final String CHANNEL_ID = "mentra_recovery_channel";

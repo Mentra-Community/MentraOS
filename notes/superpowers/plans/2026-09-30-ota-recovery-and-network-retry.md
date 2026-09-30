@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 owner: philippe
 ---
 
@@ -18,29 +18,45 @@ Base: `e09a07ee7b71972e75a5051003ec561c12e6cb9b` (`origin/staging` at investigat
 - [x] Demonstrate `no_internet` from a stalled server on connected, validated Wi-Fi, followed by successful retry without reconnect.
 - [x] Verify that the existing include-stopped intent reaches a force-stopped enabled worker during a real CDN-backed downgrade.
 
+## Implementation status
+
+The implementation uses an explicit ordered broadcast query rather than another long
+startup watchdog. Recovery v11 answers queries on the same control executor as handoff
+decisions and returns a request nonce, protocol version, transaction identity, target,
+hash, busy state and last terminal reason. The existing signed broadcast verdict remains
+compatible with older ASG; the new updater uses it only to trigger a correlated durable
+query. A missing response does not release ownership. The updater checks recovery again
+before any artifact/firmware work after its own process restart.
+
+The current patch deliberately contains no MTK driver/routing reset and no automatic
+Wi-Fi toggle: the original persistent network condition still lacks a captured cause.
+The safe, evidence-backed changes are accurate error classification, unconditional
+request cleanup, fresh requests on retry, and retained diagnostics. The 32-entry history
+survives ordinary ASG restarts, but ASG uninstall resets its preferences.
+
 ## 1. Recovery readiness and repair
 
-- [ ] Add a readiness/status protocol to recovery, with a correlated request ID and advertised protocol version. Increment the worker version and synchronize the bundled-version and minimum-version gates.
-- [ ] In `RecoveryWorkerManager`, inspect availability/signers/permissions/receiver state, start or deploy through the supported path, and await readiness. A dispatched broadcast is not success.
+- [x] Add a readiness/status protocol to recovery, with a correlated request ID and advertised protocol version. Increment the worker version and synchronize the bundled-version and minimum-version gates.
+- [x] In `RecoveryWorkerManager`, inspect availability/signers/permissions/receiver state, start or deploy through the supported path, and await readiness. A dispatched broadcast is not success.
 - [ ] Verify the OEM path for repairing an explicitly disabled worker. If unsupported, give a specific recovery/support action instead of promising reboot will fix it.
-- [ ] In `OtaHelper`, complete readiness before downloading or entering install/verifying presentation. Use a bounded readiness timer separate from hashing/enqueue and transaction supervision.
+- [x] In `OtaHelper`, complete readiness before downloading or entering install/verifying presentation. Use a bounded readiness timer separate from hashing/enqueue and transaction supervision.
 - [ ] Cover missing, old, disabled, stopped, incompatible, and non-responsive workers. Assert that unavailable recovery performs no large download.
 
 ## 2. Handoff ownership, cache, and UI
 
-- [ ] Persist recovery-owned transaction identity/target/hash/state and expose a read-only status query.
-- [ ] Make duplicate requests for the same transaction idempotent; report existing ownership for a conflicting request. Preserve claimed-artifact and installer serialization guarantees.
-- [ ] Correlate all verdicts in `ServiceHeartbeatReceiver`/`OtaHelper`. On acknowledgement loss, reconcile durable state rather than treating timeout as confirmed non-ownership.
-- [ ] Reuse valid unclaimed staged APKs; never overwrite a claimed artifact. Test corrupt cache, changed target, and a retry concurrent with accepted work.
+- [x] Persist recovery-owned transaction identity/target/hash/state and expose a read-only status query.
+- [x] Make duplicate requests for the same transaction idempotent; report existing ownership for a conflicting request. Preserve claimed-artifact and installer serialization guarantees.
+- [x] Correlate all verdicts in `ServiceHeartbeatReceiver`/`OtaHelper`. On acknowledgement loss, reconcile durable state rather than treating timeout as confirmed non-ownership.
+- [x] Reuse valid unclaimed staged APKs; never overwrite a claimed artifact. Test corrupt cache, changed target, and a retry concurrent with accepted work.
 - [ ] Update `OtaInstallCoordinator` and OTA presentation to follow the authoritative phase/ownership state through retry, reconnect, and remount. Keep exact target-version completion.
-- [ ] Replace misleading two-minute/two-restart copy. Preserve the reported slow experience as an acceptance concern, with actual per-phase timings and clear install versus download labels.
+- [x] Replace misleading two-minute/two-restart copy. Preserve the reported slow experience as an acceptance concern, with actual per-phase timings and clear install versus download labels.
 - [ ] Test late verdicts, lost acceptance, recovery/ASG process death, phone remount, and slow accepted transactions; no duplicate install/download or premature release.
 
 ## 3. Network evidence and supported fixes
 
 - [ ] Add attempt-scoped network/HTTP diagnostics at manifest and artifact boundaries; preserve a failure/retry ring in incident artifacts without credentials or signed URL queries.
-- [ ] Replace the broad `no_internet` mapping with distinct DNS/connect/read-timeout/HTTP/TLS/no-network categories. Synchronize Engine error mapping and app translations.
-- [ ] Put all download streams and connections under unconditional cleanup. Verify retries release admission, retain byte-based liveness, and make a fresh request on the intended current transport.
+- [x] Replace the broad `no_internet` mapping with distinct DNS/connect/read-timeout/HTTP/TLS/no-network categories. Synchronize Engine error mapping and app translations.
+- [x] Put all download streams and connections under unconditional cleanup. Verify retries release admission, retain byte-based liveness, and make a fresh request on the intended current transport.
 - [ ] Repeat the stalled-server fixture and add DNS, connect refusal, captive portal, validation transitions, AP loss, and hotspot/local-server recovery. Retry should succeed without manual reconnect when connectivity is usable.
 - [ ] Capture the persistent failure on the affected network/setup. Only then select any MTK/DNS/routing/reconnection patch; the current fixture does not reproduce that specific cause.
 
@@ -49,7 +65,7 @@ Base: `e09a07ee7b71972e75a5051003ec561c12e6cb9b` (`origin/staging` at investigat
 - [ ] Establish delivery to already affected source builds: a compatible source-side ASG bridge plus versioned recovery, or an explicit signed-worker support repair. A fix only in the lower target cannot unblock its own installation.
 - [ ] Run focused ASG/recovery JVM and Android compile checks, Engine coordinator/error tests, then physical release-signed qualification. Keep PR evidence separate from hardware evidence.
 - [ ] Test exact source/target and bridge-to-staging paths on the RC Mentra App, normal Wi-Fi and phone-served hotspot; include reconnect, background/screen-off, gallery rendering and byte preservation.
-- [ ] Read and apply `select-pr-routines` when opening implementation PRs; select existing coverage and state gaps. Obtain the required independent Codex PR review. No PR was opened during this investigation.
+- [ ] Read and apply `select-pr-routines` when opening implementation PRs; select existing coverage and state gaps. Obtain the required independent Codex PR review. The implementation PR and review are tracked in the task.
 
 ## Device disposition and limitations
 
@@ -58,3 +74,59 @@ Final glasses state: ASG `302010058` / 3.2.1, recovery v10 enabled in its origin
 The supported downgrade reset ASG-owned app state through uninstall/reinstall. It did not flash MTK/BES, change the phone's installed app, or delete gallery data. Local fixture servers were stopped, the investigation's ADB reverse removed, and ADB returned to non-root. The phone was returned home and put to sleep for charging.
 
 The local evidence summary is `incident-logs/ota-investigation-20260930/summary.json`; `key-events.txt` indexes the full captured log and `SHA256SUMS` inventories the evidence. The connected phone is 3.2.0, not the reported RC; the test triggers exercised ASG/recovery directly, so full RC UI qualification remains on the checklist.
+
+## Implementation validation, September 30
+
+- ASG Java compile and release-signed APK build passed; 150 focused ASG JVM tests passed.
+- Recovery v11 release-signed build and 28 JVM tests passed. The signing certificate matches
+  the existing release worker/ASG certificate. CI builds and bundles this worker before ASG.
+- 143 focused phone tests passed (coordinator, error mapping and OTA presentation).
+- Disabled recovery v11: only the manifest was fetched, followed by
+  `downgrade_recovery_disabled`; no APK request occurred.
+- Force-stopped enabled v11: readiness woke it. A fixture sent 128 KiB then stalled;
+  the updater reported `download_timeout` after its 20-second read timeout while Wi-Fi
+  remained connected and validated on the same network. The request history retained
+  the phase, byte count, exception classes and before/after network snapshots.
+- Removed recovery's control receiver after readiness, during the download: the full
+  verified APK remained unclaimed, the updater reported `downgrade_status_unknown`, and
+  another OTA request was rejected while admission remained owned.
+- Restored recovery and restarted ASG by changing a component setting. The next attempt
+  queried durable state and reused the full verified APK without another artifact GET.
+  With ASG's verdict receiver disabled, recovery accepted and completed installation of
+  target `302010058`. All 74 existing gallery files retained their original SHA-256 hashes.
+
+These are local release-signed ASG/recovery tests through the debug OTA entry point, not
+an end-to-end test of the patched Android phone UI. The connected phone remains on 3.2.0.
+No MTK/BES firmware was installed. Raw evidence stays gitignored under
+`incident-logs/ota-implementation-20260930/`. The fixture initially failed its own component
+mutation as non-root (EOF at headers); that run is retained as a fixture failure, and the
+handoff-loss test was repeated successfully with authorized root access.
+
+The pinned `routine:day1-ota` definition was inspected at harness revision
+`90a70edfe2fa17fd766dda3d98977555d6608a05`. It covers multi-component customer OTA on an
+existing authorized Mac/lab fixture, but not these lost-verdict/disabled-worker/stalled-server
+faults or Android UI. Its label is deferred because this task's hardware authorization is
+for the connected phone/glasses, and the shared January/return fixture's authorization and
+remaining attempt budget have not been established. Add focused recovery-fault steps to a
+reviewed routine before treating those cases as unattended coverage.
+
+## Rollout / already affected devices
+
+The current source build must receive the fix: publishing it only inside a lower target
+cannot repair the updater trying to install that target. Use a signed source-side bridge
+ASG newer than the affected build, with bundled recovery v11, before offering the lower pin.
+The existing CI asset build supplies the worker; standalone remote worker updates remain
+explicitly disabled.
+
+For an already stuck support device, first establish that no recovery transaction or OEM
+install is active. Verify the release certificate and exact worker artifact, install the
+signed v11 worker with the supported installer/authorized USB tooling, and restore the
+worker package/control receiver to its enabled default state if disabled. Do not delete a
+claimed `.txn` artifact to force a retry. The original ASG handoff remains compatible with
+v11, while a bridge ASG adds readiness, correlation and cache reuse. This procedure needs
+the existing device/support authorization; a reboot is not a repair for a disabled package.
+
+Remaining release qualification: patched RC Android UI and physical iPhone/Mac hotspot flow,
+missing/old worker deployment, network transitions/captive portal/DNS/connect fixtures,
+process death at each installer boundary, and capture of the original persistent network
+failure. The patch does not claim a diagnosed MTK/DNS/routing root cause for OS-2047.

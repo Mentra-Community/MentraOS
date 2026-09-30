@@ -14,6 +14,21 @@ import org.robolectric.annotation.Config;
 public class RecoveryWorkerManagerTest {
 
     @Test
+    public void missingAndDisabledWorkersHaveSpecificPreDownloadFailures() throws Exception {
+        android.content.Context context = org.mockito.Mockito.mock(android.content.Context.class);
+        android.content.pm.PackageManager pm = org.mockito.Mockito.mock(android.content.pm.PackageManager.class);
+        org.mockito.Mockito.when(context.getPackageManager()).thenReturn(pm);
+        org.mockito.Mockito.when(pm.getPackageInfo("com.mentra.recovery", 0))
+                .thenThrow(new android.content.pm.PackageManager.NameNotFoundException());
+        assertEquals("downgrade_recovery_unavailable", RecoveryWorkerManager.recoveryAvailabilityError(context));
+        android.content.pm.PackageInfo info = new android.content.pm.PackageInfo();
+        info.applicationInfo = new android.content.pm.ApplicationInfo();
+        info.applicationInfo.enabled = false;
+        org.mockito.Mockito.doReturn(info).when(pm).getPackageInfo("com.mentra.recovery", 0);
+        assertEquals("downgrade_recovery_disabled", RecoveryWorkerManager.recoveryAvailabilityError(context));
+    }
+
+    @Test
     public void newRecoveryIntent_targetsWorkerPackageWithAction() {
         Intent intent = RecoveryWorkerManager.newRecoveryIntent("com.mentra.recovery.ACTION_X");
         assertEquals("com.mentra.recovery.ACTION_X", intent.getAction());

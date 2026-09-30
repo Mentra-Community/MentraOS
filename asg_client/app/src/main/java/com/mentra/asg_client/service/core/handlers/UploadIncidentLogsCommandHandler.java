@@ -5,6 +5,7 @@ import android.util.Log;
 import com.mentra.asg_client.io.bes.log.BesLivenessLog;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
+import com.mentra.asg_client.io.ota.utils.OtaHttpRequest;
 import com.mentra.asg_client.reporting.GlassesLogBuffer;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -331,7 +332,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Merges the logcat tail with the BES liveness ring, oldest first.
+     * Merges the logcat tail with the BES liveness and retained OTA request rings, oldest first.
      *
      * <p>{@link #MAX_LOG_LINES} deliberately stays small because the BLE relay path has to push
      * this whole payload over a K900 file transfer. That window cannot hold a BES fault: the
@@ -339,10 +340,11 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
      * it. {@link BesLivenessLog} is kept out of band for exactly that reason, so splice it back in
      * here rather than widening the tail.
      */
-    private static JSONArray buildGlassesLogEntries() {
+    private JSONArray buildGlassesLogEntries() {
         JSONArray logcat = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
         JSONArray liveness = BesLivenessLog.recentEntries();
-        return mergeByTimestamp(logcat, liveness);
+        return mergeByTimestamp(mergeByTimestamp(logcat, liveness),
+                OtaHttpRequest.recentEntries(mContext));
     }
 
     /** Both inputs are already ascending by timestamp, so a single pass interleaves them. */

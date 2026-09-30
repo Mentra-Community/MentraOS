@@ -197,6 +197,7 @@ class OtaInstallCoordinator {
 
   // Genuinely session-local state (was component state/refs).
   private errorMsg = ""
+  private versionChangeReconnected = false
   private sawReconnectEdge = false
   private continueButtonDisabled = false
   // True once this session reported an APK step. After an APK install the ASG
@@ -538,7 +539,7 @@ class OtaInstallCoordinator {
   private deriveVersionChangePhase(connected: boolean): "installing" | "restarting" | "verifying" | null {
     if (!this.versionChangeSession || this.versionChangeConverged) return null
     if (!this.versionChangeInstallStarted) return "installing"
-    return connected ? "verifying" : "restarting"
+    return !connected ? "restarting" : this.versionChangeReconnected ? "verifying" : "installing"
   }
 
   /**
@@ -567,6 +568,7 @@ class OtaInstallCoordinator {
 
   private resetSessionState(): void {
     this.errorMsg = ""
+    this.versionChangeReconnected = false
     this.sawReconnectEdge = false
     this.continueButtonDisabled = false
     this.apkStepSeen = false
@@ -865,20 +867,15 @@ class OtaInstallCoordinator {
       this.emitInternalChange()
     }
 
-    // Ownership refuted: ASG emits install/STARTED BEFORE handing off, so the latch above can
-    // be set even when no transaction ends up owning the detour. Recovery answers every
-    // handoff synchronously, so exactly three error codes prove non-ownership and release the
-    // latch: downgrade_handoff_refused (recovery's explicit verdict),
-    // downgrade_handoff_failed (no verdict at all — recovery dead/missing, so it never began),
-    // and downgrade_transaction_stalled (the long-stop past recovery's own stale give-up).
-    // An accepted-but-slow transaction emits NONE of these (acceptance cancels the short
-    // watchdog), so the latch is never released while a live worker owns the staged artifact
-    // — which recovery additionally claims by rename at acceptance.
+    // New ASG builds release only after a correlated recovery status query proves idle.
+    // Keep legacy terminal codes compatible with older glasses. A status-unknown failure
+    // deliberately retains the detour latch: silence is not permission to repeat an install.
     if (
       this.versionChangeInstallStarted &&
       !this.versionChangeConverged &&
       otaStatus?.status === "failed" &&
-      (otaStatus.error === "downgrade_handoff_refused" ||
+      (otaStatus.error === "downgrade_not_owned" ||
+        otaStatus.error === "downgrade_handoff_refused" ||
         otaStatus.error === "downgrade_handoff_failed" ||
         otaStatus.error === "downgrade_transaction_stalled")
     ) {
@@ -1085,6 +1082,7 @@ class OtaInstallCoordinator {
    * edge handling is complete).
    */
   private runReconnectArbitration(label: string): boolean {
+    if (this.isInVersionChangeDetour()) this.versionChangeReconnected = true
     console.log(`[OTA_PROGRESS] ${label}: false->true, flipping sawReconnectEdge=true`)
     // A physical reconnect passed through the disconnect branch first, which cleared
     // these timers; a session-change edge never disconnects, so a fallback armed by an

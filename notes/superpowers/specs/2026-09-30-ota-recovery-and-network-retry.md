@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 owner: philippe
 ---
 
@@ -9,7 +9,7 @@ owner: philippe
 
 The primary evidence is [Cayden's Slack thread](https://mentra-labs.slack.com/archives/C096YCLEBFW/p1790731957550599), its four OTA screenshots, and the attached `phone-and-glasses-logs-20260930.zip`. OS-2046 and OS-2047 are secondary summaries. Philippe explicitly confirmed this evidence priority during the investigation.
 
-This investigation was performed from `origin/staging` at `e09a07ee7b71972e75a5051003ec561c12e6cb9b`, on branch `codex/os-2046-os-2047-investigation`. It proposes implementation work; no production fix has been implemented or published.
+This investigation was performed from `origin/staging` at `e09a07ee7b71972e75a5051003ec561c12e6cb9b`, on branch `codex/os-2046-os-2047-investigation`. Implementation now lives on this branch; the execution plan records validation and remaining release qualification. Nothing has been merged or released.
 
 ### What Cayden actually reported
 
@@ -35,7 +35,7 @@ Other replies concern VAD, Mentra AI, Maps, and gallery corners. They are not ev
 
 ## Physical investigation
 
-Devices: glasses ADB selector `0123456789ABCDEF`, BES Bluetooth MAC `2C:BA:CA:25:D9:10`; phone `RFCX71TH0CR`, SM-F956U1, Android 16. The generic ADB serial is not a product serial.
+Devices: USB-connected Mentra Live and Samsung Z Fold running Android 16. Device identifiers and raw logs remain in the private local evidence bundle.
 
 Initial glasses: ASG `302010058`, recovery v10 / 1.1.2, MTK `MentraLive_20260923.0`. Subsequent ASG/BES state reports BES `26.9.27.0`. Phone: Mentra App 3.2.0, code `302000017`. Therefore this is not Cayden's exact phone/firmware environment or an end-to-end RC phone UI qualification.
 
