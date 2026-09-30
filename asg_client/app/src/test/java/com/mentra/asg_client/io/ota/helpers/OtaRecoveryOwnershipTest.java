@@ -171,7 +171,7 @@ public class OtaRecoveryOwnershipTest {
         clearInvocations(phone);
         // Malformed URL fails locally, before createSession or any artifact download.
         assertTrue(helper.startVersionCheckWithUrl(RuntimeEnvironment.getApplication(), "invalid-url"));
-        verify(phone, timeout(5000)).sendOtaStatus(argThat(status -> "download_failed".equals(status.optString("error_message"))));
+        verify(phone, timeout(5000)).sendOtaStatus(argThat(status -> "download_failed".equals(status.optString("err"))));
         java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
         assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
         permit.release();
@@ -189,6 +189,33 @@ public class OtaRecoveryOwnershipTest {
         helper = new OtaHelper(RuntimeEnvironment.getApplication(), mock(IBesOtaRegistry.class));
         assertEquals("complete", helper.getOtaSessionState().getString("status"));
         assertNull(get("handoffOwner"));
+    }
+
+    @Test public void disconnectedRetryManifestFailureSurvivesRestartAndReplaysOnReconnect() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        OtaHelper.PhoneConnectionProvider phone = mock(OtaHelper.PhoneConnectionProvider.class);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+        assertTrue(helper.startVersionCheckWithUrl(context, "invalid-url"));
+        java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
+        assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
+        permit.release();
+        verify(phone, never()).sendOtaStatus(any());
+
+        // Only persistent state survives; the previous downgrade result must not return.
+        helper.cleanup();
+        helper = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        assertEquals("failed", helper.getOtaSessionState().getString("status"));
+        assertEquals("download_failed", helper.getOtaSessionState().getString("err"));
+        assertEquals("download", helper.getOtaSessionState().getString("phase"));
+        when(phone.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+        helper.onPhoneConnected();
+        verify(phone).sendOtaStatus(argThat(status -> "download_failed".equals(status.optString("err"))));
+        assertNull(get("handoffOwner"));
+        assertEquals(false, get("isUpdating"));
     }
 
     @Test public void lateOrMismatchedVerdictCannotChangeCurrentAttempt() throws Exception {

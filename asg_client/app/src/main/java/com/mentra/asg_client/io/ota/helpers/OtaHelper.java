@@ -288,10 +288,15 @@ public class OtaHelper {
         }
         // Durable BES truth is read at delivery time; EventBus and process-local retry timers are
         // only wake-ups and never become a second terminal store.
-        sendAuthoritativeBesStatusToPhone();
+        boolean sentBesStatus = sendAuthoritativeBesStatusToPhone();
         if (sessionManager == null || phoneConnectionProvider == null) return;
         String pendingStatus = sessionManager.consumePendingApkStatus();
-        if (pendingStatus == null) return;
+        if (pendingStatus == null) {
+            // Manifest failures can occur before there is an install or APK-done signal.
+            // Replay the persisted failure even when its original BLE delivery was missed.
+            if (!sentBesStatus && "failed".equals(sessionManager.getStatus())) sendOtaStatus();
+            return;
+        }
         JSONObject apkDoneJson = sessionManager.buildApkDoneJson(pendingStatus);
         if (apkDoneJson == null) {
             Log.w(TAG, "onPhoneConnected: buildApkDoneJson returned null, skipping APK done signal");
@@ -742,6 +747,7 @@ public class OtaHelper {
                     return;
                 }
                 currentUpdateStage = "download";
+                currentUpdateType = "apk";
                 stage[0] = "fetch_version_info";
                 // Fetch version info from URL
                 String versionInfo = fetchVersionInfo(resolvedVersionJsonUrl);
@@ -2983,7 +2989,15 @@ public class OtaHelper {
     }
 
     private void updateSessionFromProgress(String stage, int progress, long bytesDownloaded, String status, String errorMessage) {
-        if (sessionManager == null || sessionManager.getSessionState() == null) return;
+        if (sessionManager == null) return;
+        if (sessionManager.getSessionState() == null) {
+            // A retry retires the old terminal before fetching its new manifest. Retain a
+            // failure in the normal session store even if BLE is down and no steps were
+            // parsed yet, so reconnect/query and a fresh ASG process can report this attempt.
+            if (!"FAILED".equals(status) || lastVersionJsonUrl == null
+                    || !sessionManager.createSession(new String[]{currentUpdateType}, lastVersionJsonUrl)) return;
+            sessionManager.advanceStep(0, stage);
+        }
 
         int stepIndex = findStepIndex(currentUpdateType);
         if (stepIndex < 0) return;

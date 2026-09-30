@@ -176,3 +176,21 @@ Jest does not type-check. The fixtures now use the discriminated union's disconn
 shape. After provisioning this checkout's own frozen dependencies, the full mobile
 `bun run compile` and all 143 focused Jest tests pass. Earlier temporary shared-dependency
 type-check output is not treated as validation of this checkout.
+
+
+## Follow-up after merge and end-to-end qualification
+
+The merged PR's later Bugbot finding (discussion_r4149769573) was valid: retiring a
+previous downgrade outcome left a manifest retry without a session, so a failure while
+BLE was disconnected vanished. The follow-up creates a normal failed session when the
+manifest fails before steps exist and replays it on reconnect. A regression first failed
+with idle after helper reconstruction, then passed with the new download failure; 160
+focused ASG tests and the release build pass.
+
+User-requested qualification now includes the full Android product UI and a new automated
+routine: requested build -> production 3.1.1 -> the same requested build. Resolve and freeze
+the requested build's phone APK and effective glasses manifest per run; never hard-code this
+PR as the routine's permanent start or return build. Record the production baseline's exact
+artifact provenance. Setup/pairing, injected failure cases, and the measured two-leg loop
+must have separate evidence. The complete UI loop and routine implementation remain in
+progress; earlier debug-entry tests do not qualify them.
