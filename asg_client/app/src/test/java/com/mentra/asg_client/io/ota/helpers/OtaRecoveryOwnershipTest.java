@@ -171,7 +171,7 @@ public class OtaRecoveryOwnershipTest {
         clearInvocations(phone);
         // Malformed URL fails locally, before createSession or any artifact download.
         assertTrue(helper.startVersionCheckWithUrl(RuntimeEnvironment.getApplication(), "invalid-url"));
-        verify(phone, timeout(5000)).sendOtaStatus(argThat(status -> "download_failed".equals(status.optString("error_message"))));
+        verify(phone, timeout(5000)).sendOtaStatus(argThat(status -> "download_failed".equals(status.optString("err"))));
         java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
         assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
         permit.release();
@@ -191,12 +191,110 @@ public class OtaRecoveryOwnershipTest {
         assertNull(get("handoffOwner"));
     }
 
+    @Test public void disconnectedRetryManifestFailureSurvivesRestartAndReplaysOnReconnect() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        OtaHelper.PhoneConnectionProvider phone = mock(OtaHelper.PhoneConnectionProvider.class);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+        assertTrue(helper.startVersionCheckWithUrl(context, "invalid-url"));
+        java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
+        assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
+        permit.release();
+        verify(phone, never()).sendOtaStatus(any());
+
+        // Only persistent state survives; the previous downgrade result must not return.
+        helper.cleanup();
+        helper = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        assertEquals("failed", helper.getOtaSessionState().getString("status"));
+        assertEquals("download_failed", helper.getOtaSessionState().getString("err"));
+        assertEquals("download", helper.getOtaSessionState().getString("phase"));
+        when(phone.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+        helper.onPhoneConnected();
+        verify(phone).sendOtaStatus(argThat(status -> "download_failed".equals(status.optString("err"))));
+        assertNull(get("handoffOwner"));
+        assertEquals(false, get("isUpdating"));
+    }
+
+    @Test public void disconnectedFirmwareContinuationRetainsManifestFailure() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        assertTrue(helper.retireSettledDowngrade());
+        OtaSessionManager session = new OtaSessionManager(context);
+        assertTrue(session.createSession(new String[]{"mtk", "bes"}, "invalid-url"));
+        session.advanceStep(0, "install");
+        set("sessionManager", helper, session);
+        OtaHelper.PhoneConnectionProvider phone = mock(OtaHelper.PhoneConnectionProvider.class);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+
+        assertTrue(helper.continueSessionAfterStepComplete(context));
+        java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
+        assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
+        permit.release();
+        verify(phone, never()).sendOtaStatus(any());
+        assertEquals("failed", helper.getOtaSessionState().getString("status"));
+        assertEquals("bes", helper.getOtaSessionState().getString("st"));
+
+        helper.cleanup();
+        helper = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        assertEquals("download_failed", helper.getOtaSessionState().getString("err"));
+        assertEquals("bes", helper.getOtaSessionState().getString("st"));
+        when(phone.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(phone);
+        clearInvocations(phone);
+        helper.onPhoneConnected();
+        verify(phone).sendOtaStatus(argThat(status -> "failed".equals(status.optString("status"))
+                && "bes".equals(status.optString("st"))));
+    }
+
     @Test public void lateOrMismatchedVerdictCannotChangeCurrentAttempt() throws Exception {
         OtaHelper.onDowngradeHandoffResult(false, "rejected", "old", 302010058L);
         OtaHelper.onDowngradeHandoffResult(false, "rejected", "current", 999L);
         OtaHelper.onDowngradeHandoffResult(false, "legacy", null, 302010058L);
         assertEquals(true, get("isUpdating"));
         assertSame(helper, get("handoffOwner"));
+    }
+    @Test public void queuedApkCompletionCannotMaskDisconnectedContinuationFailure() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        assertTrue(helper.retireSettledDowngrade());
+        OtaSessionManager session = new OtaSessionManager(context);
+        assertTrue(session.createSession(new String[]{"apk", "mtk", "bes"}, "invalid-url"));
+        session.advanceStep(0, "install");
+        session.setPendingApkStatus("step_complete");
+        set("sessionManager", helper, session);
+        OtaHelper.PhoneConnectionProvider phone = mock(OtaHelper.PhoneConnectionProvider.class);
+        helper.setPhoneConnectionProvider(phone);
+        assertTrue(helper.continueSessionAfterStepComplete(context));
+        java.util.concurrent.Semaphore permit = (java.util.concurrent.Semaphore) get("otaAdmissionPermit");
+        assertTrue(permit.tryAcquire(5, java.util.concurrent.TimeUnit.SECONDS));
+        permit.release();
+        helper.cleanup();
+        helper = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        when(phone.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(phone);
+        verify(phone).sendOtaStatus(argThat(status -> "failed".equals(status.optString("status"))
+                && "mtk".equals(status.optString("st"))));
+        verify(phone, never()).sendOtaStatus(argThat(status -> "step_complete".equals(status.optString("status"))));
+    }
+
+    @Test public void queuedApkCompletionIsScopedToItsSession() {
+        OtaSessionManager session = new OtaSessionManager(RuntimeEnvironment.getApplication());
+        session.clear();
+        assertTrue(session.createSession(new String[]{"apk"}, "first"));
+        session.setPendingApkStatus("complete");
+        OtaSessionManager restarted = new OtaSessionManager(RuntimeEnvironment.getApplication());
+        assertEquals("complete", restarted.consumePendingApkStatus());
+        restarted.setPendingApkStatus("complete");
+        restarted.clear();
+        assertTrue(restarted.createSession(new String[]{"apk"}, "second"));
+        assertNull(restarted.consumePendingApkStatus());
+        restarted.setPendingApkStatus("complete");
+        restarted.setFailed("manifest failure");
+        assertNull(new OtaSessionManager(RuntimeEnvironment.getApplication()).consumePendingApkStatus());
     }
     private static void set(String name, Object target, Object value) throws Exception {
         Field field = OtaHelper.class.getDeclaredField(name); field.setAccessible(true); field.set(target, value);

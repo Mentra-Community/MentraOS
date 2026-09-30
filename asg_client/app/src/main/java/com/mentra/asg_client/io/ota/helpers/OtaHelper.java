@@ -288,8 +288,14 @@ public class OtaHelper {
         }
         // Durable BES truth is read at delivery time; EventBus and process-local retry timers are
         // only wake-ups and never become a second terminal store.
-        sendAuthoritativeBesStatusToPhone();
+        boolean sentBesStatus = sendAuthoritativeBesStatusToPhone();
         if (sessionManager == null || phoneConnectionProvider == null) return;
+        // A later failed step supersedes an APK completion queued before disconnect.
+        if ("failed".equals(sessionManager.getStatus())) {
+            sessionManager.consumePendingApkStatus();
+            if (!sentBesStatus) sendOtaStatus();
+            return;
+        }
         String pendingStatus = sessionManager.consumePendingApkStatus();
         if (pendingStatus == null) return;
         JSONObject apkDoneJson = sessionManager.buildApkDoneJson(pendingStatus);
@@ -742,6 +748,11 @@ public class OtaHelper {
                     return;
                 }
                 currentUpdateStage = "download";
+                // Firmware continuation refetches the same manifest after advancing its
+                // durable step. Attribute a fetch failure to that step, even without APK.
+                String sessionStep = sessionManager == null ? null
+                        : sessionManager.getStepType(sessionManager.getCurrentStepIndex());
+                currentUpdateType = sessionStep != null ? sessionStep : "apk";
                 stage[0] = "fetch_version_info";
                 // Fetch version info from URL
                 String versionInfo = fetchVersionInfo(resolvedVersionJsonUrl);
@@ -2983,7 +2994,15 @@ public class OtaHelper {
     }
 
     private void updateSessionFromProgress(String stage, int progress, long bytesDownloaded, String status, String errorMessage) {
-        if (sessionManager == null || sessionManager.getSessionState() == null) return;
+        if (sessionManager == null) return;
+        if (sessionManager.getSessionState() == null) {
+            // A retry retires the old terminal before fetching its new manifest. Retain a
+            // failure in the normal session store even if BLE is down and no steps were
+            // parsed yet, so reconnect/query and a fresh ASG process can report this attempt.
+            if (!"FAILED".equals(status) || lastVersionJsonUrl == null
+                    || !sessionManager.createSession(new String[]{currentUpdateType}, lastVersionJsonUrl)) return;
+            sessionManager.advanceStep(0, stage);
+        }
 
         int stepIndex = findStepIndex(currentUpdateType);
         if (stepIndex < 0) return;
