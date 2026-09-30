@@ -132,14 +132,24 @@ export function TestDispatchPanel({ onResult, routineIds }: { onResult: (runId: 
           {submittedInput && progress.error ? <Button variant="outline" disabled={submitting || progress.isFetching} onClick={() => void send(submittedInput)}>Retry saved request</Button> : null}
           {progress.data && ["finished", "unavailable", "failed"].includes(progress.data.state) ? <Button variant="outline" onClick={() => { setDispatchId(null); setSubmittedInput(null); clearSelection(); }}>New request</Button> : null}
         </div> : null}
-        {recent.data?.dispatches.length ? <details><summary className="cursor-pointer text-sm font-medium">Recent routine requests</summary><ul className="mt-2 space-y-1">
-          {recent.data.dispatches.map(item => <li key={item.dispatchId}><button disabled={submitting} className="text-left text-sm text-[#087d50] underline" onClick={() => { setDispatchId(item.dispatchId); setSubmittedInput(item.input); setError(null); }}>
-            {item.input.routineId} · {item.input.source.channel === "pr" ? `PR #${item.input.source.prNumber}` : item.input.source.channel} · {new Date(item.createdAt).toLocaleString()}
-          </button></li>)}
-        </ul></details> : null}
+        <RecentRoutineRequests dispatches={recent.data?.dispatches ?? []} routineIds={routineIds} disabled={submitting}
+          onSelect={item => { setDispatchId(item.dispatchId); setSubmittedInput(item.input); setError(null); }} />
       </div> : null}
     </section>
   );
+}
+
+export function RecentRoutineRequests({ dispatches, routineIds, disabled, onSelect }: {
+  dispatches: TestDispatchReceipt[]; routineIds?: readonly TestRoutineId[]; disabled: boolean;
+  onSelect: (dispatch: TestDispatchReceipt) => void;
+}) {
+  const visible = dispatches.filter(item => !routineIds || routineIds.includes(item.input.routineId));
+  if (!visible.length) return null;
+  return <details><summary className="cursor-pointer text-sm font-medium">Recent routine requests</summary><ul className="mt-2 space-y-1">
+    {visible.map(item => <li key={item.dispatchId}><button disabled={disabled} className="text-left text-sm text-[#087d50] underline" onClick={() => onSelect(item)}>
+      {item.input.routineId} · {item.input.source.channel === "pr" ? `PR #${item.input.source.prNumber}` : item.input.source.channel} · {new Date(item.createdAt).toLocaleString()}
+    </button></li>)}
+  </ul></details>;
 }
 
 export function TestDispatchStatus({ dispatch, onResult }: { dispatch: TestDispatchView; onResult: (id: string) => void }) {

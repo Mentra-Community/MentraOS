@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { canRequestRoutine, TestBuildOption, testBuildInventoryPath, TestDispatchStatus } from "./test-dispatches";
+import { canRequestRoutine, RecentRoutineRequests, TestBuildOption, testBuildInventoryPath, TestDispatchStatus } from "./test-dispatches";
 import type { TestBuild, TestDispatchView } from "../../../../packages/core/src/types/test-dispatch.types";
 
 test("inventory distinguishes PR and release selectors and rejects unsafe input", () => {
@@ -25,6 +25,17 @@ test("queued is visibly distinct from a test verdict and final failed verdict is
     runId: "synthetic-result", outcome: "failed", outcomes: { test: "failed", teardown: "passed", evidence: "incomplete" }, reportPath: "/?testRun=synthetic-result",
   } }} onResult={() => {}} />);
   expect(failed).toContain("<strong>failed</strong>"); expect(failed).toContain("evidence: incomplete"); expect(failed).toContain("View recording and evidence");
+});
+
+test("catalog history cannot open excluded routines while unfiltered Test runs keeps all history", () => {
+  const legacy: TestDispatchView = { ...view, dispatchId: "legacy", input: { ...view.input, routineId: "day1-ota" } };
+  const render = (routineIds?: ("no-glasses" | "captions-phone")[]) => renderToStaticMarkup(
+    <RecentRoutineRequests dispatches={[view, legacy]} routineIds={routineIds} disabled={false} onSelect={() => {}} />,
+  );
+  expect(render(["no-glasses"])).toContain("no-glasses");
+  expect(render(["no-glasses"])).not.toContain("day1-ota");
+  expect(render()).toContain("day1-ota");
+  expect(render(["captions-phone"])).toBe("");
 });
 
 // Synthetic inventory fixtures only; they do not describe real published builds.
