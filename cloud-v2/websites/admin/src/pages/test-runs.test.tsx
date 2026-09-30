@@ -854,13 +854,26 @@ describe("recorded run duration", () => {
     expect(markup).toContain("Apply filters");
   });
 
-  test("run detail shows the recorded duration or states it is unavailable", () => {
-    const valid = renderToStaticMarkup(<TestRunView run={run} onStep={() => {}} />);
-    expect(valid).toMatch(/<dt[^>]*>Duration<\/dt><dd[^>]*>10m 0s<\/dd>/);
+  test("run detail shows run start and recorded phase durations, with missing values distinct from zero", () => {
+    const valid = renderRun({ ...run, phaseDurationsMs: { setup: 61052, teardown: 1278 } });
+    expect(valid).toContain('aria-label="Run timing"');
+    expect(valid).toMatch(/<dt[^>]*>Run started<\/dt><dd[^>]*>/);
+    expect(valid).toContain(new Date(run.startedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "long" }));
+    expect(valid).toMatch(/<dt[^>]*>Total duration<\/dt><dd[^>]*>10m 0s<\/dd>/);
+    expect(valid).toMatch(/<dt[^>]*>Setup duration<\/dt><dd[^>]*>1m 1s<\/dd>/);
+    expect(valid).toMatch(/<dt[^>]*>Teardown duration<\/dt><dd[^>]*>1s<\/dd>/);
+    const legacy = renderRun(run);
+    expect(legacy).toMatch(/<dt[^>]*>Setup duration<\/dt><dd[^>]*>Not recorded<\/dd>/);
+    expect(legacy).toMatch(/<dt[^>]*>Teardown duration<\/dt><dd[^>]*>Not recorded<\/dd>/);
+    const partial = renderRun({ ...run, phaseDurationsMs: { setup: 0 } });
+    expect(partial).toMatch(/<dt[^>]*>Setup duration<\/dt><dd[^>]*>0s<\/dd>/);
+    expect(partial).toMatch(/<dt[^>]*>Teardown duration<\/dt><dd[^>]*>Not recorded<\/dd>/);
     const reversed = renderToStaticMarkup(
-      <TestRunView run={{ ...run, finishedAt: "2026-09-22T00:00:00Z" }} onStep={() => {}} />,
+      <TestRunView run={{ ...run, finishedAt: "2026-09-22T00:00:00Z", phaseDurationsMs: { setup: -1, teardown: Infinity } }} onStep={() => {}} />,
     );
-    expect(reversed).toMatch(/<dt[^>]*>Duration<\/dt><dd[^>]*>Not available from the recorded times<\/dd>/);
+    expect(reversed).toMatch(/<dt[^>]*>Total duration<\/dt><dd[^>]*>Not recorded<\/dd>/);
+    expect(reversed).toMatch(/<dt[^>]*>Setup duration<\/dt><dd[^>]*>Not recorded<\/dd>/);
+    expect(reversed).toMatch(/<dt[^>]*>Teardown duration<\/dt><dd[^>]*>Not recorded<\/dd>/);
     expect(reversed).not.toContain("NaN");
   });
 });
