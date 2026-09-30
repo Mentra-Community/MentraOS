@@ -9,6 +9,7 @@ import { ReportAssetModel } from "../models/report-asset.model";
 import { signTestFailureReadGrant, signWorkerDiagnosticsGrant, verifyTestFailureReadGrant } from "./test-failure-auth";
 import { WorkerDiagnosticsService } from "./worker-diagnostics.service";
 import { TestRunService } from "./test-run.service";
+import { recoveryResultRunId } from "./test-recovery-lineage";
 import { getReport, submitReport } from "./report.service";
 import { TestFailureIncidentService } from "./test-failure-incident.service";
 import { StorageService } from "./storage/storage.service";
@@ -101,6 +102,17 @@ describe.skipIf(!uri)("worker diagnostics report persistence", () => {
       message: "Recorder failed", assetIds: [], incidentIds, redactionPolicy: "synthetic-v1",
       missingEvidence: [{ kind: "recording", reason: "Recorder failed" }] }],
   });
+  const recoveryOf = (original: TestRun, parent = original, generation = 2): TestRun => ({
+    ...structuredClone(parent), runId: recoveryResultRunId(original.runId, generation),
+    provenance: { ...parent.provenance, originalRunId: original.runId, previousResultRunId: parent.runId,
+      resultGeneration: String(generation), originalTerminalSnapshotSha256: original.provenance.lifecycleTerminalSha256!,
+      terminalSnapshotSha256: digest(`terminal-${generation}`) },
+  });
+  const recoverable = (id: string): TestRun => ({ ...fixture(id),
+    provenance: { repository: "Mentra-Community/MentraOS", lifecycleTerminalSha256: "a".repeat(64) },
+    source: { schemaVersion: 1, trigger: "local", repository: "Mentra-Community/MentraOS", channel: "local",
+      headSha: "b".repeat(40), branch: "dev" },
+  });
   beforeAll(async () => {
     const url = new URL(uri!);
     if (url.protocol !== "mongodb:" || url.hostname !== "127.0.0.1" || url.username || url.password || url.search)
@@ -155,6 +167,63 @@ describe.skipIf(!uri)("worker diagnostics report persistence", () => {
     const assets = await ReportAssetModel.find({ reportId: row!.diagnosticsReportId }).lean();
     expect(assets).toHaveLength(1);
     expect(digest(objects.get(assets[0]!.storageKey)!)).toBe(assets[0]!.sha256);
+  });
+  test("recovery diagnostics remain readable through every exact owner across generations and retries", async () => {
+    const original = recoverable("recovery-owners"), first = await runs.ingest(original);
+    const second = recoveryOf(original);
+    second.failures!.push({ ...structuredClone(second.failures![0]!), phase: "return-verification",
+      step: { id: "new-return", label: "Return" }, code: "return-failed" });
+    const acceptedSecond = await runs.ingest(second), third = recoveryOf(original, second, 3);
+    const acceptedThird = await runs.ingest(third);
+    const before = await TestRunModel.find({ runId: { $in: [original.runId, second.runId, third.runId] } }).lean();
+    expect(before.find(row => row.runId === third.runId)?.failureOccurrences).toEqual([]);
+    expect(new Set(before.find(row => row.runId === third.runId)?.recoveryLineage.inheritedFailures.map((ref: { runId: string }) => ref.runId)))
+      .toEqual(new Set([original.runId, second.runId]));
+    // Owner upload state does not reparent an inherited occurrence or prevent diagnostics discovery.
+    await TestRunModel.updateOne({ runId: original.runId }, { $set: { uploadsComplete: false } });
+    const input = body(acceptedThird.payloadSha256);
+    const receipts = await Promise.all([diagnostics.forRun(third.runId, input), diagnostics.forRun(third.runId, input)]);
+    expect(receipts[0]).toEqual(receipts[1]);
+    const receipt = receipts[0]!;
+    expect(receipt).toMatchObject({ runId: third.runId, payloadSha256: acceptedThird.payloadSha256, stored: true });
+    const reader = new TestFailureIncidentService(runs, { getReport, readReportArtifactPayload: async (id, assetId) => {
+      const asset = await ReportAssetModel.findOne({ reportId: id, artifactId: assetId }).lean();
+      return asset ? { bytes: objects.get(asset.storageKey)!, contentType: asset.contentType, fileName: null } as never : null;
+    } });
+    for (const id of acceptedThird.occurrenceIds) {
+      expect((await runs.failureDetail(id)).failure.incidentIds).toEqual([receipt.reportId]);
+      expect((await reader.metadata(id, receipt.reportId, "/diagnostics")).logs.state).toBe("usable");
+    }
+    // Different owning results may already have their own incidents; never overwrite either binding.
+    await TestRunModel.updateOne({ runId: original.runId }, { $set: { uploadsComplete: true } });
+    const own = await diagnostics.forRun(original.runId, body(first.payloadSha256));
+    const parent = await diagnostics.forRun(second.runId, body(acceptedSecond.payloadSha256));
+    expect(new Set([own.reportId, parent.reportId, receipt.reportId]).size).toBe(3);
+    expect(new Set((await runs.failureDetail(first.occurrenceIds[0]!)).failure.incidentIds))
+      .toEqual(new Set([own.reportId, parent.reportId, receipt.reportId]));
+    expect(await diagnostics.forRun(third.runId, input)).toEqual(receipt);
+    expect(await ReportAssetModel.countDocuments({ reportId: receipt.reportId })).toBe(1);
+    for (const prior of before) {
+      const saved = await TestRunModel.findOne({ runId: prior.runId }).lean();
+      for (const key of ["payload", "payloadSha256", "failureOccurrences", "recoveryLineage"] as const)
+        expect(saved?.[key]).toEqual(prior[key]);
+    }
+  });
+  test("unavailable or mismatched inherited owners refuse ACK and cannot expose another result's report", async () => {
+    const original = recoverable("recovery-missing-owner"), first = await runs.ingest(original);
+    const recovery = recoveryOf(original), accepted = await runs.ingest(recovery);
+    const saved = await TestRunModel.findOne({ runId: recovery.runId }).lean();
+    const reference = saved!.recoveryLineage.inheritedFailures[0];
+    const unrelated = await diagnostics.forRun(original.runId, body(first.payloadSha256));
+    const writesBefore = writes;
+    for (const bad of [{ ...reference, payloadSha256: "0".repeat(64) }, { ...reference, runId: "missing-owner" },
+      { ...reference, occurrenceId: `tfo_${"0".repeat(64)}` }]) {
+      await TestRunModel.updateOne({ runId: recovery.runId }, { $set: {
+        "recoveryLineage.inheritedFailures": [bad], diagnosticsReportId: "rep_unrelated" } });
+      await expect(diagnostics.forRun(recovery.runId, body(accepted.payloadSha256))).rejects.toMatchObject({ status: 503 });
+      expect((await runs.failureDetail(first.occurrenceIds[0]!)).failure.incidentIds).toEqual([unrelated.reportId]);
+    }
+    expect(writes).toBe(writesBefore);
   });
   test("failed writes, false storage receipts and corrupt readback never ACK; identical retries finish one reservation", async () => {
     for (const mode of ["put", "receipt", "readback"] as const) {

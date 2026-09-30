@@ -5,6 +5,7 @@ import { testFailureOccurrenceIdSchema } from "../types/test-failure.types";
 import { workerDiagnosticsSchema, WORKER_DIAGNOSTICS_MAX_BYTES } from "../types/worker-diagnostics.types";
 import { addLogArtifact, ensureTestRunReport, markReportReady, ReportArtifactError } from "./report.service";
 import { TestRunError } from "./test-run.service";
+import type { TestRecoveryLineage } from "./test-recovery-lineage";
 import type { StorageService } from "./storage/storage.service";
 
 /** Transport adapter only: normal report assets/storage, with server-resolved ownership.
@@ -37,6 +38,13 @@ export class WorkerDiagnosticsService {
       throw new TestRunError(409, "completed test run with settled asset uploads required");
     const originalIds = [...new Set((run.data.failures ?? []).flatMap(failure => failure.incidentIds))];
     try {
+      // Recovery diagnostics are discovered through these persisted occurrence links,
+      // not free-form originalRunId provenance. Refuse ACK if an owner is unavailable.
+      for (const reference of (row.recoveryLineage as TestRecoveryLineage | undefined)?.inheritedFailures ?? []) {
+        const owner = await TestRunModel.exists({ runId: reference.runId, payloadSha256: reference.payloadSha256,
+          "failureOccurrences.occurrenceId": reference.occurrenceId }).read("primary").readConcern("majority");
+        if (!owner) throw new TestRunError(503, "inherited failure occurrence is unavailable");
+      }
       // Immutable failure order selects the canonical original incident for the run;
       // multiple failed steps never force callers to invent a report or owner.
       const reportId = row.diagnosticsReportId ?? originalIds[0]
@@ -47,7 +55,8 @@ export class WorkerDiagnosticsService {
       await TestRunModel.updateOne({ runId: row.runId, payloadSha256: row.payloadSha256,
         diagnosticsReportId: { $exists: false } }, { $set: { diagnosticsReportId: reportId } },
         { writeConcern: { w: "majority", j: true, wtimeout: 10_000 } });
-      const bound = await TestRunModel.findOne({ runId: row.runId }).select({ diagnosticsReportId: 1 }).lean();
+      const bound = await TestRunModel.findOne({ runId: row.runId }).select({ diagnosticsReportId: 1 })
+        .read("primary").readConcern("majority").lean();
       if (bound?.diagnosticsReportId !== reportId) throw new TestRunError(409, "incident binding changed");
       const result = await addLogArtifact({ mentraUserId: report.mentraUserId, reportId, source, entries: input.entries },
         { key: `${row.runId}\n${source}\n${input.attachmentKey}`, storage: this.storage });
