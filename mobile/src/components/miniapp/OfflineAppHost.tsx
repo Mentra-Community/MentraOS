@@ -28,7 +28,7 @@
 
 import {engine} from "@mentra/engine"
 import {useCallback, useEffect, useRef, useState} from "react"
-import {Platform, StyleSheet, View} from "react-native"
+import {StyleSheet, View} from "react-native"
 import {Screen as NativeScreen, ScreenStack} from "react-native-screens"
 
 import CapsuleMenu from "@/effects/CapsuleMenu"
@@ -205,20 +205,14 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
   }
 
   return (
-    // Opaque themed backdrop: the Compositor's Screen wrapper is transparent
-    // (so its scale animation reveals home behind the overlay), but liquid
-    // glass surfaces in the hosted screens sample whatever is behind them —
-    // without this they'd pick up the home screen instead of the app
-    // background they sat on when pushed as routes.
-    // Keep the iOS surface rounded. Android fills the display: forcing an
-    // iPhone-sized radius here clips gallery photos on square-cornered phones
-    // and reveals the home screen behind the bottom corners.
+    // The Compositor's Screen wrapper is transparent. Keep an opaque themed
+    // backdrop so glass surfaces sample the hosted app instead of home.
+    // Fill the screen without a corner radius, matching LocalMiniappView;
+    // app-switcher cards apply their own rounding to captured previews.
     <View
       style={{
         flex: 1,
         backgroundColor: theme.colors.background,
-        borderRadius: Platform.OS === "android" ? 0 : theme.spacing.s12,
-        borderCurve: "continuous",
         overflow: "hidden",
       }}
       ref={viewShotRef}
