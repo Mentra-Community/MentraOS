@@ -732,6 +732,14 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
           .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "downgrade_not_owned"}))
         otaInstallCoordinator.retry()
         expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+        await flushNativeStartPromise()
+        GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+        useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install"}))
+        expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("installing")
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected", fullyBooted: false}})
+        expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("restarting")
+        setGlassesConnected()
+        expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("verifying")
       }
     },
   )

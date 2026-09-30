@@ -164,3 +164,9 @@ terminal persistence failure, exact-version completion, and admission before man
 The phone regression reconnects after 31 minutes and permits Retry only after the retained
 idle outcome. This edge is covered by automated tests; the earlier physical process-death
 run did not include session expiry while disconnected.
+
+The third review reproduced a presentation-only retry gap: the prior attempt's reconnect
+flag survived a fresh Retry and immediately labeled the next install as Verifying. Fresh
+attempt admission now resets that flag, while reconciliation-only Retry preserves it. The
+existing disconnected-terminal regression failed with Verifying before this fix and now
+checks Installing -> Restarting -> Verifying for the next attempt; all 143 phone tests pass.

@@ -439,6 +439,9 @@ class OtaInstallCoordinator {
       this.clearContinueLockoutTimer()
       this.retryCount = 0
       if (!this.prepareFreshOtaStartAttempt()) return
+      // A terminal recovery result released the previous detour. Its reconnect
+      // cannot count as verification of the new install attempt.
+      this.versionChangeReconnected = false
       this.resetBesRestartAttempt()
       this.setSawReconnectEdge(false)
       this.setErrorMsg("")
