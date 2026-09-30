@@ -27,6 +27,10 @@ mock.module("../AppRegistry", () => ({
   saveLocalAppRunningState: () => {},
 }))
 mock.module("../DevServerBridge", () => ({default: {connect: () => {}}}))
+mock.module("../../stores/settings", () => ({
+  SETTINGS: {super_mode: {key: "super_mode"}},
+  useSettingsStore: {getState: () => ({getSetting: () => false})},
+}))
 
 let waitForConnectCalls: string[] = []
 mock.module("../LocalMiniappRuntime", () => ({
