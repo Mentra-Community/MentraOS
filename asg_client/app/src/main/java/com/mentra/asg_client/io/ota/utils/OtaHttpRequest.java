@@ -105,7 +105,10 @@ public final class OtaHttpRequest implements AutoCloseable {
         if (error instanceof java.net.ConnectException) return "connection_failed";
         if (error instanceof javax.net.ssl.SSLException) {
             for (Throwable cause = error; cause != null; cause = cause.getCause()) {
-                if (cause instanceof java.security.cert.CertificateNotYetValidException) return "clock_skew";
+                String message = cause.getMessage();
+                if (cause instanceof java.security.cert.CertificateNotYetValidException
+                        || (message != null && (message.contains("Certificate not yet valid")
+                        || message.contains("timestamp check failed")))) return "clock_skew";
             }
             return "ssl_error";
         }

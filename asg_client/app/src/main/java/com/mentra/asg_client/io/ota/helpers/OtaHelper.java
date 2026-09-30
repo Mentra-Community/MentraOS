@@ -175,12 +175,14 @@ public class OtaHelper {
     private String lastOtaPhoneError;
 
     private final IBesOtaRegistry besOtaRegistry;
+    private final android.content.SharedPreferences mPendingDowngradePrefs;
 
     public OtaHelper(Context context, IBesOtaRegistry besOtaRegistry) {
         this.besOtaRegistry = besOtaRegistry;
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
         sessionManager = new OtaSessionManager(this.context);
+        mPendingDowngradePrefs = this.context.getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE);
         synchronized (OtaHelper.class) {
             if (handoffOwner != null) {
                 OtaHelper previous = handoffOwner;
@@ -193,6 +195,24 @@ public class OtaHelper {
                 currentUpdateStage = "install";
                 handoffOwner = this;
                 scheduleRecoveryReconcile();
+            } else {
+                // The phone retains its detour latch and may only send ota_query_status after
+                // process death. Restore polling independently of another ota_start.
+                String pendingId = mPendingDowngradePrefs.getString("request_id", "");
+                long pendingTarget = mPendingDowngradePrefs.getLong("target_version", -1L);
+                String pendingSha = mPendingDowngradePrefs.getString("sha256", "");
+                if (!pendingId.isEmpty() && pendingTarget > 0 && !pendingSha.isEmpty()) {
+                    mDowngradeRequestId = pendingId;
+                    mDowngradeTarget = pendingTarget;
+                    mDowngradeSha = pendingSha;
+                    mDowngradeWaitStarted = SystemClock.elapsedRealtime();
+                    currentUpdateType = "apk";
+                    currentUpdateStage = "install";
+                    isUpdating = true;
+                    handoffOwner = this;
+                    Log.i(TAG, "Restoring pending downgrade reconciliation: " + pendingId);
+                    scheduleRecoveryReconcile();
+                }
             }
         }
 
@@ -803,8 +823,10 @@ public class OtaHelper {
         // A process restart loses ASG's in-memory latch, but not recovery's transaction.
         // Observe it before ANY artifact/firmware work, including while the factory APK is up.
         if (getInstalledVersion(OtaConstants.RECOVERY_PACKAGE, context) >= OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE) {
-            RecoveryWorkerManager.DowngradeStatus existing = RecoveryWorkerManager.queryDowngradeStatus(context);
-            if (existing == null) {
+            RecoveryWorkerManager.DowngradeStatus existing;
+            try {
+                existing = RecoveryWorkerManager.awaitDowngradeReady(context);
+            } catch (Exception e) {
                 String unavailable = RecoveryWorkerManager.recoveryAvailabilityError(context);
                 sendProgressToPhone("download", 0, 0, 0, "FAILED",
                         unavailable == null ? "downgrade_recovery_unavailable" : unavailable);
@@ -817,7 +839,9 @@ public class OtaHelper {
             if (existing.active) {
                 JSONObject pin = apps.optJSONObject(OtaConstants.ASG_PACKAGE);
                 if (pin != null && existing.owns(pin.optLong("versionCode"), pin.optString("sha256"))) {
-                    stageAndHandoffDowngrade(pin, context);
+                    if (!adoptExistingDowngrade(existing)) {
+                        sendProgressToPhone("download", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
+                    }
                 } else {
                     sendProgressToPhone("download", 0, 0, 0, "FAILED", "downgrade_recovery_busy");
                 }
@@ -1280,11 +1304,7 @@ public class OtaHelper {
                     return false;
                 }
             }
-            currentUpdateStage = "install";
-            sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
-            mDowngradeWaitStarted = SystemClock.elapsedRealtime();
-            synchronized (OtaHelper.class) { handoffOwner = this; }
-            scheduleRecoveryReconcile();
+            if (!startRecoveryReconciliation()) return false;
             if (!ready.active) {
                 Intent handoff = RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
                 handoff.putExtra(AsgConstants.EXTRA_RECOVERY_REQUEST_ID, mDowngradeRequestId);
@@ -1305,6 +1325,42 @@ public class OtaHelper {
             isUpdating = false;
             return false;
         }
+    }
+
+    /** Adopt a snapshot without staging again if recovery finishes between query and adoption. */
+    boolean adoptExistingDowngrade(RecoveryWorkerManager.DowngradeStatus existing) {
+        mDowngradeRequestId = existing.transactionId;
+        mDowngradeTarget = existing.targetVersion;
+        mDowngradeSha = existing.sha256;
+        isUpdating = true;
+        return startRecoveryReconciliation();
+    }
+
+    private boolean startRecoveryReconciliation() {
+        // Commit before announcing install or sending the handoff. A crash in the next
+        // instruction must still leave a poller on the next ASG startup.
+        if (!persistPendingDowngrade()) {
+            lastApkFailureErrorCode = "apk_restart_guard_not_persisted";
+            isUpdating = false;
+            return false;
+        }
+        mDowngradeUnknownReported = false;
+        mDowngradeWaitStarted = SystemClock.elapsedRealtime();
+        currentUpdateType = "apk";
+        currentUpdateStage = "install";
+        synchronized (OtaHelper.class) { handoffOwner = this; }
+        scheduleRecoveryReconcile();
+        sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
+        return true;
+    }
+
+    /** Persist intent before handoff; only an authenticated idle result may clear it. */
+    @SuppressWarnings("ApplySharedPref")
+    boolean persistPendingDowngrade() {
+        return mPendingDowngradePrefs.edit()
+                .putString("request_id", mDowngradeRequestId)
+                .putLong("target_version", mDowngradeTarget)
+                .putString("sha256", mDowngradeSha).commit();
     }
 
     private void scheduleRecoveryReconcile() {
@@ -1336,6 +1392,10 @@ public class OtaHelper {
         synchronized (OtaHelper.class) {
             if (handoffOwner != this) return;
             if (status != null && !status.active && !status.busy) {
+                if (!mPendingDowngradePrefs.edit().clear().commit()) {
+                    sendProgressToPhone("install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
+                    return;
+                }
                 handoffOwner = null;
                 if (handoffWatchdog != null) HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
                 handoffWatchdog = null;

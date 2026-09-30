@@ -474,7 +474,11 @@ public class RecoveryWorkerManager {
                     if (getResultCode() == android.app.Activity.RESULT_OK && extras != null
                             && extras.getInt("protocol") == AsgConstants.RECOVERY_STATUS_PROTOCOL
                             && requestId.equals(extras.getString(AsgConstants.EXTRA_RECOVERY_REQUEST_ID))) {
-                        status.set(new DowngradeStatus(extras));
+                        DowngradeStatus candidate = new DowngradeStatus(extras);
+                        if (!candidate.active || (candidate.targetVersion > 0
+                                && !candidate.transactionId.isEmpty() && !candidate.sha256.isEmpty())) {
+                            status.set(candidate);
+                        }
                     }
                     response.countDown();
                 }

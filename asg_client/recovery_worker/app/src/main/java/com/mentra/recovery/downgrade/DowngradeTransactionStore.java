@@ -80,12 +80,22 @@ public final class DowngradeTransactionStore {
         .commit();
   }
 
+  /** Backfill identity when v11 resumes a transaction persisted by v10. */
+  @SuppressWarnings("ApplySharedPref")
   public String getRequestId() {
-    return preferences.getString(RecoveryConstants.KEY_REQUEST_ID, "");
+    synchronized (preferences) {
+      String id = preferences.getString(RecoveryConstants.KEY_REQUEST_ID, "");
+      if (id.isEmpty() && isActive()) {
+        id = java.util.UUID.randomUUID().toString();
+        if (!preferences.edit().putString(RecoveryConstants.KEY_REQUEST_ID, id).commit()) return "";
+      }
+      return id;
+    }
   }
 
   /** Snapshot one atomic preference commit; active identity survives ASG uninstall/restart. */
   public android.os.Bundle snapshot() {
+    getRequestId();
     java.util.Map<String, ?> values = preferences.getAll();
     android.os.Bundle result = new android.os.Bundle();
     Object target = values.get(KEY_TARGET_VERSION);

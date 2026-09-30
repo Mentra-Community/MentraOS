@@ -33,6 +33,17 @@ public class DowngradeOwnershipTest {
     assertEquals("attempt-a", store.snapshot().getString("transaction_id"));
     assertEquals("converged", store.snapshot().getString("terminal_reason"));
   }
+  @Test public void activeV10TransactionGetsOneDurableIdentityOnUpgrade() {
+    store.begin(302010058L, "/tmp/owned.txn", "sha");
+    context.getSharedPreferences(RecoveryConstants.DOWNGRADE_PREFS, Context.MODE_PRIVATE)
+        .edit().remove(RecoveryConstants.KEY_REQUEST_ID).commit();
+    String migrated = store.snapshot().getString("transaction_id");
+    assertNotNull(migrated);
+    assertFalse(migrated.isEmpty());
+    assertEquals(migrated, new DowngradeTransactionStore(context).getRequestId());
+    assertEquals("/tmp/owned.txn", store.getApkPath());
+    assertEquals(302010058L, store.getTargetVersion());
+  }
   @Test public void duplicatePinReportsOwnershipWithoutClaimingOrReplacingArtifact() {
     store.begin("original", 302010058L, "/tmp/owned.txn", "sha");
     store.incrementInstallAttempts();

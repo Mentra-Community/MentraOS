@@ -295,7 +295,8 @@ release invariant rather than a separate minimum-installed-version or capability
 Recovery worker v11 adds a permission-protected readiness/status query before staging
 an APK downgrade. The updater checks the worker package, signature, permissions and
 receiver availability, then observes its durable transaction identity. An existing
-transaction cannot be replaced by Retry. A missing acknowledgement retains admission
+transaction cannot be replaced by Retry. ASG persists its pending handoff before
+sending it and resumes reconciliation on startup without another phone install request. A missing acknowledgement retains admission
 until recovery confirms it is idle; a verified unclaimed APK can then be reused. A
 disabled or incompatible worker needs a specific support repair, not an instruction
 that promises reboot will fix it. Older source builds need the signed worker repair

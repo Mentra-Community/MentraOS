@@ -1,6 +1,9 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** ASG-side intent to hand off; survives process death until recovery proves it is idle. */
+    public static final String PENDING_DOWNGRADE_PREFS = "pending_downgrade";
+
     /** Versioned, permission-protected query; response is ordered after pending handoff decisions. */
     public static final String RECOVERY_QUERY_STATUS = "com.mentra.recovery.ACTION_QUERY_DOWNGRADE_STATUS";
     public static final String RECOVERY_HEARTBEAT_PERMISSION = "com.mentra.recovery.permission.HEARTBEAT";

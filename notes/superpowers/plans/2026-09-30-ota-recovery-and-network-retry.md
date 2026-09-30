@@ -77,8 +77,8 @@ The local evidence summary is `incident-logs/ota-investigation-20260930/summary.
 
 ## Implementation validation, September 30
 
-- ASG Java compile and release-signed APK build passed; 150 focused ASG JVM tests passed.
-- Recovery v11 release-signed build and 28 JVM tests passed. The signing certificate matches
+- ASG Java compile and release-signed APK build passed; 155 focused ASG JVM tests passed.
+- Recovery v11 release-signed build and 29 JVM tests passed. The signing certificate matches
   the existing release worker/ASG certificate. CI builds and bundles this worker before ASG.
 - 143 focused phone tests passed (coordinator, error mapping and OTA presentation).
 - Disabled recovery v11: only the manifest was fetched, followed by
@@ -127,6 +127,27 @@ v11, while a bridge ASG adds readiness, correlation and cache reuse. This proced
 the existing device/support authorization; a reboot is not a repair for a disabled package.
 
 Remaining release qualification: patched RC Android UI and physical iPhone/Mac hotspot flow,
-missing/old worker deployment, network transitions/captive portal/DNS/connect fixtures,
+old worker deployment, network transitions/captive portal/DNS/connect fixtures,
 process death at each installer boundary, and capture of the original persistent network
 failure. The patch does not claim a diagnosed MTK/DNS/routing root cause for OS-2047.
+
+## Review follow-up
+
+The first independent review found that debug-entry retry had bypassed a normal-phone
+restart dead end: after ASG process death, the phone's detour latch suppresses another
+`ota_start`, so a new process must resume polling without it. ASG now synchronously
+persists the pending request/target/hash before handoff and restores polling at startup.
+Only authenticated idle clears that marker. The phone regression covers unknown -> wait
+without another start -> recovered idle -> safe Retry. The ASG regression reconstructs
+a fresh helper from persisted state and checks the unsolicited idle verdict.
+
+Physical confirmation: killed ASG after `downgrade_status_unknown`; the fresh process
+restored the same pending identity and emitted `downgrade_not_owned` after recovery was
+restored, before any new OTA command. The marker cleared, and the subsequent retry reused
+the cached APK. This specifically closes the gap the first hardware/debug retry missed.
+
+Other review findings were addressed with bounded readiness retries after a transient
+query timeout, a separate adoption path that never stages bytes and reports persistence
+failure, and preservation of Android's message-only clock-skew diagnosis. Recovery also
+backfills a durable identity when v11 encounters an active v10 transaction. The missing-
+worker physical test successfully deployed the bundled worker before the artifact GET.

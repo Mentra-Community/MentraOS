@@ -67,6 +67,12 @@ public class OtaHttpRequestTest {
         assertTrue(connection.disconnected);
     }
 
+    @Test public void androidCertificateTimestampFailureStillRequestsClockSync() {
+        javax.net.ssl.SSLException error = new javax.net.ssl.SSLException("handshake failed");
+        error.initCause(new java.security.cert.CertificateException("timestamp check failed"));
+        assertEquals("clock_skew", OtaHttpRequest.classify(error, "connect", 0));
+    }
+
     @Test public void classificationDoesNotClaimInternetIsDown() {
         assertEquals("connect_timeout", OtaHttpRequest.classify(new SocketTimeoutException(), "connect", 0));
         assertEquals("download_timeout", OtaHttpRequest.classify(new SocketTimeoutException(), "headers", 0));
