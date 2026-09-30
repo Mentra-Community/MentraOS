@@ -28,7 +28,6 @@ POLL_SECONDS="${POLL_SECONDS:-5}"
 # rejected as the PR author's own review. GH_ACCOUNT=own: leave GH_TOKEN unset so gh posts from
 # the logged-in account (use for PRs the logged-in user did not author).
 GH_ACCOUNT="${GH_ACCOUNT:-app}"
-CODEX="${CODEX_BIN:-codex}"
 MODEL="${CODEX_REVIEW_MODEL:-gpt-6-astra}"
 EFFORT="${CODEX_REVIEW_EFFORT:-medium}"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -53,6 +52,10 @@ if [[ -n "$project_dir" ]]; then
     project_id=$(cat "${CODEX_REVIEW_HOME:-$HOME/.codex-reviews}/project-id")
   fi
 fi
+transport=exec
+[[ -n "$project_dir" ]] && transport=app-server
+CODEX=$(node "$script_dir/resolve-codex.mjs" "$transport") || exit 1
+echo "codex-review: using $CODEX ($transport)" >&2
 printf -v quoted_repo '%q' "$repo_dir"
 review_prompt="Review checkout: $repo_dir
 Run repository commands and tests in this checkout (cd $quoted_repo), and read its AGENTS.md / CLAUDE.md instructions. The session's starting folder may only be the desktop Review project; it is not the code being reviewed.

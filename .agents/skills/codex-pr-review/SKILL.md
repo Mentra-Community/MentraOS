@@ -11,7 +11,9 @@ description: >-
 
 One command does everything. Run it in the background and wait for it; do not
 re-verify the Codex binary, the scripts, the token minter or the gh login first.
-The script fails loudly if anything is missing.
+The launcher validates the required CLI command before starting a review. It skips
+broken PATH entries and can use the installed macOS desktop CLI automatically.
+An invalid explicit `CODEX_BIN` is an error; unset it to enable discovery.
 
 ```bash
 nohup scripts/codex-review/codex-pr-review.sh <repo-dir> <pr-number> [extra-prompt-file] > <log> 2>&1 &
@@ -115,7 +117,7 @@ session source; it does not relabel existing sessions or spoof a source.
 
 | Variable                                                      | Default                                                | Purpose                                                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `CODEX_BIN`                                                   | `codex`                                                | Codex CLI binary. Point it at a specific install if the shim on PATH does not support `exec`. |
+| `CODEX_BIN`                                                   | Working CLI on PATH, then macOS desktop install       | Optional explicit executable; validated for the selected transport. |
 | `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`                  | `gpt-6-astra` / `medium`                               | Model and reasoning effort.                                                                   |
 | `CODEX_REVIEW_HOME`                                           | `~/.codex-reviews`                                     | Where prompts, final messages and runner logs are kept.                                       |
 | `CODEX_REVIEW_PROJECT_DIR`                                    | Saved `project-directory` file, otherwise PR worktree | Starting directory for future sessions; register that folder in Codex to group reviews. |
@@ -157,6 +159,9 @@ comment; let Codex weigh comments itself.
 - If the PR belongs to someone else, report only; do not rework unless asked.
 - On `codex-pr-review: FAILED`, read `runner.log`, report the failure, and do not claim a review
   was posted.
+- If a PATH launcher is broken, repair that host's installed command and verify
+  `codex --version` in a fresh shell. Do not leave a per-review `CODEX_BIN` override
+  as the permanent repair; preserve existing authentication and model settings.
 - Remove completed review worktrees first, before finished fixer worktrees, once
   the canonical outcome and needed reproduction material are preserved outside
   the checkout. Wait for the wrapper, runner and their children to exit; keep a
