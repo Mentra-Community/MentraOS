@@ -11,6 +11,7 @@ import { readRecordingTimeline, TestRunRecordings } from "./test-run-recordings"
 import { testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
 import {
   chapterSeekTime,
+  elapsedDuration,
   EMPTY_FILTERS,
   FAILURE_PHASE_LABELS,
   failureRows,
@@ -429,6 +430,19 @@ export function TestRunView({
         ) : related ? (
           <SourceReference key={related.runId} runId={related.runId} />
         ) : null}
+        <dl aria-label="Run timing" className="mt-5 grid gap-4 border-t border-[#eceeeb] pt-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["Run started", date(run.startedAt, "long")],
+            ["Total duration", runDuration(run.startedAt, run.finishedAt) ?? "Not recorded"],
+            ["Setup duration", elapsedDuration(run.phaseDurationsMs?.setup) ?? "Not recorded"],
+            ["Teardown duration", elapsedDuration(run.phaseDurationsMs?.teardown) ?? "Not recorded"],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-xs font-medium text-[#68746d]">{label}</dt>
+              <dd className="mt-1 text-sm font-semibold tabular-nums text-[#202722]">{value}</dd>
+            </div>
+          ))}
+        </dl>
         <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
           {Object.entries(run.outcomes).map(([label, value]) => (
             <div key={label} className="rounded-xl bg-[#f5f7f4] p-3">
@@ -633,9 +647,7 @@ export function TestRunView({
             ["Fixture", run.fixture.alias],
             ["PR", run.prNumber ? `#${run.prNumber}` : undefined],
             ["Release", run.release],
-            ["Started", date(run.startedAt)],
-            ["Finished", date(run.finishedAt)],
-            ["Duration", runDuration(run.startedAt, run.finishedAt) ?? "Not available from the recorded times"],
+            ["Run finished", date(run.finishedAt, "long")],
             ...Object.entries(run.provenance).filter(([key]) => key !== "producerUrl"),
           ]
             .filter(([, value]) => value)
@@ -872,11 +884,11 @@ function Empty({ title, body }: { title: string; body: string }) {
     </div>
   );
 }
-function date(value: string) {
+function date(value: string, timeStyle: "short" | "long" = "short") {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime())
     ? "Not recorded"
-    : parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    : parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle });
 }
 function durationText(startedAt: string, finishedAt: string) {
   const duration = runDuration(startedAt, finishedAt);

@@ -85,6 +85,12 @@ export const testRunSchema = z.object({
   release: text.optional(),
   startedAt: z.string().datetime({ offset: true }),
   finishedAt: z.string().datetime({ offset: true }),
+  // Completed lifecycle phase intervals, measured by the producer's monotonic clock.
+  // Missing timing is unknown; it does not mean zero or imply a phase verdict.
+  phaseDurationsMs: z.object({
+    setup: z.number().finite().nonnegative().optional(),
+    teardown: z.number().finite().nonnegative().optional(),
+  }).strict().optional(),
   outcome: z.enum(["passed", "failed", "blocked", "aborted"]),
   outcomes: z.object({
     test: verdict, teardown: verdict,

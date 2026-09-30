@@ -33,6 +33,7 @@ export interface TestRunSummary {
   release?: string;
   startedAt: string;
   finishedAt: string;
+  phaseDurationsMs?: { setup?: number; teardown?: number };
   outcome: RunOutcome;
   outcomes: {
     test: CheckOutcome;
@@ -300,8 +301,11 @@ export function relatedRun(run: Pick<TestRunDetail, "runId" | "provenance">): Re
  */
 export function runDuration(startedAt: unknown, finishedAt: unknown): string | null {
   if (typeof startedAt !== "string" || typeof finishedAt !== "string") return null;
-  const ms = Date.parse(finishedAt) - Date.parse(startedAt);
-  if (!Number.isFinite(ms) || ms < 0) return null;
+  return elapsedDuration(Date.parse(finishedAt) - Date.parse(startedAt));
+}
+
+export function elapsedDuration(ms: unknown): string | null {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
   if (ms === 0) return "0s";
   if (ms < 1000) return "<1s";
   const seconds = Math.floor(ms / 1000);

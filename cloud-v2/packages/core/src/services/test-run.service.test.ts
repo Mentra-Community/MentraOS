@@ -143,6 +143,43 @@ const recoveryPackets = () => ({
   recovery: testRunSchema.parse(JSON.parse(readFileSync(new URL("./fixtures/recovery-lineage/recovery.json", import.meta.url), "utf8"))),
 });
 
+describe("recorded lifecycle phase durations", () => {
+  test("accepts partial and zero intervals without inventing absent timing", () => {
+    expect(testRunSchema.parse(fixture())).not.toHaveProperty("phaseDurationsMs");
+    for (const timing of [{}, { setup: 0 }, { teardown: 1250.75 }, { setup: 61053.25, teardown: 1278 }]) {
+      const parsed = testRunSchema.parse({ ...fixture(), phaseDurationsMs: timing });
+      expect(parsed.phaseDurationsMs).toEqual(timing);
+    }
+    for (const timing of [null, [], { setup: -1 }, { teardown: NaN }, { setup: Infinity },
+      { teardown: -Infinity }, { setup: "1000" }, { setup: null }, { test: 1000 }]) {
+      expect(testRunSchema.safeParse({ ...fixture(), phaseDurationsMs: timing }).success).toBe(false);
+    }
+  });
+
+  test("ingests and returns measured durations independently of a failed test verdict", async () => {
+    const run: TestRun = { ...fixture(), outcome: "failed", phaseDurationsMs: { setup: 61053.25, teardown: 1278 },
+      outcomes: { ...fixture().outcomes, test: "failed" } };
+    expect((await post(run)).status).toBe(201);
+    const response = await admin.request(`/${run.runId}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ startedAt: run.startedAt, phaseDurationsMs: run.phaseDurationsMs,
+      outcome: "failed", outcomes: { test: "failed" } });
+    expect(repository.runs.get(run.runId)!.run.phaseDurationsMs).toEqual(run.phaseDurationsMs);
+    expect((await service.list({ limit: 25 })).runs[0]!.phaseDurationsMs).toEqual(run.phaseDurationsMs);
+  });
+
+  test("keeps old results untimed and rejects changes to accepted timing", async () => {
+    const old = fixture();
+    expect((await post(old)).status).toBe(201);
+    expect(await service.detail(old.runId)).not.toHaveProperty("phaseDurationsMs");
+    expect((await post({ ...old, phaseDurationsMs: { setup: 0 } })).status).toBe(409);
+    const measured: TestRun = { ...fixture(), runId: "run-measured", phaseDurationsMs: { teardown: 1200 } };
+    expect((await post(measured)).status).toBe(201);
+    expect((await post(measured)).status).toBe(200);
+    expect((await post({ ...measured, phaseDurationsMs: { teardown: 1300 } })).status).toBe(409);
+  });
+});
+
 describe("validated recovery failure lineage", () => {
   test("the actual nine-asset Notes return keeps original cases, failures and current delivery receipts", async () => {
     const { original, recovery } = recoveryPackets();
