@@ -4,10 +4,12 @@ import { TEST_RUN_COMPLETION_INDEX, TestRunModel } from "../models/test-run.mode
 /** Idempotent server projection only; never writes payload, digest, outcomes or upload receipts. */
 export async function backfillTestRunCompletionDates() {
   const missing = { completionProjectionVersion: { $ne: 1 } };
+  // Cosmos MongoDB 4.2 accepts the pipeline but rejects hints on update commands.
+  // Keep index hints on reads only so this migration also runs in private clouds.
   const result = await TestRunModel.collection.updateMany(missing, [{ $set: { completionProjectionVersion: 1, completedAt: {
     $cond: [{ $eq: [{ $type: "$payload.finishedAt" }, "string"] },
       { $convert: { input: "$payload.finishedAt", to: "date", onError: null, onNull: null } }, null],
-  } } }], { hint: TEST_RUN_COMPLETION_INDEX, maxTimeMS: 120_000, writeConcern: { w: "majority" } });
+  } } }], { maxTimeMS: 120_000, writeConcern: { w: "majority" } });
   const remaining = await TestRunModel.collection.findOne(missing,
     { projection: { _id: 1 }, hint: TEST_RUN_COMPLETION_INDEX, maxTimeMS: 5_000 });
   if (remaining) throw new Error("Test-run completion migration is incomplete; retry after older Core writers retire");
