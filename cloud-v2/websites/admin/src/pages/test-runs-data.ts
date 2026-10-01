@@ -23,6 +23,7 @@ export const FIRMWARE_PHASE_LABELS: Record<FirmwareCheckPhase, string> = {
 };
 
 export interface TestRunSummary {
+  source?: {headSha?: string};
   runId: string;
   requestId: string;
   routineId: string;
