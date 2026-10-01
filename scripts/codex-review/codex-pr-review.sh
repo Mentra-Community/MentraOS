@@ -247,7 +247,7 @@ Do the following, in order:
    \`gh pr review ${pr} -R ${slug} --request-changes --body "<body>"\`.
    If GitHub refuses the formal review, post \`gh pr review ${pr} -R ${slug} --comment --body "<body>"\`
    whose first line is "Approve." or "Request changes." and say in your final message that you fell back.
-   The body must start with "Reviewed by local Codex (gpt-6-astra, medium)." and then list: what
+   The body must start with "Reviewed by local Codex (gpt-6.1-sol, medium)." and then list: what
    you checked (files/areas, tests/builds run), each existing comment and whether you agree with it
    and why, any defects found with file:line references and a suggested coherent fix, the
    "Is this change needed?" conclusion, and the reason for the verdict. Keep it
