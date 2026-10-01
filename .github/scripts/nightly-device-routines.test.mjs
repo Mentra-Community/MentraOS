@@ -500,11 +500,12 @@ test("workflow keeps nightly opt-in, ordinary callbacks and independent matrix m
   assert.match(workflow, /availability:\n    needs: plan/)
   assert.match(workflow, /core\.setFailed\('Some required routines or platform publications are unavailable/)
   assert.match(workflow, /request:\n    needs: plan/)
-  assert.doesNotMatch(workflow, /needs:.*availability/)
+  assert.doesNotMatch(workflow.split('  request:')[1].split('  finalize:')[0], /needs:.*availability/)
+  assert.match(workflow, /needs: \[plan, request, availability\]/)
   assert.match(workflow, /fail-fast: false/)
   assert.match(workflow, /group: nightly-device-\$\{\{ matrix.date \}\}-\$\{\{ matrix.channel \}\}-\$\{\{ matrix.routine \}\}/)
   assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
-  assert.equal((workflow.match(/retries: 0/g) ?? []).length, 2)
+  assert.equal((workflow.match(/retries: 0/g) ?? []).length, 3)
   assert.doesNotMatch(workflow, /workflow_dispatch:|self-hosted|mentra-device-worker|download-artifact|Wait for both|OTA then Call/)
 })
 
@@ -610,7 +611,7 @@ for (const cloned of [false, true]) test(`nightly selects original publication f
     return getAttempt(input)
   }
   const result = await planNightlyRequests(f.options)
-  assert.deepEqual(result.requests.find(row => row.channel === "dev"), {...plan, publicationAttempt: 1})
+  assert.deepEqual(result.requests.find(row => row.channel === "dev"), {...plan, publicationAttempt: 1, headSha: "a".repeat(40)})
   // No production target is planned, so none is unavailable.
   assert.equal(result.unavailable.length, 0)
   const reads = f.state.calls.filter(([kind, input]) => kind === "attempt" && input.run_id === 100)

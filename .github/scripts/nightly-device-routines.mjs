@@ -148,7 +148,8 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
         requireThat([...platforms.values()].every(selection => selection.build.sourceCommit === reference.build.sourceCommit &&
           selection.build.releaseIdentity === reference.build.releaseIdentity && selection.releasePlan.sha256 === reference.releasePlan.sha256 &&
           selection.otaManifest.sha256 === reference.otaManifest.sha256), "Platform selections disagree on their exact publication")
-        selected = {sourceRunId: candidate.id, publicationAttempt, releaseIdentity: reference.build.releaseIdentity, platforms, errors}
+        selected = {sourceRunId: candidate.id, publicationAttempt, headSha: reference.build.sourceCommit,
+          releaseIdentity: reference.build.releaseIdentity, platforms, errors}
         break
       } catch (error) {
         rejected.push({runId: candidate.id, reason: error instanceof Error ? error.message : "Publication unavailable"})
@@ -160,10 +161,11 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
         sourceRunId: selected.sourceRunId, publicationAttempt: selected.publicationAttempt, releaseIdentity: selected.releaseIdentity,
         reason: selected.errors.get(target.platform)})
       else requests.push({date, channel, ...target, sourceRunId: selected.sourceRunId,
-        publicationAttempt: selected.publicationAttempt, releaseIdentity: selected.releaseIdentity})
+        publicationAttempt: selected.publicationAttempt, headSha: selected.headSha, releaseIdentity: selected.releaseIdentity})
     }
   }
-  return {requests, unavailable, sourceRunId: run.id, reason: "One exact publication per channel; independent routine requests, not device results"}
+  return {requests, unavailable, sourceRunId: run.id, startedAt: run.created_at,
+    reason: "One exact publication per channel; independent routine requests, not device results"}
 }
 
 /** One entered send step fences one date/channel/routine, even after a lost response. */
