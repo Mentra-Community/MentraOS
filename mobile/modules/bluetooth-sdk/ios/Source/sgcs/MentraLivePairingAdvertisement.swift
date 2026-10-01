@@ -61,4 +61,25 @@ enum MentraLiveConnectionAttemptPolicy {
     ) -> Bool {
         !pairingYieldActive && matchesActiveAttempt
     }
+
+    /// Whether an unexpected link loss should re-arm a pending connection to the same
+    /// peripheral. iOS completes a pending `connect` whenever the glasses advertise again,
+    /// even while the app is suspended (phone locked), and wakes the app to handle it. A scan
+    /// without service filters returns nothing in the background, and the backoff timers that
+    /// drive it stop while the app is suspended, so the scan path alone never reconnects there.
+    static func shouldReconnectDirectly(
+        isKilled: Bool,
+        pairingYieldActive: Bool,
+        bluetoothPoweredOn: Bool,
+        peripheralName: String?,
+        savedDeviceName: String?
+    ) -> Bool {
+        guard !isKilled, !pairingYieldActive, bluetoothPoweredOn,
+              let peripheralName, !peripheralName.isEmpty,
+              let savedDeviceName
+        else {
+            return false
+        }
+        return peripheralName == savedDeviceName
+    }
 }

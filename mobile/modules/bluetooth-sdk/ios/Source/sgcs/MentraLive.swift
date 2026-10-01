@@ -945,8 +945,9 @@ extension MentraLive: CBCentralManagerDelegate {
                 return
             }
 
-            // Attempt reconnection if not killed
-            if !self.isKilled {
+            // Prefer a pending direct reconnect: it is the only path iOS completes while the
+            // app is suspended. Fall back to the scan backoff when it does not apply.
+            if !self.isKilled, !self.reconnectDirectly(to: peripheral) {
                 self.handleReconnection()
             }
         }
@@ -2378,6 +2379,42 @@ class MentraLive: NSObject, SGCManager {
                 options: MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: requiresAncs)
             )
         #endif
+    }
+
+    /// Re-arms a pending connection to the glasses that just dropped. Unlike `connectToDevice`,
+    /// it sets no timeout: CoreBluetooth keeps the request open until the glasses advertise
+    /// again (for example after a BES firmware reset), completes it in the background and wakes
+    /// the app. `destroy()` and `cleanup()` cancel it through `connectedPeripheral`.
+    /// Returns false when the policy does not apply, so the caller can fall back to scanning.
+    private func reconnectDirectly(to peripheral: CBPeripheral) -> Bool {
+        guard let centralManager,
+              MentraLiveConnectionAttemptPolicy.shouldReconnectDirectly(
+                  isKilled: isKilled,
+                  pairingYieldActive: pairingYieldActive,
+                  bluetoothPoweredOn: centralManager.state == .poweredOn,
+                  peripheralName: peripheral.name,
+                  savedDeviceName: UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME)
+              )
+        else {
+            return false
+        }
+        Bridge.log(
+            "LIVE: Pending direct reconnect to \(peripheral.identifier.uuidString) (no timeout, completes in background)"
+        )
+        isConnecting = true
+        updateConnectionState(ConnTypes.CONNECTING)
+        connectingPeripheral = peripheral
+        connectedPeripheral = peripheral
+        peripheral.delegate = self
+        #if os(macOS)
+            centralManager.connect(peripheral, options: nil)
+        #else
+            centralManager.connect(
+                peripheral,
+                options: MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: requiresAncs)
+            )
+        #endif
+        return true
     }
 
     /// Opt the firmware into ANCS only after iOS has authorized this accessory.

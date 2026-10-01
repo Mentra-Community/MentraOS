@@ -14,6 +14,8 @@ export const INFO_ANALYTICS_ENVIRONMENT = "MentraBluetoothSdkAnalyticsEnvironmen
 export const INFO_SDK_VERSION = "MentraBluetoothSdkVersion"
 const STALE_INFO_POSTHOG_API_KEY = "MentraBluetoothSdkPostHogApiKey"
 const STALE_INFO_POSTHOG_HOST = "MentraBluetoothSdkPostHogHost"
+/** Lets iOS complete the SDK's pending reconnect, and deliver BLE events, while the app is suspended. */
+export const IOS_BLUETOOTH_BACKGROUND_MODE = "bluetooth-central"
 
 const ensureBluetoothSdkExpoAdapterPodEnv = (podfile: string): string => {
   if (podfile.includes(BLUETOOTH_SDK_EXPO_ADAPTER_ENV)) {
@@ -80,6 +82,12 @@ export function applyBluetoothSdkInfoPlist(
   delete infoPlist[STALE_INFO_POSTHOG_HOST]
 
   infoPlist[INFO_SDK_VERSION] = sdkVersion
+
+  // Merge, never replace: apps may also declare audio, location or other modes.
+  const backgroundModes = Array.isArray(infoPlist.UIBackgroundModes) ? infoPlist.UIBackgroundModes : []
+  if (!backgroundModes.includes(IOS_BLUETOOTH_BACKGROUND_MODE)) {
+    infoPlist.UIBackgroundModes = [...backgroundModes, IOS_BLUETOOTH_BACKGROUND_MODE]
+  }
   if (analytics.disabled !== undefined) {
     infoPlist[INFO_ANALYTICS_DISABLED] = analytics.disabled
   }
