@@ -7,7 +7,9 @@ contain older and unfinished routines; membership there is not sufficient.
 
 The small, typed content list is
 [`routine-catalog-data.ts`](../../../websites/admin/src/pages/routine-catalog-data.ts).
-The page derives its cards and manual-dispatch filter from that list. It reuses
+The page derives its cards from that list and its manual-dispatch filter from
+entries with an explicit request binding. Local-only routines have no request
+label and do not enter the dispatch selector. It reuses
 the existing dispatch controls and authenticated result/video viewer; there is
 no new backend catalog or playback path. Server-side build compatibility,
 channel configuration, worker enrollment and admission still decide whether a
@@ -47,6 +49,24 @@ Relevant private source paths are `tools/mentra-e2e/flows/no-glasses.ts`,
 `tools/mentra-e2e/flows/notes-phone.ts`, and the shared compositions in
 `worker/local-mac.ts` and `worker/local-android.ts`. These paths are maintenance
 pointers, not substitutes for recorded passing evidence.
+
+The Android ASG roundtrip example is
+`local-android-bda5a7fd-f862-458d-8cd6-3a239a06e999`, started September 30, 2026
+at 23:00:32 PDT. Its clean merged harness source is
+`453378be4cd3593484a3f5703dc25d2e536bb932`; requested app source is
+`6c51cd313686151a95a6a7810444926d39d6c97d` (PR 4356, app 3.2.1 / 302014623).
+All six authored steps, final assertions, teardown, independent return
+verification and evidence passed. The 15m26s recording, six screenshots,
+chapters, lifecycle summary and six firmware/gallery checkpoints were uploaded
+to dev Core; the original payload was disposed after acknowledged publication.
+All 21 gallery files were preserved, and the `mini-060b` fixture was released
+ready. This is local-development coverage, not CI qualification. Authenticated
+viewer playback is handed to the Mac coordinator for verification.
+
+Its private maintenance paths are `tools/mentra-e2e/flows/ota-roundtrip.ts` and
+`worker/local-ota-android.ts`. A nightly request requires an executable enrolled
+adapter and the exact routine ID wired through request validation and dispatch;
+do not add a label or advertise automatic execution based only on this example.
 
 ## Check the UI
 
