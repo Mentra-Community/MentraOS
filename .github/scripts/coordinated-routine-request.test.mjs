@@ -4,6 +4,16 @@ import {readFile} from "node:fs/promises"
 import {createRoutineRequest} from "./request-e2e-routine.mjs"
 import {verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 import {coordinatedAndroidFixture, coordinatedFixture} from "./coordinated-routine-fixture.mjs"
+import {AUTOMATIC_BUILD_ROUTINES, DEVICE_ROUTINES} from "./device-routines.mjs"
+
+test("remade routine guidance points to the merged shared foundation", () => {
+  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/bcc58134351705f0b6e0b87ed7bfaeb2672ba058/"
+  for (const id of AUTOMATIC_BUILD_ROUTINES) {
+    assert.equal(DEVICE_ROUTINES[id].worker, `${source}worker/foundation-worker.ts`)
+    assert.ok(DEVICE_ROUTINES[id].definition.startsWith(source))
+    assert.ok(DEVICE_ROUTINES[id].implementation.startsWith(source))
+  }
+})
 
 test("the shared private/public wire fixture is the actual producer output", async () => {
   const {state, options} = coordinatedFixture()
@@ -26,6 +36,18 @@ for (const channel of ["dev", "staging"]) test(`${channel} selects an exact succ
   assert.equal(request.selection.otaManifest.sha256, pin(state.ota))
   await verifyCoordinatedReadyRequest({...options, request})
 })
+
+for (const channel of ["dev", "staging"]) for (const routine of ["captions-phone", "notes-phone"])
+  test(`${channel} successful build authenticates the exact ${routine} request`, async () => {
+    const {options} = coordinatedFixture(channel)
+    const selected = {...options, routine, requestOrigin: "successful-build"}
+    const request = await createRoutineRequest(selected)
+    assert.equal(request.status, "ready", request.reason)
+    assert.equal(request.routine.id, routine)
+    assert.equal(request.routine.authorization, "successful-build")
+    assert.equal(request.selection.platform, "ios-on-mac")
+    await verifyCoordinatedReadyRequest({...selected, request})
+  })
 
 test("exact selection never substitutes another run, attempt, branch or source", async () => {
   for (const change of [{id: 101}, {run_attempt: 1}, {head_branch: "main"}, {event: "pull_request"},

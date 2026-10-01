@@ -1,3 +1,4 @@
+import {RecentTestSuites} from "./test-suites";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, ExternalLink, Film, Loader2, RefreshCcw, Search } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -55,6 +56,14 @@ export function TestRunsPage({
     getNextPageParam: (response) => response.nextCursor ?? undefined,
     enabled: !selection,
   });
+  const requestIds = (runs.data?.pages.flatMap(page => page.runs) ?? []).map(run => run.requestId);
+  const suiteLabels = useQuery({queryKey: ["test-suite-labels", requestIds], enabled: !selection && requestIds.length > 0,
+    queryFn: async () => {
+      type Label = {requestId: string; routineId: string; platform: string; channel: string; headSha: string; suiteId: string; label: string};
+      const batches = await Promise.all(Array.from({length: Math.ceil(requestIds.length / 100)}, (_, index) =>
+        api<{labels: Label[]}>(`/api/admin/test-runs/suite-index/labels?requestIds=${encodeURIComponent(requestIds.slice(index * 100, (index + 1) * 100).join(","))}`)));
+      return {labels: batches.flatMap(batch => batch.labels)};
+    }});
   const update = (key: keyof TestRunFilters, value: string) => setDraft((current) => ({ ...current, [key]: value }));
   if (selection)
     return (
@@ -69,6 +78,7 @@ export function TestRunsPage({
   const additionalFilters = !!(filters.outcome || filters.fixtureAlias || filters.startedAfter || filters.startedBefore);
   return (
     <section className={PANEL}>
+      <RecentTestSuites />
       <TestRunOverviewPanel onResult={runID => onSelect({ runID })} />
       <TestDispatchPanel onResult={runID => onSelect({ runID })} />
       <div className="border-b border-[#eceeeb] p-5">
@@ -248,9 +258,8 @@ export function TestRunsPage({
         <>
           <div className="divide-y divide-[#eceeeb]">
             {rows.map((run) => (
-              <button
+              <div
                 key={run.runId}
-                type="button"
                 className="block w-full p-5 text-left hover:bg-[#fafbfa]"
                 onClick={() => onSelect({ runID: run.runId })}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -262,7 +271,12 @@ export function TestRunsPage({
                       </span>
                       {run.prNumber ? <span className="text-xs font-semibold">PR #{run.prNumber}</span> : null}
                     </div>
-                    <h3 className="mt-2 font-semibold">{run.routineId}</h3>
+                    <div className="mt-2 flex flex-wrap gap-2">{(suiteLabels.data?.labels ?? []).filter(label =>
+                      label.requestId === run.requestId && label.routineId === run.routineId && label.platform === run.platform
+                      && label.channel === run.channel && label.headSha === (run.source?.headSha ?? run.provenance.headSha)).map(label =>
+                      <a key={label.suiteId} className="rounded-full bg-[#eaf3ed] px-2 py-1 text-xs font-semibold text-[#087d50]"
+                        href={`/?testSuite=${encodeURIComponent(label.suiteId)}`} onClick={event => event.stopPropagation()}>{label.label}</a>)}</div>
+                    <h3 className="mt-2 font-semibold"><button type="button" className="text-left underline-offset-2 hover:underline" onClick={event => {event.stopPropagation(); onSelect({runID: run.runId});}}>{run.routineId}</button></h3>
                     <p className="mt-1 text-xs text-[#747780]">
                       {run.fixture.alias} · {run.release ?? short(run.provenance.buildSha ?? run.provenance.headSha)} ·{" "}
                       {date(run.startedAt)} · {durationText(run.startedAt, run.finishedAt)}
@@ -281,7 +295,7 @@ export function TestRunsPage({
                     Customer development phase. Full routine and unattended CI are not qualified.
                   </p>
                 ) : null}
-              </button>
+              </div>
             ))}
           </div>
           {runs.hasNextPage ? (

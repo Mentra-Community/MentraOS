@@ -1,9 +1,17 @@
 import {SETTINGS, engine} from "@mentra/engine"
 import {appRegistry} from "@mentra/engine-host-internal"
 
-import {mentraCallPackageName, shouldHideMiniapp as shouldHideByPolicy} from "@/constants/miniapps"
+import {
+  linkLingoPackageName,
+  mentraCallPackageName,
+  shouldHideMiniapp as shouldHideByPolicy,
+} from "@/constants/miniapps"
 import {deploymentStore} from "@/services/deployment/store"
 import type {ActiveDeployment} from "@/services/deployment/types"
+
+/** LinkLingo is available only while the local Super Mode setting is enabled. */
+export const isSuperModeMiniappAllowed = (packageName: string): boolean =>
+  packageName !== linkLingoPackageName || engine.settings.get(SETTINGS.super_mode.key) === true
 
 export function isDeploymentManagedCall(deployment: ActiveDeployment = deploymentStore.getActive()): boolean {
   return (
@@ -15,6 +23,7 @@ export function isDeploymentManagedCall(deployment: ActiveDeployment = deploymen
 
 /** Installation eligibility must not depend on the bundle already being on disk. */
 export const shouldSkipMiniappInstall = (packageName: string): boolean => {
+  if (!isSuperModeMiniappAllowed(packageName)) return true
   const deployment = deploymentStore.getActive()
   if (packageName === mentraCallPackageName && deployment.kind === "workspace") {
     return !isDeploymentManagedCall(deployment)

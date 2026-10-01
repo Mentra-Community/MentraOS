@@ -67,7 +67,7 @@ export const TEST_ROUTINES: TestRoutineEntry[] = [
   // Registered Mac nightly target; a deployment enables it through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.
   { id: "livestreamer" as const, name: "Livestreamer (Mac)", description: "Stream here and local RTMP from the Mentra app, observed by an owned receiver." },
   // Registered Mac Phone mode routines; a deployment enables each through TEST_RUN_DISPATCH_ROUTINES once its worker is enrolled.
-  { id: "captions-phone" as const, name: "Captions with simulated glasses (Mac)", description: "Phone mode Captions transcribes one controlled speech fixture, then restores the microphone, Home and host audio." },
+  { id: "captions-phone" as const, name: "Captions with simulated glasses (Mac)", description: "Phone mode Captions transcribes controlled speech, restores owned microphone and host audio settings, then verifies the app is stopped." },
   { id: "notes-phone" as const, name: "Notes with simulated glasses (Mac)", description: "Phone mode Notes transcribes a controlled discussion, then its one new note is edited, persisted and found by Search." },
 ];
 

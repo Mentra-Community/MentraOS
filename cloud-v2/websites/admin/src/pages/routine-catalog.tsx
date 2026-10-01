@@ -1,6 +1,6 @@
 import { ArrowUpRight, CheckCircle2, Monitor, Play, Smartphone } from "lucide-react";
 import { TestDispatchPanel } from "./test-dispatches";
-import { CATALOG_ROUTINE_IDS, ROUTINE_CATALOG, catalogPassingRunHref, type CatalogRoutine } from "./routine-catalog-data";
+import { CATALOG_REQUEST_ROUTINE_IDS, ROUTINE_CATALOG, catalogPassingRunHref, type CatalogRoutine } from "./routine-catalog-data";
 
 const PANEL = "rounded-2xl border border-[#e0e4de] bg-white";
 const REQUIREMENTS = { software: "Software", firmware: "Glasses and firmware", account: "Account", network: "Network", physical: "Physical setup", data: "Test data" } as const;
@@ -20,12 +20,12 @@ export function RoutineCatalogPage({ onResult }: { onResult: (runId: string) => 
     <section className={`${PANEL} overflow-hidden`} aria-label="Request a catalog routine">
       <div className="border-b border-[#eceeeb] p-5">
         <h2 className="text-lg font-semibold">Request a run</h2>
-        <p className="mt-2 text-sm leading-6 text-[#4f5d54]">For a MentraOS PR targeting <code>dev</code>, add the exact <code>routine:&lt;id&gt;</code> label shown on its card. The request needs a published, compatible app artifact.</p>
+        <p className="mt-2 text-sm leading-6 text-[#4f5d54]">For a MentraOS PR targeting <code>dev</code>, add the exact <code>routine:&lt;id&gt;</code> label shown on a request-enabled card. Local-replay-only routines cannot be requested here. The request needs a published, compatible app artifact.</p>
         <p className="mt-3 text-xs font-semibold text-[#4f5d54]">Example: request Captions for PR 123 (replace the PR number)</p>
         <pre className="mt-2 overflow-x-auto rounded-lg bg-[#f2f4f0] p-3 text-xs leading-5"><code>gh pr edit 123 --repo Mentra-Community/MentraOS --add-label routine:captions-phone</code></pre>
         <p className="mt-2 text-sm leading-6 text-[#68746d]">For a manual request, choose a routine and a PR, dev or staging build below. Admin checks the published artifact and reports unavailable channels or routines. An enabled worker and a ready fixture are still required; a queued request is not a passing result.</p>
       </div>
-      <TestDispatchPanel onResult={onResult} routineIds={CATALOG_ROUTINE_IDS} />
+      <TestDispatchPanel onResult={onResult} routineIds={CATALOG_REQUEST_ROUTINE_IDS} />
     </section>
   </div>;
 }
@@ -38,7 +38,8 @@ export function RoutineCatalogCard({ routine }: { routine: CatalogRoutine }) {
       <div className="flex items-center gap-2 text-xs font-semibold text-[#68746d]"><Device className="size-4" />{routine.platform}</div>
       <h3 id={`catalog-${routine.id}`} className="mt-2 text-lg font-semibold">{routine.name}</h3>
       <p className="mt-2 text-sm leading-6 text-[#4f5d54]">{routine.purpose}</p>
-      <div className="mt-4 text-xs text-[#68746d]">PR label <code className="ml-1 inline-block break-all rounded-md bg-[#f2f4f0] px-2 py-1 text-[#303d34]">routine:{routine.id}</code></div>
+      {routine.request ? <div className="mt-4 text-xs text-[#68746d]">PR label <code className="ml-1 inline-block break-all rounded-md bg-[#f2f4f0] px-2 py-1 text-[#303d34]">routine:{routine.request.routineId}</code></div>
+        : <p className="mt-4 text-xs leading-5 text-[#68746d]">Local replay only. PR requests and nightly execution require a separately enrolled worker; this passing example does not enable them.</p>}
       <details className="mt-5 border-t border-[#eceeeb] pt-4">
         <summary className="cursor-pointer text-sm font-semibold text-[#303d34]">Requirements and cleanup</summary>
         <dl className="mt-4 space-y-3 text-sm leading-6">

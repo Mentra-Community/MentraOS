@@ -11,6 +11,7 @@ export const miniappDeveloperPackageName = "com.mentra.miniappdev"
 export const notifyPackageName = "cloud.augmentos.notify"
 export const navigationPackageName = "com.mentra.navigation" // "Mentra Map"
 export const mentraCallPackageName = "com.mentra.call"
+export const linkLingoPackageName = "com.mentra.link"
 
 /** True when this binary is the China (com.mentra.mentra.cn) build. */
 export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"

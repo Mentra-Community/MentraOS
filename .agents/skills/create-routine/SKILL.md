@@ -54,7 +54,7 @@ before using its APIs or commands:
 | --- | --- |
 | `tools/mentra-e2e/runner/routine-plan.ts` | Build, platform, entry, account, fixtures and resources |
 | `tools/mentra-e2e/runner/standard-routine.ts` | Common setup/test/teardown composition |
-| `worker/local.ts` | Local run, cleanup and publication commands; inspect `--help` |
+| `worker/local.ts` | Local run, authoring, cleanup and publication commands; inspect `--help` |
 | `worker/local-mac.ts`, `worker/local-android.ts` | Platform implementation of that contract |
 | `tools/mentra-e2e/flows/` | Small flow definitions, including walkthrough, Captions and Notes |
 
@@ -86,33 +86,53 @@ does not prove the runner forwards its Java/Android tool configuration. Use the
 selected revision's pinned tools and a minimal semantic observation to check the
 assigned device; keep account entry and firmware operations in setup.
 
-## Discover with AI, then encode the observed flow
+## First complete one recorded traversal of the whole flow
 
-Use AI computer use to traverse the real flow as a person would. Capture actions,
-expected versus observed behavior, screenshots and recording. File genuine bugs
-through the existing incident path, retaining its ID or submission failure; keep
-the affected check failed and continue independent exploration where possible.
-Do not gate basic exploration on unnecessary calibration or measurement probes;
-leave measurements unverified until their required evidence exists.
+**Use AI computer use to traverse the entire English scenario from entry to end
+at least once before building its deterministic replay.** Keep the working
+authoring session and recording going. Record the ordered actions, observed UI
+controls/selectors, expected versus actual results, and screenshots needed to
+reproduce the flow. Existing controls and small helper fixes can support this
+exploration; final replay construction and polishing come afterward.
 
-During authoring, retry the failed step or smallest dependent section from usable
-state. Re-establish only prerequisites that changed; do not reinstall, reset or
-repeat a long successful prefix for every edit. Coordinate in-flight actions and
-recorders through the existing owner. Section runs remain development evidence.
+When a step fails during authoring, fix it and retry that step or the smallest
+dependent section from the current usable state, then continue forward. Restore
+only prerequisites that changed. **An ordinary step failure must not restart
+setup, reinstall/reset the app, repeat the completed prefix, or trigger teardown
+and a separate recovery workflow.** Finish the whole traversal before normal
+teardown; a partial section is not the first completed traversal.
 
-Prove the smallest new physical section before building the rest of the flow.
-Use the selected checkout's section entry point if one exists; do not invent a
-CLI flag. If it lacks one, invoke the same shared action under the existing
-session/ownership contract and retain the section's inputs, source revision and
-result. Extend a shared entry point only when needed; do not create a second
-runner or replay an uncertain firmware write. Once teardown has reset the app,
-the next section must re-establish the prerequisites it removed.
+File genuine bugs through the existing incident path, retaining the incident ID
+or submission failure. Keep the affected check failed and continue independent
+remaining steps; do not require every check to pass before finishing exploration.
+If a real blocker prevents reaching the end, report the exact obstacle and next
+action rather than inventing a pass or starting over. Do not make calibration or
+measurement probes prerequisites to basic exploration; keep unsupported
+measurements explicitly unverified.
 
-After a complete successful real traversal, encode its observed actions and
-assertions for deterministic replay without AI. Keep flow files small and
-readable: stable named steps, data for routine-specific choices, shared helpers
-for repeated mechanics. Prefer stable selectors and state-based waits. Avoid
-copying setup, authentication, recording, publication or cleanup into flows.
+On revisions containing [the shared authoring interface](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/248),
+use `bun --no-env-file worker/local.ts author --config /absolute/private-config.json`.
+It runs shared setup and holds its owner/recorder for `steps`, `snapshot`,
+`step <ID>`, `section <ID> <ID>`, semantic `press`, and, on Android,
+`maestro /absolute/section.yaml`. Check the selected checkout's help and
+`docs/DEVELOPMENT-ENTRY.md` for supported adapters and commands. Keep retries
+inside that session; edit and rerun supported sections from the current state.
+End the complete traversal with `teardown`. If the authoring process exits,
+the existing `cleanup` command requires the original `--config` and
+`--run-directory`; after teardown, a new session establishes its own prerequisites.
+
+On older revisions, use or extend the selected checkout's shared authoring/section
+entry point and owner for input, recording and local retries. Do not invent CLI
+flags, create a second runner or replay an uncertain firmware write. Authoring
+section evidence documents progress; it cannot publish a full routine result or
+replace the complete traversal.
+
+Only after reaching the end, encode the observed actions and assertions for
+deterministic replay without AI. Keep flow files small and readable: stable named
+steps, data for routine-specific choices, shared helpers for repeated mechanics.
+Prefer stable selectors and state-based waits. Avoid copying setup,
+authentication, recording, publication or cleanup into flows. A separate full
+replay through the foundation establishes whether the routine passes.
 
 Use the maintained driver path that fits the platform. Existing Mac flows use
 TypeScript `Step` definitions with Swift/native helpers; Android uses shared
