@@ -3,6 +3,13 @@ import {describe, expect, test} from "bun:test"
 import {TARGET_LANGUAGES, getFlagEmoji, getLanguageName} from "./languages"
 
 describe("language lookup", () => {
+  test("puts preferred targets first and keeps the remaining languages alphabetical", () => {
+    expect(TARGET_LANGUAGES.slice(0, 4).map(({code}) => code)).toEqual(["en", "de", "fr", "ja"])
+    const remainingNames = TARGET_LANGUAGES.slice(4).map(({name}) => name)
+    expect(remainingNames).toEqual([...remainingNames].sort())
+    expect(new Set(TARGET_LANGUAGES.map(({code}) => code)).size).toBe(60)
+  })
+
   test("offers the complete Soniox translation language set", () => {
     expect(TARGET_LANGUAGES).toHaveLength(60)
     expect(TARGET_LANGUAGES.map(({code}) => code)).toEqual(

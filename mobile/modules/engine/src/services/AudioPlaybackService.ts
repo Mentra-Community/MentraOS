@@ -8,6 +8,7 @@ const RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK = false
 
 interface AudioPlayRequest {
   startPositionMs?: number
+  startupTimeoutMs?: number
   requestId: string
   audioUrl: string
   appId?: string
@@ -34,6 +35,8 @@ type AudioPlaybackCompletion = (
 
 interface PlaybackState {
   startPositionMs: number
+  startupTimer: number | null
+  hasStarted: boolean
   requestId: string
   audioUrl: string
   uplinkSuppressionId: string
@@ -277,7 +280,14 @@ class AudioPlaybackService {
     }
   }
 
+  private clearStartupTimer(playback: PlaybackState): void {
+    if (playback.startupTimer === null) return
+    BgTimer.clearTimeout(playback.startupTimer)
+    playback.startupTimer = null
+  }
+
   private unloadPlaybackSource(playback: PlaybackState, reason: string): void {
+    this.clearStartupTimer(playback)
     if (this.loadedPlayback !== playback) return
     const player = this.player
     if (!player) {
@@ -414,6 +424,8 @@ class AudioPlaybackService {
       // Store the new playback state
       const playback: PlaybackState = {
         startPositionMs,
+        startupTimer: null,
+        hasStarted: false,
         requestId,
         audioUrl,
         uplinkSuppressionId: `url:${requestId}`,
@@ -457,6 +469,21 @@ class AudioPlaybackService {
       })
 
       console.log(`AUDIO: Requested native playback for ${requestId}`)
+      const startupTimeoutMs = request.startupTimeoutMs
+      if (
+        this.currentPlayback === playback &&
+        !playback.completed &&
+        !playback.hasStarted &&
+        startupTimeoutMs !== undefined &&
+        Number.isFinite(startupTimeoutMs) &&
+        startupTimeoutMs > 0
+      ) {
+        playback.startupTimer = BgTimer.setTimeout(() => {
+          playback.startupTimer = null
+          if (playback.hasStarted) return
+          this.failPlayback(playback, `Playback did not start within ${startupTimeoutMs}ms`)
+        }, startupTimeoutMs)
+      }
     } catch (error) {
       if (suppressCloudUplink) {
         setAudioCloudUplinkSuppressed(`url:${requestId}`, false)
@@ -536,11 +563,17 @@ class AudioPlaybackService {
       return
     }
 
+    if (status.playing && !status.isBuffering && status.currentTime * 1000 > playback.startPositionMs) {
+      playback.hasStarted = true
+      this.clearStartupTimer(playback)
+    }
+
     // Check if playback finished
     if (status.didJustFinish) {
       const durationMs = (status.duration || 0) * 1000 // expo-audio uses seconds
       console.log(`AUDIO: Playback finished for ${playback.requestId}, duration: ${durationMs}ms`)
       playback.completed = true
+      this.clearStartupTimer(playback)
 
       // ExoPlayer can report finished before an A2DP sink has audibly drained
       // the last buffered audio. Pausing immediately can clip the tail on

@@ -1,4 +1,5 @@
 import BluetoothSdk, {type OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import {otaDeviceSessionRevision} from "./OtaDeviceSession"
 import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
@@ -463,24 +464,43 @@ export async function checkForOtaUpdate(
   }
 }
 
-let versionInfoRefresh: Promise<void> | null = null
+let versionInfoRefresh: {revision: number; promise: Promise<void>} | null = null
+const checkedDevices = new WeakMap<OtaCheckCurrentGlassesResult, number>()
 
-function refreshGlassesVersionInfo(): Promise<void> {
+/** Reject a checked offer after its paired device was replaced or forgotten. */
+export function isOtaCheckForCurrentDevice(result: OtaCheckCurrentGlassesResult): boolean {
+  const checkedRevision = checkedDevices.get(result)
+  return checkedRevision === undefined || checkedRevision === otaDeviceSessionRevision()
+}
+
+async function refreshGlassesVersionInfo(): Promise<void> {
   // The background checker and mounted flow may check together. The native SDK
   // allows one version request at a time, so share its fresh response.
-  versionInfoRefresh ??= BluetoothSdk.requestVersionInfo()
+  const revision = otaDeviceSessionRevision()
+  // Native permits only one request across all devices. Wait for an old pair's
+  // request to release that slot, without using its response or failure for B.
+  while (versionInfoRefresh && versionInfoRefresh.revision !== revision) {
+    await versionInfoRefresh.promise.catch(() => {})
+    if (revision !== otaDeviceSessionRevision()) return
+  }
+  if (versionInfoRefresh?.revision === revision) return versionInfoRefresh.promise
+  const refresh = {revision, promise: Promise.resolve()}
+  refresh.promise = BluetoothSdk.requestVersionInfo()
     .then((versionInfo) => {
-      useGlassesStore.getState().setGlassesInfo(versionInfo)
+      if (revision === otaDeviceSessionRevision()) useGlassesStore.getState().setGlassesInfo(versionInfo)
     })
     .finally(() => {
-      versionInfoRefresh = null
+      if (versionInfoRefresh === refresh) versionInfoRefresh = null
     })
-  return versionInfoRefresh
+  versionInfoRefresh = refresh
+  return refresh.promise
 }
 
 export async function checkCurrentGlassesForUpdate(
   options: OtaCheckCurrentGlassesOptions = {},
 ): Promise<OtaCheckCurrentGlassesResult> {
+  const deviceRevision = otaDeviceSessionRevision()
+  const deviceChanged = () => deviceRevision !== otaDeviceSessionRevision()
   const {
     waitForBuildNumberMs = 0,
     waitForBesVersionMs = 5000,
@@ -491,7 +511,7 @@ export async function checkCurrentGlassesForUpdate(
     floorVersionCode = DOWNGRADE_FLOOR_VERSION_CODE,
   } = options
 
-  if (!glassesConnectedNow()) {
+  if (deviceChanged() || !glassesConnectedNow()) {
     return emptyCheckResult("disconnected")
   }
 
@@ -503,6 +523,7 @@ export async function checkCurrentGlassesForUpdate(
   if (refreshVersionInfo) {
     try {
       await refreshGlassesVersionInfo()
+      if (deviceChanged()) return emptyCheckResult("disconnected")
     } catch (error) {
       console.warn("OTA: Failed to request version_info from glasses:", error)
       return emptyCheckResult(undefined, {checkFailureReason: "version_info"})
@@ -512,6 +533,7 @@ export async function checkCurrentGlassesForUpdate(
   let buildNumber = useGlassesStore.getState().buildNumber
   if (!buildNumber && waitForBuildNumberMs > 0) {
     await waitForGlassesState("buildNumber", (value) => !!value, waitForBuildNumberMs)
+    if (deviceChanged()) return emptyCheckResult("disconnected")
     buildNumber = useGlassesStore.getState().buildNumber
   }
 
@@ -534,7 +556,7 @@ export async function checkCurrentGlassesForUpdate(
     return emptyCheckResult("unofficial_client", {buildNumber, packageName})
   }
 
-  if (!glassesConnectedNow()) {
+  if (deviceChanged() || !glassesConnectedNow()) {
     return emptyCheckResult("disconnected")
   }
 
@@ -550,7 +572,7 @@ export async function checkCurrentGlassesForUpdate(
     }
   }
 
-  if (!glassesConnectedNow()) {
+  if (deviceChanged() || !glassesConnectedNow()) {
     return emptyCheckResult("disconnected")
   }
 
@@ -560,7 +582,7 @@ export async function checkCurrentGlassesForUpdate(
     mtkFirmwareVersion = useGlassesStore.getState().mtkFirmwareVersion
   }
 
-  if (!glassesConnectedNow()) {
+  if (deviceChanged() || !glassesConnectedNow()) {
     return emptyCheckResult("disconnected")
   }
 
@@ -571,6 +593,7 @@ export async function checkCurrentGlassesForUpdate(
     })
   }
 
+  if (deviceChanged()) return emptyCheckResult("disconnected")
   const manifestUrl = resolveOtaManifestUrl(useGlassesStore.getState().otaVersionUrl, buildNumber)
   if (!manifestUrl) {
     console.log("OTA: check skipped - no OTA manifest pin resolved")
@@ -584,6 +607,7 @@ export async function checkCurrentGlassesForUpdate(
     floorVersionCode,
   )
 
+  if (deviceChanged()) return emptyCheckResult("disconnected")
   if (!result.hasCheckCompleted) {
     return {
       ...result,
@@ -629,7 +653,7 @@ export async function checkCurrentGlassesForUpdate(
       (value) => Number.parseInt(value, 10) >= 39,
       waitForLegacyMigrationMs,
     )
-    if (!glassesConnectedNow()) return emptyCheckResult("disconnected")
+    if (deviceChanged() || !glassesConnectedNow()) return emptyCheckResult("disconnected")
     if (!migrated) {
       console.warn("OTA: Legacy rescue did not hand off to the release manifest")
       return emptyCheckResult(undefined, {checkFailureReason: "version_info"})
@@ -660,7 +684,7 @@ export async function checkCurrentGlassesForUpdate(
 
   useGlassesStore.getState().setOtaUpdateAvailable(updateInfo)
 
-  return {
+  const checkedResult: OtaCheckCurrentGlassesResult = {
     ...result,
     updateAvailable,
     updates: filteredUpdates,
@@ -682,4 +706,6 @@ export async function checkCurrentGlassesForUpdate(
     mtkFirmwareVersion,
     besFirmwareVersion,
   }
+  checkedDevices.set(checkedResult, deviceRevision)
+  return checkedResult
 }
