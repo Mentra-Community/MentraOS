@@ -6,15 +6,16 @@ import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSui
 import {testRunIdSchema} from "../types/test-run.types";
 import {canonical, TestRunError} from "./test-run.service";
 
+const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 export class TestSuiteService {
   async create(input: unknown) {
     const parsed = testSuiteSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid test suite");
     const payload = parsed.data;
     const payloadSha256 = createHash("sha256").update(canonical(payload)).digest("hex");
-    try { await TestSuiteModel.create({suiteId: payload.suiteId, payload, payloadSha256}); }
+    try { await TestSuiteModel.create([{suiteId: payload.suiteId, payload, payloadSha256}], {writeConcern}); }
     catch (error) { if ((error as {code?: number}).code !== 11000) throw error; }
-    const stored = await TestSuiteModel.findOne({suiteId: payload.suiteId}).lean();
+    const stored = await TestSuiteModel.findOne({suiteId: payload.suiteId}).read("primary").readConcern("majority").lean();
     if (!stored || stored.payloadSha256 !== payloadSha256) throw new TestRunError(409, "suite ID already has a different plan");
     return this.detail(payload.suiteId);
   }
@@ -31,7 +32,7 @@ export class TestSuiteService {
       const updated = await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false},
         "payload.members.requestId": {$ne: parsed.data.requestId},
         "payload.members": {$elemMatch: {memberId, requestId: {$exists: false}}}},
-        {$set: {"payload.members.$.requestId": parsed.data.requestId}});
+        {$set: {"payload.members.$.requestId": parsed.data.requestId}}, {writeConcern});
       if (!updated.modifiedCount) {
         const current = await this.detail(suiteId);
         if (current.members.find(member => member.memberId === memberId)?.requestId !== parsed.data.requestId)
@@ -46,12 +47,12 @@ export class TestSuiteService {
     const suite = await this.detail(suiteId);
     if (Date.parse(parsed.data.finishedAt) < Date.parse(suite.startedAt)) throw new TestRunError(400, "suite finish precedes start");
     // A retry acknowledges the original completion; it cannot reopen or rewrite it.
-    await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}}, {$set: parsed.data});
+    await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}}, {$set: parsed.data}, {writeConcern});
     return this.detail(suiteId);
   }
   async detail(suiteId: string) {
     if (!testRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
-    const row = await TestSuiteModel.findOne({suiteId}).lean();
+    const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
     if (!row) throw new TestRunError(404, "test suite not found");
     const suite = row.payload as TestSuite;
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
@@ -69,7 +70,7 @@ export class TestSuiteService {
     return {labels: rows.flatMap(row => {
       const suite = row.payload as TestSuite;
       return suite.members.filter(member => !!member.requestId && requestIds.includes(member.requestId)).map(member => ({...member,
-        suiteId: suite.suiteId, channel: suite.channel, headSha: suite.build.headSha,
+        suiteId: suite.suiteId, channel: suite.channel, headSha: member.headSha ?? suite.build.headSha,
         label: `${suite.channel} ${suite.trigger} · ${suite.build.release ?? suite.build.headSha.slice(0, 7)}`}));
     })};
   }
