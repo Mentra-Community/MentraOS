@@ -476,11 +476,16 @@ export function expectedPlayTracks(plan) {
 
 // The Android build may carry a testing track's floor plus one instead of the
 // family number (see resolve-android-version-code.mjs); the results say so.
+export const ANDROID_MAX_VERSION_CODE = 2_100_000_000
+
 export function androidBuildNumberOf(plan, results) {
   const declared = results?.native?.androidBuildNumber
   if (declared === undefined) return plan.native.buildNumber
   if (!Number.isSafeInteger(declared) || declared < plan.native.buildNumber) {
     throw new Error(`native.androidBuildNumber ${JSON.stringify(declared)} is below the family build number`)
+  }
+  if (declared > ANDROID_MAX_VERSION_CODE) {
+    throw new Error(`native.androidBuildNumber ${declared} exceeds ${ANDROID_MAX_VERSION_CODE}`)
   }
   return declared
 }

@@ -3,6 +3,10 @@
 const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/90a70edfe2fa17fd766dda3d98977555d6608a05/"
 // Combined feedback form contract; deploy the companion harness before testing these app artifacts.
 const noGlassesDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/09e8c89b2dd0212d342d05f48b988dec9c21d7a5/"
+const phoneDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/69ffd29cba268d9ef2a67ee5d1b33edb2c547b90/"
+const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
+const connectedDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
+const accountDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/11b98bed9efb2b414ad912074888c58aeea2e6df/"
 export const DEVICE_ROUTINES = Object.freeze({
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",
@@ -24,6 +28,16 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${noGlassesDefinitions}tools/mentra-e2e/flows/no-glasses.ts`,
     worker: `${noGlassesDefinitions}worker/no-glasses.ts`,
   }),
+  "no-glasses-android": Object.freeze({
+    label: "routine:no-glasses-android", name: "Android no-glasses UI", platform: "android",
+    coverage: "Signed-in English unpaired Home, All Apps search, Settings and account forms without submitting, miniapp switcher and local glasses-required dialogs; recorded Android steps and verified app return state.",
+    relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/app.config.ts", "mobile/modules/**/android/**"],
+    prerequisites: "CI signed Android APK and immutable OTA manifest; enrolled Android phone with its own existing test account and no paired glasses.",
+    exclusions: "No login/logout, onboarding, permission changes, pairing, connected glasses, OTA, Call, acoustic qualification or physical-iPhone coverage. Mac and Android results are independent; the Android adapter's device qualification is pending.",
+    definition: `${noGlassesDefinitions}tools/mentra-e2e/ANDROID-NO-GLASSES-ROUTINE.md`,
+    implementation: `${noGlassesDefinitions}tools/mentra-e2e/runner/android-walkthrough.ts`,
+    worker: `${noGlassesDefinitions}worker/android-no-glasses.ts`,
+  }),
   "mentra-call": Object.freeze({
     label: "routine:mentra-call", name: "Mentra Call", platform: "ios-on-mac",
     coverage: "Real Teams guest admission, advancing glasses video, required two-way audio evidence, mute, background, roster/leave/rejoin and owned meeting/network cleanup.",
@@ -34,12 +48,90 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${definitions}tools/mentra-e2e/runner/call-routine.ts`,
     worker: `${definitions}worker/CALL-RECIPE.md`,
   }),
+  // Registered Mac nightly target: its automatic worker (worker/account-miniapps.ts, configuration kind
+  // automatic-account-miniapps-worker) authenticates the request, verifies its exact selected Mac build and OTA manifest,
+  // binds the reviewed host of the selected app backend (dev or staging) and runs the full definition in one claimed
+  // lifecycle with claim-bound recording, export and settlement. Registration permits an honest attempted run; it is
+  // not qualification.
+  "account-miniapps": Object.freeze({
+    label: "routine:account-miniapps", name: "Account and miniapps", platform: "ios-on-mac",
+    coverage: "One combined paired-account routine on the request's selected Mac build: email login/logout, data export, Google SSO, exact feedback report, paired miniapps and visual incompatible tiles, with account and pairing restoration.",
+    relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/src/services/**", "mobile/assets/miniapps/**"],
+    prerequisites: "CI Mac app and immutable OTA manifest verified against the claimed request, on a dev or staging backend with its own reviewed worker host; the private lifecycle's recorded original account and paired glasses fixture, the Google account and the Safari provider recording, and the private worker's own fixture, credential and ownership prerequisites.",
+    exclusions: "Sections are one routine and are never requested separately. No Android, OTA or Call coverage. The owned Safari Google provider completion, its Mentra callback and the selected provider window's close are unqualified, and no real eligible customer completion has been observed: those cases report failed or blocked results when unobserved. Registered in source; not qualified.",
+    definition: `${accountDefinitions}docs/ACCOUNT-MINIAPPS-ROUTINE.md`,
+    implementation: `${accountDefinitions}tools/mentra-e2e/runner/account-miniapps-routine.ts`,
+    worker: `${accountDefinitions}worker/account-miniapps.ts`,
+  }),
+  // Registered Android nightly target: its automatic worker (worker/connected-glasses.ts, configuration kind
+  // automatic-connected-glasses-worker) authenticates the request, verifies its exact selected APK and OTA manifest and
+  // runs the full definition in one claimed lifecycle with claim-bound segmented recording, export and settlement.
+  // Registration permits an honest attempted run; it is not qualification.
+  "connected-glasses": Object.freeze({
+    label: "routine:connected-glasses", name: "Connected glasses (Android)", platform: "android",
+    coverage: "One combined Android routine with paired glasses on the request's selected APK: disconnect/unpair/reconnect, Bluetooth, battery report, camera settings, Wi-Fi scan and connect (C14, the observed path with the protected entry omitted between owned recording segments), gallery delivery (C9) and YouTube audio (C8), returning the original account and pairing.",
+    relatedPaths: ["mobile/modules/bluetooth-sdk/**", "mobile/modules/**/android/**", "mobile/src/app/**", "mobile/src/services/**"],
+    prerequisites: "CI signed Android APK and immutable OTA manifest verified against the claimed request; an enrolled Android phone with its paired glasses and existing account, and the private worker's own fixture, tool and ownership prerequisites.",
+    exclusions: "Never relabelled as the Android no-glasses walkthrough; no Mac, OTA or Call coverage. C8 and C9 have no controllers yet: their steps fail by name before any input, and later unvisited steps stay not-run. C3's physical report evidence, C8 route/reference/audio and C9 capture/sync remain unverified. Registered in source; not qualified.",
+    definition: `${connectedDefinitions}docs/routines/connected-glasses-brief.md`,
+    implementation: `${connectedDefinitions}tools/mentra-e2e/runner/connected-glasses-routine.ts`,
+    worker: `${connectedDefinitions}worker/connected-glasses.ts`,
+  }),
+  // Registered nightly target: its automatic worker (worker/livestreamer.ts, configuration kind
+  // automatic-livestreamer-worker) authenticates the request, binds its selected Mac build and runs the one claimed
+  // lifecycle with claim-bound CI evidence. Preparation still refuses before any claim while its physical
+  // observations are missing; live qualification is pending.
+  livestreamer: Object.freeze({
+    label: "routine:livestreamer", name: "Livestreamer", platform: "ios-on-mac",
+    coverage: "One routine on the request's selected Mac build with paired glasses: managed Stream Here (WebRTC) started and stopped once, observed by an owned viewer of the run's own Share URL (decoded progression, live to offline), and a local Custom RTMP stream to an owned local receiver over the glasses hotspot, each stopped through its normal control with recordings verified; then network, receiver and UI restored and the selected app, original account and paired Home verified.",
+    relatedPaths: ["mobile/assets/miniapps/**", "mobile/src/services/**"],
+    prerequisites: "CI Mac app installed from the claimed request's selected build; an enrolled paired-glasses Mac fixture with its pinned ADB, firmware and account; the host's pinned native snapshots of every observed Livestreamer state and an observed owned Stream Here Share URL (managed watch binding) on that build; the pinned local receiver and glasses-hotspot network; normal return custody of the app, glasses, receiver and network. Preparation refuses before any claim while an observation is missing.",
+    exclusions: "No Android, physical iPhone, OTA or Call coverage. Receiver or viewer observations alone do not qualify it. Registered in source; the managed-viewer and state observations and live qualification are still pending.",
+    definition: `${livestreamerDefinitions}docs/LIVESTREAMER-FULL-ROUTINE.md`,
+    implementation: `${livestreamerDefinitions}tools/mentra-e2e/flows/livestreamer.ts`,
+    worker: `${livestreamerDefinitions}worker/livestreamer.ts`,
+  }),
+  // Registered Mac Phone mode routines: one shared automatic worker (worker/phone-mode.ts) authenticates the request,
+  // installs its selected Mac build and runs the complete flow with claim-bound CI evidence. Their live qualification is
+  // still requires real claim-bound runs; trigger registration does not prove qualification.
+  "captions-phone": Object.freeze({
+    label: "routine:captions-phone", name: "Captions with simulated glasses", platform: "ios-on-mac",
+    coverage: "Selected build and pinned-account setup establish Phone mode and Phone microphone input; Captions transcribes controlled speech. Shared teardown restores owned audio resources and verifies the app is stopped.",
+    relatedPaths: ["mobile/assets/miniapps/com.mentra.captions-*.zip", "mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/modules/engine/src/services/**"],
+    prerequisites: "CI Mac app; an available enrolled Mac lane, pinned test account, speech, player, audio switch tools and exact input/output/system audio UIDs. Claimed setup establishes its own entry rather than requiring precommissioned Phone Home.",
+    exclusions: "No physical glasses, physical iPhone, Android or quantitative acoustic qualification. Trigger registration and development examples do not qualify a new CI request.",
+    definition: `${phoneDefinitions}docs/routines/captions-phone.md`,
+    implementation: `${phoneDefinitions}tools/mentra-e2e/flows/captions-phone.ts`,
+    worker: `${phoneDefinitions}worker/phone-mode.ts`,
+  }),
+  "notes-phone": Object.freeze({
+    label: "routine:notes-phone", name: "Notes with simulated glasses", platform: "ios-on-mac",
+    coverage: "The same recorded Phone mode setup, then transcription of a controlled discussion generated with a fresh phrase for each request; exactly one new generated note found by list identity; exact title and body edits; persistence after reopening; and Search returning that note and the exact-phrase transcript.",
+    relatedPaths: ["mobile/assets/miniapps/com.mentra.notes-*.zip", "mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/modules/engine/src/services/**"],
+    prerequisites: "CI Mac app; an available enrolled Mac lane, pinned test account, speech synthesizer, exact audio endpoint UIDs and an exclusively allocated empty transcript day. Shared setup and teardown own this run's data and audio resources.",
+    exclusions: "No deletion of unrelated account history, physical glasses, physical iPhone or Android. Run-owned Notes and transcripts are cleaned; teardown verifies the app is stopped rather than requiring Phone Home. Development examples do not qualify a new CI request.",
+    definition: `${phoneDefinitions}docs/routines/notes-phone.md`,
+    implementation: `${phoneDefinitions}tools/mentra-e2e/flows/notes-phone.ts`,
+    worker: `${phoneDefinitions}worker/phone-mode.ts`,
+  }),
 })
 
 export function deviceRoutine(id) {
   if (!Object.hasOwn(DEVICE_ROUTINES, id)) throw new Error("Unsupported device routine")
   return DEVICE_ROUTINES[id]
 }
+
+export const AUTOMATIC_BUILD_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"])
+
+/** Execution paths (request, dispatch and nightly) accept only a routine with a registered automatic worker. A planned
+ * routine refuses with its exact pending reason. Tests may pass a catalog that models a completed registration. */
+export function registeredRoutine(id, catalog = DEVICE_ROUTINES) {
+  if (!Object.hasOwn(catalog, id)) throw new Error("Unsupported device routine")
+  const routine = catalog[id]
+  if (routine.pending) throw new Error(`Routine ${id} is planned but not registered for automatic execution: ${routine.pending}`)
+  return routine
+}
+export const isRegisteredRoutine = (id, catalog = DEVICE_ROUTINES) => Object.hasOwn(catalog, id) && !catalog[id].pending
 
 export function hasRoutineLabel(pr, id) {
   return pr.labels?.some((label) => (typeof label === "string" ? label : label.name) === deviceRoutine(id).label) ?? false

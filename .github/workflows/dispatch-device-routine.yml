@@ -3,7 +3,7 @@ run-name: Device request callback ${{ github.event.workflow_run.id }} / attempt 
 
 on:
   workflow_run:
-    workflows: [Mobile App iOS Build, Coordinated Mentra Release, Request device routine]
+    workflows: [Mobile App iOS Build, Mobile App Android Build, Coordinated Mentra Release, Request device routine]
     types: [completed]
 
 permissions:
