@@ -33,8 +33,10 @@ under `regions/china/alibaba/`:
   `china/alibaba/prod/terraform.tfstate`. The bucket was kept. Reuse this
   key: it still tracks the resources that survived the teardown (VPC,
   vswitches, security groups, DNS records in the domestic account,
-  certificates). Run `terraform plan` first so the refresh drops the deleted
-  resources, and reconcile any drift before `apply`. A fresh key would lose
+  certificates). Start with `terraform plan -refresh-only` and, once
+  reviewed, `terraform apply -refresh-only` to drop the deleted resources
+  from state. Then run a normal `plan` and check every planned
+  recreation before `apply`. A fresh key would lose
   those bindings and try to create duplicates.
 - `dev/`: the dev network and the **marketing site** that serves
   `mentraglass.cn`. Its state is not in the bucket above.
