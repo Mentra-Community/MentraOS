@@ -3,7 +3,7 @@ import test from "node:test"
 import {nightlySuiteId, suiteResultMessage, publishSuiteResult} from "./nightly-suite.mjs"
 
 const expected = ["no-glasses", "ota-roundtrip-android"]
-const suite = {suiteId: nightlySuiteId(5000, 1), channel: "dev", outcome: "passed", passed: true,
+const suite = {suiteId: nightlySuiteId(5000, 1), channel: "dev", outcome: "passed", passed: 2,
   finishedAt: "2026-10-01T12:00:00Z", members: expected.map(routineId => ({routineId, status: "passed"}))}
 
 test("suite identity and complete green require every frozen member", () => {
@@ -25,7 +25,7 @@ test("running, staging, duplicate and contradictory aggregates refuse posting", 
 })
 
 test("single-routine jobs link to their published run, not the suite", () => {
-  const single = {...suite, members: [{...suite.members[0], runId: "routine-100-1-dev-no-glasses"}]}
+  const single = {...suite, passed: 1, members: [{...suite.members[0], runId: "routine-100-1-dev-no-glasses"}]}
   const result = suiteResultMessage(single, ["no-glasses"])
   assert.ok(result.url.includes("?testRun="))
   assert.ok(!result.text.includes("nightly suite"))

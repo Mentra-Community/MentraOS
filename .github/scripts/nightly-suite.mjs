@@ -18,7 +18,7 @@ export function suiteResultMessage(suite, expectedRoutineIds) {
     members.set(member.routineId, member)
   }
   const failed = expectedRoutineIds.filter(routine => members.get(routine)?.status !== "passed")
-  const passed = failed.length === 0 && suite.outcome === "passed" && suite.passed === true
+  const passed = failed.length === 0 && suite.outcome === "passed" && suite.passed === expectedRoutineIds.length
   if (!passed && !failed.length) throw new Error("Suite aggregate contradicts member results")
   const singleRunId = expectedRoutineIds.length === 1 ? members.get(expectedRoutineIds[0])?.runId : undefined
   if (expectedRoutineIds.length === 1 && (typeof singleRunId !== "string" || !singleRunId))
