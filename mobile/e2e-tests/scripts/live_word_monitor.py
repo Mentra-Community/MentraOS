@@ -115,19 +115,9 @@ def parse_args() -> argparse.Namespace:
         help="Require this macOS output device for local playback. If SwitchAudioSource is installed, the monitor will switch to it automatically.",
     )
     parser.add_argument(
-        "--alert-intent-action",
-        default="com.mentra.SUBMIT_INCIDENT_REPORT",
-        help="Android broadcast action to fire when an alert is raised.",
-    )
-    parser.add_argument(
-        "--alert-intent-component",
-        default="com.mentra.mentra/com.mentra.crust.receivers.SubmitIncidentReportReceiver",
-        help="Optional explicit Android broadcast component for alert dispatch.",
-    )
-    parser.add_argument(
         "--disable-alert-intent-dispatch",
         action="store_true",
-        help="Disable Android alert-intent dispatch even when alerts are raised.",
+        help="Disable Android incident deep-link dispatch even when alerts are raised.",
     )
     parser.add_argument("--poll-interval", type=float, default=0.25, help="Hierarchy poll interval in seconds")
     parser.add_argument("--word-match-early-tolerance-ms", type=int, default=250, help="Allow a visible word match slightly before the expected word timestamp")
@@ -1249,77 +1239,22 @@ class MonitorWorker:
                 dispatch_attempted_at_ms=now_ms,
             )
 
-        action = (self.args.alert_intent_action or "").strip()
-        if not action:
-            return self.state.update_alert(
-                device_id,
-                alert_id,
-                status="dispatch_disabled",
-                dispatch_attempted_at_ms=now_ms,
-                dispatch_error="No alert intent action configured.",
-            )
-
         failure_message = (
             f"{alert.get('incident_name', alert.get('incident_type', 'incident'))} alert reached after "
             f"{int(alert.get('duration_ms') or 0) / 1000:.1f}s."
         )
-        remote_cmd = ["am", "broadcast", "-a", action]
-        component = (self.args.alert_intent_component or "").strip()
-        if component:
-            remote_cmd.extend(["-n", component])
-        remote_cmd.extend(
-            [
-                "--es",
-                "failure_code",
-                str(alert.get("incident_type") or "unknown_incident"),
-                "--es",
-                "failure_message",
-                failure_message,
-                "--es",
-                "test_run_id",
-                alert_id,
-                "--es",
-                "scenario_name",
-                str(alert.get("incident_name") or alert.get("incident_type") or "Unknown Incident"),
-                "--es",
-                "source",
-                "live_word_monitor",
-                "--es",
-                "alert_id",
-                alert_id,
-                "--es",
-                "incident_id",
-                str(alert.get("incident_id") or ""),
-                "--es",
-                "incident_type",
-                str(alert.get("incident_type") or ""),
-                "--es",
-                "incident_name",
-                str(alert.get("incident_name") or ""),
-                "--es",
-                "reason",
-                str(alert.get("reason") or ""),
-                "--ei",
-                "duration_ms",
-                str(int(alert.get("duration_ms") or 0)),
-                "--ei",
-                "alert_threshold_ms",
-                str(int(alert.get("alert_threshold_ms") or 0)),
-                "--el",
-                "started_at_ms",
-                str(int(alert.get("started_at_ms") or 0)),
-                "--el",
-                "alerted_at_ms",
-                str(int(alert.get("alerted_at_ms") or now_ms)),
-            ]
-        )
-        if alert.get("dataset_row_idx") is not None:
-            remote_cmd.extend(["--ei", "dataset_row_idx", str(int(alert["dataset_row_idx"]))])
-        if alert.get("utterance_text"):
-            remote_cmd.extend(["--es", "utterance_text", str(alert["utterance_text"])])
-        public_dashboard_url = (self.args.public_dashboard_url or "").strip()
-        if public_dashboard_url:
-            remote_cmd.extend(["--es", "dashboard_url", public_dashboard_url])
+        params = {
+            "alert_id": alert_id,
+            "test_run_id": alert_id,
+            "failure_code": str(alert.get("incident_type") or "unknown_incident"),
+            "failure_message": failure_message,
+            "scenario_name": str(alert.get("incident_name") or alert.get("incident_type") or "Unknown Incident"),
+            "source": "live_word_monitor",
+        }
+        if self.args.public_dashboard_url:
+            params["dashboard_url"] = self.args.public_dashboard_url
+        url = "com.mentra://test/submit-incident-report?" + urllib.parse.urlencode(params)
+        remote_cmd = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", "com.mentra.mentra"]
 
         adb_cmd = self.adb_prefix_for(device_id) + ["shell", " ".join(shlex.quote(part) for part in remote_cmd)]
         try:
@@ -1330,7 +1265,7 @@ class MonitorWorker:
                 status="dispatched",
                 dispatch_attempted_at_ms=now_ms,
                 dispatch_completed_at_ms=int(time.time() * 1000),
-                dispatch_output=(result.stdout or result.stderr).strip() or "broadcast_sent",
+                dispatch_output=(result.stdout or result.stderr).strip() or "deep_link_sent",
             )
         except Exception as exc:
             return self.state.update_alert(

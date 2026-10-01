@@ -6,9 +6,14 @@ const mockStop = jest.fn(),
   mockStart = jest.fn(),
   mockForeground = jest.fn(),
   mockPermissions = jest.fn()
+const mockReplaceSurface = jest.fn()
+jest.mock("@/stores/miniappLaunch", () => ({useMiniappPresentationStore: {getState: () => ({replaceSurface: mockReplaceSurface})}}))
+const mockSuperMode = jest.fn()
 const app = {packageName: "com.mentra.notes", version: "1.0.27"}
 jest.mock("@mentra/engine", () => ({
+  SETTINGS: {super_mode: {key: "super_mode"}},
   engine: {
+    settings: {get: () => mockSuperMode()},
     miniapps: {
       stop: (...args: unknown[]) => mockStop(...args),
       refresh: () => mockRefresh(),
@@ -26,6 +31,7 @@ const link = (url = "http://127.0.0.1:3000/bundle.zip") =>
   `com.mentra://test/load-miniapp?${new URLSearchParams({url, package: app.packageName, version: app.version})}`
 beforeEach(() => {
   jest.clearAllMocks()
+  mockSuperMode.mockReturnValue(true)
   mockInstall.mockResolvedValue({is_error: () => false})
   mockPermissions.mockResolvedValue([])
   mockStart.mockResolvedValue(true)
@@ -58,4 +64,24 @@ it("does not open a failed installation or a launch needing permissions", async 
   mockPermissions.mockResolvedValue(["microphone"])
   await expect(loadAuthoringMiniapp(link())).rejects.toThrow("microphone")
   expect(mockForeground).not.toHaveBeenCalled()
+})
+
+it("refuses normal-mode install requests before stopping or installing", async () => {
+  mockSuperMode.mockReturnValue(false)
+  await expect(loadAuthoringMiniapp(link())).rejects.toThrow("Super Mode")
+  expect(mockStop).not.toHaveBeenCalled()
+  expect(mockInstall).not.toHaveBeenCalled()
+})
+
+it("rejects overlap without another stop or install and releases the guard after failure", async () => {
+  let fail!: (error: Error) => void
+  mockInstall.mockReturnValueOnce(new Promise((_, reject) => {fail = reject}))
+  const first = loadAuthoringMiniapp(link())
+  await Promise.resolve()
+  await expect(loadAuthoringMiniapp(link())).rejects.toThrow("already in progress")
+  expect(mockStop).toHaveBeenCalledTimes(1)
+  fail(new Error("download failed"))
+  await expect(first).rejects.toThrow("download failed")
+  await expect(loadAuthoringMiniapp(link())).resolves.toEqual(app)
+  expect(mockReplaceSurface).toHaveBeenCalledWith(app.packageName)
 })

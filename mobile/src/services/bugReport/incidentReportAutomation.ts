@@ -1,4 +1,4 @@
-import {submitIncidentReport, type IncidentReportResult} from "@mentra/engine"
+import {engine, SETTINGS, submitIncidentReport, type IncidentReportResult} from "@mentra/engine"
 
 const fields = {
   alert_id: 160,
@@ -57,6 +57,8 @@ function failed(request: IncidentReportRequest, error: string): IncidentReportRe
  * Include deployment and account identity in the scope; never include credentials.
  */
 export function submitIncidentReportOnce(scope: string, request: IncidentReportRequest): Promise<IncidentReportResult> {
+  if (engine.settings.get(SETTINGS.super_mode.key) !== true)
+    return Promise.resolve(failed(request, "Enable Super Mode to submit an incident from a script"))
   const key = JSON.stringify([scope, request.alert_id])
   const input = JSON.stringify(request)
   const existing = submissions.get(key)

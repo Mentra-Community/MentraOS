@@ -14,14 +14,12 @@ import com.mentra.crust.heading.HeadingManager
 import com.mentra.crust.jsc.JSCRuntime
 import com.mentra.crust.jsc.InstalledMiniappManifest
 import com.mentra.crust.jsc.JSCPolyfillBridge
-import com.mentra.crust.receivers.IncidentReportDelivery
 
 class CrustModule : Module() {
   companion object {
     private const val TAG = "CrustModule"
 
     @Volatile private var eventEmitter: ((String, Map<String, Any>) -> Unit)? = null
-    private val incidentReports = IncidentReportDelivery()
 
     fun emitPhoneNotification(
             context: android.content.Context,
@@ -53,8 +51,6 @@ class CrustModule : Module() {
       NotificationProcessBridge.emitDismissed(context, notificationKey, packageName)
     }
 
-    /** Returns false when no started JS report service received the request. */
-    fun emitSubmitIncidentReport(data: Map<String, Any>): Boolean = incidentReports.deliver(data)
 
     private fun emitEvent(eventName: String, data: Map<String, Any>) {
       val emitter = eventEmitter
@@ -122,7 +118,6 @@ class CrustModule : Module() {
       "onChange",
       "phone_notification",
       "phone_notification_dismissed",
-      "submit_incident_report",
       "onNavManeuver",
       "onNavRerouting",
       "onNavArrived",
@@ -138,7 +133,6 @@ class CrustModule : Module() {
 
     OnCreate {
       eventEmitter = { eventName, data -> sendEvent(eventName, data) }
-      incidentReports.attach { data -> sendEvent("submit_incident_report", data) }
       registerNotificationBridgeIfPossible()
       installRuntimeIfPossible("OnCreate")
     }
@@ -152,17 +146,10 @@ class CrustModule : Module() {
       notificationEventReceiver = null
       notificationBridgeContext = null
       eventEmitter = null
-      incidentReports.detach()
     }
 
     Function("hello") {
       "Hello world! 👋"
-    }
-
-    // SubmitIncidentReportService reports its listener state so broadcasts that
-    // arrive before it subscribes get an immediate failed receipt, not silence.
-    Function("setIncidentReportServiceReady") { ready: Boolean ->
-      incidentReports.setServiceReady(ready)
     }
 
     AsyncFunction("setValueAsync") { value: String ->

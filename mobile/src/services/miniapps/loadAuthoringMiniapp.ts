@@ -1,10 +1,26 @@
-import {engine} from "@mentra/engine"
+import {engine, SETTINGS} from "@mentra/engine"
 import {appRegistry} from "@mentra/engine-host-internal"
+
+import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 
 import {checkPermissionsUI} from "@/utils/PermissionsUtils"
 
-/** One authoring request replaces only its named package using the normal installer. */
+let loading = false
+
+/** Reject overlapping replacements; the same-version WebView is remounted after installation. */
 export async function loadAuthoringMiniapp(link: string) {
+  if (loading) throw new Error("A miniapp replacement is already in progress")
+  loading = true
+  try {
+    return await replaceMiniapp(link)
+  } finally {
+    loading = false
+  }
+}
+
+async function replaceMiniapp(link: string) {
+  if (engine.settings.get(SETTINGS.super_mode.key) !== true)
+    throw new Error("Enable Super Mode to load a miniapp from a script")
   const request = new URL(link)
   if (request.protocol !== "com.mentra:" || request.hostname !== "test" || request.pathname !== "/load-miniapp") {
     throw new Error("Expected a Mentra miniapp authoring link")
@@ -32,10 +48,11 @@ export async function loadAuthoringMiniapp(link: string) {
   if (installed.is_error()) throw installed.error
   await engine.miniapps.refresh()
   const app = engine.miniapps.list().find((item) => item.packageName === packageName)
-  if (!app) throw new Error("Installed miniapp is missing from the registry")
+  if (!app || app.version !== version) throw new Error("Installed miniapp is missing from the registry")
   const missing = await checkPermissionsUI(app)
   if (missing.length) throw new Error(`Miniapp needs permissions: ${missing.join(", ")}`)
   if (!(await engine.miniapps.start(app, {skipNavigation: true}))) throw new Error("Miniapp launch was refused")
+  useMiniappPresentationStore.getState().replaceSurface(packageName)
   await engine.miniapps.setForeground(packageName)
   return {packageName, version}
 }

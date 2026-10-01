@@ -4,11 +4,17 @@ type MiniappOpeningAnimation = "slide" | "expand"
 
 /** Presentation only: runtime startup does not wait on this state. */
 export const useMiniappPresentationStore = create<{
+  replacementGeneration: number
+  replacedPackageName: string | null
+  replaceSurface: (packageName: string) => void
   revealedPackageName: string | null
   setRevealedPackageName: (packageName: string | null) => void
   closingPackageName: string | null
   setClosingPackageName: (packageName: string | null) => void
 }>((set) => ({
+  replacementGeneration: 0,
+  replacedPackageName: null,
+  replaceSurface: (replacedPackageName) => set((state) => ({replacedPackageName, replacementGeneration: state.replacementGeneration + 1})),
   revealedPackageName: null,
   setRevealedPackageName: (revealedPackageName) => set({revealedPackageName}),
   closingPackageName: null,

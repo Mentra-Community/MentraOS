@@ -79,6 +79,8 @@ const GLASS_WARMUP_MS = 10
 
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
+  const replacementGeneration = useMiniappPresentationStore((state) => state.replacementGeneration)
+  const replacedPackageName = useMiniappPresentationStore((state) => state.replacedPackageName)
   // Last foregrounded packageName (null = none) — lets the keyboard-dismiss
   // effect below fire only on real identity changes, not reference churn.
   const prevForegroundPackageRef = useRef<string | null>(null)
@@ -120,7 +122,7 @@ export default function Compositor() {
     }
     if (foregroundApp) {
       // Mount before starting the slide, and keep the same reference across store refreshes.
-      setRenderedApp((prev) => (prev?.packageName === foregroundApp.packageName ? prev : foregroundApp))
+      setRenderedApp((prev) => (prev?.packageName === foregroundApp.packageName && replacedPackageName !== foregroundApp.packageName ? prev : foregroundApp))
     }
     if (Platform.OS === "ios" && iosAppSwitcherBottomSwipe) {
       if (foregroundApp) {
@@ -133,7 +135,7 @@ export default function Compositor() {
         )
       }
     }
-  }, [foregroundApp])
+  }, [foregroundApp, replacementGeneration])
 
   const isForeground = foregroundApp != null
   // LocalMiniappView toggles this off while the foregrounded miniapp's WebView
@@ -519,7 +521,7 @@ export default function Compositor() {
             // switching between two offline-hosted apps must mount a fresh host
             // (the internal stack only seeds from def.initialRoute on mount, so
             // a reused instance would keep the previous app's stack).
-            key={renderedApp.packageName}
+            key={`${renderedApp.packageName}:${replacedPackageName === renderedApp.packageName ? replacementGeneration : 0}`}
             packageName={renderedApp.packageName}
             appName={renderedApp.name}
             iconUrl={renderedApp.logoUrl}
@@ -538,7 +540,7 @@ export default function Compositor() {
             // `webViewCanGoBack` became true under B — which disabled the
             // Compositor's minimize-swipe and made the back-swipe pop to A's
             // page instead of returning home.
-            key={renderedApp.packageName}
+            key={`${renderedApp.packageName}:${replacedPackageName === renderedApp.packageName ? replacementGeneration : 0}`}
             openingComplete={capsuleVisible}
             packageName={renderedApp.packageName}
             appName={renderedApp.name}

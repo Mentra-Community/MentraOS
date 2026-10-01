@@ -28,7 +28,6 @@ import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloud
 import {startSupportProfileSync, stopSupportProfileSync} from "./services/SupportProfileSync"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
-import {startSubmitIncidentReportService, stopSubmitIncidentReportService} from "./services/SubmitIncidentReportService"
 import {
   startMentraJSCrashloopReportService,
   stopMentraJSCrashloopReportService,
@@ -125,7 +124,6 @@ export const engine = {
     startPhoneNotificationsSync()
     // Android: external tools can broadcast an incident-report request in any build;
     // engine owns turning that into a Cloud V2 report.
-    if (cloudClientService.hasCore()) startSubmitIncidentReportService()
     // MentraJS crashloop-disabled is runtime state; engine owns filing the
     // automatic report while hosts only render alert/telemetry side effects.
     if (cloudClientService.hasCore()) startMentraJSCrashloopReportService()
@@ -159,7 +157,6 @@ export const engine = {
     await safely("audio cloud uplink", stopAudioCloudUplink)
     await safely("support profile sync", stopSupportProfileSync)
     await safely("phone notifications sync", stopPhoneNotificationsSync)
-    await safely("incident report service", stopSubmitIncidentReportService)
     await safely("mentrajs crashloop report service", stopMentraJSCrashloopReportService)
     await safely("miniapp engine", stopMiniappEngine)
     await safely("local miniapp runtime", () => localMiniappRuntime.cleanup())

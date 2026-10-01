@@ -8,6 +8,7 @@ import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 
 let mockForegroundApp: ClientApp | null = null
 const mockStop = jest.fn()
+const mockMount = jest.fn()
 jest.mock("@mentra/engine", () => ({
   SETTINGS: {ios_app_switcher_bottom_swipe: {key: "bottomSwipe"}},
   useSetting: () => [false],
@@ -24,7 +25,11 @@ jest.mock("@mentra/engine", () => ({
 }))
 jest.mock("@/components/miniapp/LocalMiniappView", () => {
   const {Pressable} = require("react-native")
-  return ({onClose}: {onClose: () => void}) => <Pressable testID="close-miniapp" onPress={onClose} />
+  const {useEffect} = require("react")
+  return ({onClose}: {onClose: () => void}) => {
+    useEffect(() => {mockMount()}, [])
+    return <Pressable testID="close-miniapp" onPress={onClose} />
+  }
 })
 jest.mock("@/components/miniapp/OfflineAppHost", () => () => null)
 jest.mock("@/components/miniapp/offlineHostedPackages", () => ({isOfflineHosted: () => false}))
@@ -53,7 +58,8 @@ beforeEach(() => {
     callback()
     return {cancel: jest.fn()} as any
   })
-  useMiniappPresentationStore.setState({closingPackageName: null, revealedPackageName: null})
+  useMiniappPresentationStore.setState({closingPackageName: null, revealedPackageName: null, replacedPackageName: null, replacementGeneration: 0})
+  mockMount.mockClear()
   mockForegroundApp = {packageName: "one", name: "One", foregrounded: true, running: true} as ClientApp
   mockStop.mockReset()
 })
@@ -99,4 +105,14 @@ test("slow teardown cannot hide a relaunch or clear a later close animation", as
   })
   expect(mockStop).toHaveBeenCalledTimes(2)
   expect(useMiniappPresentationStore.getState().closingPackageName).toBeNull()
+})
+
+test("repacking the same version remounts its WebView; ordinary store refresh does not", () => {
+  const view = render(<Compositor />)
+  expect(mockMount).toHaveBeenCalledTimes(1)
+  mockForegroundApp = {...mockForegroundApp!}
+  view.rerender(<Compositor />)
+  expect(mockMount).toHaveBeenCalledTimes(1)
+  act(() => useMiniappPresentationStore.getState().replaceSurface("one"))
+  expect(mockMount).toHaveBeenCalledTimes(2)
 })

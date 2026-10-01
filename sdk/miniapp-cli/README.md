@@ -251,7 +251,12 @@ The CLI's allowed-value lists are mirrored by hand from `@mentra/engine` and `@m
 
 ## Try a packed miniapp during routine authoring
 
-With the Mentra App already signed in, build and pack the modified miniapp normally.
+With the Mentra App already signed in and its existing **Super Mode** enabled, build and pack the modified miniapp normally.
+For a fresh local authoring build, set `EXPO_PUBLIC_SUPER_MODE=true` when building
+the Mentra App. This defaults the existing setting on without UI clicks; normal
+builds default it off. An explicitly saved setting still takes precedence. This
+is a local build option, not a change to the requested CI artifact.
+
 From the MentraOS checkout, load the resulting ZIP without navigating developer settings:
 
 ```bash
@@ -282,5 +287,6 @@ bun scripts/submit-test-incident.mjs --android R5CW22Z3GDZ alert_id=authoring-2 
 
 Both send `com.mentra://test/submit-incident-report`. The existing incident modal
 keeps the current screen underneath and shows upload status and the report ID.
-Android's `com.mentra.SUBMIT_INCIDENT_REPORT` broadcast remains supported for
-existing callers and background submission without foregrounding the app.
+Both script entry points require Super Mode. The old Android incident broadcast
+has been removed; automated-testing callers use this shared URL. Normal user
+feedback remains available without Super Mode.

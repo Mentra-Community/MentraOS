@@ -77,7 +77,6 @@ public class CrustModule: Module {
             "onChange",
             "phone_notification",
             "phone_notification_dismissed",
-            "submit_incident_report",
             "onNavManeuver",
             "onNavRerouting",
             "onNavArrived",

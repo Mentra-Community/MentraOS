@@ -68,6 +68,10 @@ export default function IncidentReportRequest({
     }
   }, [authenticated, input, scope])
 
+  useEffect(() => {
+    if (result) console.log(`INCIDENT_REPORT_RESULT ${JSON.stringify(result)}`)
+  }, [result])
+
   return (
     <Modal visible animationType="none" onRequestClose={onDismiss}>
       <Screen preset="fixed" safeAreaEdges={["bottom"]}>

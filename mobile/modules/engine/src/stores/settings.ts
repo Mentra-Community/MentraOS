@@ -81,7 +81,7 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  super_mode: {key: "super_mode", defaultValue: () => process.env.EXPO_PUBLIC_SUPER_MODE === "true", writable: true, saveOnServer: true, persist: true},
   appearance_menu_enabled: {
     key: "appearance_menu_enabled",
     defaultValue: () => false,
