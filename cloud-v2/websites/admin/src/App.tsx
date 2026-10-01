@@ -168,6 +168,7 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
+const initialTestRunsPage = new URLSearchParams(window.location.search).get("testRuns") === "1";
 const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
@@ -180,7 +181,7 @@ function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
   const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
@@ -233,7 +234,7 @@ function AdminPage() {
       const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
       setTestRunListScope(scope);
-      if (suite || selection || scope) setPage("test-runs");
+      if (suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
       else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
