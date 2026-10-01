@@ -2,7 +2,7 @@ import {harnessVerificationArtifact, readHarnessVerification} from "./harness-ve
 import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
 import {admittedPrBase, currentBaseSha, successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
-import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel, isRegisteredRoutine, registeredRoutine} from "./device-routines.mjs"
+import {AUTOMATIC_BUILD_ROUTINES, DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel, isRegisteredRoutine, registeredRoutine} from "./device-routines.mjs"
 import {validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 
@@ -128,9 +128,9 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
   const run = await completedRun(github, context)
   if (!run) return {mode: "skip", reason: "Workflow has not completed"}
   if (run.path === COORDINATED_WORKFLOW) {
-    if (!["no-glasses", "no-glasses-android"].includes(routine) || !["dev", "staging"].includes(run.head_branch) ||
+    if (!AUTOMATIC_BUILD_ROUTINES.includes(routine) || !["dev", "staging"].includes(run.head_branch) ||
       !["push", "workflow_dispatch"].includes(run.event) || run.conclusion !== "success")
-      return {mode: "skip", reason: "Automatic coordinated requests require successful dev/staging builds and no-glasses"}
+      return {mode: "skip", reason: "Automatic coordinated requests require successful dev/staging builds and a registered foundation routine"}
     if (callbackAttempt !== 1) return {mode: "reconcile", callbackUrl: callbackUrl(context.runId),
       reason: "This callback was already attempted; reconcile manually"}
     const publicationAttempt = await coordinatedPublicationAttempt(github, context, run)
@@ -207,6 +207,7 @@ export async function planDeviceDispatches(options) {
   for (const routine of Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id))) {
     const plan = await planDeviceDispatch({...options, routine})
     if (plan.mode === "dispatch") return [plan]
+    if (options.nightlyOnly && plan.mode === "request") continue
     plans.push(plan)
   }
   return plans
@@ -215,7 +216,7 @@ export async function planDeviceDispatches(options) {
 export async function requestAfterPublication({github, context, plan, wait = sleep}) {
   registeredRoutine(plan.routine)
   const coordinated = ["dev", "staging"].includes(plan.channel)
-  requireThat(plan.mode === "request" && (coordinated ? !plan.pr && ["no-glasses", "no-glasses-android"].includes(plan.routine) : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
+  requireThat(plan.mode === "request" && (coordinated ? !plan.pr && AUTOMATIC_BUILD_ROUTINES.includes(plan.routine) : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
     && plan.callbackRunId === context.runId && plan.callbackAttempt === 1, "Invalid request dispatch")
   const prior = await automaticGenerationFence(github, context, plan, wait)
   if (prior) return {status: "request-reconcile", ...prior}
@@ -237,7 +238,7 @@ export async function requestAfterPublication({github, context, plan, wait = sle
 }
 
 /** Read the downloaded JSON as data. The private worker independently authenticates it again. */
-export async function dispatchReadyRequest({github, privateGithub, context, plan, bytes, fetchImpl = fetch, routineCatalog}) {
+export async function dispatchReadyRequest({github, privateGithub, context, plan, bytes, fetchImpl = fetch, routineCatalog, nightlyOnly = false}) {
   requireThat(plan.mode === "dispatch" && positive(plan.runId) && positive(plan.runAttempt) &&
     SHA.test(plan.sourceSha ?? ""), "Invalid private dispatch plan")
   requireThat(bytes.byteLength <= 1024 * 1024, "Request exceeds 1 MiB")
@@ -259,6 +260,9 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
         request.requestId === `routine-${plan.runId}-${plan.runAttempt}-${request.pullRequest.number}-${request.routine.id}`),
   "Request does not match its trusted producer")
   const nightly = validateNightlyMarker(request)
+  if (nightlyOnly && !(coordinated && request.source.channel === "dev" && nightly?.kind === "nightly-routine" &&
+    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"].includes(request.routine.id)))
+    return {status: "not-dispatched", requestId: request.requestId, reason: "Only verified dev foundation nightlies are enabled"}
   if (nightly?.kind === "nightly-ota-call") return {status: "not-dispatched", requestId: request.requestId,
     reason: "Nightly sequence member; only the scheduled source may dispatch the paired OTA then Call job"}
   if (nightly) await authenticateNightlyMarker({github, context, request})

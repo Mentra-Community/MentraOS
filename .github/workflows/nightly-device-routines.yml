@@ -1,6 +1,7 @@
 name: Nightly device routines
 
 on:
+  workflow_dispatch:
   schedule:
     # 04:00 America/Los_Angeles is 11:00 UTC in summer and 12:00 UTC in winter.
     # The planner selects the applicable trigger, including DST transition days.
@@ -15,13 +16,15 @@ permissions:
 
 jobs:
   plan:
+    environment: routine-nightly-dev
     if: github.repository == 'Mentra-Community/MentraOS' && vars.DEVICE_ROUTINE_NIGHTLY_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has-work: ${{ steps.plan.outputs.has-work }}
       unavailable: ${{ steps.plan.outputs.unavailable }}
+      suite-id: ${{ steps.plan.outputs.suite-id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,11 +36,19 @@ jobs:
       - name: Select verified publications for 04:00 Pacific
         id: plan
         uses: actions/github-script@v7
+        env:
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
         with:
           retries: 0
           script: |
             const {planNightlyRequests} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
-            const plan = await planNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT)});
+            const plan = await planNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT), devFoundationOnly: true});
+            const {frozenNightlySuite, suiteApi} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-suite.mjs`);
+            const suite = frozenNightlySuite({plan, runId: context.runId, attempt: Number(process.env.GITHUB_RUN_ATTEMPT), workflowSha: process.env.GITHUB_SHA});
+            if (suite) {
+              core.setOutput('suite-id', suite.suiteId);
+              await suiteApi({token: process.env.TEST_RUN_INGEST_TOKEN, operation: 'create', body: suite});
+            }
             core.setOutput('matrix', JSON.stringify({include: plan.requests}));
             core.setOutput('has-work', String(plan.requests.length > 0));
             core.setOutput('unavailable', JSON.stringify(plan.unavailable));
@@ -54,7 +65,7 @@ jobs:
   availability:
     needs: plan
     if: needs.plan.outputs.unavailable != '[]'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Report unavailable routines and publications
@@ -67,13 +78,14 @@ jobs:
             core.setFailed('Some required routines or platform publications are unavailable. Eligible routines are requested independently.');
 
   request:
+    environment: routine-nightly-dev
     needs: plan
     if: needs.plan.outputs.has-work == 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: Nightly ${{ matrix.date }} / ${{ matrix.channel }} / ${{ matrix.routine }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     concurrency:
       group: nightly-device-${{ matrix.date }}-${{ matrix.channel }}-${{ matrix.routine }}
@@ -103,19 +115,75 @@ jobs:
         uses: actions/github-script@v7
         env:
           NIGHTLY_PLAN: ${{ toJSON(matrix) }}
+          SUITE_ID: ${{ needs.plan.outputs.suite-id }}
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
         with:
           github-token: ${{ steps.request-token.outputs.token }}
           retries: 0
           script: |
             const {sendNightlyRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
             const result = await sendNightlyRequest({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
-              plan: JSON.parse(process.env.NIGHTLY_PLAN)});
+              plan: JSON.parse(process.env.NIGHTLY_PLAN), devFoundationOnly: true});
             core.setOutput('sent', JSON.stringify(result));
+            const {suiteApi, suiteMemberBinding} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-suite.mjs`);
+            const binding = suiteMemberBinding(result);
+            await suiteApi({token: process.env.TEST_RUN_INGEST_TOKEN, suiteId: process.env.SUITE_ID,
+              operation: 'bind', ...binding});
             const resultId = `routine-${result.runId}-${result.runAttempt}-${result.channel}-${result.routine}`;
             await core.summary.addHeading(`${result.channel} / ${result.routine}`)
-              .addRaw('Request dispatched. The device verdict is pending; this workflow does not wait for it.\n\n')
+              .addRaw('Request dispatched and bound to the nightly suite. The finalizer waits for published device results.\n\n')
               .addLink('Request workflow', `https://github.com/Mentra-Community/MentraOS/actions/runs/${result.runId}`)
               .addRaw(' · ')
               .addLink('Recording and device result', `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(resultId)}`)
               .addRaw('\n\nThe recorded result appears after the worker publishes it. If the request or worker cannot start, inspect the request workflow and Admin Live activity.\n\n')
               .addCodeBlock(JSON.stringify(result, null, 2), 'json').write();
+
+  finalize:
+    environment: routine-nightly-dev
+    name: Finalize dev nightly suite
+    needs: [plan, request, availability]
+    if: always() && needs.plan.outputs.suite-id != ''
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 190
+    concurrency:
+      group: nightly-suite-finalize-${{ github.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Reconcile published results and post final dev-builds verdict
+        uses: actions/github-script@v7
+        env:
+          SUITE_ID: ${{ needs.plan.outputs.suite-id }}
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
+        with:
+          retries: 0
+          script: |
+            if (Number(process.env.GITHUB_RUN_ATTEMPT) !== 1) throw new Error('Nightly finalizer reruns require reconciliation; never repeat an uncertain Slack send');
+            const {reconcileNightlySuite, publishSuiteWebhook} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-suite.mjs`);
+            const {DEV_FOUNDATION_NIGHTLY_ROUTINES} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
+            const suite = await reconcileNightlySuite({suiteId: process.env.SUITE_ID, token: process.env.TEST_RUN_INGEST_TOKEN,
+              deadline: Date.now() + 3 * 3600_000});
+            const {writeFile} = await import('node:fs/promises');
+            await writeFile('nightly-suite-send-intent.json', JSON.stringify({suiteId: suite.suiteId, destination: 'dev-builds-webhook',
+              status: 'send-entered', attempt: Number(process.env.GITHUB_RUN_ATTEMPT)}));
+            const receipt = await publishSuiteWebhook({suite, expectedRoutineIds: DEV_FOUNDATION_NIGHTLY_ROUTINES,
+              webhook: process.env.SLACK_WEBHOOK});
+            await writeFile('nightly-suite-result.json', JSON.stringify({suite, receipt}));
+            await core.summary.addHeading('Final dev nightly suite').addLink('Suite results', receipt.url)
+              .addCodeBlock(JSON.stringify({suite, receipt}, null, 2), 'json').write();
+            if (!receipt.passed) core.setFailed(`Non-pass routines: ${receipt.failedRoutines.join(', ')}`);
+      - name: Retain final suite and Slack acknowledgement
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-suite-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: nightly-suite-*.json
+          if-no-files-found: ignore
+          retention-days: 30
