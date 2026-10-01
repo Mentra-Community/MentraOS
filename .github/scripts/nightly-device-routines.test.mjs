@@ -160,7 +160,7 @@ test("dev foundation rollout excludes staging and legacy routines", async () => 
   assert.ok(result.requests.length > 0)
   assert.ok(result.requests.every(request => request.channel === "dev" &&
     ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"].includes(request.routine)))
-  assert.ok(result.unavailable.some(request => request.routine === "ota-roundtrip-android" && request.channel === "dev"))
+  assert.ok(result.requests.some(request => request.routine === "ota-roundtrip-android" && request.channel === "dev"))
   assert.ok(!f.state.calls.some(([kind, input]) => kind === "runs" && input.branch === "staging"))
   await assert.rejects(sendNightlyRequest({...f.options, plan: {...plan, channel: "staging"}, devFoundationOnly: true}), /Invalid nightly/)
 })
@@ -178,7 +178,7 @@ test("the production catalog registers Livestreamer as its existing Mac nightly 
   const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/LIVESTREAMER-FULL-ROUTINE.md",
     "tools/mentra-e2e/flows/livestreamer.ts", "worker/livestreamer.ts"].map(path => `${source}${path}`))
-  assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
     "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 
@@ -194,7 +194,7 @@ test("the production catalog registers account-miniapps as its existing Mac nigh
     "tools/mentra-e2e/runner/account-miniapps-routine.ts", "worker/account-miniapps.ts"].map(path => `${source}${path}`))
   // Registration is not qualification: the catalog states the unqualified provider observations.
   assert.match(routine.exclusions, /not qualified/)
-  assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
     "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 
@@ -206,7 +206,7 @@ test("the production catalog registers connected-glasses as its existing Android
   const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/routines/connected-glasses-brief.md",
     "tools/mentra-e2e/runner/connected-glasses-routine.ts", "worker/connected-glasses.ts"].map(path => `${source}${path}`))
-  assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
     "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 

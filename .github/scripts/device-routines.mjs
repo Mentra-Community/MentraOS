@@ -6,6 +6,16 @@ const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Auto
 const connectedDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
 const accountDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/11b98bed9efb2b414ad912074888c58aeea2e6df/"
 export const DEVICE_ROUTINES = Object.freeze({
+  "ota-roundtrip-android": Object.freeze({
+    label: "routine:ota-roundtrip-android", name: "Android OTA roundtrip", platform: "android",
+    coverage: "Shared foundation establishes the requested dev app and glasses firmware, downgrades ASG through normal app controls to immutable production, and returns to exact requested ASG while preserving gallery and independently verifying firmware return.",
+    relatedPaths: ["asg_client/**", "mobile/modules/bluetooth-sdk/**", "mobile/modules/engine/**", "mobile/src/services/ota*"],
+    prerequisites: "An enrolled Android phone and physical Mentra Live pair, reserved account, immutable production firmware, and matching requested dev app/firmware. Authenticated dev independent nightly only; local staging qualification is not a nightly pass.",
+    exclusions: "No BES/MTK downgrade, injected transport failure, physical iPhone, staging nightly or PR/build automatic enrollment.",
+    definition: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/ab3523e3631e1b89d625314686f48c608f294cca/docs/routines/ota-roundtrip-android.md",
+    implementation: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/ab3523e3631e1b89d625314686f48c608f294cca/tools/mentra-e2e/flows/ota-roundtrip-android.ts",
+    worker: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/ab3523e3631e1b89d625314686f48c608f294cca/worker/foundation-worker.ts",
+  }),
   "day1-ota": Object.freeze({
     label: "routine:day1-ota", name: "Day-one OTA", platform: "ios-on-mac",
     coverage: "January lab baseline → customer update → exact selected manifest BES, MTK and active ASG versions; setup and return recovery.",

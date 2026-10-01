@@ -17,7 +17,7 @@ jobs:
   plan:
     environment: routine-nightly-dev
     if: github.repository == 'Mentra-Community/MentraOS' && vars.DEVICE_ROUTINE_NIGHTLY_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -64,7 +64,7 @@ jobs:
   availability:
     needs: plan
     if: needs.plan.outputs.unavailable != '[]'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Report unavailable routines and publications
@@ -84,7 +84,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: Nightly ${{ matrix.date }} / ${{ matrix.channel }} / ${{ matrix.routine }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     concurrency:
       group: nightly-device-${{ matrix.date }}-${{ matrix.channel }}-${{ matrix.routine }}
@@ -142,7 +142,7 @@ jobs:
     name: Finalize dev nightly suite
     needs: [plan, request, availability]
     if: always() && needs.plan.outputs.suite-id != ''
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 190
     concurrency:
       group: nightly-suite-finalize-${{ github.run_id }}
