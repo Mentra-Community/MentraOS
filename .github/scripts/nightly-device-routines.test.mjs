@@ -499,7 +499,7 @@ test("workflow keeps nightly opt-in, ordinary callbacks and independent matrix m
   assert.doesNotMatch(workflow, /03:00 Pacific/)
   assert.match(workflow, /availability:\n    needs: plan/)
   assert.match(workflow, /core\.setFailed\('Some required routines or platform publications are unavailable/)
-  assert.match(workflow, /request:\n    needs: plan/)
+  assert.match(workflow, /request:\n    environment: routine-nightly-dev\n    needs: plan/)
   assert.doesNotMatch(workflow.split('  request:')[1].split('  finalize:')[0], /needs:.*availability/)
   assert.match(workflow, /needs: \[plan, request, availability\]/)
   assert.match(workflow, /fail-fast: false/)
