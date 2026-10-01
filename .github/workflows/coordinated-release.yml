@@ -540,11 +540,25 @@ jobs:
           name: ${{ needs.sdk-native.outputs.result_artifact }}
           path: release-input/sdk-native
 
-      - uses: actions/download-artifact@v4
+      - name: Download and validate complete mobile publication evidence
         if: steps.restore-result.outputs.restored != 'true'
-        with:
-          name: ${{ needs.mobile.outputs.result_artifact }}
-          path: release-input/mobile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MOBILE_ARTIFACT: ${{ needs.mobile.outputs.result_artifact }}
+          RELEASE_SET_ID: ${{ needs.plan.outputs.release_set_id }}
+        run: |
+          set -euo pipefail
+          # The large mobile archive must finish extracting before assembly can
+          # see it. Keep the CLI's original download/extraction failure intact.
+          test ! -e release-input/mobile
+          download=$(mktemp -d release-input/.mobile-download.XXXXXX)
+          trap 'rm -rf -- "$download"' EXIT
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$MOBILE_ARTIFACT" --dir "$download"
+          test -s "$download/mobile-publications.json"
+          jq -e --arg release_set "$RELEASE_SET_ID" \
+            '.releaseSetId == $release_set' "$download/mobile-publications.json" > /dev/null
+          mv "$download" release-input/mobile
 
       - name: Assemble complete publication evidence
         id: results
