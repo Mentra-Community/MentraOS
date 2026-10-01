@@ -60,8 +60,13 @@ verification and evidence passed. The 15m26s recording, six screenshots,
 chapters, lifecycle summary and six firmware/gallery checkpoints were uploaded
 to dev Core; the original payload was disposed after acknowledged publication.
 All 21 gallery files were preserved, and the `mini-060b` fixture was released
-ready. This is local-development coverage, not CI qualification. Authenticated
-viewer playback is handed to the Mac coordinator for verification.
+ready. This is local-development coverage, not CI qualification. The Mac
+coordinator verified the authenticated hosted result and playback, including
+changing video frames and step seeks at downgrade 5:08, requested upgrade 12:18
+and return 14:14, recorded in PR 4369 comment 5926175951. The result displayed
+all six passed steps, passing test/teardown, ready fixture and complete evidence.
+The recording covers the authored test; setup and teardown have separate
+lifecycle evidence rather than being part of that video.
 
 Its private maintenance paths are `tools/mentra-e2e/flows/ota-roundtrip.ts` and
 `worker/local-ota-android.ts`. A nightly request requires an executable enrolled
