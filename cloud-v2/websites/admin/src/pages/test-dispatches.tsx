@@ -6,18 +6,45 @@ import { api, ApiError } from "../lib/api";
 import type { TestBuild, TestDispatchInput, TestDispatchReceipt, TestDispatchView, TestRoutineId } from "../../../../packages/core/src/types/test-dispatch.types";
 
 const SELECT = "h-9 rounded-lg border border-[#dfe3dc] bg-white px-3 text-sm";
-export function testBuildInventoryPath(channel: string, pr: string) {
+export function testBuildInventoryPath(channel: string, pr: string, routineId?: TestRoutineId) {
   if (!["pr", "dev", "staging"].includes(channel)) throw new Error("Choose a build channel.");
   const query = new URLSearchParams({ channel });
   if (channel === "pr") {
     if (!/^[1-9]\d*$/.test(pr) || !Number.isSafeInteger(Number(pr))) throw new Error("Enter a positive PR number.");
     query.set("pr", pr);
   }
+  if (routineId) query.set("routineId", routineId);
   return `/api/admin/test-builds?${query}`;
 }
-const buildKey = (build: TestBuild) => `${build.source.channel}-${build.source.buildRunId}-${build.source.publicationAttempt}`;
+const buildKey = (build: TestBuild) => `${build.platform ?? "ios-on-mac"}-${build.source.channel}-${build.source.buildRunId}-${build.source.publicationAttempt}`;
+/** Only a build Core reports as available, with a published archive, can be selected. */
+export const buildSelectable = (build: TestBuild) => build.availability === "available" && !!build.archive;
+export function canRequestRoutine(selected: TestBuild | undefined, routineId: TestRoutineId) {
+  return !!selected && buildSelectable(selected) && !!selected.routines.find(routine => routine.id === routineId)?.available;
+}
 
-export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => void }) {
+export function TestBuildOption({ build, checked, locked, onSelect }: { build: TestBuild; checked: boolean; locked: boolean; onSelect: () => void }) {
+  const selectable = buildSelectable(build);
+  const statusId = `test-build-status-${buildKey(build)}`;
+  return <label className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${selectable ? "border-[#e0e4de]" : "cursor-not-allowed border-dashed border-[#d5d9d3] bg-[#f5f7f4] text-[#68746d]"}`}>
+    <input type="radio" name="test-build" aria-label={`${build.title}, publication ${build.source.publicationAttempt}`} aria-describedby={statusId}
+      disabled={!selectable || locked} checked={checked} onChange={onSelect} />
+    <span className="min-w-0">
+      <span className="flex flex-wrap items-center gap-2"><span className="font-medium">{build.title}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${selectable ? "bg-[#edf7f0] text-[#087d50]" : "bg-[#f0e9e1] text-[#8a5a1f]"}`}>{selectable ? "Published" : "Not selectable"}</span></span>
+      <span className="mt-1 block text-xs text-[#68746d]">
+        {build.release ? `${build.release} · ` : ""}{build.headSha.slice(0, 12)} · run {build.source.buildRunId} / publication {build.source.publicationAttempt}
+      </span>
+      <span id={statusId} className="mt-1 block">{selectable
+        ? `${build.platform === "android" ? "Android APK" : "Mac artifact"} published; the request workflow completes validation`
+        : `Unavailable: ${build.reason ?? "no published artifact is available for this build"}`}</span>
+      {build.archive ? <span className="mt-1 block break-all font-mono text-[10px]">SHA256 {build.archive.sha256}</span> : null}
+      <a href={build.buildUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[#087d50] underline">View build in GitHub</a>
+    </span>
+  </label>;
+}
+
+export function TestDispatchPanel({ onResult, routineIds }: { onResult: (runId: string) => void; routineIds?: readonly TestRoutineId[] }) {
   const [open, setOpen] = useState(false);
   const [channel, setChannel] = useState("pr");
   const [pr, setPr] = useState("");
@@ -39,6 +66,7 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
     refetchInterval: query => query.state.data && ["finished", "unavailable", "failed", "recovery-required"].includes(query.state.data.state) ? false : 5000 });
   const selected = builds.data?.builds.find(build => buildKey(build) === selection);
   const compatibility = selected?.routines.find(routine => routine.id === routineId);
+  const requestable = canRequestRoutine(selected, routineId);
 
   async function send(input: TestDispatchInput) {
     if (submitting) return;
@@ -59,7 +87,7 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
     } finally { setSubmitting(false); }
   }
   function submit() {
-    if (!selected?.archive || !compatibility?.available || submitting || dispatchId) return;
+    if (!requestable || !selected?.archive || submitting || dispatchId) return;
     void send({ source: selected.source, routineId, archiveSha256: selected.archive.sha256, idempotencyKey: crypto.randomUUID() });
   }
   function clearSelection() { setInventoryPath(null); setSelection(""); setError(null); }
@@ -73,34 +101,26 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
         <form className="flex flex-wrap items-end gap-3" onSubmit={event => {
           event.preventDefault();
           try {
-            const path = testBuildInventoryPath(channel, pr.trim());
+            const path = testBuildInventoryPath(channel, pr.trim(), routineId);
             if (path === inventoryPath) void builds.refetch();
             setInventoryPath(path); setSelection(""); setError(null);
           } catch (failure) { setError((failure as Error).message); }
         }}>
+          <label className="grid gap-1 text-xs font-medium">Routine<select aria-label="Routine to run" className={SELECT} value={routineId} disabled={!!dispatchId} onChange={event => { setRoutineId(event.target.value as TestRoutineId); clearSelection(); }}>
+            {routines.data?.routines.filter(routine => !routineIds || routineIds.includes(routine.id)).map(routine => <option key={routine.id} value={routine.id}>{routine.name}</option>)}
+          </select></label>
           <label className="grid gap-1 text-xs font-medium">Build channel<select aria-label="Build channel" className={SELECT} value={channel} disabled={!!dispatchId} onChange={event => { setChannel(event.target.value); clearSelection(); }}>
             <option value="pr">Pull request</option><option value="dev">Dev</option><option value="staging">Staging</option>
           </select></label>
           {channel === "pr" ? <label className="grid gap-1 text-xs font-medium">PR number<Input aria-label="PR number to test" inputMode="numeric" value={pr} disabled={!!dispatchId} onChange={event => { setPr(event.target.value); clearSelection(); }} className="w-32" /></label> : null}
-          <Button type="submit" variant="outline" disabled={builds.isFetching || !!dispatchId}>{builds.isFetching ? "Checking builds…" : "Find builds"}</Button>
+          <Button type="submit" variant="outline" disabled={builds.isFetching || !routines.data || !!dispatchId}>{builds.isFetching ? "Checking builds…" : "Find builds"}</Button>
         </form>
         {error || builds.error || routines.error ? <p role="alert" className="text-sm text-[#a64235]">{error ?? builds.error?.message ?? routines.error?.message}</p> : null}
         {builds.data ? <div className="space-y-2">
-          {builds.data.builds.length ? builds.data.builds.map(build => <label key={buildKey(build)} className="flex items-start gap-3 rounded-xl border border-[#e0e4de] p-3 text-sm">
-            <input type="radio" name="test-build" aria-label={`${build.title}, publication ${build.source.publicationAttempt}`} disabled={build.availability !== "available" || !!dispatchId}
-              checked={selection === buildKey(build)} onChange={() => setSelection(buildKey(build))} />
-            <span className="min-w-0"><span className="font-medium">{build.title}</span><span className="mt-1 block text-xs text-[#68746d]">
-              {build.release ? `${build.release} · ` : ""}{build.headSha.slice(0, 12)} · run {build.source.buildRunId} / publication {build.source.publicationAttempt}
-            </span><span className="mt-1 block">{build.availability === "available" ? "Mac artifact published; the request workflow completes validation" : build.reason ?? "Artifact unavailable"}</span>
-              {build.archive ? <span className="mt-1 block break-all font-mono text-[10px]">SHA256 {build.archive.sha256}</span> : null}
-              <a href={build.buildUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[#087d50] underline">View build in GitHub</a>
-            </span>
-          </label>) : <p className="text-sm text-[#68746d]">No matching build runs were found.</p>}
+          {builds.data.builds.length ? builds.data.builds.map(build => <TestBuildOption key={buildKey(build)} build={build} locked={!!dispatchId}
+            checked={selection === buildKey(build)} onSelect={() => setSelection(buildKey(build))} />) : <p className="text-sm text-[#68746d]">No matching build runs were found.</p>}
           <div className="flex flex-wrap items-end gap-3 pt-2">
-            <label className="grid gap-1 text-xs font-medium">Routine<select aria-label="Routine to run" className={SELECT} value={routineId} disabled={!!dispatchId} onChange={event => setRoutineId(event.target.value as TestRoutineId)}>
-              {routines.data?.routines.map(routine => <option key={routine.id} value={routine.id}>{routine.name}</option>)}
-            </select></label>
-            <Button disabled={!compatibility?.available || submitting || !!dispatchId} onClick={submit}>{submitting ? "Submitting…" : "Request routine"}</Button>
+            <Button disabled={!requestable || submitting || !!dispatchId} onClick={submit}>{submitting ? "Submitting…" : "Request routine"}</Button>
           </div>
           {compatibility?.reason ? <p role="status" className="text-sm text-[#68746d]">{compatibility.reason}</p> : null}
         </div> : null}
@@ -112,14 +132,24 @@ export function TestDispatchPanel({ onResult }: { onResult: (runId: string) => v
           {submittedInput && progress.error ? <Button variant="outline" disabled={submitting || progress.isFetching} onClick={() => void send(submittedInput)}>Retry saved request</Button> : null}
           {progress.data && ["finished", "unavailable", "failed"].includes(progress.data.state) ? <Button variant="outline" onClick={() => { setDispatchId(null); setSubmittedInput(null); clearSelection(); }}>New request</Button> : null}
         </div> : null}
-        {recent.data?.dispatches.length ? <details><summary className="cursor-pointer text-sm font-medium">Recent routine requests</summary><ul className="mt-2 space-y-1">
-          {recent.data.dispatches.map(item => <li key={item.dispatchId}><button disabled={submitting} className="text-left text-sm text-[#087d50] underline" onClick={() => { setDispatchId(item.dispatchId); setSubmittedInput(item.input); setError(null); }}>
-            {item.input.routineId} · {item.input.source.channel === "pr" ? `PR #${item.input.source.prNumber}` : item.input.source.channel} · {new Date(item.createdAt).toLocaleString()}
-          </button></li>)}
-        </ul></details> : null}
+        <RecentRoutineRequests dispatches={recent.data?.dispatches ?? []} routineIds={routineIds} disabled={submitting}
+          onSelect={item => { setDispatchId(item.dispatchId); setSubmittedInput(item.input); setError(null); }} />
       </div> : null}
     </section>
   );
+}
+
+export function RecentRoutineRequests({ dispatches, routineIds, disabled, onSelect }: {
+  dispatches: TestDispatchReceipt[]; routineIds?: readonly TestRoutineId[]; disabled: boolean;
+  onSelect: (dispatch: TestDispatchReceipt) => void;
+}) {
+  const visible = dispatches.filter(item => !routineIds || routineIds.includes(item.input.routineId));
+  if (!visible.length) return null;
+  return <details><summary className="cursor-pointer text-sm font-medium">Recent routine requests</summary><ul className="mt-2 space-y-1">
+    {visible.map(item => <li key={item.dispatchId}><button disabled={disabled} className="text-left text-sm text-[#087d50] underline" onClick={() => onSelect(item)}>
+      {item.input.routineId} · {item.input.source.channel === "pr" ? `PR #${item.input.source.prNumber}` : item.input.source.channel} · {new Date(item.createdAt).toLocaleString()}
+    </button></li>)}
+  </ul></details>;
 }
 
 export function TestDispatchStatus({ dispatch, onResult }: { dispatch: TestDispatchView; onResult: (id: string) => void }) {
