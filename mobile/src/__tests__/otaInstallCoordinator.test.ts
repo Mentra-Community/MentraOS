@@ -37,7 +37,8 @@ import {
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "../../modules/engine/src/utils/GlobalEventEmitter"
 
-import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
+import {startOtaDeviceSession, stopOtaDeviceSession} from "../../modules/engine/src/services/OtaDeviceSession"
+import {bluetoothSdkMock, emitBluetoothSdkEvent} from "../test-utils/mockBluetoothSdk"
 
 jest.mock("../../modules/engine/src/services/HotspotOtaTransport", () => ({
   hotspotOtaTransport: {
@@ -1909,5 +1910,56 @@ describe("OtaInstallCoordinator legacy APK completion settle hold (WP 8C-g)", ()
     emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "apk"})
 
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+})
+
+describe("OtaInstallCoordinator paired-device ownership", () => {
+  const pair = (address: string) => ({id: address, address, model: "Mentra Live", name: address})
+  beforeEach(async () => {
+    stopOtaDeviceSession()
+    ;(bluetoothSdkMock.getDefaultDevice as jest.Mock).mockResolvedValue(pair("A"))
+    await startOtaDeviceSession()
+  })
+  afterEach(() => stopOtaDeviceSession())
+
+  it("does not send an old hotspot manifest to the new pair after deferred staging", async () => {
+    let resolve!: (url: string) => void
+    mockHotspotPrepare.mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r
+      }),
+    )
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "39",
+      wifi: {state: "disconnected"},
+      hotspotOtaVersion: 1,
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    emitBluetoothSdkEvent("default_device_changed", {device: pair("B")})
+    resolve("http://old-pair/version.json")
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    expect(mockHotspotTeardown).toHaveBeenCalledWith(false)
+    expect(otaInstallCoordinator.snapshot().hotspotPhase).toBe("idle")
+  })
+
+  it("drops retry timers and ignores the old pair's pending acknowledgement", async () => {
+    let reject!: (error: Error) => void
+    bluetoothSdkMock.startOtaUpdate.mockReturnValueOnce(
+      new Promise((_r, j) => {
+        reject = j
+      }),
+    )
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    emitBluetoothSdkEvent("default_device_changed", {device: pair("B")})
+    reject(new Error("Old pair timed out"))
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * 2)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
   })
 })
