@@ -443,6 +443,13 @@ test("all routine labels create independent fenced generations for one exact pub
   ])
 })
 
+test("nightly-only rollout does not create requests from PR build callbacks", async () => {
+  const f = fake()
+  const plans = await planDeviceDispatches({...f, context, nightlyOnly: true})
+  assert.ok(plans.every(plan => plan.mode !== "request"))
+  assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
+})
+
 test("registered Phone mode labels, build callbacks and nightlies select the exact Mac publication", async () => {
   const {NIGHTLY_ROUTINES} = await import("./nightly-device-routines.mjs")
   const routines = ["captions-phone", "notes-phone"]

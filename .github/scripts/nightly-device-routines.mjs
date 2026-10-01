@@ -101,13 +101,17 @@ async function scheduledRun(github, context, attempt) {
   return {run, date: nightlyDate(context.payload.schedule, run.created_at)}
 }
 
-export async function planNightlyRequests({github, context, attempt, fetchImpl = fetch, routineCatalog = DEVICE_ROUTINES}) {
+export const DEV_FOUNDATION_NIGHTLY_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"])
+
+export async function planNightlyRequests({github, context, attempt, fetchImpl = fetch, routineCatalog = DEVICE_ROUTINES, devFoundationOnly = false}) {
   const {run, date} = await scheduledRun(github, context, attempt)
   if (!date) return {requests: [], unavailable: [], reason: "The other UTC trigger covers 04:00 America/Los_Angeles today"}
   requireThat(attempt === 1, "Nightly reruns require reconciliation; do not repeat physical routines automatically")
   const requests = [], unavailable = []
-  for (const channel of ["dev", "staging"]) {
-    const targets = NIGHTLY_TARGETS.filter(target => {
+  for (const channel of devFoundationOnly ? ["dev"] : ["dev", "staging"]) {
+    const selectedTargets = devFoundationOnly ? DEV_FOUNDATION_NIGHTLY_ROUTINES.map(routine =>
+      ({routine, platform: routine.endsWith("android") ? "android" : "ios-on-mac"})) : NIGHTLY_TARGETS
+    const targets = selectedTargets.filter(target => {
       if (isRegisteredRoutine(target.routine, routineCatalog) && routineCatalog[target.routine].platform === target.platform) return true
       unavailable.push({date, channel, ...target, reason: "Required routine has no compatible registered worker; authoring and qualification are pending",
         ...(routineCatalog[target.routine]?.pending ? {pending: routineCatalog[target.routine].pending} : {})})
@@ -163,10 +167,12 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
 }
 
 /** One entered send step fences one date/channel/routine, even after a lost response. */
-export async function sendNightlyRequest({github, context, attempt, plan, routineCatalog = DEVICE_ROUTINES}) {
+export async function sendNightlyRequest({github, context, attempt, plan, routineCatalog = DEVICE_ROUTINES, devFoundationOnly = false}) {
   const {run, date} = await scheduledRun(github, context, attempt)
   requireThat(attempt === 1 && date && plan.date === date && ["dev", "staging"].includes(plan.channel) &&
-    NIGHTLY_TARGETS.some(target => target.routine === plan.routine && target.platform === plan.platform) &&
+    (devFoundationOnly ? plan.channel === "dev" && DEV_FOUNDATION_NIGHTLY_ROUTINES.includes(plan.routine) &&
+      plan.platform === (plan.routine.endsWith("android") ? "android" : "ios-on-mac")
+      : NIGHTLY_TARGETS.some(target => target.routine === plan.routine && target.platform === plan.platform)) &&
     isRegisteredRoutine(plan.routine, routineCatalog) && routineCatalog[plan.routine].platform === plan.platform &&
     positive(plan.sourceRunId) && positive(plan.publicationAttempt), "Invalid nightly request coordinates")
   const since = new Date(Date.parse(run.created_at) - 26 * 3600_000).toISOString()

@@ -34,7 +34,7 @@ jobs:
           retries: 0
           script: |
             const {planDeviceDispatches} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
-            const plans = await planDeviceDispatches({github, context, callbackAttempt: Number(process.env.GITHUB_RUN_ATTEMPT)});
+            const plans = await planDeviceDispatches({github, context, callbackAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), nightlyOnly: true});
             const work = plans.filter(plan => ['request', 'dispatch'].includes(plan.mode));
             core.setOutput('matrix', JSON.stringify({include: work}));
             core.setOutput('has-work', String(work.length > 0));
@@ -120,5 +120,5 @@ jobs:
             const {dispatchReadyRequest, readRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
             const privateGithub = process.env.TEST_RUN_DISPATCH_TOKEN ? new github.constructor({auth: process.env.TEST_RUN_DISPATCH_TOKEN, retry: {enabled: false}}) : null;
             const result = await dispatchReadyRequest({github, privateGithub, context,
-              plan: JSON.parse(process.env.DISPATCH_PLAN), bytes: await readRequest('routine-request/request.json')});
+              plan: JSON.parse(process.env.DISPATCH_PLAN), bytes: await readRequest('routine-request/request.json'), nightlyOnly: true});
             await core.summary.addRaw(JSON.stringify(result)).write();

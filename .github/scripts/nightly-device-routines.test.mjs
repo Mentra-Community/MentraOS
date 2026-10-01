@@ -155,6 +155,15 @@ test("planner selects exact publications per routine and reports missing combine
 })
 
 const PLANNED = []
+test("dev foundation rollout excludes staging and legacy routines", async () => {
+  const f = fixture(), result = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.ok(result.requests.length > 0)
+  assert.ok(result.requests.every(request => request.channel === "dev" &&
+    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"].includes(request.routine)))
+  assert.ok(result.unavailable.some(request => request.routine === "ota-roundtrip-android" && request.channel === "dev"))
+  assert.ok(!f.state.calls.some(([kind, input]) => kind === "runs" && input.branch === "staging"))
+  await assert.rejects(sendNightlyRequest({...f.options, plan: {...plan, channel: "staging"}, devFoundationOnly: true}), /Invalid nightly/)
+})
 // TEST MODEL of the former planned state: the production catalog with a synthetic `pending` reason on the three combined
 // targets. Production has no planned target; this keeps every planned refusal exercised. It qualifies nothing.
 const MODELLED_PLANNED = ["account-miniapps", "connected-glasses", "livestreamer"]

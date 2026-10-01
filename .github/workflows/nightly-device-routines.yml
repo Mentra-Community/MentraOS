@@ -37,7 +37,7 @@ jobs:
           retries: 0
           script: |
             const {planNightlyRequests} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
-            const plan = await planNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT)});
+            const plan = await planNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT), devFoundationOnly: true});
             core.setOutput('matrix', JSON.stringify({include: plan.requests}));
             core.setOutput('has-work', String(plan.requests.length > 0));
             core.setOutput('unavailable', JSON.stringify(plan.unavailable));
@@ -109,7 +109,7 @@ jobs:
           script: |
             const {sendNightlyRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
             const result = await sendNightlyRequest({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
-              plan: JSON.parse(process.env.NIGHTLY_PLAN)});
+              plan: JSON.parse(process.env.NIGHTLY_PLAN), devFoundationOnly: true});
             core.setOutput('sent', JSON.stringify(result));
             const resultId = `routine-${result.runId}-${result.runAttempt}-${result.channel}-${result.routine}`;
             await core.summary.addHeading(`${result.channel} / ${result.routine}`)
