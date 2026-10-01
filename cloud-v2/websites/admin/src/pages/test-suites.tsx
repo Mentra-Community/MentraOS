@@ -6,7 +6,7 @@ export interface TestSuiteResult {
   suiteId: string; channel: string; trigger: string; startedAt: string; finishedAt?: string;
   build: {headSha: string; release?: string; producerUrl?: string};
   outcome: "running" | "passed" | "failed"; passed: number; failedRoutines: string[];
-  members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; runId?: string; startedAt?: string; finishedAt?: string}[];
+  members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string}[];
 }
 export function readSuiteId(search: string) {
   const query = new URLSearchParams(search);

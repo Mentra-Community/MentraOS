@@ -63,7 +63,7 @@ export class TestSuiteService {
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
       .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
-    const runs = rows.map(row => ({...(row.payload as SuiteRun),
+    const runs = rows.map(row => ({...(row.payload as SuiteRun), publicationComplete: row.uploadsComplete === true,
       outcome: row.outcome === "passed" && !row.uploadsComplete ? "blocked" : row.outcome}));
     return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
   }

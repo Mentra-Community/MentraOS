@@ -22,7 +22,7 @@ export const testSuiteSchema = z.object({
 export const testSuiteCompletionSchema = z.object({finishedAt: z.string().datetime({offset: true})}).strict();
 export type TestSuite = z.infer<typeof testSuiteSchema>;
 export type SuiteRun = {runId: string; requestId: string; routineId: string; platform: string;
-  channel: string; provenance: {headSha?: string}; outcome: string; startedAt: string; finishedAt: string};
+  publicationComplete?: boolean; channel: string; provenance: {headSha?: string}; outcome: string; startedAt: string; finishedAt: string};
 
 /** Missing, mismatched, or ambiguous results never count as a pass. */
 export function summarizeSuite(suite: TestSuite, runs: SuiteRun[], finishedAt?: string) {
@@ -31,7 +31,7 @@ export function summarizeSuite(suite: TestSuite, runs: SuiteRun[], finishedAt?: 
       && run.platform === member.platform && run.channel === suite.channel && run.provenance.headSha === (member.headSha ?? suite.build.headSha));
     const run = matches.length === 1 ? matches[0] : undefined;
     return {...member, status: run?.outcome ?? (finishedAt ? "not-run" : "waiting"),
-      ...(run ? {runId: run.runId, startedAt: run.startedAt, finishedAt: run.finishedAt} : {})};
+      ...(run ? {publicationComplete: run.publicationComplete === true, runId: run.runId, startedAt: run.startedAt, finishedAt: run.finishedAt} : {})};
   });
   const passed = members.filter(member => member.status === "passed").length;
   const failed = members.filter(member => !["passed", "waiting"].includes(member.status));
