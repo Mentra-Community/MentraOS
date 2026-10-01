@@ -12,6 +12,7 @@ test("the human catalog includes five full foundation combinations without enabl
   </QueryClientProvider>);
   expect(markup.match(/<article /g)).toHaveLength(5);
   expect(markup).toContain("Local replay only.");
+  expect(markup).toContain("label shown on a request-enabled card. Local-replay-only routines cannot be requested here.");
   expect(markup).not.toContain("routine:ota-roundtrip-android");
   expect(markup).toContain("These are local development passes. CI, nightly runs and other builds need their own qualification.");
   expect(markup).toContain("No physical glasses or glasses firmware required or qualified");

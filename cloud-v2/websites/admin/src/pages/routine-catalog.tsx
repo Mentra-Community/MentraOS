@@ -20,7 +20,7 @@ export function RoutineCatalogPage({ onResult }: { onResult: (runId: string) => 
     <section className={`${PANEL} overflow-hidden`} aria-label="Request a catalog routine">
       <div className="border-b border-[#eceeeb] p-5">
         <h2 className="text-lg font-semibold">Request a run</h2>
-        <p className="mt-2 text-sm leading-6 text-[#4f5d54]">For a MentraOS PR targeting <code>dev</code>, add the exact <code>routine:&lt;id&gt;</code> label shown on its card. The request needs a published, compatible app artifact.</p>
+        <p className="mt-2 text-sm leading-6 text-[#4f5d54]">For a MentraOS PR targeting <code>dev</code>, add the exact <code>routine:&lt;id&gt;</code> label shown on a request-enabled card. Local-replay-only routines cannot be requested here. The request needs a published, compatible app artifact.</p>
         <p className="mt-3 text-xs font-semibold text-[#4f5d54]">Example: request Captions for PR 123 (replace the PR number)</p>
         <pre className="mt-2 overflow-x-auto rounded-lg bg-[#f2f4f0] p-3 text-xs leading-5"><code>gh pr edit 123 --repo Mentra-Community/MentraOS --add-label routine:captions-phone</code></pre>
         <p className="mt-2 text-sm leading-6 text-[#68746d]">For a manual request, choose a routine and a PR, dev or staging build below. Admin checks the published artifact and reports unavailable channels or routines. An enabled worker and a ready fixture are still required; a queued request is not a passing result.</p>
