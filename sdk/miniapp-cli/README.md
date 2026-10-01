@@ -248,3 +248,39 @@ The CLI's allowed-value lists are mirrored by hand from `@mentra/engine` and `@m
 - Dev sidecar WebSocket server: `src/dev-server.ts`
 - QR rendering: `src/qr.ts`
 - Generated JSON Schema: `schema/miniapp.schema.json` (regenerated via `schema regenerate`)
+
+## Try a packed miniapp during routine authoring
+
+With the Mentra App already signed in, build and pack the modified miniapp normally.
+From the MentraOS checkout, load the resulting ZIP without navigating developer settings:
+
+```bash
+bun scripts/load-authoring-miniapp.mjs /absolute/path/com.mentra.notes-1.0.27.zip --mac
+bun scripts/load-authoring-miniapp.mjs /absolute/path/com.mentra.notes-1.0.27.zip --android R5CW22Z3GDZ
+```
+
+The command serves only that ZIP on loopback; Android uses an owned `adb reverse`
+tunnel. It sends `com.mentra://test/load-miniapp?url=...&package=...&version=...`.
+The app stops the named miniapp, checks the ZIP's package/version with the existing
+installer, refreshes the registry, checks existing permissions and opens it through
+the normal miniapp lifecycle. No Mentra App rebuild, sign-out or routine restart is
+needed after installing a host build that includes this handler. New permissions
+must already be granted. This does not change production bundles or routine replay
+configuration. Repacking the same version replaces its installed files.
+
+Keep the command running until the app opens the miniapp, then press Ctrl+C to
+stop its server and remove its USB tunnel. App logs emit `MINIAPP_LOAD_RESULT`
+with `opened` or `failed`; URL delivery alone does not prove installation or UI
+readiness. Verify the changed step in the held authoring session.
+
+Incident submission uses the same cross-platform transport:
+
+```bash
+bun scripts/submit-test-incident.mjs --mac alert_id=authoring-1 failure_code=search_failed 'failure_message=Search did not filter the notes'
+bun scripts/submit-test-incident.mjs --android R5CW22Z3GDZ alert_id=authoring-2 failure_code=search_failed 'failure_message=Search did not filter the notes'
+```
+
+Both send `com.mentra://test/submit-incident-report`. The existing incident modal
+keeps the current screen underneath and shows upload status and the report ID.
+Android's `com.mentra.SUBMIT_INCIDENT_REPORT` broadcast remains supported for
+existing callers and background submission without foregrounding the app.

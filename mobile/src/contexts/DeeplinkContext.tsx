@@ -8,6 +8,7 @@ import mentraAuth from "@/utils/auth/authClient"
 import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
+import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -483,6 +484,19 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         // Diagnostics must preserve the failed screen even when auth is unavailable.
         // The modal and uploader report that failure without sending the user to login.
         requiresAuth: false,
+      },
+      {
+        pattern: "/test/load-miniapp",
+        requiresAuth: true,
+        handler: async (url: string) => {
+          try {
+            const result = await loadAuthoringMiniapp(url)
+            console.info("MINIAPP_LOAD_RESULT", JSON.stringify({status: "opened", ...result}))
+          } catch (error) {
+            console.error("MINIAPP_LOAD_RESULT", JSON.stringify({status: "failed", error: String(error)}))
+            throw error
+          }
+        },
       },
       ...deepLinkRoutes,
     ],

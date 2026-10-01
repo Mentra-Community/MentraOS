@@ -11,6 +11,10 @@ const mockPush = jest.fn()
 const mockSetPendingRoute = jest.fn()
 const mockGetSession = jest.fn()
 const mockIncidentRequest = jest.fn()
+const mockLoadAuthoringMiniapp = jest.fn()
+jest.mock("@/services/miniapps/loadAuthoringMiniapp", () => ({
+  loadAuthoringMiniapp: (...args: unknown[]) => mockLoadAuthoringMiniapp(...args),
+}))
 
 jest.mock("@/components/diagnostics/IncidentReportRequest", () => ({
   __esModule: true,
@@ -283,4 +287,33 @@ it("does not exchange an expired confirmation link", async () => {
   })
   expect(mockCompleteSignupVerification).not.toHaveBeenCalled()
   expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=otp_expired")
+})
+
+const authoringUrl =
+  "com.mentra://test/load-miniapp?package=com.mentra.notes&version=1.0.27&url=http%3A%2F%2F127.0.0.1%3A3000%2Fbundle.zip"
+it("handles the native authoring URL without a settings-screen navigation", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  mockLoadAuthoringMiniapp.mockResolvedValue({packageName: "com.mentra.notes", version: "1.0.27"})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(authoringUrl)
+  })
+  expect(mockLoadAuthoringMiniapp).toHaveBeenCalledWith(authoringUrl)
+  expect(mockPush).not.toHaveBeenCalled()
+})
+it("does not install a miniapp without a signed-in session", async () => {
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(authoringUrl)
+  })
+  expect(mockLoadAuthoringMiniapp).not.toHaveBeenCalled()
+  expect(mockSetPendingRoute).toHaveBeenCalledWith(authoringUrl)
 })
