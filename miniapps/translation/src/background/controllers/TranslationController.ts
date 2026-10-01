@@ -87,7 +87,7 @@ interface InternalTranslationEntry {
 
 // ── Settings defaults (mirror SettingsManager) ─────────────────────────────
 const DEFAULT_SETTINGS: TranslationSettings = {
-  targetLanguage: "es",
+  targetLanguage: "en",
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
   wordBreaking: false,
