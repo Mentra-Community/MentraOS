@@ -473,10 +473,16 @@ export function isOtaCheckForCurrentDevice(result: OtaCheckCurrentGlassesResult)
   return checkedRevision === undefined || checkedRevision === otaDeviceSessionRevision()
 }
 
-function refreshGlassesVersionInfo(): Promise<void> {
+async function refreshGlassesVersionInfo(): Promise<void> {
   // The background checker and mounted flow may check together. The native SDK
   // allows one version request at a time, so share its fresh response.
   const revision = otaDeviceSessionRevision()
+  // Native permits only one request across all devices. Wait for an old pair's
+  // request to release that slot, without using its response or failure for B.
+  while (versionInfoRefresh && versionInfoRefresh.revision !== revision) {
+    await versionInfoRefresh.promise.catch(() => {})
+    if (revision !== otaDeviceSessionRevision()) return
+  }
   if (versionInfoRefresh?.revision === revision) return versionInfoRefresh.promise
   const refresh = {revision, promise: Promise.resolve()}
   refresh.promise = BluetoothSdk.requestVersionInfo()

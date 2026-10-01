@@ -23,7 +23,10 @@ A changed or forgotten default advances an internal revision. Forgetting and
 selecting the same pair also requires new approval. Invalidate the release range,
 downgrade approval, selected check, progress, pending start ownership, watchdogs,
 and MTK filtering. Stop coordinator reactions before clearing the OTA store.
-Refresh the mounted flow for the new glasses. Fence asynchronous checks and
+Refresh the mounted flow for the new glasses. Native version requests remain serialized
+across revisions: wait for the old request to settle, discard its response/error,
+check ownership again, then issue/share a fresh request for the replacement pair.
+Fence asynchronous checks and
 hotspot preparation before publishing state or sending another BLE command.
 Join cancelled hotspot preparation before releasing its phone network/server and
 artifacts; cleanup must never disable the replacement glasses' hotspot.
