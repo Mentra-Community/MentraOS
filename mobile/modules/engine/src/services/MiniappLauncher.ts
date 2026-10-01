@@ -107,6 +107,9 @@ class MiniappLauncher {
       useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
     )
 
+    const selectedSnapshot = devAllowed ? appRegistry.getSelectedDevSnapshot(packageName) : null
+    if (selectedSnapshot) return this.resolveInstalledBundle(packageName, selectedSnapshot)
+
     // --- Dev: live HTTP, then the last on-disk snapshot if the laptop is gone. ---
     // A stored URL from a scan that this workspace will not run must fall
     // through to the released bundle, or the home tile disappears.

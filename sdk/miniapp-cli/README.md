@@ -290,6 +290,10 @@ bun scripts/submit-test-incident.mjs --android R5CW22Z3GDZ alert_id=authoring-2 
 
 Both send `com.mentra://test/submit-incident-report`. The existing incident modal
 keeps the current screen underneath and shows upload status and the report ID.
+The packed snapshot becomes the selected source, even if this package previously
+used a scanned development server. A later scan selects that server again. Failed
+replacement restores the previous source.
+
 Both script entry points require Super Mode. The old Android incident broadcast
 has been removed; automated-testing callers use this shared URL. Normal user
 feedback remains available without Super Mode.

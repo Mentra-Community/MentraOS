@@ -43,6 +43,7 @@ async function replaceMiniapp(link: string) {
   if (!isDevMiniappAllowed(packageName, true)) throw new Error("This deployment does not allow a dev replacement for that miniapp")
   const previous = engine.miniapps.list().find((item) => item.packageName === packageName)
   const previousVersion = await appRegistry.getActiveVersion(packageName)
+  const previousSnapshot = appRegistry.getSelectedDevSnapshot(packageName)
   const stagedVersion = `dev-${Date.now()}-${Math.random().toString(16).slice(2)}`
   let stopped = false
   try {
@@ -56,6 +57,7 @@ async function replaceMiniapp(link: string) {
       releaseIdentity: {source: "dev_snapshot"},
     })
     if (installed.is_error()) throw installed.error
+    appRegistry.selectDevSnapshot(packageName, stagedVersion)
     await engine.miniapps.refresh()
     const app = engine.miniapps.list().find((item) => item.packageName === packageName)
     if (!app || app.version !== stagedVersion) throw new Error("Installed miniapp is missing from the registry")
@@ -72,6 +74,7 @@ async function replaceMiniapp(link: string) {
     return {packageName, version}
   } catch (error) {
     if (stopped) await engine.miniapps.stop(packageName)
+    appRegistry.selectDevSnapshot(packageName, previousSnapshot)
     appRegistry.discardDevSnapshot(packageName, stagedVersion)
     if (previousVersion) {
       const restored = appRegistry.setActiveVersion(packageName, previousVersion)

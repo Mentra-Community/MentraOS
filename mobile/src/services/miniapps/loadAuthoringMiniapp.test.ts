@@ -7,7 +7,8 @@ const mockStop = jest.fn(),
   mockForeground = jest.fn(),
   mockPermissions = jest.fn()
 let mockInstalledVersion = "1.0.27"
-const mockDiscard = jest.fn(), mockRestore = jest.fn(), mockAllowed = jest.fn()
+let mockSelectedSnapshot: string | null = null
+const mockDiscard = jest.fn(), mockRestore = jest.fn(), mockAllowed = jest.fn(), mockSelect = jest.fn()
 const mockReplaceSurface = jest.fn()
 jest.mock("@/stores/miniappLaunch", () => ({useMiniappPresentationStore: {getState: () => ({replaceSurface: mockReplaceSurface})}}))
 const mockSuperMode = jest.fn()
@@ -28,6 +29,7 @@ jest.mock("@mentra/engine", () => ({
 jest.mock("@mentra/engine-host-internal", () => ({
   isDevMiniappAllowed: (...args: unknown[]) => mockAllowed(...args),
   appRegistry: {installFromUrl: (...args: unknown[]) => mockInstall(...args), getActiveVersion: async () => app.version,
+    getSelectedDevSnapshot: () => mockSelectedSnapshot, selectDevSnapshot: (...args: unknown[]) => mockSelect(...args),
     discardDevSnapshot: (...args: unknown[]) => mockDiscard(...args), setActiveVersion: (...args: unknown[]) => mockRestore(...args), gcDevVersions: jest.fn()},
 }))
 jest.mock("@/utils/PermissionsUtils", () => ({checkPermissionsUI: (...args: unknown[]) => mockPermissions(...args)}))
@@ -37,6 +39,7 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockSuperMode.mockReturnValue(true)
   mockInstalledVersion = app.version
+  mockSelectedSnapshot = null
   mockAllowed.mockReturnValue(true)
   mockRestore.mockReturnValue({is_error: () => false})
   mockInstall.mockImplementation(async (_url, options) => {mockInstalledVersion = options.versionOverride; return {is_error: () => false}})
@@ -54,6 +57,7 @@ it("replaces the exact package and opens it through the normal lifecycle", async
   expect(mockInstall.mock.invocationCallOrder[0]).toBeLessThan(mockStop.mock.invocationCallOrder[0])
   expect(mockRefresh.mock.invocationCallOrder[0]).toBeLessThan(mockStart.mock.invocationCallOrder[0])
   expect(mockStart.mock.invocationCallOrder[0]).toBeLessThan(mockForeground.mock.invocationCallOrder[0])
+  expect(mockSelect).toHaveBeenCalledWith(app.packageName, expect.stringMatching(/^dev-/))
   expect(mockForeground).toHaveBeenCalledWith(app.packageName)
 })
 it.each([
@@ -107,4 +111,12 @@ it("a failed download keeps the previous miniapp running and its selected versio
   expect(mockStop).not.toHaveBeenCalled()
   expect(mockRestore).toHaveBeenCalledWith(app.packageName, app.version)
   expect(mockDiscard).toHaveBeenCalledWith(app.packageName, expect.stringMatching(/^dev-/))
+  expect(mockSelect).toHaveBeenCalledWith(app.packageName, null)
+})
+
+it("restores the prior packed-source selection when replacement fails", async () => {
+  mockSelectedSnapshot = "dev-1000-a"
+  mockInstall.mockRejectedValueOnce(new Error("download failed"))
+  await expect(loadAuthoringMiniapp(link())).rejects.toThrow("download failed")
+  expect(mockSelect).toHaveBeenCalledWith(app.packageName, "dev-1000-a")
 })

@@ -1286,27 +1286,41 @@ class MonitorWorker:
     def dismiss_incident_modal(self, device_id: str, alert_id: str) -> None:
         remote = f"/sdcard/mentra-incident-{uuid.uuid4()}.xml"
         adb = self.adb_prefix_for(device_id)
+        deadline = time.monotonic() + 20
+        tapped = False
+        last_error = "Own incident modal did not appear"
         try:
-            subprocess.run(adb + ["shell", "uiautomator", "dump", remote], check=True, capture_output=True, timeout=4)
-            xml = subprocess.run(adb + ["exec-out", "cat", remote], check=True, capture_output=True, text=True, timeout=3).stdout
-            nodes = list(ET.fromstring(xml).iter("node"))
-            ours = False
-            for node in nodes:
-                if node.get("resource-id", "").split(":id/")[-1] not in {"incident-report-state", "incident-report-result"}:
-                    continue
+            while time.monotonic() < deadline:
                 try:
-                    state = json.loads(node.get("text") or node.get("content-desc") or "")
-                    ours |= state.get("alert_id") == alert_id and state.get("test_run_id") == alert_id
-                except (ValueError, TypeError):
-                    pass
-            if not ours:
-                return
-            done = [node for node in nodes if node.get("resource-id", "").split(":id/")[-1] == "incident-report-done"]
-            bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", done[0].get("bounds", "")) if len(done) == 1 else None
-            if not bounds:
-                raise RuntimeError("Own incident modal has no unique Done button")
-            left, top, right, bottom = map(int, bounds.groups())
-            subprocess.run(adb + ["shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2)], check=True, capture_output=True, timeout=3)
+                    subprocess.run(adb + ["shell", "uiautomator", "dump", remote], check=True, capture_output=True, timeout=4)
+                    xml = subprocess.run(adb + ["exec-out", "cat", remote], check=True, capture_output=True, text=True, timeout=3).stdout
+                    nodes = list(ET.fromstring(xml).iter("node"))
+                    ours = False
+                    for node in nodes:
+                        if node.get("resource-id", "").split(":id/")[-1] not in {"incident-report-state", "incident-report-result"}:
+                            continue
+                        try:
+                            state = json.loads(node.get("text") or node.get("content-desc") or "")
+                            ours |= state.get("alert_id") == alert_id and state.get("test_run_id") == alert_id
+                        except (ValueError, TypeError):
+                            pass
+                    if not ours:
+                        if tapped:
+                            return  # Fresh hierarchy verifies that our modal is gone.
+                    else:
+                        done = [node for node in nodes if node.get("resource-id", "").split(":id/")[-1] == "incident-report-done"]
+                        bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", done[0].get("bounds", "")) if len(done) == 1 else None
+                        if not bounds:
+                            last_error = "Own incident modal has no unique Done button"
+                        elif not tapped:
+                            left, top, right, bottom = map(int, bounds.groups())
+                            tapped = True  # Never retry an input whose delivery is uncertain.
+                            subprocess.run(adb + ["shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2)], check=True, capture_output=True, timeout=3)
+                            last_error = "Own incident modal remained after Done"
+                except (subprocess.SubprocessError, ET.ParseError) as exc:
+                    last_error = str(exc)
+                time.sleep(0.5)
+            raise RuntimeError(last_error)
         finally:
             subprocess.run(adb + ["shell", "rm", "-f", remote], capture_output=True, timeout=2)
 

@@ -641,6 +641,7 @@ class AppRegistry {
     } catch (e) {
       console.warn(`APP_REGISTRY: clearDevArtifacts dir scan failed for ${packageName}:`, e)
     }
+    storage.remove(`${packageName}_dev_selected_snapshot`)
     storage.remove(`${packageName}_dev_url`)
     storage.remove(`${packageName}_dev_port`)
     storage.remove(`${packageName}_dev_mdns`)
@@ -677,6 +678,21 @@ class AppRegistry {
     } catch (e) {
       console.warn(`APP_REGISTRY: gcDevVersions error for ${packageName}:`, e)
     }
+  }
+
+  /** An explicitly selected packed snapshot takes precedence over scanned live URLs. */
+  public getSelectedDevSnapshot(packageName: string): string | null {
+    const selected = storage.load<string>(`${packageName}_dev_selected_snapshot`)
+    return selected.is_ok() && selected.value.startsWith("dev-") && this.getInstalledVersions(packageName).includes(selected.value)
+      ? selected.value : null
+  }
+
+  public selectDevSnapshot(packageName: string, version: string | null): void {
+    if (version !== null && (!version.startsWith("dev-") || !this.getInstalledVersions(packageName).includes(version)))
+      throw new Error("Selected dev snapshot is not installed")
+    if (version === null) storage.remove(`${packageName}_dev_selected_snapshot`)
+    else storage.save(`${packageName}_dev_selected_snapshot`, version)
+    this.markRefreshNeeded()
   }
 
   /** Remove one failed staged dev replacement without clearing other dev files or settings. */
@@ -759,6 +775,8 @@ class AppRegistry {
       packageName,
       useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
     )
+    const selectedSnapshot = devAllowed ? this.getSelectedDevSnapshot(packageName) : null
+    if (selectedSnapshot) return selectedSnapshot
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
     const res = storage.load<string>(`${packageName}_active_version`)
@@ -859,7 +877,7 @@ class AppRegistry {
     const offlinePackages = new Set(offline.map((app) => app.packageName))
     const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     const dev = this.projectDevApps().filter(
-      (app) => isDevMiniappAllowed(app.packageName, superMode) && !offlinePackages.has(app.packageName),
+      (app) => isDevMiniappAllowed(app.packageName, superMode) && !offlinePackages.has(app.packageName) && !this.getSelectedDevSnapshot(app.packageName),
     )
     const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
@@ -914,7 +932,7 @@ class AppRegistry {
         // their version directory name starts with "dev-".
         const isMiniappDev = versionString.startsWith("dev-")
         let devUrl: string | undefined
-        if (isMiniappDev) {
+        if (isMiniappDev && !this.getSelectedDevSnapshot(lmaInfo.packageName)) {
           const devUrlRes = storage.load<string>(`${lmaInfo.packageName}_dev_url`)
           if (devUrlRes.is_ok()) devUrl = devUrlRes.value
         }
@@ -1316,6 +1334,7 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
     mdnsHost,
   }
   storage.save(`${packageName}_dev_meta`, JSON.stringify(devRecord))
+  storage.remove(`${packageName}_dev_selected_snapshot`)
   storage.save(`${packageName}_dev_url`, record.devUrl)
   if (typeof record.devPort === "number" && Number.isFinite(record.devPort)) {
     storage.save(`${packageName}_dev_port`, record.devPort)
