@@ -86,33 +86,41 @@ does not prove the runner forwards its Java/Android tool configuration. Use the
 selected revision's pinned tools and a minimal semantic observation to check the
 assigned device; keep account entry and firmware operations in setup.
 
-## Discover with AI, then encode the observed flow
+## First complete one recorded traversal of the whole flow
 
-Use AI computer use to traverse the real flow as a person would. Capture actions,
-expected versus observed behavior, screenshots and recording. File genuine bugs
-through the existing incident path, retaining its ID or submission failure; keep
-the affected check failed and continue independent exploration where possible.
-Do not gate basic exploration on unnecessary calibration or measurement probes;
-leave measurements unverified until their required evidence exists.
+**Use AI computer use to traverse the entire English scenario from entry to end
+at least once before building its deterministic replay.** Keep the working
+authoring session and recording going. Record the ordered actions, observed UI
+controls/selectors, expected versus actual results, and screenshots needed to
+reproduce the flow. Existing controls and small helper fixes can support this
+exploration; final replay construction and polishing come afterward.
 
-During authoring, retry the failed step or smallest dependent section from usable
-state. Re-establish only prerequisites that changed; do not reinstall, reset or
-repeat a long successful prefix for every edit. Coordinate in-flight actions and
-recorders through the existing owner. Section runs remain development evidence.
+When a step fails during authoring, fix it and retry that step or the smallest
+dependent section from the current usable state, then continue forward. Restore
+only prerequisites that changed. **An ordinary step failure must not restart
+setup, reinstall/reset the app, repeat the completed prefix, or trigger teardown
+and a separate recovery workflow.** Finish the whole traversal before normal
+teardown; a partial section is not the first completed traversal.
 
-Prove the smallest new physical section before building the rest of the flow.
-Use the selected checkout's section entry point if one exists; do not invent a
-CLI flag. If it lacks one, invoke the same shared action under the existing
-session/ownership contract and retain the section's inputs, source revision and
-result. Extend a shared entry point only when needed; do not create a second
-runner or replay an uncertain firmware write. Once teardown has reset the app,
-the next section must re-establish the prerequisites it removed.
+File genuine bugs through the existing incident path, retaining the incident ID
+or submission failure. Keep the affected check failed and continue independent
+remaining steps; do not require every check to pass before finishing exploration.
+If a real blocker prevents reaching the end, report the exact obstacle and next
+action rather than inventing a pass or starting over. Do not make calibration or
+measurement probes prerequisites to basic exploration; keep unsupported
+measurements explicitly unverified.
 
-After a complete successful real traversal, encode its observed actions and
-assertions for deterministic replay without AI. Keep flow files small and
-readable: stable named steps, data for routine-specific choices, shared helpers
-for repeated mechanics. Prefer stable selectors and state-based waits. Avoid
-copying setup, authentication, recording, publication or cleanup into flows.
+Use the selected checkout's existing authoring/section entry point and owner for
+input, recording and local retries. Do not invent CLI flags, create a second
+runner or replay an uncertain firmware write. Section evidence documents progress;
+it does not replace the complete traversal.
+
+Only after reaching the end, encode the observed actions and assertions for
+deterministic replay without AI. Keep flow files small and readable: stable named
+steps, data for routine-specific choices, shared helpers for repeated mechanics.
+Prefer stable selectors and state-based waits. Avoid copying setup,
+authentication, recording, publication or cleanup into flows. A separate full
+replay through the foundation establishes whether the routine passes.
 
 Use the maintained driver path that fits the platform. Existing Mac flows use
 TypeScript `Step` definitions with Swift/native helpers; Android uses shared
