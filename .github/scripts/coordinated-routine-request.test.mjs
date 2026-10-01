@@ -4,6 +4,16 @@ import {readFile} from "node:fs/promises"
 import {createRoutineRequest} from "./request-e2e-routine.mjs"
 import {verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 import {coordinatedAndroidFixture, coordinatedFixture} from "./coordinated-routine-fixture.mjs"
+import {AUTOMATIC_BUILD_ROUTINES, DEVICE_ROUTINES} from "./device-routines.mjs"
+
+test("remade routine guidance points to the merged shared foundation", () => {
+  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/bcc58134351705f0b6e0b87ed7bfaeb2672ba058/"
+  for (const id of AUTOMATIC_BUILD_ROUTINES) {
+    assert.equal(DEVICE_ROUTINES[id].worker, `${source}worker/foundation-worker.ts`)
+    assert.ok(DEVICE_ROUTINES[id].definition.startsWith(source))
+    assert.ok(DEVICE_ROUTINES[id].implementation.startsWith(source))
+  }
+})
 
 test("the shared private/public wire fixture is the actual producer output", async () => {
   const {state, options} = coordinatedFixture()
