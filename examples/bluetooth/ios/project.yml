@@ -36,6 +36,7 @@ targets:
         product: MentraBluetoothSDK
     settings:
       base:
+        INFOPLIST_FILE: MentraExample-Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.mentra.bluetoothsdk.example.ios
         PRODUCT_NAME: MentraSdkIosExample
         CODE_SIGN_ENTITLEMENTS: MentraExample/MentraExample.entitlements

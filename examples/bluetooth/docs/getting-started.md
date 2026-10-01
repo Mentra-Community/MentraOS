@@ -216,7 +216,7 @@ iOS apps should include permission copy in `Info.plist`:
 
 ## Background Operation On iOS
 
-If your iOS app needs BLE to keep running while the phone is locked or the app is backgrounded, enable Core Bluetooth background mode:
+Declare Core Bluetooth background mode in your iOS app's `Info.plist`. It is required: when the glasses drop the link, for example while their Bluetooth chip restarts during a software update, the SDK keeps a pending reconnection that iOS completes only for apps with this mode. Without it, a locked phone stays disconnected until the user opens the app. A Swift package cannot declare it for you; the SDK logs a warning at startup when it is missing. The native example declares it in `examples/ios/MentraExample-Info.plist`. See [Background Operation](https://docs.mentraglass.com/bluetooth-sdk/ios#background-operation).
 
 ```xml
 <key>UIBackgroundModes</key>
