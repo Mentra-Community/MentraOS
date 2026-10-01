@@ -30,19 +30,27 @@ under `regions/china/alibaba/`:
 
 - `prod/`: the production stack below. Remote state is in OSS bucket
   `mentra-tfstate-china-prod` (`us-west-1`), key
-  `china/alibaba/prod/terraform.tfstate`. The bucket was kept. Its state now
-  describes deleted resources. `terraform plan` will refresh them away; to
-  start clean, use a new key instead.
+  `china/alibaba/prod/terraform.tfstate`. The bucket was kept. Reuse this
+  key: it still tracks the resources that survived the teardown (VPC,
+  vswitches, security groups, DNS records in the domestic account,
+  certificates). Run `terraform plan` first so the refresh drops the deleted
+  resources, and reconcile any drift before `apply`. A fresh key would lose
+  those bindings and try to create duplicates.
 - `dev/`: the dev network and the **marketing site** that serves
   `mentraglass.cn`. Its state is not in the bucket above.
 - `modules/`: `network`, `app` (ECI + Auto Scaling + ALB/NLB + optional
   MongoDB + logs), `acr`, `oss`, `oss-cname`, `static-website`, `ssl`
   (Let's Encrypt via ACME, uploaded to Alibaba Certificate Service), `naming`.
 
-The pods pulled `prod/api`, `prod/caption` and `prod/translation-api`
-images from the Container Registry over its VPC endpoint. The registry is
-being released, so images must be rebuilt and pushed to a new registry
-before `terraform apply` works.
+The pods ran Cloud V1 services, deployed by the since-removed
+`china-deployment-prod.yml` and `china-deploy-static-websites-prod.yaml`
+workflows. They pulled `prod/api`, `prod/caption` and
+`prod/translation-api` images from the Container Registry over its VPC
+endpoint. The registry is being released, and Cloud V1 is gone, so this
+stack is a reference for the infrastructure shape, not something to
+re-apply as-is. A future China deployment needs its own Cloud V2 regional
+design; see
+[the Cloud V2 workflow transition spec](../superpowers/specs/2026-08-28-cloud-workflow-transition.md).
 
 ## What the prod stack was
 
