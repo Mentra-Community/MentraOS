@@ -50,7 +50,9 @@ accounts for concurrent sessions when their state could interfere.
 
 Build and pack it in its source repo, then use the MentraOS command
 `bun scripts/load-authoring-miniapp.mjs <packed.zip> --mac` or
-`--android <phone-serial>`. This uses the running Mentra App's install-and-open
+`--android <phone-serial>`. For Mac, set `MENTRA_MAC_APP` to the exact installed
+`.app` path; for Android variants, set `MENTRA_HOST_PACKAGE` to their application
+ID. This uses the running Mentra App's install-and-open
 handler instead of computer use through Developer Settings. It needs a host build
 containing that handler, the existing Super Mode enabled, and already granted miniapp permissions. Keep the server
 running until the miniapp opens, then stop it. Verify the changed saved action in
