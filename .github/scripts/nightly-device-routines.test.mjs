@@ -777,3 +777,28 @@ test("explicit manual qualification has a new suite identity while scheduled sen
   await assert.rejects(sendNightlyRequest({...options, attempt: 2}), /Invalid nightly/)
   assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 1)
 })
+
+test("transient job-history reads retry without duplicating dispatch", async () => {
+  const f = fixture()
+  let reads = 0
+  f.state.jobsResponse = input => {
+    if (++reads === 1) throw Object.assign(new Error("GitHub server error"), {status: 502})
+    const jobs = f.state.jobs.get(input.run_id) ?? []
+    return {total_count: jobs.length, jobs}
+  }
+  const result = await sendNightlyRequest({...f.options, plan})
+  assert.equal(result.status, "request-dispatched")
+  assert.equal(reads, 2)
+  assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 1)
+})
+
+test("persistent server errors and authorization failures never send a request", async () => {
+  for (const [status, expectedReads] of [[502, 3], [403, 1]]) {
+    const f = fixture()
+    let reads = 0
+    f.state.jobsResponse = () => {reads++; throw Object.assign(new Error("history unavailable"), {status})}
+    await assert.rejects(sendNightlyRequest({...f.options, plan}), /history unavailable/)
+    assert.equal(reads, expectedReads)
+    assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 0)
+  }
+})

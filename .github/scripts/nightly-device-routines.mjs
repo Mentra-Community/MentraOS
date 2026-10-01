@@ -42,11 +42,22 @@ export const nightlyJobName = ({date, channel, routine}) => `Nightly ${date} / $
 const legacyJobName = ({date, channel}) => `Nightly ${date} / ${channel} / OTA then Call`
 
 /** GitHub job/run history is a send fence; an incomplete response is not absence. */
+async function readHistoryPage(read, page) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await read(page) }
+    catch (error) {
+      // Only retry read-only transient server errors. Dispatch writes are never retried here.
+      if (attempt === 3 || ![500, 502, 503, 504].includes(error?.status)) throw error
+      await new Promise(resolve => setTimeout(resolve, attempt * 250))
+    }
+  }
+}
+
 async function completePages(read, key) {
   const rows = []
   let expected
   for (let page = 1; ; page++) {
-    const {data} = await read(page)
+    const {data} = await readHistoryPage(read, page)
     requireThat(Number.isSafeInteger(data?.total_count) && data.total_count >= 1 && data.total_count < 1000 &&
       Array.isArray(data[key]), "Nightly history is incomplete; reconcile manually")
     expected ??= data.total_count
