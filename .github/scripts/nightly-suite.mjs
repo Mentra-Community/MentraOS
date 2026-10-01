@@ -20,9 +20,13 @@ export function suiteResultMessage(suite, expectedRoutineIds) {
   const failed = expectedRoutineIds.filter(routine => members.get(routine)?.status !== "passed")
   const passed = failed.length === 0 && suite.outcome === "passed" && suite.passed === true
   if (!passed && !failed.length) throw new Error("Suite aggregate contradicts member results")
-  const url = `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(suite.suiteId)}`
+  const singleRunId = expectedRoutineIds.length === 1 ? members.get(expectedRoutineIds[0])?.runId : undefined
+  if (expectedRoutineIds.length === 1 && (typeof singleRunId !== "string" || !singleRunId))
+    throw new Error("Single-routine result needs its direct published run")
+  const url = singleRunId ? `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(singleRunId)}`
+    : `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(suite.suiteId)}`
   return {passed, failedRoutines: failed, url,
-    text: `${passed ? "🟢" : "🔴"} Dev nightly suite: ${passed ? "all routines passed" : `non-pass routines: ${failed.join(", ")}`}\n${url}`}
+    text: `${passed ? "🟢" : "🔴"} Dev nightly ${singleRunId ? "routine" : "suite"}: ${passed ? "all routines passed" : `non-pass routines: ${failed.join(", ")}`}\n${url}`}
 }
 
 export async function publishSuiteResult({suite, expectedRoutineIds, channel, token, fetchImpl = fetch}) {

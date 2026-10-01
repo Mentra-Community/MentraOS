@@ -24,6 +24,14 @@ test("running, staging, duplicate and contradictory aggregates refuse posting", 
     assert.throws(() => suiteResultMessage({...suite, ...changed}, expected))
 })
 
+test("single-routine jobs link to their published run, not the suite", () => {
+  const single = {...suite, members: [{...suite.members[0], runId: "routine-100-1-dev-no-glasses"}]}
+  const result = suiteResultMessage(single, ["no-glasses"])
+  assert.ok(result.url.includes("?testRun="))
+  assert.ok(!result.text.includes("nightly suite"))
+  assert.throws(() => suiteResultMessage({...single, members: [suite.members[0]]}, ["no-glasses"]))
+})
+
 test("suite Slack send binds destination and receipt without retry", async () => {
   let sends = 0
   const receipt = await publishSuiteResult({suite, expectedRoutineIds: expected, channel: "CDEV", token: "synthetic",
