@@ -454,7 +454,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
 ]
 
 interface DeeplinkContextType {
-  processUrl: (url: string, initial?: boolean) => Promise<void>
+  processUrl: (url: string, initial?: boolean, replayPending?: boolean) => Promise<void>
 }
 
 const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContextType)
@@ -593,8 +593,10 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
   }
 
   const deferredUrl = useRef<string | null>(null)
+  const processingUrls = useRef(new Set<string>())
 
-  const processUrl = async (url: string, initial: boolean = false) => {
+  const processUrl = async (url: string, initial: boolean = false, replayPending = false) => {
+    let claimed = false
     try {
       url = sanitizeDeeplinkUrl(url)
       // ignore expo-dev-deeplinks: (this was causing android to restart the app after hot-reloads twice)
@@ -609,7 +611,8 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       // duplicate addEventListener call is blocked. A route deferred to startup
       // or sign-in can be consumed immediately, regardless of the dedup window.
       const now = Date.now()
-      const authReplay = deferredUrl.current === url
+      const authReplay = replayPending && deferredUrl.current === url
+      if (processingUrls.current.has(url)) return
       if (!initial && !authReplay && url === lastProcessed.current.url && now - lastProcessed.current.time < 3000) {
         console.log("DEEPLINK: Ignoring duplicate URL")
         return
@@ -631,6 +634,14 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
           return
         }
       }
+
+      // Only startup's explicit pending-route consumer may bypass deduplication.
+      // Claim before the asynchronous auth check so concurrent events cannot run it.
+      if (processingUrls.current.has(url)) return
+      processingUrls.current.add(url)
+      claimed = true
+      if (deferredUrl.current === url) deferredUrl.current = null
+      if (nav.getPendingRoute() === url) nav.setPendingRoute(null)
 
       // small hack since some sources strip the host and we want to put the url into URL object here
       if (url.startsWith("/")) {
@@ -664,7 +675,6 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         return
       }
 
-      if (deferredUrl.current === url) deferredUrl.current = null
       // Extract parameters from URL
       const params = extractParams(parsedUrl, matchedRoute.pattern)
       if (authed) {
@@ -690,6 +700,8 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     } catch (error) {
       console.error("Error handling deep link:", error)
       config.fallbackHandler?.(url)
+    } finally {
+      if (claimed) processingUrls.current.delete(url)
     }
   }
 
