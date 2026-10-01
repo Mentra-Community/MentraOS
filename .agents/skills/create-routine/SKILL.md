@@ -54,7 +54,7 @@ before using its APIs or commands:
 | --- | --- |
 | `tools/mentra-e2e/runner/routine-plan.ts` | Build, platform, entry, account, fixtures and resources |
 | `tools/mentra-e2e/runner/standard-routine.ts` | Common setup/test/teardown composition |
-| `worker/local.ts` | Local run, cleanup and publication commands; inspect `--help` |
+| `worker/local.ts` | Local run, authoring, cleanup and publication commands; inspect `--help` |
 | `worker/local-mac.ts`, `worker/local-android.ts` | Platform implementation of that contract |
 | `tools/mentra-e2e/flows/` | Small flow definitions, including walkthrough, Captions and Notes |
 
@@ -110,10 +110,22 @@ action rather than inventing a pass or starting over. Do not make calibration or
 measurement probes prerequisites to basic exploration; keep unsupported
 measurements explicitly unverified.
 
-Use the selected checkout's existing authoring/section entry point and owner for
-input, recording and local retries. Do not invent CLI flags, create a second
-runner or replay an uncertain firmware write. Section evidence documents progress;
-it does not replace the complete traversal.
+On revisions containing [the shared authoring interface](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/248),
+use `bun --no-env-file worker/local.ts author --config /absolute/private-config.json`.
+It runs shared setup and holds its owner/recorder for `steps`, `snapshot`,
+`step <ID>`, `section <ID> <ID>`, semantic `press`, and, on Android,
+`maestro /absolute/section.yaml`. Check the selected checkout's help and
+`docs/DEVELOPMENT-ENTRY.md` for supported adapters and commands. Keep retries
+inside that session; edit and rerun supported sections from the current state.
+End the complete traversal with `teardown`. If the authoring process exits,
+the existing `cleanup` command requires the original `--config` and
+`--run-directory`; after teardown, a new session establishes its own prerequisites.
+
+On older revisions, use or extend the selected checkout's shared authoring/section
+entry point and owner for input, recording and local retries. Do not invent CLI
+flags, create a second runner or replay an uncertain firmware write. Authoring
+section evidence documents progress; it cannot publish a full routine result or
+replace the complete traversal.
 
 Only after reaching the end, encode the observed actions and assertions for
 deterministic replay without AI. Keep flow files small and readable: stable named
