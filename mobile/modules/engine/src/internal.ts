@@ -16,6 +16,8 @@
  * types host UI renders with stay on the main entry.
  */
 
+export {isDevMiniappAllowed} from "./runtime/bootstrap"
+
 // Miniapp runtime plumbing: WebView bridge, registry, launcher, engine.
 export {default as webviewBridge} from "./services/WebviewBridge"
 export {

@@ -16,6 +16,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -115,20 +117,11 @@ def parse_args() -> argparse.Namespace:
         help="Require this macOS output device for local playback. If SwitchAudioSource is installed, the monitor will switch to it automatically.",
     )
     parser.add_argument(
-        "--alert-intent-action",
-        default="com.mentra.SUBMIT_INCIDENT_REPORT",
-        help="Android broadcast action to fire when an alert is raised.",
-    )
-    parser.add_argument(
-        "--alert-intent-component",
-        default="com.mentra.mentra/com.mentra.crust.receivers.SubmitIncidentReportReceiver",
-        help="Optional explicit Android broadcast component for alert dispatch.",
-    )
-    parser.add_argument(
         "--disable-alert-intent-dispatch",
         action="store_true",
-        help="Disable Android alert-intent dispatch even when alerts are raised.",
+        help="Disable Android incident deep-link dispatch even when alerts are raised.",
     )
+    parser.add_argument("--app-package", default="com.mentra.mentra", help="Exact Android application ID to monitor and submit incidents to")
     parser.add_argument("--poll-interval", type=float, default=0.25, help="Hierarchy poll interval in seconds")
     parser.add_argument("--word-match-early-tolerance-ms", type=int, default=250, help="Allow a visible word match slightly before the expected word timestamp")
     parser.add_argument("--post-roll-ms", type=int, default=1200, help="Extra time after the last aligned word before closing an utterance")
@@ -1249,77 +1242,22 @@ class MonitorWorker:
                 dispatch_attempted_at_ms=now_ms,
             )
 
-        action = (self.args.alert_intent_action or "").strip()
-        if not action:
-            return self.state.update_alert(
-                device_id,
-                alert_id,
-                status="dispatch_disabled",
-                dispatch_attempted_at_ms=now_ms,
-                dispatch_error="No alert intent action configured.",
-            )
-
         failure_message = (
             f"{alert.get('incident_name', alert.get('incident_type', 'incident'))} alert reached after "
             f"{int(alert.get('duration_ms') or 0) / 1000:.1f}s."
         )
-        remote_cmd = ["am", "broadcast", "-a", action]
-        component = (self.args.alert_intent_component or "").strip()
-        if component:
-            remote_cmd.extend(["-n", component])
-        remote_cmd.extend(
-            [
-                "--es",
-                "failure_code",
-                str(alert.get("incident_type") or "unknown_incident"),
-                "--es",
-                "failure_message",
-                failure_message,
-                "--es",
-                "test_run_id",
-                alert_id,
-                "--es",
-                "scenario_name",
-                str(alert.get("incident_name") or alert.get("incident_type") or "Unknown Incident"),
-                "--es",
-                "source",
-                "live_word_monitor",
-                "--es",
-                "alert_id",
-                alert_id,
-                "--es",
-                "incident_id",
-                str(alert.get("incident_id") or ""),
-                "--es",
-                "incident_type",
-                str(alert.get("incident_type") or ""),
-                "--es",
-                "incident_name",
-                str(alert.get("incident_name") or ""),
-                "--es",
-                "reason",
-                str(alert.get("reason") or ""),
-                "--ei",
-                "duration_ms",
-                str(int(alert.get("duration_ms") or 0)),
-                "--ei",
-                "alert_threshold_ms",
-                str(int(alert.get("alert_threshold_ms") or 0)),
-                "--el",
-                "started_at_ms",
-                str(int(alert.get("started_at_ms") or 0)),
-                "--el",
-                "alerted_at_ms",
-                str(int(alert.get("alerted_at_ms") or now_ms)),
-            ]
-        )
-        if alert.get("dataset_row_idx") is not None:
-            remote_cmd.extend(["--ei", "dataset_row_idx", str(int(alert["dataset_row_idx"]))])
-        if alert.get("utterance_text"):
-            remote_cmd.extend(["--es", "utterance_text", str(alert["utterance_text"])])
-        public_dashboard_url = (self.args.public_dashboard_url or "").strip()
-        if public_dashboard_url:
-            remote_cmd.extend(["--es", "dashboard_url", public_dashboard_url])
+        params = {
+            "alert_id": alert_id,
+            "test_run_id": alert_id,
+            "failure_code": str(alert.get("incident_type") or "unknown_incident"),
+            "failure_message": failure_message,
+            "scenario_name": str(alert.get("incident_name") or alert.get("incident_type") or "Unknown Incident"),
+            "source": "live_word_monitor",
+        }
+        if self.args.public_dashboard_url:
+            params["dashboard_url"] = self.args.public_dashboard_url
+        url = "com.mentra://test/submit-incident-report?" + urllib.parse.urlencode(params)
+        remote_cmd = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", self.args.app_package]
 
         adb_cmd = self.adb_prefix_for(device_id) + ["shell", " ".join(shlex.quote(part) for part in remote_cmd)]
         try:
@@ -1330,7 +1268,7 @@ class MonitorWorker:
                 status="dispatched",
                 dispatch_attempted_at_ms=now_ms,
                 dispatch_completed_at_ms=int(time.time() * 1000),
-                dispatch_output=(result.stdout or result.stderr).strip() or "broadcast_sent",
+                dispatch_output=(result.stdout or result.stderr).strip() or "deep_link_sent",
             )
         except Exception as exc:
             return self.state.update_alert(
@@ -1340,6 +1278,52 @@ class MonitorWorker:
                 dispatch_attempted_at_ms=now_ms,
                 dispatch_error=str(exc),
             )
+        finally:
+            try:
+                self.dismiss_incident_modal(device_id, alert_id)
+            except Exception as exc:
+                self.state.update_alert(device_id, alert_id, dismissal_error=str(exc))
+
+    def dismiss_incident_modal(self, device_id: str, alert_id: str) -> None:
+        remote = f"/sdcard/mentra-incident-{uuid.uuid4()}.xml"
+        adb = self.adb_prefix_for(device_id)
+        deadline = time.monotonic() + 20
+        tapped = False
+        last_error = "Own incident modal did not appear"
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    subprocess.run(adb + ["shell", "uiautomator", "dump", remote], check=True, capture_output=True, timeout=4)
+                    xml = subprocess.run(adb + ["exec-out", "cat", remote], check=True, capture_output=True, text=True, timeout=3).stdout
+                    nodes = list(ET.fromstring(xml).iter("node"))
+                    ours = False
+                    for node in nodes:
+                        if node.get("resource-id", "").split(":id/")[-1] not in {"incident-report-state", "incident-report-result"}:
+                            continue
+                        try:
+                            state = json.loads(node.get("text") or node.get("content-desc") or "")
+                            ours |= state.get("alert_id") == alert_id and state.get("test_run_id") == alert_id
+                        except (ValueError, TypeError):
+                            pass
+                    if not ours:
+                        if tapped:
+                            return  # Fresh hierarchy verifies that our modal is gone.
+                    else:
+                        done = [node for node in nodes if node.get("resource-id", "").split(":id/")[-1] == "incident-report-done"]
+                        bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", done[0].get("bounds", "")) if len(done) == 1 else None
+                        if not bounds:
+                            last_error = "Own incident modal has no unique Done button"
+                        elif not tapped:
+                            left, top, right, bottom = map(int, bounds.groups())
+                            tapped = True  # Never retry an input whose delivery is uncertain.
+                            subprocess.run(adb + ["shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2)], check=True, capture_output=True, timeout=3)
+                            last_error = "Own incident modal remained after Done"
+                except (subprocess.SubprocessError, ET.ParseError) as exc:
+                    last_error = str(exc)
+                time.sleep(0.5)
+            raise RuntimeError(last_error)
+        finally:
+            subprocess.run(adb + ["shell", "rm", "-f", remote], capture_output=True, timeout=2)
 
     def find_alert_device_id(self, alert_id: str) -> str | None:
         for device_id in self.state.device_ids:
@@ -1758,7 +1742,7 @@ class MonitorWorker:
                         focused_app = candidate_focus
             if focused_app is None:
                 focused_app = fallback_focus
-            is_app_foreground = bool(focused_app and "com.mentra.mentra" in focused_app and "MainActivity" in focused_app)
+            is_app_foreground = bool(focused_app and f"{self.args.app_package}/" in focused_app and "MainActivity" in focused_app)
         except Exception as exc:
             error_message = str(exc)
             if device_state.last_foreground_app_check_ts_ms:
@@ -1803,7 +1787,7 @@ class MonitorWorker:
                 self.state.end_incident(device_id, ongoing_incident["incident_id"], now_ms, {"reason": "incident_disabled"})
             return
         is_app_foreground, current_focus, probe_error = self.get_foreground_app_probe(device_id, device_state, now_ms)
-        details = {"current_focus": current_focus, "expected_package": "com.mentra.mentra", "expected_activity": "MainActivity"}
+        details = {"current_focus": current_focus, "expected_package": self.args.app_package, "expected_activity": "MainActivity"}
         if probe_error is not None:
             incident_id = ongoing_incident["incident_id"] if ongoing_incident is not None else self.state.start_incident(
                 device_id,

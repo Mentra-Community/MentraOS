@@ -18,3 +18,9 @@ it.each([
 ])("preserves unrelated URL %s", (other) => {
   expect(redirectSystemPath({path: other, initial: false})).toBe(other)
 })
+
+it("leaves a warm app in place for an authoring install command", () => {
+  const path = "com.mentra://test/load-miniapp?package=com.mentra.notes"
+  expect(redirectSystemPath({path, initial: false})).toBeNull()
+  expect(redirectSystemPath({path, initial: true})).toBe("/")
+})

@@ -46,6 +46,19 @@ Use private runtime account references and existing secret-input/redaction
 helpers. Keep credentials out of source, prompts and evidence; use separate
 accounts for concurrent sessions when their state could interfere.
 
+## Try a modified miniapp without restarting authoring
+
+Build and pack it in its source repo, then use the MentraOS command
+`bun scripts/load-authoring-miniapp.mjs <packed.zip> --mac` or
+`--android <phone-serial>`. For Mac, set `MENTRA_MAC_APP` to the exact installed
+`.app` path; for Android variants, set `MENTRA_HOST_PACKAGE` to their application
+ID. This uses the running Mentra App's install-and-open
+handler instead of computer use through Developer Settings. It needs a host build
+containing that handler, the existing Super Mode enabled, and already granted miniapp permissions. Keep the server
+running until the miniapp opens, then stop it. Verify the changed saved action in
+the existing session; don't redo setup or replay the completed prefix.
+See [the CLI guide](../../../sdk/miniapp-cli/README.md#try-a-packed-miniapp-during-routine-authoring).
+
 ## Use the shared foundation
 
 These paths are relative to the private repository; inspect the selected revision

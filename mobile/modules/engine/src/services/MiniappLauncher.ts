@@ -107,6 +107,9 @@ class MiniappLauncher {
       useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
     )
 
+    const selectedSnapshot = devAllowed ? appRegistry.getSelectedDevSnapshot(packageName) : null
+    if (selectedSnapshot) return this.resolveInstalledBundle(packageName, selectedSnapshot)
+
     // --- Dev: live HTTP, then the last on-disk snapshot if the laptop is gone. ---
     // A stored URL from a scan that this workspace will not run must fall
     // through to the released bundle, or the home tile disappears.
@@ -288,7 +291,7 @@ class MiniappLauncher {
     // A live dev server sets devUrl. A snapshot keeps the directory name `dev-*`
     // as the active version. Either one is the scanned build; a release fallback is neither.
     const activeVersion = await appRegistry.getActiveVersion(packageName)
-    const devBuild = Boolean(resolved.devUrl) || activeVersion.startsWith("dev-")
+    const devBuild = Boolean(resolved.devUrl) || Boolean(activeVersion?.startsWith("dev-"))
     const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     if (
       devBuild

@@ -8,11 +8,16 @@ import type {MentraJSRouter} from "../MentraJSRouter"
 
 // getActiveVersion is mutable so a test can force an "unresolvable" bundle.
 let activeVersion = "1.0.0"
+let selectedSnapshot: string | null = null
+let superMode = false
+let storedDevUrl: string | null = null
+let snapshotVersions: string[] = []
 
 mock.module("../AppRegistry", () => ({
   default: {
     getActiveVersion: async () => activeVersion,
-    getMiniappEntryPaths: () => ({background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}),
+    getSelectedDevSnapshot: () => selectedSnapshot,
+    getMiniappEntryPaths: (_package: string, version: string) => {snapshotVersions.push(version); return {background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}},
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
     getReleaseIdentity: () => null,
     getLatestDevSnapshotVersion: () => null,
@@ -41,7 +46,7 @@ mock.module("../LocalMiniappRuntime", () => ({
 // deliberately do NOT mock.module("../../utils/devMiniappLaunch"): that mock is
 // process-global in Bun and would leak into devMiniappLaunch.test.ts.
 mock.module("../../utils/storage/storage", () => ({
-  storage: {load: () => ({is_ok: () => false})},
+  storage: {load: (key: string) => ({is_ok: () => key.endsWith("_dev_url") && !!storedDevUrl, value: storedDevUrl})},
 }))
 mock.module("expo-file-system", () => ({
   File: class {
@@ -54,6 +59,8 @@ mock.module("expo-file-system", () => ({
     }
   },
 }))
+
+mock.module("../../stores/settings", () => ({SETTINGS: {super_mode: {key: "super_mode"}}, useSettingsStore: {getState: () => ({getSetting: () => superMode})}}))
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
 
@@ -87,9 +94,21 @@ describe("MiniappLauncher", () => {
 
   beforeEach(() => {
     activeVersion = "1.0.0"
+    selectedSnapshot = null
+    superMode = false
+    storedDevUrl = null
+    snapshotVersions = []
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
     miniappLauncher.configure({router: mockRouter.router})
+  })
+
+  test.each(["http://reachable.local:3000", "http://unreachable.local:3000"])("explicit packed snapshot wins over scanned URL %s", async url => {
+    superMode = true
+    selectedSnapshot = "dev-1234-a"
+    storedDevUrl = url
+    await miniappLauncher.resolveBundle("com.x", {devUrl: url})
+    expect(snapshotVersions).toEqual([selectedSnapshot])
   })
 
   test("ensureRunning spawns the background context when not registered", async () => {

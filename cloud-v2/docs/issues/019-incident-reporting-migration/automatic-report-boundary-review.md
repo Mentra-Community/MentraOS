@@ -99,7 +99,7 @@ Judgment:
   forcing host code to be the automatic-report caller. A small event/listener
   shape is cleaner than one host-owned `onCrashloop` callback doing everything.
 
-Implemented move:
+Historical migration (the broadcast listener has since been removed):
 
 - Add an island-internal automatic report service.
 - Have `MentraJSRouter` or `MiniappEngine` file the automatic report when the
@@ -144,7 +144,7 @@ Judgment:
 - The helper should be deleted rather than moved.
 - We should not preserve this as a public engine use case.
 
-Implemented move:
+Historical migration (the broadcast listener has since been removed):
 
 - Delete `mobile/src/services/bugReport/miniappStartBugReport.ts`.
 - Do not add a replacement automatic report for miniapps v2 unless a new,
@@ -175,7 +175,7 @@ Judgment:
 - The host may need to pass UI route/display metadata if island cannot derive
   it, but it should not build or submit the automatic report.
 
-Implemented move:
+Historical migration (the broadcast listener has since been removed):
 
 - Move the pairing boot timeout watch into an island pairing coordinator or
   pairing service.
@@ -220,7 +220,7 @@ Judgment:
   a native media-probe capability; the current sync validators cannot answer
   that question.
 
-Implemented move:
+Historical migration (the broadcast listener has since been removed):
 
 - Keep only lightweight transfer-safety checks in the blocking sync path:
   existence, non-zero size, expected byte count/checksum when available, and a
@@ -260,10 +260,9 @@ Research note:
 
 ## 5. Captions Tester Laptop Report
 
-Current trigger: `com.mentra.SUBMIT_INCIDENT_REPORT` is available in all Android
-builds, with the generic `submit_incident_report` event and
-`INCIDENT_REPORT_RESULT` receipt. It is no longer an internal-build-only captions
-hook. See the [broadcast contract](../../../../mobile/docs/incident-report-intent.md).
+Current trigger: `com.mentra://test/submit-incident-report` on both platforms,
+with the existing Super Mode setting required. The old Android broadcast and
+native listener have been removed. See the [shared contract](../../../../mobile/INCIDENT_REPORT_AUTOMATION.md).
 
 Original behavior:
 
@@ -311,7 +310,7 @@ Judgment:
 - The test harness can keep its own alert bookkeeping by reading the existing
   `INCIDENT_REPORT_RESULT` log line emitted after engine submission.
 
-Implemented move:
+Historical migration (the broadcast listener has since been removed):
 
 - Delete the host `submit_incident_report` automatic-report listener from
   `MantleManager`.
