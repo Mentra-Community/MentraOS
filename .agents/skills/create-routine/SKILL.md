@@ -91,9 +91,12 @@ assigned device; keep account entry and firmware operations in setup.
 
 **Complete one AI-guided traversal of the entire English scenario before full
 replay qualification. Build its executable steps as you go.** Computer use helps
-find controls and understand behavior. As each interaction works, save it with
-its observable assertion in the routine's flow and execute that saved step from
-the current state through the same driver/helper that replay will call. Continue
+find controls and understand behavior. Once the next action is understood, save
+it with its observable assertion and execute that saved step from its prerequisite
+state through the same driver/helper that replay will call. If a manual action
+already advanced the UI, restore only the smallest safe prerequisite state before
+testing the saved step. Do not repeat a submission or destructive action blindly;
+use an owned fixture or report the verification gap until it can be tested. Continue
 forward in the held session; do not leave a successful manual click to be
 translated into a different, untested action later.
 
@@ -125,7 +128,9 @@ It runs shared setup and holds its owner/recorder for `steps`, `snapshot`,
 `step <ID>`, `section <ID> <ID>`, semantic `press`, and, on Android,
 `maestro /absolute/section.yaml`. Check the selected checkout's help and
 `docs/DEVELOPMENT-ENTRY.md` for supported adapters and commands. Keep retries
-inside that session; edit and rerun supported sections from the current state.
+inside that session. Edit/rerun Maestro files directly; for TypeScript, use the
+selected revision's edited-flow loading command if present. Named steps loaded
+at startup do not automatically reload changed source.
 End the complete traversal with `teardown`. If the authoring process exits,
 the existing `cleanup` command requires the original `--config` and
 `--run-directory`; after teardown, a new session establishes its own prerequisites.
