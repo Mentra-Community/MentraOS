@@ -187,6 +187,29 @@ test("explicit dev qualification uses real workflow_dispatch metadata with same 
   const sent = await sendNightlyRequest({...f.options, context: manualContext, plan: target, devFoundationOnly: true})
   assert.equal(sent.routine, "ota-roundtrip-android")
 })
+
+test("dev foundation history explicitly bounds and revalidates the first newest-publication page", async () => {
+  const f = fixture()
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  const query = f.state.calls.find(([kind, input]) => kind === "history" && input.workflow_id === COORDINATED_WORKFLOW)[1]
+  assert.deepEqual(query, {owner: "Mentra-Community", repo: "MentraOS", workflow_id: COORDINATED_WORKFLOW,
+    branch: "dev", status: "success", per_page: 20, page: 1,
+    created: "2026-08-24T11:17:00.000Z..2026-09-23T11:17:00Z", headers: {"cache-control": "no-cache"}})
+  assert.deepEqual(selected.history[0].returned, [{runId: f.dev.state.run.id, createdAt: f.dev.state.run.created_at}])
+  assert.equal(selected.requests.length, 5)
+})
+
+test("stale or future history responses never fall through to an out-of-window dev build", async () => {
+  for (const createdAt of ["2026-08-24T11:16:59Z", "2026-09-23T11:17:01Z"]) {
+    const f = fixture()
+    f.dev.state.run.created_at = createdAt
+    const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+    assert.equal(selected.requests.length, 0)
+    assert.equal(selected.unavailable.length, 5)
+    assert.deepEqual(selected.history[0].returned, [{runId: 100, createdAt}])
+    assert.equal(f.state.calls.some(([kind]) => kind === "attempt"), false)
+  }
+})
 // TEST MODEL of the former planned state: the production catalog with a synthetic `pending` reason on the three combined
 // targets. Production has no planned target; this keeps every planned refusal exercised. It qualifies nothing.
 const MODELLED_PLANNED = ["account-miniapps", "connected-glasses", "livestreamer"]
