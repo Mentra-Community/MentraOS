@@ -42,6 +42,8 @@ export interface IslandConfigValues {
   runtimeRealtimeSession?: boolean
   /** Complete allowlist for bundled/local miniapps; null or omitted allows all. */
   localMiniappAllowlist?: readonly string[] | null
+  /** Live host access gate, composed with deployment policy at listing and launch. */
+  isLocalMiniappAllowed?: (packageName: string) => boolean
   /** Provenance-aware policy for workspace SYSTEM and managed miniapps. */
   localMiniappPolicy?: LocalMiniappPolicy
   /** Optional per-package configuration supplied by the host deployment. */
@@ -124,6 +126,7 @@ export interface IslandConfigureOptions {
 }
 
 export function isLocalMiniappPackageAllowed(packageName: string): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (policy) {
     return (
@@ -137,6 +140,7 @@ export function isLocalMiniappPackageAllowed(packageName: string): boolean {
 }
 
 export function isOfflineSystemMiniappAllowed(packageName: string): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
   return policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
@@ -152,6 +156,7 @@ export function isInstalledMiniappAllowed(
     deploymentOrigin?: string
   } | null,
 ): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
 
@@ -175,6 +180,7 @@ export function isInstalledMiniappAllowed(
  * scanned QR can stand in for its Call but never add a package it lacks.
  */
 export function isDevMiniappAllowed(packageName: string, superMode: boolean): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
   return superMode && policy.managed.some((entry) => entry.packageName === packageName)
