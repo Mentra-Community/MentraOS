@@ -39,7 +39,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   </section>;
 }
 export function RecentTestSuites() {
-  const result = useQuery({queryKey: ["test-suites"], queryFn: () => api<{suites: TestSuiteResult[]}>("/api/admin/test-runs/suites"), refetchInterval: 30000});
+  const result = useQuery({queryKey: ["test-suites"], queryFn: () => api<{suites: TestSuiteResult[]}>("/api/admin/test-runs/suite-index/list"), refetchInterval: 30000});
   if (result.isPending) return null;
   if (result.error) return <p className="text-sm text-red-700">Test suites could not refresh. <button className="underline" onClick={() => result.refetch()}>Retry</button></p>;
   if (!result.data?.suites.length) return null;

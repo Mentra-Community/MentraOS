@@ -61,7 +61,7 @@ export function TestRunsPage({
     queryFn: async () => {
       type Label = {requestId: string; routineId: string; platform: string; channel: string; headSha: string; suiteId: string; label: string};
       const batches = await Promise.all(Array.from({length: Math.ceil(requestIds.length / 100)}, (_, index) =>
-        api<{labels: Label[]}>(`/api/admin/test-runs/suite-labels?requestIds=${encodeURIComponent(requestIds.slice(index * 100, (index + 1) * 100).join(","))}`)));
+        api<{labels: Label[]}>(`/api/admin/test-runs/suite-index/labels?requestIds=${encodeURIComponent(requestIds.slice(index * 100, (index + 1) * 100).join(","))}`)));
       return {labels: batches.flatMap(batch => batch.labels)};
     }});
   const update = (key: keyof TestRunFilters, value: string) => setDraft((current) => ({ ...current, [key]: value }));
