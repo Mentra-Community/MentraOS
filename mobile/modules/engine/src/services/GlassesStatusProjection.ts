@@ -15,6 +15,7 @@ import BluetoothSdk, {type PublicGlassesStatus} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {isGlassesConnected} from "./GlassesReadiness"
+import {otaDeviceSessionRevision, startOtaDeviceSession, stopOtaDeviceSession} from "./OtaDeviceSession"
 
 /** Miniapp `session.glasses.onConnection` payload. */
 export type MiniappConnectionData = {
@@ -55,6 +56,8 @@ export function startGlassesStatusProjection(
   if (unsubs.length) return hydrationPromise ?? Promise.resolve()
 
   const runId = ++projectionRunId
+  const deviceRevision = otaDeviceSessionRevision()
+  const deviceHydration = startOtaDeviceSession()
   let bluetoothEventSeen = false
   let glassesEventSeen = false
 
@@ -69,7 +72,7 @@ export function startGlassesStatusProjection(
 
   const glassesHydration = BluetoothSdk.getGlassesStatus()
     .then((status) => {
-      if (runId !== projectionRunId || glassesEventSeen) return
+      if (runId !== projectionRunId || glassesEventSeen || deviceRevision !== otaDeviceSessionRevision()) return
       useGlassesStore.getState().setGlassesInfo(status)
     })
     .catch((error) => {
@@ -97,12 +100,13 @@ export function startGlassesStatusProjection(
     }),
   )
 
-  hydrationPromise = Promise.allSettled([bluetoothHydration, glassesHydration]).then(() => undefined)
+  hydrationPromise = Promise.allSettled([deviceHydration, bluetoothHydration, glassesHydration]).then(() => undefined)
   return hydrationPromise
 }
 
 export function stopGlassesStatusProjection(): void {
   projectionRunId++
+  stopOtaDeviceSession()
   unsubs.forEach((unsub) => unsub())
   unsubs = []
   glassesStatusForwarder = null

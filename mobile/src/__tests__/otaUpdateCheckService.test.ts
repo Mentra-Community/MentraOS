@@ -2,7 +2,8 @@ import {checkCurrentGlassesForUpdate, selectMtkUpdate} from "../../modules/engin
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
-import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+import {startOtaDeviceSession, stopOtaDeviceSession} from "../../modules/engine/src/services/OtaDeviceSession"
+import {bluetoothSdkMock, emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("MTK full fallback", () => {
   const full = {
@@ -67,6 +68,64 @@ describe("OtaUpdateCheckService", () => {
     } else {
       process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL = originalEmbeddedManifestUrl
     }
+  })
+
+  it("does not publish a delayed manifest result after the paired glasses change", async () => {
+    stopOtaDeviceSession()
+    ;(bluetoothSdkMock.getDefaultDevice as jest.Mock).mockResolvedValue({id: "A", model: "Mentra Live", name: "A"})
+    await startOtaDeviceSession()
+    let resolve!: (response: unknown) => void
+    global.fetch = jest.fn(
+      () =>
+        new Promise((r) => {
+          resolve = r
+        }),
+    ) as unknown as typeof fetch
+    const pending = checkCurrentGlassesForUpdate({refreshVersionInfo: false, fixClockBeforeCheck: false})
+    emitBluetoothSdkEvent("default_device_changed", {device: {id: "B", model: "Mentra Live", name: "B"}})
+    const newOffer = {
+      available: true,
+      versionCode: 999,
+      versionName: "new pair",
+      updates: ["apk"] as "apk"[],
+      totalSize: 0,
+    }
+    useGlassesStore.getState().setOtaUpdateAvailable(newOffer)
+    resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({versionCode: 39, versionName: "old offer", downloadUrl: "https://cdn/asg.apk"}),
+    })
+    expect((await pending).skippedReason).toBe("disconnected")
+    expect(useGlassesStore.getState().otaUpdateAvailable).toEqual(newOffer)
+    stopOtaDeviceSession()
+  })
+
+  it("does not apply a late version response to the replacement pair", async () => {
+    stopOtaDeviceSession()
+    ;(bluetoothSdkMock.getDefaultDevice as jest.Mock).mockResolvedValue({id: "A", model: "Mentra Live", name: "A"})
+    await startOtaDeviceSession()
+    let resolve!: (response: Awaited<ReturnType<typeof bluetoothSdkMock.requestVersionInfo>>) => void
+    bluetoothSdkMock.requestVersionInfo.mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r
+      }),
+    )
+    const pending = checkCurrentGlassesForUpdate({fixClockBeforeCheck: false})
+    emitBluetoothSdkEvent("default_device_changed", {device: {id: "B", model: "Mentra Live", name: "B"}})
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "46818067", appVersion: "new pair"})
+    resolve({
+      buildNumber: "303000008",
+      appVersion: "3.3.0",
+      androidVersion: "12",
+      firmwareVersion: "",
+      besFirmwareVersion: "",
+      mtkFirmwareVersion: "",
+      otaVersionUrl: "",
+    })
+    expect((await pending).skippedReason).toBe("disconnected")
+    expect(useGlassesStore.getState().appVersion).toBe("new pair")
+    stopOtaDeviceSession()
   })
 
   it("skips the check entirely when the mobile app has no embedded OTA manifest pin", async () => {
