@@ -1,3 +1,4 @@
+import {z} from "zod";
 import {createHash} from "node:crypto";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
@@ -17,6 +18,28 @@ export class TestSuiteService {
     if (!stored || stored.payloadSha256 !== payloadSha256) throw new TestRunError(409, "suite ID already has a different plan");
     return this.detail(payload.suiteId);
   }
+  async bind(suiteId: string, memberId: string, input: unknown) {
+    const parsed = z.object({requestId: testRunIdSchema}).strict().safeParse(input);
+    if (!parsed.success) throw new TestRunError(400, "invalid member request binding");
+    const suite = await this.detail(suiteId);
+    const member = suite.members.find(member => member.memberId === memberId);
+    if (!member) throw new TestRunError(404, "suite member not found");
+    if (member.requestId && member.requestId !== parsed.data.requestId) throw new TestRunError(409, "member already bound to a different request");
+    if (suite.members.some(other => other.memberId !== memberId && other.requestId === parsed.data.requestId))
+      throw new TestRunError(409, "request already belongs to another member");
+    if (!member.requestId) {
+      const updated = await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false},
+        "payload.members.requestId": {$ne: parsed.data.requestId},
+        "payload.members": {$elemMatch: {memberId, requestId: {$exists: false}}}},
+        {$set: {"payload.members.$.requestId": parsed.data.requestId}});
+      if (!updated.modifiedCount) {
+        const current = await this.detail(suiteId);
+        if (current.members.find(member => member.memberId === memberId)?.requestId !== parsed.data.requestId)
+          throw new TestRunError(409, "suite is finished or member binding changed");
+      }
+    }
+    return this.detail(suiteId);
+  }
   async complete(suiteId: string, input: unknown) {
     const parsed = testSuiteCompletionSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid suite completion");
@@ -31,7 +54,7 @@ export class TestSuiteService {
     const row = await TestSuiteModel.findOne({suiteId}).lean();
     if (!row) throw new TestRunError(404, "test suite not found");
     const suite = row.payload as TestSuite;
-    const rows = await TestRunModel.find({requestId: {$in: suite.members.map(member => member.requestId)}})
+    const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
       .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).lean();
     const runs = rows.map(row => ({...(row.payload as SuiteRun),
       outcome: row.outcome === "passed" && !row.uploadsComplete ? "blocked" : row.outcome}));
@@ -44,7 +67,7 @@ export class TestSuiteService {
       "payload.members.requestId": {$in: requestIds}}).select({suiteId: 1, payload: 1}).limit(100).lean();
     return {labels: rows.flatMap(row => {
       const suite = row.payload as TestSuite;
-      return suite.members.filter(member => requestIds.includes(member.requestId)).map(member => ({...member,
+      return suite.members.filter(member => !!member.requestId && requestIds.includes(member.requestId)).map(member => ({...member,
         suiteId: suite.suiteId, channel: suite.channel, headSha: suite.build.headSha,
         label: `${suite.channel} ${suite.trigger} · ${suite.build.release ?? suite.build.headSha.slice(0, 7)}`}));
     })};

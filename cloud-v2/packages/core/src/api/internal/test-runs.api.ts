@@ -19,6 +19,7 @@ export function createTestRunIngestApi(service = new TestRunService(),
   const suiteLimit = bodyLimit({maxSize: 64 * 1024, onError: c => c.json({error: "too_large"}, 413)});
   app.post("/suites", suiteLimit, async c => c.json(await suites.create(await c.req.json().catch(() => null)), 200));
   app.get("/suites/:suiteId", async c => c.json(await suites.detail(c.req.param("suiteId"))));
+  app.post("/suites/:suiteId/members/:memberId", suiteLimit, async c => c.json(await suites.bind(c.req.param("suiteId"), c.req.param("memberId"), await c.req.json().catch(() => null))));
   app.post("/suites/:suiteId/complete", suiteLimit, async c => c.json(await suites.complete(c.req.param("suiteId"), await c.req.json().catch(() => null))));
   app.post("/", bodyLimit({ maxSize: 1024 * 1024, onError: c => c.json({ error: "too_large" }, 413) }), async c => {
     let input: unknown;
