@@ -7,6 +7,7 @@ import {engine} from "@mentra/engine"
 import {Text} from "@/components/ignite"
 import {Ar99VersionInfo, checkAr99OtaVersion, clearAr99OtaFiles, downloadAr99Firmware} from "@/services/ar99Ota"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useKeepAwakeWhile} from "@/hooks/useKeepAwakeWhile"
 import {translate} from "@/i18n"
 import {getAr99DisplayName} from "@/utils/getGlassesImage"
 
@@ -55,6 +56,9 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
   const filePathRef = useRef<string | null>(null)
 
   const busy = phase === "checking" || phase === "downloading" || phase === "transferring" || phase === "paused"
+  // Keep the phone screen on while firmware is downloading or streaming to the
+  // glasses so the transfer isn't interrupted by the phone sleeping or locking.
+  useKeepAwakeWhile(visible && (phase === "downloading" || phase === "transferring" || phase === "paused"), "ar99-ota")
   const deviceDisplayName = getAr99DisplayName(ar99ProjectName)
   const forceUpdate = versionInfo?.forceUpdate === true
   const displayCurrentVersion = currentVersion
