@@ -2661,6 +2661,7 @@ class LocalMiniappRuntime {
             {
               requestId: audioRequestId,
               audioUrl: source.audioUrl,
+              startupTimeoutMs: 5000,
               appId: packageName,
               volume,
               stopOtherAudio,
