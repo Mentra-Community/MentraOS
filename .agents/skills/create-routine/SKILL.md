@@ -5,8 +5,9 @@ description: Create or extend a Mentra automated testing routine using the share
 
 # Add or extend a routine
 
-**Optimize for reliability, readability and maintainability. Adding a check should
-usually mean adding a named step to a small flow, not another runner.** Author
+**Routines must be fast, reliable and easy to make. Keep their English steps and
+replay code readable and maintainable. Adding a check should usually mean adding
+a named step to a small flow, not another runner.** Author
 routines in the private [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing).
 MentraOS contains their public catalog and `routine:<id>` request labels.
 
@@ -128,7 +129,10 @@ section evidence documents progress; it cannot publish a full routine result or
 replace the complete traversal.
 
 Only after reaching the end, encode the observed actions and assertions for
-deterministic replay without AI. Keep flow files small and readable: stable named
+deterministic replay without AI. Start from what worked during authoring. Improve
+selectors or input methods where that brings a demonstrated benefit; avoid turning
+replay into a second exploration of the same flow. Choose the simplest effective
+interaction for the platform and verify its observable result. Keep flow files small and readable: stable named
 steps, data for routine-specific choices, shared helpers for repeated mechanics.
 Prefer stable selectors and state-based waits. Avoid copying setup,
 authentication, recording, publication or cleanup into flows. A separate full
