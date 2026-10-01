@@ -21,3 +21,12 @@ test("recent suite link opens aggregate", () => {
   const client = new QueryClient(); client.setQueryData(["test-suites"], {suites: [suite]});
   expect(renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>)).toContain("/?testSuite=nightly-123");
 });
+
+test("running suites explain automatic refresh and empty history stays hidden", () => {
+  const client = new QueryClient();
+  client.setQueryData(["test-suite", suite.suiteId], {...suite, finishedAt: undefined, outcome: "running"});
+  client.setQueryData(["test-suites"], {suites: []});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
+  expect(html).toContain("In progress"); expect(html).toContain("Refreshes every 15 seconds");
+  expect(renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>)).toBe("");
+});

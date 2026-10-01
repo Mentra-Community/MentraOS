@@ -259,9 +259,6 @@ export function TestRunsPage({
           <div className="divide-y divide-[#eceeeb]">
             {rows.map((run) => (
               <div
-                role="button"
-                tabIndex={0}
-                onKeyDown={event => {if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {event.preventDefault(); onSelect({runID: run.runId});}}}
                 key={run.runId}
                 className="block w-full p-5 text-left hover:bg-[#fafbfa]"
                 onClick={() => onSelect({ runID: run.runId })}>
@@ -276,10 +273,10 @@ export function TestRunsPage({
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">{(suiteLabels.data?.labels ?? []).filter(label =>
                       label.requestId === run.requestId && label.routineId === run.routineId && label.platform === run.platform
-                      && label.channel === run.channel && label.headSha === run.provenance.headSha).map(label =>
+                      && label.channel === run.channel && label.headSha === (run.source?.headSha ?? run.provenance.headSha)).map(label =>
                       <a key={label.suiteId} className="rounded-full bg-[#eaf3ed] px-2 py-1 text-xs font-semibold text-[#087d50]"
                         href={`/?testSuite=${encodeURIComponent(label.suiteId)}`} onClick={event => event.stopPropagation()}>{label.label}</a>)}</div>
-                    <h3 className="mt-2 font-semibold">{run.routineId}</h3>
+                    <h3 className="mt-2 font-semibold"><button type="button" className="text-left underline-offset-2 hover:underline" onClick={event => {event.stopPropagation(); onSelect({runID: run.runId});}}>{run.routineId}</button></h3>
                     <p className="mt-1 text-xs text-[#747780]">
                       {run.fixture.alias} · {run.release ?? short(run.provenance.buildSha ?? run.provenance.headSha)} ·{" "}
                       {date(run.startedAt)} · {durationText(run.startedAt, run.finishedAt)}

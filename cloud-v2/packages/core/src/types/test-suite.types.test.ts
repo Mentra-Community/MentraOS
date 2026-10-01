@@ -9,6 +9,7 @@ const run = (index: number, outcome = "passed"): SuiteRun => ({...plan.members[i
 describe("suite verdict", () => {
   test("waits for completion and all expected members before all green", () => {
     expect(summarizeSuite(plan, [run(0), run(1)]).outcome).toBe("running");
+    expect(summarizeSuite(plan, [run(0)]).members[1]!.status).toBe("waiting");
     expect(summarizeSuite(plan, [run(0), run(1)], "2026-10-01T11:03:00Z").outcome).toBe("passed");
   });
   test("missing and blocked members are visible failures at completion", () => {
@@ -25,7 +26,7 @@ describe("suite verdict", () => {
   });
   test("pre-send missing bindings stay visible and per-member build pins work", () => {
     const pending = {...plan, members: plan.members.map(({requestId, ...member}) => member)};
-    expect(summarizeSuite(pending, [run(0), run(1)], "2026-10-01T11:03:00Z").passed).toBe(0);
+    expect(summarizeSuite(pending, [run(0), run(1)], "2026-10-01T11:03:00Z").members.every(member => member.status === "not-run")).toBe(true);
     const differentBuild = {...plan, members: [plan.members[0]!, {...plan.members[1]!, headSha: "b".repeat(40)}]};
     expect(summarizeSuite(differentBuild, [run(0), {...run(1), provenance: {headSha: "b".repeat(40)}}], "2026-10-01T11:03:00Z").outcome).toBe("passed");
   });

@@ -29,7 +29,7 @@ export class TestSuiteService {
     if (suite.members.some(other => other.memberId !== memberId && other.requestId === parsed.data.requestId))
       throw new TestRunError(409, "request already belongs to another member");
     if (!member.requestId) {
-      const updated = await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false},
+      const updated = await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}, finalizingAt: {$exists: false},
         "payload.members.requestId": {$ne: parsed.data.requestId},
         "payload.members": {$elemMatch: {memberId, requestId: {$exists: false}}}},
         {$set: {"payload.members.$.requestId": parsed.data.requestId}}, {writeConcern});
@@ -44,14 +44,24 @@ export class TestSuiteService {
   async complete(suiteId: string, input: unknown) {
     const parsed = testSuiteCompletionSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid suite completion");
+    const initial = await this.detail(suiteId);
+    if (initial.finishedAt) return initial;
+    if (Date.parse(parsed.data.finishedAt) < Date.parse(initial.startedAt)) throw new TestRunError(400, "suite finish precedes start");
+    // Fence membership before reading evidence. Retries resume the same boundary.
+    await TestSuiteModel.updateOne({suiteId, finalizingAt: {$exists: false}, finishedAt: {$exists: false}},
+      {$set: {finalizingAt: parsed.data.finishedAt}}, {writeConcern});
     const suite = await this.detail(suiteId);
-    if (Date.parse(parsed.data.finishedAt) < Date.parse(suite.startedAt)) throw new TestRunError(400, "suite finish precedes start");
-    // A retry acknowledges the original completion; it cannot reopen or rewrite it.
-    await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}}, {$set: {...parsed.data, completedResult: {...suite, finishedAt: parsed.data.finishedAt,
+    if (suite.finishedAt) return suite;
+    const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
+    const finishedAt = new Date(Math.max(Date.parse(row!.finalizingAt!),
+      ...suite.members.flatMap(member => member.finishedAt ? [Date.parse(member.finishedAt)] : []))).toISOString();
+    const completedResult = {...suite, finishedAt,
       outcome: suite.passed === suite.members.length ? "passed" : "failed",
       members: suite.members.map(member => ({...member, status: member.status === "waiting" ? "not-run" : member.status})),
-      failedRoutines: suite.members.filter(member => member.status !== "passed").map(member => member.routineId),
-    }}}, {writeConcern});
+      failedRoutines: [...new Set(suite.members.filter(member => member.status !== "passed").map(member => member.routineId))],
+    };
+    await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}},
+      {$set: {finishedAt, completedResult}}, {writeConcern});
     return this.detail(suiteId);
   }
   async detail(suiteId: string) {

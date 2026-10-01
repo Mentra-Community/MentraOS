@@ -21,7 +21,7 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
     throw error;
   });
   const suites = new TestSuiteService();
-  app.get("/suite-labels", async c => c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean))));
+  app.get("/suite-labels", async c => {c.header("Cache-Control", "no-store"); return c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean)));});
   app.get("/suites", async c => {c.header("Cache-Control", "no-store"); return c.json(await suites.list());});
   app.get("/suites/:suiteId", async c => {c.header("Cache-Control", "no-store"); return c.json(await suites.detail(c.req.param("suiteId")));});
   app.get("/", async c => {

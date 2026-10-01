@@ -40,3 +40,31 @@ test("finished suite stays frozen when later member evidence arrives", async () 
   expect(await new TestSuiteService().detail("finished")).toEqual(completedResult as any);
   expect(reads).not.toHaveBeenCalled();
 });
+
+test("completion fences a concurrent binding and retries preserve the first verdict", async () => {
+  const payload = {suiteId: "fenced", channel: "dev", trigger: "nightly", startedAt: "2026-10-01T11:00:00Z",
+    build: {headSha: "a".repeat(40)}, members: [{memberId: "mac", routineId: "captions-phone", platform: "ios-mac"}]};
+  const row: any = {payload};
+  const query = {read() {return this;}, readConcern() {return this;}, lean: async () => row};
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any));
+  const runQuery = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => []};
+  mocks.push(spyOn(TestRunModel, "find").mockReturnValue(runQuery as any));
+  const updates: any[] = [];
+  mocks.push(spyOn(TestSuiteModel, "updateOne").mockImplementation((async (filter: any, update: any) => {
+    updates.push(filter);
+    if (update.$set.finalizingAt && !row.finalizingAt) {
+      // Binding wins just before the fence: final evidence must see it.
+      row.payload.members[0].requestId = "concurrent-request";
+      row.finalizingAt = update.$set.finalizingAt;
+    }
+    if (update.$set.completedResult && !row.completedResult) Object.assign(row, update.$set);
+    return {modifiedCount: 1};
+  }) as any));
+  const service = new TestSuiteService();
+  const result = await service.complete("fenced", {finishedAt: "2026-10-01T11:03:00Z"});
+  expect(result.members[0]!.requestId).toBe("concurrent-request");
+  expect(result.members[0]!.status).toBe("not-run");
+  expect(updates[0].finalizingAt).toEqual({$exists: false});
+  expect(await service.complete("fenced", {finishedAt: "2026-10-01T12:00:00Z"})).toEqual(result);
+  expect(updates).toHaveLength(2);
+});
