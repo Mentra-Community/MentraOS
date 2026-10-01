@@ -13,6 +13,7 @@ import OtaProgressScreen from "@/app/ota/progress"
 import {BES_RESTART_TIMEOUT_MS, MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
 import {beginOtaAutoChain, isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
+import {ota} from "@/../modules/engine/src/facades/ota"
 
 const mockReplace = jest.fn()
 const AUTO_CHAIN_RELEASE_RANGE = {fromVersion: "3.0.0", toVersion: "3.1.0-dev.1"}
@@ -41,6 +42,14 @@ jest.mock("@/contexts/ThemeContext", () => ({
       },
     },
   }),
+}))
+
+const mockActivateKeepAwake = jest.fn((_tag: string) => Promise.resolve())
+const mockDeactivateKeepAwake = jest.fn((_tag: string) => Promise.resolve())
+
+jest.mock("expo-keep-awake", () => ({
+  activateKeepAwakeAsync: (tag: string) => mockActivateKeepAwake(tag),
+  deactivateKeepAwake: (tag: string) => mockDeactivateKeepAwake(tag),
 }))
 
 jest.mock("@/components/brands/MentraLogoStandalone", () => ({
@@ -853,5 +862,92 @@ describe("progress.tsx overlay suppression", () => {
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(true)
     unmount()
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
+  })
+})
+
+describe("progress.tsx keep-awake", () => {
+  const KEEP_AWAKE_TAG = "mentra-live-ota"
+
+  beforeEach(() => {
+    mockActivateKeepAwake.mockClear()
+    mockDeactivateKeepAwake.mockClear()
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it("holds the lock through a rebooting chained pass and its re-check, then releases when up to date", async () => {
+    setGlassesDisconnected()
+    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "s1",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "install",
+      stepPercent: 100,
+      overallPercent: 100,
+      status: "complete",
+    })
+    const check = jest.spyOn(ota, "checkForUpdates").mockResolvedValue({
+      hasCheckCompleted: true,
+      updateAvailable: false,
+      updateInfo: null,
+    } as never)
+    const {getByText} = render(<OtaProgressScreen />)
+
+    expect(mockActivateKeepAwake).toHaveBeenCalledWith(KEEP_AWAKE_TAG)
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(750)
+    })
+
+    act(() => {
+      setGlassesConnected()
+    })
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_750)
+    })
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(getByText("Finishing your update")).toBeDefined()
+    expect(mockDeactivateKeepAwake).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2_000)
+    })
+    expect(mockDeactivateKeepAwake).toHaveBeenCalledWith(KEEP_AWAKE_TAG)
+    expect(mockActivateKeepAwake).toHaveBeenCalledTimes(1)
+  })
+
+  it("releases on failure, re-acquires on retry, and releases on unmount", async () => {
+    setGlassesConnected()
+    const {getByTestId, unmount} = render(<OtaProgressScreen />)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(mockActivateKeepAwake).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "download",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "download_failed",
+      })
+    })
+    expect(mockDeactivateKeepAwake).toHaveBeenCalledTimes(1)
+
+    fireEvent.press(getByTestId("button-Retry"))
+    expect(mockActivateKeepAwake).toHaveBeenCalledTimes(2)
+
+    unmount()
+    expect(mockDeactivateKeepAwake).toHaveBeenCalledTimes(2)
+    expect(mockDeactivateKeepAwake).toHaveBeenLastCalledWith(KEEP_AWAKE_TAG)
   })
 })

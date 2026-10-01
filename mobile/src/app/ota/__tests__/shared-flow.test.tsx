@@ -352,4 +352,87 @@ describe("MentraLiveOtaFlow", () => {
     expect(getByText("We'll continue automatically when they're ready.")).toBeDefined()
     expect(queryByTestId("button-Continue")).toBeNull()
   })
+
+  describe("onUpdateActiveChange", () => {
+    const APK_COMPLETE = {
+      sessionId: "s1",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk" as const,
+      phase: "install" as const,
+      stepPercent: 100,
+      overallPercent: 100,
+      status: "complete" as const,
+    }
+
+    it("stays active through a chained pass reboot and re-check, then releases when up to date", async () => {
+      jest.useFakeTimers()
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+      beginOtaAutoChain("initial-offer", false, {fromVersion: "3.0.0", toVersion: "3.1.0", releaseVersion: null})
+      useGlassesStore.getState().setOtaStatus(APK_COMPLETE)
+      const check = jest.spyOn(ota, "checkForUpdates").mockResolvedValue({
+        hasCheckCompleted: true,
+        updateAvailable: false,
+        updateInfo: null,
+      } as never)
+      const onUpdateActiveChange = jest.fn()
+      const {result, unmount} = renderHook(() =>
+        useMentraLiveOta({initialPage: "progress", initializeRuntime: false, onUpdateActiveChange}),
+      )
+
+      // APK pass reported complete while the glasses reboot into the new build.
+      expect(result.current.state.screen).toBe("finishing")
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(result.current.state.screen).toBe("finishing")
+
+      // Reconnect: the flow leaves the progress page to re-check for the next pass.
+      await act(async () => {
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      // finish() and the reconnect status query settle before the re-check starts.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1_000)
+      })
+      expect(check).toHaveBeenCalledTimes(1)
+      expect(result.current.state.screen).toBe("finishing")
+      expect(onUpdateActiveChange).toHaveBeenCalledWith(true)
+      expect(onUpdateActiveChange).not.toHaveBeenCalledWith(false)
+
+      // The re-check finds nothing left: the update is done.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2_000)
+      })
+      expect(result.current.state.screen).toBe("up_to_date")
+      expect(onUpdateActiveChange).toHaveBeenLastCalledWith(false)
+      unmount()
+    })
+
+    it("releases on failure, re-activates on retry, and releases on unmount", () => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      const onUpdateActiveChange = jest.fn()
+      const {result, unmount} = renderHook(() =>
+        useMentraLiveOta({initialPage: "progress", initializeRuntime: false, onUpdateActiveChange}),
+      )
+      expect(result.current.state.screen).toBe("starting")
+      expect(onUpdateActiveChange).toHaveBeenLastCalledWith(true)
+
+      act(() => {
+        useGlassesStore.getState().setOtaStatus({...APK_COMPLETE, status: "failed", error: "download_failed"})
+      })
+      expect(result.current.state.screen).toBe("failed")
+      expect(onUpdateActiveChange).toHaveBeenLastCalledWith(false)
+
+      act(() => {
+        result.current.retryInstall()
+      })
+      expect(result.current.state.screen).toBe("starting")
+      expect(onUpdateActiveChange).toHaveBeenLastCalledWith(true)
+
+      unmount()
+      expect(onUpdateActiveChange).toHaveBeenLastCalledWith(false)
+    })
+  })
 })

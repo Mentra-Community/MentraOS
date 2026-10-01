@@ -7,6 +7,7 @@ export {
   type MentraLiveOtaFlowTranslate,
 } from "./MentraLiveOtaFlow"
 export {
+  isMentraLiveOtaUpdateActive,
   useMentraLiveOta,
   type MentraLiveOtaController,
   type MentraLiveOtaError,

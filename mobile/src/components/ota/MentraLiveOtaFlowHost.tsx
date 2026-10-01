@@ -1,11 +1,10 @@
-import {engine, SETTINGS, useSetting} from "@mentra/engine"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {MentraLiveOtaFlow, type MentraLiveOtaFlowPage} from "@mentra/engine/ota"
 import {useCallback, useEffect, useState} from "react"
 
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import {focusEffectLockScreen} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useKeepAwakeWhile} from "@/hooks/useKeepAwakeWhile"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
@@ -29,15 +28,11 @@ export function MentraLiveOtaFlowHost({initialPage = "check"}: {initialPage?: Me
   focusEffectLockScreen()
   useEffect(() => clearConfig, [clearConfig])
 
-  // Keep the phone awake from the moment the progress page mounts until the
-  // install reaches a terminal state, so the screen never dims or locks while
-  // the glasses are downloading, installing, or restarting into the update.
-  const [progressActive, setProgressActive] = useState(initialPage === "progress")
-  const installDisplayState = useEngineSnapshot(engine.ota.installSession.snapshot, (onChange) =>
-    engine.ota.installSession.onSnapshot(onChange),
-  ).displayState
-  const installSettled = installDisplayState === "complete" || installDisplayState === "failed"
-  useKeepAwakeWhile(progressActive && !installSettled, OTA_KEEP_AWAKE_TAG)
+  // Keep the phone awake for as long as the shared flow reports the update as
+  // running, including chained passes, glasses reboots and the re-checks between
+  // them, so the screen never dims or locks mid-update.
+  const [updateActive, setUpdateActive] = useState(false)
+  useKeepAwakeWhile(updateActive, OTA_KEEP_AWAKE_TAG)
 
   const handleFinished = useCallback(() => {
     const nextRoute = getNextOnboardingRoute({includeMentraLive: true, onboardingLiveCompleted, onboardingOsCompleted})
@@ -50,7 +45,6 @@ export function MentraLiveOtaFlowHost({initialPage = "check"}: {initialPage?: Me
 
   const handleFirmwareRestartingChange = useCallback(
     (restarting: boolean, progressActive: boolean) => {
-      setProgressActive(progressActive)
       if (!progressActive) {
         clearConfig()
       } else if (restarting) {
@@ -82,6 +76,7 @@ export function MentraLiveOtaFlowHost({initialPage = "check"}: {initialPage?: Me
       onFinished={handleFinished}
       onFirmwareRestartingChange={handleFirmwareRestartingChange}
       onOpenWifiSetup={handleOpenWifiSetup}
+      onUpdateActiveChange={setUpdateActive}
       superMode={Boolean(superMode)}
       theme={{
         background: theme.colors.background,

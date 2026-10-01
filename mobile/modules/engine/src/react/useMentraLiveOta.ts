@@ -128,6 +128,27 @@ export type MentraLiveOtaState = {
   glassesPackageName: string | null
 }
 
+/**
+ * Screens during which an approved update is still running: the install itself,
+ * firmware restarts, verification, an unexpected disconnect awaiting reconnect,
+ * and "finishing" (the automatic chain waiting for a reboot or re-checking for
+ * its next pass). Every other screen is idle, needs the user, or is terminal.
+ */
+const UPDATE_ACTIVE_SCREENS: ReadonlySet<MentraLiveOtaScreen> = new Set<MentraLiveOtaScreen>([
+  "starting",
+  "preparing_hotspot",
+  "updating",
+  "restarting",
+  "verifying",
+  "disconnected",
+  "finishing",
+])
+
+/** True while the screen belongs to an update that is still running. */
+export function isMentraLiveOtaUpdateActive(screen: MentraLiveOtaScreen): boolean {
+  return UPDATE_ACTIVE_SCREENS.has(screen)
+}
+
 export type UseMentraLiveOtaOptions = {
   /** Entry page. `progress` exists for interrupted-session recovery. */
   initialPage?: MentraLiveOtaFlowPage
@@ -139,6 +160,11 @@ export type UseMentraLiveOtaOptions = {
   onOpenWifiSetup?: () => void
   /** Lets a host coordinate its connection overlay with OTA firmware restarts. */
   onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
+  /**
+   * Called when the overall update starts or stops running, across chained passes,
+   * reboots and re-checks (see `isMentraLiveOtaUpdateActive`). Reports false on unmount.
+   */
+  onUpdateActiveChange?: (active: boolean) => void
 }
 
 export type MentraLiveOtaController = {
@@ -230,6 +256,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     onFinished,
     onFirmwareRestartingChange,
     onOpenWifiSetup,
+    onUpdateActiveChange,
   } = options
   const otaSnapshot = useEngineSnapshot(ota.snapshot, ota.onSnapshot)
   const installSnapshot = useEngineSnapshot(ota.installSession.snapshot, ota.installSession.onSnapshot)
@@ -260,9 +287,11 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const onFinishedRef = useRef(onFinished)
   const onOpenWifiSetupRef = useRef(onOpenWifiSetup)
   const onFirmwareRestartingChangeRef = useRef(onFirmwareRestartingChange)
+  const onUpdateActiveChangeRef = useRef(onUpdateActiveChange)
   onFinishedRef.current = onFinished
   onOpenWifiSetupRef.current = onOpenWifiSetup
   onFirmwareRestartingChangeRef.current = onFirmwareRestartingChange
+  onUpdateActiveChangeRef.current = onUpdateActiveChange
 
   useEffect(() => {
     mountedRef.current = true
@@ -882,6 +911,19 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     page,
     runtimeReady,
   ])
+
+  const updateActive = isMentraLiveOtaUpdateActive(state.screen)
+
+  useEffect(() => {
+    onUpdateActiveChangeRef.current?.(updateActive)
+  }, [updateActive])
+
+  useEffect(
+    () => () => {
+      onUpdateActiveChangeRef.current?.(false)
+    },
+    [],
+  )
 
   return useMemo(
     () => ({state, check, retryCheck: check, install, retryInstall, finish, discard, openWifiSetup}),

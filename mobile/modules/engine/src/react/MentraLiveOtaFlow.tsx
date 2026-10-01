@@ -51,6 +51,8 @@ export type MentraLiveOtaFlowProps = {
   onOpenWifiSetup: () => void
   /** Lets a host coordinate its global connection overlay with OTA progress and firmware restarts. */
   onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
+  /** Called when the overall update starts or stops running, e.g. to keep the phone screen awake. */
+  onUpdateActiveChange?: (active: boolean) => void
   /** Enables the existing developer-only escape hatches. */
   allowDevSkip?: boolean
   /** Enables the existing super-mode interrupted-session escape hatch. */
@@ -182,6 +184,7 @@ export function MentraLiveOtaFlow({
   onFinished,
   onFirmwareRestartingChange,
   onOpenWifiSetup,
+  onUpdateActiveChange,
   style,
   superMode = false,
   theme,
@@ -194,6 +197,7 @@ export function MentraLiveOtaFlow({
     onFinished,
     onFirmwareRestartingChange,
     onOpenWifiSetup,
+    onUpdateActiveChange,
   })
 
   return <OtaFlowFrame {...{allowDevSkip, colors, controller, deviceName, style, superMode, translate}} />
