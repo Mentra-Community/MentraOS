@@ -54,7 +54,7 @@ before using its APIs or commands:
 | --- | --- |
 | `tools/mentra-e2e/runner/routine-plan.ts` | Build, platform, entry, account, fixtures and resources |
 | `tools/mentra-e2e/runner/standard-routine.ts` | Common setup/test/teardown composition |
-| `worker/local.ts` | Local run, cleanup and publication commands; inspect `--help` |
+| `worker/local.ts` | Local run, authoring, cleanup and publication commands; inspect `--help` |
 | `worker/local-mac.ts`, `worker/local-android.ts` | Platform implementation of that contract |
 | `tools/mentra-e2e/flows/` | Small flow definitions, including walkthrough, Captions and Notes |
 
@@ -101,12 +101,21 @@ repeat a long successful prefix for every edit. Coordinate in-flight actions and
 recorders through the existing owner. Section runs remain development evidence.
 
 Prove the smallest new physical section before building the rest of the flow.
-Use the selected checkout's section entry point if one exists; do not invent a
-CLI flag. If it lacks one, invoke the same shared action under the existing
-session/ownership contract and retain the section's inputs, source revision and
-result. Extend a shared entry point only when needed; do not create a second
-runner or replay an uncertain firmware write. Once teardown has reset the app,
-the next section must re-establish the prerequisites it removed.
+On revisions containing [the Android authoring interface](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/248),
+use `bun --no-env-file worker/local.ts author --config /absolute/private-config.json`.
+It runs shared setup and holds its owner/recorder for `steps`, `snapshot`,
+`step <ID>`, `section <ID> <ID>`, semantic `press`, and
+`maestro /absolute/section.yaml`. End with `teardown`; ordinary `cleanup` recovery
+also requires the original `--config` and `--run-directory`. Check the selected
+checkout's help and `docs/DEVELOPMENT-ENTRY.md` for supported adapters.
+
+Keep retries inside that session. Edit and rerun Maestro sections while held;
+restart to load changed TypeScript. Settled failures retain usable state and
+separate attempt evidence; unknown input prevents another write. Authoring
+diagnostics stay local and cannot publish a full routine result. Once teardown
+has reset the app, start a new session to re-establish prerequisites. On older
+revisions, extend the shared entry point instead of inventing flags or a second
+setup/cleanup runner.
 
 After a complete successful real traversal, encode its observed actions and
 assertions for deterministic replay without AI. Keep flow files small and
