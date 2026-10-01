@@ -93,13 +93,13 @@ export const DEVICE_ROUTINES = Object.freeze({
   }),
   // Registered Mac Phone mode routines: one shared automatic worker (worker/phone-mode.ts) authenticates the request,
   // installs its selected Mac build and runs the complete flow with claim-bound CI evidence. Their live qualification is
-  // still pending; they are not in the nightly targets, successful-build requests or any per-build default.
+  // still requires real claim-bound runs; trigger registration does not prove qualification.
   "captions-phone": Object.freeze({
     label: "routine:captions-phone", name: "Captions with simulated glasses", platform: "ios-on-mac",
-    coverage: "Recorded setup from Log In or Welcome (Set up without glasses → Simulated Glasses → Continue) to Phone mode (simulated glasses) Home, pinned-account Profile check, Phone microphone selection, Captions transcribing one controlled speech fixture played through the Mac, and restoration of Automatic, Home and the original host audio.",
+    coverage: "Selected build and pinned-account setup establish Phone mode and Phone microphone input; Captions transcribes controlled speech. Shared teardown restores owned audio resources and verifies the app is stopped.",
     relatedPaths: ["mobile/assets/miniapps/com.mentra.captions-*.zip", "mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/modules/engine/src/services/**"],
-    prerequisites: "CI Mac app; an enrolled Mac fixture commissioned at Phone mode Home, Welcome, the start screen or Log In for the pinned account, with pinned speech, player and audio switch tools. The selected build is installed and Phone mode is established within the claimed run.",
-    exclusions: "No physical glasses, physical iPhone, Android or quantitative acoustic qualification. Entry from signed-in unpaired Home (its Setup without glasses card) is not yet observed and is refused. Registered in source; live CI qualification is still pending.",
+    prerequisites: "CI Mac app; an available enrolled Mac lane, pinned test account, speech, player, audio switch tools and exact input/output/system audio UIDs. Claimed setup establishes its own entry rather than requiring precommissioned Phone Home.",
+    exclusions: "No physical glasses, physical iPhone, Android or quantitative acoustic qualification. Trigger registration and development examples do not qualify a new CI request.",
     definition: `${phoneDefinitions}docs/routines/captions-phone.md`,
     implementation: `${phoneDefinitions}tools/mentra-e2e/flows/captions-phone.ts`,
     worker: `${phoneDefinitions}worker/phone-mode.ts`,
@@ -108,8 +108,8 @@ export const DEVICE_ROUTINES = Object.freeze({
     label: "routine:notes-phone", name: "Notes with simulated glasses", platform: "ios-on-mac",
     coverage: "The same recorded Phone mode setup, then transcription of a controlled discussion generated with a fresh phrase for each request; exactly one new generated note found by list identity; exact title and body edits; persistence after reopening; and Search returning that note and the exact-phrase transcript.",
     relatedPaths: ["mobile/assets/miniapps/com.mentra.notes-*.zip", "mobile/src/app/**", "mobile/src/components/**", "mobile/src/stores/**", "mobile/modules/engine/src/services/**"],
-    prerequisites: "CI Mac app; an enrolled Mac fixture commissioned at Phone mode Home, Welcome, the start screen or Log In, a pinned speech synthesizer (each request's phrase, facts and audio are generated and bound before speech), and the pinned audio tools.",
-    exclusions: "Preserves all transcript and note history; no deletion, physical glasses, physical iPhone or Android. Entry from signed-in unpaired Home is not yet observed and is refused. Registered in source; live CI qualification is still pending.",
+    prerequisites: "CI Mac app; an available enrolled Mac lane, pinned test account, speech synthesizer, exact audio endpoint UIDs and an exclusively allocated empty transcript day. Shared setup and teardown own this run's data and audio resources.",
+    exclusions: "No deletion of unrelated account history, physical glasses, physical iPhone or Android. Run-owned Notes and transcripts are cleaned; teardown verifies the app is stopped rather than requiring Phone Home. Development examples do not qualify a new CI request.",
     definition: `${phoneDefinitions}docs/routines/notes-phone.md`,
     implementation: `${phoneDefinitions}tools/mentra-e2e/flows/notes-phone.ts`,
     worker: `${phoneDefinitions}worker/phone-mode.ts`,
@@ -120,6 +120,8 @@ export function deviceRoutine(id) {
   if (!Object.hasOwn(DEVICE_ROUTINES, id)) throw new Error("Unsupported device routine")
   return DEVICE_ROUTINES[id]
 }
+
+export const AUTOMATIC_BUILD_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"])
 
 /** Execution paths (request, dispatch and nightly) accept only a routine with a registered automatic worker. A planned
  * routine refuses with its exact pending reason. Tests may pass a catalog that models a completed registration. */

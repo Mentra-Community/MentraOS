@@ -1,6 +1,6 @@
 import {isDeepStrictEqual} from "node:util"
 import {downloadNames, validateDownloads} from "./coordinated-install-downloads.mjs"
-import {deviceRoutine, registeredRoutine} from "./device-routines.mjs"
+import {AUTOMATIC_BUILD_ROUTINES, deviceRoutine, registeredRoutine} from "./device-routines.mjs"
 import {jsonArtifact, REQUEST_WORKFLOW, sourcePublication} from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {ANDROID_MAX_VERSION_CODE, androidBuildNumberOf} from "./release-family.mjs"
@@ -164,7 +164,7 @@ export async function createCoordinatedRoutineRequest({github, context, number, 
   const registered = registeredRoutine(routine, routineCatalog)
   const selected = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
   requireThat(!number && selected && ["dev", "staging"].includes(channel), "Coordinated requests require an exact run/attempt and no PR number")
-  requireThat(requestOrigin === "workflow-dispatch" || (requestOrigin === "successful-build" && ["no-glasses", "no-glasses-android"].includes(routine)),
+  requireThat(requestOrigin === "workflow-dispatch" || (requestOrigin === "successful-build" && AUTOMATIC_BUILD_ROUTINES.includes(routine)),
     "Unsupported coordinated routine authorization")
   requireThat(`${context.repo.owner}/${context.repo.repo}` === REPOSITORY && context.eventName === "workflow_dispatch" &&
     positive(context.runId) && positive(source?.runAttempt) && source.ref === "refs/heads/dev" && SHA.test(source.sha ?? "") &&
@@ -176,7 +176,7 @@ export async function createCoordinatedRoutineRequest({github, context, number, 
     trigger: {kind: context.eventName, repository: REPOSITORY, workflow: REQUEST_WORKFLOW, runId: context.runId, ...source},
     source: {kind: "coordinated-release", channel, buildRunId: selected.runId, publicationAttempt: selected.publicationAttempt},
     routine: {id: routine, authorization: requestOrigin, reason: requestOrigin === "successful-build"
-      ? "Automatic no-glasses test after successful coordinated publication" : "Explicit workflow_dispatch opt-in", harnessRevision: source.sha},
+      ? "Automatic foundation test after successful coordinated publication" : "Explicit workflow_dispatch opt-in", harnessRevision: source.sha},
     selection: null, attempts: []}
   const nightly = sourcePublication(nightlyRunId, nightlyRunAttempt)
   requireThat(["ordered", "independent"].includes(nightlyMode) && (nightly || nightlyMode === "ordered"), "Invalid nightly dispatch mode")
@@ -200,7 +200,7 @@ export async function verifyCoordinatedReadyRequest({github, context, request, f
   requireThat(request.schemaVersion === 2 && request.source?.kind === "coordinated-release" && !request.pullRequest &&
     request.requestId === `routine-${request.trigger.runId}-${request.trigger.runAttempt}-${request.source.channel}-${request.routine.id}` &&
     (request.routine.authorization === "workflow-dispatch" ||
-      (request.routine.authorization === "successful-build" && ["no-glasses", "no-glasses-android"].includes(request.routine.id))), "Invalid coordinated request")
+      (request.routine.authorization === "successful-build" && AUTOMATIC_BUILD_ROUTINES.includes(request.routine.id))), "Invalid coordinated request")
   const selection = await resolveCoordinatedSelection({github, context, source: request.source, platform: deviceRoutine(request.routine.id).platform, fetchImpl})
   requireThat(isDeepStrictEqual(selection, request.selection), "Ready coordinated selection differs from its published source")
   const {data: issuer} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})

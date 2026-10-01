@@ -27,6 +27,18 @@ for (const channel of ["dev", "staging"]) test(`${channel} selects an exact succ
   await verifyCoordinatedReadyRequest({...options, request})
 })
 
+for (const channel of ["dev", "staging"]) for (const routine of ["captions-phone", "notes-phone"])
+  test(`${channel} successful build authenticates the exact ${routine} request`, async () => {
+    const {options} = coordinatedFixture(channel)
+    const selected = {...options, routine, requestOrigin: "successful-build"}
+    const request = await createRoutineRequest(selected)
+    assert.equal(request.status, "ready", request.reason)
+    assert.equal(request.routine.id, routine)
+    assert.equal(request.routine.authorization, "successful-build")
+    assert.equal(request.selection.platform, "ios-on-mac")
+    await verifyCoordinatedReadyRequest({...selected, request})
+  })
+
 test("exact selection never substitutes another run, attempt, branch or source", async () => {
   for (const change of [{id: 101}, {run_attempt: 1}, {head_branch: "main"}, {event: "pull_request"},
     {path: ".github/workflows/other.yml"}, {status: "in_progress"},

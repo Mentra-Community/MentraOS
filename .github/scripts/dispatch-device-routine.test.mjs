@@ -443,7 +443,7 @@ test("all routine labels create independent fenced generations for one exact pub
   ])
 })
 
-test("registered Phone mode labels request the exact Mac publication, never a successful-build or nightly run", async () => {
+test("registered Phone mode labels, build callbacks and nightlies select the exact Mac publication", async () => {
   const {NIGHTLY_ROUTINES} = await import("./nightly-device-routines.mjs")
   const routines = ["captions-phone", "notes-phone"]
   const pull = {...pr, labels: routines.map(routine => ({name: `routine:${routine}`}))}
@@ -454,12 +454,11 @@ test("registered Phone mode labels request the exact Mac publication, never a su
   for (const plan of plans) assert.equal((await requestAfterPublication({...f, context, plan})).status, "request-dispatched")
   assert.deepEqual(f.calls.filter(([kind]) => kind === "dispatch").map(([, call]) => call.inputs), routines.map(routine =>
     ({pr: "42", routine, request_origin: "pr-label", source_build_run_id: "123", source_publication_attempt: "2"})))
-  // A successful coordinated build keeps requesting only the no-glasses routines.
   const run = {...build, path: ".github/workflows/coordinated-release.yml", event: "push", head_branch: "dev", pull_requests: []}
   const coordinated = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: []}})
   for (const routine of routines)
-    assert.equal((await planDeviceDispatch({...coordinated, context, routine})).mode, "skip")
-  assert.ok(routines.every(routine => !NIGHTLY_ROUTINES.includes(routine)))
+    assert.equal((await planDeviceDispatch({...coordinated, context, routine})).mode, "request")
+  assert.ok(routines.every(routine => NIGHTLY_ROUTINES.includes(routine)))
 })
 
 test("a registered account-miniapps label requests the exact dev or staging Mac publication, never a successful-build run", async () => {
@@ -487,7 +486,7 @@ test("a registered account-miniapps label requests the exact dev or staging Mac 
     const coordinated = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: []}})
     assert.equal((await planDeviceDispatch({...coordinated, context, routine: "account-miniapps"})).mode, "skip")
     assert.deepEqual((await planDeviceDispatches({...coordinated, context})).filter(plan => plan.mode === "request")
-      .map(plan => plan.routine), ["no-glasses", "no-glasses-android"])
+      .map(plan => plan.routine), ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"])
   }
 })
 
@@ -688,7 +687,7 @@ test("successful dev and staging builds request independent Mac and Android no-g
     const job = {...publicationJob, name: publicationJobName(123, 2, "no-glasses", channel)}
     const f = fake({run, jobs: [coordinatedJob()], callbackJobs: {[callback.id]: [job]}})
     const work = (await planDeviceDispatches({...f, context})).filter(plan => plan.mode === "request")
-    assert.deepEqual(work.map(plan => plan.routine), ["no-glasses", "no-glasses-android"])
+    assert.deepEqual(work.map(plan => plan.routine), ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"])
     assert.equal(work[0].routine, "no-glasses")
     assert.equal(work[0].pr, undefined)
     assert.equal((await requestAfterPublication({...f, context, plan: work[0]})).status, "request-dispatched")

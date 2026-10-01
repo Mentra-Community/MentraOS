@@ -27,6 +27,10 @@ export const NIGHTLY_TARGETS = Object.freeze([
   {routine: "account-miniapps", platform: "ios-on-mac"},
   {routine: "connected-glasses", platform: "android"},
   {routine: "livestreamer", platform: "ios-on-mac"},
+  {routine: "no-glasses", platform: "ios-on-mac"},
+  {routine: "no-glasses-android", platform: "android"},
+  {routine: "captions-phone", platform: "ios-on-mac"},
+  {routine: "notes-phone", platform: "ios-on-mac"},
 ].map(Object.freeze))
 export const NIGHTLY_ROUTINES = Object.freeze(NIGHTLY_TARGETS.map(target => target.routine))
 const REPOSITORY = "Mentra-Community/MentraOS"

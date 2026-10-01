@@ -433,6 +433,19 @@ test("dispatch fixes the repository/workflow/ref and passes only exact explicit 
   } });
 });
 
+for (const channel of ["dev", "staging"] as const) for (const routineId of ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"] as const)
+  test(`admin ${channel} ${routineId} uses the ordinary trusted request workflow`, async () => {
+    const f = fixture();
+    f.rows.set(`POST ${API}/actions/workflows/request-e2e-routine.yml/dispatches`, {
+      workflow_run_id: 70, html_url: `https://github.com/${REPO}/actions/runs/70`, run_url: `${API}/actions/runs/70`,
+    });
+    const selected: TestDispatchInput = { ...input, routineId, source: { channel, buildRunId: 50, publicationAttempt: 2 } };
+    expect((await f.gateway.dispatch(selected)).requestRunId).toBe(70);
+    expect(JSON.parse(String(f.calls.at(-1)!.init?.body))).toEqual({ ref: "dev", return_run_details: true, inputs: {
+      routine: routineId, request_origin: "workflow-dispatch", channel, source_build_run_id: "50", source_publication_attempt: "2",
+    } });
+  });
+
 test("request artifact reads are bounded and reject other files before decompression", async () => {
   await expect(readTestMetadata(new Response("12345"), 4)).rejects.toThrow("size limit");
   expect(readRequestZip(zipSync({ "request.json": strToU8('{"ok":true}') }))).toEqual({ ok: true });

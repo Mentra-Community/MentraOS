@@ -2,7 +2,7 @@ import {harnessVerificationArtifact, readHarnessVerification} from "./harness-ve
 import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
 import {admittedPrBase, currentBaseSha, successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
-import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel, isRegisteredRoutine, registeredRoutine} from "./device-routines.mjs"
+import {AUTOMATIC_BUILD_ROUTINES, DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel, isRegisteredRoutine, registeredRoutine} from "./device-routines.mjs"
 import {validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 
@@ -128,9 +128,9 @@ export async function planDeviceDispatch({github, context, callbackAttempt, rout
   const run = await completedRun(github, context)
   if (!run) return {mode: "skip", reason: "Workflow has not completed"}
   if (run.path === COORDINATED_WORKFLOW) {
-    if (!["no-glasses", "no-glasses-android"].includes(routine) || !["dev", "staging"].includes(run.head_branch) ||
+    if (!AUTOMATIC_BUILD_ROUTINES.includes(routine) || !["dev", "staging"].includes(run.head_branch) ||
       !["push", "workflow_dispatch"].includes(run.event) || run.conclusion !== "success")
-      return {mode: "skip", reason: "Automatic coordinated requests require successful dev/staging builds and no-glasses"}
+      return {mode: "skip", reason: "Automatic coordinated requests require successful dev/staging builds and a registered foundation routine"}
     if (callbackAttempt !== 1) return {mode: "reconcile", callbackUrl: callbackUrl(context.runId),
       reason: "This callback was already attempted; reconcile manually"}
     const publicationAttempt = await coordinatedPublicationAttempt(github, context, run)
@@ -215,7 +215,7 @@ export async function planDeviceDispatches(options) {
 export async function requestAfterPublication({github, context, plan, wait = sleep}) {
   registeredRoutine(plan.routine)
   const coordinated = ["dev", "staging"].includes(plan.channel)
-  requireThat(plan.mode === "request" && (coordinated ? !plan.pr && ["no-glasses", "no-glasses-android"].includes(plan.routine) : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
+  requireThat(plan.mode === "request" && (coordinated ? !plan.pr && AUTOMATIC_BUILD_ROUTINES.includes(plan.routine) : !plan.channel && positive(plan.pr)) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
     && plan.callbackRunId === context.runId && plan.callbackAttempt === 1, "Invalid request dispatch")
   const prior = await automaticGenerationFence(github, context, plan, wait)
   if (prior) return {status: "request-reconcile", ...prior}
