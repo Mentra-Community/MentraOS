@@ -5,8 +5,9 @@ description: Create or extend a Mentra automated testing routine using the share
 
 # Add or extend a routine
 
-**Optimize for reliability, readability and maintainability. Adding a check should
-usually mean adding a named step to a small flow, not another runner.** Author
+**Routines must be fast, reliable and easy to make. Keep their English steps and
+replay code readable and maintainable. Adding a check should usually mean adding
+a named step to a small flow, not another runner.** Author
 routines in the private [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing).
 MentraOS contains their public catalog and `routine:<id>` request labels.
 
@@ -86,14 +87,25 @@ does not prove the runner forwards its Java/Android tool configuration. Use the
 selected revision's pinned tools and a minimal semantic observation to check the
 assigned device; keep account entry and firmware operations in setup.
 
-## First complete one recorded traversal of the whole flow
+## Author the executable flow while traversing it
 
-**Use AI computer use to traverse the entire English scenario from entry to end
-at least once before building its deterministic replay.** Keep the working
-authoring session and recording going. Record the ordered actions, observed UI
-controls/selectors, expected versus actual results, and screenshots needed to
-reproduce the flow. Existing controls and small helper fixes can support this
-exploration; final replay construction and polishing come afterward.
+**Complete one AI-guided traversal of the entire English scenario before full
+replay qualification. Build its executable steps as you go.** Computer use helps
+find controls and understand behavior. Once the next action is understood, save
+it with its observable assertion and execute that saved step from its prerequisite
+state through the same driver/helper that replay will call. If a manual action
+already advanced the UI, restore only the smallest safe prerequisite state before
+testing the saved step. Do not repeat a submission or destructive action blindly;
+use an owned fixture or report the verification gap until it can be tested. Continue
+forward in the held session; do not leave a successful manual click to be
+translated into a different, untested action later.
+
+Authoring produces a readable executable flow plus its recording and step
+observations. The recording/action journal alone is not a replay script. Keep
+step IDs and English expectations alongside the executable actions. A step only
+tried through computer use is still exploratory until its saved implementation
+has also worked. If changing an interaction method, verify the replacement on
+that step before proceeding.
 
 When a step fails during authoring, fix it and retry that step or the smallest
 dependent section from the current usable state, then continue forward. Restore
@@ -116,7 +128,9 @@ It runs shared setup and holds its owner/recorder for `steps`, `snapshot`,
 `step <ID>`, `section <ID> <ID>`, semantic `press`, and, on Android,
 `maestro /absolute/section.yaml`. Check the selected checkout's help and
 `docs/DEVELOPMENT-ENTRY.md` for supported adapters and commands. Keep retries
-inside that session; edit and rerun supported sections from the current state.
+inside that session. Edit/rerun Maestro files directly; for TypeScript, use the
+selected revision's edited-flow loading command if present. Named steps loaded
+at startup do not automatically reload changed source.
 End the complete traversal with `teardown`. If the authoring process exits,
 the existing `cleanup` command requires the original `--config` and
 `--run-directory`; after teardown, a new session establishes its own prerequisites.
@@ -127,12 +141,22 @@ flags, create a second runner or replay an uncertain firmware write. Authoring
 section evidence documents progress; it cannot publish a full routine result or
 replace the complete traversal.
 
-Only after reaching the end, encode the observed actions and assertions for
-deterministic replay without AI. Keep flow files small and readable: stable named
-steps, data for routine-specific choices, shared helpers for repeated mechanics.
-Prefer stable selectors and state-based waits. Avoid copying setup,
-authentication, recording, publication or cleanup into flows. A separate full
-replay through the foundation establishes whether the routine passes.
+After reaching the end, run the **same saved flow** without AI through complete
+shared setup/test/teardown. Remove exploration-only actions and order the proven
+steps; do not rewrite working interactions merely to adopt another selector or
+input technique. Prefer stable selectors where they work, use the simplest
+supported alternative where they do not, and assert the actual outcome.
+
+The current authoring CLI holds the session and records attempts; it is not an
+automatic script generator. Inspect its actual loading behavior. Android Maestro
+files can be edited and rerun in the held session; TypeScript flows may be loaded
+only at startup. If that prevents testing a changed saved step in place, extend
+the shared authoring entry point to execute updated flow sections under the same
+owner and recorder. Do not work around that gap by repeatedly rebuilding setup
+or by claiming manual exploration proved an unexecuted replay implementation.
+
+Keep flow files small and readable. Reuse shared mechanics for setup,
+authentication, recording, publication and cleanup.
 
 Use the maintained driver path that fits the platform. Existing Mac flows use
 TypeScript `Step` definitions with Swift/native helpers; Android uses shared
