@@ -108,3 +108,19 @@ export async function publishSuiteResult({suite, expectedRoutineIds, channel, to
   if (posted.channel !== channel || !/^\d+\.\d+$/.test(posted.ts ?? "")) throw new Error("Slack suite acknowledgement differs")
   return {suiteId: suite.suiteId, channel, ts: posted.ts, ...result}
 }
+
+export async function publishSuiteWebhook({suite, expectedRoutineIds, webhook, fetchImpl = fetch}) {
+  let destination
+  try { destination = new URL(webhook) } catch { throw new Error("Missing dev-builds webhook capability") }
+  if (destination.origin !== "https://hooks.slack.com" || !/^\/services\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(destination.pathname) ||
+    destination.search || destination.hash || destination.username || destination.password)
+    throw new Error("Invalid dev-builds webhook capability")
+  const result = suiteResultMessage(suite, expectedRoutineIds)
+  let response
+  try {
+    response = await fetchImpl(destination.href, {method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({text: result.text, unfurl_links: false, unfurl_media: false})})
+    if (!response.ok || (await response.text()).trim() !== "ok") throw new Error("Rejected")
+  } catch { throw new Error("Slack suite webhook acknowledgement unavailable; inspect before retrying") }
+  return {suiteId: suite.suiteId, destination: "dev-builds-webhook", acknowledged: true, ...result}
+}

@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   plan:
+    environment: routine-nightly-dev
     if: github.repository == 'Mentra-Community/MentraOS' && vars.DEVICE_ROUTINE_NIGHTLY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -76,6 +77,7 @@ jobs:
             core.setFailed('Some required routines or platform publications are unavailable. Eligible routines are requested independently.');
 
   request:
+    environment: routine-nightly-dev
     needs: plan
     if: needs.plan.outputs.has-work == 'true'
     strategy:
@@ -136,6 +138,7 @@ jobs:
               .addCodeBlock(JSON.stringify(result, null, 2), 'json').write();
 
   finalize:
+    environment: routine-nightly-dev
     name: Finalize dev nightly suite
     needs: [plan, request, availability]
     if: always() && needs.plan.outputs.suite-id != ''
@@ -157,21 +160,20 @@ jobs:
         env:
           SUITE_ID: ${{ needs.plan.outputs.suite-id }}
           TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
-          SLACK_TOKEN: ${{ secrets.SLACK_BUILDS_BOT_TOKEN }}
-          SLACK_CHANNEL: ${{ vars.SLACK_DEV_BUILDS_CHANNEL_ID }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
         with:
           retries: 0
           script: |
             if (Number(process.env.GITHUB_RUN_ATTEMPT) !== 1) throw new Error('Nightly finalizer reruns require reconciliation; never repeat an uncertain Slack send');
-            const {reconcileNightlySuite, publishSuiteResult} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-suite.mjs`);
+            const {reconcileNightlySuite, publishSuiteWebhook} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-suite.mjs`);
             const {DEV_FOUNDATION_NIGHTLY_ROUTINES} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
             const suite = await reconcileNightlySuite({suiteId: process.env.SUITE_ID, token: process.env.TEST_RUN_INGEST_TOKEN,
               deadline: Date.now() + 3 * 3600_000});
             const {writeFile} = await import('node:fs/promises');
-            await writeFile('nightly-suite-send-intent.json', JSON.stringify({suiteId: suite.suiteId, channel: process.env.SLACK_CHANNEL,
+            await writeFile('nightly-suite-send-intent.json', JSON.stringify({suiteId: suite.suiteId, destination: 'dev-builds-webhook',
               status: 'send-entered', attempt: Number(process.env.GITHUB_RUN_ATTEMPT)}));
-            const receipt = await publishSuiteResult({suite, expectedRoutineIds: DEV_FOUNDATION_NIGHTLY_ROUTINES,
-              channel: process.env.SLACK_CHANNEL, token: process.env.SLACK_TOKEN});
+            const receipt = await publishSuiteWebhook({suite, expectedRoutineIds: DEV_FOUNDATION_NIGHTLY_ROUTINES,
+              webhook: process.env.SLACK_WEBHOOK});
             await writeFile('nightly-suite-result.json', JSON.stringify({suite, receipt}));
             await core.summary.addHeading('Final dev nightly suite').addLink('Suite results', receipt.url)
               .addCodeBlock(JSON.stringify({suite, receipt}, null, 2), 'json').write();

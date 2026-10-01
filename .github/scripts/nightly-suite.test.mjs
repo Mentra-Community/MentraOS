@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {nightlySuiteId, suiteResultMessage, publishSuiteResult, frozenNightlySuite,
-  suiteMemberBinding, suiteApi, reconcileNightlySuite} from "./nightly-suite.mjs"
+  suiteMemberBinding, suiteApi, reconcileNightlySuite, publishSuiteWebhook} from "./nightly-suite.mjs"
 
 const expected = ["no-glasses", "ota-roundtrip-android"]
 const suite = {suiteId: nightlySuiteId(5000, 1), channel: "dev", outcome: "passed", passed: 2,
@@ -119,4 +119,17 @@ test("read outages retry only reads until deadline, then use frozen completion r
   assert.equal(writes, 1)
   assert.equal(result.outcome, "failed")
   assert.equal(clock, Date.parse(suite.finishedAt) + 20)
+})
+
+test("dev webhook acknowledges exactly one final post without leaking or retrying", async () => {
+  let posts = 0
+  const webhook = "https://hooks.slack.com/services/TEST/TEST/synthetic"
+  const receipt = await publishSuiteWebhook({suite, expectedRoutineIds: expected, webhook,
+    fetchImpl: async (_url, options) => {posts++; assert.equal(options.redirect, "error");
+      assert.ok(JSON.parse(options.body).text.includes("testSuite=")); return new Response("ok")}})
+  assert.equal(receipt.acknowledged, true)
+  assert.equal(posts, 1)
+  await assert.rejects(publishSuiteWebhook({suite, expectedRoutineIds: expected, webhook,
+    fetchImpl: async () => {throw new Error(webhook)}}), error => !error.message.includes(webhook))
+  await assert.rejects(publishSuiteWebhook({suite, expectedRoutineIds: expected, webhook: "https://example.org/services/TEST/TEST/synthetic"}))
 })
