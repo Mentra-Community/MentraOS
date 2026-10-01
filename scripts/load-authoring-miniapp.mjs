@@ -9,6 +9,8 @@ if (!zip || !["--mac", "--android"].includes(target) || (target === "--android" 
   console.error("Usage: bun scripts/load-authoring-miniapp.mjs <packed.zip> --mac | --android <phone-serial>")
   process.exit(1)
 }
+const hostPackage = process.env.MENTRA_HOST_PACKAGE || "com.mentra.mentra"
+if (!/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(hostPackage)) throw new Error("Invalid MENTRA_HOST_PACKAGE")
 const archive = Bun.file(resolve(zip))
 if (!(await archive.exists())) throw new Error("Packed miniapp ZIP not found")
 const manifestRead = spawnSync("unzip", ["-p", archive.name, "miniapp.json"], {encoding: "utf8"})
@@ -56,7 +58,7 @@ try {
       "-d",
       `'${link}'`,
       "-p",
-      "com.mentra.mentra",
+      hostPackage,
     ])
   console.log(
     `Requested ${packageName}@${version}. Leave this server running until the miniapp opens; Ctrl+C removes it and its USB tunnel.`,

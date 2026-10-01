@@ -319,6 +319,23 @@ class AppRegistry {
   private sttModelRequired = new Set<string>()
   private refreshNeeded: boolean = true
   private listeners = new Set<Listener>()
+  private retainedDevVersions = new Map<string, Set<string>>()
+
+  /** Hold the running and rollback bundles while an explicit replacement settles. */
+  public retainDevVersions(packageName: string, versions: string[]): () => void {
+    if (this.retainedDevVersions.has(packageName)) throw new Error("A miniapp replacement is already in progress")
+    this.retainedDevVersions.set(packageName, new Set(versions.filter(version => version.startsWith("dev-"))))
+    return () => {this.retainedDevVersions.delete(packageName)}
+  }
+
+  private protectedDevVersions(packageName: string): Set<string> {
+    const versions = new Set(this.retainedDevVersions.get(packageName))
+    const selected = this.getSelectedDevSnapshot(packageName)
+    if (selected) versions.add(selected)
+    const active = storage.load<string>(`${packageName}_active_version`)
+    if (active.is_ok() && active.value.startsWith("dev-") && miniappRunningRegistry.has(packageName)) versions.add(active.value)
+    return versions
+  }
   private installationMetadata?: MMKV
 
   // Bundle files survive logout; their provenance must survive with them.
@@ -471,6 +488,8 @@ class AppRegistry {
   ): AsyncResult<void, Error> {
     return Res.try_async(() =>
       serializeInstall(async () => {
+        if (opts?.expectedPackageName && !opts.versionOverride?.startsWith("dev-") && this.retainedDevVersions.has(opts.expectedPackageName))
+          throw new Error("Cannot install a release during miniapp replacement")
         const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride, {
           packageName: opts?.expectedPackageName,
           version: opts?.expectedVersion,
@@ -507,6 +526,8 @@ class AppRegistry {
   ): AsyncResult<{packageName: string; version: string}, Error> {
     return Res.try_async(() =>
       serializeInstall(async () => {
+        if (opts?.expectedPackageName && !opts.versionOverride?.startsWith("dev-") && this.retainedDevVersions.has(opts.expectedPackageName))
+          throw new Error("Cannot install a release during miniapp replacement")
         if (
           opts?.adoptIdenticalInstalledVersion &&
           (opts.releaseIdentity?.source !== "deployment_manifest" ||
@@ -624,6 +645,7 @@ class AppRegistry {
    * package leaves nothing behind that `projectDevApps` could re-surface.
    */
   private clearDevArtifacts(packageName: string): void {
+    if (this.retainedDevVersions.has(packageName)) throw new Error("Cannot clear a miniapp during replacement")
     try {
       const pkgDir = new Directory(Paths.document, "lmas", packageName)
       if (pkgDir.exists) {
@@ -667,8 +689,11 @@ class AppRegistry {
         .list()
         .filter((d): d is Directory => d instanceof Directory && d.name.startsWith("dev-"))
         .sort((a, b) => (a.name < b.name ? 1 : -1))
+      const protectedVersions = this.protectedDevVersions(packageName)
       for (let i = keep; i < dirs.length; i++) {
+        if (protectedVersions.has(dirs[i].name)) continue
         try {
+          this.removeReleaseIdentity(packageName, dirs[i].name)
           dirs[i].delete()
         } catch (e) {
           console.warn(`APP_REGISTRY: failed to delete ${dirs[i].name}:`, e)
@@ -707,6 +732,7 @@ class AppRegistry {
 
   public uninstall(packageName: string, version?: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
+      if (this.retainedDevVersions.has(packageName)) throw new Error("Cannot uninstall a miniapp during replacement")
       if (version) {
         const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
         // Guard exists: a dev miniapp loads over HTTP and has no on-disk dir,

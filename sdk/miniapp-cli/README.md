@@ -294,6 +294,10 @@ The packed snapshot becomes the selected source, even if this package previously
 used a scanned development server. A later scan selects that server again. Failed
 replacement restores the previous source.
 
+For an Android build variant, set `MENTRA_HOST_PACKAGE` to its exact application
+ID (for example `com.mentra.mentra.china`) when running either script. The default
+is `com.mentra.mentra`.
+
 Both script entry points require Super Mode. The old Android incident broadcast
 has been removed; automated-testing callers use this shared URL. Normal user
 feedback remains available without Super Mode.

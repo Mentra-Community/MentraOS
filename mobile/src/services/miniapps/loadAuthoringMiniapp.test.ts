@@ -10,6 +10,7 @@ let mockInstalledVersion = "1.0.27"
 let mockSelectedSnapshot: string | null = null
 const mockDiscard = jest.fn(), mockRestore = jest.fn(), mockAllowed = jest.fn(), mockSelect = jest.fn()
 const mockReplaceSurface = jest.fn()
+const mockReleaseVersions = jest.fn()
 jest.mock("@/stores/miniappLaunch", () => ({useMiniappPresentationStore: {getState: () => ({replaceSurface: mockReplaceSurface})}}))
 const mockSuperMode = jest.fn()
 const app = {packageName: "com.mentra.notes", version: "1.0.27"}
@@ -29,7 +30,7 @@ jest.mock("@mentra/engine", () => ({
 jest.mock("@mentra/engine-host-internal", () => ({
   isDevMiniappAllowed: (...args: unknown[]) => mockAllowed(...args),
   appRegistry: {installFromUrl: (...args: unknown[]) => mockInstall(...args), getActiveVersion: async () => app.version,
-    getSelectedDevSnapshot: () => mockSelectedSnapshot, selectDevSnapshot: (...args: unknown[]) => mockSelect(...args),
+    retainDevVersions: () => mockReleaseVersions, getSelectedDevSnapshot: () => mockSelectedSnapshot, selectDevSnapshot: (...args: unknown[]) => mockSelect(...args),
     discardDevSnapshot: (...args: unknown[]) => mockDiscard(...args), setActiveVersion: (...args: unknown[]) => mockRestore(...args), gcDevVersions: jest.fn()},
 }))
 jest.mock("@/utils/PermissionsUtils", () => ({checkPermissionsUI: (...args: unknown[]) => mockPermissions(...args)}))
@@ -112,6 +113,7 @@ it("a failed download keeps the previous miniapp running and its selected versio
   expect(mockRestore).toHaveBeenCalledWith(app.packageName, app.version)
   expect(mockDiscard).toHaveBeenCalledWith(app.packageName, expect.stringMatching(/^dev-/))
   expect(mockSelect).toHaveBeenCalledWith(app.packageName, null)
+  expect(mockReleaseVersions).toHaveBeenCalled()
 })
 
 it("restores the prior packed-source selection when replacement fails", async () => {
@@ -119,4 +121,15 @@ it("restores the prior packed-source selection when replacement fails", async ()
   mockInstall.mockRejectedValueOnce(new Error("download failed"))
   await expect(loadAuthoringMiniapp(link())).rejects.toThrow("download failed")
   expect(mockSelect).toHaveBeenCalledWith(app.packageName, "dev-1000-a")
+})
+
+it("retains rollback versions through a deferred download and releases after completion", async () => {
+  let finish!: (value: unknown) => void
+  mockInstall.mockReturnValueOnce(new Promise(resolve => {finish = resolve}))
+  const pending = loadAuthoringMiniapp(link())
+  await Promise.resolve()
+  expect(mockReleaseVersions).not.toHaveBeenCalled()
+  finish({is_error: () => true, error: new Error("failed")})
+  await expect(pending).rejects.toThrow("failed")
+  expect(mockReleaseVersions).toHaveBeenCalledTimes(1)
 })

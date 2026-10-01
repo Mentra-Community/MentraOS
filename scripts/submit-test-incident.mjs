@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Both platforms use the same app handler; Android's old broadcast remains compatible.
+// Both platforms use the same Super Mode-gated app handler.
 import {spawnSync} from "node:child_process"
 const [target, ...args] = process.argv.slice(2)
 const serial = target === "--android" ? args.shift() : undefined
@@ -7,6 +7,8 @@ if (!["--mac", "--android"].includes(target) || (target === "--android" && !seri
   console.error("Usage: bun scripts/submit-test-incident.mjs --mac | --android <phone-serial> key=value ...")
   process.exit(1)
 }
+const hostPackage = process.env.MENTRA_HOST_PACKAGE || "com.mentra.mentra"
+if (!/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(hostPackage)) throw new Error("Invalid MENTRA_HOST_PACKAGE")
 const query = new URLSearchParams()
 for (const argument of args) {
   const equals = argument.indexOf("=")
@@ -32,7 +34,7 @@ const result =
           "-d",
           `'${url}'`,
           "-p",
-          "com.mentra.mentra",
+          hostPackage,
         ],
         {stdio: "inherit"},
       )
