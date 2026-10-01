@@ -260,7 +260,7 @@ is a local build option, not a change to the requested CI artifact.
 From the MentraOS checkout, load the resulting ZIP without navigating developer settings:
 
 ```bash
-bun scripts/load-authoring-miniapp.mjs /absolute/path/com.mentra.notes-1.0.27.zip --mac
+MENTRA_MAC_APP=/absolute/path/Mentra.app bun scripts/load-authoring-miniapp.mjs /absolute/path/com.mentra.notes-1.0.27.zip --mac
 bun scripts/load-authoring-miniapp.mjs /absolute/path/com.mentra.notes-1.0.27.zip --android R5CW22Z3GDZ
 ```
 
@@ -284,7 +284,7 @@ readiness. Verify the changed step in the held authoring session.
 Incident submission uses the same cross-platform transport:
 
 ```bash
-bun scripts/submit-test-incident.mjs --mac alert_id=authoring-1 failure_code=search_failed 'failure_message=Search did not filter the notes'
+MENTRA_MAC_APP=/absolute/path/Mentra.app bun scripts/submit-test-incident.mjs --mac alert_id=authoring-1 failure_code=search_failed 'failure_message=Search did not filter the notes'
 bun scripts/submit-test-incident.mjs --android R5CW22Z3GDZ alert_id=authoring-2 failure_code=search_failed 'failure_message=Search did not filter the notes'
 ```
 
@@ -297,6 +297,10 @@ replacement restores the previous source.
 For an Android build variant, set `MENTRA_HOST_PACKAGE` to its exact application
 ID (for example `com.mentra.mentra.china`) when running either script. The default
 is `com.mentra.mentra`.
+
+For Mac, both scripts require `MENTRA_MAC_APP` to identify the exact installed
+`.app`, so another Mentra App build cannot receive the URL by mistake. The live
+word monitor accepts the Android variant through `--app-package`.
 
 Both script entry points require Super Mode. The old Android incident broadcast
 has been removed; automated-testing callers use this shared URL. Normal user

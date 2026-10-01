@@ -792,7 +792,7 @@ class AppRegistry {
     }
   }
 
-  public async getActiveVersion(packageName: string): Promise<string> {
+  public async getActiveVersion(packageName: string): Promise<string | undefined> {
     let versions = this.getInstalledVersions(packageName)
     // A scanned build only stands in for a workspace miniapp while super mode
     // allows it. Leaving the stored pointer alone lets turning super mode on
@@ -822,6 +822,7 @@ class AppRegistry {
     }
     versions = versions.filter((v) => semver.valid(v))
     versions.sort((a, b) => semver.rcompare(a, b))
+    if (!versions.length) return undefined
     if (!(res.is_ok() && res.value.startsWith("dev-"))) this.setActiveVersion(packageName, versions[0])
     return versions[0]
   }
@@ -938,6 +939,7 @@ class AppRegistry {
       const out: ClientApp[] = []
       for (const lmaInfo of installedInfo) {
         const versionString = await this.getActiveVersion(lmaInfo.packageName)
+        if (!versionString) continue
         const versionInfo = lmaInfo.versions[versionString]
 
         const manifest = this.getMiniappManifest(lmaInfo.packageName, versionString) as {

@@ -9,6 +9,9 @@ if (!["--mac", "--android"].includes(target) || (target === "--android" && !seri
 }
 const hostPackage = process.env.MENTRA_HOST_PACKAGE || "com.mentra.mentra"
 if (!/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(hostPackage)) throw new Error("Invalid MENTRA_HOST_PACKAGE")
+const macApp = process.env.MENTRA_MAC_APP
+if (target === "--mac" && (!macApp || !macApp.startsWith("/") || !macApp.endsWith(".app")))
+  throw new Error("Set MENTRA_MAC_APP to the exact installed Mentra .app path")
 const query = new URLSearchParams()
 for (const argument of args) {
   const equals = argument.indexOf("=")
@@ -20,7 +23,7 @@ for (const argument of args) {
 const url = `com.mentra://test/submit-incident-report?${query}`
 const result =
   target === "--mac"
-    ? spawnSync("open", [url], {stdio: "inherit"})
+    ? spawnSync("open", ["-a", macApp, url], {stdio: "inherit"})
     : spawnSync(
         "adb",
         [

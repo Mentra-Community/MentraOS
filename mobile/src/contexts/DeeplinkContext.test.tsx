@@ -317,3 +317,33 @@ it("does not install a miniapp without a signed-in session", async () => {
   expect(mockLoadAuthoringMiniapp).not.toHaveBeenCalled()
   expect(mockSetPendingRoute).toHaveBeenCalledWith(authoringUrl)
 })
+
+it("consumes an auth-deferred authoring link immediately after sign-in exactly once", async () => {
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  const url = "com.mentra://test/load-miniapp?package=com.mentra.notes&version=1.0.27&url=http%3A%2F%2Flocal%2Fbundle.zip"
+  await act(async () => {await processUrl(url)})
+  expect(mockLoadAuthoringMiniapp).not.toHaveBeenCalled()
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  mockPendingRoute = null
+  await act(async () => {await processUrl(url); await processUrl(url)})
+  expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
+})
+
+it("consumes a cold-start authoring link during the startup delay exactly once", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  let startup: Promise<void>
+  await act(async () => {
+    startup = processUrl(authoringUrl, true)
+    await Promise.resolve()
+  })
+  expect(mockPendingRoute).toBe(authoringUrl)
+  mockPendingRoute = null
+  await act(async () => {
+    await processUrl(authoringUrl)
+    await jest.advanceTimersByTimeAsync(1000)
+    await startup!
+    await processUrl(authoringUrl)
+  })
+  expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
+})

@@ -45,7 +45,7 @@ async function replaceMiniapp(link: string) {
   const previousVersion = await appRegistry.getActiveVersion(packageName)
   const previousSnapshot = appRegistry.getSelectedDevSnapshot(packageName)
   const stagedVersion = `dev-${Date.now()}-${Math.random().toString(16).slice(2)}`
-  const releaseVersions = appRegistry.retainDevVersions(packageName, [previousVersion, stagedVersion, ...(previousSnapshot ? [previousSnapshot] : [])])
+  const releaseVersions = appRegistry.retainDevVersions(packageName, [stagedVersion, ...(previousVersion ? [previousVersion] : []), ...(previousSnapshot ? [previousSnapshot] : [])])
   let stopped = false
   try {
     // The isolated snapshot keeps the managed release's bytes and identity.

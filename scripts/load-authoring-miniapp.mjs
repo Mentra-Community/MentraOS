@@ -11,6 +11,9 @@ if (!zip || !["--mac", "--android"].includes(target) || (target === "--android" 
 }
 const hostPackage = process.env.MENTRA_HOST_PACKAGE || "com.mentra.mentra"
 if (!/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(hostPackage)) throw new Error("Invalid MENTRA_HOST_PACKAGE")
+const macApp = process.env.MENTRA_MAC_APP
+if (target === "--mac" && (!macApp || !macApp.startsWith("/") || !macApp.endsWith(".app")))
+  throw new Error("Set MENTRA_MAC_APP to the exact installed Mentra .app path")
 const archive = Bun.file(resolve(zip))
 if (!(await archive.exists())) throw new Error("Packed miniapp ZIP not found")
 const manifestRead = spawnSync("unzip", ["-p", archive.name, "miniapp.json"], {encoding: "utf8"})
@@ -45,7 +48,7 @@ try {
   }
   const query = new URLSearchParams({url: `http://127.0.0.1:${server.port}${path}`, package: packageName, version})
   const link = `com.mentra://test/load-miniapp?${query}`
-  if (target === "--mac") run("open", [link])
+  if (target === "--mac") run("open", ["-a", macApp, link])
   else
     run("adb", [
       "-s",

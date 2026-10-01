@@ -121,6 +121,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable Android incident deep-link dispatch even when alerts are raised.",
     )
+    parser.add_argument("--app-package", default="com.mentra.mentra", help="Exact Android application ID to monitor and submit incidents to")
     parser.add_argument("--poll-interval", type=float, default=0.25, help="Hierarchy poll interval in seconds")
     parser.add_argument("--word-match-early-tolerance-ms", type=int, default=250, help="Allow a visible word match slightly before the expected word timestamp")
     parser.add_argument("--post-roll-ms", type=int, default=1200, help="Extra time after the last aligned word before closing an utterance")
@@ -1256,7 +1257,7 @@ class MonitorWorker:
         if self.args.public_dashboard_url:
             params["dashboard_url"] = self.args.public_dashboard_url
         url = "com.mentra://test/submit-incident-report?" + urllib.parse.urlencode(params)
-        remote_cmd = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", "com.mentra.mentra"]
+        remote_cmd = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", self.args.app_package]
 
         adb_cmd = self.adb_prefix_for(device_id) + ["shell", " ".join(shlex.quote(part) for part in remote_cmd)]
         try:
@@ -1741,7 +1742,7 @@ class MonitorWorker:
                         focused_app = candidate_focus
             if focused_app is None:
                 focused_app = fallback_focus
-            is_app_foreground = bool(focused_app and "com.mentra.mentra" in focused_app and "MainActivity" in focused_app)
+            is_app_foreground = bool(focused_app and f"{self.args.app_package}/" in focused_app and "MainActivity" in focused_app)
         except Exception as exc:
             error_message = str(exc)
             if device_state.last_foreground_app_check_ts_ms:
@@ -1786,7 +1787,7 @@ class MonitorWorker:
                 self.state.end_incident(device_id, ongoing_incident["incident_id"], now_ms, {"reason": "incident_disabled"})
             return
         is_app_foreground, current_focus, probe_error = self.get_foreground_app_probe(device_id, device_state, now_ms)
-        details = {"current_focus": current_focus, "expected_package": "com.mentra.mentra", "expected_activity": "MainActivity"}
+        details = {"current_focus": current_focus, "expected_package": self.args.app_package, "expected_activity": "MainActivity"}
         if probe_error is not None:
             incident_id = ongoing_incident["incident_id"] if ongoing_incident is not None else self.state.start_incident(
                 device_id,

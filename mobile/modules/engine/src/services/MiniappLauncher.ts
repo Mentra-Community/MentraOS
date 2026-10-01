@@ -291,7 +291,7 @@ class MiniappLauncher {
     // A live dev server sets devUrl. A snapshot keeps the directory name `dev-*`
     // as the active version. Either one is the scanned build; a release fallback is neither.
     const activeVersion = await appRegistry.getActiveVersion(packageName)
-    const devBuild = Boolean(resolved.devUrl) || activeVersion.startsWith("dev-")
+    const devBuild = Boolean(resolved.devUrl) || Boolean(activeVersion?.startsWith("dev-"))
     const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     if (
       devBuild

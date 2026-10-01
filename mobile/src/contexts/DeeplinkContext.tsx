@@ -454,7 +454,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
 ]
 
 interface DeeplinkContextType {
-  processUrl: (url: string) => Promise<void>
+  processUrl: (url: string, initial?: boolean) => Promise<void>
 }
 
 const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContextType)
@@ -592,6 +592,8 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     return params
   }
 
+  const deferredUrl = useRef<string | null>(null)
+
   const processUrl = async (url: string, initial: boolean = false) => {
     try {
       url = sanitizeDeeplinkUrl(url)
@@ -604,11 +606,11 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       // Deduplicate — iOS can fire the same universal link event multiple times,
       // and on cold start both getInitialURL and addEventListener fire for the
       // same URL. Initial calls skip the check but claim the URL so that the
-      // duplicate addEventListener call is blocked. The index.tsx re-processing
-      // call happens >2s later (1s initial delay + init time + 1s DEEPLINK_DELAY)
-      // so it naturally falls outside the dedup window.
+      // duplicate addEventListener call is blocked. A route deferred to startup
+      // or sign-in can be consumed immediately, regardless of the dedup window.
       const now = Date.now()
-      if (!initial && url === lastProcessed.current.url && now - lastProcessed.current.time < 3000) {
+      const authReplay = deferredUrl.current === url
+      if (!initial && !authReplay && url === lastProcessed.current.url && now - lastProcessed.current.time < 3000) {
         console.log("DEEPLINK: Ignoring duplicate URL")
         return
       }
@@ -619,6 +621,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       // delay and calls navigateToDestination() before the pending route is set,
       // causing it to navigate to /home instead of the deep link target.
       if (initial) {
+        deferredUrl.current = url
         nav.setPendingRoute(url)
         await new Promise((resolve) => setTimeout(resolve, 1000))
         // If index.tsx already consumed and re-processed the pending route
@@ -649,6 +652,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       if (matchedRoute.requiresAuth && !authed) {
         console.warn("Authentication required for route:", matchedRoute.pattern)
         // Store the URL for after authentication
+        deferredUrl.current = url
         nav.setPendingRoute(url)
         setTimeout(() => {
           try {
@@ -660,6 +664,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         return
       }
 
+      if (deferredUrl.current === url) deferredUrl.current = null
       // Extract parameters from URL
       const params = extractParams(parsedUrl, matchedRoute.pattern)
       if (authed) {

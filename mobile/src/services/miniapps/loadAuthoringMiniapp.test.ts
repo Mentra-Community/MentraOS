@@ -8,6 +8,7 @@ const mockStop = jest.fn(),
   mockPermissions = jest.fn()
 let mockInstalledVersion = "1.0.27"
 let mockSelectedSnapshot: string | null = null
+let mockActiveVersion: string | undefined = "1.0.27"
 const mockDiscard = jest.fn(), mockRestore = jest.fn(), mockAllowed = jest.fn(), mockSelect = jest.fn()
 const mockReplaceSurface = jest.fn()
 const mockReleaseVersions = jest.fn()
@@ -29,7 +30,7 @@ jest.mock("@mentra/engine", () => ({
 }))
 jest.mock("@mentra/engine-host-internal", () => ({
   isDevMiniappAllowed: (...args: unknown[]) => mockAllowed(...args),
-  appRegistry: {installFromUrl: (...args: unknown[]) => mockInstall(...args), getActiveVersion: async () => app.version,
+  appRegistry: {installFromUrl: (...args: unknown[]) => mockInstall(...args), getActiveVersion: async () => mockActiveVersion,
     retainDevVersions: () => mockReleaseVersions, getSelectedDevSnapshot: () => mockSelectedSnapshot, selectDevSnapshot: (...args: unknown[]) => mockSelect(...args),
     discardDevSnapshot: (...args: unknown[]) => mockDiscard(...args), setActiveVersion: (...args: unknown[]) => mockRestore(...args), gcDevVersions: jest.fn()},
 }))
@@ -41,6 +42,7 @@ beforeEach(() => {
   mockSuperMode.mockReturnValue(true)
   mockInstalledVersion = app.version
   mockSelectedSnapshot = null
+  mockActiveVersion = app.version
   mockAllowed.mockReturnValue(true)
   mockRestore.mockReturnValue({is_error: () => false})
   mockInstall.mockImplementation(async (_url, options) => {mockInstalledVersion = options.versionOverride; return {is_error: () => false}})
@@ -132,4 +134,10 @@ it("retains rollback versions through a deferred download and releases after com
   finish({is_error: () => true, error: new Error("failed")})
   await expect(pending).rejects.toThrow("failed")
   expect(mockReleaseVersions).toHaveBeenCalledTimes(1)
+})
+
+it("loads a never-installed or scanned-only package without a previous version", async () => {
+  mockActiveVersion = undefined
+  await expect(loadAuthoringMiniapp(link())).resolves.toEqual(app)
+  expect(mockInstall).toHaveBeenCalled()
 })
