@@ -29,7 +29,7 @@ POLL_SECONDS="${POLL_SECONDS:-5}"
 # the logged-in account (use for PRs the logged-in user did not author).
 GH_ACCOUNT="${GH_ACCOUNT:-app}"
 CODEX="${CODEX_BIN:-codex}"
-MODEL="${CODEX_REVIEW_MODEL:-gpt-6-astra}"
+MODEL="${CODEX_REVIEW_MODEL:-gpt-6.1-sol}"
 EFFORT="${CODEX_REVIEW_EFFORT:-medium}"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 out_dir=$(dirname "$output")
