@@ -113,7 +113,7 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
   const {run, date} = await scheduledRun(github, context, attempt)
   if (!date) return {requests: [], unavailable: [], reason: "The other UTC trigger covers 04:00 America/Los_Angeles today"}
   requireThat(attempt === 1, "Nightly reruns require reconciliation; do not repeat physical routines automatically")
-  const requests = [], unavailable = []
+  const requests = [], unavailable = [], history = []
   for (const channel of devFoundationOnly ? ["dev"] : ["dev", "staging"]) {
     const selectedTargets = devFoundationOnly ? DEV_FOUNDATION_NIGHTLY_ROUTINES.map(routine =>
       ({routine, platform: routine.endsWith("android") ? "android" : "ios-on-mac"})) : NIGHTLY_TARGETS
@@ -125,16 +125,24 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
     })
     if (!targets.length) continue
     let candidates
+    const createdAfter = new Date(Date.parse(run.created_at) - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const historyQuery = {...context.repo, workflow_id: COORDINATED_WORKFLOW,
+      branch: channel, status: "success", per_page: 20, page: 1,
+      ...(devFoundationOnly ? {created: `${createdAfter}..${run.created_at}`,
+        headers: {"cache-control": "no-cache"}} : {})}
     try {
-      const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id: COORDINATED_WORKFLOW,
-        branch: channel, status: "success", per_page: 20})
+      const {data} = await github.rest.actions.listWorkflowRuns(historyQuery)
       requireThat(Array.isArray(data.workflow_runs), "Missing coordinated workflow history")
+      history.push({channel, query: historyQuery, total: data.total_count,
+        returned: data.workflow_runs.map(item => ({runId: item.id, createdAt: item.created_at}))})
       candidates = data.workflow_runs.filter(item => item.path === COORDINATED_WORKFLOW &&
         item.head_branch === channel && item.status === "completed" && item.conclusion === "success" &&
         ["push", "workflow_dispatch"].includes(item.event) && positive(item.id) && positive(item.run_attempt) &&
-        Number.isFinite(Date.parse(item.created_at)))
+        Number.isFinite(Date.parse(item.created_at)) && (!devFoundationOnly ||
+          Date.parse(item.created_at) >= Date.parse(createdAfter) && Date.parse(item.created_at) <= Date.parse(run.created_at)))
         .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id)
-    } catch {
+    } catch (error) {
+      history.push({channel, query: historyQuery, error: error instanceof Error ? error.message : "History unavailable"})
       for (const target of targets) unavailable.push({date, channel, ...target, reason: "Coordinated workflow history could not be read"})
       continue
     }
@@ -170,7 +178,7 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
         publicationAttempt: selected.publicationAttempt, headSha: selected.headSha, releaseIdentity: selected.releaseIdentity})
     }
   }
-  return {requests, unavailable, sourceRunId: run.id, startedAt: run.created_at,
+  return {requests, unavailable, history, sourceRunId: run.id, startedAt: run.created_at,
     reason: "One exact publication per channel; independent routine requests, not device results"}
 }
 

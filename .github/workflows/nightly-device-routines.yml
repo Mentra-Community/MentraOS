@@ -43,6 +43,7 @@ jobs:
           script: |
             const {planNightlyRequests} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-device-routines.mjs`);
             const plan = await planNightlyRequests({github, context, attempt: Number(process.env.GITHUB_RUN_ATTEMPT), devFoundationOnly: true});
+            core.info(`Publication history diagnostics: ${JSON.stringify(plan.history)}`);
             const {frozenNightlySuite, suiteApi} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-suite.mjs`);
             const suite = frozenNightlySuite({plan, runId: context.runId, attempt: Number(process.env.GITHUB_RUN_ATTEMPT), workflowSha: process.env.GITHUB_SHA});
             if (suite) {
