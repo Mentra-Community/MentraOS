@@ -47,16 +47,21 @@ export class TestSuiteService {
     const suite = await this.detail(suiteId);
     if (Date.parse(parsed.data.finishedAt) < Date.parse(suite.startedAt)) throw new TestRunError(400, "suite finish precedes start");
     // A retry acknowledges the original completion; it cannot reopen or rewrite it.
-    await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}}, {$set: parsed.data}, {writeConcern});
+    await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}}, {$set: {...parsed.data, completedResult: {...suite, finishedAt: parsed.data.finishedAt,
+      outcome: suite.passed === suite.members.length ? "passed" : "failed",
+      members: suite.members.map(member => ({...member, status: member.status === "waiting" ? "not-run" : member.status})),
+      failedRoutines: suite.members.filter(member => member.status !== "passed").map(member => member.routineId),
+    }}}, {writeConcern});
     return this.detail(suiteId);
   }
   async detail(suiteId: string) {
     if (!testRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
     const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
     if (!row) throw new TestRunError(404, "test suite not found");
+    if (row.completedResult) return row.completedResult as ReturnType<typeof summarizeSuite>;
     const suite = row.payload as TestSuite;
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
-      .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).lean();
+      .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
     const runs = rows.map(row => ({...(row.payload as SuiteRun),
       outcome: row.outcome === "passed" && !row.uploadsComplete ? "blocked" : row.outcome}));
