@@ -1,7 +1,8 @@
 import type { TestRoutineId } from "../../../../packages/core/src/types/test-dispatch.types";
 
 export interface CatalogRoutine {
-  id: TestRoutineId;
+  id: TestRoutineId | "ota-roundtrip-android";
+  request?: { routineId: TestRoutineId };
   name: string;
   platform: "iOS on Mac" | "Android";
   purpose: string;
@@ -34,7 +35,26 @@ const phonePhysical = "A reserved Mac with microphone permission, declared input
 
 export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
   {
-    id: "no-glasses", name: "App navigation without glasses", platform: "iOS on Mac",
+    id: "ota-roundtrip-android", name: "Glasses software downgrade and return", platform: "Android",
+    purpose: "Downgrade the glasses' ASG software to published production 3.1.1 through the Mentra App, then restore the exact requested build and verify stable paired Home.",
+    requirements: {
+      software: "The frozen requested Android APK and its matching OTA manifest, in English. Shared setup installs the app, signs in, pairs the assigned glasses and establishes the requested firmware before recording.",
+      firmware: "An enrolled physical Mentra Live pair with independently verified hardware identity. Pin the requested ASG APK and promoted production 3.1.1 manifest and APK. Newer BES and MTK firmware intentionally remain installed and are checked throughout.",
+      account: testAccount,
+      network: "Working Wi-Fi and access to the selected app backend, sign-in services and both immutable OTA download URLs. Keep the phone and glasses connected during both updates.",
+      physical: "One reserved USB-connected Android phone and one reserved Mentra Live pair with authorized ADB diagnostics, Bluetooth pairing and screen recording. The passing example uses the Mac Mini's Samsung Galaxy A54 lane.",
+      data: "The existing glasses gallery is hashed before the run and must remain unchanged at every checkpoint. Start and return use the same requested ASG version and APK hash; no rolling latest manifest is selected.",
+    },
+    cleanup: "Finalize the recording, independently verify or restore the requested firmware through normal app controls, remove owned app data and overrides, stop the app and release both devices only after the return checks pass. A failed test remains failed even when recovery succeeds.",
+    exclusions: "BES or MTK downgrade, injected network failures, the persistent no-internet Retry scenario, physical iPhone behavior, and qualification of other builds or automatic nightly execution.",
+    passingRun: {
+      id: "local-android-bda5a7fd-f862-458d-8cd6-3a239a06e999", recordedOn: "2026-09-30",
+      release: "PR 4356", appVersion: "3.2.1", appBuild: "302014623",
+      appSha: "6c51cd313686151a95a6a7810444926d39d6c97d", fixture: "mini-060b", device: "Samsung Galaxy A54",
+    },
+  },
+  {
+    id: "no-glasses", request: { routineId: "no-glasses" }, name: "App navigation without glasses", platform: "iOS on Mac",
     purpose: "Check Home, All Apps search, Settings and account forms, glasses-required messages, sign-out, sign-in and relaunch.",
     requirements: {
       software: macSoftware, firmware: noFirmware, account: testAccount,
@@ -47,7 +67,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     passingRun: { ...macBuild, id: "local-ios-on-mac-a16fdb2f-4188-4415-827f-188b8c7019bb" },
   },
   {
-    id: "no-glasses-android", name: "App navigation without glasses", platform: "Android",
+    id: "no-glasses-android", request: { routineId: "no-glasses-android" }, name: "App navigation without glasses", platform: "Android",
     purpose: "Check Home, All Apps search, Settings, account forms, Feedback navigation, the miniapp switcher and glasses-required messages.",
     requirements: {
       software: "The selected signed Android APK, in English, on an enrolled Android 13 or later test phone. The worker installs it and establishes signed-in Home.",
@@ -63,7 +83,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
       fixture: "mini-samsung-a54", device: "Samsung Galaxy A54" },
   },
   {
-    id: "captions-phone", name: "Captions with simulated glasses", platform: "iOS on Mac",
+    id: "captions-phone", request: { routineId: "captions-phone" }, name: "Captions with simulated glasses", platform: "iOS on Mac",
     purpose: "Play a controlled speech sample and verify that both expected sentences appear in the actual Captions transcript.",
     requirements: {
       software: `${macSoftware} Captions must be available; setup selects simulated glasses and the Phone microphone.`,
@@ -78,7 +98,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     passingRun: { ...macBuild, id: "local-ios-on-mac-a28e899b-2632-419c-b221-2df38870438a" },
   },
   {
-    id: "notes-phone", name: "Notes with simulated glasses", platform: "iOS on Mac",
+    id: "notes-phone", request: { routineId: "notes-phone" }, name: "Notes with simulated glasses", platform: "iOS on Mac",
     purpose: "Transcribe a controlled discussion, find its automatically generated note, edit the title and body, then verify persistence and search.",
     requirements: {
       software: `${macSoftware} Notes must be available; setup selects simulated glasses and the Phone microphone.`,
@@ -95,6 +115,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
 ];
 
 export const CATALOG_ROUTINE_IDS = ROUTINE_CATALOG.map(routine => routine.id);
+export const CATALOG_REQUEST_ROUTINE_IDS = ROUTINE_CATALOG.flatMap(routine => routine.request ? [routine.request.routineId] : []);
 
 /** Examples are stored in dev Core even when this catalog is viewed in another environment. */
 export function catalogPassingRunHref(run: CatalogRoutine["passingRun"]): string {
