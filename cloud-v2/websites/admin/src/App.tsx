@@ -1,3 +1,4 @@
+import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -167,6 +168,7 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
+const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialFixFlowLink = readFixFlowLink(window.location.search);
@@ -178,9 +180,10 @@ function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
   const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
+  const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
@@ -224,11 +227,13 @@ function AdminPage() {
       if (fixFlow || new URLSearchParams(window.location.search).get("fixFlows") === "active") {
         setPage("fix-flows"); return;
       }
+      const suite = readSuiteId(window.location.search);
+      setSuiteId(suite);
       const selection = readTestRunLink(window.location.search);
       const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
       setTestRunListScope(scope);
-      if (selection || scope) setPage("test-runs");
+      if (suite || selection || scope) setPage("test-runs");
       else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
@@ -242,6 +247,7 @@ function AdminPage() {
   }
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
+    setSuiteId(null);
     setTestRunLink(selection);
     window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
   }
@@ -388,7 +394,7 @@ function AdminPage() {
         setPage(key as AdminPageKey);
         setFixFlowLink(null);
         const location = new URL(window.location.href);
-        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth", "routineCatalog"]) location.searchParams.delete(param);
+        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth", "routineCatalog", "testSuite"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -399,6 +405,7 @@ function AdminPage() {
         }
         if (key === "fix-flows") window.history.replaceState(null, "", fixFlowHref(null));
         if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
+        setSuiteId(null);
         if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
       }}
       title={pageMeta[page].title}
@@ -465,7 +472,8 @@ function AdminPage() {
         window.history.pushState(null, "", `/?testRun=${encodeURIComponent(runID)}`);
       }} /> : null}
       {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
-      {page === "test-runs" ? (
+      {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {page === "test-runs" && !suiteId ? (
         <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
           scope={testRunListScope} onClearScope={clearTestRunListScope} />
       ) : null}

@@ -1,3 +1,4 @@
+import {TestSuiteService} from "../../services/test-suite.service";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { TestFailureCorrectionService } from "../../services/test-failure-correction.service";
@@ -19,6 +20,10 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
     if (error instanceof TestHostHealthError) return c.json({ error: "host_health_error", error_description: error.message }, error.status);
     throw error;
   });
+  const suites = new TestSuiteService();
+  app.get("/suite-labels", async c => c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean))));
+  app.get("/suites", async c => {c.header("Cache-Control", "no-store"); return c.json(await suites.list());});
+  app.get("/suites/:suiteId", async c => {c.header("Cache-Control", "no-store"); return c.json(await suites.detail(c.req.param("suiteId")));});
   app.get("/", async c => {
     const parsed = testRunQuerySchema.safeParse(c.req.query());
     if (!parsed.success) throw new TestRunError(400, "invalid test run list query");

@@ -75,6 +75,7 @@ export function readTestRunLink(search: string): TestRunLink | null {
 
 export function testRunLocation(current: string, selection: TestRunLink | null): string {
   const url = new URL(current);
+  url.searchParams.delete("testSuite");
   url.searchParams.delete("testRun");
   url.searchParams.delete("step");
   if (selection) {

@@ -1,0 +1,56 @@
+import {createHash} from "node:crypto";
+import {TestSuiteModel} from "../models/test-suite.model";
+import {TestRunModel} from "../models/test-run.model";
+import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun} from "../types/test-suite.types";
+import {testRunIdSchema} from "../types/test-run.types";
+import {canonical, TestRunError} from "./test-run.service";
+
+export class TestSuiteService {
+  async create(input: unknown) {
+    const parsed = testSuiteSchema.safeParse(input);
+    if (!parsed.success) throw new TestRunError(400, "invalid test suite");
+    const payload = parsed.data;
+    const payloadSha256 = createHash("sha256").update(canonical(payload)).digest("hex");
+    try { await TestSuiteModel.create({suiteId: payload.suiteId, payload, payloadSha256}); }
+    catch (error) { if ((error as {code?: number}).code !== 11000) throw error; }
+    const stored = await TestSuiteModel.findOne({suiteId: payload.suiteId}).lean();
+    if (!stored || stored.payloadSha256 !== payloadSha256) throw new TestRunError(409, "suite ID already has a different plan");
+    return this.detail(payload.suiteId);
+  }
+  async complete(suiteId: string, input: unknown) {
+    const parsed = testSuiteCompletionSchema.safeParse(input);
+    if (!parsed.success) throw new TestRunError(400, "invalid suite completion");
+    const suite = await this.detail(suiteId);
+    if (Date.parse(parsed.data.finishedAt) < Date.parse(suite.startedAt)) throw new TestRunError(400, "suite finish precedes start");
+    // A retry acknowledges the original completion; it cannot reopen or rewrite it.
+    await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}}, {$set: parsed.data});
+    return this.detail(suiteId);
+  }
+  async detail(suiteId: string) {
+    if (!testRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
+    const row = await TestSuiteModel.findOne({suiteId}).lean();
+    if (!row) throw new TestRunError(404, "test suite not found");
+    const suite = row.payload as TestSuite;
+    const rows = await TestRunModel.find({requestId: {$in: suite.members.map(member => member.requestId)}})
+      .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).lean();
+    const runs = rows.map(row => ({...(row.payload as SuiteRun),
+      outcome: row.outcome === "passed" && !row.uploadsComplete ? "blocked" : row.outcome}));
+    return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
+  }
+  async labels(requestIds: string[]) {
+    if (requestIds.length > 100 || requestIds.some(id => !testRunIdSchema.safeParse(id).success))
+      throw new TestRunError(400, "invalid suite label query");
+    const rows = await TestSuiteModel.find({"payload.members.1": {$exists: true},
+      "payload.members.requestId": {$in: requestIds}}).select({suiteId: 1, payload: 1}).limit(100).lean();
+    return {labels: rows.flatMap(row => {
+      const suite = row.payload as TestSuite;
+      return suite.members.filter(member => requestIds.includes(member.requestId)).map(member => ({...member,
+        suiteId: suite.suiteId, channel: suite.channel, headSha: suite.build.headSha,
+        label: `${suite.channel} ${suite.trigger} · ${suite.build.release ?? suite.build.headSha.slice(0, 7)}`}));
+    })};
+  }
+  async list() {
+    const rows = await TestSuiteModel.find({"payload.members.1": {$exists: true}}).sort({createdAt: -1}).select({suiteId: 1}).limit(20).lean();
+    return {suites: await Promise.all(rows.map(row => this.detail(row.suiteId)))};
+  }
+}
