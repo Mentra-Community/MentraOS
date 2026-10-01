@@ -758,3 +758,22 @@ test("an earlier generation's same-local-date member send blocks the current 04:
     }
   }
 })
+
+
+test("explicit manual qualification has a new suite identity while scheduled sends retain their daily fence", async () => {
+  const f = fixture()
+  f.state.run.event = "workflow_dispatch"
+  f.state.history[0].event = "workflow_dispatch"
+  const prior = {...current, id: 4999, event: "workflow_dispatch"}
+  f.state.history.push(prior)
+  f.state.jobs.set(prior.id, [sendJob(49991, {status: "completed", conclusion: "success"})])
+  const options = {...f.options, context: {...context, eventName: "workflow_dispatch", payload: {}},
+    plan: {...plan, routine: "ota-roundtrip-android", platform: "android"}, devFoundationOnly: true}
+  f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName(options.plan)})])
+  f.state.jobs.set(4999, [sendJob(49991, {name: nightlyJobName(options.plan), status: "completed", conclusion: "success"})])
+  assert.equal((await sendNightlyRequest(options)).status, "request-dispatched")
+  assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 1)
+  f.state.run.run_attempt = 2
+  await assert.rejects(sendNightlyRequest({...options, attempt: 2}), /Invalid nightly/)
+  assert.equal(f.state.calls.filter(([kind]) => kind === "dispatch").length, 1)
+})

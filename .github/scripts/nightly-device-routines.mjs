@@ -182,7 +182,8 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
     reason: "One exact publication per channel; independent routine requests, not device results"}
 }
 
-/** One entered send step fences one date/channel/routine, even after a lost response. */
+/** Scheduled sends fence one date/channel/routine. Explicit manual suites have their own run identity;
+ * retries of either workflow run remain refused. Device ownership serializes their execution. */
 export async function sendNightlyRequest({github, context, attempt, plan, routineCatalog = DEVICE_ROUTINES, devFoundationOnly = false}) {
   const {run, date} = await scheduledRun(github, context, attempt)
   requireThat(attempt === 1 && date && plan.date === date && ["dev", "staging"].includes(plan.channel) &&
@@ -212,7 +213,7 @@ export async function sendNightlyRequest({github, context, attempt, plan, routin
       [NIGHTLY_SEND_STEP, LEGACY_SEND_STEP].includes(step.name) &&
       ["in_progress", "completed"].includes(step.status) && step.conclusion !== "skipped" &&
       typeof step.started_at === "string" && Number.isFinite(Date.parse(step.started_at))))
-    if (item.id !== run.id && sends.length) throw new Error("An earlier nightly owns this date/channel/routine; reconcile its request instead of resending")
+    if (run.event === "schedule" && item.id !== run.id && sends.length) throw new Error("An earlier nightly owns this date/channel/routine; reconcile its request instead of resending")
     if (item.id === run.id) currentSend = sends.length === 1 && sends[0].name === jobName && sends[0].run_attempt === attempt && sends[0].status === "in_progress"
   }
   requireThat(currentSend, "Current nightly send is absent from authenticated job history")
