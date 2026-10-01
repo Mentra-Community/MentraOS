@@ -16,6 +16,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1275,6 +1277,38 @@ class MonitorWorker:
                 dispatch_attempted_at_ms=now_ms,
                 dispatch_error=str(exc),
             )
+        finally:
+            try:
+                self.dismiss_incident_modal(device_id, alert_id)
+            except Exception as exc:
+                self.state.update_alert(device_id, alert_id, dismissal_error=str(exc))
+
+    def dismiss_incident_modal(self, device_id: str, alert_id: str) -> None:
+        remote = f"/sdcard/mentra-incident-{uuid.uuid4()}.xml"
+        adb = self.adb_prefix_for(device_id)
+        try:
+            subprocess.run(adb + ["shell", "uiautomator", "dump", remote], check=True, capture_output=True, timeout=4)
+            xml = subprocess.run(adb + ["exec-out", "cat", remote], check=True, capture_output=True, text=True, timeout=3).stdout
+            nodes = list(ET.fromstring(xml).iter("node"))
+            ours = False
+            for node in nodes:
+                if node.get("resource-id", "").split(":id/")[-1] not in {"incident-report-state", "incident-report-result"}:
+                    continue
+                try:
+                    state = json.loads(node.get("text") or node.get("content-desc") or "")
+                    ours |= state.get("alert_id") == alert_id and state.get("test_run_id") == alert_id
+                except (ValueError, TypeError):
+                    pass
+            if not ours:
+                return
+            done = [node for node in nodes if node.get("resource-id", "").split(":id/")[-1] == "incident-report-done"]
+            bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", done[0].get("bounds", "")) if len(done) == 1 else None
+            if not bounds:
+                raise RuntimeError("Own incident modal has no unique Done button")
+            left, top, right, bottom = map(int, bounds.groups())
+            subprocess.run(adb + ["shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2)], check=True, capture_output=True, timeout=3)
+        finally:
+            subprocess.run(adb + ["shell", "rm", "-f", remote], capture_output=True, timeout=2)
 
     def find_alert_device_id(self, alert_id: str) -> str | None:
         for device_id in self.state.device_ids:

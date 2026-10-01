@@ -176,13 +176,11 @@ Gallery media integrity:
 
 External incident requests, including the captions tester:
 
-- Trigger: `com.mentra.SUBMIT_INCIDENT_REPORT` on Android, available in all builds,
-  forwards the Crust event `submit_incident_report` to the engine.
-- Submission:
-  `mobile/modules/engine/src/services/SubmitIncidentReportService.ts`.
-- The service emits `INCIDENT_REPORT_RESULT` with the request's alert/test IDs
-  and a report ID, skipped reason, or failure error. The Mentra App must be
-  running and signed in. [Android contract](../../../../mobile/docs/incident-report-intent.md).
+- Trigger: `com.mentra://test/submit-incident-report` on Android and iOS,
+  requiring the existing Super Mode setting and a signed-in app.
+- Submission uses the engine's normal automatic report uploader. The modal
+  exposes correlated request/result JSON and Android logs `INCIDENT_REPORT_RESULT`.
+  See the [shared contract](../../../../mobile/INCIDENT_REPORT_AUTOMATION.md).
 - Cloud V2 transcript test logging is emitted from island via
   `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`, and the
   laptop monitor records the marker in

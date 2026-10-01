@@ -679,6 +679,16 @@ class AppRegistry {
     }
   }
 
+  /** Remove one failed staged dev replacement without clearing other dev files or settings. */
+  public discardDevSnapshot(packageName: string, version: string): void {
+    if (!/^dev-[0-9a-f-]+$/.test(version)) throw new Error("Expected an owned dev snapshot version")
+    const directory = new Directory(Paths.document, "lmas", packageName, version)
+    if (directory.exists) directory.delete()
+    this.removeReleaseIdentity(packageName, version)
+    this.refreshNeeded = true
+    this.notify()
+  }
+
   public uninstall(packageName: string, version?: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       if (version) {

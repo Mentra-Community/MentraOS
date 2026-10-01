@@ -6,6 +6,8 @@ const mockStop = jest.fn(),
   mockStart = jest.fn(),
   mockForeground = jest.fn(),
   mockPermissions = jest.fn()
+let mockInstalledVersion = "1.0.27"
+const mockDiscard = jest.fn(), mockRestore = jest.fn(), mockAllowed = jest.fn()
 const mockReplaceSurface = jest.fn()
 jest.mock("@/stores/miniappLaunch", () => ({useMiniappPresentationStore: {getState: () => ({replaceSurface: mockReplaceSurface})}}))
 const mockSuperMode = jest.fn()
@@ -17,14 +19,16 @@ jest.mock("@mentra/engine", () => ({
     miniapps: {
       stop: (...args: unknown[]) => mockStop(...args),
       refresh: () => mockRefresh(),
-      list: () => [app],
+      list: () => [{...app, version: mockInstalledVersion}],
       start: (...args: unknown[]) => mockStart(...args),
       setForeground: (...args: unknown[]) => mockForeground(...args),
     },
   },
 }))
 jest.mock("@mentra/engine-host-internal", () => ({
-  appRegistry: {installFromUrl: (...args: unknown[]) => mockInstall(...args)},
+  isDevMiniappAllowed: (...args: unknown[]) => mockAllowed(...args),
+  appRegistry: {installFromUrl: (...args: unknown[]) => mockInstall(...args), getActiveVersion: async () => app.version,
+    discardDevSnapshot: (...args: unknown[]) => mockDiscard(...args), setActiveVersion: (...args: unknown[]) => mockRestore(...args), gcDevVersions: jest.fn()},
 }))
 jest.mock("@/utils/PermissionsUtils", () => ({checkPermissionsUI: (...args: unknown[]) => mockPermissions(...args)}))
 const link = (url = "http://127.0.0.1:3000/bundle.zip") =>
@@ -32,17 +36,22 @@ const link = (url = "http://127.0.0.1:3000/bundle.zip") =>
 beforeEach(() => {
   jest.clearAllMocks()
   mockSuperMode.mockReturnValue(true)
-  mockInstall.mockResolvedValue({is_error: () => false})
+  mockInstalledVersion = app.version
+  mockAllowed.mockReturnValue(true)
+  mockRestore.mockReturnValue({is_error: () => false})
+  mockInstall.mockImplementation(async (_url, options) => {mockInstalledVersion = options.versionOverride; return {is_error: () => false}})
   mockPermissions.mockResolvedValue([])
   mockStart.mockResolvedValue(true)
 })
 it("replaces the exact package and opens it through the normal lifecycle", async () => {
   expect(await loadAuthoringMiniapp(link())).toEqual(app)
-  expect(mockInstall).toHaveBeenCalledWith("http://127.0.0.1:3000/bundle.zip", {
+  expect(mockInstall).toHaveBeenCalledWith("http://127.0.0.1:3000/bundle.zip", expect.objectContaining({
     expectedPackageName: app.packageName,
     expectedVersion: app.version,
-  })
-  expect(mockStop.mock.invocationCallOrder[0]).toBeLessThan(mockInstall.mock.invocationCallOrder[0])
+    versionOverride: expect.stringMatching(/^dev-/),
+    releaseIdentity: {source: "dev_snapshot"},
+  }))
+  expect(mockInstall.mock.invocationCallOrder[0]).toBeLessThan(mockStop.mock.invocationCallOrder[0])
   expect(mockRefresh.mock.invocationCallOrder[0]).toBeLessThan(mockStart.mock.invocationCallOrder[0])
   expect(mockStart.mock.invocationCallOrder[0]).toBeLessThan(mockForeground.mock.invocationCallOrder[0])
   expect(mockForeground).toHaveBeenCalledWith(app.packageName)
@@ -60,7 +69,7 @@ it("does not open a failed installation or a launch needing permissions", async 
   mockInstall.mockResolvedValue({is_error: () => true, error: new Error("bundle identity mismatch")})
   await expect(loadAuthoringMiniapp(link())).rejects.toThrow("identity mismatch")
   expect(mockStart).not.toHaveBeenCalled()
-  mockInstall.mockResolvedValue({is_error: () => false})
+  mockInstall.mockImplementation(async (_url, options) => {mockInstalledVersion = options.versionOverride; return {is_error: () => false}})
   mockPermissions.mockResolvedValue(["microphone"])
   await expect(loadAuthoringMiniapp(link())).rejects.toThrow("microphone")
   expect(mockForeground).not.toHaveBeenCalled()
@@ -79,9 +88,23 @@ it("rejects overlap without another stop or install and releases the guard after
   const first = loadAuthoringMiniapp(link())
   await Promise.resolve()
   await expect(loadAuthoringMiniapp(link())).rejects.toThrow("already in progress")
-  expect(mockStop).toHaveBeenCalledTimes(1)
+  expect(mockStop).not.toHaveBeenCalled()
   fail(new Error("download failed"))
   await expect(first).rejects.toThrow("download failed")
   await expect(loadAuthoringMiniapp(link())).resolves.toEqual(app)
   expect(mockReplaceSurface).toHaveBeenCalledWith(app.packageName)
+})
+
+it("refuses a deployment-disallowed package before installing or stopping", async () => {
+  mockAllowed.mockReturnValue(false)
+  await expect(loadAuthoringMiniapp(link())).rejects.toThrow("deployment")
+  expect(mockInstall).not.toHaveBeenCalled()
+  expect(mockStop).not.toHaveBeenCalled()
+})
+it("a failed download keeps the previous miniapp running and its selected version", async () => {
+  mockInstall.mockRejectedValueOnce(new Error("download failed"))
+  await expect(loadAuthoringMiniapp(link())).rejects.toThrow("download failed")
+  expect(mockStop).not.toHaveBeenCalled()
+  expect(mockRestore).toHaveBeenCalledWith(app.packageName, app.version)
+  expect(mockDiscard).toHaveBeenCalledWith(app.packageName, expect.stringMatching(/^dev-/))
 })

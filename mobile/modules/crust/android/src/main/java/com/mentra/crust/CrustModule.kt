@@ -51,7 +51,6 @@ class CrustModule : Module() {
       NotificationProcessBridge.emitDismissed(context, notificationKey, packageName)
     }
 
-
     private fun emitEvent(eventName: String, data: Map<String, Any>) {
       val emitter = eventEmitter
       if (emitter == null) {

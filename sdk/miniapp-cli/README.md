@@ -266,12 +266,15 @@ bun scripts/load-authoring-miniapp.mjs /absolute/path/com.mentra.notes-1.0.27.zi
 
 The command serves only that ZIP on loopback; Android uses an owned `adb reverse`
 tunnel. It sends `com.mentra://test/load-miniapp?url=...&package=...&version=...`.
-The app stops the named miniapp, checks the ZIP's package/version with the existing
-installer, refreshes the registry, checks existing permissions and opens it through
+The app validates the ZIP into an isolated dev snapshot using the existing
+installer, checks deployment authorization and existing permissions, then stops
+and opens the named miniapp through
 the normal miniapp lifecycle. No Mentra App rebuild, sign-out or routine restart is
 needed after installing a host build that includes this handler. New permissions
 must already be granted. This does not change production bundles or routine replay
-configuration. Repacking the same version replaces its installed files.
+configuration. Repacking the same version creates a fresh dev snapshot and UI;
+managed release files stay intact. Failed replacement restores the previous
+selection and running state.
 
 Keep the command running until the app opens the miniapp, then press Ctrl+C to
 stop its server and remove its USB tunnel. App logs emit `MINIAPP_LOAD_RESULT`

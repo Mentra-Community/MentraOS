@@ -1,5 +1,5 @@
 import {engine, SETTINGS} from "@mentra/engine"
-import {appRegistry} from "@mentra/engine-host-internal"
+import {appRegistry, isDevMiniappAllowed} from "@mentra/engine-host-internal"
 
 import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 
@@ -40,19 +40,50 @@ async function replaceMiniapp(link: string) {
   if (!["http:", "https:"].includes(source.protocol) || source.username || source.password) {
     throw new Error("Miniapp bundle must use an HTTP(S) URL without credentials")
   }
-  await engine.miniapps.stop(packageName)
-  const installed = await appRegistry.installFromUrl(bundleUrl, {
-    expectedPackageName: packageName,
-    expectedVersion: version,
-  })
-  if (installed.is_error()) throw installed.error
-  await engine.miniapps.refresh()
-  const app = engine.miniapps.list().find((item) => item.packageName === packageName)
-  if (!app || app.version !== version) throw new Error("Installed miniapp is missing from the registry")
-  const missing = await checkPermissionsUI(app)
-  if (missing.length) throw new Error(`Miniapp needs permissions: ${missing.join(", ")}`)
-  if (!(await engine.miniapps.start(app, {skipNavigation: true}))) throw new Error("Miniapp launch was refused")
-  useMiniappPresentationStore.getState().replaceSurface(packageName)
-  await engine.miniapps.setForeground(packageName)
-  return {packageName, version}
+  if (!isDevMiniappAllowed(packageName, true)) throw new Error("This deployment does not allow a dev replacement for that miniapp")
+  const previous = engine.miniapps.list().find((item) => item.packageName === packageName)
+  const previousVersion = await appRegistry.getActiveVersion(packageName)
+  const stagedVersion = `dev-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  let stopped = false
+  try {
+    // The isolated snapshot keeps the managed release's bytes and identity.
+    // Download and validate before touching its running context.
+    const installed = await appRegistry.installFromUrl(bundleUrl, {
+      expectedPackageName: packageName,
+      expectedVersion: version,
+      versionOverride: stagedVersion,
+      rejectExistingVersion: true,
+      releaseIdentity: {source: "dev_snapshot"},
+    })
+    if (installed.is_error()) throw installed.error
+    await engine.miniapps.refresh()
+    const app = engine.miniapps.list().find((item) => item.packageName === packageName)
+    if (!app || app.version !== stagedVersion) throw new Error("Installed miniapp is missing from the registry")
+    const missing = await checkPermissionsUI(app)
+    if (missing.length) throw new Error(`Miniapp needs permissions: ${missing.join(", ")}`)
+    await engine.miniapps.stop(packageName)
+    stopped = true
+    await engine.miniapps.refresh()
+    const ready = engine.miniapps.list().find((item) => item.packageName === packageName)
+    if (!ready || !(await engine.miniapps.start(ready, {skipNavigation: true}))) throw new Error("Miniapp launch was refused")
+    useMiniappPresentationStore.getState().replaceSurface(packageName)
+    await engine.miniapps.setForeground(packageName)
+    appRegistry.gcDevVersions(packageName, 1)
+    return {packageName, version}
+  } catch (error) {
+    if (stopped) await engine.miniapps.stop(packageName)
+    appRegistry.discardDevSnapshot(packageName, stagedVersion)
+    if (previousVersion) {
+      const restored = appRegistry.setActiveVersion(packageName, previousVersion)
+      if (restored.is_error()) throw restored.error
+    }
+    await engine.miniapps.refresh()
+    if (stopped && previous?.running) {
+      const restored = engine.miniapps.list().find((item) => item.packageName === packageName)
+      if (!restored || !(await engine.miniapps.start(restored, {skipNavigation: true}))) throw new Error("Failed to restore the previous miniapp after replacement failure")
+      useMiniappPresentationStore.getState().replaceSurface(packageName)
+      if (previous.foregrounded) await engine.miniapps.setForeground(packageName)
+    }
+    throw error
+  }
 }

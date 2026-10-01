@@ -122,8 +122,6 @@ export const engine = {
     startGlassesSettingsSync()
     // Same for phone-notification config -> the native listener (Android).
     startPhoneNotificationsSync()
-    // Android: external tools can broadcast an incident-report request in any build;
-    // engine owns turning that into a Cloud V2 report.
     // MentraJS crashloop-disabled is runtime state; engine owns filing the
     // automatic report while hosts only render alert/telemetry side effects.
     if (cloudClientService.hasCore()) startMentraJSCrashloopReportService()
