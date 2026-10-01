@@ -79,6 +79,7 @@ export function testRunLocation(current: string, selection: TestRunLink | null):
   url.searchParams.delete("step");
   if (selection) {
     url.searchParams.delete("report");
+    url.searchParams.delete("routineCatalog");
     url.searchParams.set("testRun", selection.runID);
     if (selection.stepID) url.searchParams.set("step", selection.stepID);
   }
