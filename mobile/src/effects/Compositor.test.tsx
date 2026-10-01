@@ -58,7 +58,7 @@ beforeEach(() => {
     callback()
     return {cancel: jest.fn()} as any
   })
-  useMiniappPresentationStore.setState({closingPackageName: null, revealedPackageName: null, replacedPackageName: null, replacementGeneration: 0})
+  useMiniappPresentationStore.setState({closingPackageName: null, revealedPackageName: null, replacementGenerations: {}})
   mockMount.mockClear()
   mockForegroundApp = {packageName: "one", name: "One", foregrounded: true, running: true} as ClientApp
   mockStop.mockReset()
@@ -114,5 +114,10 @@ test("repacking the same version remounts its WebView; ordinary store refresh do
   view.rerender(<Compositor />)
   expect(mockMount).toHaveBeenCalledTimes(1)
   act(() => useMiniappPresentationStore.getState().replaceSurface("one"))
+  expect(mockMount).toHaveBeenCalledTimes(2)
+  act(() => useMiniappPresentationStore.getState().replaceSurface("other"))
+  expect(mockMount).toHaveBeenCalledTimes(2)
+  mockForegroundApp = {...mockForegroundApp!}
+  view.rerender(<Compositor />)
   expect(mockMount).toHaveBeenCalledTimes(2)
 })

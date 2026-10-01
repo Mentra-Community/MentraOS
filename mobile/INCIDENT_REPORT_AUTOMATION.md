@@ -85,11 +85,12 @@ retry. This does not claim durable idempotency across app restarts.
 
 ## Android
 
-Use the same URL and fields as iOS:
+Use the shared sender, which preserves the complete URL through the device shell:
 
 ```bash
-adb -s PHONE_SERIAL shell am start -a android.intent.action.VIEW \
-  -d "$INCIDENT_URL" -p com.mentra.mentra
+bun scripts/submit-test-incident.mjs --android PHONE_SERIAL \
+  alert_id=authoring-1 failure_code=search_failed \
+  'failure_message=Search did not filter the notes'
 ```
 
 The modal exposes the same three test IDs on both platforms. Android also logs
