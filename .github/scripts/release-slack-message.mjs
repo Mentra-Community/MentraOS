@@ -11,7 +11,7 @@ export const requireThat = (condition, message) => { if (!condition) throw new E
 export const receiptName = (runId, attempt) => `release-slack-message-${runId}-${attempt}`
 // Every catalogued routine and its display name come from the shared DEVICE_ROUTINES catalog. `displayFirst` only keeps
 // the historical row order of existing posts; it is filtered by the catalog and never admits a routine by itself.
-const displayFirst = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"]
+const displayFirst = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer"]
 const routineNames = Object.freeze(Object.fromEntries([...displayFirst, ...Object.keys(DEVICE_ROUTINES)]
   .filter((id, index, ids) => Object.hasOwn(DEVICE_ROUTINES, id) && ids.indexOf(id) === index)
   .map(id => [id, DEVICE_ROUTINES[id].name])))

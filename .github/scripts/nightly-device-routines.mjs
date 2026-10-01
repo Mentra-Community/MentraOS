@@ -90,15 +90,21 @@ export function nightlySenderDate(createdAt) {
 }
 
 async function scheduledRun(github, context, attempt) {
-  requireThat(NIGHTLY_CRONS.includes(context.payload?.schedule), "Unexpected nightly schedule")
-  requireThat(`${context.repo.owner}/${context.repo.repo}` === REPOSITORY && context.eventName === "schedule" &&
+  const manual = context.eventName === "workflow_dispatch"
+  requireThat(manual || NIGHTLY_CRONS.includes(context.payload?.schedule), "Unexpected nightly schedule")
+  requireThat(`${context.repo.owner}/${context.repo.repo}` === REPOSITORY && ["schedule", "workflow_dispatch"].includes(context.eventName) &&
     positive(context.runId) && positive(attempt) && SHA.test(context.sha ?? ""), "Nightly must run in the trusted repository")
   const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: context.runId})
-  requireThat(run.id === context.runId && run.run_attempt === attempt && run.event === "schedule" &&
+  requireThat(run.id === context.runId && run.run_attempt === attempt && run.event === context.eventName &&
     run.path === NIGHTLY_WORKFLOW && run.head_branch === "dev" && run.head_sha === context.sha &&
     run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
   "Nightly workflow identity differs from GitHub metadata")
-  return {run, date: nightlyDate(context.payload.schedule, run.created_at)}
+  return {run, date: manual ? pacificRunDate(run.created_at) : nightlyDate(context.payload.schedule, run.created_at)}
+}
+
+function pacificRunDate(createdAt) {
+  requireThat(Number.isFinite(Date.parse(createdAt)), "Invalid nightly creation time")
+  return new Intl.DateTimeFormat("en-CA", {timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(createdAt))
 }
 
 export const DEV_FOUNDATION_NIGHTLY_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"])
@@ -179,7 +185,7 @@ export async function sendNightlyRequest({github, context, attempt, plan, routin
     positive(plan.sourceRunId) && positive(plan.publicationAttempt), "Invalid nightly request coordinates")
   const since = new Date(Date.parse(run.created_at) - 26 * 3600_000).toISOString()
   const history = await completePages(page => github.rest.actions.listWorkflowRuns({...context.repo,
-    workflow_id: NIGHTLY_WORKFLOW, event: "schedule", branch: "dev", created: `>=${since}`, per_page: 100, page,
+    workflow_id: NIGHTLY_WORKFLOW, branch: "dev", created: `>=${since}`, per_page: 100, page,
   }), "workflow_runs")
   const current = history.find(item => item.id === run.id)
   requireThat(current?.run_attempt === attempt && current.head_sha === run.head_sha && current.created_at === run.created_at,
@@ -187,7 +193,7 @@ export async function sendNightlyRequest({github, context, attempt, plan, routin
   const jobName = nightlyJobName(plan)
   let currentSend = false
   for (const item of history) {
-    requireThat(positive(item.id) && item.path === NIGHTLY_WORKFLOW && item.event === "schedule" &&
+    requireThat(positive(item.id) && item.path === NIGHTLY_WORKFLOW && ["schedule", "workflow_dispatch"].includes(item.event) &&
       item.head_branch === "dev" && item.repository?.full_name === REPOSITORY && item.head_repository?.full_name === REPOSITORY,
     "Nightly history is not authenticated")
     const jobs = await jobsFor(github, context, item.id)
@@ -230,7 +236,8 @@ export function validateNightlyMarker(request) {
     marker && Object.keys(marker).sort().join(",") === "kind,member,runAttempt,runId" &&
     ["nightly-ota-call", "nightly-routine"].includes(marker.kind) && positive(marker.runId) && marker.runAttempt === 1 &&
     (marker.kind === "nightly-ota-call" || request.trigger?.runAttempt === 1) &&
-    (marker.kind === "nightly-ota-call" ? LEGACY_ROUTINES : NIGHTLY_ROUTINES).includes(marker.member) && marker.member === request.routine.id,
+    (marker.kind === "nightly-ota-call" ? LEGACY_ROUTINES.includes(marker.member) :
+      NIGHTLY_ROUTINES.includes(marker.member) || request.source.channel === "dev" && DEV_FOUNDATION_NIGHTLY_ROUTINES.includes(marker.member)) && marker.member === request.routine.id,
   "Invalid nightly sequence marker")
   return marker
 }
@@ -241,13 +248,15 @@ export async function authenticateNightlyMarker({github, context, request}) {
   if (!marker) return
   const {data: run} = await github.rest.actions.getWorkflowRunAttempt({...context.repo,
     run_id: marker.runId, attempt_number: marker.runAttempt})
-  requireThat(run.id === marker.runId && run.run_attempt === marker.runAttempt && run.event === "schedule" &&
+  requireThat(run.id === marker.runId && run.run_attempt === marker.runAttempt &&
+    (run.event === "schedule" || run.event === "workflow_dispatch" && marker.kind === "nightly-routine" &&
+      request.source.channel === "dev" && DEV_FOUNDATION_NIGHTLY_ROUTINES.includes(marker.member)) &&
     run.path === NIGHTLY_WORKFLOW && run.head_branch === "dev" && SHA.test(run.head_sha ?? "") &&
     run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
   "Nightly sequence source is not an authenticated scheduled workflow")
   // Historical midnight and 03:00 requests remain verifiable after the schedule moved to 04:00; every generation
   // reads the sender's creation time with its own intended hour and all readings must name one date.
-  const date = nightlySenderDate(run.created_at)
+  const date = run.event === "workflow_dispatch" ? pacificRunDate(run.created_at) : nightlySenderDate(run.created_at)
   const jobs = await jobsFor(github, context, run.id)
   const legacy = marker.kind === "nightly-ota-call"
   const expected = {date, channel: request.source.channel, routine: marker.member}

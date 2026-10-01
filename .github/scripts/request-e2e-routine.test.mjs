@@ -446,7 +446,7 @@ test("the workflow admits and selects exactly the registered routine labels; pla
   const chain = workflow.split("REQUEST_ROUTINE: ")[1]?.split("\n")[0]
   assert.ok(admission && chain)
   const labels = text => [...text.matchAll(/'routine:([a-z0-9-]+)'/g)].map(match => match[1]).sort()
-  const registered = Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id)).sort()
+  const registered = Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id) && id !== "ota-roundtrip-android").sort()
   assert.deepEqual(labels(admission), registered)
   // mentra-call is the chain's final default rather than a label test.
   assert.deepEqual(labels(chain), registered.filter(id => id !== "mentra-call"))

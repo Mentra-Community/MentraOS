@@ -78,7 +78,7 @@ test("concurrent routine completions accumulate and a late old retry cannot regr
 test("every catalogued routine renders with its catalog name in the historical order; unknown IDs refuse as rows and as retained state", () => {
   // Historical display order first (unchanged for existing posts), then the Phone routines.
   const order = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer",
-    "captions-phone", "notes-phone"]
+    "ota-roundtrip-android", "captions-phone", "notes-phone"]
   assert.deepEqual([...order].sort(), Object.keys(DEVICE_ROUTINES).sort())
   let value = notification()
   for (const [index, routineId] of [...order].reverse().entries())

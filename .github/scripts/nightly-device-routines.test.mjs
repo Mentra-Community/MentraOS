@@ -164,6 +164,29 @@ test("dev foundation rollout excludes staging and legacy routines", async () => 
   assert.ok(!f.state.calls.some(([kind, input]) => kind === "runs" && input.branch === "staging"))
   await assert.rejects(sendNightlyRequest({...f.options, plan: {...plan, channel: "staging"}, devFoundationOnly: true}), /Invalid nightly/)
 })
+
+test("all five dev foundation routines authenticate their entered nightly sender; OTA staging refuses", async () => {
+  for (const routine of ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"]) {
+    const f = await markerFixture("nightly-routine", routine)
+    assert.equal(f.request.sequence.member, routine)
+    await authenticateNightlyMarker({github: f.options.github, context, request: f.request})
+  }
+  const f = await markerFixture("nightly-routine", "ota-roundtrip-android")
+  assert.throws(() => validateNightlyMarker({...f.request, source: {...f.request.source, channel: "staging"}}))
+})
+
+test("explicit dev qualification uses real workflow_dispatch metadata with same plan, sends and marker", async () => {
+  const f = fixture()
+  f.state.run.event = "workflow_dispatch"
+  f.state.history[0].event = "workflow_dispatch"
+  f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName({...plan, routine: "ota-roundtrip-android"})})])
+  const manualContext = {...context, eventName: "workflow_dispatch", payload: {}}
+  const selected = await planNightlyRequests({...f.options, context: manualContext, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 5)
+  const target = selected.requests.find(row => row.routine === "ota-roundtrip-android")
+  const sent = await sendNightlyRequest({...f.options, context: manualContext, plan: target, devFoundationOnly: true})
+  assert.equal(sent.routine, "ota-roundtrip-android")
+})
 // TEST MODEL of the former planned state: the production catalog with a synthetic `pending` reason on the three combined
 // targets. Production has no planned target; this keeps every planned refusal exercised. It qualifies nothing.
 const MODELLED_PLANNED = ["account-miniapps", "connected-glasses", "livestreamer"]
@@ -506,7 +529,8 @@ test("workflow keeps nightly opt-in, ordinary callbacks and independent matrix m
   assert.match(workflow, /group: nightly-device-\$\{\{ matrix.date \}\}-\$\{\{ matrix.channel \}\}-\$\{\{ matrix.routine \}\}/)
   assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
   assert.equal((workflow.match(/retries: 0/g) ?? []).length, 3)
-  assert.doesNotMatch(workflow, /workflow_dispatch:|self-hosted|mentra-device-worker|download-artifact|Wait for both|OTA then Call/)
+  assert.match(workflow, /workflow_dispatch:/)
+  assert.doesNotMatch(workflow, /self-hosted|mentra-device-worker|download-artifact|Wait for both|OTA then Call/)
 })
 
 async function markerFixture(kind = "nightly-routine", routine = "day1-ota") {

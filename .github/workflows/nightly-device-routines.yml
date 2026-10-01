@@ -1,6 +1,7 @@
 name: Nightly device routines
 
 on:
+  workflow_dispatch:
   schedule:
     # 04:00 America/Los_Angeles is 11:00 UTC in summer and 12:00 UTC in winter.
     # The planner selects the applicable trigger, including DST transition days.
