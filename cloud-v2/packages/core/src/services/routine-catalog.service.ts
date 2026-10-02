@@ -21,8 +21,8 @@ const mongoRuns: CatalogRunRepository = {
     // Match the current source revision; an older example cannot qualify changed actions.
     const row = await TestRunModel.findOne({routineId: definition.routineId, platform: definition.platform,
       definitionRevision: definition.definitionRevision, outcome: "pass", uploadsComplete: true,
-      "payload.setup.status": "passed",
-      "payload.test": "passed", "payload.teardown.ready": true,
+      "payload.result.setup.status": "passed",
+      "payload.result.test": "passed", "payload.result.teardown.ready": true,
       "payload.recordingAssetId": {$type: "string"},
     }).sort({startedAt: -1, runId: -1}).lean();
     if (!row) return null;
