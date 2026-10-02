@@ -203,6 +203,20 @@ jq -n \
     | if ($c.reportStorageAccountName // "") != "" then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
   ' > "$PARAMETERS"
 
+# Azure requires an unbound hostname on the app before issuing its managed
+# certificate. A fresh custom-domain install first deploys on the generated
+# hostname; add this DNS-verified binding before the certificate deployment.
+# Existing bindings must remain intact on an unchanged rerun.
+WORKSPACE_HOSTNAME="$(jq -r '.workspaceHostname // ""' "$CONFIG")"
+if [[ -n "$WORKSPACE_HOSTNAME" ]]; then
+  RUNTIME_NAME="$(jq -r .runtimeName "$CONFIG")"
+  HOSTNAMES="$(az containerapp hostname list --name "$RUNTIME_NAME" --resource-group "$RESOURCE_GROUP" --output json)"
+  if ! jq -e --arg host "$WORKSPACE_HOSTNAME" 'any(.name == $host)' <<<"$HOSTNAMES" >/dev/null; then
+    az containerapp hostname add --name "$RUNTIME_NAME" --resource-group "$RESOURCE_GROUP" \
+      --hostname "$WORKSPACE_HOSTNAME" --output none
+  fi
+fi
+
 # Provider validation checks permissions, policy and parameters before the
 # application deployment. Never print secure parameter/provider responses.
 az deployment group validate \

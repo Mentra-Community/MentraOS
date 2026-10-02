@@ -179,6 +179,30 @@ else:sys.exit(9)
                                          capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, value is None or type(value) is bool, result.stderr)
 
+    def test_custom_hostname_added_before_certificate_without_resetting_existing_binding(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        block = source.split('WORKSPACE_HOSTNAME="', 1)[1].split('# Provider validation', 1)[0]
+        block = 'WORKSPACE_HOSTNAME="' + block
+        self.assertLess(source.index(block), source.index('az deployment group validate'))
+        self.env['HELPER_TEST_DIRECTORY'] = str(self.path)
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
+if a[:3]==['containerapp','hostname','list']: print((p/'hostnames.json').read_text())
+elif a[:3]==['containerapp','hostname','add']:
+ assert a[a.index('--hostname')+1]=='mentra.example.com'
+ (p/'added').touch()
+else: sys.exit(9)
+''')
+        (self.path/'config.json').write_text(json.dumps(dict(workspaceHostname='mentra.example.com',runtimeName='ca-test')))
+        for hostnames, expected in (([], True), ([dict(name='mentra.example.com',bindingType='SniEnabled')], False)):
+            (self.path/'hostnames.json').write_text(json.dumps(hostnames))
+            (self.path/'added').unlink(missing_ok=True)
+            script = 'set -euo pipefail\nCONFIG="$1"\nRESOURCE_GROUP=rg-test\n' + block
+            r = subprocess.run(['bash','-c',script,'test',str(self.path/'config.json')], env=self.env, text=True,capture_output=True)
+            self.assertEqual(r.returncode,0,r.stderr)
+            self.assertEqual((self.path/'added').exists(),expected)
+
 
 if __name__ == '__main__':
     unittest.main()
