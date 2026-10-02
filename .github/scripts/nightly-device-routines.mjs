@@ -118,7 +118,7 @@ function pacificRunDate(createdAt) {
   return new Intl.DateTimeFormat("en-CA", {timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(createdAt))
 }
 
-export const DEV_FOUNDATION_NIGHTLY_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"])
+export const DEV_FOUNDATION_NIGHTLY_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses"])
 
 export async function planNightlyRequests({github, context, attempt, fetchImpl = fetch, routineCatalog = DEVICE_ROUTINES, devFoundationOnly = false}) {
   const {run, date} = await scheduledRun(github, context, attempt)
@@ -127,7 +127,7 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
   const requests = [], unavailable = [], history = []
   for (const channel of devFoundationOnly ? ["dev"] : ["dev", "staging"]) {
     const selectedTargets = devFoundationOnly ? DEV_FOUNDATION_NIGHTLY_ROUTINES.map(routine =>
-      ({routine, platform: routine.endsWith("android") ? "android" : "ios-on-mac"})) : NIGHTLY_TARGETS
+      ({routine, platform: routineCatalog[routine]?.platform})) : NIGHTLY_TARGETS
     const targets = selectedTargets.filter(target => {
       if (isRegisteredRoutine(target.routine, routineCatalog) && routineCatalog[target.routine].platform === target.platform) return true
       unavailable.push({date, channel, ...target, reason: "Required routine has no compatible registered worker; authoring and qualification are pending",
@@ -199,7 +199,7 @@ export async function sendNightlyRequest({github, context, attempt, plan, routin
   const {run, date} = await scheduledRun(github, context, attempt)
   requireThat(attempt === 1 && date && plan.date === date && ["dev", "staging"].includes(plan.channel) &&
     (devFoundationOnly ? plan.channel === "dev" && DEV_FOUNDATION_NIGHTLY_ROUTINES.includes(plan.routine) &&
-      plan.platform === (plan.routine.endsWith("android") ? "android" : "ios-on-mac")
+      plan.platform === routineCatalog[plan.routine]?.platform
       : NIGHTLY_TARGETS.some(target => target.routine === plan.routine && target.platform === plan.platform)) &&
     isRegisteredRoutine(plan.routine, routineCatalog) && routineCatalog[plan.routine].platform === plan.platform &&
     positive(plan.sourceRunId) && positive(plan.publicationAttempt), "Invalid nightly request coordinates")

@@ -1,3 +1,4 @@
+import {DEVICE_ROUTINES} from "./device-routines.mjs"
 import {slackCall} from "./release-slack-message.mjs"
 import {DEV_FOUNDATION_NIGHTLY_ROUTINES} from "./nightly-device-routines.mjs"
 
@@ -16,7 +17,7 @@ export function frozenNightlySuite({plan, runId, attempt, workflowSha}) {
     build: {headSha, ...(plan.requests[0]?.releaseIdentity ? {release: plan.requests[0].releaseIdentity} : {}),
       producerUrl: `https://github.com/Mentra-Community/MentraOS/actions/runs/${runId}`},
     members: DEV_FOUNDATION_NIGHTLY_ROUTINES.map(routineId => ({memberId: routineId, routineId,
-      platform: routineId.endsWith("android") ? "android" : "ios-mac"}))}
+      platform: DEVICE_ROUTINES[routineId].platform === "ios-on-mac" ? "ios-mac" : DEVICE_ROUTINES[routineId].platform}))}
 }
 
 export async function suiteApi({token, suiteId, memberId, operation = "read", body, fetchImpl = fetch}) {

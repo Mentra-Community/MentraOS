@@ -3,7 +3,7 @@ import {readFile} from "node:fs/promises"
 import {matchingBuildRun} from "./notify-pr-builds.mjs"
 import {admittedPrBase, currentBaseSha, successfulRoutinePublication, routineProducer} from "./request-e2e-routine.mjs"
 import {AUTOMATIC_BUILD_ROUTINES, DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel, isRegisteredRoutine, registeredRoutine} from "./device-routines.mjs"
-import {validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
+import {DEV_FOUNDATION_NIGHTLY_ROUTINES, validateNightlyMarker, authenticateNightlyMarker} from "./nightly-device-routines.mjs"
 import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 
 const REPOSITORY = "Mentra-Community/MentraOS"
@@ -261,7 +261,7 @@ export async function dispatchReadyRequest({github, privateGithub, context, plan
   "Request does not match its trusted producer")
   const nightly = validateNightlyMarker(request)
   if (nightlyOnly && !(coordinated && request.source.channel === "dev" && nightly?.kind === "nightly-routine" &&
-    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"].includes(request.routine.id)))
+    DEV_FOUNDATION_NIGHTLY_ROUTINES.includes(request.routine.id)))
     return {status: "not-dispatched", requestId: request.requestId, reason: "Only verified dev foundation nightlies are enabled"}
   if (nightly?.kind === "nightly-ota-call") return {status: "not-dispatched", requestId: request.requestId,
     reason: "Nightly sequence member; only the scheduled source may dispatch the paired OTA then Call job"}

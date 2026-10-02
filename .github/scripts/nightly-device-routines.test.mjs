@@ -159,20 +159,32 @@ test("dev foundation rollout excludes staging and legacy routines", async () => 
   const f = fixture(), result = await planNightlyRequests({...f.options, devFoundationOnly: true})
   assert.ok(result.requests.length > 0)
   assert.ok(result.requests.every(request => request.channel === "dev" &&
-    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"].includes(request.routine)))
+    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses"].includes(request.routine)))
   assert.ok(result.requests.some(request => request.routine === "ota-roundtrip-android" && request.channel === "dev"))
+  assert.ok(result.requests.some(request => request.routine === "connected-glasses" && request.platform === "android"))
   assert.ok(!f.state.calls.some(([kind, input]) => kind === "runs" && input.branch === "staging"))
   await assert.rejects(sendNightlyRequest({...f.options, plan: {...plan, channel: "staging"}, devFoundationOnly: true}), /Invalid nightly/)
 })
 
-test("all five dev foundation routines authenticate their entered nightly sender; OTA staging refuses", async () => {
-  for (const routine of ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"]) {
+test("all six dev foundation routines authenticate their entered nightly sender; OTA staging refuses", async () => {
+  for (const routine of ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses"]) {
     const f = await markerFixture("nightly-routine", routine)
     assert.equal(f.request.sequence.member, routine)
     await authenticateNightlyMarker({github: f.options.github, context, request: f.request})
   }
   const f = await markerFixture("nightly-routine", "ota-roundtrip-android")
   assert.throws(() => validateNightlyMarker({...f.request, source: {...f.request.source, channel: "staging"}}))
+})
+
+test("restricted production callback dispatches connected Android nightlies but excludes unrelated routines", async () => {
+  const connected = await markerFixture("nightly-routine", "connected-glasses")
+  assert.equal((await dispatchReadyRequest({...connected.callback, nightlyOnly: true})).status, "private-job-requested")
+  assert.equal(connected.privateCalls.length, 1)
+  for (const routine of ["mentra-call", "account-miniapps"]) {
+    const other = await markerFixture("nightly-routine", routine)
+    assert.equal((await dispatchReadyRequest({...other.callback, nightlyOnly: true})).status, "not-dispatched")
+    assert.equal(other.privateCalls.length, 0)
+  }
 })
 
 test("explicit dev qualification uses real workflow_dispatch metadata with same plan, sends and marker", async () => {
@@ -182,7 +194,7 @@ test("explicit dev qualification uses real workflow_dispatch metadata with same 
   f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName({...plan, routine: "ota-roundtrip-android"})})])
   const manualContext = {...context, eventName: "workflow_dispatch", payload: {}}
   const selected = await planNightlyRequests({...f.options, context: manualContext, devFoundationOnly: true})
-  assert.equal(selected.requests.length, 5)
+  assert.equal(selected.requests.length, 6)
   const target = selected.requests.find(row => row.routine === "ota-roundtrip-android")
   const sent = await sendNightlyRequest({...f.options, context: manualContext, plan: target, devFoundationOnly: true})
   assert.equal(sent.routine, "ota-roundtrip-android")
@@ -196,7 +208,7 @@ test("dev foundation history explicitly bounds and revalidates the first newest-
     branch: "dev", status: "success", per_page: 20, page: 1,
     created: "2026-08-24T11:17:00.000Z..2026-09-23T11:17:00Z", headers: {"cache-control": "no-cache"}})
   assert.deepEqual(selected.history[0].returned, [{runId: f.dev.state.run.id, createdAt: f.dev.state.run.created_at}])
-  assert.equal(selected.requests.length, 5)
+  assert.equal(selected.requests.length, 6)
 })
 
 test("stale or future history responses never fall through to an out-of-window dev build", async () => {
@@ -205,7 +217,7 @@ test("stale or future history responses never fall through to an out-of-window d
     f.dev.state.run.created_at = createdAt
     const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
     assert.equal(selected.requests.length, 0)
-    assert.equal(selected.unavailable.length, 5)
+    assert.equal(selected.unavailable.length, 6)
     assert.deepEqual(selected.history[0].returned, [{runId: 100, createdAt}])
     assert.equal(f.state.calls.some(([kind]) => kind === "attempt"), false)
   }
