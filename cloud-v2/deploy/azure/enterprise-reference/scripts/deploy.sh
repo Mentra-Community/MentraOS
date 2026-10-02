@@ -64,6 +64,7 @@ jq -e '
   (.location | nonempty) and
   (.registryName | test("^[a-zA-Z0-9]{5,50}$")) and
   (.sourceImage | test("^ghcr\\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}$")) and
+  ((.sourceRegistryMirror // "") | type == "string" and (. == "" or test("^[a-z0-9]+\\.azurecr\\.io/[a-z0-9]+([._/-][a-z0-9]+)*$"))) and
   (.releaseTag | test("^[A-Za-z0-9._-]+$")) and
   (.tenantId | guid) and
   (.coreApiClientId | guid) and
@@ -110,6 +111,10 @@ LOCATION="$(jq -r .location "$CONFIG")"
 DEPLOYMENT_NAME="$(jq -r '.deploymentName // "mentra-private"' "$CONFIG")"
 REGISTRY_NAME="$(jq -r .registryName "$CONFIG")"
 SOURCE_IMAGE="$(jq -r .sourceImage "$CONFIG")"
+SOURCE_MIRROR="$(jq -r '.sourceRegistryMirror // ""' "$CONFIG")"
+if [[ -n "$SOURCE_MIRROR" ]]; then
+  SOURCE_IMAGE="$SOURCE_MIRROR@${SOURCE_IMAGE##*@}"
+fi
 RELEASE_TAG="$(jq -r .releaseTag "$CONFIG")"
 
 # Wizard calls are bound to an explicit subscription without changing az defaults.

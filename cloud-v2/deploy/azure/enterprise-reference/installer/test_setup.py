@@ -234,6 +234,36 @@ class InstallerTests(unittest.TestCase):
     def test_registry_redirects_never_forward_auth(self):
         self.assertIsNone(setup.NoRegistryRedirects().redirect_request(None, None, 302, '', {}, 'https://elsewhere.example'))
 
+    def test_acr_mirror_uses_scoped_token_and_preserves_release_digest(self):
+        import io
+        from unittest.mock import Mock
+        self.config['sourceRegistryMirror'] = 'approved.azurecr.io/releases/mentra-cloud'
+        pin = self.config['sourceImage'].split('@')[1]
+        token_response = io.StringIO(json.dumps({'access_token': 'scoped-token'}))
+        manifest_response = Mock()
+        manifest_response.__enter__ = Mock(return_value=manifest_response)
+        manifest_response.__exit__ = Mock(return_value=False)
+        manifest_response.headers = {'Docker-Content-Digest': pin}
+        opener = Mock()
+        opener.open.side_effect = [token_response, manifest_response]
+        with patch.dict(os.environ, {'SOURCE_REGISTRY_USERNAME': 'reader', 'SOURCE_REGISTRY_PASSWORD': 'secret'}), \
+             patch.object(setup.urllib.request, 'build_opener', return_value=opener):
+            self.assertEqual(setup.check_source_image(self.config), 'authenticated')
+        token_request, image_request = [call.args[0] for call in opener.open.call_args_list]
+        self.assertEqual(token_request.full_url, 'https://approved.azurecr.io/oauth2/token?service=approved.azurecr.io&scope=repository%3Areleases%2Fmentra-cloud%3Apull')
+        self.assertEqual(image_request.full_url, 'https://approved.azurecr.io/v2/releases/mentra-cloud/manifests/' + pin)
+        self.assertEqual(image_request.get_header('Authorization'), 'Bearer scoped-token')
+
+    def test_invalid_mirror_never_transmits_credentials(self):
+        from unittest.mock import Mock
+        opener = Mock()
+        with patch.object(setup.urllib.request, 'build_opener', return_value=opener):
+            for mirror in ('https://evil.example/image', 'other.example/image', 'valid.azurecr.io/image:latest', 'user:secret@valid.azurecr.io/image'):
+                self.config['sourceRegistryMirror'] = mirror
+                with self.assertRaisesRegex(setup.SetupError, 'sourceRegistryMirror'):
+                    setup.check_source_image(self.config)
+        opener.open.assert_not_called()
+
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess
         with patch.object(setup.subprocess, 'run', return_value=CompletedProcess(['az'], 1, '', 'secret-token')):

@@ -18,12 +18,14 @@ import sys
 import tempfile
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = ('Microsoft.App', 'Microsoft.ContainerRegistry', 'Microsoft.ManagedIdentity',
              'Microsoft.Communication', 'Microsoft.DocumentDB', 'Microsoft.Storage')
 BINDING_KEYS = ('subscriptionId', 'tenantId', 'resourceGroup', 'registryName', 'location',
+                'sourceRegistryMirror',
                 'workspaceHostname', 'environmentName', 'runtimeName', 'coreName', 'pullIdentityName',
                 'communicationName', 'mongoAccountName', 'reportStorageAccountName', 'deploymentName',
                 'resourceTags', 'coreApiClientId', 'mobileClientId')
@@ -259,6 +261,9 @@ def init(args, directory):
 
 
 def validate_resource_names(config):
+    mirror = config.get('sourceRegistryMirror', '')
+    if not isinstance(mirror, str) or (mirror and not re.fullmatch(r'[a-z0-9]+\.azurecr\.io/[a-z0-9]+(?:[._/-][a-z0-9]+)*', mirror)):
+        raise SetupError('Invalid Azure source registry mirror')
     patterns = {'registryName': r'[a-z0-9]{5,50}', 'resourceGroup': r'[a-zA-Z0-9_-]{1,90}',
                 'runtimeName': r'[a-z][a-z0-9-]{0,29}[a-z0-9]', 'coreName': r'[a-z][a-z0-9-]{0,29}[a-z0-9]',
                 'environmentName': r'[a-zA-Z0-9-]{2,60}', 'pullIdentityName': r'[a-zA-Z0-9_-]{2,128}',
@@ -294,20 +299,26 @@ def check_source_image(config):
     password = os.environ.get('SOURCE_REGISTRY_PASSWORD', '')
     if bool(username) != bool(password):
         raise SetupError('Set both SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD for a private image.')
-    # Both endpoints are fixed to GHCR. Never forward credentials to a challenge
-    # URL or redirect supplied by a server. Tokens exist only in memory.
+    # Accept the official GHCR source or a customer-approved ACR mirror, always
+    # with the release's unchanged digest. Never follow authentication URLs or
+    # redirects supplied by a registry. Credentials exist only in memory.
     opener = urllib.request.build_opener(NoRegistryRedirects())
     token_headers = {}
     if username:
         encoded = base64.b64encode((username + ':' + password).encode()).decode()
         token_headers['Authorization'] = 'Basic ' + encoded
-    token_url = ('https://ghcr.io/token?service=ghcr.io&'
-                 'scope=repository%3Amentra-community%2Fmentra-cloud%3Apull')
+    mirror = config.get('sourceRegistryMirror', '')
+    if mirror and not re.fullmatch(r'[a-z0-9]+\.azurecr\.io/[a-z0-9]+(?:[._/-][a-z0-9]+)*', mirror):
+        raise SetupError('sourceRegistryMirror must be an Azure registry/repository without a tag, digest or credentials.')
+    registry, repository = (mirror or 'ghcr.io/mentra-community/mentra-cloud').split('/', 1)
+    token_path = '/token' if registry == 'ghcr.io' else '/oauth2/token'
+    token_url = 'https://' + registry + token_path + '?service=' + registry + '&scope=' + urllib.parse.quote('repository:' + repository + ':pull', safe='')
     try:
         with opener.open(urllib.request.Request(token_url, headers=token_headers), timeout=30) as response:
-            token = json.load(response)['token']
+            data = json.load(response)
+            token = data.get('token') or data['access_token']
         pin = config['sourceImage'].split('@', 1)[1]
-        url = 'https://ghcr.io/v2/mentra-community/mentra-cloud/manifests/' + pin
+        url = 'https://' + registry + '/v2/' + repository + '/manifests/' + pin
         headers = {'Authorization': 'Bearer ' + token,
                    'Accept': 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, '
                              'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'}
@@ -315,8 +326,8 @@ def check_source_image(config):
             if response.headers.get('Docker-Content-Digest') != pin:
                 raise SetupError('Source registry did not confirm the pinned image digest.')
     except (urllib.error.URLError, OSError, ValueError, KeyError):
-        raise SetupError('Cannot read the pinned release image from GitHub Container Registry. '
-                         'For a private release, obtain GitHub package read access from Mentra and set '
+        raise SetupError('Cannot read the pinned release image. '
+                         'For a private release, obtain package read access or an approved ACR mirror from Mentra and set '
                          'SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell, then retry. '
                          'No Azure resources have been created by this preflight.') from None
     return 'authenticated' if username else 'public'
