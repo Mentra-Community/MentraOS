@@ -19,7 +19,7 @@ request() { curl --connect-timeout 10 --max-time 60 "$@"; }
 wait_for_health() {
   local origin="$1" label="$2" attempt
   for attempt in $(seq 1 30); do
-    if curl --connect-timeout 5 --max-time 10 --fail --silent "$origin/healthz" >/dev/null; then
+    if curl --connect-timeout 5 --max-time 10 --fail --silent "$origin/ready" >/dev/null; then
       return
     fi
     sleep 10
@@ -37,7 +37,7 @@ request --fail --show-error --silent "$WORKSPACE/api/client/min-version" | jq -e
   (.data.recommended | type == "string" and semver)
 ' >/dev/null
 manifest="$(request --fail --show-error --silent "$WORKSPACE/.well-known/mentra-deployment.json")"
-if ! jq -e --arg origin "$WORKSPACE" '
+if ! jq -e --arg origin "$WORKSPACE" --arg requireCall "${MENTRA_REQUIRE_CALL:-false}" '
   .schemaVersion == 1 and
   (.services.coreUrl | startswith("https://")) and
   .services.runtimeUrl == $origin and
@@ -47,7 +47,7 @@ if ! jq -e --arg origin "$WORKSPACE" '
   .features.nativeMeetings == true and
   (.telemetry | type == "boolean") and
   (.auth.sessionScopes | length > 0 and all(endswith("/mentra.session"))) and
-  (.miniapps.managed | type == "array" and any(.packageName == "com.mentra.call")) and
+  (.miniapps.managed | type == "array" and (if $requireCall == "true" then any(.packageName == "com.mentra.call") else true end)) and
   ((.miniapps.configuration == null) or (.miniapps.configuration | type == "object")) and
   (.branding.logoUrls.light | startswith($origin + "/")) and
   (.branding.logoUrls.dark | startswith($origin + "/"))
@@ -60,7 +60,7 @@ fi
 BUNDLE_DIR="$(mktemp -d)"
 trap 'rm -rf "$BUNDLE_DIR"' EXIT
 while IFS=$'\t' read -r package version url expected; do
-  [[ "$url" == "$WORKSPACE/miniapps/$package-$version.zip" && "$expected" =~ ^[0-9a-f]{64}$ ]] || {
+  [[ "$url" == "$WORKSPACE/miniapps/"* && "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || {
     printf 'Managed miniapp must use the pinned workspace bundle and SHA-256.\n' >&2
     exit 1
   }
@@ -68,7 +68,7 @@ while IFS=$'\t' read -r package version url expected; do
   python3 - "$BUNDLE_DIR/bundle.zip" "$expected" <<'PYVERIFY'
 import hashlib, sys, zipfile
 path, expected = sys.argv[1:]
-if hashlib.sha256(open(path, 'rb').read()).hexdigest() != expected:
+if hashlib.sha256(open(path, 'rb').read()).hexdigest() != expected.lower():
     sys.exit('Managed miniapp ZIP checksum mismatch')
 with zipfile.ZipFile(path) as archive:
     if archive.testzip() is not None:

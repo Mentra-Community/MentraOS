@@ -49,6 +49,21 @@ class InstallerTests(unittest.TestCase):
              patch.object(setup, 'digest', side_effect=lambda p: 'release-hash' if Path(p).name == 'release.json' else 'config-hash'):
             yield
 
+    def test_generated_global_names_differ_for_same_deployment_name(self):
+        args = argparse.Namespace(config=str(self.directory / 'answers.json'), json=True)
+        setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT,
+                         deploymentId='acme-mentra', displayName='ACME', location='westus2', workspaceHostname=''))
+        names = []
+        for name in ('one', 'two'):
+            directory = self.directory / name
+            with patch.object(setup, 'check_release', return_value=RELEASE), \
+                 patch.object(setup, 'digest', return_value='release-hash'), patch.object(setup, 'emit'):
+                setup.init(args, directory)
+            value = setup.read_json(directory / 'deployment.config.json')
+            names.append((value['registryName'], value['communicationName']))
+        self.assertNotEqual(names[0][0], names[1][0])
+        self.assertNotEqual(names[0][1], names[1][1])
+
     def test_state_cannot_move_subscription_or_tenant(self):
         for field in ('subscriptionId', 'tenantId', 'resourceGroup', 'coreApiClientId'):
             original = self.config[field]

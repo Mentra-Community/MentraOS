@@ -49,7 +49,7 @@ if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
   az() { command az "$@" --subscription "$MENTRA_SUBSCRIPTION_ID"; }
 fi
 TENANT_ID="$(az account show --query tenantId -o tsv)"
-if [[ -n "${MENTRA_EXPECTED_TENANT_ID:-}" && "$TENANT_ID" != "$MENTRA_EXPECTED_TENANT_ID" ]]; then
+if [[ -n "${MENTRA_EXPECTED_TENANT_ID:-}" && "$(tr '[:upper:]' '[:lower:]' <<<"$TENANT_ID")" != "$(tr '[:upper:]' '[:lower:]' <<<"$MENTRA_EXPECTED_TENANT_ID")" ]]; then
   printf 'Azure login does not match the configured Entra tenant. No registrations changed.\n' >&2
   exit 1
 fi

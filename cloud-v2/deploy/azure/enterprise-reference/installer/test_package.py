@@ -109,8 +109,15 @@ class PackageTests(unittest.TestCase):
     def test_path_traversal_in_managed_app_is_rejected(self):
         self.save_manifest([dict(self.app, packageName='../com.mentra.call')])
         self.record['sourceCommit'] = self.commit()
-        with self.assertRaisesRegex(ValueError, 'filename'):
+        with self.assertRaisesRegex(ValueError, 'package name'):
             self.build()
+
+    def test_invalid_package_identifier_is_rejected_before_reading_bundle(self):
+        self.save_manifest([dict(self.app, packageName='bad-name')])
+        self.record['sourceCommit'] = self.commit()
+        with self.assertRaisesRegex(ValueError, 'package name'):
+            self.build()
+        self.assertFalse(self.output.exists())
 
     def test_release_without_call_is_rejected(self):
         self.save_manifest([])

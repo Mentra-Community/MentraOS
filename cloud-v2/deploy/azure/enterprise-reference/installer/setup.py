@@ -216,7 +216,7 @@ def init(args, directory):
                   clientRecommendedVersion=release['clientMinVersion'])
     defaults = dict(resourceGroup=f'rg-{name}', registryName=name.replace('-', '') + ownership.replace('-', '')[:8],
                     environmentName=f'cae-{name}', runtimeName=f'ca-{name}', coreName=f'ca-{name}-core',
-                    pullIdentityName=f'id-{name}-pull', communicationName=f'{name}-acs',
+                    pullIdentityName=f'id-{name}-pull', communicationName=f'{name}-acs-{ownership[:8]}',
                     coreApiClientId='', mobileClientId='', coreAdminEmails='',
                     privacyPolicyUrl='', termsOfServiceUrl='')
     for key, value in defaults.items():
@@ -329,6 +329,7 @@ def environment(config):
     env['MENTRA_EXPECTED_TENANT_ID'] = config['tenantId']
     env['MENTRA_GROUP_PREPARED'] = 'true'
     env['MENTRA_SKIP_SMOKE'] = 'true'
+    env['MENTRA_REQUIRE_CALL'] = 'true'
     return env
 
 

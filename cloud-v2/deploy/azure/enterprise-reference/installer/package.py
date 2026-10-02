@@ -42,6 +42,8 @@ def build(publication_path, sbom_path, output):
     manifest = json.loads(subprocess.check_output(['git', 'show', f'{source}:{prefix}mentra-deployment.json'], cwd=REPO))
     apps = []
     for app in manifest['miniapps']['managed']:
+        if not re.fullmatch(r'[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+', app.get('packageName', '')):
+            raise ValueError('Invalid managed miniapp package name')
         filename = f"{app['packageName']}-{app['version']}.zip"
         if '/' in filename or '\\' in filename:
             raise ValueError('Invalid managed miniapp filename')

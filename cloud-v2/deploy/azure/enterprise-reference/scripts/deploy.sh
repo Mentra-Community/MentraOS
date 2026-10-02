@@ -193,8 +193,8 @@ jq -n \
       documentationUrl:{value:($c.documentationUrl // "")},
       supportUrl:{value:($c.supportUrl // "")}
     }
-  } | if $c.mongoAccountName then .parameters.mongoAccountName={value:$c.mongoAccountName} else . end
-    | if $c.reportStorageAccountName then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
+  } | if ($c.mongoAccountName // "") != "" then .parameters.mongoAccountName={value:$c.mongoAccountName} else . end
+    | if ($c.reportStorageAccountName // "") != "" then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
   ' > "$PARAMETERS"
 
 # Provider validation checks permissions, policy and parameters before the

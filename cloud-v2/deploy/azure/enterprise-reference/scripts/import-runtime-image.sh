@@ -11,8 +11,8 @@ CUSTOMER_ACR="$1"
 SOURCE_IMAGE="$2"
 RELEASE_TAG="$3"
 [[ "$CUSTOMER_ACR" =~ ^[a-zA-Z0-9]{5,50}$ ]] || exit 2
-[[ "$SOURCE_IMAGE" =~ ^ghcr\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}$ ]] || {
-  printf 'Source must be the published Mentra Cloud image pinned by sha256.\n' >&2; exit 2;
+[[ "$SOURCE_IMAGE" =~ ^[a-z0-9]+([.-][a-z0-9]+)*(:[0-9]+)?/[a-z0-9]+([._/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$ ]] || {
+  printf 'Source must be a registry/repository image pinned by sha256.\n' >&2; exit 2;
 }
 [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || exit 2
 [[ -z "${SOURCE_REGISTRY_USERNAME:-}" && -z "${SOURCE_REGISTRY_PASSWORD:-}" || -n "${SOURCE_REGISTRY_USERNAME:-}" && -n "${SOURCE_REGISTRY_PASSWORD:-}" ]] || {
@@ -22,6 +22,7 @@ if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
   az() { command az "$@" --subscription "$MENTRA_SUBSCRIPTION_ID"; }
 fi
 EXPECTED_DIGEST="${SOURCE_IMAGE##*@}"
+SOURCE_REGISTRY="${SOURCE_IMAGE%%/*}"
 # Listing the repository also verifies target access. A failed lookup is not
 # evidence that the tag is absent, and must not trigger a blind import.
 TAGS="$(az acr repository list --name "$CUSTOMER_ACR" -o json)"
@@ -42,8 +43,8 @@ if [[ -n "${SOURCE_REGISTRY_USERNAME:-}" ]]; then
   REQUEST="$(mktemp "${TMPDIR:-/tmp}/mentra-acr-import.XXXXXX")"
   trap 'rm -f "$REQUEST"' EXIT
   # jq reads the environment itself; secrets never appear in process arguments.
-  jq -n --arg source "$SOURCE_IMAGE" --arg tag "$RELEASE_TAG" '{
-    source:{registryUri:"ghcr.io",sourceImage:($source|sub("^ghcr.io/";"")),
+  jq -n --arg source "$SOURCE_IMAGE" --arg tag "$RELEASE_TAG" --arg registry "$SOURCE_REGISTRY" '{
+    source:{registryUri:$registry,sourceImage:($source|split("/")|.[1:]|join("/")),
       credentials:{username:env.SOURCE_REGISTRY_USERNAME,password:env.SOURCE_REGISTRY_PASSWORD}},
     targetTags:[("mentra-cloud-enterprise:"+$tag)],mode:"NoForce"
   }' > "$REQUEST"
