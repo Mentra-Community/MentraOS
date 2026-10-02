@@ -12,9 +12,9 @@ test("the human catalog includes seven full foundation combinations without enab
   </QueryClientProvider>);
   expect(markup.match(/<article /g)).toHaveLength(7);
   expect(markup).toContain("Enrolled in dev nightly. Manual and PR requests are not enabled for this routine.");
-  expect(markup.match(/Dev nightly pass/g)).toHaveLength(4);
-  expect(markup.match(/>Development pass</g)).toHaveLength(3);
-  expect(markup.match(/View completed nightly suite/g)).toHaveLength(4);
+  expect(markup.match(/Dev nightly pass/g)).toHaveLength(5);
+  expect(markup.match(/>Development pass</g)).toHaveLength(2);
+  expect(markup.match(/View completed nightly suite/g)).toHaveLength(5);
   expect(markup).toContain("label shown on a request-enabled card. Routines without a request label cannot be requested here.");
   expect(markup).not.toContain("routine:ota-roundtrip-android");
   expect(markup).toContain("Each card distinguishes a development pass from a completed dev nightly result. Other builds and triggers need their own qualification.");
