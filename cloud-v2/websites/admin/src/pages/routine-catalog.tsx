@@ -53,7 +53,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
     <a href="/?routineCatalog=1" className="underline">All routines</a>
     <section className={PANEL}><h2 className="text-xl font-semibold">{definition.title}</h2><p className="mt-2">{definition.purpose}</p>
       {row.example ? <div className="mt-4"><video className="w-full rounded-lg" controls preload="metadata"
-        src={`/api/admin/routine-catalog/results/${encodeURIComponent(row.example.runId)}/assets/${encodeURIComponent(row.example.recordingAssetId)}`} />
+        src={`/api/admin/routine-catalog/results/by-request/${encodeURIComponent(row.example.runId)}/assets/${encodeURIComponent(row.example.recordingAssetId)}`} />
         <a className="mt-2 block underline" href={frameworkRunHref(row.example.runId)}>Open passing run</a></div>
         : <p className="mt-4">Awaiting a complete passing recording for this revision.</p>}
     </section>
@@ -79,11 +79,11 @@ export function frameworkRunHref(runId: string) {
 
 function FrameworkRunPage({runId}: {runId: string}) {
   const result = useQuery({queryKey: ["framework-run", runId], queryFn: () =>
-    api<{run: FrameworkRun; outcome: string; uploadsComplete: boolean}>(`/api/admin/routine-catalog/results/${encodeURIComponent(runId)}`)});
+    api<{run: FrameworkRun; outcome: string; uploadsComplete: boolean}>(`/api/admin/routine-catalog/results/by-request/${encodeURIComponent(runId)}`)});
   if (result.isPending) return <p role="status">Loading run…</p>;
   if (result.error) return <p role="alert">Could not load run: {result.error.message}</p>;
   const {run, outcome, uploadsComplete} = result.data;
-  const assetHref = (id: string) => `/api/admin/routine-catalog/results/${encodeURIComponent(runId)}/assets/${encodeURIComponent(id)}`;
+  const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-request/${encodeURIComponent(runId)}/assets/${encodeURIComponent(id)}`;
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
   return <div className="space-y-5">
     <a className="underline" href={routineHref(run.routineId, run.platform)}>Back to routine</a>

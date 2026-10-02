@@ -1,7 +1,8 @@
 import {z} from "zod";
 import {routinePlatformSchema} from "./routine-definition.types";
 
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
+export const frameworkRunIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
+const id = frameworkRunIdSchema;
 const ms = z.number().finite().nonnegative();
 const failure = z.object({phase: z.enum(["setup", "test", "teardown", "evidence"]),
   actionId: id, message: z.string().min(1).max(20000)}).strict();

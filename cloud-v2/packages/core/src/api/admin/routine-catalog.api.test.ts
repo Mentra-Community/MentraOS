@@ -19,6 +19,8 @@ test("catalog detail routes routine identity and scoped pagination without run-r
   const response = await app.request("/notes/ios-on-mac?limit=2&cursor=next");
   expect(response.status).toBe(200);
   expect(calls).toEqual([{id: "notes", platform: "ios-on-mac", cursor: "next", limit: 2}]);
+  expect((await app.request("/results/android")).status).toBe(200);
+  expect(calls.at(-1)).toEqual({id: "results", platform: "android", cursor: undefined, limit: 25});
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect((await app.request("/missing/android")).status).toBe(404);
 });
@@ -29,6 +31,6 @@ test("framework result route preserves missing-result and media errors", async (
     override async media(): Promise<never> {throw new TestRunError(416, "invalid range");}
   }
   const app = createRoutineCatalogApi(new RoutineCatalogService(), new Results());
-  expect((await app.request("/results/missing")).status).toBe(404);
-  expect((await app.request("/results/run/assets/video")).status).toBe(416);
+  expect((await app.request("/results/by-request/missing")).status).toBe(404);
+  expect((await app.request("/results/by-request/run/assets/video")).status).toBe(416);
 });

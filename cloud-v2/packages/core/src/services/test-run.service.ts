@@ -1,4 +1,4 @@
-import {frameworkRunSchema} from "../types/framework-run.types";
+import {frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
 import {frameworkRunView} from "./framework-run-view";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, open, rm } from "node:fs/promises";
@@ -52,7 +52,7 @@ export function canonical(value: unknown): string {
     .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
   return JSON.stringify(value);
 }
-const cursorSchema = z.object({ startedAt: z.string().datetime(), runId: testRunIdSchema }).strict();
+const cursorSchema = z.object({ startedAt: z.string().datetime(), runId: frameworkRunIdSchema }).strict();
 function decodeCursor(cursor: string) {
   try { return cursorSchema.parse(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"))); }
   catch { throw new TestRunError(400, "invalid cursor"); }
@@ -91,12 +91,25 @@ export class MongoTestRunRepository implements TestRunRepository {
     if (query.occurrenceId) filter.$and = [{ $or: [
       { "failureOccurrences.occurrenceId": query.occurrenceId }, { "recoveryLineage.inheritedFailures.occurrenceId": query.occurrenceId },
     ] }];
-    if (query.outcome) filter.outcome = query.outcome;
-    for (const [input, path] of [["pr", "prNumber"], ["channel", "channel"],
-      ["repository", "provenance.repository"], ["headSha", "provenance.headSha"], ["archiveSha256", "provenance.archiveSha256"],
-      ["routineId", "routineId"], ["platform", "platform"], ["fixtureAlias", "fixture.alias"]] as const) {
-      if (query[input] !== undefined) filter[`payload.${path}`] = query[input];
+    const conditions: Record<string, unknown>[] = (filter.$and as Record<string, unknown>[] | undefined) ?? [];
+    if (query.outcome) {
+      const status = query.outcome === "passed" ? "pass" : query.outcome === "aborted" ? "cancelled" : query.outcome;
+      // Framework setup/teardown failures are routine failures in the shared history view.
+      const statuses = query.outcome === "failed" ? ["failed", "setup-failed", "teardown-failed"] : [status];
+      conditions.push({$or: [{outcome: query.outcome}, {definitionRevision: {$exists: true}, outcome: {$in: statuses}}]});
     }
+    for (const [input, oldPath, newPath] of [["pr", "prNumber", "build.prNumber"], ["channel", "channel", "build.channel"],
+      ["repository", "provenance.repository", "build.repository"], ["headSha", "provenance.headSha", "build.headSha"],
+      ["archiveSha256", "provenance.archiveSha256", "build.archiveSha256"], ["routineId", "routineId", "routineId"],
+      ["platform", "platform", "platform"], ["fixtureAlias", "fixture.alias", "laneId"]] as const) {
+      if (query[input] !== undefined) {
+        const value = query[input];
+        const frameworkValue = input === "platform" && value === "ios-mac" ? "ios-on-mac" : value;
+        conditions.push({$or: [{[`payload.${oldPath}`]: value},
+          {definitionRevision: {$exists: true}, [`payload.${newPath}`]: frameworkValue}]});
+      }
+    }
+    if (conditions.length) filter.$and = conditions;
     if (query.startedAfter || query.startedBefore) filter.startedAt = {
       ...(query.startedAfter ? { $gte: new Date(query.startedAfter) } : {}),
       ...(query.startedBefore ? { $lt: new Date(query.startedBefore) } : {}),
@@ -280,7 +293,7 @@ export class TestRunService {
   }
 
   private async required(runId: string) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/.test(runId)) throw new TestRunError(400, "invalid runId");
+    if (!frameworkRunIdSchema.safeParse(runId).success) throw new TestRunError(400, "invalid runId");
     const stored = await this.repository.get(runId);
     if (!stored) throw new TestRunError(404, "test run not found");
     return stored.run;

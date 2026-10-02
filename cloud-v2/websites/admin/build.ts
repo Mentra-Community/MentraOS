@@ -14,6 +14,7 @@ const result = await Bun.build({
   sourcemap: "linked",
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
+    "process.env.BUN_PUBLIC_FRAMEWORK_CATALOG": JSON.stringify(process.env.BUN_PUBLIC_FRAMEWORK_CATALOG ?? "0"),
   },
 });
 

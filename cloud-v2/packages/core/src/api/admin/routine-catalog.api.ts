@@ -15,8 +15,8 @@ export function createRoutineCatalogApi(service = new RoutineCatalogService(), r
     return c.json({error: "routine_catalog_unavailable"}, 503);
   });
   app.get("/", async c => c.json({routines: await service.list()}));
-  app.get("/results/:requestId", c => results.detail(c.req.param("requestId")).then(result => c.json(result)));
-  app.on(["GET", "HEAD"], "/results/:requestId/assets/:assetId", c => results.media(
+  app.get("/results/by-request/:requestId", c => results.detail(c.req.param("requestId")).then(result => c.json(result)));
+  app.on(["GET", "HEAD"], "/results/by-request/:requestId/assets/:assetId", c => results.media(
     c.req.param("requestId"), c.req.param("assetId"), c.req.raw));
   app.get("/:routineId/:platform", async c => c.json(await service.detail(c.req.param("routineId"),
     c.req.param("platform"), c.req.query("cursor"), Number(c.req.query("limit") ?? 25))));

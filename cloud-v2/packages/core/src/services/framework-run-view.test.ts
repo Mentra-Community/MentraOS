@@ -25,3 +25,24 @@ test("shared result reader presents a framework setup failure without losing its
     expect(run.result.setup.status).toBe("failed");
   } finally {find.mockRestore();}
 });
+
+test("shared history filters both payload formats and accepts framework pagination identities", async () => {
+  const queries: Record<string, unknown>[] = [];
+  const find = spyOn(TestRunModel, "find").mockImplementation(((filter: unknown) => {
+    queries.push(filter as Record<string, unknown>);
+    return {sort: () => ({limit: () => ({lean: async () => []})})} as unknown as ReturnType<typeof TestRunModel.find>;
+  }) as typeof TestRunModel.find);
+  try {
+    const cursor = Buffer.from(JSON.stringify({startedAt: "2026-10-02T19:00:00Z", runId: "local:run"})).toString("base64url");
+    await new MongoTestRunRepository().list({limit: 25, platform: "ios-mac", channel: "dev", outcome: "failed", cursor});
+    expect(queries[0]?.$and).toEqual([
+      {$or: [{outcome: "failed"}, {definitionRevision: {$exists: true}, outcome: {$in: ["failed", "setup-failed", "teardown-failed"]}}]},
+      {$or: [{"payload.channel": "dev"}, {definitionRevision: {$exists: true}, "payload.build.channel": "dev"}]},
+      {$or: [{"payload.platform": "ios-mac"}, {definitionRevision: {$exists: true}, "payload.platform": "ios-on-mac"}]},
+    ]);
+    expect(queries[0]?.$or).toEqual([{startedAt: {$lt: new Date("2026-10-02T19:00:00Z")}},
+      {startedAt: new Date("2026-10-02T19:00:00Z"), runId: {$lt: "local:run"}}]);
+    const invalid = Buffer.from(JSON.stringify({startedAt: "2026-10-02T19:00:00Z", runId: "../run"})).toString("base64url");
+    await expect(new MongoTestRunRepository().list({limit: 25, cursor: invalid})).rejects.toThrow("invalid cursor");
+  } finally {find.mockRestore();}
+});

@@ -560,11 +560,16 @@ test("build-scoped list links reach Mongo as exact provenance filters and reject
     const response = await api.request(`/?${new URLSearchParams(query)}`);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({runs: [], nextCursor: null});
-    expect(find).toHaveBeenCalledWith({
-      "payload.prNumber": 4136, "payload.channel": "pr", "payload.routineId": "day1-ota", "payload.platform": "ios-mac",
-      "payload.provenance.repository": query.repository, "payload.provenance.headSha": query.headSha,
-      "payload.provenance.archiveSha256": query.archiveSha256,
-    });
+    const clauses = ((find.mock.calls as unknown as [{$and: Record<string, unknown>[]} ][])[0]![0]).$and;
+    expect(clauses).toHaveLength(7);
+    for (const [oldPath, newPath, value, frameworkValue] of [
+      ["prNumber", "build.prNumber", 4136, 4136], ["channel", "build.channel", "pr", "pr"],
+      ["provenance.repository", "build.repository", query.repository, query.repository],
+      ["provenance.headSha", "build.headSha", query.headSha, query.headSha],
+      ["provenance.archiveSha256", "build.archiveSha256", query.archiveSha256, query.archiveSha256],
+      ["routineId", "routineId", "day1-ota", "day1-ota"], ["platform", "platform", "ios-mac", "ios-on-mac"],
+    ]) expect(clauses).toContainEqual({$or: [{[`payload.${oldPath}`]: value},
+      {definitionRevision: {$exists: true}, [`payload.${newPath}`]: frameworkValue}]});
     for (const patch of [{repository: "../repo"}, {headSha: "short"}, {archiveSha256: "short"}])
       expect((await api.request(`/?${new URLSearchParams({...query, ...patch})}`)).status).toBe(400);
     expect(find).toHaveBeenCalledTimes(1);

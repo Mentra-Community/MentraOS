@@ -11,6 +11,7 @@ import {
 } from "./lib/test-run-links";
 import { TestRunsPage } from "./pages/test-runs";
 import { RoutineCatalogPage } from "./pages/routine-catalog";
+import { RoutineCatalogPage as CurrentRoutineCatalogPage } from "./pages/routine-catalog-current";
 import { FixFlowsPage } from "./pages/fix-flows";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
 import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
@@ -467,7 +468,7 @@ function AdminPage() {
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       {page === "fix-flows" || page === "test-runs" ? <SystemHealthSummary /> : null}
       {page === "system-health" ? <SystemHealthPage /> : null}
-      {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
+      {page === "routine-catalog" ? (process.env.BUN_PUBLIC_FRAMEWORK_CATALOG === "1" ? <RoutineCatalogPage /> : <CurrentRoutineCatalogPage onResult={runId => {setPage("test-runs"); selectTestRun({runID: runId});}} />) : null}
       {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (
