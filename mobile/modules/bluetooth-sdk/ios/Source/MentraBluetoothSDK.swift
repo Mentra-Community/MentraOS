@@ -299,8 +299,22 @@ public final class MentraBluetoothSDK {
     private let wifiSessionCapabilities = WifiSessionCapabilities()
     private var configuredOtaVersionUrl: String?
 
+    /// Whether the app declares the `bluetooth-central` background mode. When false on iOS, the
+    /// glasses stay disconnected after a link drop until the user opens the app, so a software
+    /// update started on a locked phone stalls. Always true on macOS.
+    public static var supportsBackgroundReconnect: Bool {
+        BluetoothBackgroundMode.isDeclared(in: Bundle.main.infoDictionary)
+    }
+
+    private static var didWarnMissingBackgroundMode = false
+
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
+        // Once per process: apps may create the SDK more than once.
+        if !Self.didWarnMissingBackgroundMode, !Self.supportsBackgroundReconnect {
+            Self.didWarnMissingBackgroundMode = true
+            Bridge.log(BluetoothBackgroundMode.missingWarning)
+        }
         analytics = BluetoothSdkAnalytics(configuration: configuration.analytics)
         bluetoothAvailabilityListenerId = BluetoothAvailability.shared.addStateListener { [weak self] state in
             Task { @MainActor [weak self] in
