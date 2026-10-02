@@ -1,3 +1,4 @@
+import {testWriteConcern} from "../models/test-write-concern";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {routineEnrollmentSchema, type RoutineEnrollment} from "../types/routine-definition.types";
 import {requestInputDigest} from "./test-request.service";
@@ -13,7 +14,7 @@ const mongoRepository: RoutineDefinitionRepository = {
     const identity = {routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision};
     try {
       // An immutable revision is one atomic insert. Retrying it does not promote an old revision.
-      await RoutineDefinitionModel.create(row);
+      await RoutineDefinitionModel.create([row], {writeConcern: testWriteConcern});
     } catch (error) {
       if ((error as {code?: number}).code !== 11000) throw error;
       const existing = await RoutineDefinitionModel.findOne(identity).lean();

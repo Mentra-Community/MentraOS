@@ -36,10 +36,10 @@ test("shared history filters both payload formats and accepts framework paginati
     const cursor = Buffer.from(JSON.stringify({startedAt: "2026-10-02T19:00:00Z", runId: "local:run"})).toString("base64url");
     await new MongoTestRunRepository().list({limit: 25, platform: "ios-mac", channel: "dev", outcome: "failed", cursor});
     expect(queries[0]?.$and).toEqual([
-      {$or: [{outcome: "failed"}, {definitionRevision: {$exists: true}, outcome: {$in: ["failed", "setup-failed", "teardown-failed"]}}]},
       {$or: [{"payload.channel": "dev"}, {definitionRevision: {$exists: true}, "payload.build.channel": "dev"}]},
       {$or: [{"payload.platform": "ios-mac"}, {definitionRevision: {$exists: true}, "payload.platform": "ios-on-mac"}]},
     ]);
+    expect(queries[0]?.outcome).toBe("failed");
     expect(queries[0]?.$or).toEqual([{startedAt: {$lt: new Date("2026-10-02T19:00:00Z")}},
       {startedAt: new Date("2026-10-02T19:00:00Z"), runId: {$lt: "local:run"}}]);
     const invalid = Buffer.from(JSON.stringify({startedAt: "2026-10-02T19:00:00Z", runId: "../run"})).toString("base64url");

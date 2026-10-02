@@ -1,3 +1,4 @@
+import {frameworkRunIdSchema} from "./framework-run.types";
 import {z} from "zod";
 import {testRunIdSchema} from "./test-run.types";
 
@@ -11,7 +12,7 @@ export const testSuiteSchema = z.object({
     release: z.string().min(1).max(200).optional(),
     producerUrl: z.string().url().max(2000).refine(value => /^https:\/\/github\.com\/Mentra-Community\//.test(value)).optional(),
   }).strict(),
-  members: z.array(z.object({memberId: testRunIdSchema, requestId: testRunIdSchema.optional(), headSha: z.string().regex(/^[a-f0-9]{40}$/).optional(), routineId: testRunIdSchema,
+  members: z.array(z.object({memberId: testRunIdSchema, requestId: frameworkRunIdSchema.optional(), headSha: z.string().regex(/^[a-f0-9]{40}$/).optional(), routineId: testRunIdSchema,
     platform: z.enum(["ios-mac", "ios", "android"]),
   }).strict()).min(1).max(100),
 }).strict().superRefine((suite, ctx) => {

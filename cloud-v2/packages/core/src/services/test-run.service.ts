@@ -92,12 +92,7 @@ export class MongoTestRunRepository implements TestRunRepository {
       { "failureOccurrences.occurrenceId": query.occurrenceId }, { "recoveryLineage.inheritedFailures.occurrenceId": query.occurrenceId },
     ] }];
     const conditions: Record<string, unknown>[] = (filter.$and as Record<string, unknown>[] | undefined) ?? [];
-    if (query.outcome) {
-      const status = query.outcome === "passed" ? "pass" : query.outcome === "aborted" ? "cancelled" : query.outcome;
-      // Framework setup/teardown failures are routine failures in the shared history view.
-      const statuses = query.outcome === "failed" ? ["failed", "setup-failed", "teardown-failed"] : [status];
-      conditions.push({$or: [{outcome: query.outcome}, {definitionRevision: {$exists: true}, outcome: {$in: statuses}}]});
-    }
+    if (query.outcome) filter.outcome = query.outcome;
     for (const [input, oldPath, newPath] of [["pr", "prNumber", "build.prNumber"], ["channel", "channel", "build.channel"],
       ["repository", "provenance.repository", "build.repository"], ["headSha", "provenance.headSha", "build.headSha"],
       ["archiveSha256", "provenance.archiveSha256", "build.archiveSha256"], ["routineId", "routineId", "routineId"],

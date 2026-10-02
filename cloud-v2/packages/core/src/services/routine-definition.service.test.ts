@@ -37,7 +37,7 @@ test("standalone Mongo enrollment uses one immutable insert and reconciles dupli
   try {
     expect(await new RoutineDefinitionService().enroll(row)).toEqual(row);
     expect(transaction).not.toHaveBeenCalled();
-    expect(insert).toHaveBeenCalledWith(row);
+    expect(insert).toHaveBeenCalledWith([row], {writeConcern: {w: "majority", j: true, wtimeout: 10000}});
     find.mockReturnValue({lean: async () => ({...row, definitionSha256: "b".repeat(64)})} as unknown as ReturnType<typeof RoutineDefinitionModel.findOne>);
     await expect(new RoutineDefinitionService().enroll(row)).rejects.toThrow("different contents");
   } finally {insert.mockRestore(); find.mockRestore(); transaction.mockRestore();}

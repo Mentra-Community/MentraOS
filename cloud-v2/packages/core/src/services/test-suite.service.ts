@@ -1,4 +1,4 @@
-import {frameworkRunSchema} from "../types/framework-run.types";
+import {frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
 import {frameworkRunView} from "./framework-run-view";
 import {z} from "zod";
 import {createHash} from "node:crypto";
@@ -22,7 +22,7 @@ export class TestSuiteService {
     return this.detail(payload.suiteId);
   }
   async bind(suiteId: string, memberId: string, input: unknown) {
-    const parsed = z.object({requestId: testRunIdSchema}).strict().safeParse(input);
+    const parsed = z.object({requestId: frameworkRunIdSchema}).strict().safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid member request binding");
     const suite = await this.detail(suiteId);
     const member = suite.members.find(member => member.memberId === memberId);
@@ -84,7 +84,7 @@ export class TestSuiteService {
     return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
   }
   async labels(requestIds: string[]) {
-    if (requestIds.length > 100 || requestIds.some(id => !testRunIdSchema.safeParse(id).success))
+    if (requestIds.length > 100 || requestIds.some(id => !frameworkRunIdSchema.safeParse(id).success))
       throw new TestRunError(400, "invalid suite label query");
     const rows = await TestSuiteModel.find({"payload.members.1": {$exists: true},
       "payload.members.requestId": {$in: requestIds}}).select({suiteId: 1, payload: 1}).limit(100).lean();

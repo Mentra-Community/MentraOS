@@ -1,3 +1,4 @@
+import {testWriteConcern} from "../models/test-write-concern";
 import {createHash} from "node:crypto";
 import {TestRequestModel} from "../models/test-request.model";
 
@@ -41,12 +42,12 @@ export function requestInputDigest(input: unknown): string {
 }
 
 const mongoRepository: TestRequestRepository = {
-  async insert(request) {await TestRequestModel.create(request);},
+  async insert(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
   async get(requestId) {return await TestRequestModel.findOne({requestId}).lean() as StoredTestRequest | null;},
   async accept(receipt) {
     return await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, inputSha256: receipt.inputSha256,
       hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}},
-    {$set: {state: "accepted", hostReceipt: receipt}}, {new: true}).lean() as StoredTestRequest | null;
+    {$set: {state: "accepted", hostReceipt: receipt}}, {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
   },
   async queued(hostId, after, limit) {
     const filter = {hostId, state: "queued", ...(after ? {$or: [

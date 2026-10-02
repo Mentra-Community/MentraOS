@@ -1,3 +1,5 @@
+import {frameworkRunView} from "./framework-run-view";
+import {testWriteConcern} from "../models/test-write-concern";
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
@@ -23,10 +25,10 @@ const definitionFor = async (run: FrameworkRun): Promise<RoutineEnrollment | nul
 
 const mongoRepository: FrameworkResultRepository = {
   async insert(run, payloadSha256) {
-    await TestRunModel.create({runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
+    await TestRunModel.create([{runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
       definitionRevision: run.definitionRevision, platform: run.platform, laneId: run.laneId,
       startedAt: new Date(run.startedAt), completedAt: new Date(run.finishedAt), completionProjectionVersion: 1,
-      outcome: frameworkRunOutcome(run), payloadSha256, payload: run, uploadsComplete: run.assets.length === 0});
+      outcome: frameworkRunView(run).outcome === "passed" && run.assets.length > 0 ? "blocked" : frameworkRunView(run).outcome, payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
   },
   async getByRequest(requestId) {
     const row = await TestRunModel.findOne({requestId, definitionRevision: {$exists: true}}).lean();
@@ -37,7 +39,7 @@ const mongoRepository: FrameworkResultRepository = {
 const projectTerminal = async (run: FrameworkRun) => {
   const result = await TestRequestModel.updateOne({requestId: run.requestId, inputSha256: {$exists: true},
     hostReceipt: {$exists: true}, $or: [{runId: {$exists: false}}, {runId: run.result.runId}]},
-    {$set: {state: "terminal", runId: run.result.runId, terminalStatus: frameworkRunOutcome(run)}});
+    {$set: {state: "terminal", runId: run.result.runId, terminalStatus: frameworkRunOutcome(run)}}, {writeConcern: testWriteConcern});
   if (result.matchedCount !== 1) throw new FrameworkResultConflict("Accepted request terminal projection conflicts with its result");
 };
 
@@ -87,7 +89,7 @@ export class FrameworkResultService {
         const uploaded = await TestAssetModel.find({runId: stored.payload.result.runId}).lean();
         if (stored.payload.assets.every(expected => uploaded.some(actual => actual.assetId === expected.id
           && actual.sha256 === expected.sha256 && actual.sizeBytes === expected.size)))
-          await TestRunModel.updateOne({runId: stored.payload.result.runId, payloadSha256: stored.payloadSha256}, {$set: {uploadsComplete: true}});
+          await TestRunModel.updateOne({runId: stored.payload.result.runId, payloadSha256: stored.payloadSha256}, {$set: {uploadsComplete: true, outcome: frameworkRunView(stored.payload).outcome}}, {writeConcern: testWriteConcern});
       });
   }
 

@@ -12,6 +12,8 @@ import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
 import { OemModel } from "../models/oem.model";
+import {TestRequestModel} from "../models/test-request.model";
+import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {TestSuiteModel} from "../models/test-suite.model";
 import { TestAssetModel, TestRunModel } from "../models/test-run.model";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
@@ -54,6 +56,8 @@ export async function runStartupMigrations(): Promise<void> {
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
   // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
+  await TestRequestModel.createIndexes();
+  await RoutineDefinitionModel.createIndexes();
   await TestRunModel.createIndexes();
   await TestSuiteModel.createIndexes();
   logger.info({ migration: "test-run-completed-at", ...await backfillTestRunCompletionDates() }, "test-run completion projection ready");

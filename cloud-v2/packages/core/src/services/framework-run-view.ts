@@ -8,7 +8,7 @@ export function frameworkRunView(run: FrameworkRun): TestRun {
     ? run.build as Record<string, unknown> : {};
   const provenance = Object.fromEntries(Object.entries(build).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   const status = frameworkRunOutcome(run);
-  const outcome = status === "pass" ? "passed" : status === "cancelled" ? "aborted" : "failed";
+  const outcome = status === "pass" ? "passed" : status === "cancelled" || run.result.test === "not-run" && run.result.setup.status === "passed" && run.result.teardown.ready ? "aborted" : "failed";
   return {
     runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
     routineVersion: run.definitionRevision, platform: run.platform === "ios-on-mac" ? "ios-mac" : "android",
@@ -23,7 +23,7 @@ export function frameworkRunView(run: FrameworkRun): TestRun {
     fixture: {alias: run.laneId}, firmwareAssertions: [],
     chapters: run.result.steps.map(step => ({id: step.id, instruction: step.id, status: step.status, phase: "test"})),
     assets: run.assets.map(asset => ({assetId: asset.id,
-      kind: asset.kind === "recording" ? "video" : asset.kind === "screenshot" ? "screenshot" : "log",
+      kind: asset.mimeType.startsWith("video/") ? "video" : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log",
       contentType: asset.mimeType, filename: asset.path.split("/").at(-1)!, sizeBytes: asset.size, sha256: asset.sha256})),
     notes: run.result.failures.map(failure => `${failure.phase}/${failure.actionId}: ${failure.message}`).join("\n"),
   };
