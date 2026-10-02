@@ -17,10 +17,10 @@ export const frameworkRunSchema = z.object({
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/), platform: routinePlatformSchema,
   laneId: id, build: json, startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
   recordingAssetId: id.optional(),
-  assets: z.array(z.object({id, path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  assets: z.array(z.object({id, kind: z.enum(["recording", "screenshot", "diagnostic", "report"]), path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),
     size: z.number().int().positive().max(128 * 1024 * 1024),
     mimeType: z.enum(["video/mp4", "video/webm", "image/png", "image/jpeg", "application/json", "text/plain"])}).strict()).max(2000),
-  result: z.object({runId: id, test: z.enum(["passed", "failed", "not-run", "cancelled"]),
+  result: z.object({runId: id, finishedAt: z.string().datetime({offset: true}), test: z.enum(["passed", "failed", "not-run", "cancelled"]),
     setup: z.object({status: z.enum(["passed", "failed", "cancelled"]), actionId: id.optional()}).strict(),
     steps: z.array(z.object({id, status: z.enum(["passed", "failed", "not-run"]), durationMs: ms, causedBy: id.optional()}).strict()).max(2000),
     teardown: z.object({ready: z.boolean(), outcomes: z.array(cleanupOutcome), errors: z.array(failure),
@@ -31,12 +31,14 @@ export const frameworkRunSchema = z.object({
 }).strict().superRefine((run, ctx) => {
   const problem = (message: string) => ctx.addIssue({code: "custom", message});
   if (run.result.runId !== run.requestId || run.startedAt !== run.result.timing.startedAt
+    || run.finishedAt !== run.result.finishedAt
     || Date.parse(run.finishedAt) < Date.parse(run.startedAt)) problem("Run identity or timing contradicts its result");
   const assets = new Map(run.assets.map(asset => [asset.id, asset]));
   if (assets.size !== run.assets.length) problem("Duplicate asset identity");
   for (const asset of run.assets) if (asset.path.startsWith("/") || asset.path.split("/").some(part => !part || part === "." || part === ".."))
     problem("Asset path must be relative and contained");
-  if (run.recordingAssetId && !assets.get(run.recordingAssetId)?.mimeType.startsWith("video/")) problem("Recording is not a declared video");
+  if (run.recordingAssetId && (assets.get(run.recordingAssetId)?.kind !== "recording"
+    || assets.get(run.recordingAssetId)?.mimeType !== "video/mp4")) problem("Recording is not a declared MP4 recording");
   if (run.result.evidence.some(assetId => !assets.has(assetId))) problem("Evidence identity is not declared");
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
   if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.some(step => step.status !== "passed")))

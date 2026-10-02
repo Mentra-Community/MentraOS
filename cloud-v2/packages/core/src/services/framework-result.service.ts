@@ -2,7 +2,7 @@ import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import {TestRequestModel} from "../models/test-request.model";
 import {frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
 import {requestInputDigest} from "./test-request.service";
-import {TestRunService} from "./test-run.service";
+import {TestRunError, TestRunService} from "./test-run.service";
 import type {TestAsset} from "../types/test-run.types";
 
 export class FrameworkResultConflict extends Error {}
@@ -81,9 +81,9 @@ export class FrameworkResultService {
   async media(requestId: string, assetId: string, request: Request) {
     const stored = await this.repository.getByRequest(requestId);
     const asset = stored?.payload.assets.find(item => item.id === assetId);
-    if (!stored || !asset) throw new FrameworkResultConflict("Asset is not declared in this result");
+    if (!stored || !asset) throw new TestRunError(404, "Asset is not declared in this result");
     const uploaded = await TestAssetModel.findOne({runId: stored.payload.result.runId, assetId}).lean();
-    if (!uploaded) throw new FrameworkResultConflict("Asset upload is not acknowledged");
+    if (!uploaded) throw new TestRunError(404, "Asset upload is not acknowledged");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";
     return new TestRunService().mediaDeclaredAsset({assetId, kind, contentType: asset.mimeType,

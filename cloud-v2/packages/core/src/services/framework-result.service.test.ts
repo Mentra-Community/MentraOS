@@ -13,7 +13,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   };
   const run = {schemaVersion: 1, requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
     platform: "ios-on-mac", laneId: "mac", build: {}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
-    assets: [], result: {runId: "r1", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [],
+    assets: [], result: {runId: "r1", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [{phase: "setup", actionId: "install", message: "install failed"}], evidence: [],
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}}};
@@ -27,7 +27,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   await expect(service.complete("r1", "other")).rejects.toThrow("not acknowledged");
   stored!.uploadsComplete = false;
   await expect(service.complete("r1", "mini")).rejects.toThrow("not acknowledged");
-  await expect(service.ingest({...run, finishedAt: "2026-10-02T19:02:00Z"}, "mini")).rejects.toThrow("different terminal result");
+  await expect(service.ingest({...run, finishedAt: "2026-10-02T19:02:00Z", result: {...run.result, finishedAt: "2026-10-02T19:02:00Z"}}, "mini")).rejects.toThrow("different terminal result");
   await expect(service.ingest(run, "other")).rejects.toThrow("accepted request");
   await expect(service.ingest({...run, build: {different: true}}, "mini")).rejects.toThrow("accepted request");
 });
