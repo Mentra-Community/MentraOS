@@ -1,10 +1,11 @@
+import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {expect, test} from "bun:test";
 import {RoutineDefinitionService, type RoutineDefinitionRepository} from "./routine-definition.service";
 import {requestInputDigest} from "./test-request.service";
 
 const revision = "a".repeat(40);
-function enrollment() {
-  const definition = {id: "no-glasses", title: "App navigation", purpose: "Check app navigation",
+function enrollment(): RoutineEnrollment {
+  const definition: RoutineEnrollment["definition"] = {id: "no-glasses", title: "App navigation", purpose: "Check app navigation",
     platforms: ["ios-on-mac"], entry: "home", account: "lane", requires: [], requirements: ["Dedicated test account"],
     fixtures: [], steps: [{id: "settings", instruction: "Open Settings", expected: "Settings is visible"}],
     source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision, path: "routines/no-glasses/routine.ts"}};

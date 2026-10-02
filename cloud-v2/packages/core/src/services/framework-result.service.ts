@@ -78,6 +78,12 @@ export class FrameworkResultService {
       manifestSha256: requestInputDigest(stored.payload.assets)};
   }
 
+  async detail(requestId: string) {
+    const stored = await this.repository.getByRequest(requestId);
+    if (!stored) throw new TestRunError(404, "Framework run was not found");
+    return {run: stored.payload, outcome: frameworkRunOutcome(stored.payload), uploadsComplete: stored.uploadsComplete};
+  }
+
   async media(requestId: string, assetId: string, request: Request) {
     const stored = await this.repository.getByRequest(requestId);
     const asset = stored?.payload.assets.find(item => item.id === assetId);

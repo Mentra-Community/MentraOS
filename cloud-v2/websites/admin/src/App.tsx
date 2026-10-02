@@ -467,11 +467,7 @@ function AdminPage() {
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       {page === "fix-flows" || page === "test-runs" ? <SystemHealthSummary /> : null}
       {page === "system-health" ? <SystemHealthPage /> : null}
-      {page === "routine-catalog" ? <RoutineCatalogPage onResult={runID => {
-        setPage("test-runs");
-        setTestRunLink({ runID });
-        window.history.pushState(null, "", `/?testRun=${encodeURIComponent(runID)}`);
-      }} /> : null}
+      {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
       {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (

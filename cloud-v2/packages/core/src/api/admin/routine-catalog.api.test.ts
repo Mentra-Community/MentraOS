@@ -1,3 +1,5 @@
+import {FrameworkResultService} from "../../services/framework-result.service";
+import {TestRunError} from "../../services/test-run.service";
 import {expect, test} from "bun:test";
 import {createRoutineCatalogApi} from "./routine-catalog.api";
 import {RoutineCatalogError, RoutineCatalogService} from "../../services/routine-catalog.service";
@@ -19,4 +21,14 @@ test("catalog detail routes routine identity and scoped pagination without run-r
   expect(calls).toEqual([{id: "notes", platform: "ios-on-mac", cursor: "next", limit: 2}]);
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect((await app.request("/missing/android")).status).toBe(404);
+});
+
+test("framework result route preserves missing-result and media errors", async () => {
+  class Results extends FrameworkResultService {
+    override async detail(): Promise<never> {throw new TestRunError(404, "not found");}
+    override async media(): Promise<never> {throw new TestRunError(416, "invalid range");}
+  }
+  const app = createRoutineCatalogApi(new RoutineCatalogService(), new Results());
+  expect((await app.request("/results/missing")).status).toBe(404);
+  expect((await app.request("/results/run/assets/video")).status).toBe(416);
 });
