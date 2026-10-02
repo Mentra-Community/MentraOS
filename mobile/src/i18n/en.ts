@@ -775,6 +775,8 @@ const en = {
     notificationsLoadingApps: "Loading apps…",
     notificationsSearchApps: "Search apps…",
     notificationsAppsEnabled: "{{enabled}} of {{total}} apps enabled",
+    notificationsEnableAll: "Enable all",
+    notificationsDisableAll: "Disable all",
     notificationsBlocked: "Notifications blocked",
     notificationsEnabled: "Notifications enabled",
     notificationsFailedLoad: "Failed to load apps",
