@@ -1,3 +1,4 @@
+import {NativeDispatchPanel, NativeActivityPanel} from "./pages/framework-dispatch";
 import {TestSuitePage, RecentTestSuites, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
@@ -9,7 +10,7 @@ import { api, ApiError } from "./lib/api";
 import {
   readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
-import { RoutineCatalogPage, FrameworkRunsPage } from "./pages/routine-catalog";
+import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
 import { FixFlowsPage } from "./pages/fix-flows";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
 import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
@@ -470,7 +471,7 @@ function AdminPage() {
       {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (
-        <><RecentTestSuites /><FrameworkRunsPage /></>
+        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} /> : <><NativeActivityPanel /><NativeDispatchPanel /><RecentTestSuites /><FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key === "platform" && value === "ios-mac" ? "platform" : key, key === "platform" && value === "ios-mac" ? "ios-on-mac" : value])) : undefined} /></>
       ) : null}
 
       {detailRelease ? (

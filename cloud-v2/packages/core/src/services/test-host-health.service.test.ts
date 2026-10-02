@@ -119,9 +119,9 @@ describe("host health authorization", () => {
     const repo = new MemoryHealth(), service = new TestHostHealthService(repo, () => new Date(start));
     await service.ingest(sample());
     const app = new Hono<AppEnv>(); app.use("*", adminAuth);
-    app.route("/", createTestRunAdminApi(undefined, undefined, undefined, undefined, service));
+    app.route("/", createTestRunAdminApi(service));
     for (const path of ["/health", "/health/mini-1?days=7"]) expect((await app.request(path, { headers: { authorization: "Bearer " + token } })).status).toBe(401);
-    const read = createTestRunAdminApi(undefined, undefined, undefined, undefined, service);
+    const read = createTestRunAdminApi(service);
     expect((await read.request("/health")).headers.get("cache-control")).toBe("no-store");
     expect((await read.request("/health/mini-1?days=1")).status).toBe(200);
   });

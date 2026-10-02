@@ -1,4 +1,3 @@
-import type { TestRunDetail } from "../pages/test-runs-data";
 
 export type FixFlowLink = { occurrenceId: string } | { runId: string; stepId: string };
 const occurrence = /^tfo_[a-f0-9]{64}$/;
@@ -17,11 +16,6 @@ export function fixFlowHref(link: FixFlowLink | null): string {
   else if ("occurrenceId" in link) query.set("fixFlow", link.occurrenceId);
   else { query.set("fixFlowRun", link.runId); query.set("fixStep", link.stepId); }
   return `/?${query}`;
-}
-export function failedStepFlow(run: TestRunDetail, stepId: string): FixFlowLink {
-  const matching = run.failureOccurrences?.filter(item => item.failure.step?.id === stepId) ?? [];
-  // Multiple phase failures for a step are resolved by the exact run/step endpoint, never by signature.
-  return matching.length === 1 ? { occurrenceId: matching[0].occurrenceId } : { runId: run.runId, stepId };
 }
 export function fixFlowApiPath(link: FixFlowLink): string {
   return "occurrenceId" in link ? `/api/admin/fix-flows/${encodeURIComponent(link.occurrenceId)}`

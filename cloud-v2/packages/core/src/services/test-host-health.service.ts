@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 import { DISK_FLOOR_BYTES, DISK_GAP_MS, HOST_FRESH_MS, HOST_HISTORY_DAYS, HOST_SAMPLE_LIMIT, testHostSampleSchema,
   type CleanupHealthEvent, type TestHostHistory, type TestHostLatest, type TestHostList, type TestHostSample } from "../types/test-host-health.types";
-import { testResourceHostIdSchema } from "../types/test-resource-observation.types";
+import {frameworkIdentitySchema as testResourceHostIdSchema} from "../types/framework-request.types";
 
 const DAY_MS = 86_400_000;
 const HOST_LIMIT = 32;
