@@ -22,6 +22,9 @@ RELEASE = dict(sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a'
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):
+        openssl = patch.object(setup, 'check_openssl')
+        openssl.start()
+        self.addCleanup(openssl.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name) / 'state'
@@ -166,6 +169,38 @@ class InstallerTests(unittest.TestCase):
              patch.object(setup, 'run', side_effect=['wrong.example.com.', '"verification"']):
             with self.assertRaisesRegex(setup.SetupError, 'do not match'):
                 setup.check_dns(self.config, self.state)
+
+    def test_private_image_failure_blocks_resource_creation(self):
+        def azure(config, *args):
+            if args[:2] == ('account', 'show'):
+                return {'id': SUB, 'tenantId': TENANT, 'state': 'Enabled'}
+            if args[:2] == ('provider', 'show'):
+                return {'registrationState': 'Registered'}
+            if args[:2] == ('group', 'list'):
+                return []
+            self.fail('resource creation before image access was confirmed')
+        with patch.object(setup.shutil, 'which', return_value='/tool'), \
+             patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup, 'check_source_image', side_effect=setup.SetupError('package read access')):
+            with self.assertRaisesRegex(setup.SetupError, 'package read access'):
+                setup.install(self.args, self.directory, self.config, self.state)
+        self.assertFalse((self.directory / 'secrets.json').exists())
+
+    def test_registry_auth_errors_withhold_credentials_and_server_body(self):
+        import urllib.error
+        from unittest.mock import Mock
+        opener = Mock()
+        opener.open.side_effect = urllib.error.URLError('private-secret-from-server')
+        with patch.dict(os.environ, {'SOURCE_REGISTRY_USERNAME': 'user', 'SOURCE_REGISTRY_PASSWORD': 'password-secret'}), \
+             patch.object(setup.urllib.request, 'build_opener', return_value=opener):
+            with self.assertRaisesRegex(setup.SetupError, 'package read access') as error:
+                setup.check_source_image(self.config)
+        self.assertNotIn('password-secret', str(error.exception))
+        self.assertNotIn('private-secret-from-server', str(error.exception))
+        self.assertEqual(opener.open.call_args.args[0].host, 'ghcr.io')
+
+    def test_registry_redirects_never_forward_auth(self):
+        self.assertIsNone(setup.NoRegistryRedirects().redirect_request(None, None, 302, '', {}, 'https://elsewhere.example'))
 
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess

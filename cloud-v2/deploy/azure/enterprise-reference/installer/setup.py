@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Portable, resumable Azure installer. Python standard library only."""
 import argparse
+import base64
 import contextlib
 import datetime
 import hashlib
@@ -16,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import urllib.error
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = ('Microsoft.App', 'Microsoft.ContainerRegistry', 'Microsoft.ManagedIdentity',
@@ -243,10 +246,61 @@ def validate_resource_names(config):
             raise SetupError(f'Invalid Azure resource name: {key}')
 
 
+def check_openssl():
+    # macOS ships LibreSSL, which may exist but cannot generate our Ed25519 keys.
+    # Exercise the exact key algorithm before creating any Azure resources.
+    with tempfile.TemporaryDirectory(prefix='mentra-openssl-') as directory:
+        result = subprocess.run(['openssl', 'genpkey', '-algorithm', 'ED25519',
+                                 '-out', str(Path(directory) / 'key.pem')],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode:
+        raise SetupError('OpenSSL must support Ed25519 key generation. Use Azure Cloud Shell Bash, '
+                         'or install OpenSSL 3 and put it first on PATH.')
+
+
+class NoRegistryRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def check_source_image(config):
+    username = os.environ.get('SOURCE_REGISTRY_USERNAME', '')
+    password = os.environ.get('SOURCE_REGISTRY_PASSWORD', '')
+    if bool(username) != bool(password):
+        raise SetupError('Set both SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD for a private image.')
+    # Both endpoints are fixed to GHCR. Never forward credentials to a challenge
+    # URL or redirect supplied by a server. Tokens exist only in memory.
+    opener = urllib.request.build_opener(NoRegistryRedirects())
+    token_headers = {}
+    if username:
+        encoded = base64.b64encode((username + ':' + password).encode()).decode()
+        token_headers['Authorization'] = 'Basic ' + encoded
+    token_url = ('https://ghcr.io/token?service=ghcr.io&'
+                 'scope=repository%3Amentra-community%2Fmentra-cloud%3Apull')
+    try:
+        with opener.open(urllib.request.Request(token_url, headers=token_headers), timeout=30) as response:
+            token = json.load(response)['token']
+        pin = config['sourceImage'].split('@', 1)[1]
+        url = 'https://ghcr.io/v2/mentra-community/mentra-cloud/manifests/' + pin
+        headers = {'Authorization': 'Bearer ' + token,
+                   'Accept': 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, '
+                             'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'}
+        with opener.open(urllib.request.Request(url, headers=headers), timeout=30) as response:
+            if response.headers.get('Docker-Content-Digest') != pin:
+                raise SetupError('Source registry did not confirm the pinned image digest.')
+    except (urllib.error.URLError, OSError, ValueError, KeyError):
+        raise SetupError('Cannot read the pinned release image from GitHub Container Registry. '
+                         'For a private release, obtain GitHub package read access from Mentra and set '
+                         'SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell, then retry. '
+                         'No Azure resources have been created by this preflight.') from None
+    return 'authenticated' if username else 'public'
+
+
 def preflight(config, require_identity=False):
     missing = [tool for tool in ('az', 'bash', 'jq', 'curl', 'openssl') if not shutil.which(tool)]
     if missing:
         raise SetupError('Missing tools: ' + ', '.join(missing) + '. Use Azure Portal → Cloud Shell → Bash.')
+    check_openssl()
     account = azure(config, 'account', 'show')
     if account['id'].lower() != config['subscriptionId'].lower() or account['tenantId'].lower() != config['tenantId'].lower():
         raise SetupError('Azure login tenant/subscription does not match this deployment. Run az login --tenant TENANT_ID.')
@@ -262,7 +316,9 @@ def preflight(config, require_identity=False):
     group = next((g for g in groups if g['name'].lower() == config['resourceGroup'].lower()), None)
     if group and group.get('tags', {}).get('mentraInstallerOwner') != config['resourceTags']['mentraInstallerOwner']:
         raise SetupError('Resource group already exists and is not owned by this installer. Choose a new group; automatic adoption is refused.')
+    source_access = check_source_image(config) if require_identity and not group else 'checked during image import'
     return {'tenant': account['tenantId'], 'subscription': account['id'], 'providers': providers,
+            'sourceImageAccess': source_access,
             'resourceGroup': 'owned' if group else 'new',
             'permissionNote': 'Azure Owner, or Contributor plus RBAC assignment permission, is required. Install runs ARM validation before deployment. Some policy/quota constraints are only evaluated when Azure provisions resources.'}
 
