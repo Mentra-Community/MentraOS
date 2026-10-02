@@ -4,7 +4,7 @@ import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {TestRequestModel} from "../models/test-request.model";
-import {frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
+import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
 import {requestInputDigest} from "./test-request.service";
 import {TestRunError, TestRunService} from "./test-run.service";
 import type {TestAsset} from "../types/test-run.types";
@@ -28,7 +28,7 @@ const mongoRepository: FrameworkResultRepository = {
     await TestRunModel.create([{runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
       definitionRevision: run.definitionRevision, platform: run.platform, laneId: run.laneId,
       startedAt: new Date(run.startedAt), completedAt: new Date(run.finishedAt), completionProjectionVersion: 1,
-      outcome: frameworkRunView(run).outcome === "passed" && run.assets.length > 0 ? "blocked" : frameworkRunView(run).outcome, payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
+      outcome: frameworkRunView(run).outcome, payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
   },
   async getByRequest(requestId) {
     const row = await TestRunModel.findOne({requestId, definitionRevision: {$exists: true}}).lean();
@@ -59,11 +59,9 @@ export class FrameworkResultService {
       || binding.input.laneId !== run.laneId || requestInputDigest(binding.input.build) !== requestInputDigest(run.build))
       throw new FrameworkResultConflict("Result does not match this host's accepted request");
     const definition = await this.definition(run);
-    // Interrupted executions may contain an ordered prefix. A passing test must contain every source step.
-    if (!definition || run.result.steps.length > definition.definition.steps.length
-      || (run.result.test === "passed" && definition.definition.steps.length !== run.result.steps.length)
+    if (!definition || run.result.steps.length !== definition.definition.steps.length
       || run.result.steps.some((step, index) => step.id !== definition.definition.steps[index]?.id))
-      throw new FrameworkResultConflict("Result steps do not match the ordered source definition");
+      throw new FrameworkResultConflict("Result must contain the complete ordered source step list");
     let created = true;
     try {await this.repository.insert(run, payloadSha256);}
     catch (error) {
@@ -85,7 +83,7 @@ export class FrameworkResultService {
     if (!asset) throw new FrameworkResultConflict("Asset is not declared in the frozen result");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";
-    return new TestRunService().uploadDeclaredAsset(stored.payload.result.runId,
+    const receipt = await new TestRunService().uploadDeclaredAsset(stored.payload.result.runId,
       {assetId, kind, contentType: asset.mimeType, filename: asset.path.split("/").at(-1)!, sizeBytes: asset.size, sha256: asset.sha256},
       body, headers, async () => {
         const uploaded = await TestAssetModel.find({runId: stored.payload.result.runId}).lean();
@@ -93,6 +91,7 @@ export class FrameworkResultService {
           && actual.sha256 === expected.sha256 && actual.sizeBytes === expected.size)))
           await TestRunModel.updateOne({runId: stored.payload.result.runId, payloadSha256: stored.payloadSha256}, {$set: {uploadsComplete: true, outcome: frameworkRunView(stored.payload).outcome}}, {writeConcern: testWriteConcern});
       });
+    return {...receipt, entityId: requestId, assetId, sha256: asset.sha256, size: asset.size};
   }
 
   async complete(requestId: string, hostId: string) {
@@ -106,7 +105,7 @@ export class FrameworkResultService {
   async detail(requestId: string) {
     const stored = await this.repository.getByRequest(requestId);
     if (!stored) throw new TestRunError(404, "Framework run was not found");
-    return {run: stored.payload, outcome: frameworkRunOutcome(stored.payload), uploadsComplete: stored.uploadsComplete};
+    return {run: stored.payload, outcome: frameworkRunOutcome(stored.payload), uploadsComplete: stored.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(stored.payload) ? "complete" : "failed"};
   }
 
   async media(requestId: string, assetId: string, request: Request) {

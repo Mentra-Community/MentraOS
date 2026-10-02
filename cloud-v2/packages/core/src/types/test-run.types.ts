@@ -1,3 +1,4 @@
+import {routineIdentitySchema} from "./routine-definition.types";
 import { z } from "zod";
 import { testFailureOccurrenceIdSchema, testFailureSchema, testFailureSourceSchema } from "./test-failure.types";
 
@@ -77,7 +78,7 @@ export function boundBackendDeployment(run: BackendDeploymentRun): { proof: Test
 export const testRunSchema = z.object({
   runId: testRunIdSchema,
   requestId: testRunIdSchema,
-  routineId: testRunIdSchema,
+  routineId: routineIdentitySchema,
   routineVersion: text,
   platform: z.enum(["ios-mac", "ios", "android"]),
   channel: z.enum(["pr", "dev", "staging", "local"]),
@@ -159,7 +160,7 @@ export const testRunQuerySchema = z.object({
   archiveSha256: sha256.optional(),
   channel: z.enum(["pr", "dev", "staging", "local"]).optional(),
   outcome: z.enum(["passed", "failed", "blocked", "aborted"]).optional(),
-  routineId: testRunIdSchema.optional(),
+  routineId: routineIdentitySchema.optional(),
   platform: z.enum(["ios-mac", "ios", "android"]).optional(),
   fixtureAlias: text.optional(),
   startedAfter: z.string().datetime({ offset: true }).optional(),

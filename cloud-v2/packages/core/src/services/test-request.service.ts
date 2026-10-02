@@ -1,4 +1,4 @@
-import {frameworkRequestInputSchema} from "../types/framework-request.types";
+import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-run.service";
 import {testWriteConcern} from "../models/test-write-concern";
 import {createHash} from "node:crypto";
@@ -84,7 +84,7 @@ export class TestRequestService {
   }
 
   async submit(requestId: string, hostId: string, input: unknown): Promise<StoredTestRequest> {
-    if (!requestId || !hostId) throw new TestRequestConflict("Request and assigned host identities are required");
+    if (!frameworkIdentitySchema.safeParse(requestId).success || !frameworkIdentitySchema.safeParse(hostId).success) throw new TestRequestConflict("Request and assigned host identities are required");
     if (!frameworkRequestInputSchema.safeParse(input).success) throw new TestRunError(400, "Invalid framework request input");
     const inputSha256 = requestInputDigest(input);
     const request: StoredTestRequest = {requestId, hostId, input, inputSha256, state: "queued"};
@@ -102,7 +102,7 @@ export class TestRequestService {
   /** Publish a host's already committed local admission; this never dispatches work. */
   async registerLocal(input: unknown, receipt: HostAcceptance, authenticatedHostId: string): Promise<StoredTestRequest> {
     if (!frameworkRequestInputSchema.safeParse(input).success) throw new TestRunError(400, "Invalid framework request input");
-    if (!receipt.requestId || receipt.hostId !== authenticatedHostId || !Number.isFinite(Date.parse(receipt.acceptedAt))
+    if (!frameworkIdentitySchema.safeParse(receipt.requestId).success || !frameworkIdentitySchema.safeParse(receipt.hostId).success || receipt.hostId !== authenticatedHostId || !Number.isFinite(Date.parse(receipt.acceptedAt))
       || requestInputDigest(input) !== receipt.inputSha256)
       throw new TestRequestConflict("Local acceptance must match the authenticated host and immutable input");
     const row: StoredTestRequest = {requestId: receipt.requestId, hostId: authenticatedHostId, input,
@@ -119,7 +119,7 @@ export class TestRequestService {
   }
 
   async accept(receipt: HostAcceptance, authenticatedHostId: string): Promise<StoredTestRequest> {
-    if (receipt.hostId !== authenticatedHostId || !Number.isFinite(Date.parse(receipt.acceptedAt)))
+    if (!frameworkIdentitySchema.safeParse(receipt.requestId).success || !frameworkIdentitySchema.safeParse(receipt.hostId).success || receipt.hostId !== authenticatedHostId || !Number.isFinite(Date.parse(receipt.acceptedAt)))
       throw new TestRequestConflict("Acceptance must identify the authenticated host and its local commit time");
     const accepted = await this.repository.accept(receipt);
     if (accepted) return accepted;

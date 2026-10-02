@@ -4,7 +4,7 @@ const plan = testSuiteSchema.parse({suiteId: "nightly-123", channel: "dev", trig
   startedAt: "2026-10-01T11:00:00Z", build: {headSha: "a".repeat(40)},
   members: [{memberId: "mac-captions", requestId: "req-1", routineId: "captions-phone", platform: "ios-mac"},
     {memberId: "android-ota", requestId: "req-2", routineId: "ota", platform: "android"}]});
-const run = (index: number, outcome = "passed"): SuiteRun => ({...plan.members[index]!, requestId: plan.members[index]!.requestId!, runId: `run-${index}`, outcome,
+const run = (index: number, outcome = "passed"): SuiteRun => ({...plan.members[index]!, requestId: plan.members[index]!.requestId!, runId: `run-${index}`, outcome, publicationComplete: true,
   channel: "dev", provenance: {headSha: plan.build.headSha}, startedAt: plan.startedAt, finishedAt: "2026-10-01T11:02:00Z"});
 describe("suite verdict", () => {
   test("waits for completion and all expected members before all green", () => {
@@ -34,4 +34,20 @@ describe("suite verdict", () => {
     expect(testSuiteSchema.safeParse({...plan, members: []}).success).toBe(false);
     expect(testSuiteSchema.safeParse({...plan, members: [plan.members[0], plan.members[0]]}).success).toBe(false);
   });
+});
+
+test("suite membership and history filters share enrolled routine identity", async () => {
+  const {testRunQuerySchema} = await import("./test-run.types");
+  const {routineIdentitySchema} = await import("./routine-definition.types");
+  const routineId = "notes.search_v2";
+  expect(routineIdentitySchema.safeParse(routineId).success).toBe(true);
+  expect(testRunQuerySchema.safeParse({routineId}).success).toBe(true);
+  expect(testSuiteSchema.safeParse({...plan, members: [{...plan.members[0], routineId}]}).success).toBe(true);
+});
+
+test("missing publication fails suite completeness without rewriting a member pass", () => {
+ const result = summarizeSuite(plan, [{...run(0), publicationComplete: false}, run(1)], "2026-10-01T11:03:00Z");
+ expect(result.members[0]!.status).toBe("passed");
+ expect(result.outcome).toBe("failed");
+ expect(result.failedRoutines).toEqual(["captions-phone"]);
 });

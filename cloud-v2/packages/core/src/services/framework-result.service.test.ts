@@ -14,7 +14,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   };
   const run = {schemaVersion: 1, requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
     platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
-    assets: [], result: {runId: "r1", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [],
+    assets: [], result: {runId: "r1", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [{id: "required", status: "not-run", durationMs: 0, causedBy: "install"}],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [{phase: "setup", actionId: "install", message: "install failed"}], evidence: [],
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}}};
@@ -45,6 +45,13 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}),
     async () => {}, async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment));
   expect((await incomplete.ingest(run, "mini")).created).toBe(false);
+  await expect(incomplete.ingest({...run, result: {...run.result, steps: []}}, "mini"))
+    .rejects.toThrow("complete ordered source step list");
+  stored!.uploadsComplete = true;
+  stored!.payload.result.failures.push({phase: "evidence", actionId: "capture", message: "Recording failed"});
+  // Cloud custody of the declared diagnostics still permits disposal after capture failed.
+  expect((await service.complete("r1", "mini")).entityId).toBe(first.entityId);
+  expect((await service.detail("r1")).evidenceStatus).toBe("failed");
 
 });
 

@@ -1,11 +1,12 @@
 import {TestRunError} from "../../services/test-run.service";
+import {frameworkIdentitySchema} from "../../types/framework-request.types";
 import {z} from "zod";
 import {Hono} from "hono";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
 import {TestRequestConflict, TestRequestService, type HostAcceptance} from "../../services/test-request.service";
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
 
-const acceptanceSchema = z.object({requestId: z.string().min(1).max(240), hostId: z.string().min(1).max(240),
+const acceptanceSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
   inputSha256: z.string().regex(/^[a-f0-9]{64}$/), acceptedAt: z.string().datetime({offset: true})}).strict();
 
 /** Cloud delivery/acknowledgement only; host SQLite owns execution and allocation. */
@@ -32,12 +33,9 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
   app.post("/:requestId/accept", frameworkBodyLimit(4096), async c => {
     let body: unknown;
     body = await frameworkJson(c);
-    if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({error: "invalid_acceptance"}, 400);
-    const value = body as Record<string, unknown>;
-    if (value.requestId !== c.req.param("requestId") || typeof value.hostId !== "string"
-      || typeof value.acceptedAt !== "string" || typeof value.inputSha256 !== "string"
-      || !/^[a-f0-9]{64}$/.test(value.inputSha256)) return c.json({error: "invalid_acceptance"}, 400);
-    const row = await service.accept(value as unknown as HostAcceptance, c.var.testHostId);
+    const parsed = acceptanceSchema.safeParse(body);
+    if (!parsed.success || parsed.data.requestId !== c.req.param("requestId")) return c.json({error: "invalid_acceptance"}, 400);
+    const row = await service.accept(parsed.data, c.var.testHostId);
     return c.json({receipt: row.hostReceipt});
   });
   return app;

@@ -1,4 +1,4 @@
-import {frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
+import {frameworkEvidenceComplete, frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
 import {frameworkRunView} from "./framework-run-view";
 import {z} from "zod";
 import {createHash} from "node:crypto";
@@ -78,8 +78,8 @@ export class TestSuiteService {
     const runs: SuiteRun[] = rows.map(row => {
       const framework = frameworkRunSchema.safeParse(row.payload);
       const run = framework.success ? frameworkRunView(framework.data) : row.payload as SuiteRun;
-      return {...run, provenance: {headSha: run.provenance.headSha}, publicationComplete: row.uploadsComplete === true,
-        outcome: run.outcome === "passed" && !row.uploadsComplete ? "blocked" : run.outcome};
+      return {...run, provenance: {headSha: run.provenance.headSha}, publicationComplete: row.uploadsComplete === true && (!framework.success || frameworkEvidenceComplete(framework.data)),
+        outcome: run.outcome};
     });
     return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
   }

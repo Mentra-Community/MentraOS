@@ -1,5 +1,5 @@
 import type {FrameworkRun} from "../types/framework-run.types";
-import {frameworkRunOutcome} from "../types/framework-run.types";
+import {frameworkEvidenceComplete, frameworkRunOutcome} from "../types/framework-run.types";
 import type {TestRun} from "../types/test-run.types";
 
 /** Display projection only. The accepted framework payload and its digest remain unchanged. */
@@ -18,7 +18,7 @@ export function frameworkRunView(run: FrameworkRun): TestRun {
     phaseDurationsMs: {setup: run.result.timing.setupMs, teardown: run.result.timing.teardownMs},
     outcomes: {test: run.result.test === "cancelled" ? "not-run" : run.result.test,
       teardown: run.result.teardown.ready ? "passed" : "failed",
-      fixture: run.result.teardown.ready ? "ready" : "unavailable", evidence: "complete"},
+      fixture: run.result.teardown.ready ? "ready" : "unavailable", evidence: frameworkEvidenceComplete(run) ? "complete" : "incomplete"},
     provenance: {...provenance, repository: run.build.repository},
     fixture: {alias: run.laneId}, firmwareAssertions: [],
     chapters: run.result.steps.map(step => ({id: step.id, instruction: step.id, status: step.status, phase: "test"})),

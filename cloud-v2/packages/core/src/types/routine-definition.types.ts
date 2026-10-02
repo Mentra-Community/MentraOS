@@ -1,7 +1,8 @@
 import {z} from "zod";
 
 const text = z.string().min(1).max(2000);
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
+export const routineIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
+const id = routineIdentitySchema;
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 /** Serialized source definition; executable functions remain in the harness repository. */
 export const publishedRoutineDefinitionSchema = z.object({

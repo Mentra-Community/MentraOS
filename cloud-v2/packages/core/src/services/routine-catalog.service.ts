@@ -1,3 +1,4 @@
+import {frameworkEvidenceComplete, frameworkRunSchema} from "../types/framework-run.types";
 import {TestRunModel} from "../models/test-run.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
@@ -12,7 +13,7 @@ export interface CatalogRunRepository {
   latestPassing(definition: RoutineEnrollment): Promise<CatalogExample | null>;
   history(routineId: string, platform: string, after: {startedAt: Date; runId: string} | null, limit: number): Promise<CatalogHistoryRun[]>;
 }
-export interface CatalogHistoryRun {runId: string; startedAt: string; outcome: string; uploadsComplete: boolean; definitionRevision: string}
+export interface CatalogHistoryRun {runId: string; startedAt: string; outcome: string; uploadsComplete: boolean; evidenceStatus?: "complete" | "failed"; definitionRevision: string}
 export class RoutineCatalogError extends Error {
   constructor(readonly status: 400 | 404, message: string) {super(message);}
 }
@@ -22,7 +23,7 @@ const mongoRuns: CatalogRunRepository = {
     const row = await TestRunModel.findOne({routineId: definition.routineId, platform: definition.platform,
       definitionRevision: definition.definitionRevision, outcome: "passed", uploadsComplete: true,
       "payload.result.setup.status": "passed",
-      "payload.result.test": "passed", "payload.result.teardown.ready": true,
+      "payload.result.test": "passed", "payload.result.failures.phase": {$ne: "evidence"}, "payload.result.teardown.ready": true,
       "payload.recordingAssetId": {$type: "string"},
     }).sort({startedAt: -1, runId: -1}).lean();
     if (!row) return null;
@@ -35,9 +36,13 @@ const mongoRuns: CatalogRunRepository = {
       {startedAt: {$lt: after.startedAt}}, {startedAt: after.startedAt, runId: {$lt: after.runId}},
     ]} : {})};
     const rows = await TestRunModel.find(filter).sort({startedAt: -1, runId: -1}).limit(limit)
-      .select({runId: 1, startedAt: 1, outcome: 1, uploadsComplete: 1, definitionRevision: 1}).lean();
-    return rows.map(row => ({runId: row.runId, startedAt: row.startedAt.toISOString(),
-      outcome: row.outcome, uploadsComplete: row.uploadsComplete, definitionRevision: row.definitionRevision!}));
+      .select({runId: 1, startedAt: 1, outcome: 1, uploadsComplete: 1, definitionRevision: 1, payload: 1}).lean();
+    return rows.map(row => {
+      const parsed = frameworkRunSchema.safeParse(row.payload);
+      return {runId: row.runId, startedAt: row.startedAt.toISOString(),
+      outcome: row.outcome, uploadsComplete: row.uploadsComplete, definitionRevision: row.definitionRevision!,
+      ...(parsed.success ? {evidenceStatus: frameworkEvidenceComplete(parsed.data) ? "complete" as const : "failed" as const} : {})};
+    });
   },
 };
 

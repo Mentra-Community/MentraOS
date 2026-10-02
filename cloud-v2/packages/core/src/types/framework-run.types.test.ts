@@ -1,5 +1,5 @@
 import {expect, test} from "bun:test";
-import {frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
+import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
 
 function run() {
   return {schemaVersion: 1, requestId: "run-1", routineId: "no-glasses", definitionRevision: "a".repeat(40),
@@ -45,5 +45,12 @@ test("empty steps and recorded failures cannot qualify a passing test", () => {
   expect(frameworkRunSchema.safeParse(good).success).toBe(true);
   expect(frameworkRunSchema.safeParse({...good, result: {...good.result, steps: []}}).success).toBe(false);
   const evidenceFailure = frameworkRunSchema.parse({...good, result: {...good.result, failures: [{phase: "evidence", actionId: "recording", message: "missing"}]}});
-  expect(frameworkRunOutcome(evidenceFailure)).toBe("evidence-failed");
+  expect(frameworkRunOutcome(evidenceFailure)).toBe("pass");
+  expect(frameworkEvidenceComplete(evidenceFailure)).toBe(false);
 });
+
+ test("ready teardown cannot conceal an explicit teardown failure", () => {
+  const good = run();
+  expect(frameworkRunSchema.safeParse({...good, result: {...good.result,
+    failures: [{phase: "teardown", actionId: "uninstall", message: "failed"}]}}).success).toBe(false);
+ });

@@ -67,7 +67,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
     <section className={PANEL}><h3 className="font-semibold">Run history</h3>
       <ul className="mt-3 space-y-2">{detail.data.pages.flatMap(page => page.history).map(run => <li key={run.runId}>
         <a className="underline" href={frameworkRunHref(run.runId)}>{new Date(run.startedAt).toLocaleString()}</a>
-        {" · "}{run.outcome}{!run.uploadsComplete && " · evidence pending"}</li>)}</ul>
+        {" · "}{run.outcome}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · evidence pending"}</li>)}</ul>
       {detail.hasNextPage && <button className="mt-4 underline" disabled={detail.isFetchingNextPage} onClick={() => detail.fetchNextPage()}>More runs</button>}
     </section>
   </div>;
@@ -79,10 +79,10 @@ export function frameworkRunHref(runId: string) {
 
 function FrameworkRunPage({runId}: {runId: string}) {
   const result = useQuery({queryKey: ["framework-run", runId], queryFn: () =>
-    api<{run: FrameworkRun; outcome: string; uploadsComplete: boolean}>(`/api/admin/routine-catalog/results/by-request/${encodeURIComponent(runId)}`)});
+    api<{run: FrameworkRun; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"}>(`/api/admin/routine-catalog/results/by-request/${encodeURIComponent(runId)}`)});
   if (result.isPending) return <p role="status">Loading run…</p>;
   if (result.error) return <p role="alert">Could not load run: {result.error.message}</p>;
-  const {run, outcome, uploadsComplete} = result.data;
+  const {run, outcome, uploadsComplete, evidenceStatus} = result.data;
   const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-request/${encodeURIComponent(runId)}/assets/${encodeURIComponent(id)}`;
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
   return <div className="space-y-5">
@@ -91,12 +91,13 @@ function FrameworkRunPage({runId}: {runId: string}) {
       <p className="mt-2">Started {new Date(run.startedAt).toLocaleString()} · Finished {new Date(run.finishedAt).toLocaleString()}</p>
       <p className="mt-2">Lane: {run.laneId} · {run.platform}</p>
       <p className="mt-2">Setup {seconds(run.result.timing.setupMs)} · Test {seconds(run.result.timing.testMs)} · Teardown {seconds(run.result.timing.teardownMs)}</p>
+      {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
       {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
       {run.recordingAssetId && uploadsComplete && <video className="mt-4 w-full rounded-lg" controls preload="metadata" src={assetHref(run.recordingAssetId)} />}
     </section>
     <section className={PANEL}><h3 className="font-semibold">Execution</h3>
       <p className="mt-2">Setup: {run.result.setup.status}{run.result.setup.actionId && ` (${run.result.setup.actionId})`}</p>
-      <ol className="mt-3 list-decimal space-y-2 pl-5">{run.result.steps.map(step => <li key={step.id}>{step.id}: {step.status} · {seconds(step.durationMs)}</li>)}</ol>
+      <ol className="mt-3 list-decimal space-y-2 pl-5">{run.result.steps.map(step => <li key={step.id}>{step.id}: {step.status} · {seconds(step.durationMs)}{step.causedBy && ` · caused by ${step.causedBy}`}</li>)}</ol>
       <p className="mt-3">Teardown: {run.result.teardown.ready ? "ready" : "failed"}</p>
       {run.result.failures.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.phase} / {failure.actionId}: {failure.message}</p>)}
     </section>
