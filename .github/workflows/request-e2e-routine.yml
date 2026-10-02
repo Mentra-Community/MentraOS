@@ -18,7 +18,7 @@ on:
         type: choice
         # No catalogued routine is planned now; a planned routine refuses until its automatic worker is
         # registered in device-routines.mjs; only then add its label to the pull_request routing below.
-        options: [day1-ota, no-glasses, no-glasses-android, mentra-call, account-miniapps, connected-glasses, livestreamer, captions-phone, notes-phone, ota-roundtrip-android]
+        options: [day1-ota, no-glasses, no-glasses-android, mentra-call, account-miniapps, connected-glasses, livestreamer, captions-phone, notes-phone, ota-roundtrip-android, open-close-miniapps]
         default: day1-ota
         required: true
       request_origin:

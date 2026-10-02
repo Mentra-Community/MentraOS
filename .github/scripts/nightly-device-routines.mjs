@@ -118,7 +118,7 @@ function pacificRunDate(createdAt) {
   return new Intl.DateTimeFormat("en-CA", {timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(createdAt))
 }
 
-export const DEV_FOUNDATION_NIGHTLY_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses"])
+export const DEV_FOUNDATION_NIGHTLY_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses", "open-close-miniapps"])
 
 export async function planNightlyRequests({github, context, attempt, fetchImpl = fetch, routineCatalog = DEVICE_ROUTINES, devFoundationOnly = false}) {
   const {run, date} = await scheduledRun(github, context, attempt)

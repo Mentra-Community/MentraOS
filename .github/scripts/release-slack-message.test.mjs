@@ -78,7 +78,7 @@ test("concurrent routine completions accumulate and a late old retry cannot regr
 test("every catalogued routine renders with its catalog name in the historical order; unknown IDs refuse as rows and as retained state", () => {
   // Historical display order first (unchanged for existing posts), then the Phone routines.
   const order = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call", "account-miniapps", "connected-glasses", "livestreamer",
-    "ota-roundtrip-android", "captions-phone", "notes-phone"]
+    "ota-roundtrip-android", "open-close-miniapps", "captions-phone", "notes-phone"]
   assert.deepEqual([...order].sort(), Object.keys(DEVICE_ROUTINES).sort())
   let value = notification()
   for (const [index, routineId] of [...order].reverse().entries())
@@ -86,7 +86,7 @@ test("every catalogued routine renders with its catalog name in the historical o
   const lines = value.payload.blocks[1].text.text.split("\n").slice(1, -1)
   assert.deepEqual(lines.map(line => line.split(" — ")[0]), order.map(id => DEVICE_ROUTINES[id].name))
   assert.equal(value.payload.blocks[0], payload.blocks[0])
-  for (const [routineId, name, runId] of [["captions-phone", "Captions with simulated glasses", 501], ["notes-phone", "Notes with simulated glasses", 500]])
+  for (const [routineId, name, runId] of [["open-close-miniapps", "Open, resume and close Gallery", 502], ["captions-phone", "Captions with simulated glasses", 501], ["notes-phone", "Notes with simulated glasses", 500]])
     assert.ok(lines.includes(`${name} — *Passed* · <https://admin.dev.mentraglass.com/?testRun=routine-${runId}-1-dev-${routineId}|Recording and result>` +
       ` · <https://github.com/Mentra-Community/MentraOS/actions/runs/${runId}/attempts/1|Request>`), routineId)
   assert.deepEqual(assertNotification(value), value)

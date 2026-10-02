@@ -73,6 +73,16 @@ export const DEVICE_ROUTINES = Object.freeze({
   }),
   // The shared foundation runs the same saved Android software flow used in authoring.
   // Its local passing example does not qualify a new dispatched build or acoustic measurements.
+  "open-close-miniapps": Object.freeze({
+    label: "routine:open-close-miniapps", name: "Open, resume and close Gallery", platform: "android",
+    coverage: "Open Gallery, minimize it, confirm it remains running, resume it, close it and verify it is stopped from Home.",
+    relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/modules/engine/**", "mobile/assets/miniapps/**"],
+    prerequisites: "The requested signed Android build and matching glasses software; an enrolled Android phone, Mentra Live pair and dedicated test account. Shared setup establishes paired Home. Authenticated dev independent nightly only.",
+    exclusions: "No photo capture, gallery sync, media-content validation, other miniapps, Mac or physical iPhone coverage, staging nightly or PR/build automatic enrollment. A local passing recording does not qualify a new dispatched build.",
+    definition: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/3eb7cce959c87afef138e0d8a93a9b8f645e3014/docs/routines/miniapp-open-close.md",
+    implementation: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/3eb7cce959c87afef138e0d8a93a9b8f645e3014/tools/mentra-e2e/flows/miniapp-open-close.ts",
+    worker: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/3eb7cce959c87afef138e0d8a93a9b8f645e3014/worker/foundation-worker.ts",
+  }),
   "connected-glasses": Object.freeze({
     label: "routine:connected-glasses", name: "Connected glasses (Android)", platform: "android",
     coverage: "Pair, disconnect, unpair and reconnect Mentra Live; check battery, Bluetooth, Wi-Fi and camera settings; capture and sync a photo and bounded video; verify delivered bytes decode and media playback routing and pause.",
@@ -126,6 +136,8 @@ export function deviceRoutine(id) {
   if (!Object.hasOwn(DEVICE_ROUTINES, id)) throw new Error("Unsupported device routine")
   return DEVICE_ROUTINES[id]
 }
+
+export const DEV_INDEPENDENT_NIGHTLY_ONLY_ROUTINES = Object.freeze(["ota-roundtrip-android", "open-close-miniapps"])
 
 export const AUTOMATIC_BUILD_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"])
 

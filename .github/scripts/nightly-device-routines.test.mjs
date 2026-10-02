@@ -159,15 +159,15 @@ test("dev foundation rollout excludes staging and legacy routines", async () => 
   const f = fixture(), result = await planNightlyRequests({...f.options, devFoundationOnly: true})
   assert.ok(result.requests.length > 0)
   assert.ok(result.requests.every(request => request.channel === "dev" &&
-    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses"].includes(request.routine)))
+    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses", "open-close-miniapps"].includes(request.routine)))
   assert.ok(result.requests.some(request => request.routine === "ota-roundtrip-android" && request.channel === "dev"))
   assert.ok(result.requests.some(request => request.routine === "connected-glasses" && request.platform === "android"))
   assert.ok(!f.state.calls.some(([kind, input]) => kind === "runs" && input.branch === "staging"))
   await assert.rejects(sendNightlyRequest({...f.options, plan: {...plan, channel: "staging"}, devFoundationOnly: true}), /Invalid nightly/)
 })
 
-test("all six dev foundation routines authenticate their entered nightly sender; OTA staging refuses", async () => {
-  for (const routine of ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses"]) {
+test("all seven dev foundation routines authenticate their entered nightly sender; OTA staging refuses", async () => {
+  for (const routine of ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses", "open-close-miniapps"]) {
     const f = await markerFixture("nightly-routine", routine)
     assert.equal(f.request.sequence.member, routine)
     await authenticateNightlyMarker({github: f.options.github, context, request: f.request})
@@ -176,10 +176,18 @@ test("all six dev foundation routines authenticate their entered nightly sender;
   assert.throws(() => validateNightlyMarker({...f.request, source: {...f.request.source, channel: "staging"}}))
 })
 
-test("restricted production callback dispatches connected Android nightlies but excludes unrelated routines", async () => {
-  const connected = await markerFixture("nightly-routine", "connected-glasses")
-  assert.equal((await dispatchReadyRequest({...connected.callback, nightlyOnly: true})).status, "private-job-requested")
-  assert.equal(connected.privateCalls.length, 1)
+test("restricted callback dispatches connected glasses and Gallery Android nightlies without broadening other triggers", async () => {
+  for (const routine of ["connected-glasses", "open-close-miniapps"]) {
+    const member = await markerFixture("nightly-routine", routine)
+    assert.equal(member.request.selection.platform, "android")
+    assert.equal((await dispatchReadyRequest({...member.callback, nightlyOnly: true})).status, "private-job-requested")
+    assert.equal(member.privateCalls.length, 1)
+  }
+  const f = fixture(), selected = {...f.dev.options, github: f.options.github,
+    context: {...f.dev.options.context, runId: 9000}, routine: "open-close-miniapps",
+    nightlyRunId: current.id, nightlyRunAttempt: 1, nightlyMode: "independent"}
+  for (const override of [{channel: "staging"}, {nightlyRunId: undefined}, {nightlyRunAttempt: 2}, {nightlyMode: "ordered"},
+    {requestOrigin: "successful-build"}]) await assert.rejects(createRoutineRequest({...selected, ...override}))
   for (const routine of ["mentra-call", "account-miniapps"]) {
     const other = await markerFixture("nightly-routine", routine)
     assert.equal((await dispatchReadyRequest({...other.callback, nightlyOnly: true})).status, "not-dispatched")
@@ -194,7 +202,7 @@ test("explicit dev qualification uses real workflow_dispatch metadata with same 
   f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName({...plan, routine: "ota-roundtrip-android"})})])
   const manualContext = {...context, eventName: "workflow_dispatch", payload: {}}
   const selected = await planNightlyRequests({...f.options, context: manualContext, devFoundationOnly: true})
-  assert.equal(selected.requests.length, 6)
+  assert.equal(selected.requests.length, 7)
   const target = selected.requests.find(row => row.routine === "ota-roundtrip-android")
   const sent = await sendNightlyRequest({...f.options, context: manualContext, plan: target, devFoundationOnly: true})
   assert.equal(sent.routine, "ota-roundtrip-android")
@@ -208,7 +216,7 @@ test("dev foundation history explicitly bounds and revalidates the first newest-
     branch: "dev", status: "success", per_page: 20, page: 1,
     created: "2026-08-24T11:17:00.000Z..2026-09-23T11:17:00Z", headers: {"cache-control": "no-cache"}})
   assert.deepEqual(selected.history[0].returned, [{runId: f.dev.state.run.id, createdAt: f.dev.state.run.created_at}])
-  assert.equal(selected.requests.length, 6)
+  assert.equal(selected.requests.length, 7)
 })
 
 test("stale or future history responses never fall through to an out-of-window dev build", async () => {
@@ -217,7 +225,7 @@ test("stale or future history responses never fall through to an out-of-window d
     f.dev.state.run.created_at = createdAt
     const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
     assert.equal(selected.requests.length, 0)
-    assert.equal(selected.unavailable.length, 6)
+    assert.equal(selected.unavailable.length, 7)
     assert.deepEqual(selected.history[0].returned, [{runId: 100, createdAt}])
     assert.equal(f.state.calls.some(([kind]) => kind === "attempt"), false)
   }
@@ -237,7 +245,7 @@ test("the production catalog registers Livestreamer as its existing Mac nightly 
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/LIVESTREAMER-FULL-ROUTINE.md",
     "tools/mentra-e2e/flows/livestreamer.ts", "worker/livestreamer.ts"].map(path => `${source}${path}`))
   assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
-    "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
+    "open-close-miniapps", "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 
 test("the production catalog registers account-miniapps as its existing Mac nightly target, with its private worker source", () => {
@@ -253,7 +261,7 @@ test("the production catalog registers account-miniapps as its existing Mac nigh
   // Registration is not qualification: the catalog states the unqualified provider observations.
   assert.match(routine.exclusions, /not qualified/)
   assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
-    "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
+    "open-close-miniapps", "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 
 test("the production catalog registers connected-glasses as its existing Android nightly target, with its private worker source", () => {
@@ -265,7 +273,7 @@ test("the production catalog registers connected-glasses as its existing Android
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/routines/connected-glasses-brief.md",
     "tools/mentra-e2e/flows/connected-glasses.ts", "worker/foundation-worker.ts"].map(path => `${source}${path}`))
   assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
-    "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
+    "open-close-miniapps", "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 
 test("planned targets are catalogued but stay unavailable on both channels, with their exact pending reason", async () => {
