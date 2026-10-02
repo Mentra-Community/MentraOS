@@ -38,16 +38,16 @@ const phonePhysical = "A reserved Mac with microphone permission, declared input
 export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
   {
     id: "ota-roundtrip-android", name: "Glasses software downgrade / upgrade loop on hotspot", platform: "Android",
-    purpose: "Downgrade the glasses' ASG software to published production 3.1.1 through the Mentra App over the glasses hotspot, then upgrade back to the exact requested build and verify stable paired Home.",
+    purpose: "Downgrade the glasses' ASG software to the configured published baseline through the Mentra App over the glasses hotspot, then upgrade back to the exact requested build and verify stable paired Home.",
     requirements: {
       software: "The frozen requested Android APK and its matching OTA manifest, in English. Shared setup installs the app, signs in, pairs the assigned glasses and establishes the requested firmware before recording.",
-      firmware: "An enrolled physical Mentra Live pair with independently verified hardware identity. Pin the requested ASG APK and promoted production 3.1.1 manifest and APK. Newer BES and MTK firmware intentionally remain installed and are checked throughout.",
+      firmware: "An enrolled physical Mentra Live pair with independently verified hardware identity. Pin the requested ASG APK and configured older baseline manifest and APK. Newer BES and MTK firmware intentionally remain installed and are checked throughout.",
       account: testAccount,
       network: "Internet access to the selected app backend, sign-in services and both immutable OTA download URLs. The phone connects to the glasses hotspot to transfer each update; keep both devices connected during both updates.",
       physical: "One reserved USB-connected Android phone and one reserved Mentra Live pair with authorized ADB diagnostics, Bluetooth pairing and screen recording. The passing example uses the Mac Mini's Samsung Galaxy A54 lane.",
       data: "The existing glasses gallery is hashed before the run and must remain unchanged at every checkpoint. Start and return use the same requested ASG version and APK hash; no rolling latest manifest is selected.",
     },
-    cleanup: "Finalize the recording, independently verify or restore the requested firmware through normal app controls, remove owned app data and overrides, stop the app and release both devices only after the return checks pass. A failed test remains failed even when teardown succeeds.",
+    cleanup: "Finalize the recording, remove owned app data and overrides, stop the app and release owned resources once firmware writers are idle. Cleanup never starts an update or waits for a version reply. A firmware mismatch remains a failed result; the next setup establishes its requested software.",
     exclusions: "Updates over an external Wi-Fi network (a separate future routine), BES or MTK downgrade, injected network failures, the persistent no-internet Retry scenario, physical iPhone behavior, and qualification of other builds.",
     passingRun: {
       ...nightlyBuild, id: "routine-36957913879-1-dev-ota-roundtrip-android", appBuild: "310000349",
