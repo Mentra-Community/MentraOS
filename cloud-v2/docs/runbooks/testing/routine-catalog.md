@@ -35,45 +35,36 @@ request can run. See [manual dispatch](admin-routine-dispatch.md).
    as a separate entry only when its full passing evidence exists. Update the
    scoped render test when the supported set intentionally changes.
 
-The initial four examples were verified on 2026-09-30 against dev Core. Each
-reported `qualificationScope: local-development`, `ciQualified: false`, a
-passing test and teardown, `fixture: ready`, and `evidence: complete`; each
-recording responded to a byte-range request. Their app source is
-`d6c74c857015fac95fbc6195dbf009acfab65eeb` (`3.3.0-dev.468`). They preserve distinct
-harness working-tree identities in the result viewer and are not exact-head
-qualification of a private harness PR.
+## Verified dev nightly examples
 
-Relevant private source paths are `tools/mentra-e2e/flows/no-glasses.ts`,
-`tools/mentra-e2e/runner/android-walkthrough.ts`,
-`tools/mentra-e2e/flows/captions-phone.ts`,
-`tools/mentra-e2e/flows/notes-phone.ts`, and the shared compositions in
-`worker/local-mac.ts` and `worker/local-android.ts`. These paths are maintenance
-pointers, not substitutes for recorded passing evidence.
+The five examples from dev nightly `nightly-36957839762-1-dev` passed on
+October 1, 2026 using dev.551, app source
+`f48a6c59f06665dd41924670434f47d359be0eb3`. The suite finished in 35m7s;
+all members passed test, teardown and return checks, published their evidence,
+and disposed of their run payloads. The coordinator verified hosted playback
+and chapter navigation for every recording. The green `#dev-builds` summary
+received a Slack acknowledgement.
 
-The Android glasses software downgrade / upgrade loop uses the glasses hotspot
-for update transfers. Updates over an external Wi-Fi network will have a separate
-routine. The passing example is
-`local-android-bda5a7fd-f862-458d-8cd6-3a239a06e999`, started September 30, 2026
-at 23:00:32 PDT. Its clean merged harness source is
-`453378be4cd3593484a3f5703dc25d2e536bb932`; requested app source is
-`6c51cd313686151a95a6a7810444926d39d6c97d` (PR 4356, app 3.2.1 / 302014623).
-All six authored steps, final assertions, teardown, independent return
-verification and evidence passed. The 15m26s recording, six screenshots,
-chapters, lifecycle summary and six firmware/gallery checkpoints were uploaded
-to dev Core; the original payload was disposed after acknowledged publication.
-All 21 gallery files were preserved, and the `mini-060b` fixture was released
-ready. This is local-development coverage, not CI qualification. The Mac
-coordinator verified the authenticated hosted result and playback, including
-changing video frames and step seeks at downgrade 5:08, requested upgrade 12:18
-and return 14:14, recorded in PR 4369 comment 5926175951. The result displayed
-all six passed steps, passing test/teardown, ready fixture and complete evidence.
-The recording covers the authored test; setup and teardown have separate
-lifecycle evidence rather than being part of that video.
+[Open the completed suite](https://admin.dev.mentraglass.com/?testSuite=nightly-36957839762-1-dev).
 
-Its private maintenance paths are `tools/mentra-e2e/flows/ota-roundtrip.ts` and
-`worker/local-ota-android.ts`. A nightly request requires an executable enrolled
-adapter and the exact routine ID wired through request validation and dispatch;
-do not add a label or advertise automatic execution based only on this example.
+| Routine | Published result | App build |
+| --- | --- | --- |
+| Mac walkthrough | `routine-36957913744-1-dev-no-glasses` | 303000125 |
+| Android walkthrough | `routine-36957913815-1-dev-no-glasses-android` | 310000349 |
+| Captions phone mode | `routine-36957913823-1-dev-captions-phone` | 303000125 |
+| Notes phone mode | `routine-36957914136-1-dev-notes-phone` | 303000125 |
+| Android downgrade / upgrade on hotspot | `routine-36957913879-1-dev-ota-roundtrip-android` | 310000349 |
+
+These are actual nightly results, not proof that another build or trigger will
+pass. The hotspot routine is enrolled for dev nightly; its manual and PR
+requests remain disabled. Request bindings and nightly enrollment are separate.
+
+Private maintenance paths include `tools/mentra-e2e/flows/`,
+`worker/local-mac.ts`, `worker/local-android.ts` and
+`worker/local-ota-android.ts`. The recording covers the authored test;
+setup and teardown have separate lifecycle evidence. Updates over external
+Wi-Fi need a separate routine. The OTA example preserves the `mini-060b` gallery
+and returns to the requested software.
 
 ## Check the UI
 
@@ -100,16 +91,6 @@ protects Wi-Fi password entry. Local payloads were disposed after publication.
 This is a development pass for pairing, reconnection, settings, software capture,
 gallery delivery and playback routing. It does not prove acoustic delivery or
 scene recognition. The card has no request binding until shared dispatch is
-verified; its addition does not silently expand the existing five-member nightly.
+verified; its nightly enrollment needs its own full dispatched qualification.
 Private maintenance paths are `worker/local-connected-android.ts` and
 `tools/mentra-e2e/flows/connected-glasses-program.ts`.
-
-## Current Notes example
-
-`local-ios-on-mac-cf63411d-d5ba-43fe-9e96-5d099068937d` passed the full
-Notes replay on October 1, 2026 using dev.548 (build 303000123). Automatic note
-generation, title/body editing, persistence and search passed, followed by
-teardown and return verification. All 39 assets were published and hosted
-playback and seeking were verified. Owned payloads were disposed after publication.
-Total duration was 4m47s, including 1m25s setup and 42s teardown. This remains a
-local development pass, not a CI or nightly verdict.
