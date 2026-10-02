@@ -35,7 +35,7 @@ const phonePhysical = "A reserved Mac with microphone permission, declared input
 
 export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
   {
-    id: "ota-roundtrip-android", name: "Glasses software downgrade / upgrade loop on glasses hotspot", platform: "Android",
+    id: "ota-roundtrip-android", name: "Glasses software downgrade / upgrade loop on hotspot", platform: "Android",
     purpose: "Downgrade the glasses' ASG software to published production 3.1.1 through the Mentra App over the glasses hotspot, then upgrade back to the exact requested build and verify stable paired Home.",
     requirements: {
       software: "The frozen requested Android APK and its matching OTA manifest, in English. Shared setup installs the app, signs in, pairs the assigned glasses and establishes the requested firmware before recording.",
