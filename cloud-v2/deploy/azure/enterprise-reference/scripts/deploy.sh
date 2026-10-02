@@ -64,7 +64,8 @@ jq -e '
   (.location | nonempty) and
   (.registryName | test("^[a-zA-Z0-9]{5,50}$")) and
   (.sourceImage | test("^ghcr\\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}$")) and
-  ((.sourceRegistryMirror // "") | type == "string" and (. == "" or test("^[a-z0-9]+\\.azurecr\\.io/[a-z0-9]+([._/-][a-z0-9]+)*$"))) and
+  (.sourceRegistryMirror == null or (.sourceRegistryMirror | type == "string")) and
+  ((.sourceRegistryMirror // "") | . == "" or test("^[a-z0-9]+\\.azurecr\\.io/[a-z0-9]+([._/-][a-z0-9]+)*$")) and
   (.releaseTag | test("^[A-Za-z0-9._-]+$")) and
   (.tenantId | guid) and
   (.coreApiClientId | guid) and

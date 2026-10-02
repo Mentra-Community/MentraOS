@@ -203,6 +203,18 @@ else: sys.exit(9)
             self.assertEqual(r.returncode,0,r.stderr)
             self.assertEqual((self.path/'added').exists(),expected)
 
+    def test_source_mirror_validation_rejects_boolean_and_nonregistry_values(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        expression = source.split("jq -e '\n", 1)[1].split("\n' \"$CONFIG\"", 1)[0]
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        config['sourceImage'] = 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a'*64
+        for key in ('tenantId','coreApiClientId','mobileClientId'):
+            config[key] = '11111111-1111-1111-1111-111111111111'
+        for value, expected in ((None,True),('',True),('approved.azurecr.io/cloud',True),(False,False),(0,False),('other.example/cloud',False)):
+            config['sourceRegistryMirror'] = value
+            r = subprocess.run(['jq','-e',expression],input=json.dumps(config),capture_output=True,text=True)
+            self.assertEqual(r.returncode==0,expected,r.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -25,7 +25,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = ('Microsoft.App', 'Microsoft.ContainerRegistry', 'Microsoft.ManagedIdentity',
              'Microsoft.Communication', 'Microsoft.DocumentDB', 'Microsoft.Storage')
 BINDING_KEYS = ('subscriptionId', 'tenantId', 'resourceGroup', 'registryName', 'location',
-                'sourceRegistryMirror',
                 'workspaceHostname', 'environmentName', 'runtimeName', 'coreName', 'pullIdentityName',
                 'communicationName', 'mongoAccountName', 'reportStorageAccountName', 'deploymentName',
                 'resourceTags', 'coreApiClientId', 'mobileClientId')
@@ -328,7 +327,8 @@ def check_source_image(config):
     except (urllib.error.URLError, OSError, ValueError, KeyError):
         raise SetupError('Cannot read the pinned release image. '
                          'For a private release, obtain package read access or an approved ACR mirror from Mentra and set '
-                         'SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell, then retry. '
+                         'SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell. '
+                         'Before the first deployment, sourceRegistryMirror can be set in deployment.config.json; then retry. '
                          'No Azure resources have been created by this preflight.') from None
     return 'authenticated' if username else 'public'
 

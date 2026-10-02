@@ -264,6 +264,16 @@ class InstallerTests(unittest.TestCase):
                     setup.check_source_image(self.config)
         opener.open.assert_not_called()
 
+    def test_mirror_can_be_corrected_before_deployment_but_not_after(self):
+        self.config['sourceRegistryMirror'] = 'approved.azurecr.io/mentra-cloud'
+        self.save()
+        with self.load_context():
+            setup.load(self.directory)
+        self.state['configHash'] = 'previous-config-hash'
+        self.save()
+        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'Configuration changed'):
+            setup.load(self.directory)
+
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess
         with patch.object(setup.subprocess, 'run', return_value=CompletedProcess(['az'], 1, '', 'secret-token')):
