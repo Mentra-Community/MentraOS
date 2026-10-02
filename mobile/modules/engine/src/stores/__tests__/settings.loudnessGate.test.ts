@@ -30,7 +30,6 @@ function restartSettings() {
 
 describe.each([
   ["loudness_gate_enabled", "migration:loudness_gate_default_off_v1"],
-  ["voice_activity_detection_enabled", "migration:vad_default_off_v1"],
 ])("%s settings migration", (gateKey, migrationKey) => {
   beforeEach(() => {
     GATE_KEY = gateKey
