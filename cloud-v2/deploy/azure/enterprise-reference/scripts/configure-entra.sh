@@ -46,7 +46,29 @@ done
 
 # Explicit binding for the resumable installer; preserve the standalone helper.
 if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
-  az() { command az "$@" --subscription "$MENTRA_SUBSCRIPTION_ID"; }
+  # Entra commands are tenant-scoped and do not accept --subscription. Select
+  # the requested subscription in a private copy of the existing CLI profile,
+  # leaving the caller's default and concurrent agents' logins untouched.
+  ORIGINAL_AZURE_CONFIG_DIR="${AZURE_CONFIG_DIR:-$HOME/.azure}"
+  ENTRA_AZURE_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mentra-entra-azure.XXXXXX")"
+  trap 'rm -rf "$ENTRA_AZURE_CONFIG_DIR"' EXIT
+  python3 - "$ORIGINAL_AZURE_CONFIG_DIR" "$ENTRA_AZURE_CONFIG_DIR" <<'PYPROFILE'
+import os
+from pathlib import Path
+import shutil
+import sys
+
+source, target = map(Path, sys.argv[1:])
+for name in ('azureProfile.json', 'msal_token_cache.json', 'msal_token_cache.bin',
+             'msal_http_cache.bin', 'config'):
+    path = source / name
+    if path.is_file():
+        shutil.copyfile(path, target / name)
+        os.chmod(target / name, 0o600)
+PYPROFILE
+  export AZURE_CONFIG_DIR="$ENTRA_AZURE_CONFIG_DIR"
+  export AZURE_EXTENSION_DIR="${AZURE_EXTENSION_DIR:-$ORIGINAL_AZURE_CONFIG_DIR/cliextensions}"
+  az account set --subscription "$MENTRA_SUBSCRIPTION_ID"
 fi
 TENANT_ID="$(az account show --query tenantId -o tsv)"
 if [[ -n "${MENTRA_EXPECTED_TENANT_ID:-}" && "$(tr '[:upper:]' '[:lower:]' <<<"$TENANT_ID")" != "$(tr '[:upper:]' '[:lower:]' <<<"$MENTRA_EXPECTED_TENANT_ID")" ]]; then

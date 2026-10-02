@@ -115,6 +115,37 @@ elif url.endswith('.zip'):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_entra_profile_binds_directory_without_changing_callers_default(self):
+        source = (ROOT / 'scripts/configure-entra.sh').read_text()
+        binding = source[source.index('if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}"'):source.index('find_or_create_app()')]
+        original = self.path / 'original-profile'
+        original.mkdir()
+        (original / 'azureProfile.json').write_text('{"default":"original"}')
+        (original / 'msal_token_cache.json').write_text('private-token-fixture')
+        self.env.update(AZURE_CONFIG_DIR=str(original), MENTRA_SUBSCRIPTION_ID='qa-subscription',
+                        MENTRA_EXPECTED_TENANT_ID='abcdef12-1234-1234-1234-abcdef123456',
+                        HELPER_TEST_DIRECTORY=str(self.path), TMPDIR=str(self.path))
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['AZURE_CONFIG_DIR']);a=sys.argv[1:]
+assert '--subscription' not in a
+if a[:2]==['account','set']:
+ assert a==['account','set','--subscription','qa-subscription']
+ assert p.name.startswith('mentra-entra-azure.')
+ assert (p/'msal_token_cache.json').stat().st_mode&0o077==0
+ (p/'azureProfile.json').write_text('{"default":"qa-subscription"}')
+elif a[:2]==['account','show']:
+ assert json.loads((p/'azureProfile.json').read_text())['default']=='qa-subscription'
+ print('abcdef12-1234-1234-1234-abcdef123456')
+elif a[:3]==['ad','app','list']: print('[]')
+else:sys.exit(9)
+'''.replace("assert '--subscription' not in a", "assert a[:2]==['account','set'] or '--subscription' not in a"))
+        result = subprocess.run(['bash', '-c', 'set -euo pipefail\n' + binding + '\naz ad app list'],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((original / 'azureProfile.json').read_text(), '{"default":"original"}')
+        self.assertFalse(list(self.path.glob('mentra-entra-azure.*')))
+
     def test_acr_role_assignment_parameters_preserve_false_and_default_only_null(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()
         expression = source.split('--arg cloudImage "$IMPORTED_IMAGE" \'\n', 1)[1].split("\n  ' > \"$PARAMETERS\"", 1)[0]
