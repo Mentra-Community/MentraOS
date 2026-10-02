@@ -246,7 +246,7 @@ if [[ -n "${MENTRA_ADMIN_TOKEN:-}" && "${MENTRA_SKIP_SMOKE:-false}" != true ]]; 
   trap 'rm -f "$PARAMETERS" "${AUTH_CONFIG:-}"' EXIT
   [[ "$MENTRA_ADMIN_TOKEN" != *$'\n'* && "$MENTRA_ADMIN_TOKEN" != *$'\r'* && "$MENTRA_ADMIN_TOKEN" != *'"'* && "$MENTRA_ADMIN_TOKEN" != *'\'* ]] || exit 1
   printf 'header = "Authorization: Bearer %s"\n' "$MENTRA_ADMIN_TOKEN" > "$AUTH_CONFIG"
-  curl --config "$AUTH_CONFIG" --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
+  curl --connect-timeout 10 --max-time 30 --retry-max-time 300 --config "$AUTH_CONFIG" --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
     "$CORE_ORIGIN/api/admin/reports?limit=1" | jq -e '.reports | type == "array"' >/dev/null
 fi
 

@@ -143,6 +143,8 @@ resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
     capabilities: [
       { name: 'EnableMongo' }
       { name: 'EnableServerless' }
+      // Retry metadata throttling during Core's initial index/migration setup.
+      { name: 'DisableRateLimitingResponses' }
     ]
     consistencyPolicy: { defaultConsistencyLevel: 'Session' }
     // Documented tradeoff: Core reaches Cosmos over the authenticated public
@@ -340,6 +342,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
           resources: { cpu: json('0.5'), memory: '1Gi' }
           volumeMounts: [{ volumeName: 'core-attachments', mountPath: '/mnt/core-attachments' }]
           probes: [
+            { type: 'Startup', httpGet: { path: '/healthz', port: 3000 }, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 60 }
             { type: 'Liveness', httpGet: { path: '/healthz', port: 3000 }, initialDelaySeconds: 20, periodSeconds: 10 }
             { type: 'Readiness', httpGet: { path: '/ready', port: 3000 }, initialDelaySeconds: 10, periodSeconds: 5 }
           ]
