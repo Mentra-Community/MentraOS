@@ -1,6 +1,5 @@
 import {useInfiniteQuery, useQuery} from "@tanstack/react-query";
 import {api} from "../lib/api";
-import {testRunAssetPath} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../../../../packages/core/src/services/routine-catalog.service";
 
@@ -51,7 +50,7 @@ function RoutineDetailPage({id, platform, onResult}: {id: string; platform: stri
     <a href="/?routineCatalog=1" className="underline">All routines</a>
     <section className={PANEL}><h2 className="text-xl font-semibold">{definition.title}</h2><p className="mt-2">{definition.purpose}</p>
       {row.example ? <div className="mt-4"><video className="w-full rounded-lg" controls preload="metadata"
-        src={testRunAssetPath(row.example.runId, row.example.recordingAssetId)} />
+        src={`/api/admin/routine-catalog/results/${encodeURIComponent(row.example.runId)}/assets/${encodeURIComponent(row.example.recordingAssetId)}`} />
         <button className="mt-2 underline" onClick={() => onResult(row.example!.runId)}>Open passing run</button></div>
         : <p className="mt-4">Awaiting a complete passing recording for this revision.</p>}
     </section>

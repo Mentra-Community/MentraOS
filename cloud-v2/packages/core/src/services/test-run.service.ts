@@ -526,6 +526,10 @@ export class TestRunService {
     const meta = run.assets.find(asset => asset.assetId === assetId);
     const stored = (await this.repository.assets(runId)).find(asset => asset.assetId === assetId);
     if (!meta || !stored) throw new TestRunError(404, "uploaded asset not found");
+    return this.mediaDeclaredAsset(meta, stored, request);
+  }
+
+  async mediaDeclaredAsset(meta: TestAsset, stored: StoredTestAsset, request: Request): Promise<Response> {
     if (stored.sizeBytes !== meta.sizeBytes || stored.sha256 !== meta.sha256) throw new TestRunError(409, "stored asset metadata differs");
     const storage = this.storageFactory();
     const stat = await storage.statObject(stored.storageKey);

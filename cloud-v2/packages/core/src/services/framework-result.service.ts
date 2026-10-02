@@ -77,4 +77,16 @@ export class FrameworkResultService {
     return {entityId: stored.payload.result.runId, payloadSha256: stored.payloadSha256,
       manifestSha256: requestInputDigest(stored.payload.assets)};
   }
+
+  async media(requestId: string, assetId: string, request: Request) {
+    const stored = await this.repository.getByRequest(requestId);
+    const asset = stored?.payload.assets.find(item => item.id === assetId);
+    if (!stored || !asset) throw new FrameworkResultConflict("Asset is not declared in this result");
+    const uploaded = await TestAssetModel.findOne({runId: stored.payload.result.runId, assetId}).lean();
+    if (!uploaded) throw new FrameworkResultConflict("Asset upload is not acknowledged");
+    const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
+      : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";
+    return new TestRunService().mediaDeclaredAsset({assetId, kind, contentType: asset.mimeType,
+      filename: asset.path.split("/").at(-1)!, sizeBytes: asset.size, sha256: asset.sha256}, uploaded, request);
+  }
 }

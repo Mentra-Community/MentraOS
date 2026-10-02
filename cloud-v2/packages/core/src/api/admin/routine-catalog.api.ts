@@ -1,6 +1,7 @@
 import {Hono} from "hono";
 import {RoutineCatalogError, RoutineCatalogService} from "../../services/routine-catalog.service";
 import type {AppEnv} from "../../types/hono.types";
+import {FrameworkResultService} from "../../services/framework-result.service";
 
 /** Mounted behind the existing Admin authentication gate. */
 export function createRoutineCatalogApi(service = new RoutineCatalogService()) {
@@ -12,6 +13,8 @@ export function createRoutineCatalogApi(service = new RoutineCatalogService()) {
     return c.json({error: "routine_catalog_unavailable"}, 503);
   });
   app.get("/", async c => c.json({routines: await service.list()}));
+  app.on(["GET", "HEAD"], "/results/:requestId/assets/:assetId", c => new FrameworkResultService().media(
+    c.req.param("requestId"), c.req.param("assetId"), c.req.raw));
   app.get("/:routineId/:platform", async c => c.json(await service.detail(c.req.param("routineId"),
     c.req.param("platform"), c.req.query("cursor"), Number(c.req.query("limit") ?? 25))));
   return app;
