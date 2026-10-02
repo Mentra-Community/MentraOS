@@ -38,6 +38,9 @@ schema.index({ "payload.channel": 1, startedAt: -1 });
 schema.index({ outcome: 1, startedAt: -1 });
 schema.index({routineId: 1, platform: 1, definitionRevision: 1, outcome: 1, uploadsComplete: 1, startedAt: -1, runId: -1});
 schema.index({routineId: 1, startedAt: -1, runId: -1});
+// Old history remains immutable. Every newly enrolled definition has one terminal request result.
+schema.index({requestId: 1}, {unique: true, name: "test_runs_terminal_request",
+  partialFilterExpression: {definitionRevision: {$type: "string"}}});
 // runId is already unique; occurrence IDs are derived from it and validated
 // phase/step pairs. Empty arrays on passing runs need no unique multikey index.
 schema.index({ "failureOccurrences.occurrenceId": 1 }, { sparse: true });
