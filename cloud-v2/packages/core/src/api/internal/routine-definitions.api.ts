@@ -1,4 +1,4 @@
-import {TestRunError} from "../../services/test-run.service";
+import {TestRunError} from "../../services/test-result-error";
 import {Hono} from "hono";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
 import {RoutineDefinitionConflict, RoutineDefinitionService} from "../../services/routine-definition.service";

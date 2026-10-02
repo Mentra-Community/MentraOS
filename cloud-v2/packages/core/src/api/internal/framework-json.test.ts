@@ -1,6 +1,6 @@
 import {expect, test} from "bun:test";
 import {Hono} from "hono";
-import {TestRunError} from "../../services/test-run.service";
+import {TestRunError} from "../../services/test-result-error";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
 
 test("framework JSON rejects oversized fixed-length and streamed requests as 413", async () => {

@@ -1,5 +1,5 @@
 import {FrameworkResultService} from "../../services/framework-result.service";
-import {TestRunError} from "../../services/test-run.service";
+import {TestRunError} from "../../services/test-result-error";
 import {expect, test} from "bun:test";
 import {createRoutineCatalogApi} from "./routine-catalog.api";
 import {RoutineCatalogError, RoutineCatalogService} from "../../services/routine-catalog.service";

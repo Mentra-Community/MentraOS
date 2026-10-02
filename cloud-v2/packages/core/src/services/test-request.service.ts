@@ -1,5 +1,5 @@
 import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
-import {TestRunError} from "./test-run.service";
+import {TestRunError} from "./test-result-error";
 import {testWriteConcern} from "../models/test-write-concern";
 import {createHash} from "node:crypto";
 import {TestRequestModel} from "../models/test-request.model";

@@ -1,7 +1,7 @@
 import {Hono} from "hono";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
 import {FrameworkResultConflict, FrameworkResultService} from "../../services/framework-result.service";
-import {TestRunError} from "../../services/test-run.service";
+import {TestRunError} from "../../services/test-result-error";
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
 
 export function createFrameworkResultsApi(service = new FrameworkResultService(), credentials?: () => string | undefined) {

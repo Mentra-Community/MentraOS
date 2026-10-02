@@ -77,7 +77,7 @@ export function frameworkRunHref(runId: string) {
   return `/?routineCatalog=1&frameworkRun=${encodeURIComponent(runId)}`;
 }
 
-function FrameworkRunPage({runId}: {runId: string}) {
+export function FrameworkRunPage({runId}: {runId: string}) {
   const result = useQuery({queryKey: ["framework-run", runId], queryFn: () =>
     api<{run: FrameworkRun; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"}>(`/api/admin/routine-catalog/results/by-request/${encodeURIComponent(runId)}`)});
   if (result.isPending) return <p role="status">Loading run…</p>;
@@ -108,8 +108,10 @@ function FrameworkRunPage({runId}: {runId: string}) {
   </div>;
 }
 
-export function FrameworkRunsPage() {
- const query = useQuery({queryKey: ["framework-runs"], queryFn: () => api<{runs: {requestId: string; routineId: string; platform: string; startedAt: string; outcome: string; evidenceStatus: string; uploadsComplete: boolean}[]}>("/api/admin/routine-catalog/results"), refetchInterval: 15000});
+export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
+ const params = new URLSearchParams(scope);
+
+ const query = useQuery({queryKey: ["framework-runs", params.toString()], queryFn: () => api<{runs: {requestId: string; routineId: string; platform: string; startedAt: string; outcome: string; evidenceStatus: string; uploadsComplete: boolean}[]}>(`/api/admin/routine-catalog/results?${params}`), refetchInterval: 15000});
  if (query.isPending) return <p role="status">Loading runs…</p>;
  if (query.error) return <p role="alert">Could not load runs: {query.error.message}</p>;
  return <section className={PANEL}><h2 className="text-xl font-semibold">Routine runs</h2><ul className="mt-4 space-y-3">{query.data.runs.map(run => <li key={run.requestId}><a className="underline" href={frameworkRunHref(run.requestId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · upload pending"}</li>)}</ul></section>;

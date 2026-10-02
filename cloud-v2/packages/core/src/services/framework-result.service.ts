@@ -1,12 +1,13 @@
 import {testWriteConcern} from "../models/test-write-concern";
-import {TestAssetModel, TestRunModel} from "../models/test-run.model";
+import {TestAssetModel} from "../models/test-run.model";
+import {TestRunModel} from "../models/test-run.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {TestRequestModel} from "../models/test-request.model";
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
 import {requestInputDigest} from "./test-request.service";
-import {TestRunError, TestRunService} from "./test-run.service";
-import type {TestAsset} from "../types/test-run.types";
+import {TestRunError} from "./test-result-error";
+import {TestAssetService, type TestAsset} from "./test-asset.service";
 
 export class FrameworkResultConflict extends Error {}
 export interface FrameworkResultRepository {
@@ -26,7 +27,7 @@ const mongoRepository: FrameworkResultRepository = {
   async insert(run, payloadSha256) {
     await TestRunModel.create([{runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
       definitionRevision: run.definitionRevision, platform: run.platform, laneId: run.laneId,
-      startedAt: new Date(run.startedAt), completedAt: new Date(run.finishedAt), completionProjectionVersion: 1,
+      startedAt: new Date(run.startedAt), completedAt: new Date(run.finishedAt),
       outcome: frameworkRunOutcome(run), payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
   },
   async getByRequest(requestId) {
@@ -82,7 +83,7 @@ export class FrameworkResultService {
     if (!asset) throw new FrameworkResultConflict("Asset is not declared in the frozen result");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";
-    const receipt = await new TestRunService().uploadDeclaredAsset(stored.payload.result.runId,
+    const receipt = await new TestAssetService().uploadDeclaredAsset(stored.payload.result.runId,
       {assetId, kind, contentType: asset.mimeType, filename: asset.path.split("/").at(-1)!, sizeBytes: asset.size, sha256: asset.sha256},
       body, headers, async () => {
         const uploaded = await TestAssetModel.find({runId: stored.payload.result.runId}).read("primary").readConcern("majority").lean();
@@ -101,8 +102,13 @@ export class FrameworkResultService {
       manifestSha256: requestInputDigest(stored.payload.assets)};
   }
 
-  async list() {
-    const rows = await TestRunModel.find({definitionRevision: {$exists: true}})
+  async list(scope: Record<string, string> = {}) {
+    const filter: Record<string, unknown> = {};
+    for (const field of ["routineId", "platform"])
+      if (scope[field]) filter[field] = scope[field];
+    for (const field of ["repository", "headSha", "archiveSha256", "channel", "prNumber"])
+      if (scope[field]) filter[`payload.build.${field}`] = field === "prNumber" ? Number(scope[field]) : scope[field];
+    const rows = await TestRunModel.find(filter)
       .sort({startedAt: -1, runId: -1}).limit(100).read("primary").readConcern("majority").lean();
     return {runs: rows.map(row => {
       const run = frameworkRunSchema.parse(row.payload);
@@ -126,7 +132,7 @@ export class FrameworkResultService {
     if (!uploaded) throw new TestRunError(404, "Asset upload is not acknowledged");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";
-    return new TestRunService().mediaDeclaredAsset({assetId, kind, contentType: asset.mimeType,
+    return new TestAssetService().mediaDeclaredAsset({assetId, kind, contentType: asset.mimeType,
       filename: asset.path.split("/").at(-1)!, sizeBytes: asset.size, sha256: asset.sha256}, uploaded, request);
   }
 }

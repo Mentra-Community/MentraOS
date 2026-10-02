@@ -1,53 +1,21 @@
-import { Schema } from "mongoose";
-import { registerModel } from "./register-model";
+import {Schema} from "mongoose";
+import {registerModel} from "./register-model";
 
-export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
+/** Native framework results only. No legacy payload reader or migration fallback. */
 const schema = new Schema({
-  runId: { type: String, required: true, unique: true },
-  requestId: { type: String, required: true, index: true },
-  routineId: {type: String},
-  definitionRevision: {type: String},
-  platform: {type: String, enum: ["ios-on-mac", "android"]},
-  laneId: {type: String},
-  startedAt: { type: Date, required: true },
-  // Server-derived from validated payload.finishedAt. Null marks an unparseable legacy value.
-  completedAt: { type: Date },
-  completionProjectionVersion: { type: Number, enum: [1] },
-  payloadSha256: { type: String, required: true },
-  payload: { type: Schema.Types.Mixed, required: true },
-  // Server-owned upload projection; the source payload and its digest never change.
-  uploadsComplete: { type: Boolean, required: true },
-  outcome: { type: String, required: true },
-  // Canonical occurrences and the delivery outbox share the accepted metadata
-  // insert. This is not an analysis execution queue; the dev-agent owns that.
-  failureOccurrences: { type: [Schema.Types.Mixed], default: undefined },
-  // Validated recovery ancestry and references to existing occurrences, never another delivery outbox.
-  recoveryLineage: { type: Schema.Types.Mixed },
-  // Admin-reviewed provenance corrections of existing occurrences (at most one each), with
-  // their own delivery receipts. They never replace the payload, its digest or an occurrence.
-  provenanceCorrections: { type: [Schema.Types.Mixed], default: undefined },
-  // Bounded reviewed diagnostic additions; original payload, source, outcome and assets remain immutable.
-  evidenceSupplements: { type: [Schema.Types.Mixed], default: undefined },
-  // Server-resolved report for append-only worker diagnostics, separate from accepted payload.
-  diagnosticsReportId: { type: String },
-}, { collection: "test_runs", timestamps: true });
-schema.index({ startedAt: -1, runId: -1 });
-schema.index({ completionProjectionVersion: 1, completedAt: -1, runId: -1 }, { name: TEST_RUN_COMPLETION_INDEX });
-schema.index({ "payload.prNumber": 1, startedAt: -1 });
-schema.index({ "payload.channel": 1, startedAt: -1 });
-schema.index({ outcome: 1, startedAt: -1 });
+  runId: {type: String, required: true, unique: true},
+  requestId: {type: String, required: true, unique: true},
+  routineId: {type: String, required: true}, definitionRevision: {type: String, required: true},
+  platform: {type: String, required: true}, laneId: {type: String, required: true},
+  startedAt: {type: Date, required: true}, completedAt: {type: Date, required: true},
+  payloadSha256: {type: String, required: true}, payload: {type: Schema.Types.Mixed, required: true},
+  uploadsComplete: {type: Boolean, required: true}, outcome: {type: String, required: true},
+}, {collection: "test_runs", timestamps: true});
 schema.index({routineId: 1, platform: 1, definitionRevision: 1, outcome: 1, uploadsComplete: 1, startedAt: -1, runId: -1});
-schema.index({routineId: 1, startedAt: -1, runId: -1});
-// Old history remains immutable. Every newly enrolled definition has one terminal request result.
-schema.index({requestId: 1}, {unique: true, name: "test_runs_terminal_request",
-  partialFilterExpression: {definitionRevision: {$type: "string"}}});
-// runId is already unique; occurrence IDs are derived from it and validated
-// phase/step pairs. Empty arrays on passing runs need no unique multikey index.
-schema.index({ "failureOccurrences.occurrenceId": 1 }, { sparse: true });
-schema.index({ "recoveryLineage.inheritedFailures.occurrenceId": 1 }, { sparse: true });
-schema.index({ "failureOccurrences.delivery.state": 1, startedAt: 1 });
-schema.index({ "provenanceCorrections.delivery.state": 1 }, { sparse: true });
-schema.index({ "evidenceSupplements.delivery.state": 1 }, { sparse: true });
+schema.index({startedAt: -1, runId: -1});
+export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
+schema.index({completedAt: -1, runId: -1}, {name: TEST_RUN_COMPLETION_INDEX});
+export const TestRunModel = registerModel("TestRun", schema);
 
 const assetSchema = new Schema({
   runId: { type: String, required: true },
@@ -58,5 +26,4 @@ const assetSchema = new Schema({
 }, { collection: "test_assets", timestamps: true });
 assetSchema.index({ runId: 1, assetId: 1 }, { unique: true });
 
-export const TestRunModel = registerModel("TestRun", schema);
 export const TestAssetModel = registerModel("TestAsset", assetSchema);

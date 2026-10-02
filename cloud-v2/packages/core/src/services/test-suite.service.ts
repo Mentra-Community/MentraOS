@@ -4,8 +4,8 @@ import {createHash} from "node:crypto";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
 import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun} from "../types/test-suite.types";
-import {testRunIdSchema} from "../types/test-run.types";
-import {canonical, TestRunError} from "./test-run.service";
+import {TestRunError} from "./test-result-error";
+import {requestInputDigest} from "./test-request.service";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 export class TestSuiteService {
@@ -13,7 +13,7 @@ export class TestSuiteService {
     const parsed = testSuiteSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid test suite");
     const payload = parsed.data;
-    const payloadSha256 = createHash("sha256").update(canonical(payload)).digest("hex");
+    const payloadSha256 = requestInputDigest(payload);
     try { await TestSuiteModel.create([{suiteId: payload.suiteId, payload, payloadSha256}], {writeConcern}); }
     catch (error) { if ((error as {code?: number}).code !== 11000) throw error; }
     const stored = await TestSuiteModel.findOne({suiteId: payload.suiteId}).read("primary").readConcern("majority").lean();
@@ -66,7 +66,7 @@ export class TestSuiteService {
     return this.detail(suiteId);
   }
   async detail(suiteId: string) {
-    if (!testRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
+    if (!frameworkRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
     const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
     if (!row) throw new TestRunError(404, "test suite not found");
     if (row.completedResult) return row.completedResult as ReturnType<typeof summarizeSuite>;

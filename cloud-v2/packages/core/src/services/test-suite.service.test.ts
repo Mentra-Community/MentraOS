@@ -12,12 +12,12 @@ test("query overflow refuses a verdict rather than truncating duplicate evidence
 });
 test("suite creation retries preserve the frozen plan and use durable writes", async () => {
   const {testSuiteSchema} = await import("../types/test-suite.types");
-  const {canonical} = await import("./test-run.service");
+  const {requestInputDigest} = await import("./test-request.service");
   const {createHash} = await import("node:crypto");
   const payload = testSuiteSchema.parse({suiteId: "nightly-retry", channel: "dev", trigger: "nightly",
     startedAt: "2026-10-01T11:00:00Z", build: {headSha: "a".repeat(40)},
     members: [{memberId: "mac", routineId: "captions-phone", platform: "ios-on-mac"}]});
-  const row = {payload, payloadSha256: createHash("sha256").update(canonical(payload)).digest("hex")};
+  const row = {payload, payloadSha256: requestInputDigest(payload)};
   mocks.push(spyOn(TestSuiteModel, "create").mockImplementation((async (_rows: unknown, options: any) => {
     expect(options.writeConcern).toEqual({w: "majority", j: true, wtimeout: 10000});
     throw Object.assign(new Error("duplicate"), {code: 11000});

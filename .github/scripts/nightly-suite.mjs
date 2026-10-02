@@ -3,7 +3,7 @@ import {slackCall} from "./release-slack-message.mjs"
 import {DEV_FOUNDATION_NIGHTLY_ROUTINES} from "./nightly-device-routines.mjs"
 
 const suiteEndpoint = "https://core.dev.us-west-2.mentraglass.com/api/internal/test-runs/suites"
-const terminalStatuses = new Set(["passed", "failed", "blocked", "cancelled", "aborted", "interrupted", "infra-failed", "setup-failed", "incomplete"])
+const terminalStatuses = new Set(["pass", "failed", "teardown-failed", "cancelled", "aborted", "interrupted", "infra-failed", "setup-failed", "incomplete"])
 
 export function frozenNightlySuite({plan, runId, attempt, workflowSha}) {
   if (!plan.sourceRunId) return undefined
@@ -17,7 +17,7 @@ export function frozenNightlySuite({plan, runId, attempt, workflowSha}) {
     build: {headSha, ...(plan.requests[0]?.releaseIdentity ? {release: plan.requests[0].releaseIdentity} : {}),
       producerUrl: `https://github.com/Mentra-Community/MentraOS/actions/runs/${runId}`},
     members: DEV_FOUNDATION_NIGHTLY_ROUTINES.map(routineId => ({memberId: routineId, routineId,
-      platform: DEVICE_ROUTINES[routineId].platform === "ios-on-mac" ? "ios-mac" : DEVICE_ROUTINES[routineId].platform}))}
+      platform: DEVICE_ROUTINES[routineId].platform}))}
 }
 
 export async function suiteApi({token, suiteId, memberId, operation = "read", body, fetchImpl = fetch}) {
@@ -89,13 +89,13 @@ export function suiteResultMessage(suite, expectedRoutineIds) {
       throw new Error("Suite membership differs from frozen nightly plan")
     members.set(member.routineId, member)
   }
-  const failed = expectedRoutineIds.filter(routine => members.get(routine)?.status !== "passed")
+  const failed = expectedRoutineIds.filter(routine => members.get(routine)?.status !== "pass" || members.get(routine)?.publicationComplete !== true)
   const passed = failed.length === 0 && suite.outcome === "passed" && suite.passed === expectedRoutineIds.length
   if (!passed && !failed.length) throw new Error("Suite aggregate contradicts member results")
   const singleRunId = expectedRoutineIds.length === 1 ? members.get(expectedRoutineIds[0])?.runId : undefined
   if (expectedRoutineIds.length === 1 && (typeof singleRunId !== "string" || !singleRunId))
     throw new Error("Single-routine result needs its direct published run")
-  const url = singleRunId ? `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(singleRunId)}`
+  const url = singleRunId ? `https://admin.dev.mentraglass.com/?routineCatalog=1&frameworkRun=${encodeURIComponent(singleRunId)}`
     : `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(suite.suiteId)}`
   return {passed, failedRoutines: failed, url,
     text: `${passed ? "🟢" : "🔴"} Dev nightly ${singleRunId ? "routine" : "suite"}: ${passed ? "all routines passed" : `non-pass routines: ${failed.join(", ")}`}\n${url}`}

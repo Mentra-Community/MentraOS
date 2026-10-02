@@ -37,11 +37,9 @@ describe("suite verdict", () => {
 });
 
 test("suite membership and history filters share enrolled routine identity", async () => {
-  const {testRunQuerySchema} = await import("./test-run.types");
   const {routineIdentitySchema} = await import("./routine-definition.types");
   const routineId = "notes.search_v2";
   expect(routineIdentitySchema.safeParse(routineId).success).toBe(true);
-  expect(testRunQuerySchema.safeParse({routineId}).success).toBe(true);
   expect(testSuiteSchema.safeParse({...plan, members: [{...plan.members[0], routineId}]}).success).toBe(true);
 });
 

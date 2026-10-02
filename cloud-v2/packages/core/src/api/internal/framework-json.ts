@@ -1,6 +1,6 @@
 import {bodyLimit} from "hono/body-limit";
 import type {Context} from "hono";
-import {TestRunError} from "../../services/test-run.service";
+import {TestRunError} from "../../services/test-result-error";
 
 export const FRAMEWORK_JSON_BYTES = 1024 * 1024;
 export const frameworkBodyLimit = (maxSize = FRAMEWORK_JSON_BYTES) => bodyLimit({maxSize,

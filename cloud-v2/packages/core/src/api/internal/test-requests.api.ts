@@ -1,4 +1,4 @@
-import {TestRunError} from "../../services/test-run.service";
+import {TestRunError} from "../../services/test-result-error";
 import {frameworkIdentitySchema} from "../../types/framework-request.types";
 import {z} from "zod";
 import {Hono} from "hono";
