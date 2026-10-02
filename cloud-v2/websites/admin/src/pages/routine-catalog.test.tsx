@@ -43,5 +43,5 @@ test("each platform has requirements, truthful request availability and a dev re
   expect(markup).toContain("Samsung Galaxy A54");
   expect(markup).toContain("mini-samsung-a54");
   expect(markup).toContain("303000125");
-  expect(markup).toContain("310000290");
+  expect(markup).toContain("310000352");
 });
