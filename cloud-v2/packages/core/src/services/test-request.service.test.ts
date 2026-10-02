@@ -76,3 +76,15 @@ test("queue pages preserve equal-time requests and exclude other hosts", async (
   expect(second.nextCursor).toBeNull();
   await expect(service.queued("other", first.nextCursor!, 2)).rejects.toThrow("Invalid host queue cursor");
 });
+
+test("local acceptance publishes atomically without creating queued delivery", async () => {
+  const repository = store(), service = new TestRequestService(repository), input = {routine: "no-glasses"};
+  const receipt = {requestId: "local-1", hostId: "mini", inputSha256: requestInputDigest(input), acceptedAt: "2026-10-02T19:00:00Z"};
+  const first = await service.registerLocal(input, receipt, "mini");
+  expect(first.state).toBe("accepted");
+  expect((await service.queued("mini", undefined, 10)).requests).toEqual([]);
+  expect(await service.registerLocal(input, receipt, "mini")).toEqual(first);
+  await expect(service.registerLocal(input, {...receipt, acceptedAt: "2026-10-02T19:01:00Z"}, "mini")).rejects.toThrow("conflicts");
+  await expect(service.registerLocal(input, receipt, "other")).rejects.toThrow("authenticated host");
+  await expect(service.registerLocal({routine: "notes"}, receipt, "mini")).rejects.toThrow("immutable input");
+});

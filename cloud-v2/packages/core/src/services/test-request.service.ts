@@ -95,6 +95,24 @@ export class TestRequestService {
     }
   }
 
+  /** Publish a host's already committed local admission; this never dispatches work. */
+  async registerLocal(input: unknown, receipt: HostAcceptance, authenticatedHostId: string): Promise<StoredTestRequest> {
+    if (!receipt.requestId || receipt.hostId !== authenticatedHostId || !Number.isFinite(Date.parse(receipt.acceptedAt))
+      || requestInputDigest(input) !== receipt.inputSha256)
+      throw new TestRequestConflict("Local acceptance must match the authenticated host and immutable input");
+    const row: StoredTestRequest = {requestId: receipt.requestId, hostId: authenticatedHostId, input,
+      inputSha256: receipt.inputSha256, state: "accepted", hostReceipt: receipt};
+    try {await this.repository.insert(row); return row;}
+    catch (error) {
+      if ((error as {code?: number}).code !== 11000) throw error;
+      const existing = await this.repository.get(receipt.requestId);
+      if (!existing || existing.hostId !== authenticatedHostId || existing.inputSha256 !== receipt.inputSha256
+        || !existing.hostReceipt || existing.hostReceipt.acceptedAt !== receipt.acceptedAt)
+        throw new TestRequestConflict("Local request conflicts with an existing admission");
+      return existing;
+    }
+  }
+
   async accept(receipt: HostAcceptance, authenticatedHostId: string): Promise<StoredTestRequest> {
     if (receipt.hostId !== authenticatedHostId || !Number.isFinite(Date.parse(receipt.acceptedAt)))
       throw new TestRequestConflict("Acceptance must identify the authenticated host and its local commit time");
