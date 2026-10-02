@@ -25,7 +25,9 @@ function harness() {
   const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input)); state.calls.push({ url, init: init ?? {} });
     const json = (value: unknown) => Response.json(value);
-    const zip = (id: number) => zipSync({ "request.json": strToU8(JSON.stringify(state.requests.get(id))) });
+    // A published artifact is immutable. ZIP timestamps must not change
+    // between the metadata hash and download when the test crosses a second.
+    const zip = (id: number) => zipSync({ "request.json": strToU8(JSON.stringify(state.requests.get(id))) }, { mtime: new Date(stamp) });
     if (url.hostname === "safe.blob.core.windows.net") {
       expect(new Headers(init?.headers).has("authorization")).toBe(false);
       return new Response(zip(Number(url.pathname.slice(1))));
