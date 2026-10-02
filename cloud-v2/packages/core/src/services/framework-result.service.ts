@@ -1,4 +1,6 @@
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
+import {RoutineDefinitionModel} from "../models/routine-definition.model";
+import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {TestRequestModel} from "../models/test-request.model";
 import {frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
 import {requestInputDigest} from "./test-request.service";
@@ -15,6 +17,10 @@ const requestBinding = async (requestId: string): Promise<ResultRequestBinding |
   const row = await TestRequestModel.findOne({requestId, hostReceipt: {$exists: true}}).lean();
   return row ? {hostId: row.hostId, input: row.input as ResultRequestBinding["input"]} : null;
 };
+const definitionFor = async (run: FrameworkRun): Promise<RoutineEnrollment | null> =>
+  await RoutineDefinitionModel.findOne({routineId: run.routineId, platform: run.platform,
+    definitionRevision: run.definitionRevision}).lean() as RoutineEnrollment | null;
+
 const mongoRepository: FrameworkResultRepository = {
   async insert(run, payloadSha256) {
     await TestRunModel.create({runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
@@ -39,7 +45,8 @@ const projectTerminal = async (run: FrameworkRun) => {
 export class FrameworkResultService {
   constructor(private readonly repository: FrameworkResultRepository = mongoRepository,
     private readonly request: (id: string) => Promise<ResultRequestBinding | null> = requestBinding,
-    private readonly terminal: (run: FrameworkRun) => Promise<void> = projectTerminal) {}
+    private readonly terminal: (run: FrameworkRun) => Promise<void> = projectTerminal,
+    private readonly definition: (run: FrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
     if (!parsed.success) throw new FrameworkResultConflict("Invalid frozen framework result");
@@ -49,6 +56,10 @@ export class FrameworkResultService {
       || binding.input.definitionRevision !== run.definitionRevision || binding.input.platform !== run.platform
       || binding.input.laneId !== run.laneId || requestInputDigest(binding.input.build) !== requestInputDigest(run.build))
       throw new FrameworkResultConflict("Result does not match this host's accepted request");
+    const definition = await this.definition(run);
+    if (!definition || definition.definition.steps.length !== run.result.steps.length
+      || definition.definition.steps.some((step, index) => step.id !== run.result.steps[index]?.id))
+      throw new FrameworkResultConflict("Result steps do not match the complete ordered source definition");
     let created = true;
     try {await this.repository.insert(run, payloadSha256);}
     catch (error) {

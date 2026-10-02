@@ -38,7 +38,7 @@ export function RoutineCatalogCard({routine}: {routine: CatalogRow}) {
     <h3 className="mt-2 text-lg font-semibold"><a className="underline" href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
     <p className="mt-2">{routine.definition.purpose}</p>
     <p className="mt-4">{routine.example ? "Complete passing example available" : "Awaiting a complete pass for this revision"}</p>
-    <p className="mt-2 text-sm">PR label <code>routine:{routine.routineId}</code></p>
+    <p className="mt-2 text-sm">Dispatch availability will appear after controller integration.</p>
   </article>;
 }
 

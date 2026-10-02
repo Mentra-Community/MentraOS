@@ -37,3 +37,9 @@ test("contradictory steps, foreign recording and unsafe asset paths cannot be pu
   expect(frameworkRunSchema.safeParse({...good, assets: [{...asset, kind: "diagnostic"}], recordingAssetId: "capture"}).success).toBe(false);
   expect(frameworkRunSchema.safeParse({...good, result: {...good.result, finishedAt: "2026-10-02T19:03:00Z"}}).success).toBe(false);
 });
+
+test("empty steps and recorded failures cannot qualify a passing test", () => {
+  const good = run();
+  expect(frameworkRunSchema.safeParse({...good, result: {...good.result, steps: []}}).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...good, result: {...good.result, failures: [{phase: "evidence", actionId: "recording", message: "missing"}]}}).success).toBe(false);
+});

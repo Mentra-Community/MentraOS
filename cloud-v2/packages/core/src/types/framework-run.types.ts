@@ -41,7 +41,7 @@ export const frameworkRunSchema = z.object({
     || assets.get(run.recordingAssetId)?.mimeType !== "video/mp4")) problem("Recording is not a declared MP4 recording");
   if (run.result.evidence.some(assetId => !assets.has(assetId))) problem("Evidence identity is not declared");
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
-  if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.some(step => step.status !== "passed")))
+  if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || run.result.failures.length > 0 || run.result.steps.some(step => step.status !== "passed")))
     problem("Passing test contradicts setup or steps");
   if (run.result.teardown.ready && (run.result.teardown.errors.length || run.result.teardown.unavailableResources.length
     || run.result.teardown.outcomes.some(outcome => outcome.state !== "cleaned"))) problem("Ready teardown contradicts cleanup outcomes");
