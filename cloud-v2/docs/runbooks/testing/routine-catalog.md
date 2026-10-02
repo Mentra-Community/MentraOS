@@ -94,3 +94,14 @@ scene recognition. The card has no request binding until shared dispatch is
 verified; its nightly enrollment needs its own full dispatched qualification.
 Private maintenance paths are `worker/local-connected-android.ts` and
 `tools/mentra-e2e/flows/connected-glasses-program.ts`.
+
+## Gallery lifecycle
+
+The Android development example
+[`local-android-5fe92a2e-2807-4f15-8d9e-5f4faf7b3cdc`](https://admin.dev.mentraglass.com/?testRun=local-android-5fe92a2e-2807-4f15-8d9e-5f4faf7b3cdc)
+passed all eight saved actions and all lifecycle phases on October 2, 2026,
+using dev.559 on the Samsung Galaxy A54 with fixture `mini-03be`. Its recording
+was verified in hosted Admin. Publication completed with 11 assets, and local
+run payloads were disposed. This covers opening, minimizing, resuming and
+closing Gallery; it does not qualify capture or synchronization. The catalog
+has no request binding until registered dispatch is verified.
