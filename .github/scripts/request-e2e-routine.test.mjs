@@ -446,13 +446,17 @@ test("the workflow admits and selects exactly the registered routine labels; pla
   const chain = workflow.split("REQUEST_ROUTINE: ")[1]?.split("\n")[0]
   assert.ok(admission && chain)
   const labels = text => [...text.matchAll(/'routine:([a-z0-9-]+)'/g)].map(match => match[1]).sort()
-  const registered = Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id) && id !== "ota-roundtrip-android").sort()
+  const registered = Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id) && !["ota-roundtrip-android", "open-close-miniapps"].includes(id)).sort()
   assert.deepEqual(labels(admission), registered)
   // mentra-call is the chain's final default rather than a label test.
   assert.deepEqual(labels(chain), registered.filter(id => id !== "mentra-call"))
   assert.match(chain, /\|\| 'mentra-call'\) \}\}$/)
   assert.ok(["livestreamer", "connected-glasses", "account-miniapps"].every(id => registered.includes(id)))
-  // No catalogued routine is planned now, so every catalogued label is admitted and selected.
+  // Every catalogued routine is registered, but nightly-only routines have no PR-label routing.
+  for (const id of ["ota-roundtrip-android", "open-close-miniapps"]) {
+    assert.equal(labels(admission).includes(id), false)
+    assert.equal(labels(chain).includes(id), false)
+  }
   assert.deepEqual(Object.keys(DEVICE_ROUTINES).filter(id => !isRegisteredRoutine(id)), [])
 })
 
