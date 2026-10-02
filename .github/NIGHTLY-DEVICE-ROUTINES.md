@@ -8,7 +8,7 @@ on each latest verified coordinated **dev** and **staging** publication:
 | `day1-ota` | iOS on Mac | Registered; needs qualified enrolled runtime and fixture |
 | `mentra-call` | iOS on Mac | Registered; needs independent Call media/audio/network qualification |
 | `account-miniapps` | iOS on Mac | Registered in source; runs its full definition on the selected Mac build, where unobserved Safari Google provider cases fail or block by name; not qualified |
-| `connected-glasses` | Android | Registered in source; runs its full definition on the selected APK, where C8/C9 fail by name before input until their controllers exist; not qualified |
+| `connected-glasses` | Android | Shared-foundation software replay passed; new dispatched-build and acoustic qualification remain separate |
 | `livestreamer` | iOS on Mac | Registered in source (managed WebRTC **Stream here** and local RTMP); preparation refuses before any claim until its real enrollment and native/Share URL observations exist; not qualified |
 
 Planning, registration and qualification are separate steps. A planned target is
@@ -32,16 +32,19 @@ the recorded native state snapshots and an observed owned Stream here Share URL 
 the selected build. Until those exist its preparation refuses before any claim, and
 no run of it is qualified.
 
-`connected-glasses` is registered in source: `worker/connected-glasses.ts` exports
-`prepareConnectedGlassesWorker`, which authenticates dev and staging requests,
-verifies the exact selected APK and OTA manifest, and runs the full definition in one
-claimed lifecycle with claim-bound segmented recording, export and settlement. C14
-follows the observed Wi-Fi path with its protected entry omitted between owned
-recording segments. C8 and C9 have no controllers yet: their steps fail by name
-before any input, and later unvisited steps stay not-run. C3's physical report
-evidence, C8 route/reference/audio and C9 capture/sync remain unverified, so an
-attempted run is honest but not qualification. Fixture access and other runtime
-prerequisites stay the private worker's decisions.
+`connected-glasses` uses `worker/foundation-worker.ts` and the saved
+`tools/mentra-e2e/flows/connected-glasses.ts` flow. Shared setup installs the
+requested Android build and establishes its entry; the 58-step software replay
+covers pairing, battery and Bluetooth state, camera and Wi-Fi settings, photo and
+bounded-video capture/sync, decoded-byte checks, and playback routing and pause.
+Teardown restores changed settings, removes owned media and stops the app before
+publication and local disposal. No operator button press is required; private
+Wi-Fi entry occurs between recording segments.
+
+The complete local example is linked from the Admin routine catalog. It does not
+qualify a new dispatched build, measured speaker/microphone audio, scene recognition
+or physical action-button behavior. Dev nightly enrollment follows a passing shared
+dispatch qualification; registration alone does not enable it.
 
 `account-miniapps` is registered in source: `worker/account-miniapps.ts` exports
 `prepareAccountMiniappsWorker`, which authenticates dev and staging requests, verifies
