@@ -1,4 +1,4 @@
-import {routineIdentitySchema} from "./routine-definition.types";
+import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
 import {frameworkRunIdSchema} from "./framework-run.types";
 import {z} from "zod";
 import {testRunIdSchema} from "./test-run.types";
@@ -14,7 +14,7 @@ export const testSuiteSchema = z.object({
     producerUrl: z.string().url().max(2000).refine(value => /^https:\/\/github\.com\/Mentra-Community\//.test(value)).optional(),
   }).strict(),
   members: z.array(z.object({memberId: testRunIdSchema, requestId: frameworkRunIdSchema.optional(), headSha: z.string().regex(/^[a-f0-9]{40}$/).optional(), routineId: routineIdentitySchema,
-    platform: z.enum(["ios-mac", "ios", "android"]),
+    platform: routinePlatformSchema,
   }).strict()).min(1).max(100),
 }).strict().superRefine((suite, ctx) => {
   if (new Set(suite.members.map(member => member.memberId)).size !== suite.members.length
@@ -35,8 +35,8 @@ export function summarizeSuite(suite: TestSuite, runs: SuiteRun[], finishedAt?: 
     return {...member, status: run?.outcome ?? (finishedAt ? "not-run" : "waiting"),
       ...(run ? {publicationComplete: run.publicationComplete === true, runId: run.runId, startedAt: run.startedAt, finishedAt: run.finishedAt} : {})};
   });
-  const passed = members.filter(member => member.status === "passed" && member.publicationComplete).length;
-  const failed = members.filter(member => !["passed", "waiting"].includes(member.status) || member.status === "passed" && !member.publicationComplete);
+  const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
+  const failed = members.filter(member => !["pass", "waiting"].includes(member.status) || member.status === "pass" && !member.publicationComplete);
   return {...suite, ...(finishedAt ? {finishedAt} : {}), members, passed,
     outcome: !finishedAt ? "running" : passed === members.length ? "passed" : "failed",
     failedRoutines: [...new Set(failed.map(member => member.routineId))]};

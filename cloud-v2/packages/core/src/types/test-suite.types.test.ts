@@ -2,9 +2,9 @@ import {describe, expect, test} from "bun:test";
 import {summarizeSuite, testSuiteSchema, type SuiteRun} from "./test-suite.types";
 const plan = testSuiteSchema.parse({suiteId: "nightly-123", channel: "dev", trigger: "nightly",
   startedAt: "2026-10-01T11:00:00Z", build: {headSha: "a".repeat(40)},
-  members: [{memberId: "mac-captions", requestId: "req-1", routineId: "captions-phone", platform: "ios-mac"},
+  members: [{memberId: "mac-captions", requestId: "req-1", routineId: "captions-phone", platform: "ios-on-mac"},
     {memberId: "android-ota", requestId: "req-2", routineId: "ota", platform: "android"}]});
-const run = (index: number, outcome = "passed"): SuiteRun => ({...plan.members[index]!, requestId: plan.members[index]!.requestId!, runId: `run-${index}`, outcome, publicationComplete: true,
+const run = (index: number, outcome = "pass"): SuiteRun => ({...plan.members[index]!, requestId: plan.members[index]!.requestId!, runId: `run-${index}`, outcome, publicationComplete: true,
   channel: "dev", provenance: {headSha: plan.build.headSha}, startedAt: plan.startedAt, finishedAt: "2026-10-01T11:02:00Z"});
 describe("suite verdict", () => {
   test("waits for completion and all expected members before all green", () => {
@@ -20,7 +20,7 @@ describe("suite verdict", () => {
     expect(summarizeSuite(plan, [run(0), run(1, "blocked")], "2026-10-01T11:03:00Z").outcome).toBe("failed");
   });
   test("wrong build or lane and ambiguous retries cannot satisfy member", () => {
-    for (const wrong of [{...run(1), provenance: {headSha: "b".repeat(40)}}, {...run(1), platform: "ios-mac"}])
+    for (const wrong of [{...run(1), provenance: {headSha: "b".repeat(40)}}, {...run(1), platform: "ios-on-mac"}])
       expect(summarizeSuite(plan, [run(0), wrong], "2026-10-01T11:03:00Z").passed).toBe(1);
     expect(summarizeSuite(plan, [run(0), run(1), {...run(1), runId: "another"}], "2026-10-01T11:03:00Z").passed).toBe(1);
   });
@@ -47,7 +47,7 @@ test("suite membership and history filters share enrolled routine identity", asy
 
 test("missing publication fails suite completeness without rewriting a member pass", () => {
  const result = summarizeSuite(plan, [{...run(0), publicationComplete: false}, run(1)], "2026-10-01T11:03:00Z");
- expect(result.members[0]!.status).toBe("passed");
+ expect(result.members[0]!.status).toBe("pass");
  expect(result.outcome).toBe("failed");
  expect(result.failedRoutines).toEqual(["captions-phone"]);
 });

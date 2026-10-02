@@ -107,3 +107,10 @@ function FrameworkRunPage({runId}: {runId: string}) {
     </section>
   </div>;
 }
+
+export function FrameworkRunsPage() {
+ const query = useQuery({queryKey: ["framework-runs"], queryFn: () => api<{runs: {requestId: string; routineId: string; platform: string; startedAt: string; outcome: string; evidenceStatus: string; uploadsComplete: boolean}[]}>("/api/admin/routine-catalog/results"), refetchInterval: 15000});
+ if (query.isPending) return <p role="status">Loading runs…</p>;
+ if (query.error) return <p role="alert">Could not load runs: {query.error.message}</p>;
+ return <section className={PANEL}><h2 className="text-xl font-semibold">Routine runs</h2><ul className="mt-4 space-y-3">{query.data.runs.map(run => <li key={run.requestId}><a className="underline" href={frameworkRunHref(run.requestId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · upload pending"}</li>)}</ul></section>;
+}

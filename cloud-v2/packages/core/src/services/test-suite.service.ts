@@ -1,5 +1,4 @@
-import {frameworkEvidenceComplete, frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
-import {frameworkRunView} from "./framework-run-view";
+import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
 import {z} from "zod";
 import {createHash} from "node:crypto";
 import {TestSuiteModel} from "../models/test-suite.model";
@@ -60,7 +59,7 @@ export class TestSuiteService {
     const completedResult = {...suite, finishedAt,
       outcome: suite.passed === suite.members.length ? "passed" : "failed",
       members: suite.members.map(member => ({...member, status: member.status === "waiting" ? "not-run" : member.status})),
-      failedRoutines: [...new Set(suite.members.filter(member => (member.status !== "passed" || !member.publicationComplete)).map(member => member.routineId))],
+      failedRoutines: [...new Set(suite.members.filter(member => (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))],
     };
     await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}},
       {$set: {finishedAt, completedResult}}, {writeConcern});
@@ -77,9 +76,12 @@ export class TestSuiteService {
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
     const runs: SuiteRun[] = rows.map(row => {
       const framework = frameworkRunSchema.safeParse(row.payload);
-      const run = framework.success ? frameworkRunView(framework.data) : row.payload as SuiteRun;
-      return {...run, provenance: {headSha: run.provenance.headSha}, publicationComplete: row.uploadsComplete === true && (!framework.success || frameworkEvidenceComplete(framework.data)),
-        outcome: run.outcome};
+      if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
+      const run = framework.data;
+      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+        channel: run.build.channel, provenance: {headSha: run.build.headSha},
+        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
+        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
     });
     return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
   }

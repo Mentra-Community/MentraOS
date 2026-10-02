@@ -1,4 +1,3 @@
-import {frameworkRunView} from "./framework-run-view";
 import {testWriteConcern} from "../models/test-write-concern";
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
@@ -16,22 +15,22 @@ export interface FrameworkResultRepository {
 }
 export interface ResultRequestBinding {hostId: string; input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown}}
 const requestBinding = async (requestId: string): Promise<ResultRequestBinding | null> => {
-  const row = await TestRequestModel.findOne({requestId, hostReceipt: {$exists: true}}).lean();
+  const row = await TestRequestModel.findOne({requestId, hostReceipt: {$exists: true}}).read("primary").readConcern("majority").lean();
   return row ? {hostId: row.hostId, input: row.input as ResultRequestBinding["input"]} : null;
 };
 const definitionFor = async (run: FrameworkRun): Promise<RoutineEnrollment | null> =>
   await RoutineDefinitionModel.findOne({routineId: run.routineId, platform: run.platform,
-    definitionRevision: run.definitionRevision}).lean() as RoutineEnrollment | null;
+    definitionRevision: run.definitionRevision}).read("primary").readConcern("majority").lean() as RoutineEnrollment | null;
 
 const mongoRepository: FrameworkResultRepository = {
   async insert(run, payloadSha256) {
     await TestRunModel.create([{runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
       definitionRevision: run.definitionRevision, platform: run.platform, laneId: run.laneId,
       startedAt: new Date(run.startedAt), completedAt: new Date(run.finishedAt), completionProjectionVersion: 1,
-      outcome: frameworkRunView(run).outcome, payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
+      outcome: frameworkRunOutcome(run), payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
   },
   async getByRequest(requestId) {
-    const row = await TestRunModel.findOne({requestId, definitionRevision: {$exists: true}}).lean();
+    const row = await TestRunModel.findOne({requestId, definitionRevision: {$exists: true}}).read("primary").readConcern("majority").lean();
     return row ? {payload: row.payload as FrameworkRun, payloadSha256: row.payloadSha256, uploadsComplete: row.uploadsComplete} : null;
   },
 };
@@ -86,10 +85,10 @@ export class FrameworkResultService {
     const receipt = await new TestRunService().uploadDeclaredAsset(stored.payload.result.runId,
       {assetId, kind, contentType: asset.mimeType, filename: asset.path.split("/").at(-1)!, sizeBytes: asset.size, sha256: asset.sha256},
       body, headers, async () => {
-        const uploaded = await TestAssetModel.find({runId: stored.payload.result.runId}).lean();
+        const uploaded = await TestAssetModel.find({runId: stored.payload.result.runId}).read("primary").readConcern("majority").lean();
         if (stored.payload.assets.every(expected => uploaded.some(actual => actual.assetId === expected.id
           && actual.sha256 === expected.sha256 && actual.sizeBytes === expected.size)))
-          await TestRunModel.updateOne({runId: stored.payload.result.runId, payloadSha256: stored.payloadSha256}, {$set: {uploadsComplete: true, outcome: frameworkRunView(stored.payload).outcome}}, {writeConcern: testWriteConcern});
+          await TestRunModel.updateOne({runId: stored.payload.result.runId, payloadSha256: stored.payloadSha256}, {$set: {uploadsComplete: true, outcome: frameworkRunOutcome(stored.payload)}}, {writeConcern: testWriteConcern});
       });
     return {...receipt, entityId: requestId, assetId, sha256: asset.sha256, size: asset.size};
   }
@@ -102,6 +101,17 @@ export class FrameworkResultService {
       manifestSha256: requestInputDigest(stored.payload.assets)};
   }
 
+  async list() {
+    const rows = await TestRunModel.find({definitionRevision: {$exists: true}})
+      .sort({startedAt: -1, runId: -1}).limit(100).read("primary").readConcern("majority").lean();
+    return {runs: rows.map(row => {
+      const run = frameworkRunSchema.parse(row.payload);
+      return {requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
+        uploadsComplete: row.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
+    })};
+  }
+
   async detail(requestId: string) {
     const stored = await this.repository.getByRequest(requestId);
     if (!stored) throw new TestRunError(404, "Framework run was not found");
@@ -112,7 +122,7 @@ export class FrameworkResultService {
     const stored = await this.repository.getByRequest(requestId);
     const asset = stored?.payload.assets.find(item => item.id === assetId);
     if (!stored || !asset) throw new TestRunError(404, "Asset is not declared in this result");
-    const uploaded = await TestAssetModel.findOne({runId: stored.payload.result.runId, assetId}).lean();
+    const uploaded = await TestAssetModel.findOne({runId: stored.payload.result.runId, assetId}).read("primary").readConcern("majority").lean();
     if (!uploaded) throw new TestRunError(404, "Asset upload is not acknowledged");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";

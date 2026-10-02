@@ -45,7 +45,7 @@ export function requestInputDigest(input: unknown): string {
 
 const mongoRepository: TestRequestRepository = {
   async insert(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
-  async get(requestId) {return await TestRequestModel.findOne({requestId}).lean() as StoredTestRequest | null;},
+  async get(requestId) {return await TestRequestModel.findOne({requestId}).read("primary").readConcern("majority").lean() as StoredTestRequest | null;},
   async accept(receipt) {
     return await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, inputSha256: receipt.inputSha256,
       hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}},

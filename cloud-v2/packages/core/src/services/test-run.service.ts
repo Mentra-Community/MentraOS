@@ -1,5 +1,4 @@
-import {frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
-import {frameworkRunView} from "./framework-run-view";
+import {frameworkRunIdSchema} from "../types/framework-run.types";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +16,7 @@ import { ByteRangeError, parseSingleByteRange } from "./storage/byte-range";
 export class TestRunError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 413 | 416 | 503, message: string) { super(message); }
 }
-export interface StoredTestRun { frameworkResult?: boolean; run: TestRun; payloadSha256: string; failureOccurrences?: TestFailureOccurrence[];
+export interface StoredTestRun { run: TestRun; payloadSha256: string; failureOccurrences?: TestFailureOccurrence[];
   provenanceCorrections?: TestFailureProvenanceCorrection[]; recoveryLineage?: TestRecoveryLineage; diagnosticsReportId?: string;
   /** Read-only projection from accepted recovery results that inherit this exact occurrence. */
   recoveryDiagnosticsReportIds?: string[] }
@@ -64,8 +63,7 @@ export class MongoTestRunRepository implements TestRunRepository {
     return row ? this.stored(row) : null;
   }
   private stored(row: { payload: unknown; payloadSha256: string; failureOccurrences?: unknown[] | null; provenanceCorrections?: unknown[] | null; recoveryLineage?: unknown; diagnosticsReportId?: string | null }): StoredTestRun {
-    const framework = frameworkRunSchema.safeParse(row.payload);
-    return { ...(framework.success ? {frameworkResult: true} : {}), run: framework.success ? frameworkRunView(framework.data) : row.payload as TestRun, payloadSha256: row.payloadSha256,
+    return { run: row.payload as TestRun, payloadSha256: row.payloadSha256,
       failureOccurrences: (row.failureOccurrences ?? undefined) as TestFailureOccurrence[] | undefined,
       ...(row.provenanceCorrections ? { provenanceCorrections: row.provenanceCorrections as TestFailureProvenanceCorrection[] } : {}),
       ...(row.recoveryLineage ? { recoveryLineage: row.recoveryLineage as TestRecoveryLineage } : {}),
@@ -310,7 +308,7 @@ export class TestRunService {
       ...(stored.recoveryLineage ? { recoveryLineage: stored.recoveryLineage } : {}),
       // Reviewed corrections stay separate from the accepted occurrences they amend.
       ...(stored.provenanceCorrections?.length ? { provenanceCorrections: stored.provenanceCorrections } : {}),
-      outcome: !stored.frameworkResult && run.outcome === "passed" && !complete ? "blocked" as const : run.outcome,
+      outcome: run.outcome === "passed" && !complete ? "blocked" as const : run.outcome,
       outcomes: { ...run.outcomes, evidence: complete ? "complete" as const : "incomplete" as const },
       assets: run.assets.map(asset => ({ ...asset, uploaded: uploaded.has(asset.assetId) })) };
   }

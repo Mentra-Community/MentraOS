@@ -1,4 +1,4 @@
-import {TestSuitePage, readSuiteId} from "./pages/test-suites";
+import {TestSuitePage, RecentTestSuites, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -9,9 +9,7 @@ import { api, ApiError } from "./lib/api";
 import {
   readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
-import { TestRunsPage } from "./pages/test-runs";
-import { RoutineCatalogPage } from "./pages/routine-catalog";
-import { RoutineCatalogPage as CurrentRoutineCatalogPage } from "./pages/routine-catalog-current";
+import { RoutineCatalogPage, FrameworkRunsPage } from "./pages/routine-catalog";
 import { FixFlowsPage } from "./pages/fix-flows";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
 import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
@@ -468,12 +466,11 @@ function AdminPage() {
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       {page === "fix-flows" || page === "test-runs" ? <SystemHealthSummary /> : null}
       {page === "system-health" ? <SystemHealthPage /> : null}
-      {page === "routine-catalog" ? (process.env.BUN_PUBLIC_FRAMEWORK_CATALOG === "1" ? <RoutineCatalogPage /> : <CurrentRoutineCatalogPage onResult={runId => {setPage("test-runs"); selectTestRun({runID: runId});}} />) : null}
+      {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
       {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (
-        <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
-          scope={testRunListScope} onClearScope={clearTestRunListScope} />
+        <><RecentTestSuites /><FrameworkRunsPage /></>
       ) : null}
 
       {detailRelease ? (

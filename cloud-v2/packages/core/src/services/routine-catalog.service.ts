@@ -21,7 +21,7 @@ const mongoRuns: CatalogRunRepository = {
   async latestPassing(definition) {
     // Match the current source revision; an older example cannot qualify changed actions.
     const row = await TestRunModel.findOne({routineId: definition.routineId, platform: definition.platform,
-      definitionRevision: definition.definitionRevision, outcome: "passed", uploadsComplete: true,
+      definitionRevision: definition.definitionRevision, outcome: "pass", uploadsComplete: true,
       "payload.result.setup.status": "passed",
       "payload.result.test": "passed", "payload.result.failures.phase": {$ne: "evidence"}, "payload.result.teardown.ready": true,
       "payload.recordingAssetId": {$type: "string"},
