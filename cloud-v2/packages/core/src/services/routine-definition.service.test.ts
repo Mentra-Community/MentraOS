@@ -14,7 +14,7 @@ function enrollment() {
 
 test("definition enrollment refuses changed identity or digest before storage", async () => {
   let writes = 0;
-  const repository: RoutineDefinitionRepository = {async enroll() {writes++;}, async current() {return [];}};
+  const repository: RoutineDefinitionRepository = {async enroll() {writes++;}, async current() {return [];}, async getCurrent() {return null;}};
   const service = new RoutineDefinitionService(repository);
   const row = enrollment();
   await expect(service.enroll({...row, routineId: "notes"})).rejects.toThrow("Invalid");

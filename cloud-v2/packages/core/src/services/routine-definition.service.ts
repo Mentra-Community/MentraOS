@@ -6,6 +6,7 @@ export class RoutineDefinitionConflict extends Error {}
 export interface RoutineDefinitionRepository {
   enroll(row: RoutineEnrollment): Promise<void>;
   current(): Promise<RoutineEnrollment[]>;
+  getCurrent(routineId: string, platform: string): Promise<RoutineEnrollment | null>;
 }
 const mongoRepository: RoutineDefinitionRepository = {
   async enroll(row) {
@@ -26,6 +27,11 @@ const mongoRepository: RoutineDefinitionRepository = {
       .select({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1, definition: 1, _id: 0})
       .lean() as RoutineEnrollment[];
   },
+  async getCurrent(routineId, platform) {
+    return await RoutineDefinitionModel.findOne({routineId, platform, isCurrent: true})
+      .select({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1, definition: 1, _id: 0})
+      .lean() as RoutineEnrollment | null;
+  },
 };
 export class RoutineDefinitionService {
   constructor(private readonly repository: RoutineDefinitionRepository = mongoRepository) {}
@@ -39,4 +45,5 @@ export class RoutineDefinitionService {
     return row;
   }
   current() {return this.repository.current();}
+  getCurrent(routineId: string, platform: string) {return this.repository.getCurrent(routineId, platform);}
 }
