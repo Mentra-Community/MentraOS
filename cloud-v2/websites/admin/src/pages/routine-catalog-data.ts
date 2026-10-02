@@ -131,7 +131,9 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     cleanup: "Stop transcription, remove the owned day, conversation and new note, and verify existing data is unchanged. Restore microphone and host audio settings; stop the managed app.",
     exclusions: "Manual note generation as a substitute for automatic creation, physical glasses, Android, physical iPhone behavior and measured acoustic quality.",
     passingRun: {
-      ...macBuild, id: "routine-36957914136-1-dev-notes-phone",
+      id: "local-ios-on-mac-d5891059-4483-44c2-aac5-77b34441e95b", recordedOn: "2026-10-02",
+      release: "3.3.0-dev.559", appVersion: "3.3.0", appBuild: "303000128",
+      appSha: "f85d8361b59a7592775bb44582d64b8d82dc8689", fixture: "mini-ui-unpaired", device: "Mac",
     },
   },
 ];
