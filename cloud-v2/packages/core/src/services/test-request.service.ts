@@ -17,11 +17,13 @@ export interface StoredTestRequest {
   hostReceipt?: HostAcceptance;
   runId?: string;
   terminalStatus?: string;
+  createdAt?: Date;
 }
 export interface TestRequestRepository {
   insert(request: StoredTestRequest): Promise<void>;
   get(requestId: string): Promise<StoredTestRequest | null>;
   accept(receipt: HostAcceptance): Promise<StoredTestRequest | null>;
+  queued(hostId: string, after: {createdAt: Date; requestId: string} | null, limit: number): Promise<StoredTestRequest[]>;
 }
 export class TestRequestConflict extends Error {}
 
@@ -46,10 +48,37 @@ const mongoRepository: TestRequestRepository = {
       hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}},
     {$set: {state: "accepted", hostReceipt: receipt}}, {new: true}).lean() as StoredTestRequest | null;
   },
+  async queued(hostId, after, limit) {
+    const filter = {hostId, state: "queued", ...(after ? {$or: [
+      {createdAt: {$gt: after.createdAt}},
+      {createdAt: after.createdAt, requestId: {$gt: after.requestId}},
+    ]} : {})};
+    return await TestRequestModel.find(filter).sort({createdAt: 1, requestId: 1}).limit(limit).lean() as StoredTestRequest[];
+  },
 };
 
 export class TestRequestService {
   constructor(private readonly repository: TestRequestRepository = mongoRepository) {}
+
+  async queued(hostId: string, cursor: string | undefined, limit: number) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw new TestRequestConflict("Page limit must be between 1 and 100");
+    let after: {createdAt: Date; requestId: string} | null = null;
+    if (cursor) {
+      try {
+        const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+        if (parsed.hostId !== hostId || typeof parsed.requestId !== "string" || !parsed.requestId
+          || !Number.isFinite(Date.parse(parsed.createdAt))) throw new Error("invalid");
+        after = {createdAt: new Date(parsed.createdAt), requestId: parsed.requestId};
+      } catch {throw new TestRequestConflict("Invalid host queue cursor");}
+    }
+    const found = await this.repository.queued(hostId, after, limit + 1);
+    const requests = found.slice(0, limit);
+    const last = requests.at(-1);
+    const nextCursor = found.length > limit && last ? Buffer.from(JSON.stringify({hostId,
+      createdAt: last.createdAt, requestId: last.requestId})).toString("base64url") : null;
+    return {requests, nextCursor};
+  }
 
   async submit(requestId: string, hostId: string, input: unknown): Promise<StoredTestRequest> {
     if (!requestId || !hostId) throw new TestRequestConflict("Request and assigned host identities are required");

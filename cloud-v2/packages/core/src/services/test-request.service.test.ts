@@ -4,6 +4,12 @@ import {requestInputDigest, TestRequestService, type HostAcceptance, type Stored
 function store(): TestRequestRepository {
   const rows = new Map<string, StoredTestRequest>();
   return {
+    async queued(hostId, after, limit) {
+      return [...rows.values()].filter(row => row.hostId === hostId && row.state === "queued")
+        .sort((a, b) => a.requestId.localeCompare(b.requestId))
+        .filter(row => !after || row.requestId > after.requestId).slice(0, limit)
+        .map(row => ({...structuredClone(row), createdAt: new Date("2026-10-02T19:00:00Z")}));
+    },
     async insert(row) {
       if (rows.has(row.requestId)) throw Object.assign(new Error("duplicate"), {code: 11000});
       rows.set(row.requestId, structuredClone(row));
@@ -51,4 +57,16 @@ test("concurrent accepts converge on one original receipt", async () => {
 test("hash refuses non-JSON values instead of conflating inputs", () => {
   for (const input of [{x: undefined}, {x: Infinity}, new Date(), {x: () => 1}])
     expect(() => requestInputDigest(input)).toThrow("finite JSON");
+});
+
+test("queue pages preserve equal-time requests and exclude other hosts", async () => {
+  const service = new TestRequestService(store());
+  for (const id of ["a", "b", "c"]) await service.submit(id, "mini", {routine: "notes"});
+  await service.submit("d", "other", {routine: "notes"});
+  const first = await service.queued("mini", undefined, 2);
+  expect(first.requests.map(row => row.requestId)).toEqual(["a", "b"]);
+  const second = await service.queued("mini", first.nextCursor!, 2);
+  expect(second.requests.map(row => row.requestId)).toEqual(["c"]);
+  expect(second.nextCursor).toBeNull();
+  await expect(service.queued("other", first.nextCursor!, 2)).rejects.toThrow("Invalid host queue cursor");
 });
