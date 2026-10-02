@@ -1,0 +1,15 @@
+import {Schema} from "mongoose";
+import {registerModel} from "./register-model";
+
+/** Definitions are enrolled from source; passing examples come from test_runs. */
+const schema = new Schema({
+  routineId: {type: String, required: true, immutable: true},
+  platform: {type: String, required: true, enum: ["ios-on-mac", "android"], immutable: true},
+  definitionRevision: {type: String, required: true, immutable: true},
+  definitionSha256: {type: String, required: true, immutable: true},
+  definition: {type: Schema.Types.Mixed, required: true, immutable: true},
+  isCurrent: {type: Boolean, required: true, default: false},
+}, {collection: "routine_definitions", timestamps: true});
+schema.index({routineId: 1, platform: 1, definitionRevision: 1}, {unique: true});
+schema.index({routineId: 1, platform: 1}, {unique: true, partialFilterExpression: {isCurrent: true}});
+export const RoutineDefinitionModel = registerModel("RoutineDefinition", schema);
