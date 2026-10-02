@@ -1,3 +1,5 @@
+import {frameworkRunSchema} from "../types/framework-run.types";
+import {frameworkRunView} from "./framework-run-view";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -62,7 +64,8 @@ export class MongoTestRunRepository implements TestRunRepository {
     return row ? this.stored(row) : null;
   }
   private stored(row: { payload: unknown; payloadSha256: string; failureOccurrences?: unknown[] | null; provenanceCorrections?: unknown[] | null; recoveryLineage?: unknown; diagnosticsReportId?: string | null }): StoredTestRun {
-    return { run: row.payload as TestRun, payloadSha256: row.payloadSha256,
+    const framework = frameworkRunSchema.safeParse(row.payload);
+    return { run: framework.success ? frameworkRunView(framework.data) : row.payload as TestRun, payloadSha256: row.payloadSha256,
       failureOccurrences: (row.failureOccurrences ?? undefined) as TestFailureOccurrence[] | undefined,
       ...(row.provenanceCorrections ? { provenanceCorrections: row.provenanceCorrections as TestFailureProvenanceCorrection[] } : {}),
       ...(row.recoveryLineage ? { recoveryLineage: row.recoveryLineage as TestRecoveryLineage } : {}),
@@ -277,7 +280,7 @@ export class TestRunService {
   }
 
   private async required(runId: string) {
-    if (!testRunIdSchema.safeParse(runId).success) throw new TestRunError(400, "invalid runId");
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/.test(runId)) throw new TestRunError(400, "invalid runId");
     const stored = await this.repository.get(runId);
     if (!stored) throw new TestRunError(404, "test run not found");
     return stored.run;

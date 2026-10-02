@@ -1,5 +1,6 @@
+import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
-import {expect, test} from "bun:test";
+import {expect, spyOn, test} from "bun:test";
 import {RoutineDefinitionService, type RoutineDefinitionRepository} from "./routine-definition.service";
 import {requestInputDigest} from "./test-request.service";
 
@@ -25,4 +26,19 @@ test("definition enrollment refuses changed identity or digest before storage", 
   expect(writes).toBe(0);
   expect(await service.enroll(row)).toEqual(row);
   expect(writes).toBe(1);
+});
+
+
+test("standalone Mongo enrollment uses one immutable insert and reconciles duplicate revisions", async () => {
+  const row = enrollment();
+  const insert = spyOn(RoutineDefinitionModel, "create").mockRejectedValue(Object.assign(new Error("duplicate"), {code: 11000}));
+  const find = spyOn(RoutineDefinitionModel, "findOne").mockReturnValue({lean: async () => row} as unknown as ReturnType<typeof RoutineDefinitionModel.findOne>);
+  const transaction = spyOn(RoutineDefinitionModel.db, "transaction");
+  try {
+    expect(await new RoutineDefinitionService().enroll(row)).toEqual(row);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(insert).toHaveBeenCalledWith(row);
+    find.mockReturnValue({lean: async () => ({...row, definitionSha256: "b".repeat(64)})} as unknown as ReturnType<typeof RoutineDefinitionModel.findOne>);
+    await expect(new RoutineDefinitionService().enroll(row)).rejects.toThrow("different contents");
+  } finally {insert.mockRestore(); find.mockRestore(); transaction.mockRestore();}
 });

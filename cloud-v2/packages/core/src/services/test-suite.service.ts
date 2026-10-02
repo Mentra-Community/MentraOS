@@ -1,3 +1,5 @@
+import {frameworkRunSchema} from "../types/framework-run.types";
+import {frameworkRunView} from "./framework-run-view";
 import {z} from "zod";
 import {createHash} from "node:crypto";
 import {TestSuiteModel} from "../models/test-suite.model";
@@ -73,8 +75,12 @@ export class TestSuiteService {
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
       .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
-    const runs = rows.map(row => ({...(row.payload as SuiteRun), publicationComplete: row.uploadsComplete === true,
-      outcome: row.outcome === "passed" && !row.uploadsComplete ? "blocked" : row.outcome}));
+    const runs: SuiteRun[] = rows.map(row => {
+      const framework = frameworkRunSchema.safeParse(row.payload);
+      const run = framework.success ? frameworkRunView(framework.data) : row.payload as SuiteRun;
+      return {...run, provenance: {headSha: run.provenance.headSha}, publicationComplete: row.uploadsComplete === true,
+        outcome: run.outcome === "passed" && !row.uploadsComplete ? "blocked" : run.outcome};
+    });
     return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
   }
   async labels(requestIds: string[]) {
