@@ -80,10 +80,12 @@ The contract for every routine is:
    host/input readiness; it must not require the app already running or signed in.
 2. **Test:** perform named actions and check their observable results. The test
    may finish on any page. A successful click alone does not prove the outcome.
-3. **Teardown:** settle recording, clean owned data and resources, leave the app
-   stopped, and restore the requested firmware target if the routine changed it.
-   Verify cleanup from any ending page, including failure. The next run establishes
-   its own inputs; do not carry forward app backups or arbitrary prior state.
+3. **Teardown:** settle recording, clean owned data and resources, and leave the app
+   stopped. Cleanup works from any ending page or a stopped app. Do not start a
+   firmware installation or require a firmware version reply to release resources;
+   protect an installation that is still writing. Report software mismatches as
+   test results. The next setup establishes its requested software and inputs;
+   do not carry forward app backups or arbitrary prior state.
 4. **Publish and dispose:** use existing result/incident attachment paths to upload
    diagnostics and evidence, then dispose of owned run payloads, downloads and
    temporary copies. Preserve the failed verdict even when cleanup succeeds.
