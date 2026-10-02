@@ -31,7 +31,7 @@ function fixture() {
   const state = {requestRuns: new Map(), requestArtifacts: new Map(), run: structuredClone(current), history: [structuredClone(current)],
     candidates: {dev: [dev.state.run], staging: [staging.state.run]},
     jobs: new Map([[100, [publicationJob(1001)]], [200, [publicationJob(2001)]], [5000, [sendJob(50001)]]]),
-    historyResponse: null, jobsResponse: null, dispatchResponse: {status: 200, data: {workflow_run_id: 9000,
+    coordinatedHistoryResponse: null, historyResponse: null, jobsResponse: null, dispatchResponse: {status: 200, data: {workflow_run_id: 9000,
       html_url: `https://github.com/${repository}/actions/runs/9000`, run_url: `https://api.github.com/repos/${repository}/actions/runs/9000`}},
     dispatchError: false, calls: []}
   const listWorkflowRunArtifacts = () => {}
@@ -45,7 +45,8 @@ function fixture() {
     listWorkflowRuns: async input => {
       state.calls.push(["history", input])
       if (input.workflow_id === COORDINATED_WORKFLOW)
-        return {data: {workflow_runs: state.candidates[input.branch]}}
+        return {data: state.coordinatedHistoryResponse ? state.coordinatedHistoryResponse(input)
+          : {workflow_runs: state.candidates[input.branch]}}
       return {data: state.historyResponse ? state.historyResponse(input) : {total_count: state.history.length, workflow_runs: state.history}}
     },
     listJobsForWorkflowRun: async input => {
@@ -228,6 +229,51 @@ test("stale or future history responses never fall through to an out-of-window d
     assert.equal(selected.unavailable.length, 7)
     assert.deepEqual(selected.history[0].returned, [{runId: 100, createdAt}])
     assert.equal(f.state.calls.some(([kind]) => kind === "attempt"), false)
+  }
+})
+
+test("a stale success page is refreshed before any publication admission or request selection", async () => {
+  const f = fixture()
+  const stale = {...f.dev.state.run, id: 99, created_at: "2026-09-08T00:00:00Z"}
+  f.state.coordinatedHistoryResponse = input => ({total_count: input.per_page === 20 ? 14 : 127,
+    workflow_runs: input.status === "success" && input.per_page === 20 ? [stale] : [f.dev.state.run]})
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 7)
+  assert.ok(selected.requests.every(row => row.sourceRunId === f.dev.state.run.id))
+  const reads = f.state.calls.filter(([kind, input]) => kind === "history" && input.workflow_id === COORDINATED_WORKFLOW)
+  assert.deepEqual(reads.map(([, input]) => [input.status, input.per_page]),
+    [["success", 20], ["completed", 100], ["success", 100], ["completed", 100]])
+  assert.ok(reads.every(([, input]) => input.created === "2026-08-24T11:17:00.000Z..2026-09-23T11:17:00Z" &&
+    input.headers["cache-control"] === "no-cache"))
+  assert.equal(f.state.calls.some(([kind, input]) => kind === "attempt" && input.run_id === stale.id), false)
+  assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
+  assert.equal(selected.history.length, 4)
+})
+
+test("persistently inconsistent newest history refuses every target after one refresh", async () => {
+  for (const overrides of [{id: 99, created_at: "2026-09-08T00:00:00Z"}, {run_attempt: 3}, {head_sha: "c".repeat(40)}]) {
+    const f = fixture()
+    f.state.coordinatedHistoryResponse = input => ({workflow_runs: input.status === "success"
+      ? [{...f.dev.state.run, ...overrides}] : [f.dev.state.run]})
+    const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+    assert.equal(selected.requests.length, 0)
+    assert.equal(selected.unavailable.length, 7)
+    assert.match(selected.history.at(-1).error, /freshness could not be reconciled/)
+    assert.equal(f.state.calls.filter(([kind]) => kind === "history").length, 4)
+    assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
+  }
+})
+
+test("a completed-history witness must contain an eligible success, not a running or future build", async () => {
+  for (const overrides of [{status: "in_progress", conclusion: null}, {created_at: "2026-09-23T11:17:01Z"},
+    {head_branch: "staging"}]) {
+    const f = fixture()
+    f.state.coordinatedHistoryResponse = input => ({workflow_runs: input.status === "completed"
+      ? [{...f.dev.state.run, ...overrides}] : [f.dev.state.run]})
+    const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+    assert.equal(selected.requests.length, 0)
+    assert.equal(selected.unavailable.length, 7)
+    assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
   }
 })
 // TEST MODEL of the former planned state: the production catalog with a synthetic `pending` reason on the three combined
