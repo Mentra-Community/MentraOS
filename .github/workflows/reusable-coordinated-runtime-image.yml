@@ -304,6 +304,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mentra-private-cloud-${{ steps.coordinates.outputs.release_identity }}
+          overwrite: true
           path: |
             mentra-private-cloud.tar.gz
             mentra-private-cloud.tar.gz.sha256

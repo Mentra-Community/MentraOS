@@ -91,6 +91,19 @@ elif url.endswith('.zip'): Path(a[a.index('--output')+1]).write_bytes((p/'bundle
         self.env['MENTRA_REQUIRE_CALL'] = 'true'
         self.smoke(True)
 
+    def test_zip_verification_bounds_actual_expansion(self):
+        import hashlib
+        source = (ROOT / 'scripts/smoke-test.sh').read_text()
+        verifier = source.split("<<'PYVERIFY'\n", 1)[1].split('\nPYVERIFY', 1)[0]
+        bundle = self.path / 'large.zip'
+        with zipfile.ZipFile(bundle, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('too-large', bytes(33 * 1024 * 1024))
+        result = subprocess.run(['python3', '-c', verifier, str(bundle),
+                                 hashlib.sha256(bundle.read_bytes()).hexdigest()],
+                                env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('expansion limit', result.stderr)
+
     def test_tenant_guard_accepts_uuid_casing_before_directory_writes(self):
         source = (ROOT / 'scripts/configure-entra.sh').read_text()
         guard = source[source.index('TENANT_ID='):source.index('find_or_create_app()')]

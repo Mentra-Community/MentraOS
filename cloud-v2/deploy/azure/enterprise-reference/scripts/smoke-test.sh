@@ -64,15 +64,31 @@ while IFS=$'\t' read -r package version url expected; do
     printf 'Managed miniapp must use the pinned workspace bundle and SHA-256.\n' >&2
     exit 1
   }
-  request --fail --show-error --silent --output "$BUNDLE_DIR/bundle.zip" "$url"
+  request --fail --show-error --silent --max-filesize 67108864 --output "$BUNDLE_DIR/bundle.zip" "$url"
   python3 - "$BUNDLE_DIR/bundle.zip" "$expected" <<'PYVERIFY'
 import hashlib, sys, zipfile
+from pathlib import Path
 path, expected = sys.argv[1:]
-if hashlib.sha256(open(path, 'rb').read()).hexdigest() != expected.lower():
+if Path(path).stat().st_size > 64 * 1024 * 1024:
+    sys.exit('Managed miniapp ZIP exceeds download limit')
+if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected.lower():
     sys.exit('Managed miniapp ZIP checksum mismatch')
 with zipfile.ZipFile(path) as archive:
-    if archive.testzip() is not None:
-        sys.exit('Managed miniapp ZIP is corrupt')
+    entries = archive.infolist()
+    if len(entries) > 4096:
+        sys.exit('Managed miniapp ZIP contains too many files')
+    total = 0
+    for entry in entries:
+        expanded = 0
+        with archive.open(entry) as stream:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    break
+                expanded += len(chunk)
+                total += len(chunk)
+                if expanded > 32 * 1024 * 1024 or total > 64 * 1024 * 1024:
+                    sys.exit('Managed miniapp ZIP exceeds expansion limit')
 PYVERIFY
 done < <(jq -r '.miniapps.managed[] | [.packageName,.version,.bundleUrl,.sha256] | @tsv' <<<"$manifest")
 
