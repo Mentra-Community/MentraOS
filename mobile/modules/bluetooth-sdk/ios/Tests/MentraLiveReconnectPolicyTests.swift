@@ -40,4 +40,19 @@ final class MentraLiveReconnectPolicyTests: XCTestCase {
         XCTAssertFalse(decide(peripheralName: nil))
         XCTAssertFalse(decide(peripheralName: "", savedDeviceName: ""))
     }
+
+    func testFailureThenFallbackLeavesTheStaleSettleTimerPowerless() {
+        var pending = MentraLivePendingReconnect()
+        let first = pending.arm()
+        XCTAssertTrue(pending.owns(first))
+
+        // didFailToConnect or a fallback connectToDevice clears tracking.
+        pending.clear()
+        XCTAssertFalse(pending.owns(first))
+
+        // A later re-arm does not revive the earlier attempt's timer.
+        let second = pending.arm()
+        XCTAssertFalse(pending.owns(first))
+        XCTAssertTrue(pending.owns(second))
+    }
 }

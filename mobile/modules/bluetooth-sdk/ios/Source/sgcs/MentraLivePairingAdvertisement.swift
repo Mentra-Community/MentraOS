@@ -87,3 +87,25 @@ enum MentraLiveConnectionAttemptPolicy {
         return peripheralName == savedDeviceName
     }
 }
+
+/// Ownership of the one armed pending reconnect. Each arm returns a new attempt number, so a
+/// timer captured for an earlier attempt can tell it no longer owns the connection state after
+/// a failure, a fallback connect or a re-arm.
+struct MentraLivePendingReconnect {
+    private(set) var attempt = 0
+    private(set) var isArmed = false
+
+    mutating func arm() -> Int {
+        attempt += 1
+        isArmed = true
+        return attempt
+    }
+
+    mutating func clear() {
+        isArmed = false
+    }
+
+    func owns(_ candidate: Int) -> Bool {
+        isArmed && candidate == attempt
+    }
+}

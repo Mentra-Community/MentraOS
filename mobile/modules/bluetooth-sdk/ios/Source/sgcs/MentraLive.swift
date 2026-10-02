@@ -917,6 +917,7 @@ extension MentraLive: CBCentralManagerDelegate {
                 return
             }
             self.connectingPeripheral = nil
+            self.clearPendingReconnectTracking()
             Bridge.log("LIVE: Disconnected from GATT server")
 
             self.isConnecting = false
@@ -968,6 +969,7 @@ extension MentraLive: CBCentralManagerDelegate {
             Bridge.log("LIVE: Failed to connect to peripheral: \(errorDescription)")
 
             self.stopConnectionTimeout()
+            self.clearPendingReconnectTracking()
             self.isConnecting = false
             self.closeL2capFileChannel()
             self.connectedPeripheral = nil
@@ -1650,6 +1652,7 @@ class MentraLive: NSObject, SGCManager {
     private var connectionTimeoutTimer: Timer?
     /// Peripheral of an armed pending reconnect (see `reconnectDirectly`).
     private var pendingReconnectPeripheral: CBPeripheral?
+    private var pendingReconnect = MentraLivePendingReconnect()
     private var pendingReconnectSettleWorkItem: DispatchWorkItem?
     private var reconnectionWorkItem: DispatchWorkItem?
     private var requiresAncs = true
@@ -2365,6 +2368,14 @@ class MentraLive: NSObject, SGCManager {
         }
         Bridge.log("LIVE: Connecting to device: \(peripheral.identifier.uuidString)")
 
+        // A timed attempt supersedes any pending reconnect: withdraw one aimed at other
+        // glasses, and drop tracking for this one so its settle timer cannot touch this attempt.
+        if let pending = pendingReconnectPeripheral, pending !== peripheral {
+            cancelPendingReconnect(reason: "superseded")
+        } else {
+            clearPendingReconnectTracking()
+        }
+
         isConnecting = true
         updateConnectionState(ConnTypes.CONNECTING)
         connectingPeripheral = peripheral
@@ -2403,7 +2414,7 @@ class MentraLive: NSObject, SGCManager {
         connectedPeripheral = peripheral
         pendingReconnectPeripheral = peripheral
         issueConnect(peripheral)
-        schedulePendingReconnectSettle(for: peripheral)
+        schedulePendingReconnectSettle(attempt: pendingReconnect.arm())
         return true
     }
 
@@ -2428,10 +2439,12 @@ class MentraLive: NSObject, SGCManager {
     /// dead, left behind). After the old scan backoff's span, report DISCONNECTED like that
     /// backoff did, but keep the request armed: iOS still completes it whenever the glasses
     /// advertise, and `didConnect` accepts it through `connectingPeripheral`.
-    private func schedulePendingReconnectSettle(for peripheral: CBPeripheral) {
+    private func schedulePendingReconnectSettle(attempt: Int) {
         pendingReconnectSettleWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.pendingReconnectPeripheral === peripheral,
+            // Only the attempt that armed this timer may settle state; a failure, fallback
+            // connect or re-arm clears or replaces it.
+            guard let self, self.pendingReconnect.owns(attempt),
                   self.connectionState != ConnTypes.CONNECTED
             else { return }
             Bridge.log("LIVE: Glasses still unreachable; reporting disconnected, pending reconnect stays armed")
@@ -2451,6 +2464,7 @@ class MentraLive: NSObject, SGCManager {
     private func clearPendingReconnectTracking() {
         pendingReconnectSettleWorkItem?.cancel()
         pendingReconnectSettleWorkItem = nil
+        pendingReconnect.clear()
         pendingReconnectPeripheral = nil
     }
 
