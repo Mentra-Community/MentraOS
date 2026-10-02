@@ -5,6 +5,10 @@ export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
 const schema = new Schema({
   runId: { type: String, required: true, unique: true },
   requestId: { type: String, required: true, index: true },
+  routineId: {type: String},
+  definitionRevision: {type: String},
+  platform: {type: String, enum: ["ios-on-mac", "android"]},
+  laneId: {type: String},
   startedAt: { type: Date, required: true },
   // Server-derived from validated payload.finishedAt. Null marks an unparseable legacy value.
   completedAt: { type: Date },
@@ -32,6 +36,8 @@ schema.index({ completionProjectionVersion: 1, completedAt: -1, runId: -1 }, { n
 schema.index({ "payload.prNumber": 1, startedAt: -1 });
 schema.index({ "payload.channel": 1, startedAt: -1 });
 schema.index({ outcome: 1, startedAt: -1 });
+schema.index({routineId: 1, platform: 1, definitionRevision: 1, outcome: 1, uploadsComplete: 1, startedAt: -1, runId: -1});
+schema.index({routineId: 1, startedAt: -1, runId: -1});
 // runId is already unique; occurrence IDs are derived from it and validated
 // phase/step pairs. Empty arrays on passing runs need no unique multikey index.
 schema.index({ "failureOccurrences.occurrenceId": 1 }, { sparse: true });
