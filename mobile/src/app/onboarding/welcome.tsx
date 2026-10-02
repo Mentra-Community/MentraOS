@@ -49,7 +49,7 @@ const CardButton = ({
 }
 
 export default function OnboardingWelcome() {
-  const {push} = useNavigationStore.getState()
+  const {goHomeAndPush, push} = useNavigationStore.getState()
   const [_onboarding, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const simulatedGlassesAllowed = isGlassesModelAllowedByDeployment(DeviceTypes.SIMULATED)
 
@@ -58,7 +58,7 @@ export default function OnboardingWelcome() {
     // TODO: Track analytics event - user has glasses
     // analytics.track('onboarding_has_glasses_selected')
     setOnboardingCompleted(true)
-    push("/pairing/select-glasses-model", {onboarding: true})
+    goHomeAndPush("/pairing/select-glasses-model", {onboarding: true})
   }
 
   // User doesn't have glasses yet - go directly to simulated glasses
