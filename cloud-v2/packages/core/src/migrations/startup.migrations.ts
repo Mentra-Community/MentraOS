@@ -20,7 +20,6 @@ import { TestRunClaimModel } from "../models/test-run-claim.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestRepairModel } from "../models/test-repair.model";
 import { TestResourceObservationModel } from "../models/test-resource-observation.model";
-import { backfillTestRunCompletionDates } from "./test-run-completion.migration";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
@@ -60,7 +59,6 @@ export async function runStartupMigrations(): Promise<void> {
   await RoutineDefinitionModel.createIndexes();
   await TestRunModel.createIndexes();
   await TestSuiteModel.createIndexes();
-  logger.info({ migration: "test-run-completed-at", ...await backfillTestRunCompletionDates() }, "test-run completion projection ready");
   await TestAssetModel.createIndexes();
   // No device execution grant is safe until request IDs are unique across all Core instances.
   await TestRunClaimModel.createIndexes();
