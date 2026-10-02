@@ -22,6 +22,11 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
   expect(first.created).toBe(true);
   expect(duplicate).toEqual({...first, created: false});
+  expect(await service.complete("r1", "mini")).toEqual({entityId: first.entityId,
+    payloadSha256: first.payloadSha256, manifestSha256: (await import("./test-request.service")).requestInputDigest([])});
+  await expect(service.complete("r1", "other")).rejects.toThrow("not acknowledged");
+  stored!.uploadsComplete = false;
+  await expect(service.complete("r1", "mini")).rejects.toThrow("not acknowledged");
   await expect(service.ingest({...run, finishedAt: "2026-10-02T19:02:00Z"}, "mini")).rejects.toThrow("different terminal result");
   await expect(service.ingest(run, "other")).rejects.toThrow("accepted request");
   await expect(service.ingest({...run, build: {different: true}}, "mini")).rejects.toThrow("accepted request");
