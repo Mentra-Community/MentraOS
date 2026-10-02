@@ -306,9 +306,13 @@ public final class MentraBluetoothSDK {
         BluetoothBackgroundMode.isDeclared(in: Bundle.main.infoDictionary)
     }
 
+    private static var didWarnMissingBackgroundMode = false
+
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
-        if !Self.supportsBackgroundReconnect {
+        // Once per process: apps may create the SDK more than once.
+        if !Self.didWarnMissingBackgroundMode, !Self.supportsBackgroundReconnect {
+            Self.didWarnMissingBackgroundMode = true
             Bridge.log(BluetoothBackgroundMode.missingWarning)
         }
         analytics = BluetoothSdkAnalytics(configuration: configuration.analytics)

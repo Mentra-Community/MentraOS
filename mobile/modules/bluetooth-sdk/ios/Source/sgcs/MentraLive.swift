@@ -862,6 +862,7 @@ extension MentraLive: CBCentralManagerDelegate {
             Bridge.log("Connected to GATT server, discovering services...")
 
             self.stopConnectionTimeout()
+            self.clearPendingReconnectTracking()
             self.isConnecting = false
             self.connectingPeripheral = nil
             self.connectedPeripheral = peripheral
@@ -1647,6 +1648,9 @@ class MentraLive: NSObject, SGCManager {
     private static let glassesMediaVolumeTimeoutSec: TimeInterval = 2.0
 
     private var connectionTimeoutTimer: Timer?
+    /// Peripheral of an armed pending reconnect (see `reconnectDirectly`).
+    private var pendingReconnectPeripheral: CBPeripheral?
+    private var pendingReconnectSettleWorkItem: DispatchWorkItem?
     private var reconnectionWorkItem: DispatchWorkItem?
     private var requiresAncs = true
 
@@ -1714,6 +1718,7 @@ class MentraLive: NSObject, SGCManager {
 
             // clear the saved device name:
             UserDefaults.standard.set("", forKey: PREFS_DEVICE_NAME)
+            cancelPendingReconnect(reason: "discovery")
 
             manualDiscoveryActive = true
             startScan()
@@ -1726,6 +1731,7 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func enterPairingYield(windowMs: Int) {
+        cancelPendingReconnect(reason: "pairing_yield")
         pairingYieldActive = true
         pairingYieldAwaitingReclaim = false
         pairingYieldEndWorkItem?.cancel()
@@ -1806,6 +1812,7 @@ class MentraLive: NSObject, SGCManager {
             return
         }
         Bridge.log("connectById: \(deviceName)")
+        cancelPendingReconnect(reason: "connect_by_id")
         // Save the device name for future reconnection
         UserDefaults.standard.set(deviceName, forKey: PREFS_DEVICE_NAME)
 
@@ -2362,30 +2369,19 @@ class MentraLive: NSObject, SGCManager {
         updateConnectionState(ConnTypes.CONNECTING)
         connectingPeripheral = peripheral
         connectedPeripheral = peripheral
-        peripheral.delegate = self
 
         // Set connection timeout
         startConnectionTimeout()
 
-        #if os(macOS)
-            centralManager?.connect(peripheral, options: nil)
-        #else
-            // ANCS is hosted by iOS and is only exposed to authorized accessories.
-            // The default requirement lets the system complete that authorization flow
-            // before the glasses subscribe; apps that do not relay notifications can opt out.
-            Bridge.log("LIVE: ANCS connection requirement \(requiresAncs ? "enabled" : "disabled")")
-            centralManager?.connect(
-                peripheral,
-                options: MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: requiresAncs)
-            )
-        #endif
+        issueConnect(peripheral)
     }
 
     /// Re-arms a pending connection to the glasses that just dropped. Unlike `connectToDevice`,
     /// it sets no timeout: CoreBluetooth keeps the request open until the glasses advertise
     /// again (for example after a BES firmware reset), completes it in the background and wakes
-    /// the app. `destroy()` and `cleanup()` cancel it through `connectedPeripheral`.
-    /// Returns false when the policy does not apply, so the caller can fall back to scanning.
+    /// the app. Discovery, connect-by-id, pairing yield and `destroy()` cancel it through
+    /// `cancelPendingReconnect`. Returns false when the policy does not apply, so the caller can
+    /// fall back to scanning.
     private func reconnectDirectly(to peripheral: CBPeripheral) -> Bool {
         guard let centralManager,
               MentraLiveConnectionAttemptPolicy.shouldReconnectDirectly(
@@ -2405,16 +2401,76 @@ class MentraLive: NSObject, SGCManager {
         updateConnectionState(ConnTypes.CONNECTING)
         connectingPeripheral = peripheral
         connectedPeripheral = peripheral
+        pendingReconnectPeripheral = peripheral
+        issueConnect(peripheral)
+        schedulePendingReconnectSettle(for: peripheral)
+        return true
+    }
+
+    /// The single CoreBluetooth connect call, shared by user-initiated and pending reconnects.
+    private func issueConnect(_ peripheral: CBPeripheral) {
         peripheral.delegate = self
         #if os(macOS)
-            centralManager.connect(peripheral, options: nil)
+            centralManager?.connect(peripheral, options: nil)
         #else
-            centralManager.connect(
+            // ANCS is hosted by iOS and is only exposed to authorized accessories.
+            // The default requirement lets the system complete that authorization flow
+            // before the glasses subscribe; apps that do not relay notifications can opt out.
+            Bridge.log("LIVE: ANCS connection requirement \(requiresAncs ? "enabled" : "disabled")")
+            centralManager?.connect(
                 peripheral,
                 options: MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: requiresAncs)
             )
         #endif
-        return true
+    }
+
+    /// A pending connect never times out, so the glasses may simply never return (battery
+    /// dead, left behind). After the old scan backoff's span, report DISCONNECTED like that
+    /// backoff did, but keep the request armed: iOS still completes it whenever the glasses
+    /// advertise, and `didConnect` accepts it through `connectingPeripheral`.
+    private func schedulePendingReconnectSettle(for peripheral: CBPeripheral) {
+        pendingReconnectSettleWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingReconnectPeripheral === peripheral,
+                  self.connectionState != ConnTypes.CONNECTED
+            else { return }
+            Bridge.log("LIVE: Glasses still unreachable; reporting disconnected, pending reconnect stays armed")
+            self.pendingReconnectSettleWorkItem = nil
+            self.isConnecting = false
+            self.connectedPeripheral = nil
+            self.updateConnectionState(ConnTypes.DISCONNECTED)
+        }
+        pendingReconnectSettleWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(MentraLiveConnectionAttemptPolicy.pendingReconnectSettleMs),
+            execute: work
+        )
+    }
+
+    /// Stops tracking a pending reconnect after it connected; no CoreBluetooth call needed.
+    private func clearPendingReconnectTracking() {
+        pendingReconnectSettleWorkItem?.cancel()
+        pendingReconnectSettleWorkItem = nil
+        pendingReconnectPeripheral = nil
+    }
+
+    /// Withdraws a pending reconnect before the user retargets (discovery, connect-by-id,
+    /// pairing yield) or tears down, so iOS cannot later complete it to the previous glasses.
+    private func cancelPendingReconnect(reason: String) {
+        guard let peripheral = pendingReconnectPeripheral else {
+            clearPendingReconnectTracking()
+            return
+        }
+        clearPendingReconnectTracking()
+        Bridge.log("LIVE: Cancelling pending reconnect to \(peripheral.identifier.uuidString) (\(reason))")
+        if connectingPeripheral === peripheral {
+            connectingPeripheral = nil
+        }
+        if connectedPeripheral === peripheral, connectionState != ConnTypes.CONNECTED {
+            connectedPeripheral = nil
+        }
+        isConnecting = false
+        centralManager?.cancelPeripheralConnection(peripheral)
     }
 
     /// Opt the firmware into ANCS only after iOS has authorized this accessory.
@@ -5930,6 +5986,7 @@ class MentraLive: NSObject, SGCManager {
         closeL2capFileChannel()
 
         // Disconnect BLE
+        cancelPendingReconnect(reason: "destroy")
         if let peripheral = connectedPeripheral {
             centralManager?.cancelPeripheralConnection(peripheral)
         }

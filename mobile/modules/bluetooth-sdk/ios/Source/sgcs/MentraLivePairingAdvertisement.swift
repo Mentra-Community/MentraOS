@@ -62,6 +62,10 @@ enum MentraLiveConnectionAttemptPolicy {
         !pairingYieldActive && matchesActiveAttempt
     }
 
+    /// How long a pending reconnect reports CONNECTING before settling to DISCONNECTED. Matches
+    /// the span of the scan backoff it replaces (1+2+4+8+16 s, then 30 s × 5 attempts).
+    static let pendingReconnectSettleMs = 181_000
+
     /// Whether an unexpected link loss should re-arm a pending connection to the same
     /// peripheral. iOS completes a pending `connect` whenever the glasses advertise again,
     /// even while the app is suspended (phone locked), and wakes the app to handle it. A scan

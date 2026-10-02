@@ -9,10 +9,15 @@ import Foundation
 enum BluetoothBackgroundMode {
     static let requiredMode = "bluetooth-central"
 
+    /// Platform-independent plist check, so tests exercise it on every host.
+    static func declaresBluetoothCentral(_ infoDictionary: [String: Any]?) -> Bool {
+        guard let modes = infoDictionary?["UIBackgroundModes"] as? [String] else { return false }
+        return modes.contains(requiredMode)
+    }
+
     static func isDeclared(in infoDictionary: [String: Any]?) -> Bool {
         #if os(iOS)
-            guard let modes = infoDictionary?["UIBackgroundModes"] as? [String] else { return false }
-            return modes.contains(requiredMode)
+            return declaresBluetoothCentral(infoDictionary)
         #else
             // macOS apps are not suspended the same way and have no background modes.
             return true

@@ -84,7 +84,11 @@ export function applyBluetoothSdkInfoPlist(
   infoPlist[INFO_SDK_VERSION] = sdkVersion
 
   // Merge, never replace: apps may also declare audio, location or other modes.
-  const backgroundModes = Array.isArray(infoPlist.UIBackgroundModes) ? infoPlist.UIBackgroundModes : []
+  const declaredModes = infoPlist.UIBackgroundModes
+  if (declaredModes !== undefined && !Array.isArray(declaredModes)) {
+    throw new Error("ios.infoPlist.UIBackgroundModes must be an array of background mode strings")
+  }
+  const backgroundModes: string[] = declaredModes ?? []
   if (!backgroundModes.includes(IOS_BLUETOOTH_BACKGROUND_MODE)) {
     infoPlist.UIBackgroundModes = [...backgroundModes, IOS_BLUETOOTH_BACKGROUND_MODE]
   }

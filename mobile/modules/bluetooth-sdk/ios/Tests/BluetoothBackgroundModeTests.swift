@@ -4,16 +4,23 @@ import XCTest
 final class BluetoothBackgroundModeTests: XCTestCase {
     func testDetectsDeclaredBluetoothCentral() {
         XCTAssertTrue(
-            BluetoothBackgroundMode.isDeclared(in: ["UIBackgroundModes": ["audio", "bluetooth-central"]])
+            BluetoothBackgroundMode.declaresBluetoothCentral(
+                ["UIBackgroundModes": ["audio", "bluetooth-central"]]
+            )
         )
     }
 
-    func testMissingModeIsReportedOnIOS() {
-        #if os(iOS)
-            XCTAssertFalse(BluetoothBackgroundMode.isDeclared(in: nil))
-            XCTAssertFalse(BluetoothBackgroundMode.isDeclared(in: [:]))
-            XCTAssertFalse(BluetoothBackgroundMode.isDeclared(in: ["UIBackgroundModes": ["audio"]]))
-        #else
+    func testReportsMissingOrMalformedBackgroundModes() {
+        XCTAssertFalse(BluetoothBackgroundMode.declaresBluetoothCentral(nil))
+        XCTAssertFalse(BluetoothBackgroundMode.declaresBluetoothCentral([:]))
+        XCTAssertFalse(BluetoothBackgroundMode.declaresBluetoothCentral(["UIBackgroundModes": ["audio"]]))
+        XCTAssertFalse(
+            BluetoothBackgroundMode.declaresBluetoothCentral(["UIBackgroundModes": "bluetooth-central"])
+        )
+    }
+
+    func testMacOSHasNoBackgroundModeRequirement() {
+        #if os(macOS)
             XCTAssertTrue(BluetoothBackgroundMode.isDeclared(in: nil))
         #endif
     }
