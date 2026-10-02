@@ -3,15 +3,55 @@ import {createHash} from "node:crypto"
 import {execFileSync} from "node:child_process"
 import {appendFileSync, readFileSync, writeFileSync} from "node:fs"
 import {pathToFileURL} from "node:url"
+import {resolveAndroidVersionCode} from "./resolve-android-version-code.mjs"
 
 export const EXAMPLE_PACKAGE_ID = "com.mentra.bluetoothsdkexample"
 const installUrl = `https://play.google.com/apps/testing/${EXAMPLE_PACKAGE_ID}`
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
 
-export function verifyExampleAabIdentity(plan, aab, bundletool, run = execFileSync) {
+export function requireExampleBuildNumber(plan, buildNumber) {
+  if (!Number.isSafeInteger(buildNumber) || buildNumber < plan.native.buildNumber || buildNumber > 2100000000)
+    throw new Error("Example Android version code must be at least the family number and within Play's limit")
+  return buildNumber
+}
+
+// Separate package, separate reservations, shared cross-family release container.
+// The job's app-wide concurrency lock covers lookup, reservation and publication.
+export function allocateExampleBuildNumber(plan, track, codes, used, assets) {
+  const owner = createHash("sha256").update(plan.releaseSetId).digest("hex")
+  const reservations = assets.flatMap(({name}) => {
+    const match = /^mentra-example-android-code-(\d+)-([a-f0-9]{64})\.json$/.exec(name)
+    return match ? [{code: Number(match[1]), owner: match[2]}] : []
+  })
+  const result = resolveAndroidVersionCode({
+    planBuildNumber: plan.native.buildNumber,
+    track,
+    trackCodes: [...codes, ...used],
+    usedCodes: used,
+    reservations,
+    owner,
+  })
+  requireExampleBuildNumber(plan, result.versionCode)
+  return {
+    ...result,
+    markerName: `mentra-example-android-code-${result.versionCode}-${owner}.json`,
+    releaseSetId: plan.releaseSetId,
+    packageId: EXAMPLE_PACKAGE_ID,
+    planBuildNumber: plan.native.buildNumber,
+    track,
+  }
+}
+
+export function verifyExampleAabIdentity(
+  plan,
+  aab,
+  bundletool,
+  run = execFileSync,
+  buildNumber = plan.native.buildNumber,
+) {
   const expected = {
     "package": EXAMPLE_PACKAGE_ID,
-    "android:versionCode": String(plan.native.buildNumber),
+    "android:versionCode": String(requireExampleBuildNumber(plan, buildNumber)),
     "android:versionName": plan.native.marketingVersion,
   }
   for (const [attribute, value] of Object.entries(expected)) {
@@ -70,7 +110,7 @@ export function examplePlayCoordinates(plan, starterKit, track) {
   }
 }
 
-export function configureExampleAndroid(plan, config, packageJson) {
+export function configureExampleAndroid(plan, config, packageJson, buildNumber = plan.native.buildNumber) {
   if (!["dev", "beta", "production"].includes(plan.channel)) {
     throw new Error("Only coordinated dev, beta, or production examples are supported")
   }
@@ -83,13 +123,18 @@ export function configureExampleAndroid(plan, config, packageJson) {
     expo: {
       ...config.expo,
       version: plan.native.marketingVersion,
-      android: {...config.expo.android, package: EXAMPLE_PACKAGE_ID, versionCode: plan.native.buildNumber},
+      android: {
+        ...config.expo.android,
+        package: EXAMPLE_PACKAGE_ID,
+        versionCode: requireExampleBuildNumber(plan, buildNumber),
+      },
     },
   }
 }
 
 export function validateExampleGooglePlay(plan, starterKit, record) {
   const coordinates = examplePlayCoordinates(plan, starterKit, record?.track)
+  requireExampleBuildNumber(plan, record?.version?.buildNumber)
   if (
     record?.schemaVersion !== 1 ||
     record.releaseSetId !== plan.releaseSetId ||
@@ -99,7 +144,6 @@ export function validateExampleGooglePlay(plan, starterKit, record) {
     record.starterKitReleaseCommit !== starterKit.starterKit.releaseCommit ||
     record.packageId !== EXAMPLE_PACKAGE_ID ||
     record.version?.marketingVersion !== plan.native.marketingVersion ||
-    record.version?.buildNumber !== plan.native.buildNumber ||
     !["published", "reused"].includes(record.uploadStatus) ||
     record.distribution?.status !== "submitted" ||
     record.distribution?.audience !== examplePlayAudience(plan.channel) ||
@@ -128,9 +172,11 @@ export function createExampleGooglePlayRecord({
   artifactUrl,
   uploadStatus,
   provenanceUrl,
+  buildNumber = plan.native.buildNumber,
 }) {
   examplePlayCoordinates(plan, starterKit, track)
-  if (!Array.isArray(codes) || !codes.map(Number).includes(plan.native.buildNumber)) {
+  requireExampleBuildNumber(plan, buildNumber)
+  if (!Array.isArray(codes) || !codes.map(Number).includes(buildNumber)) {
     throw new Error("Google Play did not retain the exact coordinated version code")
   }
   return validateExampleGooglePlay(plan, starterKit, {
@@ -141,7 +187,7 @@ export function createExampleGooglePlayRecord({
     mentraosSourceCommit: plan.sourceCommit,
     starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
     packageId: EXAMPLE_PACKAGE_ID,
-    version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
+    version: {marketingVersion: plan.native.marketingVersion, buildNumber},
     track,
     uploadStatus,
     // Track acceptance is not proof that review or tester availability has completed.
@@ -159,12 +205,27 @@ function main() {
     options[args[index].slice(2)] = args[index + 1]
   }
   const plan = readJson(options.plan)
+  if (command === "allocate") {
+    const result = allocateExampleBuildNumber(
+      plan,
+      options.track,
+      readJson(options.codes),
+      readJson(options.used),
+      readJson(options.assets),
+    )
+    writeFileSync(options.output, `${JSON.stringify(result, null, 2)}\n`)
+    return
+  }
+  const buildNumber =
+    command === "coordinates"
+      ? plan.native.buildNumber
+      : requireExampleBuildNumber(plan, Number(options["build-number"]))
   if (command === "verify-aab") {
-    verifyExampleAabIdentity(plan, options.aab, options.bundletool)
+    verifyExampleAabIdentity(plan, options.aab, options.bundletool, execFileSync, buildNumber)
     return
   }
   if (command === "configure") {
-    const result = configureExampleAndroid(plan, readJson(options.app), readJson(options.package))
+    const result = configureExampleAndroid(plan, readJson(options.app), readJson(options.package), buildNumber)
     writeFileSync(options.app, `${JSON.stringify(result, null, 2)}\n`)
     return
   }
@@ -187,6 +248,7 @@ function main() {
     artifactUrl: options["artifact-url"],
     uploadStatus: options["upload-status"],
     provenanceUrl: options["provenance-url"],
+    buildNumber,
   })
   writeFileSync(options.output, `${JSON.stringify(record, null, 2)}\n`)
 }

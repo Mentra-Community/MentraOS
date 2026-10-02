@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import {readFileSync} from "node:fs"
 import test from "node:test"
 import {
+  allocateExampleBuildNumber,
   configureExampleAndroid,
   createExampleGooglePlayRecord,
   examplePlayCoordinates,
@@ -160,10 +161,12 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.match(reusable, /starter_release_commit/)
   assert.match(reusable, /cancel-in-progress: false/)
   assert.match(reusable, /queue: max/)
-  assert.ok(reusable.indexOf(".mjs verify-aab") < reusable.indexOf("publish-immutable-release-asset.mjs"))
   const verificationStep = reusable.slice(
     reusable.indexOf("- name: Verify and persist"),
     reusable.indexOf("- name: Require Play access"),
+  )
+  assert.ok(
+    verificationStep.indexOf(".mjs verify-aab") < verificationStep.indexOf("publish-immutable-release-asset.mjs"),
   )
   assert.doesNotMatch(verificationStep, /if:.*existing/)
   assert.doesNotMatch(reusable, /-PreactNativeArchitectures=/)
@@ -171,6 +174,102 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.doesNotMatch(reusable, /track_promote|GOOGLE_PLAY_TRACK: production/)
   const notification = readFileSync(new URL("notify-coordinated-release-slack.sh", import.meta.url), "utf8")
   assert.match(notification, /checks_line\+=" \| Example Google Play:/)
+})
+
+test("example codes clear the observed Play floor and every used code without borrowing mobile reservations", () => {
+  const {plan} = fixture("dev")
+  plan.native.buildNumber = 303000128
+  const first = allocateExampleBuildNumber(
+    plan,
+    "internal",
+    [320000227],
+    [320000227, 320000228],
+    [{name: "mentra-android-version-code-900000002-coordinated-run-123.json"}],
+  )
+  assert.equal(first.versionCode, 320000229)
+  const assets = [{name: first.markerName}]
+  assert.equal(
+    allocateExampleBuildNumber(plan, "internal", [320000240], [320000241], assets).versionCode,
+    first.versionCode,
+  )
+  const next = allocateExampleBuildNumber({...plan, releaseSetId: "next-family"}, "beta", [1], [], assets)
+  assert.equal(next.versionCode, 320000230)
+  assert.notEqual(next.markerName, first.markerName)
+  assert.throws(() => allocateExampleBuildNumber(plan, "internal", [2100000000], [], []), /Play's limit/)
+  assert.throws(() => allocateExampleBuildNumber(plan, "internal", ["invalid"], [], []), /invalid version/)
+  assert.throws(
+    () =>
+      allocateExampleBuildNumber(
+        plan,
+        "internal",
+        [],
+        [],
+        [...assets, {name: first.markerName.replace("320000229", "320000230")}],
+      ),
+    /more than one/,
+  )
+})
+
+test("the allocated code is embedded, verified, and recorded separately from the unchanged family number", () => {
+  const input = fixture("dev")
+  input.plan.native.buildNumber = 303000128
+  const buildNumber = 320000228
+  const config = configureExampleAndroid(
+    input.plan,
+    {expo: {android: {}, ios: {buildNumber: "123"}}},
+    {dependencies: input.starterKit.packages},
+    buildNumber,
+  )
+  assert.equal(config.expo.android.versionCode, buildNumber)
+  assert.equal(config.expo.ios.buildNumber, "123")
+  assert.equal(input.plan.native.buildNumber, 303000128)
+  const attributes = {
+    "package": "com.mentra.bluetoothsdkexample",
+    "android:versionCode": String(buildNumber),
+    "android:versionName": input.plan.native.marketingVersion,
+  }
+  const read = (_cmd, args) => attributes[args.at(-1).split("@").at(-1)]
+  verifyExampleAabIdentity(input.plan, "bundle.aab", "bundletool.jar", read, buildNumber)
+  assert.throws(() => verifyExampleAabIdentity(input.plan, "bundle.aab", "bundletool.jar", read), /does not match/)
+  const args = {
+    ...input,
+    buildNumber,
+    codes: [buildNumber],
+    aab: Buffer.from("bundle"),
+    artifactUrl: examplePlayCoordinates(input.plan, input.starterKit, input.track).aab_url,
+    uploadStatus: "published",
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/123",
+  }
+  const record = createExampleGooglePlayRecord(args)
+  assert.equal(validateExampleGooglePlay(input.plan, input.starterKit, record).version.buildNumber, buildNumber)
+  assert.throws(
+    () => createExampleGooglePlayRecord({...args, codes: [input.plan.native.buildNumber]}),
+    /exact coordinated/,
+  )
+  for (const invalid of [0, 303000127, 2100000001, 320000228.5, NaN]) {
+    assert.throws(() => createExampleGooglePlayRecord({...args, buildNumber: invalid}), /version code/)
+    assert.throws(
+      () =>
+        validateExampleGooglePlay(input.plan, input.starterKit, {
+          ...record,
+          version: {...record.version, buildNumber: invalid},
+        }),
+      /version code/,
+    )
+  }
+})
+
+test("workflow reserves before building and passes the selected code through all identity boundaries", () => {
+  const workflow = readFileSync(
+    new URL("../workflows/reusable-coordinated-example-google-play.yml", import.meta.url),
+    "utf8",
+  )
+  assert.ok(workflow.indexOf('.mjs" allocate') < workflow.indexOf("Generate release-matched Android project"))
+  assert.match(workflow, /bundle exec fastlane used_version_codes/)
+  assert.match(workflow, /releases\/tags\/mentra-coordinated-asg/)
+  assert.match(workflow, /--xpath=\/manifest\/@android:versionCode/)
+  assert.equal((workflow.match(/--build-number "\$\{\{ steps.play.outputs.code \}\}"/g) || []).length, 3)
+  assert.match(workflow, /--argjson expected "\$code"/)
 })
 
 test("the production example has its own closed Play track for an internal audience", () => {
