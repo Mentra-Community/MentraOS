@@ -624,7 +624,6 @@ describe("test run authentication and immutable ingestion", () => {
     const variants = [
       { ...run, runId: "run.1" },
       { ...run, requestId: "request.1" },
-      { ...run, routineId: "routine.1" },
       { ...run, assets: [{ ...run.assets[0], assetId: "video.1" }],
         chapters: [{ ...run.chapters[0], videoAssetId: "video.1" }] },
       { ...run, assets: [...run.assets, { ...run.assets[0], assetId: "screenshot.1", kind: "screenshot", contentType: "image/png" }],
@@ -633,6 +632,7 @@ describe("test run authentication and immutable ingestion", () => {
     ];
     for (const value of variants) expect((await post(value)).status).toBe(400);
     expect(repository.runs.size).toBe(0);
+    expect((await post({...run, routineId: "routine.1"})).status).toBe(201);
   });
   test("preserves optional firmware phases and failed test checks after a successful return", async () => {
     const run = fixture();

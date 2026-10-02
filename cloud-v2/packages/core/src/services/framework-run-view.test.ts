@@ -17,6 +17,7 @@ test("shared result reader presents a framework setup failure without losing its
     ({payload: run, payloadSha256: "c".repeat(64)})})})} as unknown as ReturnType<typeof TestRunModel.findOne>);
   try {
     const stored = await new MongoTestRunRepository().get(run.result.runId);
+    expect(stored?.frameworkResult).toBe(true);
     expect(stored?.run).toEqual(frameworkRunView(run));
     expect(stored?.run.outcomes.test).toBe("not-run");
     expect(stored?.run.notes).toContain("Home not reached");
@@ -42,7 +43,25 @@ test("shared history filters both payload formats and accepts framework paginati
     expect(queries[0]?.outcome).toBe("failed");
     expect(queries[0]?.$or).toEqual([{startedAt: {$lt: new Date("2026-10-02T19:00:00Z")}},
       {startedAt: new Date("2026-10-02T19:00:00Z"), runId: {$lt: "local:run"}}]);
+    for (const outcome of ["passed", "blocked"] as const) {
+      await new MongoTestRunRepository().list({limit: 25, outcome});
+      expect(queries.at(-1)?.outcome).toBe(outcome);
+    }
     const invalid = Buffer.from(JSON.stringify({startedAt: "2026-10-02T19:00:00Z", runId: "../run"})).toString("base64url");
     await expect(new MongoTestRunRepository().list({limit: 25, cursor: invalid})).rejects.toThrow("invalid cursor");
   } finally {find.mockRestore();}
+});
+
+test("framework pass remains passed in shared presentation despite pending or failed evidence", async () => {
+ const {TestRunService} = await import("./test-run.service");
+ for (const evidence of ["complete", "incomplete"] as const) {
+  const run = {runId: "local:pass", outcome: "passed", outcomes: {evidence}, assets: [{assetId: "recording"}],
+    provenance: {}, chapters: [], notes: ""};
+  const repository = {assets: async () => []};
+  const service = new TestRunService(repository as any);
+  const stored = {frameworkResult: true, run, payloadSha256: "a".repeat(64)};
+  const result = await (service as any).present(stored);
+  expect(result.outcome).toBe("passed");
+  expect(result.outcomes.evidence).toBe("incomplete");
+ }
 });

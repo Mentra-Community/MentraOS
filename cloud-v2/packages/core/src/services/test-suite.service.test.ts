@@ -68,3 +68,23 @@ test("completion fences a concurrent binding and retries preserve the first verd
   expect(await service.complete("fenced", {finishedAt: "2026-10-01T12:00:00Z"})).toEqual(result);
   expect(updates).toHaveLength(2);
 });
+
+test("persisted suite completion lists passing members with incomplete publication", async () => {
+ const payload = {suiteId: "pending-publish", channel: "dev", trigger: "nightly", startedAt: "2026-10-01T11:00:00Z",
+  build: {headSha: "a".repeat(40)}, members: [{memberId: "mac", requestId: "request", routineId: "notes", platform: "ios-mac"}]};
+ const row: any = {payload};
+ const query = {read() {return this;}, readConcern() {return this;}, lean: async () => row};
+ mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any));
+ const run = {runId: "run", requestId: "request", routineId: "notes", platform: "ios-mac", channel: "dev",
+  provenance: {headSha: "a".repeat(40)}, outcome: "passed", startedAt: payload.startedAt, finishedAt: "2026-10-01T11:01:00Z"};
+ const runs = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [{payload: run, uploadsComplete: false}]};
+ mocks.push(spyOn(TestRunModel, "find").mockReturnValue(runs as any));
+ mocks.push(spyOn(TestSuiteModel, "updateOne").mockImplementation((async (_filter: any, update: any) => {
+  Object.assign(row, update.$set);return {modifiedCount: 1};
+ }) as any));
+ const result = await new TestSuiteService().complete(payload.suiteId, {finishedAt: "2026-10-01T11:03:00Z"});
+ expect(result.outcome).toBe("failed");
+ expect(result.members[0]!.status).toBe("passed");
+ expect(result.failedRoutines).toEqual(["notes"]);
+ expect(row.completedResult).toEqual(result);
+});

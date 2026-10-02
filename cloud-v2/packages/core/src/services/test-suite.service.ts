@@ -60,7 +60,7 @@ export class TestSuiteService {
     const completedResult = {...suite, finishedAt,
       outcome: suite.passed === suite.members.length ? "passed" : "failed",
       members: suite.members.map(member => ({...member, status: member.status === "waiting" ? "not-run" : member.status})),
-      failedRoutines: [...new Set(suite.members.filter(member => member.status !== "passed").map(member => member.routineId))],
+      failedRoutines: [...new Set(suite.members.filter(member => (member.status !== "passed" || !member.publicationComplete)).map(member => member.routineId))],
     };
     await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}},
       {$set: {finishedAt, completedResult}}, {writeConcern});
