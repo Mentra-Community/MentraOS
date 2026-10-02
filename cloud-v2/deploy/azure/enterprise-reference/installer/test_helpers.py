@@ -24,7 +24,7 @@ class HelperTests(unittest.TestCase):
 
     def test_mirror_import_keeps_credentials_out_of_arguments_and_checks_digest(self):
         self.env.update(SOURCE_REGISTRY_USERNAME='reader', SOURCE_REGISTRY_PASSWORD='private-value',
-                        HELPER_TEST_DIRECTORY=str(self.path))
+                        HELPER_TEST_DIRECTORY=str(self.path), TMPDIR=str(self.path))
         self.executable('az', '''import json,os,sys
 from pathlib import Path
 p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
@@ -76,7 +76,9 @@ elif url.endswith('/min-version'): print('{"data":{"required":"3.3.0","recommend
 elif url.endswith('/healthz'): print('{"package":"core"}')
 elif url.endswith('/jwks.json'): print('{"keys":[{},{}]}')
 elif url.endswith('/acs/token'): print('401',end='')
-elif url.endswith('.zip'): Path(a[a.index('--output')+1]).write_bytes((p/'bundle.zip').read_bytes())
+elif url.endswith('.zip'):
+ assert url==json.loads((p/'manifest.json').read_text())['miniapps']['managed'][0]['bundleUrl']
+ Path(a[a.index('--output')+1]).write_bytes((p/'bundle.zip').read_bytes())
 ''')
         self.executable('sleep', 'pass\n')
         result = subprocess.run(['bash', str(ROOT / 'scripts/smoke-test.sh'), origin],
