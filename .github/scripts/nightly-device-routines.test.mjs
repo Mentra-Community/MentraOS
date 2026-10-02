@@ -249,9 +249,9 @@ test("the production catalog registers connected-glasses as its existing Android
   const routine = DEVICE_ROUTINES["connected-glasses"]
   assert.equal(routine.pending, undefined)
   assert.equal(routine.platform, "android")
-  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
+  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6215c390f081d2ba8e93a3bb3b149813a5d81d80/"
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/routines/connected-glasses-brief.md",
-    "tools/mentra-e2e/runner/connected-glasses-routine.ts", "worker/connected-glasses.ts"].map(path => `${source}${path}`))
+    "tools/mentra-e2e/flows/connected-glasses.ts", "worker/foundation-worker.ts"].map(path => `${source}${path}`))
   assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
     "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
