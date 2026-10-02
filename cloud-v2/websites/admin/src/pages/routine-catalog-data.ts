@@ -12,6 +12,7 @@ export interface CatalogRoutine {
   passingRun: {
     id: string;
     recordedOn: string;
+    suiteId?: string;
     release: string;
     appVersion: string;
     appBuild: string;
@@ -24,10 +25,11 @@ export interface CatalogRoutine {
 // Curated full runs on the shared foundation, not the broader dispatch registry.
 // Add a platform only after checking its result, recording and lifecycle outcomes.
 // Maintenance instructions: cloud-v2/docs/runbooks/testing/routine-catalog.md.
-const macBuild = {
-  recordedOn: "2026-09-30", release: "3.3.0-dev.468", appVersion: "3.3.0", appBuild: "303000084",
-  appSha: "d6c74c857015fac95fbc6195dbf009acfab65eeb", fixture: "mini-ui-unpaired", device: "Mac",
+const nightlyBuild = {
+  recordedOn: "2026-10-01", release: "3.3.0-dev.551", appVersion: "3.3.0",
+  appSha: "f48a6c59f06665dd41924670434f47d359be0eb3", suiteId: "nightly-36957839762-1-dev",
 };
+const macBuild = { ...nightlyBuild, appBuild: "303000125", fixture: "mini-ui-unpaired", device: "Mac" };
 const macSoftware = "The selected Mentra App build for iOS on Mac, in English. The worker installs the build and signs in before the test.";
 const testAccount = "An existing, dedicated test account for the selected app backend. The worker holds its credentials.";
 const noFirmware = "No physical glasses or glasses firmware required or qualified.";
@@ -45,12 +47,11 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
       physical: "One reserved USB-connected Android phone and one reserved Mentra Live pair with authorized ADB diagnostics, Bluetooth pairing and screen recording. The passing example uses the Mac Mini's Samsung Galaxy A54 lane.",
       data: "The existing glasses gallery is hashed before the run and must remain unchanged at every checkpoint. Start and return use the same requested ASG version and APK hash; no rolling latest manifest is selected.",
     },
-    cleanup: "Finalize the recording, independently verify or restore the requested firmware through normal app controls, remove owned app data and overrides, stop the app and release both devices only after the return checks pass. A failed test remains failed even when recovery succeeds.",
-    exclusions: "Updates over an external Wi-Fi network (a separate future routine), BES or MTK downgrade, injected network failures, the persistent no-internet Retry scenario, physical iPhone behavior, and qualification of other builds or automatic nightly execution.",
+    cleanup: "Finalize the recording, independently verify or restore the requested firmware through normal app controls, remove owned app data and overrides, stop the app and release both devices only after the return checks pass. A failed test remains failed even when teardown succeeds.",
+    exclusions: "Updates over an external Wi-Fi network (a separate future routine), BES or MTK downgrade, injected network failures, the persistent no-internet Retry scenario, physical iPhone behavior, and qualification of other builds.",
     passingRun: {
-      id: "local-android-bda5a7fd-f862-458d-8cd6-3a239a06e999", recordedOn: "2026-09-30",
-      release: "PR 4356", appVersion: "3.2.1", appBuild: "302014623",
-      appSha: "6c51cd313686151a95a6a7810444926d39d6c97d", fixture: "mini-060b", device: "Samsung Galaxy A54",
+      ...nightlyBuild, id: "routine-36957913879-1-dev-ota-roundtrip-android", appBuild: "310000349",
+      fixture: "mini-060b", device: "Samsung Galaxy A54",
     },
   },
   {
@@ -64,7 +65,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     },
     cleanup: "Finish the recording, stop the Mentra App and verify that the app and recorder have stopped.",
     exclusions: "Connected glasses, firmware updates, Phone mode, media streaming, Android and physical iPhone behavior.",
-    passingRun: { ...macBuild, id: "local-ios-on-mac-a16fdb2f-4188-4415-827f-188b8c7019bb" },
+    passingRun: { ...macBuild, id: "routine-36957913744-1-dev-no-glasses" },
   },
   {
     id: "no-glasses-android", request: { routineId: "no-glasses-android" }, name: "App navigation without glasses", platform: "Android",
@@ -79,7 +80,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     },
     cleanup: "Finish the recording, clear the owned test app’s data and force-stop it; verify that both the app and recorder have stopped.",
     exclusions: "Sign-out and authentication walkthrough assertions, permission changes, pairing, firmware updates, audio and physical iPhone behavior.",
-    passingRun: { ...macBuild, id: "local-android-c0d4c2a6-b415-4939-982e-1ae02b387bbe", appBuild: "310000290",
+    passingRun: { ...macBuild, id: "routine-36957913815-1-dev-no-glasses-android", appBuild: "310000349",
       fixture: "mini-samsung-a54", device: "Samsung Galaxy A54" },
   },
   {
@@ -95,7 +96,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     },
     cleanup: "Close the owned miniapp, restore Automatic microphone selection and the original host audio routes, volume and mute state; stop the managed app.",
     exclusions: "Physical glasses, Android, physical iPhone behavior and measured acoustic quality.",
-    passingRun: { ...macBuild, id: "local-ios-on-mac-a28e899b-2632-419c-b221-2df38870438a" },
+    passingRun: { ...macBuild, id: "routine-36957913823-1-dev-captions-phone" },
   },
   {
     id: "connected-glasses", name: "Connected glasses", platform: "Android",
@@ -130,9 +131,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     cleanup: "Stop transcription, remove the owned day, conversation and new note, and verify existing data is unchanged. Restore microphone and host audio settings; stop the managed app.",
     exclusions: "Manual note generation as a substitute for automatic creation, physical glasses, Android, physical iPhone behavior and measured acoustic quality.",
     passingRun: {
-      id: "local-ios-on-mac-cf63411d-d5ba-43fe-9e96-5d099068937d", recordedOn: "2026-10-01",
-      release: "3.3.0-dev.548", appVersion: "3.3.0", appBuild: "303000123",
-      appSha: "b0f8be74e1aae531836532a849cd402c10d2e5ae", fixture: "mini-ui-unpaired", device: "Mac",
+      ...macBuild, id: "routine-36957914136-1-dev-notes-phone",
     },
   },
 ];
