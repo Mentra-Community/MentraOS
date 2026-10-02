@@ -461,6 +461,13 @@ export class TestRunService {
     const run = await this.required(runId);
     const asset = run.assets.find(item => item.assetId === assetId);
     if (!asset) throw new TestRunError(404, "asset is not declared in this run");
+    return this.uploadDeclaredAsset(runId, asset, body, headers, () => this.reconcileUploads(run));
+  }
+
+  /** Shared upload implementation for every validated result manifest. */
+  async uploadDeclaredAsset(runId: string, asset: TestAsset, body: ReadableStream<Uint8Array> | null,
+    headers: Headers, acknowledge: () => Promise<void>) {
+    const assetId = asset.assetId;
     if (!body) throw new TestRunError(400, "missing asset body");
     if (headers.get("content-type") !== asset.contentType) throw new TestRunError(400, "content type does not match immutable metadata");
     if (headers.has("content-length") && headers.get("content-length") !== String(asset.sizeBytes)) throw new TestRunError(400, "content length does not match immutable metadata");
@@ -493,7 +500,7 @@ export class TestRunService {
       if (!mediaSignatureMatches(asset.contentType, prefix)) throw new TestRunError(400, "asset bytes do not match media type");
       const existing = (await this.repository.assets(runId)).find(item => item.assetId === assetId);
       if (existing) {
-        await this.reconcileUploads(run);
+        await acknowledge();
         return { assetId, uploaded: true, created: false };
       }
       const storage = this.storageFactory();
@@ -503,7 +510,7 @@ export class TestRunService {
       if ((await storage.statObject(storageKey)).sizeBytes !== size) throw new TestRunError(409, "stored object size differs");
       const winner = await this.repository.insertAsset({ runId, assetId, storageKey, sizeBytes: size, sha256: asset.sha256 });
       if (winner.storageKey !== storageKey) await storage.deleteObject(storageKey).catch(() => undefined);
-      await this.reconcileUploads(run);
+      await acknowledge();
       return { assetId, uploaded: true, created: winner.storageKey === storageKey };
       // An ambiguous DB failure deliberately leaves its unique private object for reconciliation.
     } finally { await rm(directory, { recursive: true, force: true }); }

@@ -11,15 +11,18 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     },
     async getByRequest() {return stored;},
   };
-  const service = new FrameworkResultService(repository);
   const run = {schemaVersion: 1, requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
     platform: "ios-on-mac", laneId: "mac", build: {}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
     assets: [], result: {runId: "r1", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [{phase: "setup", actionId: "install", message: "install failed"}], evidence: [],
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}}};
-  const first = await service.ingest(run), duplicate = await service.ingest(run);
+  const service = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
+    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {}}}));
+  const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
   expect(first.created).toBe(true);
   expect(duplicate).toEqual({...first, created: false});
-  await expect(service.ingest({...run, finishedAt: "2026-10-02T19:02:00Z"})).rejects.toThrow("different terminal result");
+  await expect(service.ingest({...run, finishedAt: "2026-10-02T19:02:00Z"}, "mini")).rejects.toThrow("different terminal result");
+  await expect(service.ingest(run, "other")).rejects.toThrow("accepted request");
+  await expect(service.ingest({...run, build: {different: true}}, "mini")).rejects.toThrow("accepted request");
 });
