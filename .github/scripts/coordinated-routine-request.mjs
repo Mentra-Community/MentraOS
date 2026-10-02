@@ -1,6 +1,6 @@
 import {isDeepStrictEqual} from "node:util"
 import {downloadNames, validateDownloads} from "./coordinated-install-downloads.mjs"
-import {AUTOMATIC_BUILD_ROUTINES, deviceRoutine, registeredRoutine} from "./device-routines.mjs"
+import {AUTOMATIC_BUILD_ROUTINES, DEV_INDEPENDENT_NIGHTLY_ONLY_ROUTINES, deviceRoutine, registeredRoutine} from "./device-routines.mjs"
 import {jsonArtifact, REQUEST_WORKFLOW, sourcePublication} from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {ANDROID_MAX_VERSION_CODE, androidBuildNumberOf} from "./release-family.mjs"
@@ -162,7 +162,7 @@ export async function createCoordinatedRoutineRequest({github, context, number, 
   routineCatalog}) {
   // A planned routine without a registered automatic worker refuses before any request is created.
   const registered = registeredRoutine(routine, routineCatalog)
-  if (["ota-roundtrip-android", "open-close-miniapps"].includes(routine)) requireThat(channel === "dev" && positive(Number(nightlyRunId)) &&
+  if (DEV_INDEPENDENT_NIGHTLY_ONLY_ROUTINES.includes(routine)) requireThat(channel === "dev" && positive(Number(nightlyRunId)) &&
     Number(nightlyRunAttempt) === 1 && nightlyMode === "independent", `${routine} admission requires a dev independent nightly`)
   const selected = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
   requireThat(!number && selected && ["dev", "staging"].includes(channel), "Coordinated requests require an exact run/attempt and no PR number")

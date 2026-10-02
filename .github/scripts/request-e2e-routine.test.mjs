@@ -777,3 +777,18 @@ test("Android retained build jobs select the first publication attempt and a fai
     {buildAttempt: 1, publicationAttempt: 1})
   assert.equal(successfulAndroidPublication({run_attempt: 2, status: "completed"}, [first, {...retained, conclusion: "failure"}]), null)
 })
+
+
+test("nightly-only Android routines reject explicit PR selection and replay before reading GitHub metadata", async () => {
+  for (const routine of ["ota-roundtrip-android", "open-close-miniapps"]) for (const base of ["dev", "staging"]) {
+    const f = androidFixture()
+    f.manual()
+    f.state.pr.base.ref = base
+    for (const override of [{}, {originalRequestRunId: "123"}]) {
+      await assert.rejects(f.resolveAndroid({channel: "pr", routine, requestOrigin: "workflow-dispatch", ...override}),
+        /requires a dev independent nightly/)
+      assert.equal(f.state.prReads, 0)
+      assert.deepEqual(f.state.apiCalls, [])
+    }
+  }
+})

@@ -5,7 +5,7 @@ import {matchingBuildRun, readOtaTargets} from "./notify-pr-builds.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {ANDROID_WORKFLOW, ANDROID_PUBLICATION_STEP, androidReceiptName, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {deviceRoutine, hasRoutineLabel, registeredRoutine} from "./device-routines.mjs"
+import {DEV_INDEPENDENT_NIGHTLY_ONLY_ROUTINES, deviceRoutine, hasRoutineLabel, registeredRoutine} from "./device-routines.mjs"
 
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
 export const REQUEST_LABEL = "routine:day1-ota"
@@ -275,6 +275,7 @@ export async function createRoutineRequest({
     return createCoordinatedRoutineRequest({github, context, number, channel, routine, requestOrigin, source,
       sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode, fetchImpl, now, routineCatalog})
   }
+  if (DEV_INDEPENDENT_NIGHTLY_ONLY_ROUTINES.includes(routine)) throw new Error(`${routine} admission requires a dev independent nightly`)
   const repository = `${context.repo.owner}/${context.repo.repo}`
   if (sourcePublication(nightlyRunId, nightlyRunAttempt) || (nightlyMode && nightlyMode !== "ordered")) throw new Error("Nightly sequences require a coordinated channel")
   const selectedSource = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)

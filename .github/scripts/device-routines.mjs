@@ -137,6 +137,8 @@ export function deviceRoutine(id) {
   return DEVICE_ROUTINES[id]
 }
 
+export const DEV_INDEPENDENT_NIGHTLY_ONLY_ROUTINES = Object.freeze(["ota-roundtrip-android", "open-close-miniapps"])
+
 export const AUTOMATIC_BUILD_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"])
 
 /** Execution paths (request, dispatch and nightly) accept only a routine with a registered automatic worker. A planned
