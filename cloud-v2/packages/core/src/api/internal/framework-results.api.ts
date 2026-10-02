@@ -1,5 +1,5 @@
 import {Hono} from "hono";
-import {bodyLimit} from "hono/body-limit";
+import {frameworkBodyLimit, frameworkJson} from "./framework-json";
 import {FrameworkResultConflict, FrameworkResultService} from "../../services/framework-result.service";
 import {TestRunError} from "../../services/test-run.service";
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
@@ -13,9 +13,9 @@ export function createFrameworkResultsApi(service = new FrameworkResultService()
     c.var.logger?.error({errorName: error.name}, "framework result publication failed");
     return c.json({error: "result_publication_unavailable"}, 503);
   });
-  app.post("/", bodyLimit({maxSize: 1024 * 1024}), async c => {
+  app.post("/", frameworkBodyLimit(), async c => {
     let input: unknown;
-    try {input = await c.req.json();} catch {return c.json({error: "invalid_json"}, 400);}
+    input = await frameworkJson(c);
     return c.json(await service.ingest(input, c.var.testHostId));
   });
   app.put("/:requestId/assets/:assetId", async c => c.json(await service.upload(c.req.param("requestId"),

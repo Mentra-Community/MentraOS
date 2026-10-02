@@ -54,6 +54,7 @@ export function frameworkRunOutcome(run: FrameworkRun) {
   if (run.result.setup.status === "failed") return "setup-failed";
   if (run.result.test === "failed") return "failed";
   if (run.result.setup.status === "cancelled" || run.result.test === "cancelled") return "cancelled";
+  if (run.result.failures.some(failure => failure.phase === "evidence")) return "evidence-failed";
   if (!run.result.teardown.ready) return "teardown-failed";
   return run.result.test === "passed" ? "pass" : "not-run";
 }
