@@ -98,6 +98,25 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     passingRun: { ...macBuild, id: "local-ios-on-mac-a28e899b-2632-419c-b221-2df38870438a" },
   },
   {
+    id: "connected-glasses", name: "Connected glasses", platform: "Android",
+    purpose: "Pair, disconnect, unpair and reconnect Mentra Live; check battery, Bluetooth, Wi-Fi and camera settings; capture and sync a photo and video; verify media playback routing and pause.",
+    requirements: {
+      software: "The selected signed Android APK, in English. Shared setup installs the app and signs in before the recorded flow starts from unpaired Home.",
+      firmware: "One enrolled Mentra Live pair with its requested starting software and independently verified identity. This routine does not perform a firmware update.",
+      account: testAccount,
+      network: "Internet for sign-in and the pinned reference video, plus a declared Wi-Fi network the glasses can join. Gallery transfer uses the glasses hotspot.",
+      physical: "A reserved USB-connected Android phone and Mentra Live pair with authorized ADB access, Bluetooth and screen recording. No operator button presses are required.",
+      data: "Pinned reference video, declared camera settings and fresh capture request IDs. Record existing gallery files and settings before changing them; verify delivered photo and video bytes match the glasses originals and decode.",
+    },
+    cleanup: "Stop owned playback and recording, remove this run’s captures and downloaded media, restore changed settings, stop the managed app and release the phone and glasses. Publish evidence before disposing of local run files.",
+    exclusions: "Measured speaker or microphone audio, visual scene recognition, physical action-button behavior, firmware updates, other glasses models and CI/nightly qualification. The recording briefly pauses while entering the private Wi-Fi password.",
+    passingRun: {
+      id: "local-android-59a30e48-e849-4416-983c-83e222f25cdc", recordedOn: "2026-10-01",
+      release: "3.3.0-dev.468", appVersion: "3.3.0", appBuild: "310000290",
+      appSha: "d6c74c857015fac95fbc6195dbf009acfab65eeb", fixture: "mini-03be", device: "Samsung Galaxy A54",
+    },
+  },
+  {
     id: "notes-phone", request: { routineId: "notes-phone" }, name: "Notes with simulated glasses", platform: "iOS on Mac",
     purpose: "Transcribe a controlled discussion, find its automatically generated note, edit the title and body, then verify persistence and search.",
     requirements: {

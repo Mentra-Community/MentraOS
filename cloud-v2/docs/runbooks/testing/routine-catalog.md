@@ -88,3 +88,18 @@ bun --no-env-file run --cwd websites/admin build
 Open the catalog at desktop and narrow widths, expand the requirements, and
 check that manual controls list only the catalog entries. Do not send a real
 device request just to verify the catalog UI.
+
+## Connected-glasses software coverage
+
+The Android example `local-android-59a30e48-e849-4416-983c-83e222f25cdc`
+passed all 58 saved software actions on October 1, 2026, with passing teardown,
+return checks and complete evidence. Its 62 uploaded assets include two recording
+segments; the coordinator verified playback and seeking in both. The brief gap
+protects Wi-Fi password entry. Local payloads were disposed after publication.
+
+This is a development pass for pairing, reconnection, settings, software capture,
+gallery delivery and playback routing. It does not prove acoustic delivery or
+scene recognition. The card has no request binding until shared dispatch is
+verified; its addition does not silently expand the existing five-member nightly.
+Private maintenance paths are `worker/local-connected-android.ts` and
+`tools/mentra-e2e/flows/connected-glasses-program.ts`.

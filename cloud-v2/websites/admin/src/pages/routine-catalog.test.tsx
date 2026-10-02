@@ -4,13 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CATALOG_REQUEST_ROUTINE_IDS, CATALOG_ROUTINE_IDS, ROUTINE_CATALOG } from "./routine-catalog-data";
 import { RoutineCatalogPage } from "./routine-catalog";
 
-test("the human catalog includes five full foundation combinations without enabling local-only requests", () => {
-  expect(CATALOG_ROUTINE_IDS).toEqual(["ota-roundtrip-android", "no-glasses", "no-glasses-android", "captions-phone", "notes-phone"]);
+test("the human catalog includes six full foundation combinations without enabling local-only requests", () => {
+  expect(CATALOG_ROUTINE_IDS).toEqual(["ota-roundtrip-android", "no-glasses", "no-glasses-android", "captions-phone", "connected-glasses", "notes-phone"]);
   expect(CATALOG_REQUEST_ROUTINE_IDS).toEqual(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"]);
   const markup = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}>
     <RoutineCatalogPage onResult={() => {}} />
   </QueryClientProvider>);
-  expect(markup.match(/<article /g)).toHaveLength(5);
+  expect(markup.match(/<article /g)).toHaveLength(6);
   expect(markup).toContain("Local replay only.");
   expect(markup).toContain("label shown on a request-enabled card. Local-replay-only routines cannot be requested here.");
   expect(markup).not.toContain("routine:ota-roundtrip-android");
@@ -33,7 +33,7 @@ test("each platform has requirements, truthful request availability and a dev re
     expect(markup).toContain(`https://github.com/Mentra-Community/MentraOS/commit/${routine.passingRun.appSha}`);
   }
   for (const label of ["Software", "Glasses and firmware", "Account", "Network", "Physical setup", "Test data", "Cleanup", "Outside this routine"])
-    expect(markup.match(new RegExp(`>${label}</`, "g"))).toHaveLength(5);
+    expect(markup.match(new RegExp(`>${label}</`, "g"))).toHaveLength(6);
   expect(markup).toContain("mini-060b");
   expect(markup).toContain("302014623");
   expect(markup).toContain("BES and MTK firmware intentionally remain installed");
