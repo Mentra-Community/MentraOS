@@ -50,7 +50,9 @@ Relevant private source paths are `tools/mentra-e2e/flows/no-glasses.ts`,
 `worker/local-mac.ts` and `worker/local-android.ts`. These paths are maintenance
 pointers, not substitutes for recorded passing evidence.
 
-The Android ASG roundtrip example is
+The Android glasses software downgrade / upgrade loop uses the glasses hotspot
+for update transfers. Updates over an external Wi-Fi network will have a separate
+routine. The passing example is
 `local-android-bda5a7fd-f862-458d-8cd6-3a239a06e999`, started September 30, 2026
 at 23:00:32 PDT. Its clean merged harness source is
 `453378be4cd3593484a3f5703dc25d2e536bb932`; requested app source is
