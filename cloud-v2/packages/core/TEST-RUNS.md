@@ -113,12 +113,15 @@ registered routines, it becomes requestable only once a deployment adds it to
 managed-viewer and state observations are pinned, its preparation refuses before any
 claim. Its live CI qualification is still pending.
 
-`connected-glasses` (Android) is registered: its private worker verifies the request's
-exact selected APK and OTA manifest and exports claim-bound segmented CI evidence, and
-it is a nightly target. Like `no-glasses-android`, it needs a published Android APK
-and becomes requestable only once a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES`
-after its worker lane is enrolled. Its C8 and C9 sections have no controllers yet and
-fail by name; its live CI qualification is still pending.
+`connected-glasses` (Android) uses the shared foundation worker and saved software
+flow. Its complete local replay covers pairing, battery, camera and Wi-Fi settings,
+photo/video capture and sync, decoded-byte checks, and playback routing and pause.
+The worker verifies the requested APK and firmware manifest and exports claim-bound
+recordings. It becomes requestable after lane enrollment and deployment adds it to
+`TEST_RUN_DISPATCH_ROUTINES`. Dev nightly enrollment follows shared dispatch
+qualification; a passing local example alone does not qualify a new CI build.
+Measured acoustic output, scene recognition and physical button behavior remain
+outside the demonstrated software coverage.
 
 `account-miniapps` (Mac) is registered: its private worker verifies the request's
 exact selected Mac build and OTA manifest on a dev or staging backend, uses only that
