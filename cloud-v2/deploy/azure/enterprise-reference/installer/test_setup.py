@@ -64,6 +64,23 @@ class InstallerTests(unittest.TestCase):
         self.assertNotEqual(names[0][0], names[1][0])
         self.assertNotEqual(names[0][1], names[1][1])
 
+    def test_interrupted_identity_update_recovers_without_new_registrations(self):
+        self.config['displayName'] = 'Example'
+        self.save()
+        result = dict(tenantId=TENANT, coreApiClientId='33333333-3333-3333-3333-333333333333',
+                      mobileClientId='44444444-4444-4444-4444-444444444444')
+        with patch.object(setup, 'preflight'), patch.object(setup, 'run', return_value=json.dumps(result)), \
+             patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
+            with self.assertRaises(OSError):
+                setup.configure_entra(self.args, self.directory, self.config, self.state)
+        with patch.object(setup, 'check_release', return_value=RELEASE), \
+             patch.object(setup, 'digest', side_effect=lambda p: 'release-hash' if Path(p).name == 'release.json' else setup.hashlib.sha256(Path(p).read_bytes()).hexdigest()):
+            config, state, _ = setup.load(self.directory)
+        self.assertEqual(config['coreApiClientId'], result['coreApiClientId'])
+        self.assertEqual(state['binding']['mobileClientId'], result['mobileClientId'])
+        self.assertEqual(state['phase'], 'identity_configured')
+        self.assertFalse((self.directory / 'identity.pending.json').exists())
+
     def test_state_cannot_move_subscription_or_tenant(self):
         for field in ('subscriptionId', 'tenantId', 'resourceGroup', 'coreApiClientId'):
             original = self.config[field]

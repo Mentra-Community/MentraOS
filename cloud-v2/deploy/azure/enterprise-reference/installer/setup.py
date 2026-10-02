@@ -139,6 +139,31 @@ def locked(directory):
             fcntl.flock(stream, fcntl.LOCK_UN)
 
 
+def recover_identity(directory, config, state):
+    # Journal the two-file identity update before publishing either file. A
+    # killed process can finish the same authorized update on its next load.
+    journal = directory / 'identity.pending.json'
+    if not journal.exists():
+        return
+    pending = read_json(journal)
+    if state.get('outputs') or state.get('configHash'):
+        raise SetupError('Pending identity update conflicts with a deployed configuration')
+    previous = pending['previousBinding']
+    updated = dict(config, coreApiClientId=pending['coreApiClientId'], mobileClientId=pending['mobileClientId'])
+    binding = {k: updated.get(k) for k in BINDING_KEYS}
+    if (any(updated.get(k) != previous.get(k) for k in BINDING_KEYS
+            if k not in ('coreApiClientId', 'mobileClientId'))
+            or state['binding'] not in (previous, binding)
+            or (digest(directory / 'deployment.config.json') != pending['previousConfigHash']
+                and config != updated)):
+        raise SetupError('Pending identity update conflicts with saved configuration; restore the original files')
+    write_json(directory / 'deployment.config.json', updated)
+    config.update(updated)
+    state['binding'] = binding
+    checkpoint(directory, state, 'identity_configured')
+    journal.unlink()
+
+
 def load(directory):
     config = read_json(directory / 'deployment.config.json')
     state = read_json(directory / 'state.json')
@@ -147,6 +172,7 @@ def load(directory):
     release = check_release()
     if state['releaseHash'] != digest(ROOT / 'release.json'):
         raise SetupError('Installer release differs from saved state. Use the original package; upgrades require a new reviewed release.')
+    recover_identity(directory, config, state)
     for key in BINDING_KEYS:
         if config.get(key) != state['binding'].get(key):
             raise SetupError(f'{key} changed since initialization. Restore the original configuration.')
@@ -444,10 +470,10 @@ def configure_entra(args, directory, config, state):
     result = json.loads(run(argv, env=environment(config)))
     if result['tenantId'].lower() != config['tenantId'].lower():
         raise SetupError('Entra helper returned another tenant')
-    config.update(coreApiClientId=result['coreApiClientId'], mobileClientId=result['mobileClientId'])
-    write_json(directory / 'deployment.config.json', config)
-    state['binding'] = {k: config.get(k) for k in BINDING_KEYS}
-    checkpoint(directory, state, 'identity_configured')
+    write_json(directory / 'identity.pending.json', dict(previousBinding=state['binding'],
+               previousConfigHash=digest(directory / 'deployment.config.json'),
+               coreApiClientId=result['coreApiClientId'], mobileClientId=result['mobileClientId']))
+    recover_identity(directory, config, state)
     write_json(directory / 'entra.json', result)
     emit(args, {'status': 'configured', 'next': 'Assign employees to the Mobile enterprise application in Entra. Teams Graph creation needs customer app permissions and a Teams application access policy; see handoff documentation.'})
 
