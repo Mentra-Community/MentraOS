@@ -112,9 +112,9 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     cleanup: "Stop owned playback and recording, remove this run’s captures and downloaded media, restore changed settings, stop the managed app and release the phone and glasses. Publish evidence before disposing of local run files.",
     exclusions: "Measured speaker or microphone audio, visual scene recognition, physical action-button behavior, firmware updates, other glasses models and CI/nightly qualification. The recording briefly pauses while entering the private Wi-Fi password.",
     passingRun: {
-      id: "local-android-59a30e48-e849-4416-983c-83e222f25cdc", recordedOn: "2026-10-01",
-      release: "3.3.0-dev.468", appVersion: "3.3.0", appBuild: "310000290",
-      appSha: "d6c74c857015fac95fbc6195dbf009acfab65eeb", fixture: "mini-03be", device: "Samsung Galaxy A54",
+      id: "local-android-a061de4c-2407-4a28-985d-bd9482c11569", recordedOn: "2026-10-02",
+      release: "3.3.0-dev.559", appVersion: "3.3.0", appBuild: "310000352",
+      appSha: "f85d8361b59a7592775bb44582d64b8d82dc8689", fixture: "mini-03be", device: "Samsung Galaxy A54",
     },
   },
   {
