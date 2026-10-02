@@ -176,6 +176,17 @@ test("all six dev foundation routines authenticate their entered nightly sender;
   assert.throws(() => validateNightlyMarker({...f.request, source: {...f.request.source, channel: "staging"}}))
 })
 
+test("restricted production callback dispatches connected Android nightlies but excludes unrelated routines", async () => {
+  const connected = await markerFixture("nightly-routine", "connected-glasses")
+  assert.equal((await dispatchReadyRequest({...connected.callback, nightlyOnly: true})).status, "private-job-requested")
+  assert.equal(connected.privateCalls.length, 1)
+  for (const routine of ["mentra-call", "account-miniapps"]) {
+    const other = await markerFixture("nightly-routine", routine)
+    assert.equal((await dispatchReadyRequest({...other.callback, nightlyOnly: true})).status, "not-dispatched")
+    assert.equal(other.privateCalls.length, 0)
+  }
+})
+
 test("explicit dev qualification uses real workflow_dispatch metadata with same plan, sends and marker", async () => {
   const f = fixture()
   f.state.run.event = "workflow_dispatch"

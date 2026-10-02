@@ -46,13 +46,15 @@ test("suite Slack send binds destination and receipt without retry", async () =>
 test("freeze includes unavailable members before any request receives its ID", () => {
   const frozen = frozenNightlySuite({plan: {sourceRunId: 5000, startedAt: suite.finishedAt,
     requests: [{channel: "dev", routine: "no-glasses", headSha: "a".repeat(40)}]}, runId: 5000, attempt: 1})
-  assert.equal(frozen.members.length, 5)
-  assert.equal(frozen.members.at(-1).routineId, "ota-roundtrip-android")
+  assert.equal(frozen.members.length, 6)
+  assert.equal(frozen.members.at(-1).routineId, "connected-glasses")
   assert.equal(frozen.members[0].platform, "ios-mac")
+  assert.deepEqual(frozen.members.filter(member => member.platform === "android").map(member => member.routineId),
+    ["no-glasses-android", "ota-roundtrip-android", "connected-glasses"])
   assert.ok(frozen.members.every(member => !member.requestId))
   const unavailable = frozenNightlySuite({plan: {sourceRunId: 5000, startedAt: suite.finishedAt, requests: [],
     unavailable: [{routine: "no-glasses", reason: "No verified publication"}]}, runId: 5000, attempt: 1, workflowSha: "b".repeat(40)})
-  assert.equal(unavailable.members.length, 5)
+  assert.equal(unavailable.members.length, 6)
   assert.equal(unavailable.build.headSha, "b".repeat(40))
   assert.ok(unavailable.members.every(member => !member.requestId))
   assert.equal(frozenNightlySuite({plan: {requests: []}}), undefined)
