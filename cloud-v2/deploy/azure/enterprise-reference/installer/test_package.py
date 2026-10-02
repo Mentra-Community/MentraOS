@@ -32,6 +32,8 @@ class PackageTests(unittest.TestCase):
         self.manifest = self.repo / PREFIX / 'mentra-deployment.json'
         self.app = dict(packageName='com.mentra.call', version='1.0.0', sha256=package.sha(self.bundle.read_bytes()))
         self.save_manifest([self.app])
+        (self.repo / 'mobile').mkdir()
+        (self.repo / 'mobile/package.json').write_text('{"version":"3.3.0"}')
         self.source = self.commit()
         self.publication = self.repo / 'publication.json'
         self.sbom = self.repo / 'image.spdx.json'
@@ -48,7 +50,7 @@ class PackageTests(unittest.TestCase):
         return subprocess.check_output(['git', *args], cwd=self.repo, text=True).strip()
 
     def commit(self):
-        self.git('add', PREFIX)
+        self.git('add', PREFIX, 'mobile/package.json')
         self.git('commit', '-qm', 'Add release fixture')
         return self.git('rev-parse', 'HEAD')
 
@@ -66,6 +68,7 @@ class PackageTests(unittest.TestCase):
         installer = self.commit()
         script.write_text('uncommitted change must not be shipped\n')
         release = self.build()
+        self.assertEqual(release['clientMinVersion'], '3.3.0')
         self.assertEqual(release['imageSourceCommit'], self.source)
         self.assertEqual(release['installerSourceCommit'], installer)
         with tarfile.open(self.output) as archive:
@@ -76,6 +79,12 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(release['files']['setup.sh'], package.sha(data))
         self.assertEqual(self.output.with_name('release.tar.gz.sha256').read_text().split()[0],
                          package.sha(self.output.read_bytes()))
+
+    def test_invalid_mobile_version_is_rejected(self):
+        (self.repo / 'mobile/package.json').write_text('{"version":"unknown"}')
+        self.record['sourceCommit'] = self.commit()
+        with self.assertRaisesRegex(ValueError, 'marketing version'):
+            self.build()
 
     def test_modified_sbom_is_rejected_before_archive_creation(self):
         self.sbom.write_bytes(b'tampered')

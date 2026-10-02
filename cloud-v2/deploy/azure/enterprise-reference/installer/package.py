@@ -35,6 +35,9 @@ def build(publication_path, sbom_path, output):
     if metadata['format'] != 'spdx-json' or sha(sbom) != metadata['sha256'] or len(sbom) != metadata['size']:
         raise ValueError('SBOM bytes do not match publication evidence')
     source = publication['sourceCommit']
+    client_version = json.loads(subprocess.check_output(['git', 'show', f'{source}:mobile/package.json'], cwd=REPO))['version']
+    if not re.fullmatch(r'\d+\.\d+\.\d+', client_version):
+        raise ValueError('Image source must declare a valid Mentra App marketing version')
     prefix = 'cloud-v2/deploy/azure/enterprise-reference/'
     manifest = json.loads(subprocess.check_output(['git', 'show', f'{source}:{prefix}mentra-deployment.json'], cwd=REPO))
     apps = []
@@ -57,7 +60,7 @@ def build(publication_path, sbom_path, output):
     contents['runtime-image.spdx.json'] = sbom
     release = dict(schemaVersion=1, sourceImage=publication['reference'], releaseTag=publication['releaseIdentity'],
                    imageSourceCommit=source, installerSourceCommit=installer_commit, managedMiniapps=apps,
-                   clientMinVersion='0.0.0', files={name: sha(data) for name, data in contents.items()})
+                   clientMinVersion=client_version, files={name: sha(data) for name, data in contents.items()})
     contents['release.json'] = (json.dumps(release, indent=2) + '\n').encode()
     contents['INSTALL.txt'] = b'''Mentra Private Cloud Azure installer
 Use Azure Portal > Cloud Shell > Bash on Windows, macOS, or Linux.

@@ -472,7 +472,7 @@ def main():
             if args.command == 'preflight':
                 emit(args, preflight(config))
             elif args.command == 'plan':
-                emit(args, {'deployment': config['deploymentId'], 'subscription': config['subscriptionId'],
+                emit(args, {'deployment': config['deploymentId'], 'subscription': config['subscriptionId'], 'tenant': config['tenantId'],
                             'region': config['location'], 'group': config['resourceGroup'], 'image': release['sourceImage'],
                             'resources': ['Basic ACR', 'Container Apps environment, Core + Runtime', 'Managed identity + AcrPull',
                                           'Azure Communication Services', 'Cosmos DB MongoDB serverless', 'Azure Files report attachments'],
