@@ -79,6 +79,7 @@ jq -e '
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
   ((.coreAdminEmails // "") | type == "string") and
+  (.manageAcrPullRoleAssignment == null or (.manageAcrPullRoleAssignment | type == "boolean")) and
   ((.miniappConfiguration // {}) | miniapp_configuration_map) and
   ($minVersion | semver) and
   ($recommendedVersion | semver) and
@@ -155,7 +156,7 @@ jq -n \
       cloudImage:{value:$cloudImage},
       registryName:{value:$c.registryName},
       resourceTags:{value:($c.resourceTags // {})},
-      manageAcrPullRoleAssignment:{value:($c.manageAcrPullRoleAssignment // true)},
+      manageAcrPullRoleAssignment:{value:(if $c.manageAcrPullRoleAssignment == null then true else $c.manageAcrPullRoleAssignment end)},
       tenantId:{value:$c.tenantId},
       coreApiClientId:{value:$c.coreApiClientId},
       mobileClientId:{value:$c.mobileClientId},

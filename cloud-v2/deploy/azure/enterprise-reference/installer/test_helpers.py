@@ -115,6 +115,39 @@ elif url.endswith('.zip'):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_acr_role_assignment_parameters_preserve_false_and_default_only_null(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        expression = source.split('--arg cloudImage "$IMPORTED_IMAGE" \'\n', 1)[1].split("\n  ' > \"$PARAMETERS\"", 1)[0]
+        for value, expected in ((False, False), (True, True), (None, True), ('missing', True)):
+            with self.subTest(value=value):
+                config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+                if value == 'missing':
+                    config.pop('manageAcrPullRoleAssignment', None)
+                else:
+                    config['manageAcrPullRoleAssignment'] = value
+                (self.path / 'config.json').write_text(json.dumps(config))
+                (self.path / 'secrets.json').write_text('{}')
+                result = subprocess.run(['jq', '-n', '--slurpfile', 'config', str(self.path / 'config.json'),
+                                         '--slurpfile', 'secrets', str(self.path / 'secrets.json'),
+                                         '--arg', 'cloudImage', 'test.azurecr.io/cloud@sha256:' + 'a' * 64,
+                                         expression], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIs(json.loads(result.stdout)['parameters']['manageAcrPullRoleAssignment']['value'], expected)
+
+    def test_acr_role_assignment_validation_rejects_nonboolean_values(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        expression = source.split("jq -e '\n", 1)[1].split("\n' \"$CONFIG\"", 1)[0]
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        config['sourceImage'] = 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64
+        for key in ('tenantId', 'coreApiClientId', 'mobileClientId'):
+            config[key] = '11111111-1111-1111-1111-111111111111'
+        for value in (False, True, None, 'false', 0):
+            with self.subTest(value=value):
+                config['manageAcrPullRoleAssignment'] = value
+                result = subprocess.run(['jq', '-e', expression], input=json.dumps(config),
+                                         capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, value is None or type(value) is bool, result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
