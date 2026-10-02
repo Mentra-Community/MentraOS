@@ -216,7 +216,18 @@ iOS apps should include permission copy in `Info.plist`:
 
 ## Background Operation On iOS
 
-Declare Core Bluetooth background mode in your iOS app's `Info.plist`. It is required: when the glasses drop the link, for example while their Bluetooth chip restarts during a software update, the SDK keeps a pending reconnection that iOS completes only for apps with this mode. Without it, a locked phone stays disconnected until the user opens the app. A Swift package cannot declare it for you; the SDK logs a warning at startup when it is missing. The native example declares it in `examples/ios/MentraExample-Info.plist`. See [Background Operation](https://docs.mentraglass.com/bluetooth-sdk/ios#background-operation).
+Declare Core Bluetooth background mode in your iOS app's `Info.plist`. Without
+it, iOS suspends your app when the phone locks and delivers no Bluetooth events
+to it, so the glasses link stops working in the background. A Swift package
+cannot declare background modes for your app. The native example declares it in
+`examples/ios/MentraExample-Info.plist`.
+
+An upcoming SDK release, tracked in Mentra-Community/MentraOS#4386, also
+reconnects in the background after the glasses drop the link, for example while
+their Bluetooth chip restarts during a software update, and logs a warning at
+startup when the mode is missing. The SDK version these examples pin,
+`3.2.1-dev.307`, does not include that yet. See
+[Background Operation](https://docs.mentraglass.com/bluetooth-sdk/ios#background-operation).
 
 ```xml
 <key>UIBackgroundModes</key>
