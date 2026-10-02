@@ -248,6 +248,7 @@
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-no_compact_unwind -lresolv -liconv -lc++ -framework GStreamer -framework CoreFoundation -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreAudio -framework AudioToolbox -framework AssetsLibrary -weak_framework VideoToolbox -framework OpenGLES -framework QuartzCore -framework UIKit";
 				INFOPLIST_KEY_CFBundleDisplayName = "Mentra SDK iOS";
+				INFOPLIST_FILE = "MentraExample-Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.bluetoothsdk.example.ios;
 				PRODUCT_NAME = MentraSdkIosExample;
 				SDKROOT = iphoneos;
@@ -280,6 +281,7 @@
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-no_compact_unwind -lresolv -liconv -lc++ -framework GStreamer -framework CoreFoundation -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreAudio -framework AudioToolbox -framework AssetsLibrary -weak_framework VideoToolbox -framework OpenGLES -framework QuartzCore -framework UIKit";
 				INFOPLIST_KEY_CFBundleDisplayName = "Mentra SDK iOS";
+				INFOPLIST_FILE = "MentraExample-Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.bluetoothsdk.example.ios;
 				PRODUCT_NAME = MentraSdkIosExample;
 				SDKROOT = iphoneos;
