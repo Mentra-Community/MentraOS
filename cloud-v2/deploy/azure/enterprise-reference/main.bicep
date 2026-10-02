@@ -1,6 +1,9 @@
 @description('Azure region for the Core, Runtime, and database.')
 param location string = resourceGroup().location
 
+@description('Installer ownership and operator-supplied resource tags.')
+param resourceTags object = {}
+
 @description('Built Mentra Cloud image, including registry host and immutable digest.')
 param cloudImage string
 
@@ -95,6 +98,7 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing =
 resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: pullIdentityName
   location: location
+  tags: resourceTags
 }
 
 resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageAcrPullRoleAssignment) {
@@ -110,18 +114,21 @@ resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if 
 resource communication 'Microsoft.Communication/communicationServices@2023-04-01' = {
   name: communicationName
   location: 'global'
+  tags: resourceTags
   properties: { dataLocation: communicationDataLocation }
 }
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
+  tags: resourceTags
   properties: {}
 }
 
 resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
   name: mongoAccountName
   location: location
+  tags: resourceTags
   kind: 'MongoDB'
   properties: {
     apiProperties: { serverVersion: '4.2' }
@@ -164,6 +171,7 @@ resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertific
 resource reportStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: reportStorageAccountName
   location: location
+  tags: resourceTags
   kind: 'StorageV2'
   sku: { name: 'Standard_LRS' }
   properties: {
@@ -207,6 +215,12 @@ var generatedCoreHostname = '${coreName}.${environment.properties.defaultDomain}
 var workspaceOrigin = 'https://${empty(workspaceHostname) ? generatedRuntimeHostname : workspaceHostname}'
 var coreOrigin = 'https://${generatedCoreHostname}'
 var mongoConnectionString = replace(mongo.listConnectionStrings().connectionStrings[0].connectionString, '/?', '/mentra-private?')
+var resolvedManagedMiniapps = map(managedMiniapps, app => {
+      packageName: app.packageName
+      version: app.version
+      bundleUrl: contains(app, 'bundlePath') ? '${workspaceOrigin}${app.bundlePath}' : app.bundleUrl
+      sha256: app.sha256
+    })
 var deploymentManifest = {
   schemaVersion: 1
   deploymentId: deploymentId
@@ -249,7 +263,10 @@ var deploymentManifest = {
     supportUrl: empty(supportUrl) ? null : supportUrl
   }
   systemMiniapps: { approvedPackageNamesOverride: approvedSystemMiniapps }
-  miniapps: { managed: managedMiniapps, configuration: miniappConfiguration }
+  miniapps: {
+    managed: resolvedManagedMiniapps
+    configuration: miniappConfiguration
+  }
   glasses: { allowedModelsOverride: allowedGlassesModels }
   features: {
     runtimeRealtimeSession: false
@@ -265,6 +282,7 @@ var deploymentManifest = {
 resource core 'Microsoft.App/containerApps@2024-03-01' = {
   name: coreName
   location: location
+  tags: resourceTags
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: { '${pullIdentity.id}': {} }
@@ -344,6 +362,7 @@ var workspaceAliasOrigins = [for domain in additionalWorkspaceDomains: 'https://
 resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   name: runtimeName
   location: location
+  tags: resourceTags
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: { '${pullIdentity.id}': {} }

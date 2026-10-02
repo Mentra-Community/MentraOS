@@ -285,6 +285,31 @@ jobs:
             --workflow-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --output runtime-image-publication.json
 
+      - name: Package Azure installer for the published image
+        if: inputs.dry_run != true
+        run: |
+          python3 cloud-v2/deploy/azure/enterprise-reference/installer/package.py \
+            --publication runtime-image-publication.json \
+            --sbom "${{ steps.coordinates.outputs.sbom_name }}" \
+            --output mentra-private-cloud.tar.gz
+
+      - name: Attest Azure installer
+        if: inputs.dry_run != true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: mentra-private-cloud.tar.gz
+
+      - name: Upload Azure installer
+        if: inputs.dry_run != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-private-cloud-${{ steps.coordinates.outputs.release_identity }}
+          path: |
+            mentra-private-cloud.tar.gz
+            mentra-private-cloud.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Name coordinated result artifact
         id: artifact
         run: |

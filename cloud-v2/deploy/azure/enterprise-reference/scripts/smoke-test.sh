@@ -9,7 +9,7 @@ WORKSPACE="${WORKSPACE%/}"
   exit 2
 }
 
-for command in curl jq; do
+for command in curl jq python3; do
   command -v "$command" >/dev/null || { printf '%s is required\n' "$command" >&2; exit 1; }
 done
 
@@ -31,7 +31,7 @@ if ! jq -e --arg origin "$WORKSPACE" '
   .features.nativeMeetings == true and
   (.telemetry | type == "boolean") and
   (.auth.sessionScopes | length > 0 and all(endswith("/mentra.session"))) and
-  (.miniapps.managed | type == "array") and
+  (.miniapps.managed | type == "array" and any(.packageName == "com.mentra.call")) and
   ((.miniapps.configuration == null) or (.miniapps.configuration | type == "object")) and
   (.branding.logoUrls.light | startswith($origin + "/")) and
   (.branding.logoUrls.dark | startswith($origin + "/"))
@@ -39,6 +39,26 @@ if ! jq -e --arg origin "$WORKSPACE" '
   printf 'Workspace manifest does not match the Mentra Private Deployment v1 contract.\n' >&2
   exit 1
 fi
+
+# Verify what phones download, including the exact published ZIP bytes.
+BUNDLE_DIR="$(mktemp -d)"
+trap 'rm -rf "$BUNDLE_DIR"' EXIT
+while IFS=$'\t' read -r package version url expected; do
+  [[ "$url" == "$WORKSPACE/miniapps/$package-$version.zip" && "$expected" =~ ^[0-9a-f]{64}$ ]] || {
+    printf 'Managed miniapp must use the pinned workspace bundle and SHA-256.\n' >&2
+    exit 1
+  }
+  curl --fail --show-error --silent --output "$BUNDLE_DIR/bundle.zip" "$url"
+  python3 - "$BUNDLE_DIR/bundle.zip" "$expected" <<'PYVERIFY'
+import hashlib, sys, zipfile
+path, expected = sys.argv[1:]
+if hashlib.sha256(open(path, 'rb').read()).hexdigest() != expected:
+    sys.exit('Managed miniapp ZIP checksum mismatch')
+with zipfile.ZipFile(path) as archive:
+    if archive.testzip() is not None:
+        sys.exit('Managed miniapp ZIP is corrupt')
+PYVERIFY
+done < <(jq -r '.miniapps.managed[] | [.packageName,.version,.bundleUrl,.sha256] | @tsv' <<<"$manifest")
 
 CORE="$(jq -r .services.coreUrl <<<"$manifest")"
 curl --fail --show-error --silent "$CORE/healthz" | jq -e '.package == "core"' >/dev/null

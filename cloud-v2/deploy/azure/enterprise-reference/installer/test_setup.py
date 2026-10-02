@@ -1,0 +1,179 @@
+"""Installer recovery and isolation checks; no Azure resources are created."""
+import argparse
+import contextlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+SPEC = importlib.util.spec_from_file_location('mentra_setup', Path(__file__).with_name('setup.py'))
+setup = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(setup)
+SUB = '11111111-1111-1111-1111-111111111111'
+TENANT = '22222222-2222-2222-2222-222222222222'
+RELEASE = dict(sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64,
+               releaseTag='mentra-test', clientMinVersion='0.0.0',
+               managedMiniapps=[dict(packageName='com.mentra.call', version='2.1.44',
+                                     sha256='b' * 64, bundlePath='/miniapps/com.mentra.call-2.1.44.zip')])
+
+
+class InstallerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name) / 'state'
+        self.directory.mkdir(mode=0o700)
+        self.args = argparse.Namespace(json=True, config=None, dns_ready=False, grant_admin_consent=False)
+        self.config = dict(subscriptionId=SUB, tenantId=TENANT, resourceGroup='rg-test',
+                           runtimeName='ca-test', workspaceHostname='', coreApiClientId=SUB,
+                           mobileClientId=TENANT, deploymentId='test', resourceTags={'mentraInstallerOwner': 'owner'},
+                           **RELEASE)
+        self.state = dict(schemaVersion=1, deploymentId='test', releaseHash='release-hash',
+                          binding={k: self.config.get(k) for k in setup.BINDING_KEYS}, owner='owner',
+                          phase='initialized', secretsCreated=False, outputs={})
+        self.save()
+
+    def save(self):
+        setup.write_json(self.directory / 'deployment.config.json', self.config)
+        setup.write_json(self.directory / 'state.json', self.state)
+
+    @contextlib.contextmanager
+    def load_context(self):
+        with patch.object(setup, 'check_release', return_value=RELEASE), \
+             patch.object(setup, 'digest', side_effect=lambda p: 'release-hash' if Path(p).name == 'release.json' else 'config-hash'):
+            yield
+
+    def test_state_cannot_move_subscription_or_tenant(self):
+        for field in ('subscriptionId', 'tenantId', 'resourceGroup', 'coreApiClientId'):
+            original = self.config[field]
+            self.config[field] = 'changed'
+            self.save()
+            with self.subTest(field=field), self.load_context(), self.assertRaisesRegex(setup.SetupError, field):
+                setup.load(self.directory)
+            self.config[field] = original
+
+    def test_release_cannot_change_during_resume(self):
+        self.state['releaseHash'] = 'other-release'
+        self.save()
+        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'release differs'):
+            setup.load(self.directory)
+
+    def test_missing_original_keys_cannot_be_regenerated(self):
+        self.state['secretsCreated'] = True
+        self.save()
+        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'Original secrets file is missing'):
+            setup.load(self.directory)
+
+    def test_shared_or_symlinked_secrets_are_rejected(self):
+        secrets = self.directory / 'secrets.json'
+        secrets.write_text('{}')
+        secrets.chmod(0o644)
+        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'accessible only'):
+            setup.load(self.directory)
+        secrets.unlink()
+        target = self.directory / 'target'
+        target.write_text('{}')
+        target.chmod(0o600)
+        secrets.symlink_to(target)
+        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'regular file'):
+            setup.load(self.directory)
+
+    def test_config_is_frozen_after_first_azure_write(self):
+        self.state['configHash'] = 'old-hash'
+        self.save()
+        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'Configuration changed'):
+            setup.load(self.directory)
+
+    def test_lock_conflict_and_release_after_failure(self):
+        with setup.locked(self.directory):
+            with self.assertRaisesRegex(setup.SetupError, 'Another setup'):
+                with setup.locked(self.directory):
+                    pass
+        try:
+            with setup.locked(self.directory):
+                raise RuntimeError('interrupted')
+        except RuntimeError:
+            pass
+        with setup.locked(self.directory):
+            pass
+
+    def test_json_writes_are_private_and_refuse_symlinks(self):
+        output = self.directory / 'private.json'
+        setup.write_json(output, {'example': 'value'})
+        self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+        output.unlink()
+        output.symlink_to(self.directory / 'other')
+        with self.assertRaisesRegex(setup.SetupError, 'symlink'):
+            setup.write_json(output, {})
+
+    def test_consumer_credentials_do_not_leak_to_customer_setup(self):
+        with patch.dict(os.environ, {'MENTRA_ADMIN_TOKEN_PROD': 'secret', 'MENTRA_CALL_CLIENT_SECRET': 'secret',
+                                     'TEAMS_GRAPH_CLIENT_SECRET': 'secret', 'UNRELATED': 'retain'}):
+            env = setup.environment(self.config)
+        self.assertFalse(any(k.startswith(('MENTRA_ADMIN_TOKEN', 'MENTRA_CALL_', 'TEAMS_GRAPH_')) for k in env))
+        self.assertEqual(env['MENTRA_SUBSCRIPTION_ID'], SUB)
+        self.assertEqual(env['MENTRA_EXPECTED_TENANT_ID'], TENANT)
+        self.assertEqual(env['UNRELATED'], 'retain')
+
+    def test_wrong_tenant_and_foreign_resource_groups_block_writes(self):
+        def azure(config, *args):
+            if args[:2] == ('account', 'show'):
+                return {'id': SUB, 'tenantId': TENANT, 'state': 'Enabled'}
+            if args[:2] == ('provider', 'show'):
+                return {'registrationState': 'Registered'}
+            if args[:2] == ('group', 'list'):
+                return [{'name': 'RG-TEST', 'tags': {'mentraInstallerOwner': 'someone-else'}}]
+            self.fail('preflight attempted a write')
+        with patch.object(setup.shutil, 'which', return_value='/tool'), patch.object(setup, 'azure', side_effect=azure):
+            with self.assertRaisesRegex(setup.SetupError, 'not owned'):
+                setup.preflight(self.config)
+        with patch.object(setup.shutil, 'which', return_value='/tool'), \
+             patch.object(setup, 'azure', return_value={'id': SUB, 'tenantId': SUB, 'state': 'Enabled'}):
+            with self.assertRaisesRegex(setup.SetupError, 'does not match'):
+                setup.preflight(self.config)
+
+    def test_interrupted_deploy_preserves_secrets_and_can_resume(self):
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if 'generate-private-secrets.sh' in argv[1]:
+                setup.write_json(self.directory / 'secrets.json', {'private': 'same-key'})
+            return ''
+        with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
+             patch.object(setup, 'run', side_effect=run), \
+             patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')), \
+             patch.object(setup, 'emit'):
+            with self.assertRaisesRegex(setup.SetupError, 'interrupted'):
+                setup.install(self.args, self.directory, self.config, self.state)
+        self.assertTrue(setup.read_json(self.directory / 'state.json')['secretsCreated'])
+        with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
+             patch.object(setup, 'run', side_effect=run), patch.object(setup, 'deploy'), \
+             patch.object(setup, 'verify'), patch.object(setup, 'emit'):
+            setup.install(self.args, self.directory, self.config, self.state)
+        self.assertEqual(sum('generate-private-secrets.sh' in argv[1] for argv in calls), 1)
+        self.assertEqual(setup.read_json(self.directory / 'secrets.json')['private'], 'same-key')
+
+    def test_dns_handoff_cannot_be_verified_as_final_customer_domain(self):
+        self.config['workspaceHostname'] = 'mentra.example.com'
+        self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com'}
+        with self.assertRaisesRegex(setup.SetupError, 'domain is not deployed'):
+            setup.verify(self.args, self.directory, self.config, self.state)
+        self.state['dns'] = [{'value': 'azure.example.com'}, {'value': 'verification'}]
+        with patch.object(setup.shutil, 'which', return_value='/dig'), \
+             patch.object(setup, 'run', side_effect=['wrong.example.com.', '"verification"']):
+            with self.assertRaisesRegex(setup.SetupError, 'do not match'):
+                setup.check_dns(self.config, self.state)
+
+    def test_provider_errors_do_not_print_secret_output(self):
+        from subprocess import CompletedProcess
+        with patch.object(setup.subprocess, 'run', return_value=CompletedProcess(['az'], 1, '', 'secret-token')):
+            with self.assertRaises(setup.SetupError) as error:
+                setup.run(['az', 'deployment'])
+        self.assertNotIn('secret-token', str(error.exception))
+
+
+if __name__ == '__main__':
+    unittest.main()

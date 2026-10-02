@@ -40,11 +40,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for command in az jq uuidgen; do
+for command in az jq python3; do
   command -v "$command" >/dev/null || { printf '%s is required\n' "$command" >&2; exit 1; }
 done
 
+# Explicit binding for the resumable installer; preserve the standalone helper.
+if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
+  az() { command az "$@" --subscription "$MENTRA_SUBSCRIPTION_ID"; }
+fi
 TENANT_ID="$(az account show --query tenantId -o tsv)"
+if [[ -n "${MENTRA_EXPECTED_TENANT_ID:-}" && "$TENANT_ID" != "$MENTRA_EXPECTED_TENANT_ID" ]]; then
+  printf 'Azure login does not match the configured Entra tenant. No registrations changed.\n' >&2
+  exit 1
+fi
 [[ -n "$TENANT_ID" ]] || { printf 'Azure CLI is not signed in\n' >&2; exit 1; }
 
 find_or_create_app() {
@@ -107,7 +115,7 @@ CORE_OBJECT_ID="$(find_or_create_app "$CORE_CLIENT_ID" "$CORE_NAME")"
 CORE_CLIENT_ID="$(az ad app show --id "$CORE_OBJECT_ID" --query appId -o tsv)"
 CORE_SCOPE_ID="$(az ad app show --id "$CORE_OBJECT_ID" --query "api.oauth2PermissionScopes[?value=='mentra.session'].id | [0]" -o tsv)"
 if [[ -z "$CORE_SCOPE_ID" ]]; then
-  CORE_SCOPE_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  CORE_SCOPE_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 fi
 
 core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
@@ -186,4 +194,4 @@ jq -n \
 if [[ "$GRANT_ADMIN_CONSENT" != "true" ]]; then
   printf '%s\n' 'Admin consent was not granted. Review the permissions, then rerun with --grant-admin-consent.' >&2
 fi
-printf '%s\n' 'Assign approved pilot users/groups to the Mobile Enterprise Application before testing.' >&2
+printf '%s\n' 'Assign approved employees/groups to the Mobile Enterprise Application before testing.' >&2
