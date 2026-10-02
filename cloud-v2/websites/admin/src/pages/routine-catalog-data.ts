@@ -1,7 +1,7 @@
 import type { TestRoutineId } from "../../../../packages/core/src/types/test-dispatch.types";
 
 export interface CatalogRoutine {
-  id: TestRoutineId | "ota-roundtrip-android";
+  id: TestRoutineId | "ota-roundtrip-android" | "open-close-miniapps";
   request?: { routineId: TestRoutineId };
   name: string;
   platform: "iOS on Mac" | "Android";
@@ -134,6 +134,25 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
       id: "local-ios-on-mac-d5891059-4483-44c2-aac5-77b34441e95b", recordedOn: "2026-10-02",
       release: "3.3.0-dev.559", appVersion: "3.3.0", appBuild: "303000128",
       appSha: "f85d8361b59a7592775bb44582d64b8d82dc8689", fixture: "mini-ui-unpaired", device: "Mac",
+    },
+  },
+  {
+    id: "open-close-miniapps", name: "Open, resume and close Gallery", platform: "Android",
+    purpose: "Open Gallery, minimize it, confirm it remains running, resume it, close it and verify it is stopped from Home.",
+    requirements: {
+      software: "The selected signed Android APK, in English, with Gallery available. Shared setup installs the app, signs in and establishes paired Home.",
+      firmware: "An enrolled Mentra Live pair with verified identity and the requested starting software. This routine does not update firmware.",
+      account: testAccount,
+      network: "Internet access to the selected backend, sign-in and miniapp services.",
+      physical: "A reserved USB-connected Android phone and Mentra Live pair, with authorized ADB access and screen recording. No operator input is required.",
+      data: "Existing gallery contents are preserved. No new photo, video or seeded media is required for these lifecycle checks.",
+    },
+    cleanup: "Close the owned miniapp, restore changed settings, stop the managed app and recorder, and release owned resources. Publish evidence before disposing of local run files.",
+    exclusions: "Photo or video capture, media synchronization, scene verification, other miniapps, other platforms and registered dispatch qualification.",
+    passingRun: {
+      id: "local-android-5fe92a2e-2807-4f15-8d9e-5f4faf7b3cdc", recordedOn: "2026-10-02",
+      release: "3.3.0-dev.559", appVersion: "3.3.0", appBuild: "310000352",
+      appSha: "f85d8361b59a7592775bb44582d64b8d82dc8689", fixture: "mini-03be", device: "Samsung Galaxy A54",
     },
   },
 ];
