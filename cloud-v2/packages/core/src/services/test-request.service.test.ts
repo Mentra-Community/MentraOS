@@ -1,4 +1,5 @@
 import {expect, test} from "bun:test";
+import {createHash} from "node:crypto";
 import {requestInputDigest, TestRequestService, type HostAcceptance, type StoredTestRequest, type TestRequestRepository} from "./test-request.service";
 
 function store(): TestRequestRepository {
@@ -57,6 +58,11 @@ test("concurrent accepts converge on one original receipt", async () => {
 test("hash refuses non-JSON values instead of conflating inputs", () => {
   for (const input of [{x: undefined}, {x: Infinity}, new Date(), {x: () => 1}])
     expect(() => requestInputDigest(input)).toThrow("finite JSON");
+});
+
+test("host and cloud canonical JSON agree on integer-like object keys", () => {
+  const expected = createHash("sha256").update('{"2":"two","10":"ten","a":{"1":true,"b":false}}').digest("hex");
+  expect(requestInputDigest({a: {b: false, "1": true}, "10": "ten", "2": "two"})).toBe(expected);
 });
 
 test("queue pages preserve equal-time requests and exclude other hosts", async () => {
