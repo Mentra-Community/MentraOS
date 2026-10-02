@@ -31,7 +31,7 @@ function fixture() {
   const state = {requestRuns: new Map(), requestArtifacts: new Map(), run: structuredClone(current), history: [structuredClone(current)],
     candidates: {dev: [dev.state.run], staging: [staging.state.run]},
     jobs: new Map([[100, [publicationJob(1001)]], [200, [publicationJob(2001)]], [5000, [sendJob(50001)]]]),
-    historyResponse: null, jobsResponse: null, dispatchResponse: {status: 200, data: {workflow_run_id: 9000,
+    coordinatedHistoryResponse: null, historyResponse: null, jobsResponse: null, dispatchResponse: {status: 200, data: {workflow_run_id: 9000,
       html_url: `https://github.com/${repository}/actions/runs/9000`, run_url: `https://api.github.com/repos/${repository}/actions/runs/9000`}},
     dispatchError: false, calls: []}
   const listWorkflowRunArtifacts = () => {}
@@ -45,7 +45,8 @@ function fixture() {
     listWorkflowRuns: async input => {
       state.calls.push(["history", input])
       if (input.workflow_id === COORDINATED_WORKFLOW)
-        return {data: {workflow_runs: state.candidates[input.branch]}}
+        return {data: state.coordinatedHistoryResponse ? state.coordinatedHistoryResponse(input)
+          : {workflow_runs: state.candidates[input.branch]}}
       return {data: state.historyResponse ? state.historyResponse(input) : {total_count: state.history.length, workflow_runs: state.history}}
     },
     listJobsForWorkflowRun: async input => {
@@ -159,20 +160,40 @@ test("dev foundation rollout excludes staging and legacy routines", async () => 
   const f = fixture(), result = await planNightlyRequests({...f.options, devFoundationOnly: true})
   assert.ok(result.requests.length > 0)
   assert.ok(result.requests.every(request => request.channel === "dev" &&
-    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"].includes(request.routine)))
+    ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses", "open-close-miniapps"].includes(request.routine)))
   assert.ok(result.requests.some(request => request.routine === "ota-roundtrip-android" && request.channel === "dev"))
+  assert.ok(result.requests.some(request => request.routine === "connected-glasses" && request.platform === "android"))
   assert.ok(!f.state.calls.some(([kind, input]) => kind === "runs" && input.branch === "staging"))
   await assert.rejects(sendNightlyRequest({...f.options, plan: {...plan, channel: "staging"}, devFoundationOnly: true}), /Invalid nightly/)
 })
 
-test("all five dev foundation routines authenticate their entered nightly sender; OTA staging refuses", async () => {
-  for (const routine of ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android"]) {
+test("all seven dev foundation routines authenticate their entered nightly sender; OTA staging refuses", async () => {
+  for (const routine of ["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses", "open-close-miniapps"]) {
     const f = await markerFixture("nightly-routine", routine)
     assert.equal(f.request.sequence.member, routine)
     await authenticateNightlyMarker({github: f.options.github, context, request: f.request})
   }
   const f = await markerFixture("nightly-routine", "ota-roundtrip-android")
   assert.throws(() => validateNightlyMarker({...f.request, source: {...f.request.source, channel: "staging"}}))
+})
+
+test("restricted callback dispatches connected glasses and Gallery Android nightlies without broadening other triggers", async () => {
+  for (const routine of ["connected-glasses", "open-close-miniapps"]) {
+    const member = await markerFixture("nightly-routine", routine)
+    assert.equal(member.request.selection.platform, "android")
+    assert.equal((await dispatchReadyRequest({...member.callback, nightlyOnly: true})).status, "private-job-requested")
+    assert.equal(member.privateCalls.length, 1)
+  }
+  const f = fixture(), selected = {...f.dev.options, github: f.options.github,
+    context: {...f.dev.options.context, runId: 9000}, routine: "open-close-miniapps",
+    nightlyRunId: current.id, nightlyRunAttempt: 1, nightlyMode: "independent"}
+  for (const override of [{channel: "staging"}, {nightlyRunId: undefined}, {nightlyRunAttempt: 2}, {nightlyMode: "ordered"},
+    {requestOrigin: "successful-build"}]) await assert.rejects(createRoutineRequest({...selected, ...override}))
+  for (const routine of ["mentra-call", "account-miniapps"]) {
+    const other = await markerFixture("nightly-routine", routine)
+    assert.equal((await dispatchReadyRequest({...other.callback, nightlyOnly: true})).status, "not-dispatched")
+    assert.equal(other.privateCalls.length, 0)
+  }
 })
 
 test("explicit dev qualification uses real workflow_dispatch metadata with same plan, sends and marker", async () => {
@@ -182,7 +203,7 @@ test("explicit dev qualification uses real workflow_dispatch metadata with same 
   f.state.jobs.set(5000, [sendJob(50001, {name: nightlyJobName({...plan, routine: "ota-roundtrip-android"})})])
   const manualContext = {...context, eventName: "workflow_dispatch", payload: {}}
   const selected = await planNightlyRequests({...f.options, context: manualContext, devFoundationOnly: true})
-  assert.equal(selected.requests.length, 5)
+  assert.equal(selected.requests.length, 7)
   const target = selected.requests.find(row => row.routine === "ota-roundtrip-android")
   const sent = await sendNightlyRequest({...f.options, context: manualContext, plan: target, devFoundationOnly: true})
   assert.equal(sent.routine, "ota-roundtrip-android")
@@ -196,7 +217,7 @@ test("dev foundation history explicitly bounds and revalidates the first newest-
     branch: "dev", status: "success", per_page: 20, page: 1,
     created: "2026-08-24T11:17:00.000Z..2026-09-23T11:17:00Z", headers: {"cache-control": "no-cache"}})
   assert.deepEqual(selected.history[0].returned, [{runId: f.dev.state.run.id, createdAt: f.dev.state.run.created_at}])
-  assert.equal(selected.requests.length, 5)
+  assert.equal(selected.requests.length, 7)
 })
 
 test("stale or future history responses never fall through to an out-of-window dev build", async () => {
@@ -205,10 +226,116 @@ test("stale or future history responses never fall through to an out-of-window d
     f.dev.state.run.created_at = createdAt
     const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
     assert.equal(selected.requests.length, 0)
-    assert.equal(selected.unavailable.length, 5)
+    assert.equal(selected.unavailable.length, 7)
     assert.deepEqual(selected.history[0].returned, [{runId: 100, createdAt}])
     assert.equal(f.state.calls.some(([kind]) => kind === "attempt"), false)
   }
+})
+
+test("a stale success page is refreshed before any publication admission or request selection", async () => {
+  const f = fixture()
+  const stale = {...f.dev.state.run, id: 99, created_at: "2026-09-08T00:00:00Z"}
+  f.state.coordinatedHistoryResponse = input => ({total_count: input.per_page === 20 ? 14 : 127,
+    workflow_runs: input.status === "success" && input.per_page === 20 ? [stale] : [f.dev.state.run]})
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 7)
+  assert.ok(selected.requests.every(row => row.sourceRunId === f.dev.state.run.id))
+  const reads = f.state.calls.filter(([kind, input]) => kind === "history" && input.workflow_id === COORDINATED_WORKFLOW)
+  assert.deepEqual(reads.map(([, input]) => [input.status, input.per_page]),
+    [["success", 20], ["completed", 100], ["success", 100], ["completed", 100]])
+  assert.ok(reads.every(([, input]) => input.created === "2026-08-24T11:17:00.000Z..2026-09-23T11:17:00Z" &&
+    input.headers["cache-control"] === "no-cache"))
+  assert.equal(f.state.calls.some(([kind, input]) => kind === "attempt" && input.run_id === stale.id), false)
+  assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
+  assert.equal(selected.history.length, 4)
+})
+
+test("persistently inconsistent newest history refuses every target after one refresh", async () => {
+  for (const overrides of [{id: 99}, {created_at: "2026-09-08T00:00:00Z"}, {run_attempt: 3}, {head_sha: "c".repeat(40)}]) {
+    const f = fixture()
+    f.state.coordinatedHistoryResponse = input => ({workflow_runs: input.status === "success"
+      ? [{...f.dev.state.run, ...overrides}] : [f.dev.state.run]})
+    const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+    assert.equal(selected.requests.length, 0)
+    assert.equal(selected.unavailable.length, 7)
+    assert.match(selected.history.at(-1).error, /freshness could not be reconciled/)
+    assert.equal(f.state.calls.filter(([kind]) => kind === "history").length, 4)
+    assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
+  }
+})
+
+test("a completed-history witness must contain an eligible success, not a running or future build", async () => {
+  for (const overrides of [{status: "in_progress", conclusion: null}, {created_at: "2026-09-23T11:17:01Z"},
+    {head_branch: "staging"}]) {
+    const f = fixture()
+    f.state.coordinatedHistoryResponse = input => ({workflow_runs: input.status === "completed"
+      ? [{...f.dev.state.run, ...overrides}] : [f.dev.state.run]})
+    const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+    assert.equal(selected.requests.length, 0)
+    assert.equal(selected.unavailable.length, 7)
+    assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
+  }
+})
+
+test("completed history reaches a valid success behind 100 newer failed releases", async () => {
+  const f = fixture()
+  const failures = Array.from({length: 100}, (_, index) => ({...f.dev.state.run,
+    id: 200 + index, conclusion: "failure", created_at: "2026-09-23T11:16:00Z"}))
+  f.state.coordinatedHistoryResponse = input => ({total_count: 101, workflow_runs:
+    input.status === "completed" && input.page === 1 ? failures : [f.dev.state.run]})
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 7)
+  assert.deepEqual(selected.history.filter(row => row.query.status === "completed").map(row => row.query.page), [1, 2])
+})
+
+test("completed witness depth exhaustion is reported as incomplete evidence", async () => {
+  const f = fixture()
+  f.state.coordinatedHistoryResponse = input => ({workflow_runs: input.status === "completed"
+    ? Array.from({length: 100}, (_, index) => ({...f.dev.state.run, id: 200 + index, conclusion: "failure"}))
+    : [f.dev.state.run]})
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 0)
+  assert.match(selected.history.at(-1).error, /incomplete after 1000 rows/)
+  assert.equal(selected.history.filter(row => row.query?.status === "completed").length, 10)
+  assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
+})
+
+test("malformed and failed witness reads record their actual query without misattribution", async () => {
+  for (const transient of [false, true]) {
+    const f = fixture()
+    let failures = 0
+    f.state.coordinatedHistoryResponse = input => {
+      if (input.status === "success") return {workflow_runs: [f.dev.state.run]}
+      failures++
+      if (transient) throw Object.assign(new Error("Synthetic server failure"), {status: 503})
+      return {workflow_runs: null}
+    }
+    const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+    assert.equal(selected.requests.length, 0)
+    const errors = selected.history.filter(row => row.error)
+    assert.equal(errors.length, 1)
+    assert.equal(errors[0].query.status, "completed")
+    assert.equal(errors[0].query.page, 1)
+    assert.equal(errors[0].query.per_page, 100)
+    assert.equal(failures, transient ? 3 : 1)
+    assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
+  }
+})
+
+test("a failed success refresh retains the refreshed query in diagnostics", async () => {
+  const f = fixture()
+  f.state.coordinatedHistoryResponse = input => {
+    if (input.status === "completed") return {workflow_runs: [f.dev.state.run]}
+    if (input.per_page === 100) throw Object.assign(new Error("Synthetic refresh failure"), {status: 403})
+    return {workflow_runs: [{...f.dev.state.run, id: 99}]}
+  }
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 0)
+  const errors = selected.history.filter(row => row.error)
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0].query.status, "success")
+  assert.equal(errors[0].query.per_page, 100)
+  assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
 })
 // TEST MODEL of the former planned state: the production catalog with a synthetic `pending` reason on the three combined
 // targets. Production has no planned target; this keeps every planned refusal exercised. It qualifies nothing.
@@ -225,7 +352,7 @@ test("the production catalog registers Livestreamer as its existing Mac nightly 
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/LIVESTREAMER-FULL-ROUTINE.md",
     "tools/mentra-e2e/flows/livestreamer.ts", "worker/livestreamer.ts"].map(path => `${source}${path}`))
   assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
-    "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
+    "open-close-miniapps", "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 
 test("the production catalog registers account-miniapps as its existing Mac nightly target, with its private worker source", () => {
@@ -241,7 +368,7 @@ test("the production catalog registers account-miniapps as its existing Mac nigh
   // Registration is not qualification: the catalog states the unqualified provider observations.
   assert.match(routine.exclusions, /not qualified/)
   assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
-    "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
+    "open-close-miniapps", "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 
 test("the production catalog registers connected-glasses as its existing Android nightly target, with its private worker source", () => {
@@ -249,11 +376,11 @@ test("the production catalog registers connected-glasses as its existing Android
   const routine = DEVICE_ROUTINES["connected-glasses"]
   assert.equal(routine.pending, undefined)
   assert.equal(routine.platform, "android")
-  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
+  const source = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6215c390f081d2ba8e93a3bb3b149813a5d81d80/"
   assert.deepEqual([routine.definition, routine.implementation, routine.worker], ["docs/routines/connected-glasses-brief.md",
-    "tools/mentra-e2e/runner/connected-glasses-routine.ts", "worker/connected-glasses.ts"].map(path => `${source}${path}`))
+    "tools/mentra-e2e/flows/connected-glasses.ts", "worker/foundation-worker.ts"].map(path => `${source}${path}`))
   assert.deepEqual(Object.keys(DEVICE_ROUTINES), ["ota-roundtrip-android", "day1-ota", "no-glasses", "no-glasses-android", "mentra-call", "account-miniapps",
-    "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
+    "open-close-miniapps", "connected-glasses", "livestreamer", "captions-phone", "notes-phone"])
 })
 
 test("planned targets are catalogued but stay unavailable on both channels, with their exact pending reason", async () => {

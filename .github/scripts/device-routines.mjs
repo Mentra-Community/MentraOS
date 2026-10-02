@@ -3,7 +3,7 @@
 const definitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/90a70edfe2fa17fd766dda3d98977555d6608a05/"
 const foundationDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/bcc58134351705f0b6e0b87ed7bfaeb2672ba058/"
 const livestreamerDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/29d46391aaee46648d5871a5b9666de26414aad0/"
-const connectedDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6096399229f5adee4f434c13da34f3336dba0832/"
+const connectedDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/6215c390f081d2ba8e93a3bb3b149813a5d81d80/"
 const accountDefinitions = "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/11b98bed9efb2b414ad912074888c58aeea2e6df/"
 export const DEVICE_ROUTINES = Object.freeze({
   "ota-roundtrip-android": Object.freeze({
@@ -71,19 +71,27 @@ export const DEVICE_ROUTINES = Object.freeze({
     implementation: `${accountDefinitions}tools/mentra-e2e/runner/account-miniapps-routine.ts`,
     worker: `${accountDefinitions}worker/account-miniapps.ts`,
   }),
-  // Registered Android nightly target: its automatic worker (worker/connected-glasses.ts, configuration kind
-  // automatic-connected-glasses-worker) authenticates the request, verifies its exact selected APK and OTA manifest and
-  // runs the full definition in one claimed lifecycle with claim-bound segmented recording, export and settlement.
-  // Registration permits an honest attempted run; it is not qualification.
+  // The shared foundation runs the same saved Android software flow used in authoring.
+  // Its local passing example does not qualify a new dispatched build or acoustic measurements.
+  "open-close-miniapps": Object.freeze({
+    label: "routine:open-close-miniapps", name: "Open, resume and close Gallery", platform: "android",
+    coverage: "Open Gallery, minimize it, confirm it remains running, resume it, close it and verify it is stopped from Home.",
+    relatedPaths: ["mobile/src/app/**", "mobile/src/components/**", "mobile/modules/engine/**", "mobile/assets/miniapps/**"],
+    prerequisites: "The requested signed Android build and matching glasses software; an enrolled Android phone, Mentra Live pair and dedicated test account. Shared setup establishes paired Home. Authenticated dev independent nightly only.",
+    exclusions: "No photo capture, gallery sync, media-content validation, other miniapps, Mac or physical iPhone coverage, staging nightly or PR/build automatic enrollment. A local passing recording does not qualify a new dispatched build.",
+    definition: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/3eb7cce959c87afef138e0d8a93a9b8f645e3014/docs/routines/miniapp-open-close.md",
+    implementation: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/3eb7cce959c87afef138e0d8a93a9b8f645e3014/tools/mentra-e2e/flows/miniapp-open-close.ts",
+    worker: "https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/3eb7cce959c87afef138e0d8a93a9b8f645e3014/worker/foundation-worker.ts",
+  }),
   "connected-glasses": Object.freeze({
     label: "routine:connected-glasses", name: "Connected glasses (Android)", platform: "android",
-    coverage: "One combined Android routine with paired glasses on the request's selected APK: disconnect/unpair/reconnect, Bluetooth, battery report, camera settings, Wi-Fi scan and connect (C14, the observed path with the protected entry omitted between owned recording segments), gallery delivery (C9) and YouTube audio (C8), returning the original account and pairing.",
+    coverage: "Pair, disconnect, unpair and reconnect Mentra Live; check battery, Bluetooth, Wi-Fi and camera settings; capture and sync a photo and bounded video; verify delivered bytes decode and media playback routing and pause.",
     relatedPaths: ["mobile/modules/bluetooth-sdk/**", "mobile/modules/**/android/**", "mobile/src/app/**", "mobile/src/services/**"],
-    prerequisites: "CI signed Android APK and immutable OTA manifest verified against the claimed request; an enrolled Android phone with its paired glasses and existing account, and the private worker's own fixture, tool and ownership prerequisites.",
-    exclusions: "Never relabelled as the Android no-glasses walkthrough; no Mac, OTA or Call coverage. C8 and C9 have no controllers yet: their steps fail by name before any input, and later unvisited steps stay not-run. C3's physical report evidence, C8 route/reference/audio and C9 capture/sync remain unverified. Registered in source; not qualified.",
+    prerequisites: "The request's signed Android APK and matching immutable firmware manifest; an enrolled Android phone and Mentra Live pair with verified identity, dedicated test account, declared Wi-Fi network and pinned reference video. Shared setup installs the requested build and establishes its entry.",
+    exclusions: "Measured speaker or microphone audio, visual scene recognition, physical action-button behavior, firmware updates, Mac and physical iPhone behavior. No operator button presses are required. Local software qualification does not qualify a new CI request.",
     definition: `${connectedDefinitions}docs/routines/connected-glasses-brief.md`,
-    implementation: `${connectedDefinitions}tools/mentra-e2e/runner/connected-glasses-routine.ts`,
-    worker: `${connectedDefinitions}worker/connected-glasses.ts`,
+    implementation: `${connectedDefinitions}tools/mentra-e2e/flows/connected-glasses.ts`,
+    worker: `${connectedDefinitions}worker/foundation-worker.ts`,
   }),
   // Registered nightly target: its automatic worker (worker/livestreamer.ts, configuration kind
   // automatic-livestreamer-worker) authenticates the request, binds its selected Mac build and runs the one claimed
@@ -128,6 +136,8 @@ export function deviceRoutine(id) {
   if (!Object.hasOwn(DEVICE_ROUTINES, id)) throw new Error("Unsupported device routine")
   return DEVICE_ROUTINES[id]
 }
+
+export const DEV_INDEPENDENT_NIGHTLY_ONLY_ROUTINES = Object.freeze(["ota-roundtrip-android", "open-close-miniapps"])
 
 export const AUTOMATIC_BUILD_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone"])
 

@@ -1,7 +1,7 @@
 import type { TestRoutineId } from "../../../../packages/core/src/types/test-dispatch.types";
 
 export interface CatalogRoutine {
-  id: TestRoutineId | "ota-roundtrip-android";
+  id: TestRoutineId | "ota-roundtrip-android" | "open-close-miniapps";
   request?: { routineId: TestRoutineId };
   name: string;
   platform: "iOS on Mac" | "Android";
@@ -12,6 +12,7 @@ export interface CatalogRoutine {
   passingRun: {
     id: string;
     recordedOn: string;
+    suiteId?: string;
     release: string;
     appVersion: string;
     appBuild: string;
@@ -24,10 +25,11 @@ export interface CatalogRoutine {
 // Curated full runs on the shared foundation, not the broader dispatch registry.
 // Add a platform only after checking its result, recording and lifecycle outcomes.
 // Maintenance instructions: cloud-v2/docs/runbooks/testing/routine-catalog.md.
-const macBuild = {
-  recordedOn: "2026-09-30", release: "3.3.0-dev.468", appVersion: "3.3.0", appBuild: "303000084",
-  appSha: "d6c74c857015fac95fbc6195dbf009acfab65eeb", fixture: "mini-ui-unpaired", device: "Mac",
+const nightlyBuild = {
+  recordedOn: "2026-10-01", release: "3.3.0-dev.551", appVersion: "3.3.0",
+  appSha: "f48a6c59f06665dd41924670434f47d359be0eb3", suiteId: "nightly-36957839762-1-dev",
 };
+const macBuild = { ...nightlyBuild, appBuild: "303000125", fixture: "mini-ui-unpaired", device: "Mac" };
 const macSoftware = "The selected Mentra App build for iOS on Mac, in English. The worker installs the build and signs in before the test.";
 const testAccount = "An existing, dedicated test account for the selected app backend. The worker holds its credentials.";
 const noFirmware = "No physical glasses or glasses firmware required or qualified.";
@@ -36,21 +38,20 @@ const phonePhysical = "A reserved Mac with microphone permission, declared input
 export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
   {
     id: "ota-roundtrip-android", name: "Glasses software downgrade / upgrade loop on hotspot", platform: "Android",
-    purpose: "Downgrade the glasses' ASG software to published production 3.1.1 through the Mentra App over the glasses hotspot, then upgrade back to the exact requested build and verify stable paired Home.",
+    purpose: "Downgrade the glasses' ASG software to the configured published baseline through the Mentra App over the glasses hotspot, then upgrade back to the exact requested build and verify stable paired Home.",
     requirements: {
       software: "The frozen requested Android APK and its matching OTA manifest, in English. Shared setup installs the app, signs in, pairs the assigned glasses and establishes the requested firmware before recording.",
-      firmware: "An enrolled physical Mentra Live pair with independently verified hardware identity. Pin the requested ASG APK and promoted production 3.1.1 manifest and APK. Newer BES and MTK firmware intentionally remain installed and are checked throughout.",
+      firmware: "An enrolled physical Mentra Live pair with independently verified hardware identity. Pin the requested ASG APK and configured older baseline manifest and APK. Newer BES and MTK firmware intentionally remain installed and are checked throughout.",
       account: testAccount,
       network: "Internet access to the selected app backend, sign-in services and both immutable OTA download URLs. The phone connects to the glasses hotspot to transfer each update; keep both devices connected during both updates.",
       physical: "One reserved USB-connected Android phone and one reserved Mentra Live pair with authorized ADB diagnostics, Bluetooth pairing and screen recording. The passing example uses the Mac Mini's Samsung Galaxy A54 lane.",
       data: "The existing glasses gallery is hashed before the run and must remain unchanged at every checkpoint. Start and return use the same requested ASG version and APK hash; no rolling latest manifest is selected.",
     },
-    cleanup: "Finalize the recording, independently verify or restore the requested firmware through normal app controls, remove owned app data and overrides, stop the app and release both devices only after the return checks pass. A failed test remains failed even when recovery succeeds.",
-    exclusions: "Updates over an external Wi-Fi network (a separate future routine), BES or MTK downgrade, injected network failures, the persistent no-internet Retry scenario, physical iPhone behavior, and qualification of other builds or automatic nightly execution.",
+    cleanup: "Finalize the recording, remove owned app data and overrides, stop the app and release owned resources once firmware writers are idle. Cleanup never starts an update or waits for a version reply. A firmware mismatch remains a failed result; the next setup establishes its requested software.",
+    exclusions: "Updates over an external Wi-Fi network (a separate future routine), BES or MTK downgrade, injected network failures, the persistent no-internet Retry scenario, physical iPhone behavior, and qualification of other builds.",
     passingRun: {
-      id: "local-android-bda5a7fd-f862-458d-8cd6-3a239a06e999", recordedOn: "2026-09-30",
-      release: "PR 4356", appVersion: "3.2.1", appBuild: "302014623",
-      appSha: "6c51cd313686151a95a6a7810444926d39d6c97d", fixture: "mini-060b", device: "Samsung Galaxy A54",
+      ...nightlyBuild, id: "routine-36957913879-1-dev-ota-roundtrip-android", appBuild: "310000349",
+      fixture: "mini-060b", device: "Samsung Galaxy A54",
     },
   },
   {
@@ -64,7 +65,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     },
     cleanup: "Finish the recording, stop the Mentra App and verify that the app and recorder have stopped.",
     exclusions: "Connected glasses, firmware updates, Phone mode, media streaming, Android and physical iPhone behavior.",
-    passingRun: { ...macBuild, id: "local-ios-on-mac-a16fdb2f-4188-4415-827f-188b8c7019bb" },
+    passingRun: { ...macBuild, id: "routine-36957913744-1-dev-no-glasses" },
   },
   {
     id: "no-glasses-android", request: { routineId: "no-glasses-android" }, name: "App navigation without glasses", platform: "Android",
@@ -79,7 +80,7 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     },
     cleanup: "Finish the recording, clear the owned test app’s data and force-stop it; verify that both the app and recorder have stopped.",
     exclusions: "Sign-out and authentication walkthrough assertions, permission changes, pairing, firmware updates, audio and physical iPhone behavior.",
-    passingRun: { ...macBuild, id: "local-android-c0d4c2a6-b415-4939-982e-1ae02b387bbe", appBuild: "310000290",
+    passingRun: { ...macBuild, id: "routine-36957913815-1-dev-no-glasses-android", appBuild: "310000349",
       fixture: "mini-samsung-a54", device: "Samsung Galaxy A54" },
   },
   {
@@ -95,7 +96,26 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     },
     cleanup: "Close the owned miniapp, restore Automatic microphone selection and the original host audio routes, volume and mute state; stop the managed app.",
     exclusions: "Physical glasses, Android, physical iPhone behavior and measured acoustic quality.",
-    passingRun: { ...macBuild, id: "local-ios-on-mac-a28e899b-2632-419c-b221-2df38870438a" },
+    passingRun: { ...macBuild, id: "routine-36957913823-1-dev-captions-phone" },
+  },
+  {
+    id: "connected-glasses", name: "Connected glasses", platform: "Android",
+    purpose: "Pair, disconnect, unpair and reconnect Mentra Live; check battery, Bluetooth, Wi-Fi and camera settings; capture and sync a photo and video; verify media playback routing and pause.",
+    requirements: {
+      software: "The selected signed Android APK, in English. Shared setup installs the app and signs in before the recorded flow starts from unpaired Home.",
+      firmware: "One enrolled Mentra Live pair with its requested starting software and independently verified identity. This routine does not perform a firmware update.",
+      account: testAccount,
+      network: "Internet for sign-in and the pinned reference video, plus a declared Wi-Fi network the glasses can join. Gallery transfer uses the glasses hotspot.",
+      physical: "A reserved USB-connected Android phone and Mentra Live pair with authorized ADB access, Bluetooth and screen recording. No operator button presses are required.",
+      data: "Pinned reference video, declared camera settings and fresh capture request IDs. Record existing gallery files and settings before changing them; verify delivered photo and video bytes match the glasses originals and decode.",
+    },
+    cleanup: "Stop owned playback and recording, remove this run’s captures and downloaded media, restore changed settings, stop the managed app and release the phone and glasses. Publish evidence before disposing of local run files.",
+    exclusions: "Measured speaker or microphone audio, visual scene recognition, physical action-button behavior, firmware updates, other glasses models and CI/nightly qualification. The recording briefly pauses while entering the private Wi-Fi password.",
+    passingRun: {
+      id: "local-android-a061de4c-2407-4a28-985d-bd9482c11569", recordedOn: "2026-10-02",
+      release: "3.3.0-dev.559", appVersion: "3.3.0", appBuild: "310000352",
+      appSha: "f85d8361b59a7592775bb44582d64b8d82dc8689", fixture: "mini-03be", device: "Samsung Galaxy A54",
+    },
   },
   {
     id: "notes-phone", request: { routineId: "notes-phone" }, name: "Notes with simulated glasses", platform: "iOS on Mac",
@@ -110,7 +130,30 @@ export const ROUTINE_CATALOG: readonly CatalogRoutine[] = [
     },
     cleanup: "Stop transcription, remove the owned day, conversation and new note, and verify existing data is unchanged. Restore microphone and host audio settings; stop the managed app.",
     exclusions: "Manual note generation as a substitute for automatic creation, physical glasses, Android, physical iPhone behavior and measured acoustic quality.",
-    passingRun: { ...macBuild, id: "local-ios-on-mac-77e10ae9-ecca-4fbc-b2e9-d6fe1529f7cb" },
+    passingRun: {
+      id: "routine-37009046417-1-dev-notes-phone", recordedOn: "2026-10-02", suiteId: "nightly-37008938999-1-dev",
+      release: "3.3.0-dev.564", appVersion: "3.3.0", appBuild: "303000133",
+      appSha: "b52b731cc691cced8d3162614a1ac0c9eae92403", fixture: "mini-ui-unpaired", device: "Mac",
+    },
+  },
+  {
+    id: "open-close-miniapps", name: "Open, resume and close Gallery", platform: "Android",
+    purpose: "Open Gallery, minimize it, confirm it remains running, resume it, close it and verify it is stopped from Home.",
+    requirements: {
+      software: "The selected signed Android APK, in English, with Gallery available. Shared setup installs the app, signs in and establishes paired Home.",
+      firmware: "An enrolled Mentra Live pair with verified identity and the requested starting software. This routine does not update firmware.",
+      account: testAccount,
+      network: "Internet access to the selected backend, sign-in and miniapp services.",
+      physical: "A reserved USB-connected Android phone and Mentra Live pair, with authorized ADB access and screen recording. No operator input is required.",
+      data: "Existing gallery contents are preserved. No new photo, video or seeded media is required for these lifecycle checks.",
+    },
+    cleanup: "Close the owned miniapp, restore changed settings, stop the managed app and recorder, and release owned resources. Publish evidence before disposing of local run files.",
+    exclusions: "Photo or video capture, media synchronization, scene verification, other miniapps, other platforms and registered dispatch qualification.",
+    passingRun: {
+      id: "local-android-5fe92a2e-2807-4f15-8d9e-5f4faf7b3cdc", recordedOn: "2026-10-02",
+      release: "3.3.0-dev.559", appVersion: "3.3.0", appBuild: "310000352",
+      appSha: "f85d8361b59a7592775bb44582d64b8d82dc8689", fixture: "mini-03be", device: "Samsung Galaxy A54",
+    },
   },
 ];
 

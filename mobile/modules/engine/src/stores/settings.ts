@@ -465,11 +465,9 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  // Keep speech continuous by default: Mentra Live's VAD can clip the first
-  // words after a pause, including the Mentra AI wake word. Users can opt in.
   voice_activity_detection_enabled: {
     key: "voice_activity_detection_enabled",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -1166,20 +1164,6 @@ export const useSettingsStore = create<SettingsState>()(
           // repeated attempt per launch until a write succeeds.
           if (allCleared) {
             storage.save(BUILD_ENV_KEY, buildEnv)
-          }
-        }
-
-        // Apply the VAD-off default to upgrades too. A saved value from the
-        // previous default must not keep clipping speech after the update.
-        // Later explicit opt-ins survive subsequent launches.
-        const VAD_MIGRATION_KEY = "migration:vad_default_off_v1"
-        const vadMigrationDone = storage.load<boolean>(VAD_MIGRATION_KEY)
-        if (vadMigrationDone.is_error() || !vadMigrationDone.value) {
-          const result = await get().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, true)
-          if (result.is_error()) {
-            console.log("SETTINGS: VAD migration failed:", result.error)
-          } else {
-            storage.save(VAD_MIGRATION_KEY, true)
           }
         }
 
