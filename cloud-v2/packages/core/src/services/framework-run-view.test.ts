@@ -6,7 +6,7 @@ import {MongoTestRunRepository} from "./test-run.service";
 
 test("shared result reader presents a framework setup failure without losing its immutable identity", async () => {
   const run = frameworkRunSchema.parse({schemaVersion: 1, requestId: "local:run", routineId: "walkthrough",
-    definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {channel: "dev", headSha: "b".repeat(40)},
+    definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
     startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z", assets: [],
     result: {runId: "local:run", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "entry"},
       test: "not-run", steps: [{id: "home", status: "not-run", durationMs: 0, causedBy: "entry"}],

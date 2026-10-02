@@ -51,7 +51,7 @@ export class FrameworkResultService {
     private readonly definition: (run: FrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
-    if (!parsed.success) throw new FrameworkResultConflict("Invalid frozen framework result");
+    if (!parsed.success) throw new TestRunError(400, "Invalid frozen framework result");
     const run = parsed.data, payloadSha256 = requestInputDigest(run);
     const binding = await this.request(run.requestId);
     if (!binding || binding.hostId !== authenticatedHostId || binding.input.routineId !== run.routineId
@@ -59,9 +59,11 @@ export class FrameworkResultService {
       || binding.input.laneId !== run.laneId || requestInputDigest(binding.input.build) !== requestInputDigest(run.build))
       throw new FrameworkResultConflict("Result does not match this host's accepted request");
     const definition = await this.definition(run);
-    if (!definition || definition.definition.steps.length !== run.result.steps.length
-      || definition.definition.steps.some((step, index) => step.id !== run.result.steps[index]?.id))
-      throw new FrameworkResultConflict("Result steps do not match the complete ordered source definition");
+    // Interrupted executions may contain an ordered prefix. A passing test must contain every source step.
+    if (!definition || run.result.steps.length > definition.definition.steps.length
+      || (run.result.test === "passed" && definition.definition.steps.length !== run.result.steps.length)
+      || run.result.steps.some((step, index) => step.id !== definition.definition.steps[index]?.id))
+      throw new FrameworkResultConflict("Result steps do not match the ordered source definition");
     let created = true;
     try {await this.repository.insert(run, payloadSha256);}
     catch (error) {

@@ -1,3 +1,4 @@
+import {TestRunError} from "../../services/test-run.service";
 import {z} from "zod";
 import {Hono} from "hono";
 import {bodyLimit} from "hono/body-limit";
@@ -13,6 +14,7 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
   app.use("*", createTestHostAuth(credentials));
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
+    if (error instanceof TestRunError) return c.json({error: "invalid_request", message: error.message}, error.status);
     if (error instanceof TestRequestConflict) return c.json({error: "request_conflict", message: error.message}, 409);
     c.var.logger?.error({errorName: error.name}, "controller request delivery failed");
     return c.json({error: "request_delivery_unavailable"}, 503);

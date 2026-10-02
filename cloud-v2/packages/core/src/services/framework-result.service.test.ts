@@ -13,15 +13,15 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     async getByRequest() {return stored;},
   };
   const run = {schemaVersion: 1, requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
-    platform: "ios-on-mac", laneId: "mac", build: {}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
+    platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
     assets: [], result: {runId: "r1", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [{phase: "setup", actionId: "install", message: "install failed"}], evidence: [],
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}}};
   let projectionAttempts = 0;
-  const source = async () => ({definition: {steps: []}} as unknown as RoutineEnrollment);
+  const source = async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment);
   const service = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
-    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {}}}), async () => {projectionAttempts++;}, source);
+    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}), async () => {projectionAttempts++;}, source);
   const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
   expect(projectionAttempts).toBe(2);
   expect(first.created).toBe(true);
@@ -33,17 +33,41 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   await expect(service.complete("r1", "mini")).rejects.toThrow("not acknowledged");
   await expect(service.ingest({...run, finishedAt: "2026-10-02T19:02:00Z", result: {...run.result, finishedAt: "2026-10-02T19:02:00Z"}}, "mini")).rejects.toThrow("different terminal result");
   await expect(service.ingest(run, "other")).rejects.toThrow("accepted request");
-  await expect(service.ingest({...run, build: {different: true}}, "mini")).rejects.toThrow("accepted request");
+  await expect(service.ingest({...run, build: {...run.build, different: true}}, "mini")).rejects.toThrow("accepted request");
   let attempts = 0;
   const retrying = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
-    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {}}}),
+    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}),
     async () => {if (++attempts === 1) throw new Error("request projection unavailable");}, source);
   await expect(retrying.ingest(run, "mini")).rejects.toThrow("projection unavailable");
   expect(await retrying.ingest(run, "mini")).toEqual({...first, created: false});
   expect(attempts).toBe(2);
   const incomplete = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
-    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {}}}),
+    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}),
     async () => {}, async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment));
-  await expect(incomplete.ingest(run, "mini")).rejects.toThrow("complete ordered source definition");
+  expect((await incomplete.ingest(run, "mini")).created).toBe(false);
 
+});
+
+
+test("a completed test can publish a teardown failure without becoming a catalog pass", async () => {
+  const {frameworkRunSchema, frameworkRunOutcome} = await import("../types/framework-run.types");
+  let stored: FrameworkRun | undefined;
+  const failure = {phase: "teardown" as const, actionId: "uninstall", message: "App removal failed"};
+  const run = frameworkRunSchema.parse({schemaVersion: 1, requestId: "local:teardown", routineId: "notes",
+    definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z", assets: [],
+    result: {runId: "local:teardown", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "passed"}, test: "passed",
+      steps: [{id: "required", status: "passed", durationMs: 10}],
+      teardown: {ready: false, outcomes: [{state: "failed", resourceId: "app", failure}], errors: [failure], unavailableResources: []},
+      failures: [failure], evidence: [], timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
+  const service = new FrameworkResultService({async insert(payload) {stored = payload;}, async getByRequest() {return null;}},
+    async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
+      platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
+    async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment));
+  expect((await service.ingest(run, "mini")).created).toBe(true);
+  expect(stored?.result.failures).toEqual([failure]);
+  expect(frameworkRunOutcome(stored!)).toBe("teardown-failed");
+  await expect(service.ingest({...run, result: {...run.result, steps: []}}, "mini")).rejects.toThrow("Invalid frozen");
+  await expect(service.ingest({...run, result: {...run.result, failures: [{...failure, phase: "test"}]}}, "mini")).rejects.toThrow("Invalid frozen");
 });

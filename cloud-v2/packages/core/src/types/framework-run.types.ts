@@ -1,7 +1,8 @@
 import {z} from "zod";
+import {frameworkBuildSchema, frameworkIdentitySchema} from "./framework-request.types";
 import {routinePlatformSchema} from "./routine-definition.types";
 
-export const frameworkRunIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
+export const frameworkRunIdSchema = frameworkIdentitySchema;
 const id = frameworkRunIdSchema;
 const ms = z.number().finite().nonnegative();
 const failure = z.object({phase: z.enum(["setup", "test", "teardown", "evidence"]),
@@ -16,7 +17,7 @@ const cleanupOutcome = z.discriminatedUnion("state", [
 export const frameworkRunSchema = z.object({
   schemaVersion: z.literal(1), requestId: id, routineId: id,
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/), platform: routinePlatformSchema,
-  laneId: id, build: json, startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
+  laneId: id, build: frameworkBuildSchema, startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
   recordingAssetId: id.optional(),
   assets: z.array(z.object({id, kind: z.enum(["recording", "screenshot", "diagnostic", "report"]), path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),
     size: z.number().int().positive().max(128 * 1024 * 1024),
@@ -42,7 +43,7 @@ export const frameworkRunSchema = z.object({
     || assets.get(run.recordingAssetId)?.mimeType !== "video/mp4")) problem("Recording is not a declared MP4 recording");
   if (run.result.evidence.some(assetId => !assets.has(assetId))) problem("Evidence identity is not declared");
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
-  if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || run.result.failures.length > 0 || run.result.steps.some(step => step.status !== "passed")))
+  if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || run.result.failures.some(failure => failure.phase === "setup" || failure.phase === "test") || run.result.steps.some(step => step.status !== "passed")))
     problem("Passing test contradicts setup or steps");
   if (run.result.teardown.ready && (run.result.teardown.errors.length || run.result.teardown.unavailableResources.length
     || run.result.teardown.outcomes.some(outcome => outcome.state !== "cleaned"))) problem("Ready teardown contradicts cleanup outcomes");
