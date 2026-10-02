@@ -17,9 +17,11 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [{phase: "setup", actionId: "install", message: "install failed"}], evidence: [],
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}}};
+  let projectionAttempts = 0;
   const service = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
-    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {}}}));
+    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {}}}), async () => {projectionAttempts++;});
   const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
+  expect(projectionAttempts).toBe(2);
   expect(first.created).toBe(true);
   expect(duplicate).toEqual({...first, created: false});
   expect(await service.complete("r1", "mini")).toEqual({entityId: first.entityId,
@@ -30,4 +32,12 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   await expect(service.ingest({...run, finishedAt: "2026-10-02T19:02:00Z", result: {...run.result, finishedAt: "2026-10-02T19:02:00Z"}}, "mini")).rejects.toThrow("different terminal result");
   await expect(service.ingest(run, "other")).rejects.toThrow("accepted request");
   await expect(service.ingest({...run, build: {different: true}}, "mini")).rejects.toThrow("accepted request");
+  let attempts = 0;
+  const retrying = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
+    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {}}}),
+    async () => {if (++attempts === 1) throw new Error("request projection unavailable");});
+  await expect(retrying.ingest(run, "mini")).rejects.toThrow("projection unavailable");
+  expect(await retrying.ingest(run, "mini")).toEqual({...first, created: false});
+  expect(attempts).toBe(2);
+
 });

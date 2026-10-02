@@ -28,10 +28,18 @@ const mongoRepository: FrameworkResultRepository = {
   },
 };
 
+const projectTerminal = async (run: FrameworkRun) => {
+  const result = await TestRequestModel.updateOne({requestId: run.requestId, inputSha256: {$exists: true},
+    hostReceipt: {$exists: true}, $or: [{runId: {$exists: false}}, {runId: run.result.runId}]},
+    {$set: {state: "terminal", runId: run.result.runId, terminalStatus: frameworkRunOutcome(run)}});
+  if (result.matchedCount !== 1) throw new FrameworkResultConflict("Accepted request terminal projection conflicts with its result");
+};
+
 /** One frozen terminal result per controller request; publication never rewrites verdicts. */
 export class FrameworkResultService {
   constructor(private readonly repository: FrameworkResultRepository = mongoRepository,
-    private readonly request: (id: string) => Promise<ResultRequestBinding | null> = requestBinding) {}
+    private readonly request: (id: string) => Promise<ResultRequestBinding | null> = requestBinding,
+    private readonly terminal: (run: FrameworkRun) => Promise<void> = projectTerminal) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
     if (!parsed.success) throw new FrameworkResultConflict("Invalid frozen framework result");
@@ -50,6 +58,8 @@ export class FrameworkResultService {
         throw new FrameworkResultConflict("Request already has a different terminal result");
       created = false;
     }
+    // A lost cross-store acknowledgement is repaired by repeating this same immutable result.
+    await this.terminal(run);
     return {entityId: run.result.runId, payloadSha256, created};
   }
 
