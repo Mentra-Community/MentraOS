@@ -141,6 +141,7 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
       branch: channel, status: "success", per_page: 20, page: 1,
       ...(devFoundationOnly ? {created: `${createdAfter}..${run.created_at}`,
         headers: {"cache-control": "no-cache"}} : {})}
+    let failedRead = false
     try {
       const eligible = rows => rows.filter(item => item.path === COORDINATED_WORKFLOW &&
         item.head_branch === channel && item.status === "completed" && item.conclusion === "success" &&
@@ -149,19 +150,33 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
           Date.parse(item.created_at) >= Date.parse(createdAfter) && Date.parse(item.created_at) <= Date.parse(run.created_at)))
         .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id)
       const read = async query => {
-        const {data} = await readHistoryPage(() => github.rest.actions.listWorkflowRuns(query), 1)
-        requireThat(Array.isArray(data?.workflow_runs), "Missing coordinated workflow history")
-        history.push({channel, query, total: data.total_count,
-          returned: data.workflow_runs.map(item => ({runId: item.id, createdAt: item.created_at}))})
-        return eligible(data.workflow_runs)
+        try {
+          const {data} = await readHistoryPage(() => github.rest.actions.listWorkflowRuns(query), 1)
+          requireThat(Array.isArray(data?.workflow_runs), "Missing coordinated workflow history")
+          history.push({channel, query, total: data.total_count,
+            returned: data.workflow_runs.map(item => ({runId: item.id, createdAt: item.created_at}))})
+          return {eligible: eligible(data.workflow_runs), count: data.workflow_runs.length}
+        } catch (error) {
+          failedRead = true
+          history.push({channel, query, error: error instanceof Error ? error.message : "History unavailable"})
+          throw error
+        }
       }
-      candidates = await read(historyQuery)
+      const readCompletedWitness = async () => {
+        for (let page = 1; page <= 10; page++) {
+          const result = await read({...historyQuery, status: "completed", per_page: 100, page})
+          if (result.eligible.length) return result.eligible[0]
+          if (result.count < 100) return undefined
+        }
+        throw new Error("Completed workflow history is incomplete after 1000 rows")
+      }
+      candidates = (await read(historyQuery)).eligible
       if (devFoundationOnly) {
         let reconciled = false
         for (let refresh = 0; refresh < 2; refresh++) {
-          if (refresh) candidates = await read({...historyQuery, per_page: 100})
-          const completed = await read({...historyQuery, status: "completed", per_page: 100})
-          const newest = candidates[0], witness = completed[0]
+          if (refresh) candidates = (await read({...historyQuery, per_page: 100})).eligible
+          const witness = await readCompletedWitness()
+          const newest = candidates[0]
           if (newest && witness && newest.id === witness.id && newest.run_attempt === witness.run_attempt &&
             newest.head_sha === witness.head_sha && newest.created_at === witness.created_at) {
             reconciled = true
@@ -172,7 +187,7 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
         candidates = candidates.slice(0, 20)
       }
     } catch (error) {
-      history.push({channel, query: historyQuery, error: error instanceof Error ? error.message : "History unavailable"})
+      if (!failedRead) history.push({channel, stage: "history-reconciliation", error: error instanceof Error ? error.message : "History unavailable"})
       for (const target of targets) unavailable.push({date, channel, ...target, reason: "Coordinated workflow history could not be read"})
       continue
     }

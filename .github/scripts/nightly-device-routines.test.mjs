@@ -251,7 +251,7 @@ test("a stale success page is refreshed before any publication admission or requ
 })
 
 test("persistently inconsistent newest history refuses every target after one refresh", async () => {
-  for (const overrides of [{id: 99, created_at: "2026-09-08T00:00:00Z"}, {run_attempt: 3}, {head_sha: "c".repeat(40)}]) {
+  for (const overrides of [{id: 99}, {created_at: "2026-09-08T00:00:00Z"}, {run_attempt: 3}, {head_sha: "c".repeat(40)}]) {
     const f = fixture()
     f.state.coordinatedHistoryResponse = input => ({workflow_runs: input.status === "success"
       ? [{...f.dev.state.run, ...overrides}] : [f.dev.state.run]})
@@ -275,6 +275,67 @@ test("a completed-history witness must contain an eligible success, not a runnin
     assert.equal(selected.unavailable.length, 7)
     assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
   }
+})
+
+test("completed history reaches a valid success behind 100 newer failed releases", async () => {
+  const f = fixture()
+  const failures = Array.from({length: 100}, (_, index) => ({...f.dev.state.run,
+    id: 200 + index, conclusion: "failure", created_at: "2026-09-23T11:16:00Z"}))
+  f.state.coordinatedHistoryResponse = input => ({total_count: 101, workflow_runs:
+    input.status === "completed" && input.page === 1 ? failures : [f.dev.state.run]})
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 7)
+  assert.deepEqual(selected.history.filter(row => row.query.status === "completed").map(row => row.query.page), [1, 2])
+})
+
+test("completed witness depth exhaustion is reported as incomplete evidence", async () => {
+  const f = fixture()
+  f.state.coordinatedHistoryResponse = input => ({workflow_runs: input.status === "completed"
+    ? Array.from({length: 100}, (_, index) => ({...f.dev.state.run, id: 200 + index, conclusion: "failure"}))
+    : [f.dev.state.run]})
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 0)
+  assert.match(selected.history.at(-1).error, /incomplete after 1000 rows/)
+  assert.equal(selected.history.filter(row => row.query?.status === "completed").length, 10)
+  assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
+})
+
+test("malformed and failed witness reads record their actual query without misattribution", async () => {
+  for (const transient of [false, true]) {
+    const f = fixture()
+    let failures = 0
+    f.state.coordinatedHistoryResponse = input => {
+      if (input.status === "success") return {workflow_runs: [f.dev.state.run]}
+      failures++
+      if (transient) throw Object.assign(new Error("Synthetic server failure"), {status: 503})
+      return {workflow_runs: null}
+    }
+    const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+    assert.equal(selected.requests.length, 0)
+    const errors = selected.history.filter(row => row.error)
+    assert.equal(errors.length, 1)
+    assert.equal(errors[0].query.status, "completed")
+    assert.equal(errors[0].query.page, 1)
+    assert.equal(errors[0].query.per_page, 100)
+    assert.equal(failures, transient ? 3 : 1)
+    assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
+  }
+})
+
+test("a failed success refresh retains the refreshed query in diagnostics", async () => {
+  const f = fixture()
+  f.state.coordinatedHistoryResponse = input => {
+    if (input.status === "completed") return {workflow_runs: [f.dev.state.run]}
+    if (input.per_page === 100) throw Object.assign(new Error("Synthetic refresh failure"), {status: 403})
+    return {workflow_runs: [{...f.dev.state.run, id: 99}]}
+  }
+  const selected = await planNightlyRequests({...f.options, devFoundationOnly: true})
+  assert.equal(selected.requests.length, 0)
+  const errors = selected.history.filter(row => row.error)
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0].query.status, "success")
+  assert.equal(errors[0].query.per_page, 100)
+  assert.equal(f.state.calls.some(([kind]) => ["attempt", "dispatch"].includes(kind)), false)
 })
 // TEST MODEL of the former planned state: the production catalog with a synthetic `pending` reason on the three combined
 // targets. Production has no planned target; this keeps every planned refusal exercised. It qualifies nothing.
