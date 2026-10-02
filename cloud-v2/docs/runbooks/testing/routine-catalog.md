@@ -103,3 +103,13 @@ scene recognition. The card has no request binding until shared dispatch is
 verified; its addition does not silently expand the existing five-member nightly.
 Private maintenance paths are `worker/local-connected-android.ts` and
 `tools/mentra-e2e/flows/connected-glasses-program.ts`.
+
+## Current Notes example
+
+`local-ios-on-mac-cf63411d-d5ba-43fe-9e96-5d099068937d` passed the full
+Notes replay on October 1, 2026 using dev.548 (build 303000123). Automatic note
+generation, title/body editing, persistence and search passed, followed by
+teardown and return verification. All 39 assets were published and hosted
+playback and seeking were verified. Owned payloads were disposed after publication.
+Total duration was 4m47s, including 1m25s setup and 42s teardown. This remains a
+local development pass, not a CI or nightly verdict.
