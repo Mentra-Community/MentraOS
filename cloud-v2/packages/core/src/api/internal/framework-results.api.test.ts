@@ -9,7 +9,10 @@ test("result routes derive host identity and refuse incomplete final acknowledge
       calls.push({input, host});
       return {entityId: "r1", payloadSha256: "digest", created: true};
     }
-    override async complete(): Promise<never> {throw new FrameworkResultConflict("uploads incomplete");}
+    override async complete(requestId: string, host: string): Promise<never> {calls.push({requestId, host}); throw new FrameworkResultConflict("uploads incomplete");}
+    override async upload(requestId: string, assetId: string, hostId: string): Promise<any> {
+      calls.push({requestId, assetId, hostId}); return {uploaded: true};
+    }
   }
   const token = "synthetic-controller-credential-" + "x".repeat(32);
   const api = createFrameworkResultsApi(new Service(), () => JSON.stringify({mini: token}));
@@ -18,5 +21,8 @@ test("result routes derive host identity and refuse incomplete final acknowledge
   expect(response.status).toBe(200);
   expect(calls).toEqual([{input: {hostId: "other"}, host: "mini"}]);
   expect((await api.request("/r1/complete", {method: "POST", headers})).status).toBe(409);
+  expect(calls.at(-1)).toEqual({requestId: "r1", host: "mini"});
+  expect((await api.request("/r1/assets/video", {method: "PUT", headers, body: "bytes"})).status).toBe(200);
+  expect(calls.at(-1)).toEqual({requestId: "r1", assetId: "video", hostId: "mini"});
   expect((await api.request("/", {method: "POST", headers, body: "{"})).status).toBe(400);
 });

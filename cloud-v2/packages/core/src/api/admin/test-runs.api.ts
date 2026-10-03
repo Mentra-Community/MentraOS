@@ -26,8 +26,8 @@ export function createTestRunAdminApi(health = new TestHostHealthService()) {
     .read("primary").readConcern("majority").lean()}));
   app.get("/health", async c => c.json(await health.list()));
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
-  app.get("/:runId", async c => c.json(await results.detail(c.req.param("runId"))));
-  app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => results.media(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
+  app.get("/:runId", async c => c.json(await results.detailByRun(c.req.param("runId"))));
+  app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => results.mediaByRun(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
   return app;
 }
 export default createTestRunAdminApi();

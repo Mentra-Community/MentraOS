@@ -1,6 +1,7 @@
 import type {RoutineEnrollment} from "../types/routine-definition.types";
-import {expect, test} from "bun:test";
+import {expect, test, spyOn} from "bun:test";
 import {FrameworkResultService, type FrameworkResultRepository} from "./framework-result.service";
+import {TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
 
 test("lost result acknowledgement returns same receipt and refuses rewritten terminal result", async () => {
@@ -11,6 +12,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
       stored = {payload, payloadSha256, uploadsComplete: true};
     },
     async getByRequest() {return stored;},
+    async getByRun() {return stored;},
   };
   const run = {schemaVersion: 1, requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
     platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
@@ -68,7 +70,7 @@ test("a completed test can publish a teardown failure without becoming a catalog
       steps: [{id: "required", status: "passed", durationMs: 10}],
       teardown: {ready: false, outcomes: [{state: "failed", resourceId: "app", failure}], errors: [failure], unavailableResources: []},
       failures: [failure], evidence: [], timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
-  const service = new FrameworkResultService({async insert(payload) {stored = payload;}, async getByRequest() {return null;}},
+  const service = new FrameworkResultService({async insert(payload) {stored = payload;}, async getByRequest() {return null;}, async getByRun() {return null;}},
     async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
       platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
     async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment));
@@ -77,4 +79,19 @@ test("a completed test can publish a teardown failure without becoming a catalog
   expect(frameworkRunOutcome(stored!)).toBe("teardown-failed");
   await expect(service.ingest({...run, result: {...run.result, steps: []}}, "mini")).rejects.toThrow("Invalid frozen");
   await expect(service.ingest({...run, result: {...run.result, failures: [{...failure, phase: "test"}]}}, "mini")).rejects.toThrow("Invalid frozen");
+});
+
+
+test("native result list scopes the archive digest and excludes retained old payloads", async () => {
+  let filter: Record<string, unknown> | null = null;
+  const find = spyOn(TestRunModel, "find").mockImplementation(((query: Record<string, unknown>) => {
+    filter = query;
+    const chain = {sort() {return chain;}, limit() {return chain;}, read() {return chain;}, readConcern() {return chain;}, async lean() {return [];}};
+    return chain;
+  }) as any);
+  try {
+    const service = new FrameworkResultService();
+    expect(await service.list({routineId: "walkthrough", platform: "ios-on-mac", archiveSha256: "a".repeat(64), prNumber: "12", channel: "pr"})).toEqual({runs: []});
+    expect(filter as Record<string, unknown> | null).toEqual({"payload.schemaVersion": 1, routineId: "walkthrough", platform: "ios-on-mac", "payload.build.archive.sha256": "a".repeat(64), "payload.build.prNumber": 12, "payload.build.channel": "pr"});
+  } finally {find.mockRestore();}
 });

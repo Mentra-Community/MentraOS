@@ -11,13 +11,11 @@ import {
   readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
 import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
-import { FixFlowsPage } from "./pages/fix-flows";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
-import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "routine-catalog" | "fix-flows" | "system-health";
+type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "routine-catalog" | "system-health";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
@@ -136,7 +134,6 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
   { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
-  { key: "fix-flows", label: "Fix flows", icon: RotateCcw },
   { key: "system-health", label: "System health", icon: ShieldCheck },
 ];
 
@@ -172,8 +169,6 @@ const initialTestRunsPage = new URLSearchParams(window.location.search).get("tes
 const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
-const initialFixFlowLink = readFixFlowLink(window.location.search);
-const initialFixFlows = new URLSearchParams(window.location.search).get("fixFlows") === "active";
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
 const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 
@@ -181,9 +176,8 @@ function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialSystemHealth ? "system-health" : initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
-  const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
@@ -223,11 +217,6 @@ function AdminPage() {
   useEffect(() => {
     const restore = () => {
       if (new URLSearchParams(window.location.search).get("systemHealth") === "1") { setPage("system-health"); return; }
-      const fixFlow = readFixFlowLink(window.location.search);
-      setFixFlowLink(fixFlow);
-      if (fixFlow || new URLSearchParams(window.location.search).get("fixFlows") === "active") {
-        setPage("fix-flows"); return;
-      }
       const suite = readSuiteId(window.location.search);
       setSuiteId(suite);
       const selection = readTestRunLink(window.location.search);
@@ -240,12 +229,6 @@ function AdminPage() {
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
-
-  function selectFixFlow(selection: FixFlowLink | null) {
-    setFixFlowLink(selection);
-    setPage("fix-flows");
-    window.history.pushState(null, "", fixFlowHref(selection));
-  }
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
     setSuiteId(null);
@@ -373,7 +356,6 @@ function AdminPage() {
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
     "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
-    "fix-flows": { title: "Fix flows", body: "Follow a failed routine through its incident, AI investigation, PR, review and verification." },
     "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
   };
 
@@ -393,9 +375,8 @@ function AdminPage() {
       activeKey={page}
       onSelect={key => {
         setPage(key as AdminPageKey);
-        setFixFlowLink(null);
         const location = new URL(window.location.href);
-        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth", "routineCatalog", "testSuite"]) location.searchParams.delete(param);
+        for (const param of ["systemHealth", "routineCatalog", "testSuite"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -404,7 +385,6 @@ function AdminPage() {
           selectTestRun(null, true);
           clearTestRunListScope();
         }
-        if (key === "fix-flows") window.history.replaceState(null, "", fixFlowHref(null));
         if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
         setSuiteId(null);
         if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
@@ -465,13 +445,12 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      {page === "fix-flows" || page === "test-runs" ? <SystemHealthSummary /> : null}
+      {page === "test-runs" ? <SystemHealthSummary /> : null}
       {page === "system-health" ? <SystemHealthPage /> : null}
       {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
-      {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (
-        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} /> : <><NativeActivityPanel /><NativeDispatchPanel /><RecentTestSuites /><FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key === "platform" && value === "ios-mac" ? "platform" : key, key === "platform" && value === "ios-mac" ? "ios-on-mac" : value])) : undefined} /></>
+        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <><NativeActivityPanel /><NativeDispatchPanel /><RecentTestSuites /><FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key === "platform" && value === "ios-mac" ? "platform" : key, key === "platform" && value === "ios-mac" ? "ios-on-mac" : value])) : undefined} /></>
       ) : null}
 
       {detailRelease ? (

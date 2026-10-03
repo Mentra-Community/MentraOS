@@ -5,19 +5,28 @@ import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {TestRequestModel} from "../models/test-request.model";
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
-import {requestInputDigest} from "./test-request.service";
+import {requestInputDigest, TestRequestConflict} from "./test-request.service";
+import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-result-error";
 import {TestAssetService, type TestAsset} from "./test-asset.service";
 
 export class FrameworkResultConflict extends Error {}
 export interface FrameworkResultRepository {
   insert(run: FrameworkRun, payloadSha256: string): Promise<void>;
-  getByRequest(requestId: string): Promise<{payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null>;
+  getByRequest(requestId: string): Promise<StoredFrameworkRun | null>;
+  getByRun(runId: string): Promise<StoredFrameworkRun | null>;
 }
+export interface StoredFrameworkRun {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean}
+export const nativeRunFilter = {"payload.schemaVersion": 1};
 export interface ResultRequestBinding {hostId: string; input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown}}
 const requestBinding = async (requestId: string): Promise<ResultRequestBinding | null> => {
   const row = await TestRequestModel.findOne({requestId, hostReceipt: {$exists: true}}).read("primary").readConcern("majority").lean();
   return row ? {hostId: row.hostId, input: row.input as ResultRequestBinding["input"]} : null;
+};
+const buildDigest = (input: unknown): string | null => {
+  if (!frameworkBuildSchema.safeParse(input).success) return null;
+  try {return requestInputDigest(input);}
+  catch (error) {if (error instanceof TestRequestConflict) return null; throw error;}
 };
 const definitionFor = async (run: FrameworkRun): Promise<RoutineEnrollment | null> =>
   await RoutineDefinitionModel.findOne({routineId: run.routineId, platform: run.platform,
@@ -31,7 +40,11 @@ const mongoRepository: FrameworkResultRepository = {
       outcome: frameworkRunOutcome(run), payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
   },
   async getByRequest(requestId) {
-    const row = await TestRunModel.findOne({requestId, definitionRevision: {$exists: true}}).read("primary").readConcern("majority").lean();
+    const row = await TestRunModel.findOne({...nativeRunFilter, requestId}).read("primary").readConcern("majority").lean();
+    return row ? {payload: row.payload as FrameworkRun, payloadSha256: row.payloadSha256, uploadsComplete: row.uploadsComplete} : null;
+  },
+  async getByRun(runId) {
+    const row = await TestRunModel.findOne({...nativeRunFilter, runId}).read("primary").readConcern("majority").lean();
     return row ? {payload: row.payload as FrameworkRun, payloadSha256: row.payloadSha256, uploadsComplete: row.uploadsComplete} : null;
   },
 };
@@ -54,9 +67,9 @@ export class FrameworkResultService {
     if (!parsed.success) throw new TestRunError(400, "Invalid frozen framework result");
     const run = parsed.data, payloadSha256 = requestInputDigest(run);
     const binding = await this.request(run.requestId);
-    if (!binding || binding.hostId !== authenticatedHostId || binding.input.routineId !== run.routineId
+    if (!binding || !buildDigest(binding.input?.build) || binding.hostId !== authenticatedHostId || binding.input.routineId !== run.routineId
       || binding.input.definitionRevision !== run.definitionRevision || binding.input.platform !== run.platform
-      || binding.input.laneId !== run.laneId || requestInputDigest(binding.input.build) !== requestInputDigest(run.build))
+      || binding.input.laneId !== run.laneId || buildDigest(binding.input.build) !== requestInputDigest(run.build))
       throw new FrameworkResultConflict("Result does not match this host's accepted request");
     const definition = await this.definition(run);
     if (!definition || run.result.steps.length !== definition.definition.steps.length
@@ -103,29 +116,45 @@ export class FrameworkResultService {
   }
 
   async list(scope: Record<string, string> = {}) {
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, unknown> = {...nativeRunFilter};
     for (const field of ["routineId", "platform"])
       if (scope[field]) filter[field] = scope[field];
-    for (const field of ["repository", "headSha", "archiveSha256", "channel", "prNumber"])
+    if (scope.archiveSha256) filter["payload.build.archive.sha256"] = scope.archiveSha256;
+    for (const field of ["repository", "headSha", "channel", "prNumber"])
       if (scope[field]) filter[`payload.build.${field}`] = field === "prNumber" ? Number(scope[field]) : scope[field];
     const rows = await TestRunModel.find(filter)
       .sort({startedAt: -1, runId: -1}).limit(100).read("primary").readConcern("majority").lean();
     return {runs: rows.map(row => {
       const run = frameworkRunSchema.parse(row.payload);
-      return {requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, laneId: run.laneId,
         startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
         uploadsComplete: row.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
     })};
   }
 
   async detail(requestId: string) {
-    const stored = await this.repository.getByRequest(requestId);
+    return this.describe(await this.repository.getByRequest(requestId));
+  }
+
+  async detailByRun(runId: string) {
+    return this.describe(await this.repository.getByRun(runId));
+  }
+
+  private async describe(stored: StoredFrameworkRun | null) {
     if (!stored) throw new TestRunError(404, "Framework run was not found");
-    return {run: stored.payload, outcome: frameworkRunOutcome(stored.payload), uploadsComplete: stored.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(stored.payload) ? "complete" : "failed"};
+    const definition = await this.definition(stored.payload);
+    return {run: stored.payload, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(stored.payload), uploadsComplete: stored.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(stored.payload) ? "complete" : "failed"};
   }
 
   async media(requestId: string, assetId: string, request: Request) {
-    const stored = await this.repository.getByRequest(requestId);
+    return this.storedMedia(await this.repository.getByRequest(requestId), assetId, request);
+  }
+
+  async mediaByRun(runId: string, assetId: string, request: Request) {
+    return this.storedMedia(await this.repository.getByRun(runId), assetId, request);
+  }
+
+  private async storedMedia(stored: StoredFrameworkRun | null, assetId: string, request: Request) {
     const asset = stored?.payload.assets.find(item => item.id === assetId);
     if (!stored || !asset) throw new TestRunError(404, "Asset is not declared in this result");
     const uploaded = await TestAssetModel.findOne({runId: stored.payload.result.runId, assetId}).read("primary").readConcern("majority").lean();

@@ -27,10 +27,31 @@ test("catalog detail routes routine identity and scoped pagination without run-r
 
 test("framework result route preserves missing-result and media errors", async () => {
   class Results extends FrameworkResultService {
-    override async detail(): Promise<never> {throw new TestRunError(404, "not found");}
-    override async media(): Promise<never> {throw new TestRunError(416, "invalid range");}
+    override async detailByRun(): Promise<never> {throw new TestRunError(404, "not found");}
+    override async mediaByRun(): Promise<never> {throw new TestRunError(416, "invalid range");}
   }
   const app = createRoutineCatalogApi(new RoutineCatalogService(), new Results());
-  expect((await app.request("/results/by-request/missing")).status).toBe(404);
-  expect((await app.request("/results/by-request/run/assets/video")).status).toBe(416);
+  expect((await app.request("/results/by-run/missing")).status).toBe(404);
+  expect((await app.request("/results/by-run/run/assets/video")).status).toBe(416);
+});
+
+
+test("run and request result routes stay explicit and media responses keep their range headers", async () => {
+  const calls: unknown[] = [];
+  class Results extends FrameworkResultService {
+    override async detailByRun(id: string): Promise<any> {calls.push({runId: id}); return {run: {result: {runId: id}}, outcome: "pass"};}
+    override async detail(id: string): Promise<any> {calls.push({requestId: id}); return {run: {requestId: id}, outcome: "pass"};}
+    override async mediaByRun(id: string, asset: string, request: Request): Promise<Response> {
+      calls.push({runId: id, asset, method: request.method, range: request.headers.get("range")});
+      return new Response("xy", {status: 206, headers: {"content-range": "bytes 0-1/20"}});
+    }
+  }
+  const app = createRoutineCatalogApi(new RoutineCatalogService(), new Results());
+  expect((await (await app.request("/results/by-run/run-1")).json() as {run: {result: {runId: string}}}).run.result.runId).toBe("run-1");
+  expect((await (await app.request("/results/by-request/request-1")).json() as {run: {requestId: string}}).run.requestId).toBe("request-1");
+  const media = await app.request("/results/by-run/run-1/assets/video", {headers: {range: "bytes=0-1"}});
+  expect(media.status).toBe(206);
+  expect(media.headers.get("content-range")).toBe("bytes 0-1/20");
+  expect(await media.text()).toBe("xy");
+  expect(calls).toEqual([{runId: "run-1"}, {requestId: "request-1"}, {runId: "run-1", asset: "video", method: "GET", range: "bytes=0-1"}]);
 });

@@ -16,6 +16,9 @@ export function createRoutineCatalogApi(service = new RoutineCatalogService(), r
   });
   app.get("/", async c => c.json({routines: await service.list()}));
   app.get("/results", async c => c.json(await results.list(c.req.query())));
+  app.get("/results/by-run/:runId", c => results.detailByRun(c.req.param("runId")).then(result => c.json(result)));
+  app.on(["GET", "HEAD"], "/results/by-run/:runId/assets/:assetId", c => results.mediaByRun(
+    c.req.param("runId"), c.req.param("assetId"), c.req.raw));
   app.get("/results/by-request/:requestId", c => results.detail(c.req.param("requestId")).then(result => c.json(result)));
   app.on(["GET", "HEAD"], "/results/by-request/:requestId/assets/:assetId", c => results.media(
     c.req.param("requestId"), c.req.param("assetId"), c.req.raw));

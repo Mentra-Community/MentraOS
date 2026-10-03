@@ -69,23 +69,33 @@ export class TestAssetService {
         }
         await file.sync();
       } finally {
-        // This request owns the reader until it is discarded. Releasing a
-        // cancelled native HTTP reader throws on reused connections in Bun.
         await reader.cancel().catch(() => undefined);
+        // Bun can throw when releasing a cancelled native HTTP reader. Do not
+        // let that cleanup error mask the original upload failure.
+        try {reader.releaseLock();} catch {}
         await file.close();
       }
       if (size !== asset.sizeBytes || hash.digest("hex") !== asset.sha256) throw new TestRunError(400, "asset size/SHA256 does not match immutable metadata");
       if (!mediaSignatureMatches(asset.contentType, prefix)) throw new TestRunError(400, "asset bytes do not match media type");
       const existing = (await this.repository.assets(runId)).find(item => item.assetId === assetId);
       if (existing) {
+        if (existing.sizeBytes !== asset.sizeBytes || existing.sha256 !== asset.sha256)
+          throw new TestRunError(409, "Stored asset differs from declared asset");
         await acknowledge();
         return { assetId, uploaded: true, created: false };
       }
       const storage = this.storageFactory();
       // Unique keys mean a racing/failed upload can never replace a committed object.
-      const storageKey = `test-runs/${runId}/${assetId}/${randomUUID()}`;
-      await storage.putFile({ key: storageKey, path, contentType: asset.contentType });
-      if ((await storage.statObject(storageKey)).sizeBytes !== size) throw new TestRunError(409, "stored object size differs");
+      const segment = (id: string) => Buffer.from(id).toString("base64url");
+      const storageKey = `test-runs/${segment(runId)}/${segment(assetId)}/${randomUUID()}`;
+      try {
+        await storage.putFile({ key: storageKey, path, contentType: asset.contentType });
+        if ((await storage.statObject(storageKey)).sizeBytes !== size) throw new TestRunError(409, "stored object size differs");
+      } catch (error) {
+        // No database publication has begun, so this private object is disposable.
+        await storage.deleteObject(storageKey).catch(() => undefined);
+        throw error;
+      }
       const winner = await this.repository.insertAsset({ runId, assetId, storageKey, sizeBytes: size, sha256: asset.sha256 });
       if (winner.storageKey !== storageKey) await storage.deleteObject(storageKey).catch(() => undefined);
       await acknowledge();
