@@ -49,6 +49,95 @@ class InstallerTests(unittest.TestCase):
              patch.object(setup, 'digest', side_effect=lambda p: 'release-hash' if Path(p).name == 'release.json' else 'config-hash'):
             yield
 
+    @contextlib.contextmanager
+    def upgrade_context(self, target=None):
+        import types
+        old = dict(RELEASE, releaseTag='3.3.0-dev.1')
+        target = target or dict(old, releaseTag='3.3.0-dev.2', sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'c' * 64)
+        self.config.update(sourceImage=old['sourceImage'], releaseTag=old['releaseTag'])
+        self.state.update(phase='infrastructure_verified', secretsCreated=True)
+        self.save()
+        setup.write_json(self.directory / 'secrets.json', {'signing': 'original-private-key'})
+        self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
+        self.save()
+        self.args.previous_package = str(self.directory / 'previous-package')
+        self.args.backup_confirmed = True
+        def load_previous(directory):
+            return setup.read_json(directory / 'deployment.config.json'), setup.read_json(directory / 'state.json'), old
+        loader = types.SimpleNamespace(exec_module=lambda module: setattr(module, 'load', load_previous))
+        spec = types.SimpleNamespace(loader=loader)
+        actual_digest = setup.digest
+        with patch('importlib.util.spec_from_file_location', return_value=spec), \
+             patch('importlib.util.module_from_spec', return_value=types.SimpleNamespace()), \
+             patch.object(setup, 'check_release', return_value=target), \
+             patch.object(setup, 'digest', side_effect=lambda p: 'target-release' if Path(p) == setup.ROOT / 'release.json' else actual_digest(p)), \
+             patch.object(setup, 'preflight') as preflight, patch.object(setup, 'emit'):
+            yield preflight
+
+    def test_upgrade_preserves_original_keys_bindings_and_exact_backup(self):
+        with self.upgrade_context():
+            before = (self.directory / 'deployment.config.json').read_bytes()
+            key = (self.directory / 'secrets.json').read_bytes()
+            setup.upgrade(self.args, self.directory)
+            state = setup.read_json(self.directory / 'state.json')
+            config = setup.read_json(self.directory / 'deployment.config.json')
+            self.assertEqual(state['releaseHash'], 'target-release')
+            self.assertEqual(config['releaseTag'], '3.3.0-dev.2')
+            self.assertEqual(state['binding'], self.state['binding'])
+            self.assertEqual((self.directory / 'secrets.json').read_bytes(), key)
+            self.assertEqual((self.directory / 'upgrades/target-release/deployment.config.json').read_bytes(), before)
+            self.assertFalse((self.directory / 'upgrade.pending.json').exists())
+
+    def test_interrupted_upgrade_publishes_same_target_on_next_load(self):
+        with self.upgrade_context():
+            with patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
+                with self.assertRaises(OSError):
+                    setup.upgrade(self.args, self.directory)
+            self.assertTrue((self.directory / 'upgrade.pending.json').exists())
+            config, state, release = setup.load(self.directory)
+            self.assertEqual(state['releaseHash'], 'target-release')
+            self.assertEqual(config['sourceImage'], release['sourceImage'])
+            self.assertFalse((self.directory / 'upgrade.pending.json').exists())
+
+    def test_upgrade_source_access_failure_does_not_change_saved_state(self):
+        with self.upgrade_context() as preflight:
+            before = (self.directory / 'state.json').read_bytes()
+            preflight.side_effect = setup.SetupError('image inaccessible')
+            with self.assertRaisesRegex(setup.SetupError, 'inaccessible'):
+                setup.upgrade(self.args, self.directory)
+            self.assertEqual((self.directory / 'state.json').read_bytes(), before)
+            self.assertFalse((self.directory / 'upgrades').exists())
+
+    def test_unsafe_release_downgrade_and_reused_identity_are_refused(self):
+        for target in (dict(RELEASE, releaseTag='3.2.0'),
+                       dict(RELEASE, releaseTag='3.3.0-dev.1', sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'c' * 64)):
+            with self.upgrade_context(target):
+                with self.assertRaisesRegex(setup.SetupError, 'downgrade|cannot change'):
+                    setup.upgrade(self.args, self.directory)
+                self.assertFalse((self.directory / 'upgrade.pending.json').exists())
+
+    def test_upgrade_requires_backups_and_original_verified_package(self):
+        with self.upgrade_context():
+            self.args.backup_confirmed = False
+            with self.assertRaisesRegex(setup.SetupError, 'backup-confirmed'):
+                setup.upgrade(self.args, self.directory)
+            self.args.backup_confirmed = True
+            self.state['phase'] = 'deploying'
+            self.save()
+            with self.assertRaisesRegex(setup.SetupError, 'Verify the current'):
+                setup.upgrade(self.args, self.directory)
+
+    def test_pending_upgrade_cannot_adopt_foreign_resource_binding(self):
+        with self.upgrade_context():
+            with patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
+                with self.assertRaises(OSError):
+                    setup.upgrade(self.args, self.directory)
+            pending = setup.read_json(self.directory / 'upgrade.pending.json')
+            pending['updatedConfig']['subscriptionId'] = 'foreign'
+            setup.write_json(self.directory / 'upgrade.pending.json', pending)
+            with self.assertRaisesRegex(setup.SetupError, 'conflicts'):
+                setup.load(self.directory)
+
     def test_generated_global_names_differ_for_same_deployment_name(self):
         args = argparse.Namespace(config=str(self.directory / 'answers.json'), json=True)
         setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT,

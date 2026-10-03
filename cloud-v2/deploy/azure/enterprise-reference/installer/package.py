@@ -87,6 +87,14 @@ A custom hostname pauses for the CNAME and TXT in dns-records.json.
 After publishing those records: ./setup.sh resume --directory ../mentra-setup --dns-ready
 The setup directory contains private keys: protect it and back it up to your secret manager.
 Server verification does not certify Teams licensing/policy or phone behavior.
+Retain this original package and protected state. Resume never changes release pins.
+Before upgrade, back up the database, report attachment share, state and original secrets.
+From a verified target release package run:
+./setup.sh upgrade --directory ../mentra-setup --previous-package /path/to/retained/mentra-private-cloud --backup-confirmed
+Then ./setup.sh resume --directory ../mentra-setup and verify employee Calls and reports.
+Upgrade retains resource/identity bindings and original keys; unsafe downgrades are refused.
+An image rollback is not database rollback. Follow the approved recovery procedure.
+
 '''
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)

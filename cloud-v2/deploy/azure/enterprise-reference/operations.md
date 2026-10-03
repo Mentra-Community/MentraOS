@@ -214,7 +214,37 @@ When a customer ingress serves the paths instead, deploy with
 `managedMiniappDirectory=''` so Runtime does not also require image-bundled
 files.
 
-## Upgrade
+## Packaged installer upgrade
+
+Keep the original installer archive and the protected setup directory. First
+run `verify` from the original package. Back up the Core database, report
+attachment share, deployment state and original signing/refresh secrets using
+your approved recovery process. Confirm the target release's provenance and
+matching Mentra App compatibility floor before executing it.
+
+From the extracted target package:
+
+```bash
+./setup.sh upgrade --directory ../mentra-setup \
+  --previous-package /path/to/retained/mentra-private-cloud --backup-confirmed
+./setup.sh resume --directory ../mentra-setup
+./setup.sh verify --directory ../mentra-setup
+```
+
+Upgrade preserves the tenant/subscription, resource names, hostname, Entra
+registrations, administrator allowlist and secrets. It snapshots the exact
+original config/state and journals the release-pin change before publishing.
+An interruption resumes from the target package. A changed image under the
+same release identity and a semantic release downgrade are refused. Updating
+only installer code under the same image release is permitted. Creating an
+upgrade plan does not roll out containers; `resume` does that explicitly.
+
+Keep both image digests and packages. Test employee sign-in, Call creation and
+joining, and report/attachment retrieval after rollout. Do not manually edit
+saved release hashes to bypass these checks. A database migration can make an
+image rollback unsafe; recover using the qualified database/files sequence.
+
+## Standalone deployment upgrade
 
 1. Save the currently deployed Mentra Cloud digest and Bicep parameter set.
 2. Import the new coordinated Mentra Cloud by digest.

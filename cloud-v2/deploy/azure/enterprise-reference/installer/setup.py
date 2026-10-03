@@ -175,6 +175,7 @@ def load(directory):
     if state.get('schemaVersion') != 1 or state['deploymentId'] != config['deploymentId']:
         raise SetupError('State belongs to a different deployment')
     release = check_release()
+    recover_upgrade(directory, config, state)
     if state['releaseHash'] != digest(ROOT / 'release.json'):
         raise SetupError('Installer release differs from saved state. Use the original package; upgrades require a new reviewed release.')
     recover_identity(directory, config, state)
@@ -196,6 +197,104 @@ def load(directory):
                              or stat.S_IMODE(secrets.stat().st_mode) & 0o077):
         raise SetupError('Secrets must be a regular file accessible only by its owner (chmod 600).')
     return config, state, release
+
+
+def recover_upgrade(directory, config, state):
+    journal = directory / 'upgrade.pending.json'
+    if not journal.exists():
+        return
+    pending = read_json(journal)
+    if pending['targetReleaseHash'] != digest(ROOT / 'release.json'):
+        raise SetupError('An upgrade is pending. Resume using its target installer package; do not edit saved state.')
+    previous = pending['previousConfig']
+    updated = pending['updatedConfig']
+    allowed = {'sourceImage', 'releaseTag', 'managedMiniapps', 'clientMinVersion', 'clientRecommendedVersion'}
+    release = check_release()
+    if (config not in (previous, updated)
+            or state['releaseHash'] not in (pending['previousReleaseHash'], pending['targetReleaseHash'])
+            or state.get('configHash') not in (pending['previousConfigHash'], pending['updatedConfigHash'])
+            or any(previous.get(k) != state['binding'].get(k) for k in BINDING_KEYS)
+            or any(previous.get(k) != updated.get(k) for k in set(previous) | set(updated) if k not in allowed)
+            or any(updated.get(k) != release.get(k) for k in ('sourceImage', 'releaseTag', 'managedMiniapps', 'clientMinVersion'))
+            or updated.get('clientRecommendedVersion') != release['clientMinVersion']):
+        raise SetupError('Pending upgrade conflicts with saved configuration. Restore the protected upgrade backup.')
+    write_json(directory / 'deployment.config.json', updated)
+    config.update(updated)
+    checkpoint(directory, state, 'upgrade_ready', releaseHash=pending['targetReleaseHash'],
+               configHash=pending['updatedConfigHash'], upgrade=pending['summary'])
+    journal.unlink()
+
+
+def release_version(release):
+    value = release['releaseTag']
+    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z0-9.-]+))?', value)
+    if not match:
+        raise SetupError('Upgrade requires a coordinated semantic release identity')
+    base = tuple(int(x) for x in match.group(1, 2, 3))
+    suffix = match.group(4)
+    if suffix is None:
+        return base + (1, ())
+    parts = tuple((0, int(x)) if x.isdigit() else (1, x) for x in suffix.split('.'))
+    return base + (0, parts)
+
+
+def upgrade(args, directory):
+    if not args.backup_confirmed:
+        raise SetupError('Upgrade requires --backup-confirmed after backing up the database, attachments and original signing material')
+    if not args.previous_package:
+        raise SetupError('upgrade requires --previous-package PATH to the retained original installer package')
+    previous_root = Path(args.previous_package).resolve()
+    if previous_root == ROOT:
+        raise SetupError('Use the new target package for upgrade and retain the previous package separately')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('mentra_previous_installer', previous_root / 'installer/setup.py')
+    if not spec or not spec.loader:
+        raise SetupError('Cannot load the retained previous installer')
+    previous = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(previous)
+    config, state, old_release = previous.load(directory)
+    if state['phase'] != 'infrastructure_verified':
+        raise SetupError('Verify the current deployment with its original package before upgrade')
+    target = check_release()
+    if release_version(target) < release_version(old_release):
+        raise SetupError('Release downgrade is refused: image rollback does not roll back database migrations')
+    if target['releaseTag'] == old_release['releaseTag'] and target['sourceImage'] != old_release['sourceImage']:
+        raise SetupError('A coordinated release identity cannot change its image digest')
+    if digest(ROOT / 'release.json') == state['releaseHash']:
+        raise SetupError('Target installer is already selected. Use resume or verify')
+    if not (directory / 'secrets.json').is_file() or not state.get('secretsCreated'):
+        raise SetupError('Restore the original signing secrets before upgrade')
+    updated = dict(config, **{k: target[k] for k in ('sourceImage', 'releaseTag', 'managedMiniapps', 'clientMinVersion')},
+                   clientRecommendedVersion=target['clientMinVersion'])
+    preflight(updated, require_identity=True)
+    # Keep the exact original bytes and state before publishing the new pins.
+    # This snapshot supports diagnosis, not automatic database/image downgrade.
+    backup = directory / 'upgrades' / digest(ROOT / 'release.json')
+    backup.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if backup.is_symlink() or backup.stat().st_uid != os.getuid() or backup.stat().st_mode & 0o077:
+        raise SetupError('Upgrade backup directory must be owner-only and not a symlink')
+    for name in ('deployment.config.json', 'state.json'):
+        destination = backup / name
+        original = (directory / name).read_bytes()
+        if destination.exists():
+            if destination.is_symlink() or destination.read_bytes() != original:
+                raise SetupError('Upgrade backup conflicts with original state; never overwrite recovery evidence')
+        else:
+            with destination.open('xb') as stream:
+                os.chmod(destination, 0o600)
+                stream.write(original)
+    temporary = directory / 'upgrade.update.json'
+    write_json(temporary, updated)
+    summary = {'fromRelease': old_release['releaseTag'], 'toRelease': target['releaseTag'],
+               'fromImage': old_release['sourceImage'], 'toImage': target['sourceImage'], 'backup': str(backup)}
+    write_json(directory / 'upgrade.pending.json', {
+        'previousConfig': config, 'updatedConfig': updated, 'previousReleaseHash': state['releaseHash'],
+        'targetReleaseHash': digest(ROOT / 'release.json'), 'previousConfigHash': digest(directory / 'deployment.config.json'),
+        'updatedConfigHash': digest(temporary), 'summary': summary})
+    temporary.unlink()
+    recover_upgrade(directory, config, state)
+    emit(args, {'status': 'upgrade_ready', **summary,
+                'next': 'Use this target package to run resume, then verify employee sign-in, Calls and report retrieval. Original keys and resource bindings are retained. Retain both packages and your database/files backup.'})
 
 
 def recover_configuration(directory, config, state):
@@ -748,7 +847,7 @@ def configure_entra(args, directory, config, state):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns', 'check-teams', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'diagnostics'))
+    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns', 'check-teams', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'upgrade', 'diagnostics'))
     parser.add_argument('--directory', default='./mentra-setup', help='Persistent state and secret directory outside the installer package')
     parser.add_argument('--config', help='JSON answers for init; otherwise edit deployment.config.json')
     parser.add_argument('--json', action='store_true')
@@ -759,6 +858,8 @@ def main():
     parser.add_argument('--dns-resource-group', help='Resource group containing the Azure DNS zone')
     parser.add_argument('--dns-subscription', help='DNS subscription, if different; must belong to the same Entra tenant')
     parser.add_argument('--teams-user', help='Employee object ID or UPN for check-teams; no license assignment is performed')
+    parser.add_argument('--backup-confirmed', action='store_true', help='Confirm database, attachment and original-secret backups before upgrade')
+    parser.add_argument('--previous-package', help='Retained original package directory for explicit upgrade')
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     try:
@@ -767,6 +868,9 @@ def main():
         with locked(directory):
             if args.command == 'init':
                 init(args, directory)
+                return
+            if args.command == 'upgrade':
+                upgrade(args, directory)
                 return
             config, state, release = load(directory)
             if args.command == 'preflight':
