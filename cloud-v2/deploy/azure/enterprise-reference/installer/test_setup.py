@@ -310,7 +310,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(config['sourceImage'], RELEASE['sourceImage'])
         self.assertEqual(state['phase'], 'deploying')
         self.assertEqual(state['configHash'], setup.digest(self.directory / 'deployment.config.json'))
-        self.assertFalse((self.directory / 'mirror.pending.json').exists())
+        self.assertFalse((self.directory / 'configuration.pending.json').exists())
 
     def test_failed_mirror_check_preserves_config_and_state(self):
         original = {p.name: p.read_bytes() for p in self.directory.glob('*.json')}
@@ -322,6 +322,8 @@ class InstallerTests(unittest.TestCase):
 
     def test_admin_bootstrap_retries_saved_credential_and_preserves_existing_allowlist(self):
         self.config['coreName'] = 'ca-test-core'
+        self.state['binding']['coreName'] = 'ca-test-core'
+        self.save()
         self.state['outputs'] = {'coreOrigin': 'https://core.example'}
         setup.write_json(self.directory/'admin-key.json',dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR',value='msk_local_test.secret'))
         calls = []
@@ -330,11 +332,23 @@ class InstallerTests(unittest.TestCase):
             if args[:2]==('containerapp','show'):
                 return {'properties':{'template':{'containers':[{'env':[{'name':'CLOUD_CORE_ADMIN_EMAILS','value':'existing@example.com'}]}]}}}
             return {}
-        with patch.object(setup,'azure',side_effect=azure), patch.object(setup.subprocess,'run',side_effect=AssertionError('must reuse saved key')), patch.object(setup,'emit'):
+        with patch.object(setup,'azure',side_effect=azure), patch.object(setup.subprocess,'Popen',side_effect=AssertionError('must reuse saved key')), patch.object(setup,'emit'):
             setup.bootstrap_admin(self.args,self.directory,self.config,self.state)
         self.assertIn('existing@example.com',self.config['coreAdminEmails'])
         self.assertIn('api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local',self.config['coreAdminEmails'])
         self.assertEqual(setup.digest(self.directory/'deployment.config.json'),self.state['configHash'])
+
+    def test_admin_allowlist_update_recovers_interrupted_checkpoint(self):
+        self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
+        self.save()
+        with patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
+            with self.assertRaises(OSError):
+                setup.update_configuration(self.directory, self.config, self.state, coreAdminEmails='admin@example.com')
+        with patch.object(setup, 'check_release', return_value=RELEASE), \
+             patch.object(setup, 'digest', side_effect=lambda p: 'release-hash' if Path(p).name == 'release.json' else setup.hashlib.sha256(Path(p).read_bytes()).hexdigest()):
+            config, state, _ = setup.load(self.directory)
+        self.assertEqual(config['coreAdminEmails'], 'admin@example.com')
+        self.assertEqual(state['configHash'], setup.digest(self.directory / 'deployment.config.json'))
 
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess

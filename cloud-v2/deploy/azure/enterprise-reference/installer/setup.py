@@ -174,7 +174,7 @@ def load(directory):
     if state['releaseHash'] != digest(ROOT / 'release.json'):
         raise SetupError('Installer release differs from saved state. Use the original package; upgrades require a new reviewed release.')
     recover_identity(directory, config, state)
-    recover_mirror(directory, config, state)
+    recover_configuration(directory, config, state)
     for key in BINDING_KEYS:
         if config.get(key) != state['binding'].get(key):
             raise SetupError(f'{key} changed since initialization. Restore the original configuration.')
@@ -194,23 +194,39 @@ def load(directory):
     return config, state, release
 
 
-def recover_mirror(directory, config, state):
-    journal = directory / 'mirror.pending.json'
+def recover_configuration(directory, config, state):
+    journal = directory / 'configuration.pending.json'
     if not journal.exists():
         return
     pending = read_json(journal)
     previous = pending['previousConfig']
-    updated = dict(previous, sourceRegistryMirror=pending['mirror'])
+    changes = pending['changes']
+    if not changes or set(changes) - {'sourceRegistryMirror', 'coreAdminEmails'}:
+        raise SetupError('Unsupported pending configuration update')
+    updated = dict(previous, **changes)
     # Only this explicitly requested distribution endpoint can change. Never
     # adopt edits to resource bindings, release pins, or other configuration.
     if (config not in (previous, updated)
             or state.get('configHash') not in (None, pending['previousConfigHash'], pending['updatedConfigHash'])
             or any(previous.get(k) != state['binding'].get(k) for k in BINDING_KEYS)):
-        raise SetupError('Pending mirror update conflicts with saved configuration; restore the original files')
+        raise SetupError('Pending configuration update conflicts with saved configuration; restore the original files')
     write_json(directory / 'deployment.config.json', updated)
     config.update(updated)
     checkpoint(directory, state, state['phase'], configHash=pending['updatedConfigHash'] if state.get('configHash') else None)
     journal.unlink()
+
+
+def update_configuration(directory, config, state, **changes):
+    previous = dict(config)
+    updated = dict(config, **changes)
+    temporary = directory / 'configuration.update.json'
+    write_json(temporary, updated)
+    pending = {'previousConfig': previous, 'changes': changes,
+               'previousConfigHash': digest(directory / 'deployment.config.json'),
+               'updatedConfigHash': digest(temporary)}
+    write_json(directory / 'configuration.pending.json', pending)
+    temporary.unlink()
+    recover_configuration(directory, config, state)
 
 
 def configure_mirror(args, directory, config, state):
@@ -218,14 +234,7 @@ def configure_mirror(args, directory, config, state):
         raise SetupError('configure-mirror requires --mirror REGISTRY.azurecr.io/REPOSITORY')
     updated = dict(config, sourceRegistryMirror=args.mirror)
     check_source_image(updated)
-    temporary = directory / 'mirror.config.json'
-    write_json(temporary, updated)
-    pending = {'previousConfig': config, 'mirror': args.mirror,
-               'previousConfigHash': digest(directory / 'deployment.config.json'),
-               'updatedConfigHash': digest(temporary)}
-    write_json(directory / 'mirror.pending.json', pending)
-    temporary.unlink()
-    recover_mirror(directory, config, state)
+    update_configuration(directory, config, state, sourceRegistryMirror=args.mirror)
     emit(args, {'status': 'mirror_configured', 'image': config['sourceImage'],
                 'next': 'Run resume. The release digest and deployed resource settings are unchanged.'})
 
@@ -573,9 +582,7 @@ def bootstrap_admin(args, directory, config, state):
     emails = sorted(set(filter(None, (values + ',' + config.get('coreAdminEmails', '') + ',' + email).split(','))))
     allowlist = ','.join(emails)
     # Preserve the setting in installer configuration so later resume retains it.
-    config['coreAdminEmails'] = allowlist
-    write_json(directory / 'deployment.config.json', config)
-    checkpoint(directory, state, state['phase'], configHash=digest(directory / 'deployment.config.json'))
+    update_configuration(directory, config, state, coreAdminEmails=allowlist)
     azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
           '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
     emit(args, {'status': 'admin_key_created', 'file': str(output),
