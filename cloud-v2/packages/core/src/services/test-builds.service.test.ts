@@ -50,3 +50,46 @@ test("wrong archive size and moved PR base cannot become selectable", async () =
   expect((await f.gateway.resolve({channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}, "ios-on-mac")).availability).toBe("unavailable");
  }
 });
+
+test("PR inventory exposes only the current same-repository head with verified published artifacts", async () => {
+ const f = fixture();
+ f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, {
+  workflow_runs: [run(), run({id: 51, head_sha: BASE}), run({id: 52, head_repository: {full_name: "external/fork"}})],
+ });
+ const builds = await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"});
+ expect(builds).toHaveLength(1);
+ expect(builds[0]).toMatchObject({availability: "available", headSha: HEAD,
+  source: {channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}});
+ expect(builds[0]!.archive?.url).toBe(`${CDN}pr-builds/${f.receipt.artifacts.mac.name}`);
+ expect(f.calls.some(call => /actions\/runs\/(51|52)\//.test(call.url))).toBe(false);
+});
+
+test("dev inventory distinguishes a newer unpublished build from the previous immutable Mac release", async () => {
+ const f = fixture();
+ const identity = "3.2.1-dev.20", tag = "mentra-builds-v3.2.1";
+ f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&per_page=10`, {
+  workflow_runs: [run({id: 60, head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml", status: "in_progress", conclusion: null}),
+   run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})],
+ });
+ f.rows.set(`${API}/actions/runs/60/jobs?filter=all&per_page=100&page=1`, {total_count: 0, jobs: []});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{id: 70,
+  name: "Finalize immutable release bill of materials", run_attempt: 1, status: "completed", conclusion: "success",
+  started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z",
+  steps: [{name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success"}]}]});
+ f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, {artifacts: [{name: `coordinated-release-plan-mentra-${identity}`,
+  expired: false, workflow_run: {id: 50, head_sha: HEAD}}]});
+ f.rows.set(`${CDN}${tag}/mentra-release-plan-${identity}.json`, {releaseIdentity: identity, sourceCommit: HEAD, channel: "dev",
+  artifactContainerTag: tag, native: {buildNumber: 20, marketingVersion: "3.2.1"}, artifactNames: {otaManifest: `mentra-live-ota-${identity}.json`}});
+ const archive = {name: `mentraos-${identity}-mac.zip`, sha256: HASH, size: 100};
+ f.rows.set(`${CDN}${tag}/mentraos-${identity}-apple-downloads.json`, {schemaVersion: 1, releaseIdentity: identity, sourceCommit: HEAD,
+  app: {bundleId: "com.mentra.mentra", headSha: HEAD, backend: "dev", build: "20", version: "3.2.1",
+   otaManifestUrl: `${CDN}${tag}/mentra-live-ota-${identity}.json`, executableSha256: HASH, javascriptSha256: HASH}, artifacts: {mac: archive}});
+ f.rows.set(`${CDN}${tag}/mentra-live-ota-${identity}.json`, {releaseVersion: identity});
+ f.rows.set(`HEAD ${CDN}${tag}/${archive.name}`, new Response(null, {headers: {"Content-Length": "100"}}));
+ const builds = await f.gateway.inventory({channel: "dev", platform: "ios-on-mac"});
+ expect(builds[0]).toMatchObject({availability: "unavailable", source: {buildRunId: 60}, reason: "Selected coordinated attempt did not publish immutable assets"});
+ const available = builds.filter(build => build.availability === "available");
+ expect(available).toHaveLength(1);
+ expect(available[0]).toMatchObject({headSha: HEAD, release: identity, source: {channel: "dev", buildRunId: 50, publicationAttempt: 1}, archive});
+ expect(available[0]!.archive?.url).toBe(`${CDN}${tag}/${archive.name}`);
+});
