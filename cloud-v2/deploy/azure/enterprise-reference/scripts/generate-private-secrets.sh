@@ -18,7 +18,7 @@ OUTPUT_NAME="$(basename -- "$OUTPUT")"
   exit 1
 }
 
-for command in jq openssl; do
+for command in jq openssl python3; do
   command -v "$command" >/dev/null || {
     printf '%s is required\n' "$command" >&2
     exit 1
@@ -29,6 +29,13 @@ umask 077
 TEMP_DIR="$(mktemp -d)"
 TEMP_OUTPUT="$(mktemp "$OUTPUT_DIR/.${OUTPUT_NAME}.tmp.XXXXXX")"
 trap 'rm -rf "$TEMP_DIR"; rm -f "$TEMP_OUTPUT"' EXIT
+chmod 0600 "$TEMP_OUTPUT"
+python3 - "$TEMP_OUTPUT" <<'PYMODE'
+import os, stat, sys
+value = os.stat(sys.argv[1])
+if value.st_uid != os.getuid() or stat.S_IMODE(value.st_mode) & 0o077:
+    sys.exit('This filesystem cannot protect secret files. In persistent Azure Cloud Shell use a folder under $HOME, not the clouddrive SMB share.')
+PYMODE
 
 key_body() {
   sed '/^-----/d' "$1" | tr -d '\r\n'
@@ -64,12 +71,22 @@ jq -n \
   > "$TEMP_OUTPUT"
 chmod 0600 "$TEMP_OUTPUT"
 
-# Hard-link publication is atomic and fails if OUTPUT appeared concurrently or
-# is a dangling symlink. Both paths are in the same directory/filesystem.
-if ! ln "$TEMP_OUTPUT" "$OUTPUT"; then
-  printf 'Refusing to overwrite existing secret file: %s\n' "$OUTPUT" >&2
-  exit 1
-fi
-rm -f "$TEMP_OUTPUT"
+# Persistent Cloud Shell HOME supports POSIX permissions and hard links; its
+# clouddrive SMB share was rejected above before generating keys. Publish a
+# complete inode without replacing a file, even if a non-cooperating writer
+# creates the destination concurrently. A killed generator leaves no partial key.
+python3 - "$TEMP_OUTPUT" "$OUTPUT" <<'PYPUBLISH'
+import os, sys
+source, output = sys.argv[1:]
+with open(source, 'rb') as stream:
+    os.fsync(stream.fileno())
+try:
+    os.link(source, output)
+except FileExistsError:
+    sys.exit('Refusing to overwrite existing secret file: ' + output)
+except OSError:
+    sys.exit('This filesystem cannot atomically publish secrets without overwriting. Use persistent Cloud Shell HOME or a local POSIX filesystem.')
+os.unlink(source)
+PYPUBLISH
 
 printf 'Created %s with mode 0600. Import it into the approved secret manager, then retain or destroy this copy according to policy.\n' "$OUTPUT"

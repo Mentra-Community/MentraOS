@@ -4,6 +4,7 @@
   "deploymentName": "mentra-private",
   "registryName": "acmementraregistry",
   "sourceImage": "ghcr.io/mentra-community/mentra-cloud@sha256:<digest>",
+  "sourceRegistryMirror": "",
   "releaseTag": "3.2.0",
   "tenantId": "<entra-tenant-id>",
   "coreApiClientId": "<core-api-client-id>",
