@@ -54,3 +54,45 @@ test("empty steps and recorded failures cannot qualify a passing test", () => {
   expect(frameworkRunSchema.safeParse({...good, result: {...good.result,
     failures: [{phase: "teardown", actionId: "uninstall", message: "failed"}]}}).success).toBe(false);
  });
+
+test("cleaned recorder diagnostics preserve evidence failure independently of hardware readiness", () => {
+  const good = run();
+  const cleaned = {state: "cleaned" as const, resourceId: "recorder", evidence: [], errors: []};
+  expect(frameworkRunSchema.parse({...good, result: {...good.result,
+    teardown: {...good.result.teardown, outcomes: [cleaned]}}}).result.teardown.outcomes[0]).toEqual(cleaned);
+  const error = {phase: "evidence" as const, actionId: "finalize-recording", message: "Recorder report finalization failed"};
+  const diagnostic = {...good, result: {...good.result, failures: [error],
+    teardown: {...good.result.teardown, outcomes: [{...cleaned, errors: [error]}], errors: [error]}}};
+  const preserved = frameworkRunSchema.parse(diagnostic);
+  expect(preserved.result.teardown.outcomes[0]).toEqual({...cleaned, errors: [error]});
+  expect(frameworkRunOutcome(preserved)).toBe("pass");
+  expect(frameworkEvidenceComplete(preserved)).toBe(false);
+  expect(frameworkRunSchema.safeParse({...diagnostic, result: {...diagnostic.result, failures: []}}).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...diagnostic, result: {...diagnostic.result,
+    teardown: {...diagnostic.result.teardown, errors: []}}}).success).toBe(false);
+  const teardownError = {...error, phase: "teardown"};
+  const failed = {...good, result: {...good.result, failures: [teardownError],
+    teardown: {...good.result.teardown, outcomes: [{...cleaned, errors: [teardownError]}], errors: [teardownError]}}};
+  expect(frameworkRunSchema.safeParse(failed).success).toBe(false);
+  expect(frameworkRunOutcome(frameworkRunSchema.parse({...failed, result: {...failed.result,
+    teardown: {...failed.result.teardown, ready: false}}}))).toBe("teardown-failed");
+  expect(frameworkRunSchema.safeParse({...good, result: {...good.result,
+    teardown: {...good.result.teardown, outcomes: [{...cleaned, errors: [{...error, phase: "arbitrary"}]}]}}}).success).toBe(false);
+});
+
+test("teardown evidence errors cannot disappear from run failures when outcome errors are absent or empty", () => {
+  const good = run();
+  const error = {phase: "evidence" as const, actionId: "finalize-recording", message: "Recording finalization failed"};
+  for (const cleaned of [
+    {state: "cleaned" as const, resourceId: "recorder", evidence: []},
+    {state: "cleaned" as const, resourceId: "recorder", evidence: [], errors: []},
+  ]) {
+    const diagnostic = {...good, result: {...good.result,
+      teardown: {...good.result.teardown, outcomes: [cleaned], errors: [error]}}};
+    expect(frameworkRunSchema.safeParse(diagnostic).success).toBe(false);
+    const preserved = frameworkRunSchema.parse({...diagnostic, result: {...diagnostic.result, failures: [error]}});
+    expect(frameworkRunOutcome(preserved)).toBe("pass");
+    expect(frameworkEvidenceComplete(preserved)).toBe(false);
+    expect(preserved.result.teardown.outcomes[0]).toEqual(cleaned);
+  }
+});
