@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {renderPrRoutineResult, resolvePrRoutineResults, publishPrRoutineResult} from "./pr-routine-result.mjs"
-import {routineFixture} from "./routine-api-fixture.mjs"
+import {routineFixture, terminalRoutineFixture} from "./routine-api-fixture.mjs"
 const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "workflow_run", ref: "refs/heads/dev"}
 
 test("PR comment uses unknown-to-client frozen title/platform and actual lifecycle outcome", () => {
@@ -23,4 +23,14 @@ test("PR notification retries reconcile marker after an uncertain send and retai
   assert.equal((await publishPrRoutineResult({github, context, plan})).status, "unchanged")
   assert.equal(writes.length, 1)
   comments.push({...comments[0], id: 2}); await assert.rejects(publishPrRoutineResult({github, context, plan}), /Duplicate/)
+})
+
+test("terminal PR request comment shows truthful receipt and no recording or framework checks", () => {
+  for (const status of ["not-run", "cancelled"]) {
+    const f = terminalRoutineFixture({status}), plan = renderPrRoutineResult(f.detail)
+    assert.match(plan.body, new RegExp(status)); assert.match(plan.body, /No framework result has been published/)
+    assert.match(plan.body, /\[Request receipt\].*testRun=example-request/)
+    assert.doesNotMatch(plan.body, /Recording and full result|\| Setup \||recorded candidate/)
+    assert.match(plan.body, new RegExp(f.request.input.definitionRevision))
+  }
 })

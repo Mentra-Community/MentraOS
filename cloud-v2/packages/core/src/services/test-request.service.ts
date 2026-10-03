@@ -20,6 +20,8 @@ export const hostCancellationSchema = z.object({requestId: frameworkIdentitySche
   inputSha256: z.string().regex(/^[a-f0-9]{64}$/), requestedAt: z.string().datetime({offset: true}),
   reason: z.string().min(1).max(2000)}).strict();
 export type HostCancellation = z.infer<typeof hostCancellationSchema>;
+type QueueCursor = {createdAt: Date; requestId: string};
+type CancellationCursor = {requestedAt: string; requestId: string};
 export interface StoredTestRequest {
   requestId: string;
   inputSha256: string;
@@ -41,8 +43,8 @@ export interface TestRequestRepository {
   reject(receipt: HostRejection): Promise<StoredTestRequest | null>;
   cancel(receipt: HostCancellation): Promise<StoredTestRequest | null>;
   acknowledgeCancellation(receipt: HostCancellation): Promise<StoredTestRequest | null>;
-  queued(hostId: string, after: {createdAt: Date; requestId: string} | null, limit: number): Promise<StoredTestRequest[]>;
-  cancellations(hostId: string, after: {createdAt: Date; requestId: string} | null, limit: number): Promise<StoredTestRequest[]>;
+  queued(hostId: string, after: QueueCursor | null, limit: number): Promise<StoredTestRequest[]>;
+  cancellations(hostId: string, after: CancellationCursor | null, limit: number): Promise<StoredTestRequest[]>;
 }
 export class TestRequestConflict extends Error {}
 
@@ -104,8 +106,9 @@ const mongoRepository: TestRequestRepository = {
   },
   async cancellations(hostId, after, limit) {
     return await TestRequestModel.find({hostId, hostCancellation: {$exists: true}, cancellationAcknowledged: {$ne: true},
-      ...(after ? {$or: [{createdAt: {$gt: after.createdAt}}, {createdAt: after.createdAt, requestId: {$gt: after.requestId}}]} : {})})
-      .sort({createdAt: 1, requestId: 1}).limit(limit).read("primary").readConcern("majority").lean() as StoredTestRequest[];
+      ...(after ? {$or: [{"hostCancellation.requestedAt": {$gt: after.requestedAt}},
+        {"hostCancellation.requestedAt": after.requestedAt, requestId: {$gt: after.requestId}}]} : {})})
+      .sort({"hostCancellation.requestedAt": 1, requestId: 1}).limit(limit).read("primary").readConcern("majority").lean() as StoredTestRequest[];
   },
 };
 
@@ -115,29 +118,34 @@ export class TestRequestService {
   get(requestId: string) {return this.repository.get(requestId);}
 
   async queued(hostId: string, cursor: string | undefined, limit: number) {
-    return this.page("queued", hostId, cursor, limit);
+    this.validatePageLimit(limit);
+    const parsed = this.decodeCursor(hostId, cursor, "createdAt");
+    const after = parsed ? {createdAt: new Date(parsed.timestamp), requestId: parsed.requestId} : null;
+    const found = await this.repository.queued(hostId, after, limit + 1), requests = found.slice(0, limit), last = requests.at(-1);
+    return {requests, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
   }
   async cancellations(hostId: string, cursor: string | undefined, limit: number) {
-    return this.page("cancellations", hostId, cursor, limit);
+    this.validatePageLimit(limit);
+    const parsed = this.decodeCursor(hostId, cursor, "requestedAt");
+    const after = parsed ? {requestedAt: parsed.timestamp, requestId: parsed.requestId} : null;
+    const found = await this.repository.cancellations(hostId, after, limit + 1), requests = found.slice(0, limit), last = requests.at(-1);
+    return {requests, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "requestedAt", last.hostCancellation!.requestedAt) : null};
   }
-  private async page(kind: "queued" | "cancellations", hostId: string, cursor: string | undefined, limit: number) {
+  private validatePageLimit(limit: number) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new TestRequestConflict("Page limit must be between 1 and 100");
-    let after: {createdAt: Date; requestId: string} | null = null;
-    if (cursor) {
-      try {
-        const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-        if (parsed.hostId !== hostId || typeof parsed.requestId !== "string" || !parsed.requestId
-          || !Number.isFinite(Date.parse(parsed.createdAt))) throw new Error("invalid");
-        after = {createdAt: new Date(parsed.createdAt), requestId: parsed.requestId};
-      } catch {throw new TestRequestConflict("Invalid host queue cursor");}
-    }
-    const found = await this.repository[kind](hostId, after, limit + 1);
-    const requests = found.slice(0, limit);
-    const last = requests.at(-1);
-    const nextCursor = found.length > limit && last ? Buffer.from(JSON.stringify({hostId,
-      createdAt: last.createdAt, requestId: last.requestId})).toString("base64url") : null;
-    return {requests, nextCursor};
+  }
+  private decodeCursor(hostId: string, cursor: string | undefined, field: "createdAt" | "requestedAt") {
+    if (!cursor) return null;
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+      if (parsed.hostId !== hostId || !frameworkIdentitySchema.safeParse(parsed.requestId).success
+        || !z.string().datetime({offset: true}).safeParse(parsed[field]).success) throw new Error("invalid");
+      return {timestamp: new Date(parsed[field]).toISOString(), requestId: parsed.requestId as string};
+    } catch {throw new TestRequestConflict(field === "createdAt" ? "Invalid host queue cursor" : "Invalid host cancellation cursor");}
+  }
+  private encodeCursor(hostId: string, requestId: string, field: "createdAt" | "requestedAt", timestamp: string) {
+    return Buffer.from(JSON.stringify({hostId, requestId, [field]: timestamp})).toString("base64url");
   }
 
   async submit(requestId: string, hostId: string, input: unknown): Promise<StoredTestRequest> {
@@ -213,7 +221,8 @@ export class TestRequestService {
     const row = await this.repository.get(requestId);
     if (!row) return null;
     if (row.hostCancellation || row.state === "terminal") return row;
-    const receipt = hostCancellationSchema.parse({requestId, hostId: row.hostId, inputSha256: row.inputSha256, requestedAt, reason});
+    const parsed = hostCancellationSchema.parse({requestId, hostId: row.hostId, inputSha256: row.inputSha256, requestedAt, reason});
+    const receipt = {...parsed, requestedAt: new Date(parsed.requestedAt).toISOString()};
     return await this.repository.cancel(receipt) ?? await this.repository.get(requestId);
   }
   /** Acknowledgement proves the host accepted cooperative cancellation, not that writers or cleanup settled. */

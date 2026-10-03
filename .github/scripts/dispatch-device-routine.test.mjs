@@ -32,3 +32,11 @@ test("callback refuses untrusted or ambiguous publication metadata", async () =>
   f.run.head_repository.full_name = repository; f.run.pull_requests.push({...f.run.pull_requests[0], number: 13})
   await assert.rejects(planDeviceDispatches(options), /ambiguous/)
 })
+
+test("identical authenticated PR associations select once; distinct PR numbers refuse", async () => {
+  const f = fixture(), options = {...f, token: "fixture"}
+  f.run.pull_requests.push(structuredClone(f.run.pull_requests[0]))
+  assert.equal((await planDeviceDispatches(options)).length, 1)
+  f.run.pull_requests.push({...f.run.pull_requests[0], number: 13})
+  await assert.rejects(planDeviceDispatches(options), /ambiguous/)
+})

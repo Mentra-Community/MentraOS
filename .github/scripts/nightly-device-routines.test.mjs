@@ -52,3 +52,19 @@ test("a transient admission or complete outage retries the original boundary and
   await assert.rejects(reconcileNightlyOccurrence({...options, fetchImpl: async url => Response.json(url.endsWith("/complete")
     ? {...terminal(), status: "running", finishedAt: undefined} : {plan: {...occurrence, members: []}, admissions: []})}), /terminal receipt/)
 })
+
+test("expired trigger reconciles the original occurrence without resetting its start boundary", async () => {
+  const delayed = scheduledOccurrence("0 11 * * *", "2026-10-03T14:30:00Z")
+  assert.deepEqual(delayed, occurrence)
+  const clock = Date.parse("2026-10-03T14:30:00Z"), calls = []
+  const receipt = {...terminal(), status: "incomplete", passed: 0, finishedAt: new Date(clock).toISOString(),
+    members: [{...terminal().members[0], status: "not-run", publicationComplete: false}]}
+  const result = await reconcileNightlyOccurrence({token: "fixture", occurrence: delayed, now: () => clock, deadline: clock,
+    sleep: async () => assert.fail("Expired terminal receipt must not start another wait"), fetchImpl: async (url, options) => {
+      calls.push({url, options})
+      return Response.json(url.endsWith("/complete") ? receipt : {plan: {...delayed, members: receipt.members}, admissions: []})
+    }})
+  assert.equal(result.status, "incomplete")
+  assert.deepEqual(JSON.parse(calls[0].options.body), occurrence)
+  assert.equal(calls.length, 2)
+})

@@ -17,4 +17,6 @@ const schema = new Schema({
 }, {collection: "test_requests", timestamps: true});
 schema.index({state: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, state: 1});
+schema.index({hostId: 1, "hostCancellation.requestedAt": 1, requestId: 1},
+  {partialFilterExpression: {hostCancellation: {$exists: true}}});
 export const TestRequestModel = registerModel("TestRequest", schema);

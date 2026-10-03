@@ -19,8 +19,9 @@ export async function planDeviceDispatches({github, context, token, fetchImpl = 
   if (!publication) return []
   const matching = (run.pull_requests ?? []).filter(pr => pr.head?.sha === run.head_sha || pr.head?.ref === run.head_branch)
   if (!matching.length) return []
-  ensure(matching.length === 1 && positive(matching[0].number), "App publication has ambiguous PR metadata")
-  const pr = await authenticatedPr(github, context, matching[0].number)
+  const numbers = [...new Set(matching.map(pr => pr.number))]
+  ensure(numbers.length === 1 && positive(numbers[0]), "App publication has ambiguous PR metadata")
+  const pr = await authenticatedPr(github, context, numbers[0])
   if (pr.head.sha !== run.head_sha || pr.head.ref !== run.head_branch) return []
   const ids = routineLabelIds(pr)
   if (!ids.length) return []

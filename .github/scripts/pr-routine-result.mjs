@@ -4,21 +4,25 @@ const PUBLIC = `https://github.com/${REPOSITORY}`
 export const resultMarker = row => `<!-- mentra-routine-result:${row.requestId} -->`
 const plain = value => String(value).replace(/[\\`*_|<>\r\n]/g, " ").trim()
 
-/** Render the frozen definition and actual framework lifecycle, independent of the PR's current head. */
+/** Render the frozen request or actual lifecycle, independent of the PR's current head. */
 export function renderPrRoutineResult(detail) {
   const row = boundRoutineResult(detail)
   if (!row || row.source.channel !== "pr") return null
-  const {request, result} = detail, {run} = result, build = request.input.build, report = run.result
+  const {request, result} = detail, run = result?.run, build = request.input.build, report = run?.result
   ensure(build.repository === REPOSITORY && build.prNumber === row.source.prNumber && /^[a-f0-9]{40}$/.test(build.headSha), "Invalid PR build binding")
   const body = [resultMarker(row), `### ${plain(row.title)} — ${plain(row.status)}`, "",
     `Candidate PR head: [\`${build.headSha}\`](${PUBLIC}/commit/${build.headSha}). Platform: \`${row.platform}\`.`, "",
-    "| Check | Result |", "| --- | --- |", `| Setup | ${report.setup.status} |`, `| Customer test | ${report.test} |`,
+    ...(report ? ["| Check | Result |", "| --- | --- |", `| Setup | ${report.setup.status} |`, `| Customer test | ${report.test} |`,
     `| Teardown ready | ${report.teardown.ready ? "Verified" : "Not verified"} |`, `| Evidence | ${result.evidenceStatus} |`,
     `| Uploads | ${result.uploadsComplete ? "Complete" : "Incomplete"} |`, "",
-    `[Recording and full result](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.resultRunId)})`, "",
+    `[Recording and full result](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.resultRunId)})`, ""] :
+      [`Request ${row.status === "not-run" ? "was rejected" : "was cancelled"}: ${plain(row.reason)}.`, "",
+        "No framework result has been published for this request.", "",
+        `[Request receipt](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.requestId)})`, ""]),
     `[Build ${row.source.buildRunId}/${row.source.publicationAttempt}](${PUBLIC}/actions/runs/${row.source.buildRunId}/attempts/${row.source.publicationAttempt})`, "",
-    `Routine: \`${row.routineId}\`; definition revision: \`${run.definitionRevision}\`; request: \`${row.requestId}\`.`, "",
-    "This result covers the recorded candidate. Notification retries retain the same request comment.",
+    `Routine: \`${row.routineId}\`; definition revision: \`${request.input.definitionRevision}\`; request: \`${row.requestId}\`.`, "",
+    report ? "This result covers the recorded candidate. Notification retries retain the same request comment." :
+      "This receipt covers the requested candidate. Notification retries retain the same request comment.",
   ].join("\n")
   return {pr: build.prNumber, requestId: row.requestId, routineId: row.routineId, marker: resultMarker(row), body}
 }

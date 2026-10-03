@@ -48,8 +48,10 @@ function store(): TestRequestRepository {
     },
     async cancellations(hostId, after, limit) {
       return [...rows.values()].filter(row => row.hostId === hostId && row.hostCancellation && !row.cancellationAcknowledged)
-        .sort((a, b) => a.requestId.localeCompare(b.requestId)).filter(row => !after || row.requestId > after.requestId).slice(0, limit)
-        .map(row => ({...structuredClone(row), createdAt: new Date("2026-10-03T11:00:00Z")}));
+        .sort((a, b) => a.hostCancellation!.requestedAt.localeCompare(b.hostCancellation!.requestedAt) || a.requestId.localeCompare(b.requestId))
+        .filter(row => !after || row.hostCancellation!.requestedAt > after.requestedAt
+          || row.hostCancellation!.requestedAt === after.requestedAt && row.requestId > after.requestId).slice(0, limit)
+        .map(row => ({...structuredClone(row), createdAt: new Date("2026-10-02T11:00:00Z")}));
     },
   };
 }
@@ -158,7 +160,7 @@ test("rejection refuses another host, changed inputs, accepted requests and malf
 });
 
 test("cancellation removes cloud-queued work atomically and preserves accepted work for cooperative host cancellation", async () => {
-  const service = new TestRequestService(store()), requestedAt = "2026-10-03T14:00:00Z";
+  const service = new TestRequestService(store()), requestedAt = "2026-10-03T14:00:00.000Z";
   const queued = await service.submit("queued-cancel", "mini", inputFor());
   const cancelled = await service.cancel(queued.requestId, requestedAt, "Occurrence boundary");
   expect(cancelled).toMatchObject({state: "terminal", terminalStatus: "cancelled", hostCancellation: {requestedAt}});
@@ -218,4 +220,42 @@ test("lost acceptance acknowledgement after cancellation retains real result cus
   expect(await results.ingest(run, "mini")).toMatchObject({entityId: row.requestId, created: true});
   expect(terminal).toEqual(run);
   expect((await service.get(row.requestId))!.state).toBe("terminal");
+});
+
+test("cancellation cursor uses immutable intent time, including an old request cancelled after a prior page", async () => {
+  const repository = store(), service = new TestRequestService(repository);
+  for (const id of ["old-a", "early-b", "late-c"]) await service.submit(id, "mini", inputFor());
+  await service.submit("other-host", "other", inputFor());
+  await service.cancel("early-b", "2026-10-03T14:00:00Z", "first intent");
+  await service.cancel("late-c", "2026-10-03T14:02:00Z", "later intent");
+  await service.cancel("other-host", "2026-10-03T14:01:00Z", "other host intent");
+  const first = await service.cancellations("mini", undefined, 1);
+  expect(first.requests.map(row => row.requestId)).toEqual(["early-b"]);
+  expect(JSON.parse(Buffer.from(first.nextCursor!, "base64url").toString())).toEqual({hostId: "mini",
+    requestId: "early-b", requestedAt: "2026-10-03T14:00:00.000Z"});
+  // This request was created before the cursor's request, but its intent now belongs after the cursor.
+  await service.cancel("old-a", "2026-10-03T16:01:00+02:00", "new cancellation on old request");
+  const second = await service.cancellations("mini", first.nextCursor!, 1);
+  expect(second.requests.map(row => row.requestId)).toEqual(["old-a"]);
+  expect((await service.cancellations("mini", second.nextCursor!, 1)).requests.map(row => row.requestId)).toEqual(["late-c"]);
+  expect(await service.cancel("old-a", "2026-10-03T15:00:00Z", "retry must not reorder")).toMatchObject({hostCancellation: {
+    requestedAt: "2026-10-03T14:01:00.000Z", reason: "new cancellation on old request"}});
+  await expect(service.cancellations("other", first.nextCursor!, 1)).rejects.toThrow("Invalid host cancellation cursor");
+  const staleQueueCursor = Buffer.from(JSON.stringify({hostId: "mini", requestId: "early-b", createdAt: "2026-10-03T14:00:00Z"})).toString("base64url");
+  await expect(service.cancellations("mini", staleQueueCursor, 1)).rejects.toThrow("Invalid host cancellation cursor");
+});
+
+test("Mongo cancellation pages sort and bound by intent time rather than request creation", async () => {
+  const {spyOn} = await import("bun:test"), {TestRequestModel} = await import("../models/test-request.model");
+  const requestedAt = "2026-10-03T14:00:00.000Z", cursor = Buffer.from(JSON.stringify({hostId: "mini", requestId: "first", requestedAt})).toString("base64url");
+  const find = spyOn(TestRequestModel, "find").mockImplementation(((filter: any) => {
+    expect(filter.$or).toEqual([{"hostCancellation.requestedAt": {$gt: requestedAt}},
+      {"hostCancellation.requestedAt": requestedAt, requestId: {$gt: "first"}}]);
+    expect(filter).not.toHaveProperty("createdAt");
+    return {sort(sort: any) {expect(sort).toEqual({"hostCancellation.requestedAt": 1, requestId: 1}); return this;},
+      limit(limit: number) {expect(limit).toBe(3); return this;}, read(value: string) {expect(value).toBe("primary"); return this;},
+      readConcern(value: string) {expect(value).toBe("majority"); return this;}, lean: async () => []};
+  }) as any);
+  try {expect(await new TestRequestService().cancellations("mini", cursor, 2)).toEqual({requests: [], nextCursor: null});}
+  finally {find.mockRestore();}
 });

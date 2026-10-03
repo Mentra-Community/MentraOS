@@ -8,6 +8,37 @@ export const ensure = (condition, message) => {if (!condition) throw new Error(m
 export const positive = value => Number.isSafeInteger(value) && value > 0
 export const platforms = Object.freeze(["android", "ios-on-mac"])
 
+/** Match Core's finite-JSON input identity, independent of transport key order. */
+export function requestInputDigest(input) {
+  const canonical = value => {
+    if (value === null || typeof value === "boolean" || typeof value === "string" || typeof value === "number" && Number.isFinite(value)) return value
+    if (Array.isArray(value)) return value.map(canonical)
+    if (typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype)
+      return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]))
+    throw new Error("Request input must be finite JSON")
+  }
+  return createHash("sha256").update(JSON.stringify(canonical(input))).digest("hex")
+}
+
+/** A terminal request is a receipt, not evidence that a framework run existed. */
+function terminalRequestResult(request) {
+  if (request.state !== "terminal" || !["not-run", "cancelled"].includes(request.terminalStatus)) return null
+  const cancelled = request.terminalStatus === "cancelled", receipt = cancelled ? request.hostCancellation : request.hostRejection
+  const timeKey = cancelled ? "requestedAt" : "rejectedAt", keys = ["requestId", "hostId", "inputSha256", timeKey, "reason", ...(!cancelled ? ["code"] : [])]
+  const input = request.input
+  ensure(requestIdentity(request.hostId) && routineId(input.routineId) && platforms.includes(input.platform) &&
+    /^[a-f0-9]{40}$/.test(input.definitionRevision ?? "") && requestIdentity(input.laneId) &&
+    /^[a-f0-9]{64}$/.test(request.inputSha256 ?? "") && requestInputDigest(input) === request.inputSha256 &&
+    receipt && Object.keys(receipt).length === keys.length && keys.every(key => Object.hasOwn(receipt, key)) &&
+    receipt.requestId === request.requestId && receipt.hostId === request.hostId && receipt.inputSha256 === request.inputSha256 &&
+    typeof receipt.reason === "string" && receipt.reason.length > 0 && receipt.reason.length <= 2000 &&
+    typeof receipt[timeKey] === "string" && /^\d{4}-\d{2}-\d{2}T/.test(receipt[timeKey]) && Number.isFinite(Date.parse(receipt[timeKey])) &&
+    (cancelled ? !request.hostRejection : !request.hostReceipt && !request.hostCancellation && requestIdentity(receipt.code)),
+    "Terminal request differs from its immutable receipt")
+  return {routineId: input.routineId, title: input.routineId, platform: input.platform, requestId: request.requestId,
+    finishedAt: receipt[timeKey], source: exactSource(input.build?.source), status: request.terminalStatus, reason: receipt.reason}
+}
+
 export function routineLabelIds(pr) {
   return [...new Set((pr.labels ?? []).map(label => typeof label === "string" ? label : label.name)
     .filter(label => typeof label === "string" && label.startsWith("routine:")).map(label => label.slice(8)))].sort()
@@ -72,7 +103,7 @@ export async function routineApi({token, operation, request, requestId = request
 export function boundRoutineResult(detail) {
   const {request, result} = detail ?? {}, run = result?.run, input = request?.input
   ensure(requestIdentity(request?.requestId) && input, "Missing accepted routine request")
-  if (!result) return null
+  if (!result) return terminalRequestResult(request)
   ensure(run?.requestId === request.requestId && run.result?.runId === request.requestId && run.hostId === request.hostId &&
     run.routineId === input.routineId && run.platform === input.platform && run.definitionRevision === input.definitionRevision &&
     run.laneId === input.laneId && isDeepStrictEqual(run.build, input.build) && result.definition?.id === run.routineId &&
@@ -101,7 +132,7 @@ export async function waitForRoutineResult({token, requestId, fetchImpl = fetch,
     catch (error) {if (!error.retryable) throw error}
     if (detail) {
       const row = boundRoutineResult(detail)
-      if (row && (detail.result.uploadsComplete || now() >= deadline)) return detail
+      if (row && (!detail.result || detail.result.uploadsComplete || now() >= deadline)) return detail
       if (now() >= deadline) throw new Error(`No published routine result for ${requestId}; inspect Core request state`)
     }
     ensure(now() < deadline, `Routine result API did not recover for ${requestId}`)

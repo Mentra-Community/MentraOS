@@ -1,5 +1,6 @@
 import {createHash} from "node:crypto";
 import {z} from "zod";
+import {createLogger} from "@mentra/cloud-shared";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {testWriteConcern} from "../models/test-write-concern";
 import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
@@ -7,11 +8,10 @@ import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {selectedBuildInput, type TestBuild, type TestBuildPlatform} from "../types/test-build.types";
 import {testSuiteSchema, type TestSuite} from "../types/test-suite.types";
 import {RoutineCatalogService} from "./routine-catalog.service";
-import {GithubTestBuildGateway} from "./test-builds.service";
+import {GithubTestBuildGateway, TestDispatchError} from "./test-builds.service";
 import {TestHostStateService, type ReceivedTestHostState} from "./test-host-state.service";
 import {TestRequestService, requestInputDigest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
-import {TestSuiteService} from "./test-suite.service";
 import {TestRunError} from "./test-result-error";
 import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings} from "./routine-admission.service";
 
@@ -19,10 +19,13 @@ export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentity
   startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"])}).strict();
 type Occurrence = z.infer<typeof nightlyOccurrenceSchema>;
 type RequestInput = z.infer<typeof frameworkRequestInputSchema>;
+export interface NightlySelectionError {stage: "build" | "host" | "admission"; status?: number; message: string}
+type PlatformSelection = {build?: TestBuild; host?: ReceivedTestHostState | null; errors: NightlySelectionError[]};
+const logger = createLogger("core").child({service: "nightly-routine"});
 export interface NightlyMember {
   memberId: string; routineId: string; platform: TestBuildPlatform; definitionRevision: string; definitionSha256: string;
   build?: ReturnType<typeof selectedBuildInput>;
-  requestId: string; hostId?: string; input?: RequestInput; unavailableReason?: string;
+  requestId: string; hostId?: string; input?: RequestInput; unavailableReason?: string; selectionErrors?: NightlySelectionError[];
 }
 export interface NightlyPlan extends Occurrence {suiteId: string; members: NightlyMember[]; suite?: TestSuite;
   publication?: {source: TestBuild["source"]; headSha: string; release?: string}}
@@ -33,7 +36,7 @@ export interface NightlyPlanRepository {
   finish(suiteId: string, result: NightlyResult): Promise<NightlyResult>;
 }
 export interface NightlyResult {occurrenceId: string; suiteId: string; startedAt: string; trigger: Occurrence["trigger"];
-  members: (NightlyMember & {status: string; publicationComplete: boolean; runId?: string})[];
+  members: (NightlyMember & {status: string; publicationComplete: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
   expectedCount: number; passed: number; status: string; resultUrl?: string; finishedAt?: string}
 export const nightlyPlanRepository: NightlyPlanRepository = {
   async get(suiteId) {
@@ -53,7 +56,8 @@ export const nightlyPlanRepository: NightlyPlanRepository = {
     return row?.nightlyResult as NightlyResult ?? null;
   },
   async finish(suiteId, result) {
-    await TestSuiteModel.updateOne({suiteId, nightlyResult: {$exists: false}}, {$set: {nightlyResult: result}}, {writeConcern: testWriteConcern});
+    await TestSuiteModel.updateOne({suiteId, nightlyResult: {$exists: false}},
+      {$set: {nightlyResult: result, finishedAt: result.finishedAt}}, {writeConcern: testWriteConcern});
     const saved = await this.completed(suiteId);
     if (!saved) throw new TestRunError(503, "Nightly terminal receipt was not retained");
     return saved;
@@ -73,8 +77,16 @@ export class NightlyRoutineService {
     private readonly repository: NightlyPlanRepository = nightlyPlanRepository,
     private readonly bindings: () => RoutineLaneBindings = configuredRoutineLanes,
     private readonly results: Pick<FrameworkResultService, "detail"> = new FrameworkResultService(),
-    private readonly suites: Pick<TestSuiteService, "detail" | "complete"> = new TestSuiteService(),
-    private readonly now: () => number = Date.now) {}
+    private readonly now: () => number = Date.now,
+    private readonly logSelectionError: (error: unknown, context: {occurrenceId: string; platform: TestBuildPlatform; stage: NightlySelectionError["stage"]}) => void
+      = (error, context) => logger.error({err: error, ...context}, "Nightly selection failed")) {}
+
+  private selectionError(error: unknown, stage: NightlySelectionError["stage"], occurrenceId: string, platform: TestBuildPlatform): NightlySelectionError {
+    if (error instanceof TestRunError || error instanceof TestDispatchError)
+      return {stage, status: error.status, message: error.message.slice(0, 2000)};
+    this.logSelectionError(error, {occurrenceId, platform, stage});
+    return {stage, message: stage === "build" ? "Immutable build resolution is unavailable." : "Configured host observation is unavailable."};
+  }
 
   async start(input: unknown) {
     const parsed = nightlyOccurrenceSchema.safeParse(input);
@@ -104,25 +116,30 @@ export class NightlyRoutineService {
     const catalog = (await this.catalog.list()).filter(row => row.nightlyEnabled !== false);
     if (catalog.length > 100) throw new TestRunError(503, "Nightly catalog exceeds the occurrence bound; no members were selected");
     const bindings = this.bindings(), platforms = [...new Set(catalog.map(row => row.platform))].sort();
-    const selected = new Map<TestBuildPlatform, {build?: TestBuild; host?: ReceivedTestHostState | null; reason?: string}>();
+    const selected = new Map<TestBuildPlatform, PlatformSelection>();
     let anchor: TestBuild | null = null;
+    let anchorFailure: {error: unknown} | undefined;
     try {if (platforms[0]) anchor = await this.builds.latestDev(platforms[0], occurrence.startedAt);}
-    catch {
-      for (const platform of platforms) selected.set(platform, {reason: "Latest immutable dev publication is unavailable."});
-    }
+    catch (error) {anchorFailure = {error};}
     await Promise.all(platforms.map(async platform => {
-      if (selected.has(platform)) return;
       const binding = bindings[platform];
-      try {
-        const [build, host] = await Promise.all([!anchor ? null : platform === platforms[0] ? anchor : this.builds.resolve(anchor.source, platform),
-          binding ? this.hosts.get(binding.hostId) : null]);
+      const selection: PlatformSelection = {errors: []};
+      // Resolve independently so an unavailable observation cannot discard an exact published artifact.
+      const [artifact, observation] = await Promise.allSettled([
+        anchorFailure ? Promise.reject(anchorFailure.error) : !anchor ? Promise.resolve(null)
+          : platform === platforms[0] ? Promise.resolve(anchor) : this.builds.resolve(anchor.source, platform),
+        binding ? this.hosts.get(binding.hostId) : Promise.resolve(null),
+      ]);
+      if (artifact.status === "fulfilled") {
+        if (artifact.value) selection.build = artifact.value;
+        const build = selection.build;
         if (anchor && build && (requestInputDigest(build.source) !== requestInputDigest(anchor.source)
-          || build.headSha !== anchor.headSha || anchor.release !== undefined && build.release !== undefined && build.release !== anchor.release)) {
-          selected.set(platform, {reason: "Platform artifact differs from the occurrence's frozen dev publication."});
-          return;
-        }
-        selected.set(platform, {build: build ?? undefined, host});
-      } catch {selected.set(platform, {reason: "Published build or configured host observation is unavailable."});}
+          || build.headSha !== anchor.headSha || anchor.release !== undefined && build.release !== undefined && build.release !== anchor.release))
+          selection.errors.push({stage: "build", status: 409, message: "Platform artifact differs from the occurrence's frozen dev publication."});
+      } else selection.errors.push(this.selectionError(artifact.reason, "build", occurrence.occurrenceId, platform));
+      if (observation.status === "fulfilled") selection.host = observation.value;
+      else selection.errors.push(this.selectionError(observation.reason, "host", occurrence.occurrenceId, platform));
+      selected.set(platform, selection);
     }));
     const members = catalog.map(row => this.member(row, suiteId, bindings[row.platform], selected.get(row.platform)!));
     const firstBuild = members.find(member => member.build)?.build;
@@ -139,14 +156,16 @@ export class NightlyRoutineService {
   }
 
   private member(row: RoutineEnrollment, suiteId: string, binding: RoutineLaneBindings[TestBuildPlatform],
-    selected: {build?: TestBuild; host?: ReceivedTestHostState | null; reason?: string}): NightlyMember {
+    selected: PlatformSelection): NightlyMember {
     const memberId = `member-${digestId([row.routineId, row.platform])}`, requestId = `${suiteId}-${memberId}`;
     const buildInput = selected.build?.availability === "available" && selected.build.archive && selected.build.receipt ? selectedBuildInput(selected.build, row.platform) : undefined;
     const base = {memberId, requestId, routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision,
       definitionSha256: row.definitionSha256, ...(buildInput ? {build: buildInput} : {})};
-    if (selected.reason) return {...base, unavailableReason: selected.reason};
+    if (selected.errors.length) return {...base, selectionErrors: selected.errors,
+      unavailableReason: selected.errors.map(error => error.message).join(" ").slice(0, 2000)};
     try {return {...base, hostId: binding?.hostId, input: routineAdmissionInput(row, selected.build, binding, selected.host, this.now())};}
-    catch (error) {if (error instanceof TestRunError) return {...base, unavailableReason: error.message}; throw error;}
+    catch (error) {if (error instanceof TestRunError) return {...base, unavailableReason: error.message,
+      selectionErrors: [{stage: "admission", status: error.status, message: error.message}]}; throw error;}
   }
 
   async detail(occurrenceId: string): Promise<NightlyResult> {
@@ -162,7 +181,8 @@ export class NightlyRoutineService {
         if (run.routineId !== member.routineId || run.platform !== member.platform || run.definitionRevision !== member.definitionRevision
           || run.hostId !== member.hostId || run.laneId !== member.input.laneId || requestInputDigest(run.build) !== requestInputDigest(member.input.build))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Result identity differs from the frozen request."};
-        return {...member, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete", runId: run.result.runId};
+        return {...member, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete",
+          runId: run.result.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
         if (!(error instanceof TestRunError) || error.status !== 404) throw error;
         const request = await this.requests.get(member.requestId);
@@ -177,23 +197,27 @@ export class NightlyRoutineService {
       }
     }));
     const terminal = members.every(member => member.status === "incomplete" || member.status !== "waiting" && member.publicationComplete);
+    const single = members.length === 1 ? members[0]! : undefined;
+    const singleRequest = single?.input && !single.runId ? await this.requests.get(single.requestId) : null;
+    const singleResultId = single?.runId ?? (singleRequest && singleRequest.hostId === single?.hostId
+      && singleRequest.inputSha256 === requestInputDigest(single!.input) ? single!.requestId : undefined);
     return {occurrenceId: plan.occurrenceId, suiteId: plan.suiteId, startedAt: plan.startedAt, trigger: plan.trigger,
       members, expectedCount: members.length, passed: members.filter(member => member.status === "pass" && member.publicationComplete).length,
       status: !members.length ? "skipped" : !terminal ? "running" : members.every(member => member.status === "pass" && member.publicationComplete) ? "pass"
         : members.some(member => member.status === "incomplete") ? "incomplete" : members.every(member => member.status === "cancelled") ? "cancelled" : "failed",
       ...(plan.suite ? {resultUrl: `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(plan.suiteId)}`}
-        : members.length === 1 ? {resultUrl: `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(members[0]!.runId ?? members[0]!.requestId)}`} : {})};
+        : singleResultId ? {resultUrl: `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(singleResultId)}`} : {})};
   }
 
   async complete(occurrenceId: string) {
     const detail = await this.detail(occurrenceId), plan = (await this.repository.get(detail.suiteId))!;
+    if (detail.finishedAt) return detail;
     if (detail.status === "running" && this.now() < Date.parse(plan.startedAt) + 3 * 3600_000) return detail;
     const finishedAt = new Date(this.now()).toISOString();
     if (this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000)
       await Promise.all(plan.members.filter(member => member.input).map(member =>
         this.requests.cancel(member.requestId, finishedAt, "Nightly occurrence reached its completion boundary.")));
-    if (detail.finishedAt) return detail;
-    if (plan.suite) await this.suites.complete(plan.suiteId, {finishedAt});
+    // The occurrence receipt is the only frozen verdict. Admin derives its suite projection from it.
     return this.repository.finish(plan.suiteId, finite({...detail, finishedAt,
       status: detail.status === "running" ? "incomplete" : detail.status,
       members: detail.members.map(member => member.status === "waiting" ? {...member, status: "incomplete", unavailableReason: "No complete result was published before the occurrence deadline."} : member)}));

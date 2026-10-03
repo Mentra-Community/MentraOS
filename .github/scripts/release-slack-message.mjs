@@ -80,7 +80,8 @@ function validRow(notification, row) {
   return routineId(row?.routineId) && platforms.includes(row.platform) && Object.hasOwn(notification.build.artifacts, row.platform) &&
     typeof row.title === "string" && row.title.length > 0 && row.title.length <= 2000 && id(row.requestId) &&
     Number.isFinite(Date.parse(row.finishedAt)) && statuses.includes(row.status) &&
-    (!row.resultRunId || id(row.resultRunId)) && row.source?.channel === notification.build.channel &&
+    (!row.resultRunId || id(row.resultRunId)) && (row.reason === undefined || typeof row.reason === "string" && row.reason.length > 0 && row.reason.length <= 2000) &&
+    row.source?.channel === notification.build.channel &&
     row.source.buildRunId === notification.build.runId && positive(row.source.publicationAttempt)
 }
 /** Preserve other release blocks verbatim; names and platforms come from the attested Core definition. */
@@ -96,8 +97,9 @@ export function applyRoutineResult(notification, row) {
   const labels = {passed: "Passed", failed: "Failed", "setup-failed": "Setup failed", "teardown-failed": "Teardown failed", "not-run": "Not run", cancelled: "Cancelled", unknown: "Unknown", "upload-incomplete": "Result upload incomplete"}
   const lines = Object.keys(rows).sort().map(key => {
     const current = rows[key], result = current.resultRunId
-      ? ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(current.resultRunId)}|Recording and result>` : ""
-    return `${displayTitle(current.title)} · ${current.platform === "android" ? "Android" : "iOS on Mac"} — *${labels[current.status]}*${result}`
+      ? ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(current.resultRunId)}|Recording and result>`
+      : ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(current.requestId)}|Request receipt>`
+    return `${displayTitle(current.title)} · ${current.platform === "android" ? "Android" : "iOS on Mac"} — *${labels[current.status]}*${result}${current.reason ? ` (${displayTitle(current.reason)})` : ""}`
   })
   return {...notification, rows, payload: {...notification.payload, blocks: notification.payload.blocks.map(block => block.block_id === ROUTINE_BLOCK
     ? {...block, text: {type: "mrkdwn", text: `*Device test results*\n${lines.join("\n")}\nLatest completed request per routine and platform; build success is independent of these results.`}} : block)}}

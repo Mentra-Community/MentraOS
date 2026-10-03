@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {routineApi, routineLabelIds, selectedCatalog, stableRequestId, boundRoutineResult, waitForRoutineResult} from "./routine-api.mjs"
-import {routineFixture} from "./routine-api-fixture.mjs"
+import {routineApi, routineLabelIds, selectedCatalog, stableRequestId, boundRoutineResult, waitForRoutineResult, requestInputDigest} from "./routine-api.mjs"
+import {routineFixture, terminalRoutineFixture} from "./routine-api-fixture.mjs"
 
 test("unfamiliar routine labels resolve only through enrolled definitions", () => {
   const f = routineFixture(), catalog = {routines: [f.enrollment]}
@@ -62,6 +62,12 @@ test("active callers contain no routine registry and preserve enable gates and t
   assert.match(nightly, /DEVICE_ROUTINE_NIGHTLY_ENABLED == 'true'/)
   assert.match(nightly, /SLACK_WEBHOOK_DEV_BUILDS/); assert.match(nightly, /publishNightlyWebhook/)
   assert.match(results, /request_id:/); assert.match(results, /resolveRoutineResults/)
+  assert.match(results, /fanout:[\s\S]*actions: write/)
+  assert.match(results, /fanout:[\s\S]*github\.event_name == 'workflow_run'/)
+  assert.match(results, /resolve:[\s\S]*github\.event_name == 'workflow_dispatch'/)
+  assert.match(results, /launchRoutineResultNotifications/)
+  assert.doesNotMatch(results, /runs-on: ubuntu-latest|routine-result-fanout\.json|Retain authenticated dispatch intent/)
+  assert.equal((results.match(/runs-on: blacksmith-4vcpu-ubuntu-2404/g) ?? []).length, 4)
   assert.doesNotMatch(request + dispatch + results, /worker_run_id|privateGithub|TEST_RUN_GITHUB_APP_PRIVATE_KEY|nightlyOnly/)
   for (const name of await readdir(new URL("./", import.meta.url))) if (name.endsWith(".mjs") && !name.endsWith(".test.mjs") && !name.endsWith("-fixture.mjs")) {
     const source = await readFile(new URL(name, import.meta.url), "utf8")
@@ -75,4 +81,31 @@ test("client refuses a reported pass that contradicts steps or cleanup", () => {
   assert.throws(() => boundRoutineResult(f.detail), /contradicts/)
   f.detail.result.run.result.steps[0].status = "passed"; f.detail.result.run.result.teardown.ready = false
   assert.throws(() => boundRoutineResult(f.detail), /contradicts/)
+})
+
+test("terminal rejection and cancellation return immediately without fabricating a run", async () => {
+  for (const status of ["not-run", "cancelled"]) {
+    const f = terminalRoutineFixture({status}), row = boundRoutineResult(f.detail)
+    assert.equal(row.status, status); assert.equal(row.resultRunId, undefined)
+    assert.equal(row.title, f.request.input.routineId); assert.ok(row.reason)
+    const detail = await waitForRoutineResult({token: "fixture", requestId: f.request.requestId, fetchImpl: f.fetchImpl,
+      sleep: async () => {assert.fail("Terminal request must not wait for a nonexistent report")}})
+    assert.equal(detail.result, null); assert.equal(f.calls.length, 1)
+  }
+})
+
+test("terminal request receipts bind exact input, host, identity and terminal kind", () => {
+  const f = terminalRoutineFixture()
+  for (const mutate of [d => {d.request.input.build.archive.sha256 = "e".repeat(64)}, d => {d.request.hostRejection.hostId = "other"},
+    d => {d.request.hostRejection.requestId = "other"}, d => {d.request.hostRejection.inputSha256 = "e".repeat(64)},
+    d => {d.request.hostRejection.reason = ""}, d => {d.request.hostRejection.rejectedAt = "invalid"},
+    d => {d.request.hostReceipt = {requestId: d.request.requestId}}, d => {d.request.terminalStatus = "cancelled"},
+    d => {d.request.hostRejection.extra = true}]) {
+    const detail = structuredClone(f.detail); mutate(detail)
+    assert.throws(() => boundRoutineResult(detail), /immutable receipt/)
+  }
+  const cancellation = terminalRoutineFixture({status: "cancelled"})
+  cancellation.request.state = "accepted"
+  assert.equal(boundRoutineResult(cancellation.detail), null) // Intent is not settled cancellation.
+  assert.equal(requestInputDigest({b: 2, a: [1, {c: true}]}), requestInputDigest({a: [1, {c: true}], b: 2}))
 })

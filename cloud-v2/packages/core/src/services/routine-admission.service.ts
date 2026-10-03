@@ -24,8 +24,14 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
   const lane = host?.lanes.find(lane => lane.id === binding.laneId && lane.platform === definition.platform);
   if (!host || host.hostId !== binding.hostId || !Number.isFinite(Date.parse(host.receivedAt)) || now - Date.parse(host.receivedAt) > 120_000)
     throw new TestRunError(409, `Configured ${definition.platform} host has no current observation.`);
-  if (!lane || lane.dispatchMode !== "automatic" || ["in-repair", "out-of-service", "offline"].includes(lane.state))
+  // The assigned host controller waits for lane repair/readiness; selection must retain this occurrence's request.
+  if (!lane || lane.dispatchMode !== "automatic")
     throw new TestRunError(409, `Configured ${definition.platform} automatic lane is unavailable.`);
+  if (lane.routineAvailability !== undefined) {
+    const availability = lane.routineAvailability.find(row => row.routineId === definition.routineId && row.definitionRevision === definition.definitionRevision);
+    if (!availability?.available) throw new TestRunError(409,
+      `Configured lane cannot prepare ${definition.routineId} at ${definition.definitionRevision}: ${availability?.reason ?? "No available capability was reported for this exact definition."}`);
+  }
   const execution = definition.definition.execution;
   if (!execution) throw new TestRunError(409, "The current definition has no execution resource metadata.");
   const resources = execution.resourceKinds.map(kind => {

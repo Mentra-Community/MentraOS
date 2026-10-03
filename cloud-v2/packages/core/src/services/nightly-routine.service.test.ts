@@ -1,11 +1,14 @@
 import {expect, spyOn, test} from "bun:test";
-import {NightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
+import {NightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult, type NightlyPlanRepository} from "./nightly-routine.service";
 import {TestSuiteModel} from "../models/test-suite.model";
 import type {RoutineCatalogService} from "./routine-catalog.service";
 import {routineEnrollmentSchema} from "../types/routine-definition.types";
 import type {TestBuild} from "../types/test-build.types";
 import type {ReceivedTestHostState} from "./test-host-state.service";
 import {TestRunError} from "./test-result-error";
+import {TestSuiteService} from "./test-suite.service";
+import {requestInputDigest} from "./test-request.service";
+import {TestDispatchError} from "./test-builds.service";
 
 const startedAt = "2026-10-03T11:00:00Z", now = Date.parse(startedAt);
 const occurrence = {occurrenceId: "schedule:2026-10-03", startedAt, trigger: "nightly" as const};
@@ -23,7 +26,7 @@ const build = (platform: "android" | "ios-on-mac"): TestBuild => ({source: {chan
 const host: ReceivedTestHostState = {hostId: "mini", incarnation: "one", incarnationGeneration: 1, sequence: 1, observedAt: startedAt, receivedAt: startedAt,
   lanes: ["android", "ios-on-mac"].map(platform => ({id: platform, platform: platform as "android" | "ios-on-mac", dispatchMode: "automatic", state: "running",
     resources: [{id: `app:${platform}`, kind: "app"}]}))};
-function fixture(initial = [row("a-new-routine", "android"), row("different.routine", "ios-on-mac"), row("disabled-routine", "android", false)]) {
+function fixture(initial = [row("a-new-routine", "android"), row("different.routine", "ios-on-mac"), row("disabled-routine", "android", false)], repository?: NightlyPlanRepository) {
   let catalog = initial, plan: NightlyPlan | null = null, finished: NightlyResult | null = null, reads = 0;
   let failId: string | undefined, clock = now;
   const admitted: {requestId: string; hostId: string; input: any}[] = [];
@@ -34,11 +37,11 @@ function fixture(initial = [row("a-new-routine", "android"), row("different.rout
     {async latestDev(platform, before) {buildReads.push("latest:" + platform); expect(before).toBe(startedAt); return build(platform);},
       async resolve(source, platform) {buildReads.push("resolve:" + platform); expect(source).toEqual(build(platform).source); return build(platform);}},
     {async get(id) {expect(id).toBe("mini"); return host;}},
-    {async cancel(id) {cancelled.push(id); return null;}, async get(id) {return requestRows.get(id) ?? null;}, async submit(requestId, hostId, input) {if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input}); return {} as any;}},
-    {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
+    {async cancel(id) {cancelled.push(id); return null;}, async get(id) {return requestRows.get(id) ?? null;}, async submit(requestId, hostId, input) {if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input}); requestRows.set(requestId, {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}); return {} as any;}},
+    repository ?? {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
     () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
     {async detail(id) {const result = resultRows.get(id); if (!result) throw new TestRunError(404, "missing"); return result;}},
-    {async detail() {return {} as any;}, async complete() {return {} as any;}}, () => clock);
+    () => clock);
   return {service, admitted, cancelled, buildReads, resultRows, requestRows, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}};
 }
 test("nightly freezes the entire enabled catalog, arbitrary IDs and exact current definitions/artifacts", async () => {
@@ -72,12 +75,14 @@ test("a missing platform binding retains its expected member and never creates a
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}}, {async get() {throw new Error("must not look up an unbound fleet");}},
     {async cancel() {return null;}, async get() {return null;}, async submit() {throw new Error("must not submit");}},
     {async get() {return plan;}, async freeze(next) {plan = next; return next;}, async completed() {return null;}, async finish(_id, value) {return value;}},
-    () => ({}), undefined, undefined, () => now);
+    () => ({}), undefined, () => now);
   const result = await service.start(occurrence);
   expect(result.plan.members).toHaveLength(1);
   expect(result.plan.members[0]!.unavailableReason).toContain("lane");
   expect(result.plan.suite).toBeUndefined();
-  expect((await service.detail(occurrence.occurrenceId)).status).toBe("incomplete");
+  const detail = await service.detail(occurrence.occurrenceId);
+  expect(detail.status).toBe("incomplete");
+  expect(detail.resultUrl).toBeUndefined();
 });
 test("result matching refuses changed artifact/source identity and terminal receipts fence later changes", async () => {
   const state = fixture([row("single-routine", "android")]);
@@ -163,7 +168,7 @@ test("an admission completing across the deadline is cancelled through the ordin
     {async get() {return host;}}, {async get() {return null;}, async submit() {clock = now + 3 * 3600_000; return {} as any;},
       async cancel(id) {cancelled.push(id); return null;}},
     {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
-    () => ({android: {hostId: "mini", laneId: "android"}}), undefined, undefined, () => clock);
+    () => ({android: {hostId: "mini", laneId: "android"}}), undefined, () => clock);
   const {plan} = await service.start(occurrence);
   expect(cancelled).toEqual([plan.members[0]!.requestId]);
 });
@@ -176,11 +181,160 @@ test("a mismatched platform publication remains expected and missing anchor plat
         async resolve(source, platform) {return {...build(platform), source, ...(mismatch ? {headSha: "9".repeat(40)} : {})};}},
       {async get() {return host;}}, {async cancel() {return null;}, async get() {return null;}, async submit() {return {} as any;}},
       {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
-      () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}), undefined, undefined, () => now);
+      () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}), undefined, () => now);
     const {plan} = await service.start(occurrence);
     expect(plan.members).toHaveLength(2);
     expect(plan.members[mismatch ? 1 : 0]!.input).toBeUndefined();
     expect(plan.members[mismatch ? 0 : 1]!.input).toBeDefined();
     expect(plan.members[mismatch ? 1 : 0]!.unavailableReason).toBeDefined();
   }
+});
+
+function publishedResult(member: NightlyPlan["members"][number], uploadsComplete: boolean) {
+  return {run: {routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
+    hostId: member.hostId, laneId: member.input!.laneId, build: member.input!.build, result: {runId: member.requestId},
+    startedAt, finishedAt: "2026-10-03T11:01:00Z"},
+    outcome: "pass", uploadsComplete, evidenceStatus: "complete"};
+}
+
+test("nightly and Admin share one terminal authority across concurrent uploads, completers and a lost write ACK", async () => {
+  const stored: any = {};
+  const query = {read() {return this;}, readConcern() {return this;}, lean: async () => stored};
+  const find = spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any);
+  const create = spyOn(TestSuiteModel, "create").mockImplementation((async (rows: any[]) => {
+    Object.assign(stored, rows[0]); return rows;
+  }) as any);
+  let state: ReturnType<typeof fixture>, failedAck = false;
+  const changes: any[] = [];
+  const update = spyOn(TestSuiteModel, "updateOne").mockImplementation((async (_filter: any, change: any) => {
+    changes.push(change.$set);
+    // An upload commits after the terminal snapshot was read but before its durable write.
+    for (const result of state.resultRows.values()) result.uploadsComplete = true;
+    if (!stored.nightlyResult) {
+      Object.assign(stored, structuredClone(change.$set));
+      if (!failedAck) {failedAck = true; throw new Error("ACK lost after durable commit");}
+    }
+    return {modifiedCount: 0};
+  }) as any);
+  try {
+    state = fixture(undefined, nightlyPlanRepository);
+    const {plan} = await state.service.start(occurrence);
+    for (const member of plan.members) state.resultRows.set(member.requestId, publishedResult(member, false));
+    state.clock = now + 3 * 3600_000;
+    const completions = await Promise.allSettled([state.service.complete(occurrence.occurrenceId), state.service.complete(occurrence.occurrenceId)]);
+    expect(completions.some(result => result.status === "rejected")).toBe(true);
+    const receipt = await state.service.complete(occurrence.occurrenceId);
+    const admin = await new TestSuiteService().detail(plan.suiteId);
+    expect(receipt).toEqual(stored.nightlyResult);
+    expect(receipt).toMatchObject({status: "incomplete", expectedCount: 2, passed: 0});
+    expect(admin).toMatchObject({outcome: "failed", passed: receipt.passed, finishedAt: receipt.finishedAt});
+    expect(admin.members.map(member => member.publicationComplete)).toEqual(receipt.members.map(member => member.publicationComplete));
+    expect(admin.members.map(member => member.startedAt)).toEqual(receipt.members.map(member => member.runStartedAt));
+    expect(admin.members.map(member => member.finishedAt)).toEqual(receipt.members.map(member => member.runFinishedAt));
+    expect(admin.failedRoutines.sort()).toEqual(receipt.members.map(member => member.routineId).sort());
+    expect(stored.completedResult).toBeUndefined();
+    expect(changes.every(change => !change.completedResult)).toBe(true);
+    // Direct suite completion resumes the same occurrence authority and never snapshots later uploads.
+    expect(await new TestSuiteService().complete(plan.suiteId, {finishedAt: "2026-10-03T16:00:00Z"})).toEqual(admin);
+    expect(await state.service.detail(occurrence.occurrenceId)).toEqual(receipt);
+    stored.nightlyResult.members[0].input.build.headSha = "8".repeat(40);
+    await expect(new TestSuiteService().detail(plan.suiteId)).rejects.toThrow("frozen input");
+  } finally {find.mockRestore(); create.mockRestore(); update.mockRestore();}
+});
+
+test("selection retains independently resolved artifacts and safe original typed diagnostics", async () => {
+  for (const stage of ["host", "build", "unknown"] as const) {
+    let saved: NightlyPlan | null = null;
+    const logged: unknown[] = [];
+    const unknown = new Error("private upstream detail");
+    const service = new NightlyRoutineService({async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+      {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {
+        if (stage === "build") throw new TestDispatchError(502, "Immutable receipt SHA does not match publication 21.");
+        return {...build(platform), source};
+      }}, {async get(id) {
+        if (id === "desktop-host") throw stage === "unknown" ? unknown : new TestRunError(503, "Host observation storage is unavailable.");
+        return host;
+      }}, {async cancel() {return null;}, async get() {return null;}, async submit() {return {} as any;}},
+      {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+      () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "desktop-host", laneId: "ios-on-mac"}}), undefined, () => now,
+      (error, context) => logged.push({error, context}));
+    const {plan} = await service.start(occurrence), desktop = plan.members[1]!;
+    expect(plan.members[0]!.input).toBeDefined();
+    expect(desktop.input).toBeUndefined();
+    expect(plan.publication!.source).toEqual(build("android").source);
+    if (stage === "build") {
+      expect(desktop.selectionErrors).toEqual([{stage: "build", status: 502, message: "Immutable receipt SHA does not match publication 21."},
+        {stage: "host", status: 503, message: "Host observation storage is unavailable."}]);
+      expect(desktop.build).toBeUndefined();
+    } else {
+      expect(desktop.build!.archive!.sha256).toBe(build("ios-on-mac").archive!.sha256);
+      expect(desktop.build!.source).toEqual(build("ios-on-mac").source);
+      expect(desktop.selectionErrors).toEqual([{stage: "host", ...(stage === "host" ? {status: 503} : {}),
+        message: stage === "host" ? "Host observation storage is unavailable." : "Configured host observation is unavailable."}]);
+    }
+    if (stage === "unknown") {
+      expect(logged).toEqual([{error: unknown, context: {occurrenceId: occurrence.occurrenceId, platform: "ios-on-mac", stage: "host"}}]);
+      expect(JSON.stringify(plan)).not.toContain(unknown.message);
+    } else expect(logged).toEqual([]);
+  }
+});
+
+test("known automatic lanes queue through repair/offline states while invalid mode or resource metadata remains rejected", async () => {
+  for (const laneState of ["in-repair", "out-of-service", "offline", "running"] as const) {
+    for (const invalid of [undefined, "mode", "resources"] as const) {
+      const observed = structuredClone(host), submitted: string[] = [];
+      observed.lanes[0]!.state = laneState;
+      if (invalid === "mode") observed.lanes[0]!.dispatchMode = "paused";
+      if (invalid === "resources") observed.lanes[0]!.resources = [];
+      let saved: NightlyPlan | null = null;
+      const service = new NightlyRoutineService({async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+        {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
+        {async get() {return observed;}}, {async cancel() {return null;}, async get() {return null;}, async submit(id) {submitted.push(id); return {} as any;}},
+        {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+        () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}), undefined, () => now);
+      const {plan} = await service.start(occurrence);
+      expect(plan.members).toHaveLength(2);
+      expect(plan.members[1]!.input).toBeDefined();
+      expect(submitted).toHaveLength(invalid ? 1 : 2);
+      if (invalid) expect(plan.members[0]!.unavailableReason).toBeDefined();
+      else expect(plan.members[0]!.input).toBeDefined();
+    }
+  }
+});
+
+test("lane-specific exact-definition availability never disables the healthy sibling or global catalog", async () => {
+  for (const unavailable of ["false", "missing", "stale"] as const) {
+    const observed = structuredClone(host), submitted: string[] = [];
+    observed.lanes[0]!.routineAvailability = unavailable === "missing" ? [] : [{routineId: "phone-product",
+      definitionRevision: unavailable === "stale" ? "c".repeat(40) : "a".repeat(40), available: false, reason: "Phone cannot prepare the selected source."}];
+    observed.lanes[1]!.routineAvailability = [{routineId: "desktop-product", definitionRevision: "a".repeat(40), available: true}];
+    let saved: NightlyPlan | null = null;
+    const service = new NightlyRoutineService({async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+      {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
+      {async get() {return observed;}}, {async cancel() {return null;}, async get() {return null;}, async submit(id) {submitted.push(id); return {} as any;}},
+      {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+      () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}), undefined, () => now);
+    const {plan} = await service.start(occurrence);
+    expect(plan.members).toHaveLength(2);
+    expect(submitted).toEqual([plan.members[1]!.requestId]);
+    expect(plan.members[0]!.unavailableReason).toContain(unavailable === "false" ? "Phone cannot prepare the selected source." : "this exact definition");
+    expect(plan.members[1]!.input).toBeDefined();
+    observed.lanes[0]!.routineAvailability = [{routineId: "phone-product", definitionRevision: "a".repeat(40), available: true}];
+    const retry = await service.start(occurrence);
+    expect(retry.plan).toEqual(plan); // Capability changes cannot silently replace the frozen expected member.
+  }
+});
+
+test("an unpersisted single admission exposes no dead result link until its stable retry creates the request", async () => {
+  const catalog = [row("single-product", "android")];
+  const probe = await fixture(catalog).service.start(occurrence), state = fixture(catalog);
+  state.failId = probe.plan.members[0]!.requestId;
+  const first = await state.service.start(occurrence);
+  expect(first.admissions[0]!.admitted).toBe(false);
+  expect((await state.service.detail(occurrence.occurrenceId)).resultUrl).toBeUndefined();
+  state.failId = undefined;
+  await state.service.start(occurrence);
+  const detail = await state.service.detail(occurrence.occurrenceId);
+  expect(detail.resultUrl).toContain(`testRun=${encodeURIComponent(first.plan.members[0]!.requestId)}`);
+  expect(detail.resultUrl).not.toContain("testSuite=");
 });

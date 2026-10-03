@@ -2,6 +2,8 @@
 
 `nightly-device-routines.yml` is a thin scheduler. `DEVICE_ROUTINE_NIGHTLY_ENABLED=true` enables its existing `routine-nightly-dev` environment. The two UTC schedules cover 04:00 Pacific through daylight saving time; only the matching trigger creates that day's occurrence. Manual runs use the original GitHub run ID and creation time. Rerun attempts reuse both occurrence identity and start boundary.
 
+The execution deadline is three hours after that original start boundary. A delayed schedule or old manual rerun arriving after it reconciles the expired occurrence; it does not restart the deadline or request a fresh run. Missing evidence remains incomplete. Start a new manual workflow run when fresh coverage is wanted.
+
 Core selects the passing routine catalog for dev, applies each routine/platform's Admin nightly preference, and freezes the selected definitions, source builds, host/lane bindings and independent requests. The scheduler sends no routine IDs:
 
 - `POST /api/internal/nightly-routines` with `{occurrenceId, startedAt, trigger: "nightly" | "manual"}`.
@@ -13,3 +15,5 @@ These endpoints use `TEST_RUN_INGEST_TOKEN_DEV`. Core's `NIGHTLY_ROUTINE_LANES` 
 The final receipt supplies the expected members, individual status and publication completeness, aggregate verdict and recorded-results URL. The scheduler retains it as an Actions artifact and posts the generic verdict to `SLACK_WEBHOOK_DEV_BUILDS`. Only the original scheduler attempt may send the webhook; reruns reconcile Core without replaying an uncertain Slack send. Inspect the retained send intent and acknowledgement before manually reconciling a notification.
 
 Nightly preferences are controlled in Admin's routine catalog. Turning a preference off affects future occurrences; it does not rewrite an existing occurrence. PR label dispatch remains separately disabled by default.
+
+PR and explicit release result callbacks launch one publication workflow per authenticated Core request. A rejected or cancelled terminal request gets its receipt link and reason immediately; it does not acquire a fabricated framework result. Each request can publish while another waits for evidence or an API recovery. Automatic retries reuse the original producer/run attempt and request identity and reuse authenticated existing publication runs. If GitHub does not acknowledge a dispatch, it can be retried: duplicate notification runs reconcile the same request through the existing PR/Slack locks and durable post receipts. Explicit publication retries use `notify-release-routine.yml` with the same request ID; they never start another device run.

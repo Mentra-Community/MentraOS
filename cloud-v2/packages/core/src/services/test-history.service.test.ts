@@ -151,6 +151,26 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect(await suites.detail(suite.suiteId)).toEqual(frozen);
   });
 
+  test("nightly terminal authority groups only its exact frozen runs and leaves late publication visible", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    const suite = plan("suite:nightly-authority", [member("on-time"), member("late")]);
+    const expected = suite.members.map(selected => ({...selected, requestId: selected.requestId!, definitionRevision: "b".repeat(40),
+      definitionSha256: "c".repeat(64), hostId: "mini", input: {routineId: selected.routineId, platform: selected.platform,
+        definitionRevision: "b".repeat(40), laneId: "mac", resources: [], build: run(selected.requestId!).build}}));
+    const nightlyPlan = {suiteId: suite.suiteId, occurrenceId: "history-nightly", startedAt: suite.startedAt, trigger: "nightly", suite, members: expected};
+    const nightlyResult = {...nightlyPlan, expectedCount: 2, passed: 1, status: "incomplete", finishedAt: "2026-10-03T19:02:00Z",
+      members: expected.map((selected, index) => ({...selected, status: index === 0 ? "pass" : "incomplete", publicationComplete: index === 0,
+        ...(index === 0 ? {runId: selected.requestId, runStartedAt: at, runFinishedAt: "2026-10-03T19:01:00Z"} : {})}))};
+    await TestSuiteModel.collection.insertOne({suiteId: suite.suiteId, payload: suite, startedAt: new Date(suite.startedAt), nightlyPlan, nightlyResult});
+    await saveRun(run("on-time")); await saveRun(run("late"));
+    const entries = (await new TestHistoryService().list()).entries;
+    expect(entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : entry.id)).toEqual([suite.suiteId, "late"]);
+    expect(entries[0]).toMatchObject({kind: "suite", passed: 1, outcome: "failed", finishedAt: nightlyResult.finishedAt});
+    const row = await TestSuiteModel.collection.findOne({suiteId: suite.suiteId});
+    expect(row!.completedResult).toBeUndefined();
+    expect(await new TestSuiteService().detail(suite.suiteId)).toMatchObject({passed: 1, outcome: "failed"});
+  });
+
   test("raw batches advance past a newer large suite to older standalone results without a total cap", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
     const ids = Array.from({length: 100}, (_, index) => `grouped-${index.toString().padStart(3, "0")}`);

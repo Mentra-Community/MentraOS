@@ -76,8 +76,51 @@ export async function resolveRoutineSelectors({github, context, requestId, read 
   return [...new Set(ids)]
 }
 
+/** Result workflows resolve only their own request; fanout isolates neighboring waits. */
 export async function resolveRoutineResults({token, requestIds, fetchImpl = fetch, wait = waitForRoutineResult}) {
   return Promise.all(requestIds.map(requestId => wait({token, requestId, fetchImpl})))
+}
+
+export const notificationIdentity = (producer, requestId) => `notify-${createHash("sha256").update(JSON.stringify([producer.id, producer.run_attempt, requestId])).digest("hex")}`
+
+/** Fan out selectors without waiting for any device. Retried child publications reconcile the same request. */
+export async function launchRoutineResultNotifications({github, context, requestIds}) {
+  requireThat(context.eventName === "workflow_run" && context.ref === "refs/heads/dev" &&
+    `${context.repo.owner}/${context.repo.repo}` === REPOSITORY && Array.isArray(requestIds) &&
+    requestIds.length <= 256 && requestIds.every(requestIdentity) && new Set(requestIds).size === requestIds.length,
+    "Result fanout requires trusted unique callback selectors")
+  const candidate = context.payload.workflow_run
+  requireThat(positive(candidate?.id) && positive(candidate.run_attempt), "Result producer identity is missing")
+  const {data: producer} = await github.rest.actions.getWorkflowRunAttempt({...context.repo, run_id: candidate.id, attempt_number: candidate.run_attempt})
+  requireThat(producer.id === candidate.id && producer.run_attempt === candidate.run_attempt && Number.isFinite(Date.parse(producer.created_at)) &&
+    producer.status === "completed" && [".github/workflows/request-e2e-routine.yml", ".github/workflows/dispatch-device-routine.yml"].includes(producer.path) &&
+    ["workflow_dispatch", "pull_request_target", "workflow_run"].includes(producer.event) && producer.repository?.full_name === REPOSITORY &&
+    producer.head_repository?.full_name === REPOSITORY, "Result fanout producer differs from its authenticated source")
+  const history = await github.paginate(github.rest.actions.listWorkflowRuns, {...context.repo, workflow_id: WORKFLOW,
+    branch: "dev", event: "workflow_dispatch", created: `>=${producer.created_at}`, per_page: 100})
+  requireThat(history.length < 1000 && new Set(history.map(run => run.id)).size === history.length, "Result fanout history is incomplete")
+  const {data: current} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: context.runId})
+  assertRun(current, context.repo, [WORKFLOW], "dev", false)
+  requireThat(current.id === context.runId && current.event === "workflow_run", "Result fanout run differs")
+  const settled = await Promise.allSettled(requestIds.map(async requestId => {
+    const identity = notificationIdentity(producer, requestId), title = `Routine result ${identity}`
+    const existing = history.filter(run => run.display_title === title)
+    for (const run of existing) {
+      assertRun(run, context.repo, [WORKFLOW], "dev", false)
+      requireThat(run.event === "workflow_dispatch", "Result retry belongs to another event")
+    }
+    const reusable = existing.filter(run => ["queued", "in_progress"].includes(run.status) || run.status === "completed" && run.conclusion === "success")
+    if (reusable.length) return {requestId, notificationId: identity, status: "existing", runId: Math.min(...reusable.map(run => run.id))}
+    // An uncertain GitHub dispatch can be retried: duplicate notification runs
+    // reconcile the same request through PR/Slack locks and durable post receipts.
+    // This path never submits another Core request or starts another device run.
+    await github.rest.actions.createWorkflowDispatch({...context.repo, workflow_id: WORKFLOW, ref: "dev",
+      inputs: {request_id: requestId, notification_id: identity}})
+    return {requestId, notificationId: identity, status: "launched"}
+  }))
+  const errors = settled.flatMap((result, index) => result.status === "rejected" ? [new Error(`${requestIds[index]}: ${result.reason.message}`, {cause: result.reason})] : [])
+  if (errors.length) throw new AggregateError(errors, `Routine result fanout failed: ${errors.map(error => error.message).join("; ")}`)
+  return settled.map(result => result.value)
 }
 
 /** Match a frozen Core build to a retained editable Slack post for that exact platform archive. */
