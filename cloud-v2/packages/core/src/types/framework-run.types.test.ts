@@ -114,7 +114,20 @@ test("lifecycle actions preserve old results and reject duplicate identities, in
     [{...action, status: "not-run", durationMs: 0}],
   ]) expect(frameworkRunSchema.safeParse(withSetup(actions)).success).toBe(false);
   const skipped = {...action, status: "not-run", durationMs: 0, startedAt: undefined, finishedAt: undefined, causedBy: "shared:entry"};
-  expect(frameworkRunSchema.safeParse(withSetup([skipped])).success).toBe(true);
+  expect(frameworkRunSchema.safeParse({...old, result: {...old.result, setup: {status: "failed", actions: [skipped]},
+    test: "not-run", steps: [{id: "settings", status: "not-run", durationMs: 0}]}}).success).toBe(true);
+});
+
+test("passed setup cannot conceal failed, cancelled or unexecuted shared setup actions", () => {
+  const old = run();
+  const action = {id: "shared:install", instruction: "Install the selected Mentra App", expected: "The selected build is installed",
+    scope: "shared" as const, status: "passed" as const, durationMs: 10};
+  expect(frameworkRunSchema.safeParse({...old, result: {...old.result, setup: {...old.result.setup, actions: [action]}}}).success).toBe(true);
+  for (const status of ["failed", "cancelled", "not-run"] as const) {
+    const changed = {...action, status, durationMs: status === "not-run" ? 0 : 10};
+    expect(frameworkRunSchema.safeParse({...old, result: {...old.result,
+      setup: {...old.result.setup, actions: [changed]}}}).success).toBe(false);
+  }
 });
 
 test("routine lifecycle failures cannot hide behind aggregate pass while shared evidence failures remain independent", () => {

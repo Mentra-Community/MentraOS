@@ -75,8 +75,8 @@ export const frameworkRunSchema = z.object({
         problem(`${phase} action timing is outside the run`);
     }
   }
-  if (run.result.setup.status === "passed" && run.result.setup.actions?.some(action => action.scope === "routine" && action.status !== "passed"))
-    problem("Passing setup contradicts routine setup actions");
+  if (run.result.setup.status === "passed" && run.result.setup.actions?.some(action => action.status !== "passed"))
+    problem("Passing setup contradicts setup actions");
   if (run.result.teardown.ready && run.result.teardown.actions?.some(action => action.scope === "routine" && action.status !== "passed"
     && !(action.status === "not-run" && run.result.setup.status !== "passed")))
     problem("Ready teardown contradicts routine teardown actions");
