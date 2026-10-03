@@ -19,7 +19,7 @@ test("catalog labels a historical example without claiming the current definitio
   expect(routineHref("notes-phone", "ios-on-mac")).toBe("/?routineCatalog=1&routine=notes-phone&platform=ios-on-mac");
 });
 
-test("run keeps every timestamp-linked step beside a bounded recording and stacks on narrow screens", () => {
+test("run keeps steps and recording in one equal-height desktop row with evidence below", () => {
   const run = frameworkRunSchema.parse({schemaVersion: 1, requestId: "request", hostId: "mini", routineId: "notes-phone",
     definitionRevision: "c".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
     startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:02:00Z", recordingAssetId: "recording",
@@ -37,10 +37,13 @@ test("run keeps every timestamp-linked step beside a bounded recording and stack
   const html = render(true);
   expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]");
   expect(html.indexOf('aria-label="Run recording"')).toBeLessThan(html.indexOf('aria-label="Execution steps"'));
-  expect(html).toContain("order-2 lg:order-1");
+  expect(html).toContain("order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col");
+  expect(html).toContain("lg:h-[calc(100dvh-var(--admin-header-height,6rem)-2rem)]");
+  expect(html).toContain('role="region" aria-label="Execution details" tabindex="0"');
   expect(html).toContain("lg:overflow-y-auto");
-  expect(html).toContain("lg:sticky lg:top-[calc(var(--admin-header-height,6rem)+1rem)]");
-  expect(html).toContain("object-contain lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-8rem)]");
+  expect(html).not.toContain("lg:sticky");
+  expect(html).toContain("object-contain lg:h-full lg:max-h-none");
+  expect(html).toContain('Teardown: ready</p></div></section></div><section');
   expect(html.match(/Watch this step/g)).toHaveLength(71);
   expect(html.match(/class="w-7 shrink-0 text-right"/g)).toHaveLength(71);
   expect(html).toContain('class="w-7 shrink-0 text-right">71.</span>');
