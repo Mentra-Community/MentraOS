@@ -174,6 +174,7 @@ def load(directory):
     if state['releaseHash'] != digest(ROOT / 'release.json'):
         raise SetupError('Installer release differs from saved state. Use the original package; upgrades require a new reviewed release.')
     recover_identity(directory, config, state)
+    recover_mirror(directory, config, state)
     for key in BINDING_KEYS:
         if config.get(key) != state['binding'].get(key):
             raise SetupError(f'{key} changed since initialization. Restore the original configuration.')
@@ -191,6 +192,42 @@ def load(directory):
                              or stat.S_IMODE(secrets.stat().st_mode) & 0o077):
         raise SetupError('Secrets must be a regular file accessible only by its owner (chmod 600).')
     return config, state, release
+
+
+def recover_mirror(directory, config, state):
+    journal = directory / 'mirror.pending.json'
+    if not journal.exists():
+        return
+    pending = read_json(journal)
+    previous = pending['previousConfig']
+    updated = dict(previous, sourceRegistryMirror=pending['mirror'])
+    # Only this explicitly requested distribution endpoint can change. Never
+    # adopt edits to resource bindings, release pins, or other configuration.
+    if (config not in (previous, updated)
+            or state.get('configHash') not in (None, pending['previousConfigHash'], pending['updatedConfigHash'])
+            or any(previous.get(k) != state['binding'].get(k) for k in BINDING_KEYS)):
+        raise SetupError('Pending mirror update conflicts with saved configuration; restore the original files')
+    write_json(directory / 'deployment.config.json', updated)
+    config.update(updated)
+    checkpoint(directory, state, state['phase'], configHash=pending['updatedConfigHash'] if state.get('configHash') else None)
+    journal.unlink()
+
+
+def configure_mirror(args, directory, config, state):
+    if not args.mirror:
+        raise SetupError('configure-mirror requires --mirror REGISTRY.azurecr.io/REPOSITORY')
+    updated = dict(config, sourceRegistryMirror=args.mirror)
+    check_source_image(updated)
+    temporary = directory / 'mirror.config.json'
+    write_json(temporary, updated)
+    pending = {'previousConfig': config, 'mirror': args.mirror,
+               'previousConfigHash': digest(directory / 'deployment.config.json'),
+               'updatedConfigHash': digest(temporary)}
+    write_json(directory / 'mirror.pending.json', pending)
+    temporary.unlink()
+    recover_mirror(directory, config, state)
+    emit(args, {'status': 'mirror_configured', 'image': config['sourceImage'],
+                'next': 'Run resume. The release digest and deployed resource settings are unchanged.'})
 
 
 def emit(args, value):
@@ -328,8 +365,8 @@ def check_source_image(config):
         raise SetupError('Cannot read the pinned release image. '
                          'For a private release, obtain package read access or an approved ACR mirror from Mentra and set '
                          'SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell. '
-                         'Before the first deployment, sourceRegistryMirror can be set in deployment.config.json; then retry. '
-                         'No Azure resources have been created by this preflight.') from None
+                         'Run configure-mirror --mirror REGISTRY.azurecr.io/REPOSITORY to correct the distribution endpoint, then resume. '
+                         'No Azure resources are changed by this image-access check.') from None
     return 'authenticated' if username else 'public'
 
 
@@ -353,7 +390,7 @@ def preflight(config, require_identity=False):
     group = next((g for g in groups if g['name'].lower() == config['resourceGroup'].lower()), None)
     if group and group.get('tags', {}).get('mentraInstallerOwner') != config['resourceTags']['mentraInstallerOwner']:
         raise SetupError('Resource group already exists and is not owned by this installer. Choose a new group; automatic adoption is refused.')
-    source_access = check_source_image(config) if require_identity and not group else 'checked during image import'
+    source_access = check_source_image(config) if require_identity else 'checked before install'
     return {'tenant': account['tenantId'], 'subscription': account['id'], 'providers': providers,
             'sourceImageAccess': source_access,
             'resourceGroup': 'owned' if group else 'new',
@@ -567,12 +604,13 @@ def configure_entra(args, directory, config, state):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'diagnostics'))
+    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'diagnostics'))
     parser.add_argument('--directory', default='./mentra-setup', help='Persistent state and secret directory outside the installer package')
     parser.add_argument('--config', help='JSON answers for init; otherwise edit deployment.config.json')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--dns-ready', action='store_true')
     parser.add_argument('--grant-admin-consent', action='store_true')
+    parser.add_argument('--mirror', help='Approved Azure registry/repository for configure-mirror; release digest stays pinned')
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     try:
@@ -597,6 +635,8 @@ def main():
                             'next': 'configure-entra, then install. Plan performs no Azure writes.'})
             elif args.command == 'configure-entra':
                 configure_entra(args, directory, config, state)
+            elif args.command == 'configure-mirror':
+                configure_mirror(args, directory, config, state)
             elif args.command in ('install', 'resume'):
                 install(args, directory, config, state)
             elif args.command == 'verify':

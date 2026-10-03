@@ -269,10 +269,56 @@ class InstallerTests(unittest.TestCase):
         self.save()
         with self.load_context():
             setup.load(self.directory)
-        self.state['configHash'] = 'previous-config-hash'
+        self.state['configHash'] = 'config-hash'
         self.save()
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'Configuration changed'):
+        self.config['sourceRegistryMirror'] = 'replacement.azurecr.io/mentra-cloud'
+        setup.write_json(self.directory / 'deployment.config.json', self.config)
+        with patch.object(setup, 'check_release', return_value=RELEASE), \
+             patch.object(setup, 'digest', side_effect=lambda p: 'release-hash' if Path(p).name == 'release.json' else 'changed-config-hash'), \
+             self.assertRaisesRegex(setup.SetupError, 'Configuration changed'):
             setup.load(self.directory)
+
+    def test_owned_group_still_checks_source_before_resume(self):
+        def azure(config, *args):
+            if args[:2] == ('account', 'show'):
+                return {'id': SUB, 'tenantId': TENANT, 'state': 'Enabled'}
+            if args[:2] == ('provider', 'show'):
+                return {'registrationState': 'Registered'}
+            if args[:2] == ('group', 'list'):
+                return [{'name': 'rg-test', 'tags': {'mentraInstallerOwner': 'owner'}}]
+            self.fail('resume wrote resources before confirming image access')
+        with patch.object(setup.shutil, 'which', return_value='/tool'), \
+             patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup, 'check_source_image', side_effect=setup.SetupError('image inaccessible')):
+            with self.assertRaisesRegex(setup.SetupError, 'image inaccessible'):
+                setup.install(self.args, self.directory, self.config, self.state)
+
+    def test_mirror_recovery_changes_only_endpoint_after_failed_deployment(self):
+        self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
+        self.state['phase'] = 'deploying'
+        self.save()
+        self.args.mirror = 'replacement.azurecr.io/mentra-cloud'
+        with patch.object(setup, 'check_source_image') as check, patch.object(setup, 'emit'), \
+             patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
+            with self.assertRaises(OSError):
+                setup.configure_mirror(self.args, self.directory, self.config, self.state)
+            self.assertEqual(check.call_args.args[0]['sourceImage'], RELEASE['sourceImage'])
+        with patch.object(setup, 'check_release', return_value=RELEASE), \
+             patch.object(setup, 'digest', side_effect=lambda p: 'release-hash' if Path(p).name == 'release.json' else setup.hashlib.sha256(Path(p).read_bytes()).hexdigest()):
+            config, state, _ = setup.load(self.directory)
+        self.assertEqual(config['sourceRegistryMirror'], self.args.mirror)
+        self.assertEqual(config['sourceImage'], RELEASE['sourceImage'])
+        self.assertEqual(state['phase'], 'deploying')
+        self.assertEqual(state['configHash'], setup.digest(self.directory / 'deployment.config.json'))
+        self.assertFalse((self.directory / 'mirror.pending.json').exists())
+
+    def test_failed_mirror_check_preserves_config_and_state(self):
+        original = {p.name: p.read_bytes() for p in self.directory.glob('*.json')}
+        self.args.mirror = 'replacement.azurecr.io/mentra-cloud'
+        with patch.object(setup, 'check_source_image', side_effect=setup.SetupError('access denied')):
+            with self.assertRaises(setup.SetupError):
+                setup.configure_mirror(self.args, self.directory, self.config, self.state)
+        self.assertEqual(original, {p.name: p.read_bytes() for p in self.directory.glob('*.json')})
 
     def test_admin_bootstrap_retries_saved_credential_and_preserves_existing_allowlist(self):
         self.config['coreName'] = 'ca-test-core'
