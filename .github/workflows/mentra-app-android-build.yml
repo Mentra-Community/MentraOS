@@ -590,3 +590,4 @@ jobs:
       pull-requests: write
     secrets:
       SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}
+      TEST_RUN_INGEST_TOKEN_DEV: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}

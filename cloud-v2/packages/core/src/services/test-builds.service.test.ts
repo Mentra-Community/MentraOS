@@ -93,3 +93,48 @@ test("dev inventory distinguishes a newer unpublished build from the previous im
  expect(available[0]).toMatchObject({headSha: HEAD, release: identity, source: {channel: "dev", buildRunId: 50, publicationAttempt: 1}, archive});
  expect(available[0]!.archive?.url).toBe(`${CDN}${tag}/${archive.name}`);
 });
+
+
+test("nightly latest dev selection passes newer unpublished runs and pins the publication before its boundary", async () => {
+ const f = fixture();
+ const identity = "3.2.1-dev.20", tag = "mentra-builds-v3.2.1";
+ f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&per_page=10`, {
+  workflow_runs: [run({id: 60, head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml", status: "in_progress", conclusion: null}),
+   run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})],
+ });
+ f.rows.set(`${API}/actions/runs/60/jobs?filter=all&per_page=100&page=1`, {total_count: 0, jobs: []});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{id: 70,
+  name: "Finalize immutable release bill of materials", run_attempt: 1, status: "completed", conclusion: "success",
+  started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z",
+  steps: [{name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success"}]}]});
+ f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, {artifacts: [{name: `coordinated-release-plan-mentra-${identity}`,
+  expired: false, workflow_run: {id: 50, head_sha: HEAD}}]});
+ f.rows.set(`${CDN}${tag}/mentra-release-plan-${identity}.json`, {releaseIdentity: identity, sourceCommit: HEAD, channel: "dev",
+  artifactContainerTag: tag, native: {buildNumber: 20, marketingVersion: "3.2.1"}, artifactNames: {otaManifest: `mentra-live-ota-${identity}.json`}});
+ const archive = {name: `mentraos-${identity}-mac.zip`, sha256: HASH, size: 100};
+ f.rows.set(`${CDN}${tag}/mentraos-${identity}-apple-downloads.json`, {schemaVersion: 1, releaseIdentity: identity, sourceCommit: HEAD,
+  app: {bundleId: "com.mentra.mentra", headSha: HEAD, backend: "dev", build: "20", version: "3.2.1",
+   otaManifestUrl: `${CDN}${tag}/mentra-live-ota-${identity}.json`, executableSha256: HASH, javascriptSha256: HASH}, artifacts: {mac: archive}});
+ f.rows.set(`${CDN}${tag}/mentra-live-ota-${identity}.json`, {releaseVersion: identity});
+ f.rows.set(`HEAD ${CDN}${tag}/${archive.name}`, new Response(null, {headers: {"Content-Length": "100"}}));
+
+ const before = "2026-09-23T11:00:00Z";
+ f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=1`, {
+  total_count: 2, workflow_runs: [run({id: 60, head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml", status: "in_progress", conclusion: null}),
+   run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})],
+ });
+ const selected = await f.gateway.latestDev("ios-on-mac", before);
+ expect(selected).toMatchObject({availability: "available", source: {channel: "dev", buildRunId: 50, publicationAttempt: 1}, archive});
+ expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
+});
+
+test("nightly latest dev refuses truncated history and transient publication metadata instead of selecting older releases", async () => {
+ const before = "2026-09-23T11:00:00Z", url = `${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=1`;
+ const f = fixture();
+ f.rows.set(url, {total_count: 2, workflow_runs: [run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 0, jobs: []});
+ await expect(f.gateway.latestDev("android", before)).rejects.toThrow("incomplete");
+ f.rows.set(url, {total_count: 1, workflow_runs: [run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, new Response("unavailable", {status: 503}));
+ await expect(f.gateway.latestDev("android", before)).rejects.toThrow("unavailable");
+});

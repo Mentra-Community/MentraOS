@@ -8,7 +8,7 @@ export interface TestSuiteResult {
   suiteId: string; channel: string; trigger: string; startedAt: string; finishedAt?: string;
   build: {headSha: string; release?: string; producerUrl?: string};
   outcome: "running" | "passed" | "failed"; passed: number; failedRoutines: string[];
-  members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string}[];
+  members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string; unavailableReason?: string; rejectedAt?: string}[];
 }
 export function readSuiteId(search: string) {
   const query = new URLSearchParams(search);
@@ -44,7 +44,8 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
     {suite.build.producerUrl ? <a className="text-sm underline" href={suite.build.producerUrl} target="_blank" rel="noreferrer">Dispatched job / build in GitHub</a> : null}
     <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-[#68746d]"><th className="py-3">Routine</th><th>Lane</th><th>Result</th><th>Duration</th><th>Recording & steps</th></tr></thead>
       <tbody>{suite.members.map(member => <tr key={member.memberId} className="border-b last:border-0"><td className="py-4 font-medium">{member.routineId}</td><td>{member.platform === "ios-on-mac" ? "Mac" : member.platform === "android" ? "Android" : "iOS"}</td>
-        <td className={member.status === "pass" ? "text-green-700" : member.status === "waiting" ? "text-[#68746d]" : "text-red-700"}>{member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status}</td>
+        <td className={member.status === "pass" ? "text-green-700" : member.status === "waiting" ? "text-[#68746d]" : "text-red-700"}>{member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status}
+          {member.unavailableReason && <p className="mt-1 max-w-sm text-xs">{member.unavailableReason}</p>}</td>
         <td>{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td><td>{member.runId ? <a className="underline" href={frameworkRunHref(member.runId)}>View run</a> : "Not available yet"}</td></tr>)}</tbody></table></div>
     {suite.failedRoutines.length ? <p className="mt-4 text-sm text-red-700">Failed or incomplete: {suite.failedRoutines.join(", ")}</p> : null}
   </section>;

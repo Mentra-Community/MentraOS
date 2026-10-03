@@ -3,6 +3,7 @@ import {TestRunError} from "./test-result-error";
 import {testWriteConcern} from "../models/test-write-concern";
 import {createHash} from "node:crypto";
 import {TestRequestModel} from "../models/test-request.model";
+import {z} from "zod";
 
 export type RequestState = "queued" | "accepted" | "running" | "terminal";
 export interface HostAcceptance {
@@ -11,6 +12,14 @@ export interface HostAcceptance {
   hostId: string;
   acceptedAt: string;
 }
+export const hostRejectionSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
+  inputSha256: z.string().regex(/^[a-f0-9]{64}$/), rejectedAt: z.string().datetime({offset: true}),
+  code: frameworkIdentitySchema, reason: z.string().min(1).max(2000)}).strict();
+export type HostRejection = z.infer<typeof hostRejectionSchema>;
+export const hostCancellationSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
+  inputSha256: z.string().regex(/^[a-f0-9]{64}$/), requestedAt: z.string().datetime({offset: true}),
+  reason: z.string().min(1).max(2000)}).strict();
+export type HostCancellation = z.infer<typeof hostCancellationSchema>;
 export interface StoredTestRequest {
   requestId: string;
   inputSha256: string;
@@ -18,6 +27,9 @@ export interface StoredTestRequest {
   hostId: string;
   state: RequestState;
   hostReceipt?: HostAcceptance;
+  hostRejection?: HostRejection;
+  hostCancellation?: HostCancellation;
+  cancellationAcknowledged?: boolean;
   runId?: string;
   terminalStatus?: string;
   createdAt?: Date;
@@ -26,7 +38,11 @@ export interface TestRequestRepository {
   insert(request: StoredTestRequest): Promise<void>;
   get(requestId: string): Promise<StoredTestRequest | null>;
   accept(receipt: HostAcceptance): Promise<StoredTestRequest | null>;
+  reject(receipt: HostRejection): Promise<StoredTestRequest | null>;
+  cancel(receipt: HostCancellation): Promise<StoredTestRequest | null>;
+  acknowledgeCancellation(receipt: HostCancellation): Promise<StoredTestRequest | null>;
   queued(hostId: string, after: {createdAt: Date; requestId: string} | null, limit: number): Promise<StoredTestRequest[]>;
+  cancellations(hostId: string, after: {createdAt: Date; requestId: string} | null, limit: number): Promise<StoredTestRequest[]>;
 }
 export class TestRequestConflict extends Error {}
 
@@ -47,9 +63,37 @@ const mongoRepository: TestRequestRepository = {
   async insert(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
   async get(requestId) {return await TestRequestModel.findOne({requestId}).read("primary").readConcern("majority").lean() as StoredTestRequest | null;},
   async accept(receipt) {
-    return await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, inputSha256: receipt.inputSha256,
-      hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}},
+    const accepted = await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, inputSha256: receipt.inputSha256,
+      hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}, hostRejection: {$exists: false}},
     {$set: {state: "accepted", hostReceipt: receipt}}, {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
+    if (accepted) return accepted;
+    // Local admission may commit before Core receives its receipt. Preserve cancellation while recording that custody.
+    return await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, inputSha256: receipt.inputSha256,
+      hostId: receipt.hostId, state: "terminal", terminalStatus: "cancelled", hostReceipt: {$exists: false},
+      hostRejection: {$exists: false}, "hostCancellation.requestId": receipt.requestId,
+      "hostCancellation.hostId": receipt.hostId, "hostCancellation.inputSha256": receipt.inputSha256},
+    {$set: {hostReceipt: receipt}}, {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
+  },
+  async reject(receipt) {
+    return await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, inputSha256: receipt.inputSha256,
+      hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}, hostRejection: {$exists: false}},
+    {$set: {state: "terminal", terminalStatus: "not-run", hostRejection: receipt}},
+    {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
+  },
+  async cancel(receipt) {
+    const identity = {requestId: receipt.requestId, hostId: receipt.hostId, inputSha256: receipt.inputSha256,
+      hostCancellation: {$exists: false}};
+    const queued = await TestRequestModel.findOneAndUpdate({...identity, state: "queued", hostReceipt: {$exists: false}},
+      {$set: {state: "terminal", terminalStatus: "cancelled", hostCancellation: receipt}},
+      {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
+    if (queued) return queued;
+    return await TestRequestModel.findOneAndUpdate({...identity, state: {$in: ["accepted", "running"]}},
+      {$set: {hostCancellation: receipt}}, {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
+  },
+  async acknowledgeCancellation(receipt) {
+    return await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, hostId: receipt.hostId,
+      inputSha256: receipt.inputSha256, hostCancellation: receipt}, {$set: {cancellationAcknowledged: true}},
+    {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
   },
   async queued(hostId, after, limit) {
     const filter = {hostId, state: "queued", ...(after ? {$or: [
@@ -57,6 +101,11 @@ const mongoRepository: TestRequestRepository = {
       {createdAt: after.createdAt, requestId: {$gt: after.requestId}},
     ]} : {})};
     return await TestRequestModel.find(filter).sort({createdAt: 1, requestId: 1}).limit(limit).lean() as StoredTestRequest[];
+  },
+  async cancellations(hostId, after, limit) {
+    return await TestRequestModel.find({hostId, hostCancellation: {$exists: true}, cancellationAcknowledged: {$ne: true},
+      ...(after ? {$or: [{createdAt: {$gt: after.createdAt}}, {createdAt: after.createdAt, requestId: {$gt: after.requestId}}]} : {})})
+      .sort({createdAt: 1, requestId: 1}).limit(limit).read("primary").readConcern("majority").lean() as StoredTestRequest[];
   },
 };
 
@@ -66,6 +115,12 @@ export class TestRequestService {
   get(requestId: string) {return this.repository.get(requestId);}
 
   async queued(hostId: string, cursor: string | undefined, limit: number) {
+    return this.page("queued", hostId, cursor, limit);
+  }
+  async cancellations(hostId: string, cursor: string | undefined, limit: number) {
+    return this.page("cancellations", hostId, cursor, limit);
+  }
+  private async page(kind: "queued" | "cancellations", hostId: string, cursor: string | undefined, limit: number) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new TestRequestConflict("Page limit must be between 1 and 100");
     let after: {createdAt: Date; requestId: string} | null = null;
@@ -77,7 +132,7 @@ export class TestRequestService {
         after = {createdAt: new Date(parsed.createdAt), requestId: parsed.requestId};
       } catch {throw new TestRequestConflict("Invalid host queue cursor");}
     }
-    const found = await this.repository.queued(hostId, after, limit + 1);
+    const found = await this.repository[kind](hostId, after, limit + 1);
     const requests = found.slice(0, limit);
     const last = requests.at(-1);
     const nextCursor = found.length > limit && last ? Buffer.from(JSON.stringify({hostId,
@@ -126,9 +181,52 @@ export class TestRequestService {
     const accepted = await this.repository.accept(receipt);
     if (accepted) return accepted;
     const existing = await this.repository.get(receipt.requestId);
-    if (!existing || existing.inputSha256 !== receipt.inputSha256 || existing.hostId !== authenticatedHostId || !existing.hostReceipt)
+    if (!existing || existing.inputSha256 !== receipt.inputSha256 || existing.hostId !== authenticatedHostId || !existing.hostReceipt
+      || requestInputDigest(existing.hostReceipt) !== requestInputDigest(receipt))
       throw new TestRequestConflict("Request is missing, changed, or has not been accepted by this host");
     // Lost acknowledgements return the original receipt, never another execution.
     return existing;
+  }
+
+  /** An impossible delivery remains a terminal request receipt, never a fabricated routine run. */
+  async reject(input: unknown, authenticatedHostId: string): Promise<StoredTestRequest> {
+    const parsed = hostRejectionSchema.safeParse(input);
+    if (!parsed.success || parsed.data.hostId !== authenticatedHostId)
+      throw new TestRequestConflict("Rejection must identify the authenticated host and its immutable receipt");
+    const receipt = parsed.data, existing = await this.repository.get(receipt.requestId);
+    if (!existing || existing.hostId !== authenticatedHostId || existing.inputSha256 !== receipt.inputSha256
+      || requestInputDigest(existing.input) !== receipt.inputSha256)
+      throw new TestRequestConflict("Rejection does not match the original request host and immutable input");
+    const original = (row: StoredTestRequest | null) => {
+      if (!row || row.state !== "terminal" || row.terminalStatus !== "not-run" || !row.hostRejection
+        || requestInputDigest(row.hostRejection) !== requestInputDigest(receipt))
+        throw new TestRequestConflict("Request is already accepted or has a different terminal rejection");
+      return row;
+    };
+    if (existing.hostRejection) return original(existing);
+    if (existing.state !== "queued" || existing.hostReceipt)
+      throw new TestRequestConflict("Only an unaccepted queued request can be rejected");
+    return await this.repository.reject(receipt) ?? original(await this.repository.get(receipt.requestId));
+  }
+
+  async cancel(requestId: string, requestedAt: string, reason: string): Promise<StoredTestRequest | null> {
+    const row = await this.repository.get(requestId);
+    if (!row) return null;
+    if (row.hostCancellation || row.state === "terminal") return row;
+    const receipt = hostCancellationSchema.parse({requestId, hostId: row.hostId, inputSha256: row.inputSha256, requestedAt, reason});
+    return await this.repository.cancel(receipt) ?? await this.repository.get(requestId);
+  }
+  /** Acknowledgement proves the host accepted cooperative cancellation, not that writers or cleanup settled. */
+  async acknowledgeCancellation(input: unknown, authenticatedHostId: string): Promise<StoredTestRequest> {
+    const parsed = hostCancellationSchema.safeParse(input);
+    if (!parsed.success || parsed.data.hostId !== authenticatedHostId)
+      throw new TestRequestConflict("Cancellation must identify the authenticated host");
+    const receipt = parsed.data, row = await this.repository.get(receipt.requestId);
+    if (!row?.hostCancellation || row.hostId !== authenticatedHostId || row.inputSha256 !== receipt.inputSha256
+      || requestInputDigest(row.hostCancellation) !== requestInputDigest(receipt))
+      throw new TestRequestConflict("Cancellation acknowledgement differs from the immutable intent");
+    const saved = await this.repository.acknowledgeCancellation(row.hostCancellation);
+    if (!saved) throw new TestRequestConflict("Cancellation intent changed before acknowledgement");
+    return saved;
   }
 }

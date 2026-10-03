@@ -1,8 +1,13 @@
-import {afterEach, expect, spyOn, test} from "bun:test";
+import {afterEach, beforeEach, expect, spyOn, test} from "bun:test";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
+import {TestRequestModel} from "../models/test-request.model";
 import {TestSuiteService} from "./test-suite.service";
 const mocks: {mockRestore(): void}[] = [];
+beforeEach(() => {
+  mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
+    read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
+});
 afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore();});
 test("query overflow refuses a verdict rather than truncating duplicate evidence", async () => {
   mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;}, lean: async () => ({payload: {suiteId: "nightly-1", members: [{memberId: "mac", requestId: "req"}]}})} as any));
@@ -126,4 +131,28 @@ test("persisted suite completion lists passing members with incomplete publicati
  expect(result.members[0]!.status).toBe("pass");
  expect(result.failedRoutines).toEqual(["notes"]);
  expect(row.completedResult).toEqual(result);
+});
+
+test("suite rejection projects the exact request reason without fabricating a run", async () => {
+  const input = {routineId: "another-product", platform: "android", definitionRevision: "a".repeat(40), laneId: "phone",
+    resources: [], build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const {requestInputDigest} = await import("./test-request.service"), inputSha256 = requestInputDigest(input);
+  const payload = {suiteId: "rejected-suite", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T11:00:00Z", build: {headSha: input.build.headSha},
+    members: [{memberId: "phone", requestId: "rejected-request", routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision},
+      {memberId: "other", routineId: "other-product", platform: "android"}]};
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;}, lean: async () => ({payload})} as any));
+  mocks.push(spyOn(TestRunModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
+    read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
+  const rejection = {requestId: "rejected-request", hostId: "mini", inputSha256, rejectedAt: "2026-10-03T11:01:00Z",
+    code: "missing-definition", reason: "Selected source is not installed."};
+  const row = {requestId: rejection.requestId, hostId: rejection.hostId, inputSha256, input, state: "terminal", terminalStatus: "not-run", hostRejection: rejection};
+  mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
+    read() {return this;}, readConcern() {return this;}, lean: async () => [row]} as any));
+  const result = await new TestSuiteService().detail(payload.suiteId);
+  expect(result.members[0]).toMatchObject({status: "not-run", publicationComplete: false,
+    unavailableReason: "missing-definition: Selected source is not installed.", rejectedAt: rejection.rejectedAt});
+  expect(result.members[0]!.runId).toBeUndefined();
+  expect(result.passed).toBe(0);
+  row.hostRejection.inputSha256 = "c".repeat(64);
+  await expect(new TestSuiteService().detail(payload.suiteId)).rejects.toThrow("rejection identity");
 });

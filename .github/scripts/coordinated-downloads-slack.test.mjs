@@ -29,7 +29,7 @@ test("API outages and missing jobs retain a useful release link without blocking
   for (const fetchImpl of [async () => new Response("private provider error", {status: 403}), async () => response([]),
     async () => { throw new Error("private provider error") }]) {
     const detail = await releaseFailureDetail(env, fetchImpl)
-    assert.match(detail, /did not publish an installable iOS\/Mac build/)
+    assert.match(detail, /did not publish an installable app build/)
     assert.match(detail, /\/attempts\/2\|View release jobs/)
     assert.doesNotMatch(detail, /private provider error/)
   }
@@ -43,4 +43,49 @@ test("cancellation and publication failures are explicit and escape Slack markup
   ]))
   assert.match(failed, /Finalize release failed during “Verify &lt;metadata&gt; &amp; build”/)
   assert.doesNotMatch(failed, /iOS\/Mac build failed/)
+})
+
+const catalogRow = (id, platform, title) => ({routineId: id, platform, definitionRevision: "a".repeat(40),
+  definition: {id, title, platforms: [platform], execution: {module: "routine.ts", export: "createRoutine"}}})
+const published = {...env, FINALIZE_RESULT: "success", RELEASE_IDENTITY: "3.3.0-dev.223", SHA: "a".repeat(40),
+  TEST_RUN_INGEST_TOKEN: "synthetic-ingest-token", MAC_URL: "https://example.com/mac.zip", MOBILE_APK_URL: "https://example.com/app.apk"}
+const catalogFetch = rows => async (url, init) => {
+  assert.equal(url, "https://core.dev.us-west-2.mentraglass.com/api/internal/routine-catalog")
+  assert.equal(init.headers.Authorization, "Bearer synthetic-ingest-token")
+  return new Response(JSON.stringify({routines: rows}))
+}
+test("enrolled arbitrary IDs and titles link their exact published platform without implying a request", async () => {
+  const calls = []
+  const [block] = await coordinatedRoutineLinks(published, catalogFetch([
+    catalogRow("new-id", "android", "A new <routine>"), catalogRow("new-id", "ios-on-mac", "A new <routine>")]), {
+    select: async ({platform}) => {calls.push(platform); return {archive: {url: platform === "android" ? published.MOBILE_APK_URL : published.MAC_URL,
+      sha256: (platform === "android" ? "d" : "e").repeat(64)}}},
+  })
+  assert.deepEqual(calls, ["android", "ios-on-mac"])
+  assert.match(block.text.text, /Available device tests/)
+  assert.match(block.text.text, /Tests require an explicit request/)
+  assert.doesNotMatch(block.text.text, /Automatic request|No-glasses|execution and results are pending/)
+  assert.match(block.text.text, /A new &lt;routine&gt; · Android/)
+  const urls = [...block.text.text.matchAll(/<(https:[^|]+)\|Results for this exact build>/g)].map(match => new URL(match[1]).searchParams)
+  assert.deepEqual(urls.map(params => params.get("platform")), ["android", "ios-on-mac"])
+  assert.deepEqual(urls.map(params => params.get("archiveSha256")), ["d".repeat(64), "e".repeat(64)])
+  assert.ok(urls.every(params => params.get("routineId") === "new-id" && params.get("headSha") === published.SHA))
+})
+test("one unverified platform cannot borrow another archive and repeated rows share one verification", async () => {
+  const calls = []
+  const [block] = await coordinatedRoutineLinks(published, catalogFetch([
+    catalogRow("new-android", "android", "Phone coverage"), catalogRow("new-mac", "ios-on-mac", "Desktop coverage"),
+    catalogRow("second-android", "android", "More phone coverage")]), {
+    select: async ({platform}) => {calls.push(platform); return {archive: {url: published.MOBILE_APK_URL, sha256: "d".repeat(64)}}},
+  })
+  assert.deepEqual(calls, ["android", "ios-on-mac"])
+  assert.match(block.text.text, /Desktop coverage · iOS on Mac — Published app download could not be verified; results link unavailable/)
+  assert.equal([...block.text.text.matchAll(/\|Results for this exact build>/g)].length, 2)
+})
+test("empty or unavailable catalogs leave the release post useful without invented coverage", async () => {
+  const [empty] = await coordinatedRoutineLinks(published, catalogFetch([]), {select: async () => assert.fail("No enrolled definitions")})
+  assert.match(empty.text.text, /No device tests are currently enrolled/)
+  const [missing] = await coordinatedRoutineLinks(published, async () => {throw new Error("private backend details")})
+  assert.match(missing.text.text, /current routine catalog is unavailable/)
+  assert.doesNotMatch(missing.text.text, /private backend details|\|Results for this exact build>/)
 })

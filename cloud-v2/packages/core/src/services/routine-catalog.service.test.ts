@@ -2,7 +2,9 @@ import {expect, test} from "bun:test";
 import {RoutineCatalogService} from "./routine-catalog.service";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
+import type {RoutinePreference, RoutinePreferenceRepository} from "./routine-preference.service";
 
+const preferences = {async list() {return [];}, async get() {return null;}, async set() {}};
 const example: CatalogExample = {runId: "notes-pass", startedAt: "2026-10-02T18:00:00Z",
   finishedAt: "2026-10-02T18:01:00Z", recordingAssetId: "video", definitionRevision: "a".repeat(40),
   build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
@@ -11,7 +13,7 @@ test("a historical passing example retains catalog membership while new authorin
     {routineId: "gallery-sync", platform: "android", definitionRevision: "d".repeat(40)}] as RoutineEnrollment[];
   const service = new RoutineCatalogService({async current() {return definitions;}, async getCurrent() {return definitions[0]!;}}, {
     async history() {return [];}, async latestPassing(row) {return row.routineId === "notes" ? example : null;},
-  });
+  }, preferences);
   const catalog = await service.list();
   expect(catalog).toHaveLength(1);
   expect(catalog[0]!.routineId).toBe("notes");
@@ -31,7 +33,7 @@ test("history pagination preserves equal-time and earlier runs and refuses forei
     async history(_id, _platform, after, limit) {return rows.filter(row => !after
       || Date.parse(row.startedAt) < after.startedAt.getTime()
       || Date.parse(row.startedAt) === after.startedAt.getTime() && row.runId < after.runId).slice(0, limit);},
-  });
+  }, preferences);
   const first = await service.detail("notes", "ios-on-mac", undefined, 2);
   expect(first.history.map(row => row.runId)).toEqual(["c", "b"]);
   const last = await service.detail("notes", "ios-on-mac", first.nextCursor!, 2);
@@ -44,4 +46,27 @@ test("history pagination preserves equal-time and earlier runs and refuses forei
   await expect(service.detail("notes", "ios-on-mac", invalidDate)).rejects.toThrow("cursor");
   await expect(service.detail("notes", "ios-on-mac", undefined, 0)).rejects.toThrow("history query");
   await expect(service.detail("missing", "android")).rejects.toThrow("not enrolled");
+});
+
+test("nightly preference survives later failure and a new definition revision for the same platform", async () => {
+  let revision = "c".repeat(40);
+  const saved = new Map<string, RoutinePreference>();
+  const preferences: RoutinePreferenceRepository = {async list() {return [...saved.values()];},
+    async get(id, platform) {return saved.get(`${id}/${platform}`) ?? null;},
+    async set(row) {saved.set(`${row.routineId}/${row.platform}`, row);}};
+  const definition = () => ({routineId: "new-routine", platform: "android", definitionRevision: revision}) as RoutineEnrollment;
+  const service = new RoutineCatalogService({async current() {return [definition()];}, async getCurrent() {return definition();}}, {
+    async latestPassing() {return example;}, async history() {return [{runId: "later-failure", startedAt: "2026-10-03T18:00:00Z", outcome: "failed", uploadsComplete: true, evidenceStatus: "complete", definitionRevision: revision}];},
+  }, preferences);
+  expect((await service.list())[0]!.nightlyEnabled).toBe(true);
+  await service.setPreference("new-routine", "android", false);
+  revision = "d".repeat(40);
+  const [row] = await service.list();
+  expect(row!.nightlyEnabled).toBe(false);
+  expect(row!.example).toEqual(example);
+  expect(row!.latestAttempt!.outcome).toBe("failed");
+  expect(row!.definitionRevision).toBe(revision);
+  expect((await service.detail("new-routine", "android")).nightlyEnabled).toBe(false);
+  await service.setPreference("new-routine", "android", true);
+  expect((await service.list())[0]!.nightlyEnabled).toBe(true);
 });

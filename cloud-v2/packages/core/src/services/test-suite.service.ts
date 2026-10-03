@@ -2,9 +2,11 @@ import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, fr
 import {z} from "zod";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
-import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun} from "../types/test-suite.types";
+import {TestRequestModel} from "../models/test-request.model";
+import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun, type SuiteRejection} from "../types/test-suite.types";
 import {TestRunError} from "./test-result-error";
-import {requestInputDigest} from "./test-request.service";
+import {hostRejectionSchema, requestInputDigest} from "./test-request.service";
+import {frameworkRequestInputSchema} from "../types/framework-request.types";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 export class TestSuiteService {
@@ -69,6 +71,7 @@ export class TestSuiteService {
     const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
     if (!row) throw new TestRunError(404, "test suite not found");
     if (row.completedResult) return row.completedResult as ReturnType<typeof summarizeSuite>;
+    if (!row.payload) throw new TestRunError(404, "Occurrence has no multi-member test suite");
     const suite = row.payload as TestSuite;
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
       .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
@@ -77,12 +80,26 @@ export class TestSuiteService {
       const framework = frameworkRunSchema.safeParse(row.payload);
       if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
       const run = framework.data;
-      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
         channel: run.build.channel, provenance: {headSha: run.build.headSha},
         startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
         publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
     });
-    return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
+    const requests = await TestRequestModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])},
+      hostRejection: {$exists: true}}).select({requestId: 1, hostId: 1, inputSha256: 1, input: 1, state: 1, terminalStatus: 1, hostRejection: 1})
+      .limit(101).read("primary").readConcern("majority").lean();
+    if (requests.length > 100) throw new TestRunError(503, "suite rejection history exceeds the query bound; no verdict available");
+    const rejections: SuiteRejection[] = requests.map(request => {
+      const rejection = hostRejectionSchema.safeParse(request.hostRejection), input = frameworkRequestInputSchema.safeParse(request.input);
+      if (!rejection.success || !input.success || request.state !== "terminal" || request.terminalStatus !== "not-run"
+        || rejection.data.requestId !== request.requestId || rejection.data.hostId !== request.hostId
+        || rejection.data.inputSha256 !== request.inputSha256 || requestInputDigest(input.data) !== request.inputSha256)
+        throw new TestRunError(503, "suite member rejection identity is invalid; no verdict available");
+      return {requestId: request.requestId, routineId: input.data.routineId, platform: input.data.platform,
+        definitionRevision: input.data.definitionRevision, channel: input.data.build.channel, headSha: input.data.build.headSha,
+        rejectedAt: rejection.data.rejectedAt, reason: `${rejection.data.code}: ${rejection.data.reason}`};
+    });
+    return summarizeSuite(suite, runs, row.finishedAt ?? undefined, rejections);
   }
   async labels(requestIds: string[]) {
     if (requestIds.length > 100 || requestIds.some(id => !frameworkRunIdSchema.safeParse(id).success))

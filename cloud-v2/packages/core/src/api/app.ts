@@ -32,6 +32,8 @@ import {createTestRequestsApi} from "./internal/test-requests.api";
 import {createFrameworkResultsApi} from "./internal/framework-results.api";
 import {createTestHostStateApi} from "./internal/test-host-state.api";
 import {createRoutineDefinitionsApi} from "./internal/routine-definitions.api";
+import {createNightlyRoutinesApi} from "./internal/nightly-routines.api";
+import {createRoutineDispatchesApi} from "./internal/routine-dispatches.api";
 import testRunIngest from "./internal/test-runs.api";
 import testHostObservations from "./internal/test-host-observations.api";
 import clientAuth from "./client/auth.api";
@@ -93,6 +95,8 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/internal/framework-results", createFrameworkResultsApi());
   app.route("/api/internal/test-host-state", createTestHostStateApi());
   app.route("/api/internal/routine-definitions", createRoutineDefinitionsApi());
+  app.route("/api/internal/nightly-routines", createNightlyRoutinesApi());
+  app.route("/api/internal", createRoutineDispatchesApi());
   app.route("/api/internal/test-runs", testRunIngest);
   app.route("/api/internal/test-host-observations", testHostObservations);
   app.route("/api/client/miniapps", clientMiniapps);

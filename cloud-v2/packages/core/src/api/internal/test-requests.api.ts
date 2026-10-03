@@ -3,7 +3,7 @@ import {frameworkIdentitySchema} from "../../types/framework-request.types";
 import {z} from "zod";
 import {Hono} from "hono";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
-import {TestRequestConflict, TestRequestService, type HostAcceptance} from "../../services/test-request.service";
+import {hostCancellationSchema, hostRejectionSchema, TestRequestConflict, TestRequestService} from "../../services/test-request.service";
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
 
 const acceptanceSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
@@ -22,6 +22,8 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
   });
   app.get("/", async c => c.json(await service.queued(c.var.testHostId,
     c.req.query("after"), Number(c.req.query("limit") ?? 50))));
+  app.get("/cancellations", async c => c.json(await service.cancellations(c.var.testHostId,
+    c.req.query("after"), Number(c.req.query("limit") ?? 50))));
   app.post("/local", frameworkBodyLimit(), async c => {
     let body: unknown;
     body = await frameworkJson(c);
@@ -37,6 +39,18 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
     if (!parsed.success || parsed.data.requestId !== c.req.param("requestId")) return c.json({error: "invalid_acceptance"}, 400);
     const row = await service.accept(parsed.data, c.var.testHostId);
     return c.json({receipt: row.hostReceipt});
+  });
+  app.post("/:requestId/reject", frameworkBodyLimit(4096), async c => {
+    const parsed = hostRejectionSchema.safeParse(await frameworkJson(c));
+    if (!parsed.success || parsed.data.requestId !== c.req.param("requestId")) return c.json({error: "invalid_rejection"}, 400);
+    const row = await service.reject(parsed.data, c.var.testHostId);
+    return c.json({rejection: row.hostRejection});
+  });
+  app.post("/:requestId/cancel-ack", frameworkBodyLimit(4096), async c => {
+    const parsed = hostCancellationSchema.safeParse(await frameworkJson(c));
+    if (!parsed.success || parsed.data.requestId !== c.req.param("requestId")) return c.json({error: "invalid_cancellation"}, 400);
+    const row = await service.acknowledgeCancellation(parsed.data, c.var.testHostId);
+    return c.json({cancellation: row.hostCancellation});
   });
   return app;
 }

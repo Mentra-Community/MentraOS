@@ -9,15 +9,17 @@ description: Create or extend a Mentra automated testing routine using the share
 replay code readable and maintainable. Adding a check should usually mean adding
 a named step to a small flow, not another runner.** Author
 routines in the private [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing).
-MentraOS contains their public catalog and `routine:<id>` request labels.
+MentraOS Core stores enrolled definitions, requests and recorded results; Admin
+shows the passing-example catalog and each routine/platform's nightly preference.
 
 ## Find the closest working example
 
 Read the deployed Admin routine catalog, then the closest source definition in
 `routines/<id>/routine.ts` in the selected private checkout. The catalog uses
-previous passing runs as examples; it is not a hardcoded source registry. Extend
-an existing routine for related behavior, or use a new ID for independently
-selectable coverage.
+the latest recorded passing run for each routine/platform as an example. Once a
+routine/platform has passed on the foundation, later failures or source revisions
+do not remove it from the catalog. Extend an existing routine for related
+behavior, or use a new ID for independently selectable coverage.
 Confirm the example's actual platform and resources: an Android phone-only
 walkthrough does not demonstrate physical glasses setup or firmware restoration.
 Read its adapter as well as its flow. Record the selected checkout and revision,
@@ -36,7 +38,7 @@ parallel documentation system:
 
 | Declare | Include |
 | --- | --- |
-| Coverage | Routine ID, platform and behavior it proves; explicit exclusions |
+| Coverage | Routine ID, independently supported platforms and behavior it proves; explicit exclusions |
 | Inputs | Requested PR/dev/staging build, firmware start/return targets if needed |
 | Resources | Required account, phone/glasses, browser, network, media or audio |
 | Entry | Sign-in page or Home; optional authentication and owned fixture data |
@@ -67,22 +69,53 @@ before using its APIs or commands:
 | Entry point | Purpose |
 | --- | --- |
 | `routines/<id>/routine.ts` | English requirements and executable saved steps |
+| `framework/routines.ts` | Discover definitions from the filesystem and load their factories |
 | `framework/run.ts` | Shared setup, held authoring, replay and teardown |
 | `framework/drivers/` | Actions and assertions used during authoring and replay |
 | `framework/authoring/` | Held command/session adapters that reload edited steps |
 | `orchestration/entrypoints/cli.ts` | Controller client commands and lane reservation |
 | `framework/platforms/` | Installation, entry, recording and resource providers |
 
+Export `createRoutine(state: Record<string, unknown>)` from
+`routines/<id>/routine.ts` and return `defineRoutine(...)`. The definition's ID
+must match its directory. Declare `title`, `purpose`, `platforms`, `entry`,
+`account`, `requires`, English `requirements`, `fixtures`, and executable `steps`.
+Use `step(id, instruction, expected, run)` for readable actions. Optional `setup`
+and `teardown` arrays contain routine-owned actions through the same interface;
+their lifecycle context can differ from the product-step context. Step IDs must
+be unique across all three arrays and must not collide with shared lifecycle IDs.
+Keep mutable traversal state in the supplied factory state so edited actions use
+the state retained by held authoring.
+
+`discoverRoutines()` reads `routines/`; the installed platform providers load,
+validate and enroll supported definitions. Adding a routine does not require
+another registry, per-ID controller branch or hardcoded caller list. Requests
+select an enrolled routine/platform and exact source revision. Controller
+admission verifies that definition and its resources/policy before ownership is
+granted; an HTTP acceptance is not execution or a passing result.
+
+Declare `ios-on-mac` and `android` only when each has executable actions and
+installed providers for its requirements. The current Mac providers support app
+and recorder resources; Android supports a dedicated phone, app and recorder.
+Neither currently supports declared fixture providers or extra `requires`
+capabilities. Missing support must fail explicitly. A Mac pass does not prove
+Android behavior, glasses connectivity, firmware setup or another capability.
+Extend a shared provider for demonstrated needs and qualify each platform
+independently. Keep machine-specific host/lane bindings in configuration, never
+inside a routine or caller's ID dispatch.
+
 The contract for every routine is:
 
 1. **Setup:** install the requested Mentra App build; establish requested glasses
    software when applicable; reset/seed owned data; launch; optionally sign in;
-   verify Home or the sign-in page. Start the recording there. Preflight checks
+   verify Home or the sign-in page; run any routine-owned setup actions, then
+   start recording. Preflight checks
    host/input readiness; it must not require the app already running or signed in.
 2. **Test:** perform named actions and check their observable results. The test
    may finish on any page. A successful click alone does not prove the outcome.
-3. **Teardown:** settle recording, clean owned data and resources, and leave the app
-   stopped. Cleanup works from any ending page or a stopped app. Do not start a
+3. **Teardown:** settle recording, run routine-owned teardown actions through the
+   shared framework, clean owned data and resources, and leave the app stopped.
+   Cleanup works from any ending page or a stopped app. Do not start a
    firmware installation or require a firmware version reply to release resources;
    protect an installation that is still writing. Report software mismatches as
    test results. The next setup establishes its requested software and inputs;
@@ -139,18 +172,22 @@ measurement probes prerequisites to basic exploration; keep unsupported
 measurements explicitly unverified.
 
 Use the selected revision's controller-owned authoring interface under a granted
-lane reservation. Read its help/API before invoking commands; the old
-`worker/local.ts author` interface has been removed. A reservation alone does not
-start authoring: the installed controller must expose the held session adapter.
+lane reservation. Read its help/API before invoking commands. A reservation alone
+does not start authoring: the installed controller must expose a held session
+adapter for that platform. Mac currently provides held authoring; Android replay
+support does not imply an Android held adapter.
 If it is missing, report that framework gap and extend the shared adapter rather
 than starting a separate local runner or opening controller SQLite directly.
 
 The held interface provides `steps`, `snapshot`, a saved `step` by ID, and
 `finish`. It runs setup once, keeps the app and recorder owned, loads the edited
-saved action before executing it, and records each settled attempt. For the UI
-Mac walkthrough, edited actions share the onboarding state held by the same
-routine factory. The current adapter supports existing step IDs; changing the
-inventory needs an explicit shared interface extension. Never claim a manually
+saved action before executing it, and records each settled attempt. Edited
+actions use the same routine factory and held state as the saved replay flow.
+The current interface supports existing step IDs; changing the inventory needs a
+shared interface extension. Setup, resource and identity edits cannot be adopted
+mid-session. If the installed loader also refuses product-step edits in a
+routine with owned lifecycle actions, report that authoring capability gap;
+do not restart setup after ordinary product failures to hide it. Never claim a manually
 executed action or stale startup-loaded action proved its edited implementation.
 
 The controller CLI takes one JSON file per operation. Set
@@ -166,10 +203,10 @@ bun orchestration/entrypoints/cli.ts author command @/absolute/author-command.js
 ```
 
 `author-start.json` contains `{reservationId, generation, operationId, build,
-sourcePath}`. Use the requested published build selection and the editable
-walkthrough source file. `author-command.json` contains `{reservationId,
+sourcePath}`. Use the requested published build selection and the canonical
+editable `routines/<id>/routine.ts` file. `author-command.json` contains `{reservationId,
 generation, operationId, command}` where command is `{op:"steps"}`,
-`{op:"snapshot"}`, `{op:"step",stepId:"HOME-02-open"}` (optional `retryReason`),
+`{op:"snapshot"}`, `{op:"step",stepId:"open-settings"}` (optional `retryReason`),
 or `{op:"finish"}`. `author-inspect.json` contains `{reservationId,generation}`.
 Each start/command has a new stable operation ID. They return admission, not
 completion. `author inspect` returns `operations`; find your `operationId`.
@@ -218,16 +255,23 @@ shared driver capability only for a demonstrated gap, not a new driver per routi
 - Add focused tests for meaningful failure modes or shared logic; avoid a fixed
   test count, implementation-mirroring tests and redundant suites. Run the relevant
   typecheck and checks for the files changed.
-- For local development coverage, publish a complete passing run and recording
-  before listing it as a Development pass in Admin. Report CI enrollment
-  separately. When enabling PR/CI requests, trace the exact ID through catalog,
-  request validation, worker dispatch, Admin, result publication and PR result
-  links, and create its `routine:<id>` label. Do not enable a request label for a
-  local-only adapter; preserve unknown-ID refusal on unsupported routes.
+- Publish a complete passing foundation run and recording before claiming catalog
+  membership. Core enrollment describes executable source; the passing-example
+  catalog describes recorded qualification. Trace generic definition enrollment,
+  request admission, controller execution, result publication and result links
+  when enabling a caller. Preserve refusal for absent routine/platform/revision
+  enrollment and unsupported capabilities.
+- Admin's **Run in nightly** switch is stored per routine/platform and defaults
+  enabled. Disabling it excludes only future nightly occurrences; it does not
+  delete catalog membership or change an already frozen occurrence. Nightly and
+  **Run nightly now** snapshot the whole passing-example catalog minus disabled
+  entries, using current enrolled definitions and resolved dev builds. Missing
+  artifacts or host capabilities remain expected members with a waiting/reason
+  outcome; they must not disappear and produce a partial pass.
 - Use [select-pr-routines](../select-pr-routines/SKILL.md) to label relevant PRs.
   Apply the user's PR/review timing; when preparing a PR, include the evidence and
-  follow [codex-pr-review](../codex-pr-review/SKILL.md). Enable requested triggers
-  only with an executable worker path and report any unqualified coverage honestly.
+  follow [codex-pr-review](../codex-pr-review/SKILL.md). Request labels and scheduled
+  dispatches are requests, not hardware authorization or passing evidence.
 
 Deliver the routine ID/label, covered behavior, exact harness source and tested
 build/platform, and links to the result and passing recording. Include run start,

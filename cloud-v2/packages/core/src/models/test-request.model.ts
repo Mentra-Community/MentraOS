@@ -9,6 +9,9 @@ const schema = new Schema({
   hostId: {type: String, required: true, immutable: true},
   state: {type: String, required: true, enum: ["queued", "accepted", "running", "terminal"]},
   hostReceipt: {type: Schema.Types.Mixed},
+  hostRejection: {type: Schema.Types.Mixed},
+  hostCancellation: {type: Schema.Types.Mixed},
+  cancellationAcknowledged: {type: Boolean},
   runId: {type: String},
   terminalStatus: {type: String},
 }, {collection: "test_requests", timestamps: true});
