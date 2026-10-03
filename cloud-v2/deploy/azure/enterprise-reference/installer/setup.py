@@ -527,7 +527,7 @@ def bootstrap_admin(args, directory, config, state):
         if not GUID.fullmatch(owner):
             raise SetupError('Invalid saved deployment owner')
         remote = '/app/cloud-v2/packages/core/mentra-admin-' + owner + '.ts'
-        command = f'''bun -e "console.log('MENTRA_SCRIPT_READY'); const rl=require('node:readline').createInterface({{input:process.stdin}}); const encoded=await new Promise(resolve=>rl.once('line',resolve)); rl.close(); await Bun.write('{remote}',Buffer.from(encoded,'base64')); process.argv=['bun','{remote}','{owner}']; await import('{remote}')"'''
+        command = f'''bun -e "console.log('MENTRA_SCRIPT_READY'); const rl=require('node:readline').createInterface({{input:process.stdin}}); const chunks=[]; const encoded=await new Promise(resolve=>rl.on('line',line=>{{if(line==='MENTRA_SCRIPT_END')resolve(chunks.join(''));else chunks.push(line)}})); rl.close(); await Bun.write('{remote}',Buffer.from(encoded,'base64')); process.argv=['bun','{remote}','{owner}']; await import('{remote}')"'''
         master, slave = pty.openpty()
         try:
             process = subprocess.Popen(['az', 'containerapp', 'exec', '--name', config['coreName'],
@@ -546,7 +546,12 @@ def bootstrap_admin(args, directory, config, state):
                     chunk = os.read(process.stdout.fileno(), 65536)
                     stdout += chunk
                     if not sent and b'MENTRA_SCRIPT_READY' in stdout:
-                        os.write(master, (code + '\n').encode())
+                        # Both the local PTY and Azure's remote terminal may
+                        # have canonical input limits. Keep each line <4 KiB.
+                        payload = '\n'.join(code[i:i + 2000] for i in range(0, len(code), 2000)) + '\nMENTRA_SCRIPT_END\n'
+                        remaining = payload.encode()
+                        while remaining:
+                            remaining = remaining[os.write(master, remaining):]
                         sent = True
                     if b'MENTRA_ADMIN_END' in stdout or not chunk:
                         break
