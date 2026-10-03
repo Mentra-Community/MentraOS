@@ -57,10 +57,10 @@ test("empty steps and recorded failures cannot qualify a passing test", () => {
 
 test("cleaned recorder diagnostics preserve evidence failure independently of hardware readiness", () => {
   const good = run();
-  const cleaned = {state: "cleaned", resourceId: "recorder", evidence: [], errors: []};
+  const cleaned = {state: "cleaned" as const, resourceId: "recorder", evidence: [], errors: []};
   expect(frameworkRunSchema.parse({...good, result: {...good.result,
     teardown: {...good.result.teardown, outcomes: [cleaned]}}}).result.teardown.outcomes[0]).toEqual(cleaned);
-  const error = {phase: "evidence", actionId: "finalize-recording", message: "Recorder report finalization failed"};
+  const error = {phase: "evidence" as const, actionId: "finalize-recording", message: "Recorder report finalization failed"};
   const diagnostic = {...good, result: {...good.result, failures: [error],
     teardown: {...good.result.teardown, outcomes: [{...cleaned, errors: [error]}], errors: [error]}}};
   const preserved = frameworkRunSchema.parse(diagnostic);
