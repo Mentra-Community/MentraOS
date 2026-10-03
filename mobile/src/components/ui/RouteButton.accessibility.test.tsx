@@ -1,5 +1,4 @@
 import {fireEvent, render} from "@testing-library/react-native"
-import {Pressable} from "react-native"
 
 import {RouteButton} from "./RouteButton"
 
@@ -16,19 +15,19 @@ jest.mock("@/components/ignite", () => {
 
 test("native and touch activation navigate once and disabled rows cannot navigate", () => {
   const navigate = jest.fn()
-  const {getByText, UNSAFE_getByType, rerender} = render(<RouteButton label="Profile" onPress={navigate} />)
+  const {getByText, rerender} = render(<RouteButton label="Profile" onPress={navigate} />)
   fireEvent(getByText("Profile"), "accessibilityTap")
   expect(navigate).toHaveBeenCalledTimes(1)
   fireEvent.press(getByText("Profile"))
   expect(navigate).toHaveBeenCalledTimes(2)
 
   rerender(<RouteButton label="Profile" onPress={navigate} disabled />)
-  expect(UNSAFE_getByType(Pressable).props.disabled).toBe(true)
+  expect(getByText("Profile")).toBeDisabled()
   fireEvent(getByText("Profile"), "accessibilityTap")
   fireEvent.press(getByText("Profile"))
   expect(navigate).toHaveBeenCalledTimes(2)
 
   rerender(<RouteButton label="Profile" />)
   fireEvent(getByText("Profile"), "accessibilityTap")
-  expect(UNSAFE_getByType(Pressable).props.disabled).toBe(true)
+  expect(getByText("Profile")).toBeDisabled()
 })
