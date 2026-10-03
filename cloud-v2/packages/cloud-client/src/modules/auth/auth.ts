@@ -568,7 +568,7 @@ export class Auth implements AuthModule {
 
     const coreToken = await this.getCoreToken()
     const http = this.requireCoreHttp()
-    const res = await http.post<RuntimeTokenResponse>(RUNTIME_TOKEN_PATH, {}, {bearer: coreToken})
+    const res = await http.post<RuntimeTokenResponse>(RUNTIME_TOKEN_PATH, {}, {bearer: coreToken, idempotent: true})
     if (res.token_type !== "Bearer" || !res.access_token) {
       throw new AuthExpiredError("core returned an invalid runtime token response")
     }
