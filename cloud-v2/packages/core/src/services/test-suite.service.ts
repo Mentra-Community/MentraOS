@@ -1,10 +1,11 @@
+import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
 import {z} from "zod";
 import {createHash} from "node:crypto";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
 import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun} from "../types/test-suite.types";
-import {testRunIdSchema} from "../types/test-run.types";
-import {canonical, TestRunError} from "./test-run.service";
+import {TestRunError} from "./test-result-error";
+import {requestInputDigest} from "./test-request.service";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 export class TestSuiteService {
@@ -12,7 +13,7 @@ export class TestSuiteService {
     const parsed = testSuiteSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid test suite");
     const payload = parsed.data;
-    const payloadSha256 = createHash("sha256").update(canonical(payload)).digest("hex");
+    const payloadSha256 = requestInputDigest(payload);
     try { await TestSuiteModel.create([{suiteId: payload.suiteId, payload, payloadSha256}], {writeConcern}); }
     catch (error) { if ((error as {code?: number}).code !== 11000) throw error; }
     const stored = await TestSuiteModel.findOne({suiteId: payload.suiteId}).read("primary").readConcern("majority").lean();
@@ -20,7 +21,7 @@ export class TestSuiteService {
     return this.detail(payload.suiteId);
   }
   async bind(suiteId: string, memberId: string, input: unknown) {
-    const parsed = z.object({requestId: testRunIdSchema}).strict().safeParse(input);
+    const parsed = z.object({requestId: frameworkRunIdSchema}).strict().safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid member request binding");
     const suite = await this.detail(suiteId);
     const member = suite.members.find(member => member.memberId === memberId);
@@ -58,14 +59,14 @@ export class TestSuiteService {
     const completedResult = {...suite, finishedAt,
       outcome: suite.passed === suite.members.length ? "passed" : "failed",
       members: suite.members.map(member => ({...member, status: member.status === "waiting" ? "not-run" : member.status})),
-      failedRoutines: [...new Set(suite.members.filter(member => member.status !== "passed").map(member => member.routineId))],
+      failedRoutines: [...new Set(suite.members.filter(member => (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))],
     };
     await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}},
       {$set: {finishedAt, completedResult}}, {writeConcern});
     return this.detail(suiteId);
   }
   async detail(suiteId: string) {
-    if (!testRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
+    if (!frameworkRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
     const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
     if (!row) throw new TestRunError(404, "test suite not found");
     if (row.completedResult) return row.completedResult as ReturnType<typeof summarizeSuite>;
@@ -73,12 +74,19 @@ export class TestSuiteService {
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
       .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
-    const runs = rows.map(row => ({...(row.payload as SuiteRun), publicationComplete: row.uploadsComplete === true,
-      outcome: row.outcome === "passed" && !row.uploadsComplete ? "blocked" : row.outcome}));
+    const runs: SuiteRun[] = rows.map(row => {
+      const framework = frameworkRunSchema.safeParse(row.payload);
+      if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
+      const run = framework.data;
+      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+        channel: run.build.channel, provenance: {headSha: run.build.headSha},
+        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
+        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
+    });
     return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
   }
   async labels(requestIds: string[]) {
-    if (requestIds.length > 100 || requestIds.some(id => !testRunIdSchema.safeParse(id).success))
+    if (requestIds.length > 100 || requestIds.some(id => !frameworkRunIdSchema.safeParse(id).success))
       throw new TestRunError(400, "invalid suite label query");
     const rows = await TestSuiteModel.find({"payload.members.1": {$exists: true},
       "payload.members.requestId": {$in: requestIds}}).select({suiteId: 1, payload: 1}).limit(100).lean();

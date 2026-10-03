@@ -173,6 +173,8 @@ test("range length restoration rejects malformed, encoded and unrelated response
     { range: "bytes 0-1/2", encoding: "x-test-encoding" },
     { range: "bytes 0-1/2", path: "/api/other/video" },
     { range: "bytes 0-1/2", path: "/api/admin/reports/rep_example/artifacts/art_example", expected: "2" },
+    { range: "bytes 0-1/2", path: "/api/admin/routine-catalog/results/by-request/local%3Arun/assets/video", expected: "2" },
+    { range: "bytes 0-1/2", path: "/api/admin/routine-catalog/results/by-run/local%3Arun/assets/video", expected: "2" },
     { range: "bytes 0-1/2", path: "/api/admin/reports/rep_example" },
     { range: "bytes 0-1/2", path: "/api/admin/reports/rep_example/artifacts/art_example/extra" },
     { range: "bytes 0-1/2", status: 200 },

@@ -1,14 +1,10 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { unzipSync } from "fflate";
 import { z } from "zod";
-import { TEST_ROUTINES, recordedAppPublicationSchema, testRoutinePlatform, type RecordedAppPublication, type TestBuildPlatform, type TestRoutineId, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
-import type { ExistingWorkBundleTarget } from "../types/test-existing-work.types";
+import type {TestBuildPlatform, TestBuild, TestBuildQuery, TestBuildSource} from "../types/test-build.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPOSITORY = "Mentra-Community/MentraOS";
-const PRIVATE_REPOSITORY = "Mentra-Community/Mentra-Automated-Testing";
-const REQUEST_WORKFLOW = "request-e2e-routine.yml";
 const prWorkflow = (platform: TestBuildPlatform) => platform === "android" ? "mentra-app-android-build.yml" : "mentra-app-ios-build.yml";
 const RELEASE_WORKFLOW = "coordinated-release.yml";
 const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
@@ -40,32 +36,6 @@ const prSchema = z.object({ number: positive, state: z.string(), title: z.string
 type PullRequest = z.infer<typeof prSchema>;
 /** The PR a build must belong to: the current PR, or an authenticated original request's recorded PR. */
 type PrIdentity = { number: number; title: string; head: { sha: string }; base: { ref: string } };
-const artifactSchema = z.object({ id: positive, name: z.string(), expired: z.boolean(), size_in_bytes: positive,
-  digest: z.string().regex(/^sha256:[a-f0-9]{64}$/), workflow_run: z.object({ id: positive, head_sha: sha }) });
-const requestFields = z.object({ kind: z.literal("mentra-routine-request"),
-  requestId: z.string(), status: z.enum(["ready", "no-artifact"]), reason: z.string(),
-  routine: z.object({ id: z.string(), authorization: z.enum(["workflow-dispatch", "pr-label", "successful-build"]) }),
-  trigger: z.object({ repository: z.literal(REPOSITORY), kind: z.literal("workflow_dispatch"), runId: positive, runAttempt: positive,
-    sha, workflowSha: sha, ref: z.literal("refs/heads/dev"), workflow: z.literal(`.github/workflows/${REQUEST_WORKFLOW}`) }),
-  selection: z.object({ platform: z.enum(["ios-on-mac", "android"]), archive: assetSchema, producer: z.object({ runId: positive, publicationAttempt: positive }) }).passthrough().nullable(),
-  pullRequest: z.object({ number: positive, headSha: sha, baseSha: sha, baseRef: z.enum(PR_BASES) }).passthrough().optional(),
-  // Present only on an exact replay of an earlier original request.
-  original: z.object({ requestId: z.string(), runId: positive, runAttempt: positive, artifactDigest: digest }).strict().optional(),
-});
-const publishedRequestSchema = z.discriminatedUnion("schemaVersion", [
-  requestFields.extend({ schemaVersion: z.literal(1) }),
-  requestFields.extend({ schemaVersion: z.literal(2), source: z.object({ kind: z.literal("coordinated-release"),
-    channel: z.enum(["dev", "staging"]), buildRunId: positive, publicationAttempt: positive }) }),
-]);
-/** The exact build an original request selected, read from the issuer's immutable request artifact. */
-export interface OriginalSelection {
-  source: TestBuildSource; archiveSha256: string; headSha: string;
-  /** A replay failure keeps its occurrence, but the next issuer must name the authenticated initial request. */
-  initialRequestRunId?: number;
-  /** For a PR original: its recorded PR identity, which a replay keeps after the PR moves, closes or merges. */
-  pullRequest?: { number: number; headSha: string; baseSha: string; baseRef: PrBase };
-}
-
 export class TestDispatchError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 501 | 502 | 503, message: string) { super(message); }
 }
@@ -74,9 +44,6 @@ export class TestDispatchError extends Error {
  * dispatch path (for example a local run). A capability limit, not an invalid or untrusted source:
  * investigation, fix PRs and candidate CI verification remain available.
  */
-export class UnsupportedReplayError extends TestDispatchError {
-  constructor(message: string) { super(501, message); }
-}
 function requireThat(value: unknown, message: string): asserts value {
   if (!value) throw new TestDispatchError(409, message);
 }
@@ -104,17 +71,6 @@ function parseJson(bytes: Uint8Array): unknown {
   catch { throw new TestDispatchError(502, "Invalid build metadata JSON"); }
 }
 
-export function readRequestZip(bytes: Uint8Array): unknown {
-  let selected = 0;
-  const files = unzipSync(bytes, { filter: file => {
-    requireThat(file.name === "request.json" && ++selected === 1 && file.originalSize <= 1024 * 1024,
-      "Unexpected request artifact contents");
-    return true;
-  } });
-  requireThat(selected === 1 && files["request.json"], "Missing request.json");
-  return parseJson(files["request.json"]!);
-}
-
 function publication(run: GithubRun, jobs: Job[]) {
   const latest = (name: string) => jobs.filter(job => job.name === name && job.run_attempt <= run.run_attempt)
     .sort((a, b) => b.run_attempt - a.run_attempt || b.id - a.id)[0];
@@ -127,31 +83,9 @@ function publication(run: GithubRun, jobs: Job[]) {
   return { build: first(build), publish: first(publish) };
 }
 
-export interface RequestProgress {
-  state: "requesting" | "unavailable" | "queued" | "running" | "failed" | "unknown";
-  message: string;
-  requestId?: string;
-  workerUrl?: string;
-}
 export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
-  /** With `originalRequestRunId`, a PR build is resolved for that original request's recorded PR identity. */
-  resolve(source: TestBuildSource, routineId?: TestRoutineId, originalRequestRunId?: number): Promise<TestBuild>;
-  resolveRecordedApp?(publication: RecordedAppPublication & { channel: "dev" | "staging"; headSha: string }, routineId: TestRoutineId): Promise<TestBuild>;
-  dispatch(input: TestDispatchInput, expectedHarnessSha?: string): Promise<{ requestRunId: number; requestUrl: string }>;
-  progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
-  findExisting?(input: TestDispatchInput, since: string, excludeRequestRunIds?: number[]): Promise<{ requestRunId: number; requestUrl: string } | null>;
-  originalSelection?(requestRunId: number, routineId: TestRoutineId): Promise<OriginalSelection>;
-  existingWorkBundle?(bundle: ExistingWorkBundleTarget, headShas: string[]): Promise<ExistingWorkBundleEvidence>;
-}
-/**
- * Source facts for a reviewed bundling PR: whether GitHub records that PR as merged into its
- * base at the signed merge commit, and for each published head whether it contains that merge
- * and which blob it carries at the artifact path (null when absent).
- */
-export interface ExistingWorkBundleEvidence {
-  merged: boolean;
-  heads: Record<string, { containsMerge: boolean; artifactBlobSha: string | null }>;
+  resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild>;
 }
 
 export class GithubTestBuildGateway implements TestBuildGateway {
@@ -181,7 +115,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(/^[A-Za-z0-9._-]+$/.test(tag) && /^[A-Za-z0-9._-]+$/.test(name), "Invalid artifact identity");
     const url = `${CDN}${tag}/${name}`;
     const bytes = await readTestMetadata(await this.fetcher(url));
-    return { value: parseJson(bytes), sha256: hash(bytes), url };
+    return { value: parseJson(bytes), sha256: hash(bytes), url, size: bytes.byteLength };
   }
   private async jobs(runId: number): Promise<Job[]> {
     const jobs: Job[] = [];
@@ -207,25 +141,9 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       .parse(await this.api(`${REPOSITORY}/git/ref/heads/${base}`));
     return ref.object.sha;
   }
-  private routines(channel: TestBuildSource["channel"], available: boolean, platform: TestBuildPlatform) {
-    const channels = this.options.channels ?? (process.env.TEST_RUN_DISPATCH_CHANNELS ?? "pr").split(",");
-    const enabledRoutines = this.options.routines ?? (process.env.TEST_RUN_DISPATCH_ROUTINES ?? "no-glasses").split(",");
-    return TEST_ROUTINES.map(routine => {
-      const compatible = testRoutinePlatform(routine.id) === platform;
-      const enabled = enabledRoutines.includes(routine.id);
-      // A planned routine has no registered automatic worker; enabling it in a deployment cannot make it requestable.
-      const planned = "planned" in routine ? routine.planned : undefined;
-      return { id: routine.id, available: available && channels.includes(channel) && compatible && enabled && !planned,
-        ...(!compatible ? { reason: `This routine requires a ${testRoutinePlatform(routine.id) === "android" ? "published Android APK" : "published Mac build"}` }
-          : planned ? { reason: planned }
-          : !available ? { reason: "A verified published app build is required" }
-          : !channels.includes(channel) ? { reason: "Dispatch for this channel is not enabled on the trusted issuer yet" }
-          : !enabled ? { reason: "This routine is not enabled on the test workers yet" } : {}) };
-    });
-  }
   async inventory(query: TestBuildQuery): Promise<TestBuild[]> {
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
-    const platform = testRoutinePlatform(query.routineId);
+    const platform = query.platform;
     const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
     const filter = pr ? `event=pull_request&head_sha=${pr.head.sha}` : `branch=${query.channel}`;
     const data = z.object({ workflow_runs: z.array(runSchema) }).parse(
@@ -240,24 +158,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && (pr ? run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref
         : ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === channel);
   }
-  async resolve(source: TestBuildSource, routineId: TestRoutineId = "no-glasses", originalRequestRunId?: number): Promise<TestBuild> {
-    const platform = testRoutinePlatform(routineId);
-    if (originalRequestRunId !== undefined) {
-      // The exact build the original request selected, for that request's recorded PR head/base:
-      // never the current PR, which may have moved, closed or merged.
-      const original = await this.originalSelection(originalRequestRunId, routineId);
-      requireThat(source.channel === "pr" && original.pullRequest && isDeepStrictEqual(original.source, source),
-        "Build is not the original request's selection");
-      const pr = original.pullRequest;
-      const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
-      requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && run.repository.full_name === REPOSITORY
-        && run.head_repository.full_name === REPOSITORY && run.path === `.github/workflows/${prWorkflow(platform)}`
-        && run.event === "pull_request" && run.head_sha === pr.headSha, "Build does not match the original request's producer");
-      const identity: PrIdentity = { number: pr.number, title: `Original PR #${pr.number}`, head: { sha: pr.headSha }, base: { ref: pr.baseRef } };
-      const result = await this.describe(run, "pr", platform, identity, pr.baseSha, true);
-      requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
-      return result;
-    }
+  async resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild> {
     const pr = source.channel === "pr" ? await this.pr(source.prNumber) : undefined;
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
     requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, platform, pr),
@@ -266,32 +167,13 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
   }
-  /** A local test may have used a published app without consuming a CI request.
-   * Resolve only its named producer, then prove the installed bytes against the
-   * ordinary immutable release receipt. No recent-build search or branch tip. */
-  async resolveRecordedApp(input: RecordedAppPublication & { channel: "dev" | "staging"; headSha: string }, routineId: TestRoutineId): Promise<TestBuild> {
-    const publication = recordedAppPublicationSchema.extend({ channel: z.enum(["dev", "staging"]), headSha: sha }).parse(input);
-    requireThat(testRoutinePlatform(routineId) === "ios-on-mac", "Local app publication verification supports recorded Mac app bytes only");
-    const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${publication.producerRunId}`
-      + (publication.publicationAttempt ? `/attempts/${publication.publicationAttempt}` : "")));
-    requireThat(run.id === publication.producerRunId && run.head_sha === publication.headSha
-      && (!publication.publicationAttempt || run.run_attempt === publication.publicationAttempt)
-      && this.matches(run, publication.channel, "ios-on-mac"), "Recorded app producer does not match the local source and channel");
-    const build = await this.describe(run, publication.channel, "ios-on-mac", undefined, undefined, true);
-    requireThat(!publication.publicationAttempt || build.source.publicationAttempt === publication.publicationAttempt,
-      "Recorded app attempt retained a different publication");
-    if (build.availability === "available") requireThat(build.app?.executableSha256 === publication.executableSha256
-      && build.app?.javascriptSha256 === publication.javascriptSha256, "Published app bytes differ from the local test's recorded app");
-    return build;
-  }
   private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PrIdentity, baseSha?: string, exact = false): Promise<TestBuild> {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
       : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
     const build: TestBuild = { source, platform, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
       headSha: run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
-      availability: "unavailable", routines: this.routines(channel, false, platform) };
+      availability: "unavailable" };
     try {
-      requireThat(run.status === "completed", "Build is still running");
       const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha!) : this.prArtifacts(run, pr, baseSha!))
         : await this.releaseArtifacts(run, channel, platform);
       build.source.publicationAttempt = artifacts.attempt;
@@ -301,7 +183,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         throw new TestDispatchError(502, `Published app archive is temporarily unavailable (HTTP ${response.status})`);
       requireThat(response.ok && Number(response.headers.get("content-length")) === archive.size,
         "Published app archive is missing or its size differs from the receipt");
-      return { ...build, ...artifacts.result, archive, availability: "available", routines: this.routines(channel, true, platform) };
+      return { ...build, ...artifacts.result, archive: {...archive, url: `${CDN}${artifacts.tag}/${archive.name}`}, availability: "available" };
     } catch (error) {
       // Inventory can describe an unavailable row, but dispatch must not make a
       // permanent rejection from a transient provider or network failure.
@@ -333,7 +215,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
     return { attempt: attempts.publish, tag: "pr-builds", archive: data.artifacts.mac,
-      result: { receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+      result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256 } };
   }
   private async androidPrArtifacts(run: GithubRun, pr: PrIdentity, baseSha: string) {
     const jobs = await this.jobs(run.id);
@@ -366,7 +248,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
     return { attempt, tag: "pr-builds", archive: data.artifacts.android,
-      result: { receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+      result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256 } };
   }
   private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform) {
     // Downstream failures and notification-only retries do not erase a publication.
@@ -419,7 +301,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       const archive = assetSchema.parse({ name: assets[0]!.coordinate, sha256: assets[0]!.sha256, size: assets[0]!.size });
       const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
       requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
-      return { attempt, tag, archive, result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+      return { attempt, tag, archive, result: { release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256 } };
     }
     const receipt = await this.metadata(tag, `mentraos-${identity}-apple-downloads.json`);
     const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), sourceCommit: sha,
@@ -433,179 +315,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
     return { attempt, tag, archive: data.artifacts.mac,
-      result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256,
+      result: { release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256,
         app: { executableSha256: data.app.executableSha256, javascriptSha256: data.app.javascriptSha256 } } };
-  }
-  async findExisting(input: TestDispatchInput, since: string, excludeRequestRunIds: number[] = []) {
-    requireThat(Number.isFinite(Date.parse(since)), "Invalid candidate publication time");
-    const data = z.object({ total_count: z.number().int().nonnegative(), workflow_runs: z.array(runSchema) }).parse(await this.api(
-      `${REPOSITORY}/actions/workflows/${REQUEST_WORKFLOW}/runs?event=workflow_dispatch&branch=dev&created=${encodeURIComponent(">=" + since)}&per_page=100`));
-    requireThat(data.total_count === data.workflow_runs.length, "Request history is incomplete; reconcile before sending");
-    const found: { requestRunId: number; requestUrl: string }[] = [];
-    for (const run of data.workflow_runs) {
-      if (excludeRequestRunIds.includes(run.id)) continue;
-      if (run.status !== "completed" || run.run_attempt !== 1)
-        throw new TestDispatchError(503, "An unresolved request may own this build; reconcile before sending");
-      if (run.conclusion !== "success") continue;
-      try {
-        const progress = await this.progress(run.id, input);
-        if (progress.requestId && progress.state !== "unavailable") found.push({ requestRunId: run.id, requestUrl: runUrl(REPOSITORY, run.id) });
-      } catch (error) {
-        // Only an authenticated different selection is a miss. Missing, expired
-        // or invalid metadata cannot authorize another device execution.
-        if (!(error instanceof TestDispatchError) || !["Published request source differs", "Published request identity differs",
-          "Request selected a different app publication"].includes(error.message)) throw error;
-      }
-    }
-    requireThat(found.length <= 1, "Multiple requests already selected this build; reconcile before sending");
-    return found[0] ?? null;
-  }
-  /** Read-only source-scope App reads with validated identities; no caller URL or ref text. */
-  async existingWorkBundle(bundle: ExistingWorkBundleTarget, headShas: string[]): Promise<ExistingWorkBundleEvidence> {
-    const missing = <T>(fallback: T) => (error: unknown) => {
-      if (error instanceof TestDispatchError && error.status === 404) return fallback;
-      throw error;
-    };
-    const pr = await this.api(`${REPOSITORY}/pulls/${bundle.pullRequest}`).then(value => z.object({ number: positive, merged: z.boolean(),
-      merge_commit_sha: sha.nullable(), base: z.object({ ref: z.string(), repo: repositorySchema }) }).parse(value)).catch(missing(null));
-    const merged = !!pr && pr.number === bundle.pullRequest && pr.merged && pr.merge_commit_sha === bundle.mergeCommitSha
-      && pr.base.ref === bundle.baseBranch && pr.base.repo.full_name === REPOSITORY;
-    const directory = bundle.artifactPath.slice(0, bundle.artifactPath.lastIndexOf("/"));
-    const heads: ExistingWorkBundleEvidence["heads"] = {};
-    for (const headSha of new Set(headShas)) {
-      requireThat(sha.safeParse(headSha).success, "Invalid publication head");
-      const comparison = await this.api(`${REPOSITORY}/compare/${bundle.mergeCommitSha}...${headSha}?per_page=1`)
-        .then(value => z.object({ status: z.enum(["ahead", "identical", "behind", "diverged"]) }).parse(value).status).catch(missing(null));
-      const listing = await this.api(`${REPOSITORY}/contents/${directory}?ref=${headSha}`)
-        .then(value => z.array(z.object({ path: z.string(), type: z.string(), sha })).parse(value)).catch(missing([]));
-      const entries = listing.filter(item => item.path === bundle.artifactPath && item.type === "file");
-      heads[headSha] = { containsMerge: comparison === "ahead" || comparison === "identical",
-        artifactBlobSha: entries.length === 1 ? entries[0]!.sha : null };
-    }
-    return { merged, heads };
-  }
-  async dispatch(input: TestDispatchInput, expectedHarnessSha?: string) {
-    if (expectedHarnessSha !== undefined) sha.parse(expectedHarnessSha);
-    const source = input.source;
-    // An original replay names only its original request; the trusted issuer re-reads that request's selection.
-    requireThat(input.originalRequestRunId === undefined || source.channel === "pr", "Only a PR original is replayed by its request");
-    const inputs = { routine: input.routineId, request_origin: "workflow-dispatch",
-      ...(expectedHarnessSha ? { expected_harness_sha: expectedHarnessSha } : {}),
-      ...(input.originalRequestRunId !== undefined ? { original_request_run_id: String(input.originalRequestRunId) }
-        : { source_build_run_id: String(source.buildRunId), source_publication_attempt: String(source.publicationAttempt) }),
-      ...(source.channel === "pr" ? { pr: String(source.prNumber) } : { channel: source.channel }) };
-    const data = z.object({ workflow_run_id: positive, html_url: z.string(), run_url: z.string() }).parse(await this.api(
-      `${REPOSITORY}/actions/workflows/${REQUEST_WORKFLOW}/dispatches`, { method: "POST",
-        body: JSON.stringify({ ref: "dev", return_run_details: true, inputs }) }));
-    requireThat(data.html_url === runUrl(REPOSITORY, data.workflow_run_id)
-      && data.run_url === `https://api.github.com/repos/${REPOSITORY}/actions/runs/${data.workflow_run_id}`, "Dispatch acknowledgement differs");
-    return { requestRunId: data.workflow_run_id, requestUrl: data.html_url };
-  }
-  /**
-   * The trusted issuer's own immutable selection for an original occurrence's request:
-   * its exact producer run, publication attempt, archive and source head. Nothing here
-   * comes from the caller; the build is then admitted only by that exact source.
-   */
-  async originalSelection(requestRunId: number, routineId: TestRoutineId): Promise<OriginalSelection> {
-    const { request } = await this.publishedRequest(requestRunId);
-    requireThat(request, "The original request did not complete successfully");
-    if (request.original) {
-      const marker = request.original;
-      requireThat(request.schemaVersion === 1 && request.status === "ready" && request.routine.id === routineId
-        && request.routine.authorization === "workflow-dispatch" && marker.runAttempt === 1 && marker.runId !== requestRunId
-        && request.requestId === `routine-${requestRunId}-1-${request.pullRequest?.number}-${routineId}`,
-      "Invalid original replay request");
-      // One direct marker, never an unbounded chain: the issuer always points to the initial request.
-      const initial = await this.publishedRequest(marker.runId);
-      requireThat(initial.request && initial.request.schemaVersion === 1 && initial.request.original === undefined
-        && marker.requestId === initial.request.requestId && marker.artifactDigest === initial.artifactDigest
-        && isDeepStrictEqual(request.pullRequest, initial.request.pullRequest)
-        && isDeepStrictEqual(request.selection, initial.request.selection), "Replay differs from its original request");
-      return { ...this.selectedOriginal(initial.request, marker.runId, routineId), initialRequestRunId: marker.runId };
-    }
-    return this.selectedOriginal(request, requestRunId, routineId);
-  }
-  private selectedOriginal(request: z.infer<typeof publishedRequestSchema>, requestRunId: number, routineId: TestRoutineId): OriginalSelection {
-    const suffix = request.schemaVersion === 1 ? /^routine-[1-9]\d*-1-([1-9]\d*)-/.exec(request.requestId)?.[1] : request.source.channel;
-    requireThat(request.status === "ready" && request.selection && request.routine.id === routineId && request.original === undefined
-      && request.selection.platform === testRoutinePlatform(routineId)
-      && request.requestId === `routine-${requestRunId}-1-${suffix}-${routineId}`, "The original request did not select a published build for this routine");
-    const selection = request.selection, producer = selection.producer;
-    const recorded = z.object({ headSha: sha.optional(), baseSha: sha.optional(), sourceCommit: sha.optional() }).passthrough().safeParse(selection.build ?? {});
-    requireThat(recorded.success, "The original request did not record its selected source");
-    const build = recorded.data, headSha = request.schemaVersion === 1 ? build.headSha : build.sourceCommit;
-    requireThat(headSha, "The original request did not record its selected source");
-    if (request.schemaVersion === 2) requireThat(request.source.buildRunId === producer.runId
-      && request.source.publicationAttempt === producer.publicationAttempt, "The original request source differs from its producer");
-    const source: TestBuildSource = request.schemaVersion === 1
-      ? { channel: "pr", prNumber: Number(suffix), buildRunId: producer.runId, publicationAttempt: producer.publicationAttempt }
-      : { channel: request.source.channel, buildRunId: producer.runId, publicationAttempt: producer.publicationAttempt };
-    if (request.schemaVersion === 2) return { source, archiveSha256: selection.archive.sha256, headSha };
-    const pr = request.pullRequest;
-    requireThat(pr && pr.number === Number(suffix) && pr.headSha === headSha && build.baseSha !== undefined && pr.baseSha === build.baseSha,
-      "The original request's PR identity differs from its selected build");
-    return { source, archiveSha256: selection.archive.sha256, headSha,
-      pullRequest: { number: pr.number, headSha: pr.headSha, baseSha: pr.baseSha, baseRef: pr.baseRef } };
-  }
-  /** One authenticated immutable request generation; `request` is null until its workflow succeeded. */
-  private async publishedRequest(requestRunId: number) {
-    const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${requestRunId}/attempts/1`));
-    requireThat(run.id === requestRunId && run.run_attempt === 1 && run.repository.full_name === REPOSITORY
-      && run.head_repository.full_name === REPOSITORY && run.path === `.github/workflows/${REQUEST_WORKFLOW}`
-      && run.event === "workflow_dispatch" && run.head_branch === "dev", "Unexpected request workflow identity");
-    if (run.status !== "completed" || run.conclusion !== "success") return { run, request: null };
-    const listed = z.object({ artifacts: z.array(artifactSchema) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
-    const matches = listed.artifacts.filter(item => item.name === `mentra-routine-request-${run.id}-1`);
-    requireThat(matches.length === 1 && !matches[0]!.expired && matches[0]!.size_in_bytes <= 2 * 1024 * 1024
-      && matches[0]!.workflow_run.id === run.id && matches[0]!.workflow_run.head_sha === run.head_sha, "Request artifact is missing or ambiguous");
-    const artifact = matches[0]!;
-    const redirect = await (this.options.fetch ?? fetch)(`https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${artifact.id}/zip`, {
-      headers: { Authorization: `Bearer ${await this.token()}`, Accept: "application/vnd.github+json" },
-      redirect: "manual", signal: AbortSignal.timeout(20_000),
-    });
-    requireThat(redirect.status === 302, "Request artifact download did not return its expected redirect");
-    const location = new URL(redirect.headers.get("location") ?? "https://invalid.invalid");
-    requireThat(location.protocol === "https:" && !location.username && !location.password
-      && (location.hostname.endsWith(".blob.core.windows.net") || location.hostname.endsWith(".actions.githubusercontent.com")),
-      "Unexpected GitHub artifact storage host");
-    // Never forward the GitHub token to the signed artifact URL.
-    const bytes = await readTestMetadata(await this.fetcher(location.href), 2 * 1024 * 1024);
-    requireThat(`sha256:${hash(bytes)}` === artifact.digest, "Request artifact digest changed");
-    const request = publishedRequestSchema.parse(readRequestZip(bytes));
-    requireThat(request.trigger.runId === run.id && request.trigger.runAttempt === 1 && request.trigger.sha === run.head_sha
-      && request.trigger.workflowSha === run.head_sha, "Published request identity differs");
-    return { run, request, artifactDigest: artifact.digest.slice("sha256:".length) };
-  }
-  async progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress> {
-    const { run, request } = await this.publishedRequest(requestRunId);
-    if (run.status !== "completed") return { state: "requesting", message: "GitHub is resolving the selected build." };
-    if (!request) return { state: "failed", message: "The request workflow did not complete successfully; no passing test is implied." };
-    requireThat(input.source.channel === "pr" ? request.schemaVersion === 1
-      : request.schemaVersion === 2 && request.source.channel === input.source.channel
-        && request.source.buildRunId === input.source.buildRunId
-        && request.source.publicationAttempt === input.source.publicationAttempt, "Published request source differs");
-    const suffix = input.source.channel === "pr" ? input.source.prNumber : input.source.channel;
-    requireThat(request.requestId === `routine-${requestRunId}-1-${suffix}-${input.routineId}` && request.routine.id === input.routineId
-      && request.original?.runId === input.originalRequestRunId, "Published request identity differs");
-    if (request.status === "no-artifact") return { state: "unavailable", requestId: request.requestId, message: request.reason };
-    requireThat(request.selection?.platform === testRoutinePlatform(input.routineId) && request.selection.archive.sha256 === input.archiveSha256 && request.selection.producer.runId === input.source.buildRunId
-      && request.selection.producer.publicationAttempt === input.source.publicationAttempt, "Request selected a different app publication");
-    if (!this.options.privateReadToken && !this.appAuth.configured) return { state: "requesting", requestId: request.requestId,
-      message: "Request published. Private queue visibility is not configured; awaiting a recorded result." };
-    const privateToken = await this.token("private");
-    const privateRuns = z.object({ workflow_runs: z.array(runSchema) }).parse(await this.api(
-      `${PRIVATE_REPOSITORY}/actions/workflows/device-routine.yml/runs?event=workflow_dispatch&branch=main&per_page=100`, {}, privateToken));
-    const titles = [`Device routine request ${run.id} / attempt 1`, `Day-one OTA request ${run.id} / attempt 1`];
-    const worker = privateRuns.workflow_runs.filter(item => item.repository.full_name === PRIVATE_REPOSITORY
-      && item.head_repository.full_name === PRIVATE_REPOSITORY && item.path === ".github/workflows/device-routine.yml"
-      && item.event === "workflow_dispatch" && item.head_branch === "main" && titles.includes(item.display_title))
-      .sort((a, b) => b.id - a.id)[0];
-    if (!worker) return { state: "requesting", requestId: request.requestId, message: "Request published; waiting for the private dispatcher." };
-    const workerUrl = runUrl(PRIVATE_REPOSITORY, worker.id);
-    if (worker.status === "completed") return { state: worker.conclusion === "success" ? "unknown" : "failed", requestId: request.requestId, workerUrl,
-      message: worker.conclusion === "success" ? "The worker job ended. Awaiting its verified result or recovery state."
-        : "The worker job did not complete successfully. No verified test result is available yet; inspect its logs." };
-    return { state: worker.status === "in_progress" ? "running" : "queued", requestId: request.requestId, workerUrl,
-      message: worker.status === "in_progress" ? "The worker job is running." : "Waiting for a compatible test worker." };
   }
 }

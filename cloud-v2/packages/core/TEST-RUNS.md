@@ -1,189 +1,85 @@
-# Private test-run results
+# Framework requests and results
 
-This is an immutable result index and media service, not an execution queue.
-The separate [shared claim API](TEST-RUN-CLAIMS.md) reserves requests across workers;
-the Mac worker retains its local claim, sequential fixture access and recovery.
-No schedules, credentials, remote storage or deployments are enabled by this code.
-Latest host guard reports are separate [local resource observations](TEST-RESOURCE-OBSERVATIONS.md);
-they never change results, claims or CI return evidence.
+Core stores immutable routine definitions, host-bound requests, results and asset
+receipts. The testing host controller owns resource grants, execution and cleanup;
+Core delivery or an upload acknowledgement never grants hardware access.
 
-The exact version-one payload is `src/types/test-run.types.ts`. It retains separate
-test, teardown, fixture and evidence outcomes, selected-build provenance, firmware
-assertions, English chapters and private asset metadata. A missing CI artifact or
-unqualified routine uses `outcome: "blocked"`, test/teardown `"not-run"`, fixture
-`"unknown"` and a concrete explanation in `notes`; empty chapters, assets and
-firmware assertions are valid. Do not fabricate device identities or versions.
+Canonical payloads are in `src/types/routine-definition.types.ts`,
+`src/types/framework-request.types.ts` and `src/types/framework-run.types.ts`.
+There is one canonical result in `test_runs` per request, not a parallel legacy
+result or claim system.
 
-### Optional backend deployment projection
+## Controller authentication and enrollment
 
-`backendDeployment` is optional; every existing producer may omit it, and absence
-means the exercised backend is unknown, never a test failure. Only the claimed Notes
-Phone worker's reviewed observation path produces it, for the fixed Notes production
-repository and origin. Ingestion requires the projection to name this run and
-request, carry the worker's immutable claim document hash (`claimSha256` equals
-the exporter's `provenance.claimSha256`; the registered request hash
-`provenance.requestSha256` is a different value and never substitutes for it),
-point at exactly one declared `metadata` asset with the
-same SHA256, and satisfy `startedAt <= observedBefore <= exerciseStartedAt <=
-exerciseFinishedAt <= observedAfter <= finishedAt`. The metadata asset holds the two
-authenticated observations; it never contains tokens, account identifiers, config
-paths or raw logs. A merge, client ZIP or later deployment read is not a substitute.
+Provision `TEST_HOST_TOKENS` as a JSON object mapping stable host IDs to distinct,
+random credentials of at least 32 characters. Controllers send their credential
+with `Authorization: Bearer …`; server authentication supplies host identity.
+Do not put credentials in source, logs, result payloads or routine definitions.
+Missing or malformed host configuration disables these endpoints.
 
-## Worker API
+- `POST /api/internal/routine-definitions`: enroll the immutable routine/platform/
+  source revision, definition digest and English requirements/steps. Portable
+  execution metadata declares resource kinds and policy; it does not name a host's
+  physical resources. Repeating identical enrollment returns the same identity;
+  changing a frozen definition conflicts.
+- `POST /api/internal/test-host-state`: publish the authenticated host's current
+  lane/resource bindings, controller incarnation and increasing observation
+  sequence. This is a projection, not resource ownership authority.
+- `GET /api/internal/test-requests?limit=100&after=…`: page requests assigned to
+  this authenticated host. Preserve complete pagination.
+- `POST /api/internal/test-requests/:requestId/accept`: acknowledge durable local
+  acceptance with `{requestId, hostId, inputSha256, acceptedAt}`. Lost replies are
+  reconciled by the same request identity; they do not justify another execution.
+- `POST /api/internal/test-requests/local`: register a controller's already durable
+  local acceptance and immutable input for later publication.
 
-Set a separate, random `TEST_RUN_INGEST_TOKEN` of at least 32 characters. The
-worker uses `Authorization: Bearer ...`. Comparison uses constant-time digests;
-an absent/short server secret disables ingestion. This credential cannot read
-admin records or operate any other API.
+A submitted request is `{requestId, hostId, input}`. Its input freezes routine
+revision, platform, selected lane/resources, policy and exact build provenance.
+Requests stay bound to that host. The controller validates its installed resource
+bindings before allocation and persists acceptance before acknowledgement.
 
-1. `POST /api/internal/test-runs/` with the complete JSON result, at most 1 MiB.
-   The response is `{runId, reportPath, created, payloadSha256, missingAssetIds}`.
-   First insertion returns 201. Exact semantic replay returns 200; reuse of the
-   same `runId` with changed metadata returns 409. `reportPath` is an authenticated
-   admin-relative link such as `/?testRun=run-123`.
-2. For each missing asset, `PUT /api/internal/test-runs/:runId/assets/:assetId`
-   with raw bytes and the exact declared `Content-Type`. `Content-Length`, when
-   present, must match the declared byte count. The service independently checks
-   actual streamed length, SHA256 and basic image/video format signatures. The
-   response is `{assetId, uploaded:true, created}` with 201 or idempotent 200.
-3. Repeat the same metadata POST to reconcile acknowledged/missing assets after
-   a network interruption. Retry uploads independently of hardware execution.
-   Metadata never changes after ingestion. There is no mutable finalize endpoint.
+## Result publication
 
-Every declared asset is required. The server reports evidence `complete` only
-when the source declared it complete and all asset records have been committed
-after verified upload. Test, teardown and fixture outcomes are never replaced by
-upload status. An explicitly incomplete source result stays incomplete even when
-all available files are uploaded. Keep local evidence until acknowledgement.
+1. `POST /api/internal/framework-results` submits the frozen complete result and
+   required asset manifest. The result names authenticated host, request/run,
+   routine revision, lane, exact build, every declared step, phase outcomes and
+   actual timings. Identical replay is idempotent; altered identity/content
+   conflicts. Preserve setup/test/teardown failures and unexecuted steps.
+2. `PUT /api/internal/framework-results/:requestId/assets/:assetId` uploads each
+   declared file with its declared MIME type and bytes. The server verifies exact
+   size/hash and media type before acknowledging custody. Use bounded streaming;
+   recordings are limited to 2 GiB and other assets to 128 MiB.
+3. `POST /api/internal/framework-results/:requestId/complete` verifies all required
+   asset acknowledgements. The receipt binds `entityId`, `payloadSha256` and
+   `manifestSha256`. Retrying publication never reruns a routine.
 
-A source `passed` result must also declare passed teardown, complete evidence and
-passed status for every included firmware assertion and chapter. Contradictory
-source results are rejected. While required uploads are missing, a source-passed
-run is presented as `blocked`; its test verdict can still be `passed`. A monotonic
-server-owned upload/outcome projection makes list filters follow that displayed
-aggregate. Repeating POST or PUT reconciles the projection after interruption;
-the immutable source payload and its hash do not change.
+Keep local evidence until its exact cloud acknowledgement and local readers have
+settled, then dispose owned files. Publication status is separate from execution:
+a product pass with missing evidence is not a usable catalog example or a complete
+suite. Upload failures do not hold a lane or overwrite the original test failure.
+Step recording locations reference the declared asset and measured millisecond
+offsets; unexecuted steps have no invented timestamps or recording locations.
 
-Assets are limited to **128 MiB each**, matching the current Core HTTP server's
-default request limit. Segment long recordings and point each chapter at the
-appropriate video asset; uploading a different representation requires its own
-correct metadata before the initial POST. This service does not raise the global
-HTTP request limit or change proxy limits. Supported media are MP4, WebM, PNG,
-JPEG and WebP, plus JSON/plain-text logs. Uploaded HTML and SVG are rejected.
+## Admin dispatch and reading
 
-## Admin API
+Admin endpoints require the existing admin authentication:
 
-### Dispatch an existing build
+- `GET /api/admin/test-routines`: current enrolled executable definitions.
+- `GET /api/admin/test-builds`: published build inventory for the requested source
+  channel/platform. A listed build is not proof that it was executed.
+- `POST /api/admin/test-dispatches/picker`: submit the chosen routine, host/lane,
+  source publication and archive digest. Core resolves trusted definition policy
+  and authenticated host resource bindings before freezing the request.
+- `POST /api/admin/test-dispatches`: submit the same immutable host-bound request;
+  Core validates its selected published build, enrolled definition, resource
+  bindings and policy. Neither endpoint starts a separate GitHub runner.
+- `GET /api/admin/test-runs`, `GET /api/admin/test-runs/:runId` and
+  `GET /api/admin/test-runs/:runId/assets/:assetId`: canonical history, detail and
+  authenticated playable media. Static activity/suite routes precede `:runId`.
+- `GET /api/admin/routine-catalog` and
+  `GET /api/admin/routine-catalog/:routineId/:platform`: routine catalog/detail.
+  A tile requires an acknowledged passing example; current enrollment alone is
+  not qualification. An older example stays labeled with its actual revision.
 
-In **Run a routine**, choose the routine first, then PR, dev or staging and **Find builds**.
-`no-glasses` selects the Mac UI walkthrough; `no-glasses-android` selects the dedicated
-Android phone. The latter requires no glasses paired. The worker preserves the
-phone's account and pairing state; it does not clear app data or unpair devices to
-make the prerequisite pass.
-
-- `GET /api/admin/test-routines` lists supported routine IDs.
-- `GET /api/admin/test-builds?channel=pr&pr=123&routineId=no-glasses-android`
-  lists the PR's Android builds. Use `channel=dev` or `channel=staging` without `pr`
-  for coordinated releases. Omitting `routineId` preserves the Mac inventory.
-- `POST /api/admin/test-dispatches` keeps the existing input: `source` (channel,
-  optional PR number, build run and publication attempt), `routineId`, the selected
-  `archiveSha256`, and an `idempotencyKey`. The routine determines the platform;
-  callers cannot supply an arbitrary platform, artifact URL, ref or command.
-
-Android PRs use the immutable `mentra-android-pr-…json` receipt and matching APK.
-Dev/staging use the coordinated release manifest's APK, bound to its release-plan
-hash. Core checks the producing workflow, exact revision/attempt, publication,
-manifest identity and APK size before sending. The worker then verifies the bytes
-and runs the test. An APK cannot qualify a Mac routine or vice versa.
-
-Deployment must include `no-glasses-android` in `TEST_RUN_DISPATCH_ROUTINES` only
-after its private worker lane is enrolled; `TEST_RUN_DISPATCH_CHANNELS` still
-controls PR/dev/staging availability. This code does not enable a new lane by itself.
-
-The nightly routines `account-miniapps`, `connected-glasses` and `livestreamer` are all
-registered, so `TEST_ROUTINES` currently carries no `planned` reason. A routine added
-later with a `planned` reason stays unavailable, and dispatch refuses it, even if a
-deployment adds it to `TEST_RUN_DISPATCH_ROUTINES`, until the reviewed change that
-registers its automatic worker removes `planned`.
-
-`livestreamer` (Mac) is registered: its private worker binds the request's selected Mac
-build and exports claim-bound CI evidence, and it is a nightly target. Like the other
-registered routines, it becomes requestable only once a deployment adds it to
-`TEST_RUN_DISPATCH_ROUTINES` after its worker lane is enrolled. Until its recorded
-managed-viewer and state observations are pinned, its preparation refuses before any
-claim. Its live CI qualification is still pending.
-
-`connected-glasses` (Android) uses the shared foundation worker and saved software
-flow. Its complete local replay covers pairing, battery, camera and Wi-Fi settings,
-photo/video capture and sync, decoded-byte checks, and playback routing and pause.
-The worker verifies the requested APK and firmware manifest and exports claim-bound
-recordings. It becomes requestable after lane enrollment and deployment adds it to
-`TEST_RUN_DISPATCH_ROUTINES`. Dev nightly enrollment follows shared dispatch
-qualification; a passing local example alone does not qualify a new CI build.
-Measured acoustic output, scene recognition and physical button behavior remain
-outside the demonstrated software coverage.
-
-`account-miniapps` (Mac) is registered: its private worker verifies the request's
-exact selected Mac build and OTA manifest on a dev or staging backend, uses only that
-backend's reviewed host, and exports claim-bound CI evidence. It is a nightly target.
-Like `no-glasses-android`, it becomes requestable only once a deployment adds it to
-`TEST_RUN_DISPATCH_ROUTINES` after its worker lane is enrolled. Its Safari Google
-provider completion, callback and window close are unqualified and report failed or
-blocked results when unobserved; its live CI qualification is still pending.
-
-`captions-phone` and `notes-phone` (Mac, simulated glasses in Phone mode) are
-registered: their private worker installs the selected Mac build and exports
-claim-bound CI evidence. Like `no-glasses-android`, each becomes requestable only
-once a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES` after its worker lane is
-enrolled. Their live CI qualification is still pending. They are not nightly
-targets or successful-build requests.
-
-Existing `adminAuth` protects all three routes using the admin console session:
-
-- `GET /api/admin/test-runs/` returns `{runs, nextCursor}`. Filters: `pr`,
-  `channel`, `outcome`, `routineId`, `platform`, `fixtureAlias`, `startedAfter`,
-  `startedBefore`; ISO dates; `limit` defaults to 25 and is capped at 100.
-  `cursor` is an opaque newest-first continuation. Summaries omit chapters,
-  assets, firmware assertions and notes. `repository`, `headSha` (full 40-character
-  SHA), and `archiveSha256` (64-character hash) are optional exact provenance
-  filters. Build links combine all three with `pr`, `channel=pr`, `routineId`
-  and `platform` so results from an older revision or another archive cannot
-  appear as coverage for the linked build. Existing PR indexes bound this query.
-- `GET /api/admin/test-runs/:runId` returns the complete record, computed
-  evidence outcome and `assets[].uploaded`. It never exposes storage keys.
-- `GET` or `HEAD /api/admin/test-runs/:runId/assets/:assetId` serves only an
-  uploaded asset declared by that run. Single byte ranges, suffix ranges and
-  If-Range are supported. Responses include ETag, Content-Length, Accept-Ranges,
-  and Content-Range for 206/416. Invalid/multipart ranges return 416.
-
-Media uses authenticated, run-scoped URLs rather than arbitrary storage paths or
-public links. Responses use a deny-all sandbox CSP, `nosniff` and private no-store
-caching. Filenames are escaped. Admin viewers must not render uploaded HTML in
-their origin. The deployment's `/api` proxy must forward Range/If-Range and stream
-206 responses unchanged; qualify that proxy with real recordings after deployment.
-
-## Persistence and operational limits
-
-Mongo `test_runs` stores bounded immutable metadata; `test_assets` stores immutable
-private object pointers. Startup waits for unique run and run/asset indexes before
-accepting requests. `requestId` is indexed, not unique: a single selected build may
-produce several routine results or explicitly identified attempts.
-
-Storage uses the existing `CLOUD_STORAGE_PROVIDER` and associated S3/R2/local
-configuration. Configure that bucket/location as private. The service sets no
-public ACL and publishes no direct storage URLs. Uploads are hashed into private
-owned temporary files, then written to unique object keys; concurrent uploads
-cannot overwrite a committed object. Known losing copies are deleted. An
-ambiguous DB failure may leave an unreferenced private object for later
-reconciliation; no automatic retention/deletion policy is enabled.
-
-Media reads are bounded streams: local storage uses `createReadStream` byte
-bounds, S3 uses its native ranged stream. HEAD does not read payload bytes.
-Existing incident whole-object reads are unchanged. The implementation has been
-tested with Hono routes, temporary local files, a loopback S3 protocol fixture and
-a separate temporary Mongo 7 database (concurrent immutable run/asset insertion,
-replay, conflict, filtering and ranged media). Remote storage deployment and
-production proxy qualification remain separate.
-
-Validation: `bun test packages/core/src/services/test-run.service.test.ts` from
-`cloud-v2`, plus `tsc -b packages/shared packages/core` with workspace dependencies.
+Installing this code does not itself enroll a host, publish a passing recording,
+enable a routine or establish a successful nightly run.
