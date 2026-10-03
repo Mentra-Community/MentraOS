@@ -22,7 +22,7 @@ export function RoutineCatalogPage() {
 
 function RoutineCatalogList() {
   const catalog = useQuery({queryKey: ["routine-catalog"],
-    queryFn: () => api<{routines: CatalogRow[]}>("/api/admin/routine-catalog")});
+    queryFn: () => api<{routines: CatalogRow[]}>("/api/admin/routine-catalog"), refetchInterval: 15000});
   if (catalog.isPending) return <p role="status">Loading routines…</p>;
   if (catalog.error && !catalog.data) return <p role="alert">Could not load routines: {catalog.error.message}</p>;
   return <div className="space-y-5">
@@ -47,7 +47,7 @@ export function RoutineCatalogCard({routine}: {routine: CatalogRow}) {
 function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
   const detail = useInfiniteQuery({queryKey: ["routine-detail", id, platform], initialPageParam: undefined as string | undefined,
     queryFn: ({pageParam}) => api<Detail>(`/api/admin/routine-catalog/${encodeURIComponent(id)}/${encodeURIComponent(platform)}${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ""}`),
-    getNextPageParam: page => page.nextCursor ?? undefined});
+    getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
   if (detail.isPending) return <p role="status">Loading routine…</p>;
   if (detail.error && !detail.data) return <p role="alert">Could not load routine: {detail.error.message}</p>;
   const row = detail.data.pages[0]!, definition = row.definition;
@@ -86,7 +86,8 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const pendingOffset = useRef<number | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const result = useQuery({queryKey: ["framework-run", runId], queryFn: () =>
-    api<{run: FrameworkRun; definition: RoutineEnrollment["definition"] | null; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"}>(`/api/admin/routine-catalog/results/by-run/${encodeURIComponent(runId)}`)});
+    api<{run: FrameworkRun; definition: RoutineEnrollment["definition"] | null; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"}>(`/api/admin/routine-catalog/results/by-run/${encodeURIComponent(runId)}`),
+    refetchInterval: query => query.state.data?.uploadsComplete === false ? 5000 : false});
   useEffect(() => {
     const step = result.data?.run.result.steps.find(item => item.id === stepId);
     if (step?.recordingLocation) {
