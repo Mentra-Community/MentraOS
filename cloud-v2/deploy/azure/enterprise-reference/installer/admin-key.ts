@@ -67,10 +67,14 @@ try {
   }
   const secret = credential.value.split(".")[1];
   const hash = createHash("sha256").update(secret).digest("hex");
-  await DeveloperOrgApiKeyModel.updateOne({keyId: credential.id}, {$setOnInsert: {
-    keyId: credential.id, orgId: org.id, name: "Private Cloud administrator", env: "local",
-    hash, last4: secret.slice(-4), createdByUserId: user.id,
-  }}, {upsert: true, runValidators: true});
+  try {
+    await DeveloperOrgApiKeyModel.updateOne({keyId: credential.id}, {$setOnInsert: {
+      keyId: credential.id, orgId: org.id, name: "Private Cloud administrator", env: "local",
+      hash, last4: secret.slice(-4), createdByUserId: user.id,
+    }}, {upsert: true, runValidators: true});
+  } catch (error) {
+    if ((error as {code?: number}).code !== 11000) throw error;
+  }
   // Existing/revoked/mismatched rows must not be replaced or resurrected.
   const valid = await new DeveloperApiKeyService().validate(credential.value, "local");
   if (valid?.orgId !== org.id) throw Error("Saved administrator credential is revoked or inconsistent");

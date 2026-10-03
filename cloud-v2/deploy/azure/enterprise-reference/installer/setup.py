@@ -204,8 +204,8 @@ def recover_configuration(directory, config, state):
     if not changes or set(changes) - {'sourceRegistryMirror', 'coreAdminEmails'}:
         raise SetupError('Unsupported pending configuration update')
     updated = dict(previous, **changes)
-    # Only this explicitly requested distribution endpoint can change. Never
-    # adopt edits to resource bindings, release pins, or other configuration.
+    # Only approved distribution-endpoint and administrator-allowlist updates
+    # can change. Never adopt resource bindings, release pins, or other edits.
     if (config not in (previous, updated)
             or state.get('configHash') not in (None, pending['previousConfigHash'], pending['updatedConfigHash'])
             or any(previous.get(k) != state['binding'].get(k) for k in BINDING_KEYS)):
@@ -399,7 +399,22 @@ def preflight(config, require_identity=False):
     group = next((g for g in groups if g['name'].lower() == config['resourceGroup'].lower()), None)
     if group and group.get('tags', {}).get('mentraInstallerOwner') != config['resourceTags']['mentraInstallerOwner']:
         raise SetupError('Resource group already exists and is not owned by this installer. Choose a new group; automatic adoption is refused.')
-    source_access = check_source_image(config) if require_identity else 'checked before install'
+    source_access = 'checked before install'
+    if require_identity:
+        staged = False
+        if group:
+            # Resume can proceed during an upstream outage once the exact
+            # release is staged. An owned group alone never proves that.
+            result = subprocess.run(['az', 'acr', 'manifest', 'show-metadata', '--registry', config['registryName'],
+                                     '--name', 'mentra-cloud-enterprise:' + config['releaseTag'],
+                                     '--subscription', config['subscriptionId'], '--output', 'json'],
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                try:
+                    staged = json.loads(result.stdout).get('digest') == config['sourceImage'].split('@', 1)[1]
+                except ValueError:
+                    pass
+        source_access = 'verified in customer registry' if staged else check_source_image(config)
     return {'tenant': account['tenantId'], 'subscription': account['id'], 'providers': providers,
             'sourceImageAccess': source_access,
             'resourceGroup': 'owned' if group else 'new',
@@ -467,6 +482,56 @@ def check_dns(config, state):
     txt = run(['dig', '+short', 'TXT', 'asuid.' + host]).replace('"', '').strip()
     if cname != state['dns'][0]['value'].lower() or txt != state['dns'][1]['value']:
         raise SetupError('DNS records do not match dns-records.json yet. Confirm DNS-only CNAME and asuid TXT, wait, then resume.')
+
+
+def configure_azure_dns(args, directory, config, state):
+    if not state.get('dns') or not args.dns_zone or not args.dns_resource_group:
+        raise SetupError('Complete the first install/DNS handoff, then specify --dns-zone and --dns-resource-group')
+    subscription = args.dns_subscription or config['subscriptionId']
+    if not GUID.fullmatch(subscription):
+        raise SetupError('DNS subscription must be a UUID')
+    zone_config = dict(config, subscriptionId=subscription)
+    account = azure(zone_config, 'account', 'show')
+    if account['tenantId'].lower() != config['tenantId'].lower():
+        raise SetupError('DNS subscription must belong to this deployment tenant')
+    zone = azure(zone_config, 'network', 'dns', 'zone', 'show', '--name', args.dns_zone,
+                 '--resource-group', args.dns_resource_group)
+    host = config['workspaceHostname']
+    zone_name = zone['name'].lower().rstrip('.')
+    if not host.endswith('.' + zone_name):
+        raise SetupError('Customer hostname must be a subdomain of the selected Azure DNS zone')
+    records = azure(zone_config, 'network', 'dns', 'record-set', 'list', '--zone-name', zone['name'],
+                    '--resource-group', args.dns_resource_group)
+    desired = []
+    for record in state['dns']:
+        name = record['name'][:-len(zone_name) - 1]
+        kind = record['type']
+        value = ({'CNAMERecord': {'cname': record['value']}} if kind == 'CNAME'
+                 else {'TXTRecords': [{'value': [record['value']]}]})
+        existing = next((r for r in records if r['name'].lower() == name.lower()
+                         and r['type'].split('/')[-1].upper() == kind), None)
+        if existing:
+            normalized = {k.lower(): v for k, v in existing.items()}
+            actual = {key: normalized.get(key.lower()) for key in value}
+            if kind == 'CNAME':
+                matches = (actual['CNAMERecord'] or {}).get('cname', '').rstrip('.').lower() == record['value'].lower()
+            else:
+                matches = any(''.join(r.get('value', [])) == record['value'] for r in actual['TXTRecords'] or [])
+            if not matches:
+                raise SetupError(f'Azure DNS {kind} record {name} already exists with different content; no records changed')
+        else:
+            # Check conflicts before creating either record. Conditional creation
+            # also refuses a competing operator's record between list and PUT.
+            if kind == 'CNAME' and any(r['name'].lower() == name.lower() for r in records):
+                raise SetupError('Customer hostname already has another record type; no records changed')
+            if kind == 'TXT' and any(r['name'].lower() == name.lower() and r['type'].split('/')[-1].upper() == 'CNAME' for r in records):
+                raise SetupError('Verification hostname already has a CNAME record; no records changed')
+            desired.append((name, kind, value))
+    for name, kind, value in desired:
+        body = {'properties': dict(value, TTL=300, metadata={'mentraInstallerOwner': state['owner']})}
+        run(['az', 'rest', '--method', 'put', '--url', 'https://management.azure.com' + zone['id'] + '/' + kind + '/' + name + '?api-version=2018-05-01',
+             '--headers', 'If-None-Match=*', '--body', json.dumps(body), '--output', 'none'])
+    emit(args, {'status': 'dns_records_configured', 'next': 'Wait for propagation, then resume --dns-ready. Existing records and mail settings were preserved.'})
 
 
 def install(args, directory, config, state):
@@ -616,13 +681,16 @@ def configure_entra(args, directory, config, state):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'diagnostics'))
+    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'diagnostics'))
     parser.add_argument('--directory', default='./mentra-setup', help='Persistent state and secret directory outside the installer package')
     parser.add_argument('--config', help='JSON answers for init; otherwise edit deployment.config.json')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--dns-ready', action='store_true')
     parser.add_argument('--grant-admin-consent', action='store_true')
     parser.add_argument('--mirror', help='Approved Azure registry/repository for configure-mirror; release digest stays pinned')
+    parser.add_argument('--dns-zone', help='Existing Azure DNS zone for configure-azure-dns')
+    parser.add_argument('--dns-resource-group', help='Resource group containing the Azure DNS zone')
+    parser.add_argument('--dns-subscription', help='DNS subscription, if different; must belong to the same Entra tenant')
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     try:
@@ -649,6 +717,8 @@ def main():
                 configure_entra(args, directory, config, state)
             elif args.command == 'configure-mirror':
                 configure_mirror(args, directory, config, state)
+            elif args.command == 'configure-azure-dns':
+                configure_azure_dns(args, directory, config, state)
             elif args.command in ('install', 'resume'):
                 install(args, directory, config, state)
             elif args.command == 'verify':

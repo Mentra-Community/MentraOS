@@ -279,6 +279,7 @@ class InstallerTests(unittest.TestCase):
             setup.load(self.directory)
 
     def test_owned_group_still_checks_source_before_resume(self):
+        self.config['registryName'] = 'qaapproved'
         def azure(config, *args):
             if args[:2] == ('account', 'show'):
                 return {'id': SUB, 'tenantId': TENANT, 'state': 'Enabled'}
@@ -289,9 +290,26 @@ class InstallerTests(unittest.TestCase):
             self.fail('resume wrote resources before confirming image access')
         with patch.object(setup.shutil, 'which', return_value='/tool'), \
              patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup.subprocess, 'run', return_value=setup.subprocess.CompletedProcess([], 1, '', '')) , \
              patch.object(setup, 'check_source_image', side_effect=setup.SetupError('image inaccessible')):
             with self.assertRaisesRegex(setup.SetupError, 'image inaccessible'):
                 setup.install(self.args, self.directory, self.config, self.state)
+
+    def test_staged_exact_digest_allows_resume_without_upstream(self):
+        def azure(config, *args):
+            if args[:2] == ('account', 'show'):
+                return {'id': SUB, 'tenantId': TENANT, 'state': 'Enabled'}
+            if args[:2] == ('provider', 'show'):
+                return {'registrationState': 'Registered'}
+            if args[:2] == ('group', 'list'):
+                return [{'name': 'rg-test', 'tags': {'mentraInstallerOwner': 'owner'}}]
+            self.fail('Unexpected Azure write')
+        self.config['registryName'] = 'qaapproved'
+        result = setup.subprocess.CompletedProcess([], 0, json.dumps({'digest': self.config['sourceImage'].split('@')[1]}), '')
+        with patch.object(setup.shutil, 'which', return_value='/tool'), patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup.subprocess, 'run', return_value=result), patch.object(setup, 'check_source_image') as source:
+            self.assertEqual(setup.preflight(self.config, require_identity=True)['sourceImageAccess'], 'verified in customer registry')
+        source.assert_not_called()
 
     def test_mirror_recovery_changes_only_endpoint_after_failed_deployment(self):
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
@@ -350,6 +368,46 @@ class InstallerTests(unittest.TestCase):
             config, state, _ = setup.load(self.directory)
         self.assertEqual(config['coreAdminEmails'], 'admin@example.com')
         self.assertEqual(state['configHash'], setup.digest(self.directory / 'deployment.config.json'))
+
+    def dns_fixture(self, records):
+        self.config['workspaceHostname'] = 'mentra.qa.example.com'
+        self.state['dns'] = [{'type': 'CNAME', 'name': 'mentra.qa.example.com', 'value': 'runtime.azure.example'},
+                             {'type': 'TXT', 'name': 'asuid.mentra.qa.example.com', 'value': 'verification'}]
+        self.args.dns_zone = 'qa.example.com'
+        self.args.dns_resource_group = 'dns-group'
+        self.args.dns_subscription = None
+        def azure(config, *args):
+            if args[:2] == ('account', 'show'):
+                return {'tenantId': TENANT}
+            if args[:4] == ('network', 'dns', 'zone', 'show'):
+                return {'name': 'qa.example.com', 'id': '/subscriptions/' + SUB + '/resourceGroups/dns-group/providers/Microsoft.Network/dnsZones/qa.example.com'}
+            if args[:4] == ('network', 'dns', 'record-set', 'list'):
+                return records
+            self.fail('Unexpected DNS operation')
+        return azure
+
+    def test_azure_dns_creates_only_missing_records_conditionally(self):
+        azure = self.dns_fixture([{'name': '@', 'type': 'Microsoft.Network/dnsZones/MX', 'mxRecords': [{'exchange': 'mail.example'}]}])
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'run') as run, patch.object(setup, 'emit'):
+            setup.configure_azure_dns(self.args, self.directory, self.config, self.state)
+        self.assertEqual(run.call_count, 2)
+        for call in run.call_args_list:
+            self.assertIn('If-None-Match=*', call.args[0])
+            self.assertNotIn('/MX/', call.args[0][call.args[0].index('--url') + 1])
+
+    def test_azure_dns_matching_records_are_idempotent(self):
+        azure = self.dns_fixture([{'name': 'mentra', 'type': 'Microsoft.Network/dnsZones/CNAME', 'cnameRecord': {'cname': 'runtime.azure.example.'}},
+                                  {'name': 'asuid.mentra', 'type': 'Microsoft.Network/dnsZones/TXT', 'txtRecords': [{'value': ['verification']}]}])
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'run') as run, patch.object(setup, 'emit'):
+            setup.configure_azure_dns(self.args, self.directory, self.config, self.state)
+        run.assert_not_called()
+
+    def test_azure_dns_conflict_checks_all_records_before_any_write(self):
+        azure = self.dns_fixture([{'name': 'asuid.mentra', 'type': 'Microsoft.Network/dnsZones/TXT', 'txtRecords': [{'value': ['foreign-verification']}]}])
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'run') as run:
+            with self.assertRaisesRegex(setup.SetupError, 'different content'):
+                setup.configure_azure_dns(self.args, self.directory, self.config, self.state)
+        run.assert_not_called()
 
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess
