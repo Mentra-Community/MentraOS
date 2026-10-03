@@ -4,7 +4,14 @@ import * as jose from "jose"
 
 import {RefreshTokenModel} from "../models/refresh-token.model"
 import {RevokedJtiModel} from "../models/revoked-jti.model"
-import {getPublicJwks, issueRuntimeToken, resetSigningKeyCache, revokeSession} from "./session.service"
+import {
+  getPublicJwks,
+  issueMiniappToken,
+  issueRuntimeToken,
+  resetSigningKeyCache,
+  revokeSession,
+  setMiniappEmailClaimLookupForTests,
+} from "./session.service"
 
 const savedEnv = {
   MENTRA_JWT_PRIVATE_KEY: process.env.MENTRA_JWT_PRIVATE_KEY,
@@ -17,6 +24,7 @@ const savedEnv = {
 }
 
 afterEach(() => {
+  setMiniappEmailClaimLookupForTests(null)
   restoreEnv("MENTRA_JWT_PRIVATE_KEY", savedEnv.MENTRA_JWT_PRIVATE_KEY)
   restoreEnv("MENTRA_JWT_PUBLIC_KEY", savedEnv.MENTRA_JWT_PUBLIC_KEY)
   restoreEnv("MENTRA_MINIAPP_JWT_PRIVATE_KEY", savedEnv.MENTRA_MINIAPP_JWT_PRIVATE_KEY)
@@ -75,6 +83,61 @@ describe("Core JWKS", () => {
         directory_tenant_id: "tenant",
       },
     })
+  })
+})
+
+describe("issueMiniappToken email claim", () => {
+  test("adds a verified email only for an allowlisted package", async () => {
+    setSigningEnv()
+    setMiniappEmailClaimLookupForTests(async () => ({email: "ada@mentra.glass", email_verified: true}))
+
+    const allowed = await issueMiniappToken({
+      mentraUserId: "mu_allowed",
+      tenantId: "mentra",
+      packageName: "com.mentra.call",
+    })
+    const other = await issueMiniappToken({
+      mentraUserId: "mu_allowed",
+      tenantId: "mentra",
+      packageName: "com.example.other",
+    })
+
+    expect(jose.decodeJwt(allowed.token)).toMatchObject({
+      email: "ada@mentra.glass",
+      email_verified: true,
+      aud: "com.mentra.call",
+    })
+    expect(jose.decodeJwt(other.token).email).toBeUndefined()
+    expect(jose.decodeJwt(other.token).email_verified).toBeUndefined()
+  })
+
+  test("records an unverified email as email_verified false", async () => {
+    setSigningEnv()
+    setMiniappEmailClaimLookupForTests(async () => ({email: "ada@mentra.glass", email_verified: false}))
+
+    const {token} = await issueMiniappToken({
+      mentraUserId: "mu_unverified",
+      tenantId: "mentra",
+      packageName: "com.mentra.call",
+    })
+
+    expect(jose.decodeJwt(token)).toMatchObject({email: "ada@mentra.glass", email_verified: false})
+  })
+
+  test("mints without email when the lookup does not finish in time", async () => {
+    setSigningEnv()
+    setMiniappEmailClaimLookupForTests(() => new Promise(() => undefined))
+
+    const started = Date.now()
+    const {token} = await issueMiniappToken({
+      mentraUserId: "mu_slow",
+      tenantId: "mentra",
+      packageName: "com.mentra.call",
+    })
+
+    expect(Date.now() - started).toBeLessThan(1_500)
+    expect(jose.decodeJwt(token).email).toBeUndefined()
+    expect(jose.decodeJwt(token).sub).toBe("mu_slow")
   })
 })
 
