@@ -1,5 +1,5 @@
 import {expect, test} from "bun:test";
-import {createTestDispatchAdminApi} from "./test-dispatches.api";
+import {createTestDispatchAdminApi, HOST_STATE_FRESHNESS_MS} from "./test-dispatches.api";
 import {TestRequestService, type StoredTestRequest} from "../../services/test-request.service";
 import type {RoutineDefinitionService} from "../../services/routine-definition.service";
 import type {TestBuildGateway} from "../../services/test-builds.service";
@@ -39,6 +39,6 @@ test("direct admission cannot bypass immutable build resolver or host bindings",
 test("dispatch freshness uses Core receipt time rather than a skewed controller clock", async () => {
  for (const skew of [-180000, 86400000]) {
   const live=fixture(false,false,skew);expect((await post(live.app,selection)).status).toBe(202);
-  const stale=fixture(false,false,skew,120001);expect((await post(stale.app,selection)).status).toBe(409);expect(stale.admitted()).toBeUndefined();
+  const stale=fixture(false,false,skew,HOST_STATE_FRESHNESS_MS+1);expect((await post(stale.app,selection)).status).toBe(409);expect(stale.admitted()).toBeUndefined();
  }
 });

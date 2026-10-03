@@ -12,6 +12,7 @@ import {requestInputDigest} from "../../services/test-request.service";
 import {selectedBuildInput, testBuildQuerySchema, testBuildSourceSchema} from "../../types/test-build.types";
 const pickerSubmission = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema, routineId: z.string(), platform: z.enum(["ios-on-mac", "android"]), source: testBuildSourceSchema, archiveSha256: z.string().regex(/^[a-f0-9]{64}$/)}).strict();
 const submission = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, input: frameworkRequestInputSchema}).strict();
+export const HOST_STATE_FRESHNESS_MS = 120_000;
 /** Admin submits the same immutable request consumed by the host, without a second GitHub scheduler. */
 export function createTestDispatchAdminApi(service = new TestRequestService(), definitions = new RoutineDefinitionService(), builds: TestBuildGateway = new GithubTestBuildGateway(), hosts = new TestHostStateService()) {
   const app = new Hono<AppEnv>();
@@ -50,7 +51,7 @@ export function createTestDispatchAdminApi(service = new TestRequestService(), d
     const snapshot = await hosts.get(selected.hostId);
     const lane = snapshot?.lanes.find(lane => lane.id === selected.laneId && lane.platform === selected.platform);
     const execution = definition.definition.execution;
-    if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > 120_000 || !lane || !execution)
+    if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > HOST_STATE_FRESHNESS_MS || !lane || !execution)
       return c.json({error: "host_unavailable", message: "Selected host has no current matching execution capability."}, 409);
     const resources = execution.resourceKinds.map(kind => {
       const candidates = lane.resources.filter(resource => resource.kind === kind);
@@ -84,7 +85,7 @@ export function createTestDispatchAdminApi(service = new TestRequestService(), d
       return c.json({error: "selected_build_changed"}, 409);
     const snapshot = await hosts.get(hostId), lane = snapshot?.lanes.find(lane => lane.id === input.laneId && lane.platform === input.platform);
     const execution = definition.definition.execution;
-    if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > 120_000 || !lane || !execution)
+    if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > HOST_STATE_FRESHNESS_MS || !lane || !execution)
       return c.json({error: "host_unavailable"}, 409);
     const resources = execution.resourceKinds.map(kind => {
       const matches = lane.resources.filter(resource => resource.kind === kind);
