@@ -62,6 +62,8 @@ public class WakeLockManager {
         PAIRING_CODE,
         /** Boot-time service startup window (BootstrapActivity). */
         BOOTSTRAP,
+        /** BES TRACE delivery window after hm_rlog_ready (BesTraceTail). */
+        BES_LOG,
     }
 
     private static final class Lease {

@@ -72,7 +72,6 @@ public class BesLogManager {
    * background thread instead of posting to the backend — used for BLE relay to the phone.
    */
   private final Consumer<String> mRelayJsonCallback;
-  private final Consumer<String> mRawLogCallback;
 
   /**
    * Backend base URL for direct HTTP upload. When non-empty, takes precedence over
@@ -85,7 +84,7 @@ public class BesLogManager {
    */
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager) {
-    this(incidentId, context, configurationManager, "", null, null);
+    this(incidentId, context, configurationManager, "", null);
   }
 
   /**
@@ -96,7 +95,7 @@ public class BesLogManager {
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager,
                        String apiBaseUrl) {
-    this(incidentId, context, configurationManager, apiBaseUrl, null, null);
+    this(incidentId, context, configurationManager, apiBaseUrl, null);
   }
 
   /**
@@ -106,26 +105,18 @@ public class BesLogManager {
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager,
                        Consumer<String> relayJsonCallback) {
-    this(incidentId, context, configurationManager, "", relayJsonCallback, null);
-  }
-
-  public static BesLogManager forRawLogCallback(Context context,
-                                                IConfigurationManager configurationManager,
-                                                Consumer<String> rawLogCallback) {
-    return new BesLogManager("", context, configurationManager, "", null, rawLogCallback);
+    this(incidentId, context, configurationManager, "", relayJsonCallback);
   }
 
   private BesLogManager(String incidentId, Context context,
                         IConfigurationManager configurationManager,
                         String apiBaseUrl,
-                        Consumer<String> relayJsonCallback,
-                        Consumer<String> rawLogCallback) {
+                        Consumer<String> relayJsonCallback) {
     mIncidentId = incidentId;
     mContext = context;
     mConfigurationManager = configurationManager;
     mApiBaseUrl = apiBaseUrl != null ? apiBaseUrl.trim() : "";
     mRelayJsonCallback = relayJsonCallback;
-    mRawLogCallback = rawLogCallback;
     mHandler = new Handler(Looper.getMainLooper());
 
     mFirstPacketTimeout = () -> {
@@ -215,17 +206,6 @@ public class BesLogManager {
       return;
     }
 
-    if (mRawLogCallback != null) {
-      new Thread(() -> {
-        try {
-          mRawLogCallback.accept(fullLog);
-        } catch (Exception e) {
-          Log.e(TAG, "rawLogCallback failed", e);
-        }
-      }).start();
-      return;
-    }
-
     if (mIncidentId == null || mIncidentId.isEmpty()) {
       if (fullLog.isEmpty()) {
         Log.i(TAG, "BES log buffer empty — nothing to print");
@@ -242,6 +222,44 @@ public class BesLogManager {
 
     final String snapshot = fullLog;
     new Thread(() -> uploadLogs(snapshot)).start();
+  }
+
+  /**
+   * Deliver entries that are already on disk (the BES TRACE store) through the same relay or
+   * upload path as a completed mh_logs dump. No UART traffic.
+   */
+  public void deliverStored(JSONArray entries) {
+    if (!mFinished.compareAndSet(false, true)) return;
+    final String json = buildFirmwareUploadJson(entries);
+    if (mRelayJsonCallback != null) {
+      new Thread(() -> {
+        try {
+          mRelayJsonCallback.accept(json);
+        } catch (Exception e) {
+          Log.e(TAG, "relayJsonCallback failed", e);
+        }
+      }).start();
+      return;
+    }
+    if (mIncidentId == null || mIncidentId.isEmpty() || entries.length() == 0) {
+      Log.i(TAG, "No stored BES TRACE to upload");
+      return;
+    }
+    new Thread(() -> uploadBody(json)).start();
+  }
+
+  /** glasses_firmware artifact JSON for already-timestamped entries. */
+  public static String buildFirmwareUploadJson(JSONArray entries) {
+    try {
+      JSONObject body = new JSONObject();
+      body.put("type", "logs");
+      body.put("source", "glasses_firmware");
+      body.put("entries", entries);
+      return body.toString();
+    } catch (Exception e) {
+      Log.e(TAG, "buildFirmwareUploadJson failed", e);
+      return "{\"type\":\"logs\",\"source\":\"glasses_firmware\",\"entries\":[]}";
+    }
   }
 
   /**
@@ -294,6 +312,10 @@ public class BesLogManager {
   }
 
   private void uploadLogs(String logText) {
+    uploadBody(buildFirmwareUploadJson(logText));
+  }
+
+  private void uploadBody(String bodyStr) {
     try {
       String coreToken = mConfigurationManager.getCoreToken();
       if (coreToken == null || coreToken.isEmpty()) {
@@ -306,7 +328,6 @@ public class BesLogManager {
           : ServerConfigUtil.getServerBaseUrl(mContext);
       String url = buildReportArtifactsUrl(baseUrl, mIncidentId);
 
-      String bodyStr = buildFirmwareUploadJson(logText);
       JSONObject body = new JSONObject(bodyStr);
 
       RequestBody requestBody = RequestBody.create(bodyStr, JSON_MEDIA_TYPE);
