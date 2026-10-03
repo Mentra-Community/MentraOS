@@ -60,6 +60,8 @@ export const frameworkRunSchema = z.object({
     problem("Passing test contradicts setup or steps");
   const sameFailure = (left: z.infer<typeof failure>, right: z.infer<typeof failure>) =>
     left.phase === right.phase && left.actionId === right.actionId && left.message === right.message;
+  for (const error of run.result.teardown.errors) if (!run.result.failures.some(flattened => sameFailure(error, flattened)))
+    problem("Teardown diagnostics must remain in run failures");
   for (const outcome of run.result.teardown.outcomes) if (outcome.state === "cleaned") for (const error of outcome.errors ?? []) {
     if (!run.result.teardown.errors.some(flattened => sameFailure(error, flattened))
       || !run.result.failures.some(flattened => sameFailure(error, flattened))) problem("Cleanup diagnostics must remain in teardown errors and run failures");

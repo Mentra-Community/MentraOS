@@ -79,3 +79,20 @@ test("cleaned recorder diagnostics preserve evidence failure independently of ha
   expect(frameworkRunSchema.safeParse({...good, result: {...good.result,
     teardown: {...good.result.teardown, outcomes: [{...cleaned, errors: [{...error, phase: "arbitrary"}]}]}}}).success).toBe(false);
 });
+
+test("teardown evidence errors cannot disappear from run failures when outcome errors are absent or empty", () => {
+  const good = run();
+  const error = {phase: "evidence" as const, actionId: "finalize-recording", message: "Recording finalization failed"};
+  for (const cleaned of [
+    {state: "cleaned" as const, resourceId: "recorder", evidence: []},
+    {state: "cleaned" as const, resourceId: "recorder", evidence: [], errors: []},
+  ]) {
+    const diagnostic = {...good, result: {...good.result,
+      teardown: {...good.result.teardown, outcomes: [cleaned], errors: [error]}}};
+    expect(frameworkRunSchema.safeParse(diagnostic).success).toBe(false);
+    const preserved = frameworkRunSchema.parse({...diagnostic, result: {...diagnostic.result, failures: [error]}});
+    expect(frameworkRunOutcome(preserved)).toBe("pass");
+    expect(frameworkEvidenceComplete(preserved)).toBe(false);
+    expect(preserved.result.teardown.outcomes[0]).toEqual(cleaned);
+  }
+});
