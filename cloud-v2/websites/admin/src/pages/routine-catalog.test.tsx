@@ -42,6 +42,8 @@ test("run keeps every timestamp-linked step beside a bounded recording and stack
   expect(html).toContain("lg:sticky lg:top-[calc(var(--admin-header-height,6rem)+1rem)]");
   expect(html).toContain("object-contain lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-8rem)]");
   expect(html.match(/Watch this step/g)).toHaveLength(71);
+  expect(html.match(/class="w-7 shrink-0 text-right"/g)).toHaveLength(71);
+  expect(html).toContain('class="w-7 shrink-0 text-right">71.</span>');
   expect(html).toContain("Started ");
   expect(html).toContain("Setup 1.0 seconds · Test 71.0 seconds · Teardown 1.0 seconds");
   expect(html).toContain("/api/admin/routine-catalog/results/by-run/saved-run/assets/recording");

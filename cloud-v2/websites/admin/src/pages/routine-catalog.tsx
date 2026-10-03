@@ -134,14 +134,17 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     <div className={`min-w-0 space-y-5 ${hasRecording ? "order-2 lg:order-1" : ""}`}>
     <section aria-label="Execution steps" className={PANEL}><h3 className="font-semibold">Execution</h3>
       <p className="mt-2">Setup: {run.result.setup.status}{run.result.setup.actionId && ` (${run.result.setup.actionId})`}</p>
-      <ol className={`mt-3 list-decimal space-y-2 pl-8 ${hasRecording ? "lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-10rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>{run.result.steps.map(step => {
+      <ol role="list" className={`mt-3 list-none space-y-2 ${hasRecording ? "lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-10rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>{run.result.steps.map((step, index) => {
         const source = definition?.steps.find(item => item.id === step.id);
         const title = source?.instruction ?? step.id;
-        return <li key={step.id} className="rounded-lg border border-[#e0e4de] p-3">
+        return <li key={step.id} className="flex gap-3 rounded-lg border border-[#e0e4de] p-3">
+          <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
+          <div className="min-w-0 flex-1">
           {step.recordingLocation && uploadsComplete ? <button className="block w-full text-left" onClick={() => seekStep(step.recordingLocation!)}><span className="underline">{title}</span> · {step.status} · {seconds(step.durationMs)}<span className="block text-sm">Watch this step</span></button>
             : <p>{title} · {step.status}{step.status !== "not-run" && ` · ${seconds(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
           {source && <p className="mt-1 text-sm">Expected: {source.expected}</p>}
           {step.causedBy && <p className="mt-1 text-sm">Caused by: {step.causedBy}</p>}
+          </div>
         </li>;
       })}</ol>
       <p className="mt-3">Teardown: {run.result.teardown.ready ? "ready" : "failed"}</p>
