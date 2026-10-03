@@ -1,20 +1,24 @@
 import CrustModule from "@mentra/crust"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useEffect, useState} from "react"
 import {AppState, Platform, ScrollView} from "react-native"
 
-import {Header, Screen} from "@/components/ignite"
+import {Header, Screen, Text} from "@/components/ignite"
 import PermissionButton from "@/components/settings/PermButton"
+import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import {useDeployment} from "@/services/deployment"
+import {useNavigationStore} from "@/stores/navigation"
 import {showLeaveAppAlert} from "@/utils/AlertUtils"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {deploymentStore} from "@/services/deployment"
 
 export default function PrivacySettingsScreen() {
+  const [telemetryEnabled, setTelemetryEnabled] = useSetting<boolean>(SETTINGS.telemetry_enabled.key)
+  const [chinaDeployment] = useSetting<boolean>(SETTINGS.china_deployment.key)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
   const [calendarEnabled, setCalendarEnabled] = useState(true)
   const [calendarPermissionPending, setCalendarPermissionPending] = useState(false)
@@ -23,8 +27,9 @@ export default function PrivacySettingsScreen() {
   const [appState, setAppState] = useState(AppState.currentState)
   const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
-  const deployment = deploymentStore.getActive()
+  const {activeDeployment: deployment, selectionResolved} = useDeployment()
   const privacyPolicyUrl = deployment.manifest.links.privacyPolicyUrl
+  const telemetryAllowed = selectionResolved && deployment.manifest.telemetry && !chinaDeployment
 
   // Check permissions when screen loads
   useEffect(() => {
@@ -203,6 +208,16 @@ export default function PrivacySettingsScreen() {
     <Screen preset="fixed">
       <Header titleTx="privacySettings:title" leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView className="pt-6 px-6 -mx-6">
+        <ToggleSetting
+          label={translate("privacySettings:telemetryLabel")}
+          subtitle={translate("privacySettings:telemetrySubtitle")}
+          value={telemetryAllowed && telemetryEnabled}
+          onValueChange={setTelemetryEnabled}
+          disabled={!telemetryAllowed}
+          testID="privacy-telemetry"
+        />
+        <Text tx="privacySettings:basicUsageNotice" className="text-muted-foreground mt-3 mb-6" size="xs" />
+
         {/* Notification Permission - Android Only */}
         {Platform.OS === "android" && !notificationsEnabled && (
           <>
