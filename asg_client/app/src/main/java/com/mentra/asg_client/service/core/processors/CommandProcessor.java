@@ -12,6 +12,7 @@ import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.core.ReportManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
+import com.mentra.asg_client.service.core.handlers.AudioReproCommandHandler;
 import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
@@ -488,6 +489,11 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new PairingAudioCommandHandler(context));
             Log.d(TAG, "✅ Registered PairingAudioCommandHandler");
+
+            // Refuses every command unless the adb-created gate file exists.
+            commandHandlerRegistry.registerHandler(
+                    new AudioReproCommandHandler(context, k900CommandHandler, configurationManager));
+            Log.d(TAG, "✅ Registered AudioReproCommandHandler");
 
             Log.i(
                     TAG,
