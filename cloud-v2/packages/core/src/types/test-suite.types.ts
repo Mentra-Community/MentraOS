@@ -2,7 +2,7 @@ import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition
 import {frameworkRunIdSchema} from "./framework-run.types";
 import {z} from "zod";
 
-/** One dispatched job, with its expected members declared before execution. */
+/** A dispatched group of at least two members, declared before execution. */
 export const testSuiteSchema = z.object({
   suiteId: frameworkRunIdSchema,
   channel: z.enum(["dev", "staging", "pr", "local"]),
@@ -14,7 +14,7 @@ export const testSuiteSchema = z.object({
   }).strict(),
   members: z.array(z.object({memberId: frameworkRunIdSchema, requestId: frameworkRunIdSchema.optional(), headSha: z.string().regex(/^[a-f0-9]{40}$/).optional(), routineId: routineIdentitySchema,
     platform: routinePlatformSchema,
-  }).strict()).min(1).max(100),
+  }).strict()).min(2).max(100),
 }).strict().superRefine((suite, ctx) => {
   if (new Set(suite.members.map(member => member.memberId)).size !== suite.members.length
     || new Set(suite.members.flatMap(member => member.requestId ? [member.requestId] : [])).size !== suite.members.filter(member => member.requestId).length)

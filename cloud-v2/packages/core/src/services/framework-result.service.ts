@@ -17,6 +17,25 @@ export interface FrameworkResultRepository {
   getByRun(runId: string): Promise<StoredFrameworkRun | null>;
 }
 export interface StoredFrameworkRun {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean}
+export interface FrameworkRunSummary {
+  runId: string; requestId: string; hostId: string; routineId: string; platform: string; laneId: string;
+  startedAt: string; finishedAt: string; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed";
+  build: Pick<FrameworkRun["build"], "repository" | "channel" | "headSha" | "prNumber"> & {release?: string; producerUrl?: string};
+}
+export function summarizeFrameworkRun(run: FrameworkRun, uploadsComplete: boolean): FrameworkRunSummary {
+  const release = typeof run.build.releaseIdentity === "string" ? run.build.releaseIdentity
+    : typeof run.build.release === "string" ? run.build.release : undefined;
+  const source = run.build.source as {buildRunId?: unknown} | undefined;
+  const producerUrl = typeof run.build.producerUrl === "string" ? run.build.producerUrl
+    : Number.isSafeInteger(source?.buildRunId) && Number(source?.buildRunId) > 0
+      ? `https://github.com/${run.build.repository}/actions/runs/${source!.buildRunId}` : undefined;
+  return {runId: run.result.runId, requestId: run.requestId, hostId: run.hostId, routineId: run.routineId,
+    platform: run.platform, laneId: run.laneId, startedAt: run.startedAt, finishedAt: run.finishedAt,
+    outcome: frameworkRunOutcome(run), uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed",
+    build: {repository: run.build.repository, channel: run.build.channel, headSha: run.build.headSha,
+      ...(run.build.prNumber !== undefined ? {prNumber: run.build.prNumber} : {}),
+      ...(release ? {release} : {}), ...(producerUrl ? {producerUrl} : {})}};
+}
 export const nativeRunFilter = {"payload.schemaVersion": 1};
 export interface ResultRequestBinding {hostId: string; input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown}}
 const requestBinding = async (requestId: string): Promise<ResultRequestBinding | null> => {
@@ -116,7 +135,7 @@ export class FrameworkResultService {
       manifestSha256: requestInputDigest(stored.payload.assets)};
   }
 
-  async list(scope: Record<string, string> = {}) {
+  async list(scope: Record<string, string> = {}): Promise<{runs: FrameworkRunSummary[]}> {
     const filter: Record<string, unknown> = {...nativeRunFilter};
     for (const field of ["routineId", "platform", "hostId", "laneId"])
       if (scope[field]) filter[field] = scope[field];
@@ -127,9 +146,7 @@ export class FrameworkResultService {
       .sort({startedAt: -1, runId: -1}).limit(100).read("primary").readConcern("majority").lean();
     return {runs: rows.map(row => {
       const run = frameworkRunSchema.parse(row.payload);
-      return {runId: run.result.runId, requestId: run.requestId, hostId: run.hostId, routineId: run.routineId, platform: run.platform, laneId: run.laneId,
-        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
-        uploadsComplete: row.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
+      return summarizeFrameworkRun(run, row.uploadsComplete);
     })};
   }
 

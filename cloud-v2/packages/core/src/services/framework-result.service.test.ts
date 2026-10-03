@@ -99,6 +99,31 @@ test("native result list scopes the archive digest and excludes retained old pay
   } finally {find.mockRestore();}
 });
 
+test("native run summaries retain build identity and distinct execution and evidence outcomes", async () => {
+  const build = {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40),
+    releaseIdentity: "2.1.0-dev.42", source: {buildRunId: 1234}};
+  const run = {schemaVersion: 1, hostId: "mini", requestId: "request:mac.v2", routineId: "notes.search_v2",
+    definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build,
+    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", assets: [],
+    result: {runId: "request:mac.v2", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "passed",
+      steps: [{id: "required", status: "passed", durationMs: 10}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: "evidence", actionId: "capture", message: "Recording unavailable"}], evidence: [],
+      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}};
+  const find = spyOn(TestRunModel, "find").mockImplementation((() => {
+    return {sort() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;},
+      lean: async () => [{payload: run, uploadsComplete: false}]};
+  }) as any);
+  try {
+    const summary = (await new FrameworkResultService().list()).runs[0]!;
+    expect(summary.build).toEqual({repository: build.repository, channel: "dev", headSha: build.headSha,
+      release: build.releaseIdentity, producerUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/1234"});
+    expect(summary.outcome).toBe("pass");
+    expect(summary.evidenceStatus).toBe("failed");
+    expect(summary.uploadsComplete).toBe(false);
+    expect(summary.requestId).toBe("request:mac.v2");
+  } finally {find.mockRestore();}
+});
+
 test("invalid frozen result reports bounded issue codes and paths without payload values", async () => {
   const service = new FrameworkResultService();
   try {
