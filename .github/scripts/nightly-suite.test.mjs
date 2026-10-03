@@ -109,6 +109,25 @@ test("deadline completes missing bound results as non-pass; unbound members do n
   assert.deepEqual(suiteResultMessage(result, expected).failedRoutines, expected)
 })
 
+test("published not-run members finish immediately without waiting for the suite deadline", async () => {
+  const clock = Date.parse(suite.finishedAt)
+  let reads = 0, writes = 0
+  const completedMembers = {...suite, outcome: "running", finishedAt: undefined,
+    members: expected.map(routineId => ({routineId, requestId: routineId, runId: routineId,
+      status: "not-run", publicationComplete: true, finishedAt: suite.finishedAt}))}
+  const result = await reconcileNightlySuite({suiteId: suite.suiteId, token: "synthetic", expectedRoutineIds: expected,
+    deadline: clock + 3 * 3600_000, now: () => clock,
+    sleep: async () => assert.fail("Terminal members must not wait for another poll"),
+    fetchImpl: async (_url, options) => {
+      if (options.method === "GET") {reads++; return Response.json(completedMembers)}
+      writes++
+      return Response.json({...completedMembers, outcome: "failed", passed: 0, finishedAt: suite.finishedAt})
+    }})
+  assert.equal(reads, 1)
+  assert.equal(writes, 1)
+  assert.equal(result.outcome, "failed")
+})
+
 test("read outages retry only reads until deadline, then use frozen completion response", async () => {
   let clock = Date.parse(suite.finishedAt), writes = 0
   const result = await reconcileNightlySuite({suiteId: suite.suiteId, token: "synthetic", expectedRoutineIds: expected,

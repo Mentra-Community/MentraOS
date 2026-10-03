@@ -3,7 +3,7 @@ import {slackCall} from "./release-slack-message.mjs"
 import {DEV_FOUNDATION_NIGHTLY_ROUTINES} from "./nightly-device-routines.mjs"
 
 const suiteEndpoint = "https://core.dev.us-west-2.mentraglass.com/api/internal/test-runs/suites"
-const terminalStatuses = new Set(["pass", "failed", "teardown-failed", "cancelled", "aborted", "interrupted", "infra-failed", "setup-failed", "incomplete"])
+const terminalStatuses = new Set(["pass", "failed", "teardown-failed", "cancelled", "aborted", "interrupted", "infra-failed", "setup-failed", "incomplete", "not-run"])
 
 export function frozenNightlySuite({plan, runId, attempt, workflowSha}) {
   if (!plan.sourceRunId) return undefined
