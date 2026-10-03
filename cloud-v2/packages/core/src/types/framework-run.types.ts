@@ -84,6 +84,25 @@ export const frameworkRunSchema = z.object({
     problem("Passing test contradicts setup or steps");
   const sameFailure = (left: z.infer<typeof failure>, right: z.infer<typeof failure>) =>
     left.phase === right.phase && left.actionId === right.actionId && left.message === right.message;
+  const reportedCleanupFailure = (error: z.infer<typeof failure>) => (error.phase === "teardown" || error.phase === "evidence")
+    && run.result.teardown.errors.some(flattened => sameFailure(error, flattened))
+    && run.result.failures.some(flattened => sameFailure(error, flattened));
+  for (const action of run.result.teardown.actions ?? []) if (action.scope === "shared" && action.status !== "passed") {
+    if (action.status === "not-run") {
+      if (run.result.teardown.ready) problem("Ready teardown contradicts unexecuted shared cleanup");
+      continue;
+    }
+    const resourceId = action.id.startsWith("cleanup:") ? action.id.slice("cleanup:".length) : undefined;
+    const outcomes = run.result.teardown.outcomes.filter(outcome => outcome.resourceId === resourceId);
+    const diagnosed = outcomes.some(outcome => outcome.state === "cleaned"
+      ? !!outcome.errors?.length && outcome.errors.every(reportedCleanupFailure)
+      : outcome.state === "failed" ? reportedCleanupFailure(outcome.failure)
+        : !run.result.teardown.ready && run.result.teardown.unavailableResources.some(item => item.resource === outcome.resourceId));
+    if (!diagnosed) problem("Failed shared cleanup must retain its classified diagnostics or active resource outcome");
+    if (run.result.teardown.ready && (action.status !== "failed" || !outcomes.some(outcome => outcome.state === "cleaned"
+      && !!outcome.errors?.length && outcome.errors.every(error => error.phase === "evidence" && reportedCleanupFailure(error)))))
+      problem("Ready teardown may contain failed shared cleanup only for recorded evidence diagnostics on a cleaned resource");
+  }
   for (const error of run.result.teardown.errors) if (!run.result.failures.some(flattened => sameFailure(error, flattened)))
     problem("Teardown diagnostics must remain in run failures");
   for (const outcome of run.result.teardown.outcomes) if (outcome.state === "cleaned") for (const error of outcome.errors ?? []) {

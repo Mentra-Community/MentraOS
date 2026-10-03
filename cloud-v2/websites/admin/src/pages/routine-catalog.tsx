@@ -141,7 +141,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
-      durationMs={run.result.timing.setupMs} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
+      actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
     <div className={hasRecording ? "grid gap-5 lg:h-[calc(100dvh-var(--admin-header-height,6rem)-2rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
     {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <h3 className="shrink-0 font-semibold">Recording</h3>
@@ -181,10 +181,11 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
 }
 
 type LifecycleAction = NonNullable<FrameworkRun["result"]["setup"]["actions"]>[number];
-function LifecyclePanel({phase, actions, status, durationMs, failures, unavailable = []}: {
+function LifecyclePanel({phase, actions, status, actionId, durationMs, failures, unavailable = []}: {
   phase: "setup" | "teardown";
   actions?: LifecycleAction[];
   status: "passed" | "failed" | "cancelled";
+  actionId?: string;
   durationMs: number;
   failures: FrameworkRun["result"]["failures"];
   unavailable?: FrameworkRun["result"]["teardown"]["unavailableResources"];
@@ -205,6 +206,7 @@ function LifecyclePanel({phase, actions, status, durationMs, failures, unavailab
   </li>)}</ol>;
   return <section aria-label={`${title} details`} className={PANEL}>
     <h3 className="font-semibold">{title} <StepStatus status={status} /> · {(durationMs / 1000).toFixed(1)} seconds</h3>
+    {actionId && <p className="mt-2 text-sm">Stopped at: {actionId}</p>}
     <h4 className="mt-4 text-sm font-semibold">Routine {phase}</h4>
     {routine === undefined ? <p className="mt-2 text-sm text-[#68746d]">Routine-specific {phase} details were not recorded for this run.</p>
       : routine.length ? actionList(routine) : <p className="mt-2 text-sm text-[#68746d]">No routine-specific {phase} steps.</p>}

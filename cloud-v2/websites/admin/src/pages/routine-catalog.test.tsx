@@ -65,6 +65,14 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
   expect(pending).toContain("Evidence upload pending");
   expect(pending).not.toContain("<video");
   expect(pending).not.toContain("lg:overflow-y-auto");
+  for (const status of ["failed", "cancelled"] as const) {
+    client.setQueryData(["framework-run", "saved-run"], {run: {...run, result: {...run.result,
+      setup: {status, actionId: "legacy-entry"}}}, definition: null, outcome: status, uploadsComplete: false, evidenceStatus: "complete"});
+    const legacy = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId="saved-run" /></QueryClientProvider>);
+    expect(legacy).toContain("Stopped at: legacy-entry");
+    expect(legacy).toContain("Routine-specific setup details were not recorded");
+    expect(legacy).toContain(status === "cancelled" ? "Cancelled" : "failed");
+  }
 });
 
 test("routine lifecycle rows report real actions without video and keep failures in their phase", () => {

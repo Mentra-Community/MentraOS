@@ -149,7 +149,8 @@ test("routine lifecycle failures cannot hide behind aggregate pass while shared 
   }
   const evidenceError = {phase: "evidence" as const, actionId: "finalize-recording", message: "Recording finalization failed"};
   const sharedEvidence = {...good, result: {...good.result, failures: [evidenceError], teardown: {...good.result.teardown,
-    actions: [{...action, id: evidenceError.actionId, scope: "shared", status: "failed"}], errors: [evidenceError]}}};
+    actions: [{...action, id: "cleanup:recorder", scope: "shared", status: "failed"}], errors: [evidenceError],
+    outcomes: [{state: "cleaned", resourceId: "recorder", evidence: [], errors: [evidenceError]}]}}};
   const preserved = frameworkRunSchema.parse(sharedEvidence);
   expect(frameworkRunOutcome(preserved)).toBe("pass");
   expect(frameworkEvidenceComplete(preserved)).toBe(false);
@@ -160,5 +161,59 @@ test("routine lifecycle failures cannot hide behind aggregate pass while shared 
     expect(frameworkRunSchema.safeParse(setupStopped).success).toBe(true);
     expect(frameworkRunSchema.safeParse({...setupStopped, result: {...setupStopped.result,
       teardown: {...setupStopped.result.teardown, actions: [{...skipped, status: "failed"}]}}}).success).toBe(false);
+  }
+});
+
+test("failed shared teardown actions require their own outcome diagnostics and cannot conceal cleanup failure", () => {
+  const old = run();
+  const action = {id: "cleanup:app", instruction: "Uninstall the selected Mentra App", expected: "The app and test data are absent",
+    scope: "shared" as const, status: "failed" as const, durationMs: 10};
+  const error = {phase: "teardown" as const, actionId: "app", message: "App removal failed"};
+  const report = {...old, result: {...old.result, teardown: {...old.result.teardown, actions: [action]}}};
+  expect(frameworkRunSchema.safeParse(report).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...report, result: {...report.result,
+    teardown: {...report.result.teardown, ready: false}}}).success).toBe(false);
+  const diagnosed = {...report, result: {...report.result, failures: [error], teardown: {...report.result.teardown,
+    ready: false, errors: [error], outcomes: [{state: "failed", resourceId: "app", failure: error}]}}};
+  expect(frameworkRunOutcome(frameworkRunSchema.parse(diagnosed))).toBe("teardown-failed");
+  expect(frameworkRunSchema.safeParse({...diagnosed, result: {...diagnosed.result,
+    teardown: {...diagnosed.result.teardown, ready: true}}}).success).toBe(false);
+  for (const invalid of [
+    {...diagnosed, result: {...diagnosed.result, failures: []}},
+    {...diagnosed, result: {...diagnosed.result, teardown: {...diagnosed.result.teardown, errors: []}}},
+    {...diagnosed, result: {...diagnosed.result, teardown: {...diagnosed.result.teardown,
+      outcomes: [{state: "failed", resourceId: "other-app", failure: error}]}}},
+  ]) expect(frameworkRunSchema.safeParse(invalid).success).toBe(false);
+  const active = {...report, result: {...report.result, teardown: {...report.result.teardown, ready: false,
+    outcomes: [{state: "still-active", resourceId: "app", writer: {pid: 12}, evidence: []}],
+    unavailableResources: [{resource: "app", cause: "Owned app process is still active", nextAction: "Inspect the recorded app process"}]}}};
+  expect(frameworkRunOutcome(frameworkRunSchema.parse(active))).toBe("teardown-failed");
+});
+
+test("ready shared cleanup failures are allowed only for flattened evidence diagnostics on the matching cleaned resource", () => {
+  const old = run();
+  const action = {id: "cleanup:recorder", instruction: "Stop and finalize the original recording", expected: "The recorder is settled",
+    scope: "shared" as const, status: "failed" as const, durationMs: 10};
+  const error = {phase: "evidence" as const, actionId: "finalize-recording", message: "Report finalization failed"};
+  const report = {...old, result: {...old.result, failures: [error], teardown: {...old.result.teardown,
+    actions: [action], errors: [error], outcomes: [{state: "cleaned", resourceId: "recorder", evidence: [], errors: [error]}]}}};
+  const preserved = frameworkRunSchema.parse(report);
+  expect(frameworkRunOutcome(preserved)).toBe("pass");
+  expect(frameworkEvidenceComplete(preserved)).toBe(false);
+  for (const invalid of [
+    {...report, result: {...report.result, failures: []}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown, errors: []}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown, outcomes: []}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown,
+      outcomes: [{state: "cleaned", resourceId: "recorder", evidence: [], errors: []}]}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown,
+      outcomes: [{state: "cleaned", resourceId: "different-recorder", evidence: [], errors: [error]}]}}},
+  ]) expect(frameworkRunSchema.safeParse(invalid).success).toBe(false);
+  for (const status of ["cancelled", "not-run"] as const) {
+    const changed = {...report, result: {...report.result, teardown: {...report.result.teardown,
+      actions: [{...action, status, durationMs: status === "not-run" ? 0 : 10}]}}};
+    expect(frameworkRunSchema.safeParse(changed).success).toBe(false);
+    expect(frameworkRunSchema.safeParse({...changed, result: {...changed.result,
+      teardown: {...changed.result.teardown, ready: false}}}).success).toBe(true);
   }
 });
