@@ -1,6 +1,6 @@
 import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
-import {Platform, TouchableOpacity, View} from "react-native"
+import {Platform, Pressable, View} from "react-native"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 
@@ -70,6 +70,11 @@ export default function LoginScreen() {
     push("/auth/signup")
   }
 
+  const handleEmailLogin = async () => {
+    if (!(await selectDeployment(() => store.returnToMentra()))) return
+    push("/auth/email-login")
+  }
+
   const selectDeployment = async (select: () => Promise<void>): Promise<boolean> => {
     try {
       await select()
@@ -130,13 +135,12 @@ export default function LoginScreen() {
         {/* Already have an account? Log in */}
         <View className="flex-row flex-wrap justify-center items-center gap-1 mt-2">
           <Text className="text-sm text-muted-foreground">{translate("login:alreadyHaveAccount")}</Text>
-          <TouchableOpacity
-            onPress={async () => {
-              if (!(await selectDeployment(() => store.returnToMentra()))) return
-              push("/auth/email-login")
-            }}>
+          <Pressable
+            onPress={handleEmailLogin}
+            onAccessibilityTap={handleEmailLogin}
+            style={({pressed}) => ({opacity: pressed ? 0.2 : 1})}>
             <Text className="text-sm text-secondary-foreground font-semibold">{translate("login:logIn")}</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
 
         <Text className="text-[11px] text-muted-foreground text-center mt-2">{translate("login:termsText")}</Text>
