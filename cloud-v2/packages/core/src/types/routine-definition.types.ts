@@ -3,6 +3,7 @@ import {z} from "zod";
 const text = z.string().min(1).max(2000);
 export const routineIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
 const id = routineIdentitySchema;
+const action = z.object({id, instruction: text, expected: text}).strict();
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 /** Serialized source definition; executable functions remain in the harness repository. */
 export const publishedRoutineDefinitionSchema = z.object({
@@ -15,14 +16,17 @@ export const publishedRoutineDefinitionSchema = z.object({
   requires: z.array(id).max(30),
   requirements: z.array(text).max(30),
   fixtures: z.array(z.object({provider: id, description: text}).strict()).max(30),
-  steps: z.array(z.object({id, instruction: text, expected: text}).strict()).min(1).max(500),
+  setup: z.array(action).max(500).optional(),
+  steps: z.array(action).min(1).max(500),
+  teardown: z.array(action).max(500).optional(),
   execution: z.object({resourceKinds: z.array(z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"])).min(1),
     policy: z.record(z.unknown()).optional()}).strict().optional(),
   source: z.object({repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
     revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^routines\/[\w.-]+\/routine\.ts$/)}).strict(),
 }).strict().superRefine((definition, ctx) => {
-  if (new Set(definition.steps.map(step => step.id)).size !== definition.steps.length)
-    ctx.addIssue({code: "custom", message: "Step identities must be unique"});
+  const actions = [...(definition.setup ?? []), ...definition.steps, ...(definition.teardown ?? [])];
+  if (new Set(actions.map(action => action.id)).size !== actions.length)
+    ctx.addIssue({code: "custom", message: "Setup, test and teardown action identities must be unique"});
   if (new Set(definition.platforms).size !== definition.platforms.length)
     ctx.addIssue({code: "custom", message: "Platforms must be unique"});
   if (definition.entry === "home" && definition.account !== "lane")

@@ -140,6 +140,8 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
       {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
     </section>
+    <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
+      actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
     <div className={hasRecording ? "grid gap-5 lg:h-[calc(100dvh-var(--admin-header-height,6rem)-2rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
     {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <h3 className="shrink-0 font-semibold">Recording</h3>
@@ -150,7 +152,6 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     <section aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasRecording ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
       <label className="mt-3 block shrink-0 text-sm">Search steps<input type="search" className="mt-1 block w-full rounded-lg border border-[#cbd3c8] p-2" value={stepSearch} onChange={event => setStepSearch(event.target.value)} placeholder="Instruction, expected result or step ID" /></label>
       <div role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasRecording ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
-      <p>Setup: {run.result.setup.status}{run.result.setup.actionId && ` (${run.result.setup.actionId})`}</p>
       {!visibleSteps.length && <p className="mt-3">No steps match your search.</p>}
       <ol role="list" className="mt-3 list-none space-y-2">{visibleSteps.map(({step, index, source}) => {
         const title = source?.instruction ?? step.id;
@@ -164,18 +165,55 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
           </div>
         </li>;
       })}</ol>
-      <p className="mt-3">Teardown: {run.result.teardown.ready ? "ready" : "failed"}</p>
-      {run.result.teardown.errors.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={`cleanup-${index}`}>Cleanup / {failure.actionId}: {failure.message}</p>)}
-      {run.result.teardown.unavailableResources.map(resource => <p role="alert" className="mt-2 whitespace-pre-wrap" key={resource.resource}>{resource.resource}: {resource.cause}. Next action: {resource.nextAction}</p>)}
-      {run.result.failures.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.phase} / {failure.actionId}: {failure.message}</p>)}
+      {run.result.failures.filter(failure => failure.phase === "test").map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       </div>
     </section>
     </div>
+    <LifecyclePanel phase="teardown" actions={run.result.teardown.actions} status={run.result.teardown.ready ? "passed" : "failed"}
+      durationMs={run.result.timing.teardownMs} failures={run.result.failures.filter(failure => failure.phase === "teardown")}
+      unavailable={run.result.teardown.unavailableResources} />
     <section className={PANEL}><h3 className="font-semibold">Evidence</h3>
+      {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className="underline" href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
       <p className="mt-4 text-xs">Source revision: <code>{run.definitionRevision}</code></p>
     </section>
   </div>;
+}
+
+type LifecycleAction = NonNullable<FrameworkRun["result"]["setup"]["actions"]>[number];
+function LifecyclePanel({phase, actions, status, actionId, durationMs, failures, unavailable = []}: {
+  phase: "setup" | "teardown";
+  actions?: LifecycleAction[];
+  status: "passed" | "failed" | "cancelled";
+  actionId?: string;
+  durationMs: number;
+  failures: FrameworkRun["result"]["failures"];
+  unavailable?: FrameworkRun["result"]["teardown"]["unavailableResources"];
+}) {
+  const title = phase === "setup" ? "Setup" : "Teardown";
+  const routine = actions?.filter(action => action.scope === "routine");
+  const shared = actions?.filter(action => action.scope === "shared");
+  const actionList = (items: LifecycleAction[]) => <ol className="mt-3 space-y-2">{items.map((action, index) => <li key={action.id}
+    className="flex gap-3 rounded-lg border border-[#e0e4de] p-3">
+    <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
+    <div className="min-w-0 flex-1"><p>{action.instruction} <StepStatus status={action.status} />
+      {action.status !== "not-run" && ` · ${(action.durationMs / 1000).toFixed(1)} seconds`}</p>
+      <p className="mt-1 text-sm text-[#68746d]">Expected: {action.expected}</p>
+      {action.startedAt && <p className="mt-1 text-sm">Started {new Date(action.startedAt).toLocaleTimeString()}
+        {action.finishedAt && ` · Finished ${new Date(action.finishedAt).toLocaleTimeString()}`}</p>}
+      {action.causedBy && <p className="mt-1 text-sm">Caused by: {action.causedBy}</p>}
+    </div>
+  </li>)}</ol>;
+  return <section aria-label={`${title} details`} className={PANEL}>
+    <h3 className="font-semibold">{title} <StepStatus status={status} /> · {(durationMs / 1000).toFixed(1)} seconds</h3>
+    {actionId && <p className="mt-2 text-sm">Stopped at: {actionId}</p>}
+    <h4 className="mt-4 text-sm font-semibold">Routine {phase}</h4>
+    {routine === undefined ? <p className="mt-2 text-sm text-[#68746d]">Routine-specific {phase} details were not recorded for this run.</p>
+      : routine.length ? actionList(routine) : <p className="mt-2 text-sm text-[#68746d]">No routine-specific {phase} steps.</p>}
+    {!!shared?.length && <details className="mt-4"><summary className="cursor-pointer text-sm font-semibold">Shared framework {phase} · {shared.length} {shared.length === 1 ? "action" : "actions"}</summary>{actionList(shared)}</details>}
+    {failures.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
+    {unavailable.map(resource => <p role="alert" className="mt-2 whitespace-pre-wrap" key={resource.resource}>{resource.resource}: {resource.cause}. Next action: {resource.nextAction}</p>)}
+  </section>;
 }
 
 export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
@@ -234,8 +272,8 @@ export function recordingOffset(ms: number) {
 export function matchesStepSearch(step: FrameworkRun["result"]["steps"][number], source: RoutineEnrollment["definition"]["steps"][number] | undefined, search: string) {
   return `${step.id} ${source?.instruction ?? ""} ${source?.expected ?? ""} ${step.status}`.toLowerCase().includes(search.trim().toLowerCase());
 }
-function StepStatus({status}: {status: FrameworkRun["result"]["steps"][number]["status"]}) {
-  return <span className={`ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${status === "passed" ? "bg-green-100 text-green-800" : status === "failed" ? "bg-red-100 text-red-800" : "bg-gray-100 text-gray-700"}`}>{status === "not-run" ? "Not run" : status}</span>;
+function StepStatus({status}: {status: FrameworkRun["result"]["steps"][number]["status"] | "cancelled"}) {
+  return <span className={`ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${status === "passed" ? "bg-green-100 text-green-800" : status === "failed" ? "bg-red-100 text-red-800" : status === "cancelled" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-700"}`}>{status === "not-run" ? "Not run" : status === "cancelled" ? "Cancelled" : status}</span>;
 }
 function definitionSourceHref(source: RoutineEnrollment["definition"]["source"]) {
   return `https://github.com/${source.repository}/blob/${source.revision}/${source.path.split("/").map(encodeURIComponent).join("/")}`;

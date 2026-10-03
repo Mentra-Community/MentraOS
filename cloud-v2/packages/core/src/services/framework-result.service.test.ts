@@ -137,3 +137,102 @@ test("invalid frozen result reports bounded issue codes and paths without payloa
     expect((error as Error).message.split(";").length).toBeLessThanOrEqual(5);
   }
 });
+
+test("result ingestion binds every routine lifecycle action to the complete ordered declaration before writing", async () => {
+  const {frameworkRunSchema} = await import("../types/framework-run.types");
+  const {requestInputDigest} = await import("./test-request.service");
+  const setup = [
+    {id: "create-fixture", instruction: "Create the fixture note", expected: "The fixture note is saved"},
+    {id: "prepare-search", instruction: "Prepare the fixture search", expected: "The fixture is searchable"},
+  ];
+  const teardown = [{id: "remove-fixture", instruction: "Remove the fixture note", expected: "The fixture note is absent"}];
+  const definition: RoutineEnrollment["definition"] = {id: "notes", title: "Notes search", purpose: "Check Notes search",
+    platforms: ["ios-on-mac"], entry: "home", account: "lane", requires: [], requirements: [], fixtures: [], setup, teardown,
+    steps: [{id: "required", instruction: "Search for the fixture", expected: "The fixture note appears"}],
+    source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: "routines/notes/routine.ts"}};
+  const report = (action: typeof setup[number]) => ({...action, scope: "routine" as const, status: "passed" as const, durationMs: 10});
+  const shared = {id: "shared:app", instruction: "Install the selected Mentra App", expected: "The selected build is installed",
+    scope: "shared" as const, status: "passed" as const, durationMs: 10};
+  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "lifecycle", routineId: "notes",
+    definitionRevision: definition.source.revision, platform: "ios-on-mac", laneId: "mac",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", assets: [],
+    result: {runId: "lifecycle", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed", actions: [shared, ...setup.map(report)]},
+      test: "passed", steps: [{id: "required", status: "passed", durationMs: 10}],
+      teardown: {ready: true, actions: [...teardown.map(report), shared], outcomes: [], errors: [], unavailableResources: []},
+      failures: [], evidence: [], timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
+  let writes = 0, stored: FrameworkRun | undefined;
+  const source = {...definition};
+  const service = new FrameworkResultService({async insert(payload) {writes++; stored = payload;},
+    async getByRequest() {return null;}, async getByRun() {return null;}},
+    async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
+      platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
+    async () => ({routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
+      definitionSha256: requestInputDigest(source), definition: source}));
+  for (const phase of ["setup", "teardown"] as const) {
+    const actions = run.result[phase].actions!;
+    const {actions: omitted, ...aggregate} = run.result[phase];
+    const routine = actions.filter(action => action.scope === "routine");
+    for (const invalid of [
+      undefined, [shared], [...actions, {...routine[0]!, id: "undeclared"}],
+      actions.map(action => action.scope === "routine" ? {...action, instruction: `${action.instruction} differently`} : action),
+      actions.map(action => action.scope === "routine" ? {...action, expected: `${action.expected} differently`} : action),
+      actions.map(action => action.scope === "routine" ? {...action, scope: "shared" as const} : action),
+    ]) await expect(service.ingest({...run, result: {...run.result, [phase]: {...aggregate, ...(invalid ? {actions: invalid} : {})}}}, "mini"))
+      .rejects.toThrow(`complete ordered source ${phase} action list`);
+  }
+  await expect(service.ingest({...run, result: {...run.result, setup: {...run.result.setup,
+    actions: [shared, ...setup.map(report).reverse()]}}}, "mini")).rejects.toThrow("complete ordered source setup action list");
+  await expect(service.ingest({...run, result: {...run.result, setup: {...run.result.setup,
+    actions: [shared, report(setup[0]!)]}}}, "mini")).rejects.toThrow("complete ordered source setup action list");
+  expect(writes).toBe(0);
+  expect((await service.ingest(run, "mini")).created).toBe(true);
+  expect(stored?.result.setup.actions).toEqual(run.result.setup.actions);
+  expect(stored?.result.teardown.actions).toEqual(run.result.teardown.actions);
+  expect(writes).toBe(1);
+
+  // Shared entry may fail before any routine hook starts; normal shared disposal still establishes readiness.
+  const skipped = (action: typeof setup[number]) => ({...report(action), status: "not-run" as const, durationMs: 0, causedBy: shared.id});
+  const setupStopped = {...run, result: {...run.result,
+    setup: {status: "failed" as const, actionId: shared.id, actions: [{...shared, status: "failed" as const}, ...setup.map(skipped)]},
+    test: "not-run" as const, steps: [{id: "required", status: "not-run" as const, durationMs: 0, causedBy: shared.id}],
+    teardown: {...run.result.teardown, actions: [...teardown.map(skipped), shared]},
+    failures: [{phase: "setup" as const, actionId: shared.id, message: "Selected app launch failed"}]}};
+  await service.ingest(setupStopped, "mini");
+  expect(stored?.result.teardown.ready).toBe(true);
+  expect(stored?.result.teardown.actions?.[0]?.status).toBe("not-run");
+
+  // Missing metadata means no routine hooks; explicit arrays from a new producer still work.
+  delete source.setup; delete source.teardown;
+  const {actions: omittedTeardown, ...legacyTeardown} = run.result.teardown;
+  const legacy = {...run, result: {...run.result, setup: {status: "passed" as const},
+    teardown: legacyTeardown}};
+  await service.ingest(legacy, "mini");
+  await service.ingest({...legacy, result: {...legacy.result, setup: {...legacy.result.setup, actions: [shared]},
+    teardown: {...legacy.result.teardown, actions: []}}}, "mini");
+  await expect(service.ingest(run, "mini")).rejects.toThrow("complete ordered source setup action list");
+  source.setup = []; source.teardown = [];
+  await expect(service.ingest(legacy, "mini")).rejects.toThrow("complete ordered source setup action list");
+  await service.ingest({...legacy, result: {...legacy.result, setup: {...legacy.result.setup, actions: []},
+    teardown: {...legacy.result.teardown, actions: []}}}, "mini");
+});
+
+test("old saved lifecycle omissions remain readable without invented action reports", async () => {
+  const {frameworkRunSchema} = await import("../types/framework-run.types");
+  const old = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "old-run", routineId: "notes",
+    definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", assets: [],
+    result: {runId: "old-run", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "passed",
+      steps: [{id: "required", status: "passed", durationMs: 10}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [],
+      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
+  const service = new FrameworkResultService({async insert() {},
+    async getByRequest() {return {payload: old, payloadSha256: "f".repeat(64), uploadsComplete: true};},
+    async getByRun() {return null;}}, async () => null, async () => {}, async () => null);
+  const detail = await service.detail("old-run");
+  expect(detail.run).toEqual(old);
+  expect(detail.outcome).toBe("pass");
+  expect(detail.run.result.setup).not.toHaveProperty("actions");
+  expect(detail.run.result.teardown).not.toHaveProperty("actions");
+});
