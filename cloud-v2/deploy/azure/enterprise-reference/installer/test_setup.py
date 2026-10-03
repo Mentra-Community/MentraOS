@@ -479,8 +479,9 @@ class InstallerTests(unittest.TestCase):
             if args[:2]==('containerapp','show'):
                 return {'properties':{'template':{'containers':[{'env':[{'name':'CLOUD_CORE_ADMIN_EMAILS','value':'existing@example.com'}]}]}}}
             return {}
-        with patch.object(setup,'azure',side_effect=azure), patch.object(setup.subprocess,'Popen',side_effect=AssertionError('must reuse saved key')), patch.object(setup,'emit'):
+        with patch.object(setup,'azure',side_effect=azure), patch.object(setup,'execute_admin_script',return_value=argparse.Namespace(stdout='MENTRA_ADMIN_END')) as cleanup, patch.object(setup,'emit'):
             setup.bootstrap_admin(self.args,self.directory,self.config,self.state)
+        self.assertIn(b'fs.unlinkSync', cleanup.call_args.args[3])
         self.assertIn('existing@example.com',self.config['coreAdminEmails'])
         self.assertIn('api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local',self.config['coreAdminEmails'])
         self.assertEqual(setup.digest(self.directory/'deployment.config.json'),self.state['configHash'])

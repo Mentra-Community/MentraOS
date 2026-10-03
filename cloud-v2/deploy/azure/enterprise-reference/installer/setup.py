@@ -762,66 +762,70 @@ def check_teams(args, directory, config, state):
     emit(args, checks)
 
 
+def execute_admin_script(config, current, owner, script):
+    import pty
+    code = base64.b64encode(script).decode()
+    if not GUID.fullmatch(owner):
+        raise SetupError('Invalid saved deployment owner')
+    remote = '/app/cloud-v2/packages/core/mentra-admin-' + owner + '.ts'
+    command = f'''bun -e "console.log('MENTRA_SCRIPT_READY'); const rl=require('node:readline').createInterface({{input:process.stdin}}); const chunks=[]; const encoded=await new Promise(resolve=>rl.on('line',line=>{{if(line==='MENTRA_SCRIPT_END')resolve(chunks.join(''));else chunks.push(line)}})); rl.close(); await Bun.write('{remote}',Buffer.from(encoded,'base64')); process.argv=['bun','{remote}','{owner}']; await import('{remote}')"'''
+    master, slave = pty.openpty()
+    try:
+        process = subprocess.Popen(['az', 'containerapp', 'exec', '--name', config['coreName'],
+                                '--resource-group', config['resourceGroup'], '--subscription', config['subscriptionId'],
+                                '--revision', current['properties']['latestReadyRevisionName'],
+                                '--command', command], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                start_new_session=True)
+        import time
+        import select
+        import signal
+        start = time.monotonic()
+        stdout = b''
+        sent = False
+        while time.monotonic() - start < 120:
+            if select.select([process.stdout], [], [], 1)[0]:
+                chunk = os.read(process.stdout.fileno(), 65536)
+                stdout += chunk
+                if not sent and b'MENTRA_SCRIPT_READY' in stdout:
+                    # Both the local PTY and Azure's remote terminal may
+                    # have canonical input limits. Keep each line <4 KiB.
+                    payload = '\n'.join(code[i:i + 2000] for i in range(0, len(code), 2000)) + '\nMENTRA_SCRIPT_END\n'
+                    remaining = payload.encode()
+                    while remaining:
+                        remaining = remaining[os.write(master, remaining):]
+                    sent = True
+                if b'MENTRA_ADMIN_END' in stdout or not chunk:
+                    break
+            if process.poll() is not None:
+                break
+        # Azure's stdin thread can outlive a finished remote command.
+        # Terminate this invocation's process group, never other CLI work.
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                process.terminate()
+        process.communicate(timeout=5)
+        result = subprocess.CompletedProcess([], process.returncode, stdout.decode(), '')
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        raise SetupError('Admin bootstrap timed out. Retry to retrieve the same saved key; provider output withheld.') from None
+    finally:
+        os.close(slave)
+        os.close(master)
+    return result
+
+
 def bootstrap_admin(args, directory, config, state):
     if not state.get('outputs', {}).get('coreOrigin'):
         raise SetupError('Deploy Core before creating its administrator key')
-    import pty
     output = directory / 'admin-key.json'
     if output.exists() and (output.is_symlink() or output.stat().st_mode & 0o077):
         raise SetupError('Administrator key file must be owner-only and not a symlink')
     current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
     if not output.exists():
-        code = base64.b64encode((ROOT / 'installer/admin-key.ts').read_bytes()).decode()
-        owner = state['owner']
-        if not GUID.fullmatch(owner):
-            raise SetupError('Invalid saved deployment owner')
-        remote = '/app/cloud-v2/packages/core/mentra-admin-' + owner + '.ts'
-        command = f'''bun -e "console.log('MENTRA_SCRIPT_READY'); const rl=require('node:readline').createInterface({{input:process.stdin}}); const chunks=[]; const encoded=await new Promise(resolve=>rl.on('line',line=>{{if(line==='MENTRA_SCRIPT_END')resolve(chunks.join(''));else chunks.push(line)}})); rl.close(); await Bun.write('{remote}',Buffer.from(encoded,'base64')); process.argv=['bun','{remote}','{owner}']; await import('{remote}')"'''
-        master, slave = pty.openpty()
-        try:
-            process = subprocess.Popen(['az', 'containerapp', 'exec', '--name', config['coreName'],
-                                    '--resource-group', config['resourceGroup'], '--subscription', config['subscriptionId'],
-                                    '--revision', current['properties']['latestReadyRevisionName'],
-                                    '--command', command], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    start_new_session=True)
-            import time
-            import select
-            import signal
-            start = time.monotonic()
-            stdout = b''
-            sent = False
-            while time.monotonic() - start < 120:
-                if select.select([process.stdout], [], [], 1)[0]:
-                    chunk = os.read(process.stdout.fileno(), 65536)
-                    stdout += chunk
-                    if not sent and b'MENTRA_SCRIPT_READY' in stdout:
-                        # Both the local PTY and Azure's remote terminal may
-                        # have canonical input limits. Keep each line <4 KiB.
-                        payload = '\n'.join(code[i:i + 2000] for i in range(0, len(code), 2000)) + '\nMENTRA_SCRIPT_END\n'
-                        remaining = payload.encode()
-                        while remaining:
-                            remaining = remaining[os.write(master, remaining):]
-                        sent = True
-                    if b'MENTRA_ADMIN_END' in stdout or not chunk:
-                        break
-                if process.poll() is not None:
-                    break
-            # Azure's stdin thread can outlive a finished remote command.
-            # Terminate this invocation's process group, never other CLI work.
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
-                    process.terminate()
-            process.communicate(timeout=5)
-            result = subprocess.CompletedProcess([], process.returncode, stdout.decode(), '')
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.communicate()
-            raise SetupError('Admin bootstrap timed out. Retry to retrieve the same saved key; provider output withheld.') from None
-        finally:
-            os.close(slave)
-            os.close(master)
+        result = execute_admin_script(config, current, state['owner'], (ROOT / 'installer/admin-key.ts').read_bytes())
         match = re.search(r'MENTRA_ADMIN_BEGIN(.*?)MENTRA_ADMIN_END', result.stdout, re.S)
         if not match:
             raise SetupError('Core admin bootstrap did not return a credential. Check the selected Core revision; raw output withheld.')
@@ -829,6 +833,13 @@ def bootstrap_admin(args, directory, config, state):
         if not re.fullmatch(r'[0-9A-HJKMNP-TV-Z]{26}', credential.get('id', '')) or not credential.get('value', '').startswith('msk_local_'):
             raise SetupError('Core returned an invalid administrator credential')
         write_json(output, credential)
+    else:
+        # Previous installer versions left a plaintext share cache. Remove it
+        # even when the protected local key allows skipping key creation.
+        cleanup = b'const fs=require("node:fs");const p="/mnt/core-attachments/operator/admin-"+process.argv[2]+".json";if(fs.existsSync(p))fs.unlinkSync(p);console.log("MENTRA_ADMIN_END");'
+        result = execute_admin_script(config, current, state['owner'], cleanup)
+        if 'MENTRA_ADMIN_END' not in result.stdout:
+            raise SetupError('Legacy admin credential cleanup did not complete; retry bootstrap-admin')
     credential = read_json(output)
     email = 'api-key@' + credential['id'] + '.local'
     values = next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
