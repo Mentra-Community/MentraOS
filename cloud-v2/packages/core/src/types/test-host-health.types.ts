@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { testResourceHostIdSchema } from "./test-resource-observation.types";
+import {frameworkIdentitySchema as testResourceHostIdSchema} from "./framework-request.types";
 
 export const HOST_FRESH_MS = 180_000;
 export const DISK_GAP_MS = 90_000; // A missed 60-second tick is a gap; permit ordinary scheduling jitter.

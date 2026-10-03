@@ -1,70 +1,159 @@
-import { ArrowUpRight, CheckCircle2, Monitor, Play, Smartphone } from "lucide-react";
-import { TestDispatchPanel } from "./test-dispatches";
-import { CATALOG_REQUEST_ROUTINE_IDS, ROUTINE_CATALOG, catalogPassingRunHref, type CatalogRoutine } from "./routine-catalog-data";
+import {useEffect, useRef, useState} from "react";
+import {useInfiniteQuery, useQuery} from "@tanstack/react-query";
+import type {FrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
+import {api} from "../lib/api";
+import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
+import type {CatalogExample, CatalogHistoryRun} from "../../../../packages/core/src/services/routine-catalog.service";
 
-const PANEL = "rounded-2xl border border-[#e0e4de] bg-white";
-const REQUIREMENTS = { software: "Software", firmware: "Glasses and firmware", account: "Account", network: "Network", physical: "Physical setup", data: "Test data" } as const;
+type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null};
+type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
+const PANEL = "rounded-2xl border border-[#e0e4de] bg-white p-5";
+export function routineHref(id: string, platform: string) {
+  return `/?routineCatalog=1&routine=${encodeURIComponent(id)}&platform=${encodeURIComponent(platform)}`;
+}
 
-export function RoutineCatalogPage({ onResult }: { onResult: (runId: string) => void }) {
+export function RoutineCatalogPage() {
+  const query = new URLSearchParams(window.location.search);
+  const runId = query.get("frameworkRun");
+  if (runId) return <FrameworkRunPage runId={runId} />;
+  const id = query.get("routine"), platform = query.get("platform");
+  return id && platform ? <RoutineDetailPage id={id} platform={platform} /> : <RoutineCatalogList />;
+}
+
+function RoutineCatalogList() {
+  const catalog = useQuery({queryKey: ["routine-catalog"],
+    queryFn: () => api<{routines: CatalogRow[]}>("/api/admin/routine-catalog"), refetchInterval: 15000});
+  if (catalog.isPending) return <p role="status">Loading routines…</p>;
+  if (catalog.error && !catalog.data) return <p role="alert">Could not load routines: {catalog.error.message}</p>;
   return <div className="space-y-5">
-    <section className={`${PANEL} p-5`} aria-label="Catalog scope">
-      <h2 className="text-lg font-semibold">{ROUTINE_CATALOG.length} routines on the new foundation</h2>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-[#4f5d54]">Each has a passing recording with setup, testing and cleanup verified.</p>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-[#68746d]">Each card distinguishes a development pass from a completed dev nightly result. Other builds and triggers need their own qualification.</p>
+    <section className={PANEL}><h2 className="text-lg font-semibold">Routine catalog</h2>
+      <p className="mt-2">Routines with a published passing example, their requirements and run history.</p></section>
+    {!catalog.data.routines.length && <p>No routine has a published passing example on the new framework yet.</p>}
+    <div className="grid gap-5 lg:grid-cols-2">{catalog.data.routines.map(row => <RoutineCatalogCard key={`${row.routineId}/${row.platform}`} routine={row} />)}</div>
+  </div>;
+}
+
+export function RoutineCatalogCard({routine}: {routine: CatalogRow}) {
+  return <article className={PANEL}>
+    <p className="text-sm text-[#68746d]">{routine.platform === "android" ? "Android" : "iOS on Mac"}</p>
+    <h3 className="mt-2 text-lg font-semibold"><a className="underline" href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
+    <p className="mt-2">{routine.definition.purpose}</p>
+    <p className="mt-4">{routine.example ? "Complete passing example available" : "Awaiting a published passing example"}</p>
+    {routine.latestAttempt && <p className="mt-2 text-sm">Latest attempt: <a className="underline" href={frameworkRunHref(routine.latestAttempt.runId)}>{routine.latestAttempt.outcome}</a> · {new Date(routine.latestAttempt.startedAt).toLocaleString()}{routine.latestAttempt.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
+    {routine.example && <p className="mt-2 text-sm text-[#68746d]">Example: {new Date(routine.example.startedAt).toLocaleString()} · revision <code>{routine.example.definitionRevision.slice(0, 8)}</code>{routine.example.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
+  </article>;
+}
+
+function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
+  const detail = useInfiniteQuery({queryKey: ["routine-detail", id, platform], initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam}) => api<Detail>(`/api/admin/routine-catalog/${encodeURIComponent(id)}/${encodeURIComponent(platform)}${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ""}`),
+    getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
+  if (detail.isPending) return <p role="status">Loading routine…</p>;
+  if (detail.error && !detail.data) return <p role="alert">Could not load routine: {detail.error.message}</p>;
+  const row = detail.data.pages[0]!, definition = row.definition;
+  return <div className="space-y-5">
+    <a href="/?routineCatalog=1" className="underline">All routines</a>
+    <section className={PANEL}><h2 className="text-xl font-semibold">{definition.title}</h2><p className="mt-2">{definition.purpose}</p>
+      {row.example ? <div className="mt-4"><video className="w-full rounded-lg" controls preload="metadata"
+        src={`/api/admin/routine-catalog/results/by-run/${encodeURIComponent(row.example.runId)}/assets/${encodeURIComponent(row.example.recordingAssetId)}`} />
+        <p className="mt-2 text-sm">Recorded {new Date(row.example.startedAt).toLocaleString()} · {row.platform} · build <code>{row.example.build.headSha}</code></p>
+        <p className="mt-1 text-sm">Example definition: <code>{row.example.definitionRevision}</code>{row.example.definitionRevision !== row.definitionRevision && " (earlier than the current definition)"}</p>
+        <a className="mt-2 block underline" href={frameworkRunHref(row.example.runId)}>Open passing run</a></div>
+        : <p className="mt-4">Awaiting a published passing recording.</p>}
     </section>
-
-    <div className="grid items-start gap-5 lg:grid-cols-2">
-      {ROUTINE_CATALOG.map(routine => <RoutineCatalogCard key={routine.id} routine={routine} />)}
-    </div>
-
-    <section className={`${PANEL} overflow-hidden`} aria-label="Request a catalog routine">
-      <div className="border-b border-[#eceeeb] p-5">
-        <h2 className="text-lg font-semibold">Request a run</h2>
-        <p className="mt-2 text-sm leading-6 text-[#4f5d54]">For a MentraOS PR targeting <code>dev</code>, add the exact <code>routine:&lt;id&gt;</code> label shown on a request-enabled card. Routines without a request label cannot be requested here. The request needs a published, compatible app artifact.</p>
-        <p className="mt-3 text-xs font-semibold text-[#4f5d54]">Example: request Captions for PR 123 (replace the PR number)</p>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-[#f2f4f0] p-3 text-xs leading-5"><code>gh pr edit 123 --repo Mentra-Community/MentraOS --add-label routine:captions-phone</code></pre>
-        <p className="mt-2 text-sm leading-6 text-[#68746d]">For a manual request, choose a routine and a PR, dev or staging build below. Admin checks the published artifact and reports unavailable channels or routines. An enabled worker and a ready fixture are still required; a queued request is not a passing result.</p>
-      </div>
-      <TestDispatchPanel onResult={onResult} routineIds={CATALOG_REQUEST_ROUTINE_IDS} />
+    <section className={PANEL}><h3 className="font-semibold">Requirements</h3>
+      <p className="mt-2">Starts from {definition.entry === "home" ? "Home" : "Sign in"}. Account: {definition.account === "lane" ? "dedicated lane account" : "none"}.</p>
+      <ul className="mt-3 list-disc pl-5">{definition.requirements.map(text => <li key={text}>{text}</li>)}</ul>
+      {definition.fixtures.map(fixture => <p className="mt-2" key={fixture.provider}>{fixture.description}</p>)}
+      <h3 className="mt-5 font-semibold">Steps</h3><ol className="mt-3 list-decimal space-y-2 pl-5">{definition.steps.map(step => <li key={step.id}>{step.instruction}<p className="text-sm text-[#68746d]">Expected: {step.expected}</p></li>)}</ol>
+      <p className="mt-4 text-xs">Source revision: <code>{row.definitionRevision}</code></p>
+    </section>
+    <section className={PANEL}><h3 className="font-semibold">Run history</h3>
+      <ul className="mt-3 space-y-2">{detail.data.pages.flatMap(page => page.history).map(run => <li key={run.runId}>
+        <a className="underline" href={frameworkRunHref(run.runId)}>{new Date(run.startedAt).toLocaleString()}</a>
+        {" · "}{run.outcome}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · evidence pending"}</li>)}</ul>
+      {detail.hasNextPage && <button className="mt-4 underline" disabled={detail.isFetchingNextPage} onClick={() => detail.fetchNextPage()}>More runs</button>}
     </section>
   </div>;
 }
 
-export function RoutineCatalogCard({ routine }: { routine: CatalogRoutine }) {
-  const run = routine.passingRun;
-  const Device = routine.platform === "Android" ? Smartphone : Monitor;
-  return <article className={`${PANEL} overflow-hidden`} aria-labelledby={`catalog-${routine.id}`}>
-    <div className="p-5">
-      <div className="flex items-center gap-2 text-xs font-semibold text-[#68746d]"><Device className="size-4" />{routine.platform}</div>
-      <h3 id={`catalog-${routine.id}`} className="mt-2 text-lg font-semibold">{routine.name}</h3>
-      <p className="mt-2 text-sm leading-6 text-[#4f5d54]">{routine.purpose}</p>
-      {routine.request ? <div className="mt-4 text-xs text-[#68746d]">PR label <code className="ml-1 inline-block break-all rounded-md bg-[#f2f4f0] px-2 py-1 text-[#303d34]">routine:{routine.request.routineId}</code></div>
-        : <p className="mt-4 text-xs leading-5 text-[#68746d]">{run.suiteId ? "Enrolled in dev nightly. Manual and PR requests are not enabled for this routine." : "Development replay passed. Dev nightly qualification is pending; manual and PR requests are not enabled."}</p>}
-      <details className="mt-5 border-t border-[#eceeeb] pt-4">
-        <summary className="cursor-pointer text-sm font-semibold text-[#303d34]">Requirements and cleanup</summary>
-        <dl className="mt-4 space-y-3 text-sm leading-6">
-          {Object.entries(REQUIREMENTS).map(([key, label]) => <div key={key}>
-            <dt className="font-semibold">{label}</dt>
-            <dd className="text-[#68746d]">{routine.requirements[key as keyof typeof REQUIREMENTS]}</dd>
-          </div>)}
-          <div><dt className="font-semibold">Cleanup</dt><dd className="text-[#68746d]">{routine.cleanup}</dd></div>
-          <div><dt className="font-semibold">Outside this routine</dt><dd className="text-[#68746d]">{routine.exclusions}</dd></div>
-        </dl>
-      </details>
-    </div>
-    <div className="border-t border-[#e0e4de] bg-[#f7faf6] p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#087d50]"><CheckCircle2 className="size-4" />{run.suiteId ? "Dev nightly pass" : "Development pass"}</span>
-        <time className="text-xs text-[#68746d]" dateTime={run.recordedOn}>{run.recordedOn}</time>
-      </div>
-      <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs leading-5">
-        <dt className="text-[#68746d]">Build</dt><dd>{run.release} · app {run.appVersion} / {run.appBuild}</dd>
-        <dt className="text-[#68746d]">Device</dt><dd>{run.device} · <span className="break-all">{run.fixture}</span></dd>
-        <dt className="text-[#68746d]">App source</dt><dd><a className="inline-flex items-center gap-1 text-[#087d50] underline" href={`https://github.com/Mentra-Community/MentraOS/commit/${run.appSha}`} target="_blank" rel="noreferrer">{run.appSha.slice(0, 12)}<ArrowUpRight className="size-3" /></a></dd>
-      </dl>
-      <a className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[#d4e6d8] bg-white px-3 py-2 text-sm font-semibold text-[#087d50] hover:bg-[#edf7f0]" href={catalogPassingRunHref(run)} target="_blank" rel="noreferrer"><Play className="size-4" />Watch passing run<ArrowUpRight className="size-3" /></a>
-      {run.suiteId && <a className="mt-3 block text-xs font-semibold text-[#087d50] underline" href={`https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(run.suiteId)}`} target="_blank" rel="noreferrer">View completed nightly suite</a>}
-      <p className="mt-2 text-xs leading-5 text-[#68746d]">Opens the dev Admin result with video, steps and full build identity. Admin sign-in required.</p>
-    </div>
-  </article>;
+export function frameworkRunHref(runId: string) {
+  return `/?routineCatalog=1&frameworkRun=${encodeURIComponent(runId)}`;
+}
+
+export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
+  const video = useRef<HTMLVideoElement>(null);
+  const pendingOffset = useRef<number | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
+  const result = useQuery({queryKey: ["framework-run", runId], queryFn: () =>
+    api<{run: FrameworkRun; definition: RoutineEnrollment["definition"] | null; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"}>(`/api/admin/routine-catalog/results/by-run/${encodeURIComponent(runId)}`),
+    refetchInterval: query => query.state.data?.uploadsComplete === false ? 5000 : false});
+  useEffect(() => {
+    const step = result.data?.run.result.steps.find(item => item.id === stepId);
+    if (step?.recordingLocation) {
+      pendingOffset.current = step.recordingLocation.startOffsetMs / 1000;
+      setSelectedAsset(step.recordingLocation.assetId);
+      if (video.current?.readyState && video.current.dataset.assetId === step.recordingLocation.assetId) {
+        video.current.currentTime = pendingOffset.current; pendingOffset.current = null;
+      }
+    } else {pendingOffset.current = null; setSelectedAsset(null);}
+  }, [runId, stepId, result.data?.run]);
+  if (result.isPending) return <p role="status">Loading run…</p>;
+  if (result.error && !result.data) return <p role="alert">Could not load run: {result.error.message}</p>;
+  const {run, definition, outcome, uploadsComplete, evidenceStatus} = result.data;
+  const recordingAsset = selectedAsset ?? run.recordingAssetId;
+  const seekStep = (location: NonNullable<FrameworkRun["result"]["steps"][number]["recordingLocation"]>) => {
+    pendingOffset.current = location.startOffsetMs / 1000;
+    setSelectedAsset(location.assetId);
+    if (recordingAsset === location.assetId && video.current?.readyState) {
+      video.current.currentTime = pendingOffset.current;
+      pendingOffset.current = null;
+    }
+    video.current?.scrollIntoView({block: "nearest", behavior: "smooth"});
+  };
+  const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(runId)}/assets/${encodeURIComponent(id)}`;
+  const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
+  return <div className="space-y-5">
+    <a className="underline" href={routineHref(run.routineId, run.platform)}>Back to routine</a>
+    <section className={PANEL}><h2 className="text-xl font-semibold">{run.routineId}: {outcome}</h2>
+      <p className="mt-2">Started {new Date(run.startedAt).toLocaleString()} · Finished {new Date(run.finishedAt).toLocaleString()}</p>
+      <p className="mt-2">Computer: {run.hostId} · Lane: {run.laneId} · {run.platform}</p>
+      <p className="mt-2">Setup {seconds(run.result.timing.setupMs)} · Test {seconds(run.result.timing.testMs)} · Teardown {seconds(run.result.timing.teardownMs)}</p>
+      {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
+      {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
+      {recordingAsset && uploadsComplete && <video ref={video} data-asset-id={recordingAsset} className="mt-4 w-full rounded-lg" controls preload="metadata" src={assetHref(recordingAsset)} onLoadedMetadata={() => {
+        if (video.current && pendingOffset.current !== null) {video.current.currentTime = pendingOffset.current; pendingOffset.current = null;}
+      }} />}
+    </section>
+    <section className={PANEL}><h3 className="font-semibold">Execution</h3>
+      <p className="mt-2">Setup: {run.result.setup.status}{run.result.setup.actionId && ` (${run.result.setup.actionId})`}</p>
+      <ol className="mt-3 list-decimal space-y-2 pl-5">{run.result.steps.map(step => {
+        const source = definition?.steps.find(item => item.id === step.id);
+        const title = source?.instruction ?? step.id;
+        return <li key={step.id} className="rounded-lg border border-[#e0e4de] p-3">
+          {step.recordingLocation && uploadsComplete ? <button className="block w-full text-left" onClick={() => seekStep(step.recordingLocation!)}><span className="underline">{title}</span> · {step.status} · {seconds(step.durationMs)}<span className="block text-sm">Watch this step</span></button>
+            : <p>{title} · {step.status}{step.status !== "not-run" && ` · ${seconds(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
+          {source && <p className="mt-1 text-sm">Expected: {source.expected}</p>}
+          {step.causedBy && <p className="mt-1 text-sm">Caused by: {step.causedBy}</p>}
+        </li>;
+      })}</ol>
+      <p className="mt-3">Teardown: {run.result.teardown.ready ? "ready" : "failed"}</p>
+      {run.result.teardown.errors.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={`cleanup-${index}`}>Cleanup / {failure.actionId}: {failure.message}</p>)}
+      {run.result.teardown.unavailableResources.map(resource => <p role="alert" className="mt-2 whitespace-pre-wrap" key={resource.resource}>{resource.resource}: {resource.cause}. Next action: {resource.nextAction}</p>)}
+      {run.result.failures.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.phase} / {failure.actionId}: {failure.message}</p>)}
+    </section>
+    <section className={PANEL}><h3 className="font-semibold">Evidence</h3>
+      <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className="underline" href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
+      <p className="mt-4 text-xs">Source revision: <code>{run.definitionRevision}</code></p>
+    </section>
+  </div>;
+}
+
+export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
+ const params = new URLSearchParams(scope);
+
+ const query = useQuery({queryKey: ["framework-runs", params.toString()], queryFn: () => api<{runs: {runId: string; requestId: string; hostId: string; routineId: string; platform: string; laneId: string; startedAt: string; finishedAt: string; outcome: string; evidenceStatus: string; uploadsComplete: boolean}[]}>(`/api/admin/routine-catalog/results?${params}`), refetchInterval: 15000});
+ if (query.isPending) return <p role="status">Loading runs…</p>;
+ if (query.error && !query.data) return <p role="alert">Could not load runs: {query.error.message}</p>;
+ return <section className={PANEL}><h2 className="text-xl font-semibold">Routine runs</h2><ul className="mt-4 space-y-3">{query.data.runs.map(run => <li key={run.requestId}><a className="underline" href={frameworkRunHref(run.runId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome} · {((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000).toFixed(1)} seconds · {run.hostId}/{run.laneId}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · upload pending"}</li>)}</ul></section>;
 }

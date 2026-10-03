@@ -20,7 +20,7 @@ import {createLogger} from "@mentra/cloud-shared"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
-import {startTestFailureDelivery} from "./services/test-failure-delivery.service"
+import {serveCore} from "./http-server"
 
 const logger = createLogger("core")
 
@@ -55,8 +55,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   }
 
   const app = createApp({readinessChecks: [mongoReadinessCheck]})
-  const server = Bun.serve({port, fetch: app.fetch})
-  const stopFailureDelivery = startTestFailureDelivery()
+  const server = serveCore(app.fetch, port)
   const boundPort = server.port!
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
@@ -66,7 +65,6 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     url: `http://localhost:${boundPort}`,
     async stop() {
       server.stop()
-      await stopFailureDelivery()
       await disconnectMongo()
     },
   }

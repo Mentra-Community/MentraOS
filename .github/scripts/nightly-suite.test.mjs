@@ -5,7 +5,7 @@ import {nightlySuiteId, suiteResultMessage, publishSuiteResult, frozenNightlySui
 
 const expected = ["no-glasses", "ota-roundtrip-android"]
 const suite = {suiteId: nightlySuiteId(5000, 1), channel: "dev", outcome: "passed", passed: 2,
-  finishedAt: "2026-10-01T12:00:00Z", members: expected.map(routineId => ({routineId, status: "passed"}))}
+  finishedAt: "2026-10-01T12:00:00Z", members: expected.map(routineId => ({routineId, status: "pass", publicationComplete: true}))}
 
 test("suite identity and complete green require every frozen member", () => {
   assert.equal(suiteResultMessage(suite, expected).passed, true)
@@ -28,7 +28,7 @@ test("running, staging, duplicate and contradictory aggregates refuse posting", 
 test("single-routine jobs link to their published run, not the suite", () => {
   const single = {...suite, passed: 1, members: [{...suite.members[0], runId: "routine-100-1-dev-no-glasses"}]}
   const result = suiteResultMessage(single, ["no-glasses"])
-  assert.ok(result.url.includes("?testRun="))
+  assert.ok(result.url.includes("frameworkRun="))
   assert.ok(!result.text.includes("nightly suite"))
   assert.throws(() => suiteResultMessage({...single, members: [suite.members[0]]}, ["no-glasses"]))
 })
@@ -48,7 +48,7 @@ test("freeze includes unavailable members before any request receives its ID", (
     requests: [{channel: "dev", routine: "no-glasses", headSha: "a".repeat(40)}]}, runId: 5000, attempt: 1})
   assert.equal(frozen.members.length, 7)
   assert.equal(frozen.members.at(-1).routineId, "open-close-miniapps")
-  assert.equal(frozen.members[0].platform, "ios-mac")
+  assert.equal(frozen.members[0].platform, "ios-on-mac")
   assert.deepEqual(frozen.members.filter(member => member.platform === "android").map(member => member.routineId),
     ["no-glasses-android", "ota-roundtrip-android", "connected-glasses", "open-close-miniapps"])
   assert.ok(frozen.members.every(member => !member.requestId))
@@ -107,6 +107,25 @@ test("deadline completes missing bound results as non-pass; unbound members do n
     }})
   assert.equal(clock, Date.parse(suite.finishedAt) + 20)
   assert.deepEqual(suiteResultMessage(result, expected).failedRoutines, expected)
+})
+
+test("published not-run members finish immediately without waiting for the suite deadline", async () => {
+  const clock = Date.parse(suite.finishedAt)
+  let reads = 0, writes = 0
+  const completedMembers = {...suite, outcome: "running", finishedAt: undefined,
+    members: expected.map(routineId => ({routineId, requestId: routineId, runId: routineId,
+      status: "not-run", publicationComplete: true, finishedAt: suite.finishedAt}))}
+  const result = await reconcileNightlySuite({suiteId: suite.suiteId, token: "synthetic", expectedRoutineIds: expected,
+    deadline: clock + 3 * 3600_000, now: () => clock,
+    sleep: async () => assert.fail("Terminal members must not wait for another poll"),
+    fetchImpl: async (_url, options) => {
+      if (options.method === "GET") {reads++; return Response.json(completedMembers)}
+      writes++
+      return Response.json({...completedMembers, outcome: "failed", passed: 0, finishedAt: suite.finishedAt})
+    }})
+  assert.equal(reads, 1)
+  assert.equal(writes, 1)
+  assert.equal(result.outcome, "failed")
 })
 
 test("read outages retry only reads until deadline, then use frozen completion response", async () => {

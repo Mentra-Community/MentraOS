@@ -1,3 +1,5 @@
+import {frameworkIdentitySchema} from "../../../../packages/core/src/types/framework-request.types";
+import {routineIdentitySchema} from "../../../../packages/core/src/types/routine-definition.types";
 export type TestRunLink = { runID: string; stepID?: string };
 export type TestRunListScope = {
   repository: string;
@@ -6,7 +8,6 @@ export type TestRunListScope = {
   routineId: string;
   platform: "ios-mac" | "ios" | "android";
 } & ({ channel: "pr"; pr: string } | { channel: "dev" | "staging"; pr?: never });
-const RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/;
 const COMMON_LIST_KEYS = ["testRuns", "repository", "headSha", "archiveSha256", "routineId", "platform"] as const;
 const LIST_KEYS = [...COMMON_LIST_KEYS, "channel", "pr"] as const;
 
@@ -30,7 +31,7 @@ export function readTestRunListScope(search: string): TestRunListScope | null {
     repository.length > 200 ||
     !/^[a-f0-9]{40}$/.test(headSha) ||
     !/^[a-f0-9]{64}$/.test(archiveSha256) ||
-    !RESOURCE_ID.test(routineId) ||
+    !routineIdentitySchema.safeParse(routineId).success ||
     !["ios-mac", "ios", "android"].includes(platform)
   )
     return null;
@@ -55,7 +56,7 @@ export function testRunListLocation(current: string, scope: TestRunListScope | n
 }
 
 function identifier(value: string | null): value is string {
-  return !!value && value.length <= 160 && value.trim() === value && !/[\x00-\x1f\x7f]/.test(value);
+  return !!value && value.length <= 240 && value.trim() === value && !/[\x00-\x1f\x7f]/.test(value);
 }
 
 /** Keep these query parameters intact until authentication has finished. */
@@ -67,7 +68,7 @@ export function readTestRunLink(search: string): TestRunLink | null {
     query.getAll("testRun").length !== 1 ||
     query.getAll("step").length > 1 ||
     !identifier(runID) ||
-    !RESOURCE_ID.test(runID)
+    !frameworkIdentitySchema.safeParse(runID).success
   )
     return null;
   return { runID, ...(identifier(stepID) ? { stepID } : {}) };
@@ -88,6 +89,6 @@ export function testRunLocation(current: string, selection: TestRunLink | null):
 
 /** Asset IDs are the only media selector; never load a URL supplied in an uploaded report. */
 export function testRunAssetPath(runID: string, assetID: string): string {
-  if (!RESOURCE_ID.test(runID) || !RESOURCE_ID.test(assetID)) throw new Error("Invalid test run or asset ID");
+  if (!frameworkIdentitySchema.safeParse(runID).success || !frameworkIdentitySchema.safeParse(assetID).success) throw new Error("Invalid test run or asset ID");
   return `/api/admin/test-runs/${encodeURIComponent(runID)}/assets/${encodeURIComponent(assetID)}`;
 }

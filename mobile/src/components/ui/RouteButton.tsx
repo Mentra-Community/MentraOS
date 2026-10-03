@@ -1,9 +1,8 @@
 import {router as _router} from "expo-router"
-import {View, TouchableOpacity, TextStyle, ViewStyle} from "react-native"
+import {View, Pressable, TouchableOpacity, TextStyle, ViewStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {ThemedStyle} from "@/theme"
 import GlassView from "@/components/ui/GlassView"
 
 interface StatusCardProps {
@@ -18,8 +17,6 @@ interface StatusCardProps {
 }
 
 export function StatusCard({label, style, iconStart, iconEnd, textStyle, subtitle, onPress}: StatusCardProps) {
-  const {theme, themed} = useAppTheme()
-
   // Extract flex from style to apply to TouchableOpacity wrapper
   const {flex, ...restStyle} = (style || {}) as ViewStyle & {flex?: number}
 
@@ -81,15 +78,24 @@ export function RouteButton({
   const {theme} = useAppTheme()
 
   const isDestructive = preset === "destructive"
-  const labelColor = disabled
-    ? theme.colors.muted_foreground
-    : isDestructive
-      ? theme.colors.destructive
-      : theme.colors.secondary_foreground
+  let labelColor = theme.colors.secondary_foreground
+  if (disabled) labelColor = theme.colors.muted_foreground
+  else if (isDestructive) labelColor = theme.colors.destructive
 
   return (
-    <GlassView androidShadowSize="sm" className="bg-primary-foreground px-4 rounded-2xl" style={[disabled && {opacity: 0.5}, style]}>
-      <TouchableOpacity onPress={onPress} onLongPress={onLongPress} disabled={disabled || !onPress} hitSlop={4}>
+    <GlassView
+      androidShadowSize="sm"
+      className="bg-primary-foreground px-4 rounded-2xl"
+      style={[disabled && {opacity: 0.5}, style]}>
+      <Pressable
+        onPress={onPress}
+        onAccessibilityTap={() => {
+          if (!disabled) onPress?.()
+        }}
+        onLongPress={onLongPress}
+        disabled={disabled || !onPress}
+        hitSlop={4}
+        style={({pressed}) => ({opacity: pressed ? 0.2 : 1})}>
         <View className="items-center py-2 flex-row">
           <View
             style={{
@@ -120,7 +126,7 @@ export function RouteButton({
             />
           )}
         </View>
-      </TouchableOpacity>
+      </Pressable>
     </GlassView>
   )
 }
