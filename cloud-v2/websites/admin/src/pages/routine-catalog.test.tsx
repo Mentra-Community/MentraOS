@@ -36,6 +36,7 @@ test("run keeps every timestamp-linked step beside a bounded recording and stack
   };
   const html = render(true);
   expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]");
+  expect(html.indexOf('aria-label="Run recording"')).toBeLessThan(html.indexOf('aria-label="Execution steps"'));
   expect(html).toContain("order-2 lg:order-1");
   expect(html).toContain("lg:overflow-y-auto");
   expect(html).toContain("lg:sticky lg:top-[calc(var(--admin-header-height,6rem)+1rem)]");
