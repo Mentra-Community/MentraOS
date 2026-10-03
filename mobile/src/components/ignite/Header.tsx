@@ -292,7 +292,12 @@ function HeaderAction(props: HeaderActionProps) {
           {backgroundColor: theme.colors.primary_foreground, borderRadius: theme.spacing.s10, width: 40, height: 40},
           {opacity: pressed ? 0.2 : 1},
         ]}>
-        <Icon size={24} name={icon} color={iconColor} style={isRTL ? {transform: [{rotate: "180deg"}]} : {}} />
+        <Icon
+          size={24}
+          name={icon}
+          color={iconColor ?? theme.colors.secondary_foreground}
+          style={isRTL ? {transform: [{rotate: "180deg"}]} : {}}
+        />
       </Pressable>
     )
   }
