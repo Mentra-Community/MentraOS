@@ -833,6 +833,8 @@ def bootstrap_admin(args, directory, config, state):
         if not re.fullmatch(r'[0-9A-HJKMNP-TV-Z]{26}', credential.get('id', '')) or not credential.get('value', '').startswith('msk_local_'):
             raise SetupError('Core returned an invalid administrator credential')
         write_json(output, credential)
+        if credential.get('cleanupRequired'):
+            raise SetupError('Recovered key saved locally, but legacy share cleanup failed. Resolve Azure Files access and retry bootstrap-admin before granting admin access.')
     else:
         # Previous installer versions left a plaintext share cache. Remove it
         # even when the protected local key allows skipping key creation.

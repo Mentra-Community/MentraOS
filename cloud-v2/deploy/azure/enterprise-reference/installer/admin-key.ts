@@ -13,7 +13,7 @@ if (!/^[0-9a-f-]{36}$/.test(owner ?? "")) throw Error("Invalid deployment owner"
 const directory = "/mnt/core-attachments/operator";
 const output = `${directory}/admin-${owner}.json`;
 const user = {id: `private-cloud-operator:${owner}`, email: "operator@private-cloud.local"};
-let credential: {id: string; value: string; orgId?: string; adminEmail?: string};
+let credential: {id: string; value: string; orgId?: string; adminEmail?: string; cleanupRequired?: boolean};
 function checkCredential(value: typeof credential) {
   if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(value.id)
       || !new RegExp(`^msk_local_${value.id}\\.[A-Za-z0-9_-]{43}$`).test(value.value)) {
@@ -82,7 +82,8 @@ try {
   credential.adminEmail = `api-key@${credential.id}.local`;
   // Never leave an administrator token in the report attachment share, whose
   // SMB mount permissions do not provide owner-only access.
-  if (existsSync(output)) unlinkSync(output);
+  try { if (existsSync(output)) unlinkSync(output); }
+  catch { credential.cleanupRequired = true; }
 } finally {
   await mongoose.disconnect();
 }
