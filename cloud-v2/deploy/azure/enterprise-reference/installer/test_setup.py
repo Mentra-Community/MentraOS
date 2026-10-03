@@ -451,6 +451,13 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(identities[1]['teamsLicense'], 'missing_or_provisioning')
         self.assertIn('Unlicensed employees may join as guests', identities[1]['next'])
 
+    def test_teams_check_refuses_wrong_graph_tenant_instead_of_reading_wrong_inventory(self):
+        self.config['teamsGraphTenantId'] = SUB
+        with patch.object(setup, 'run') as run:
+            with self.assertRaisesRegex(setup.SetupError, 'deployment Entra tenant'):
+                setup.inspect_teams(self.args, self.config)
+        run.assert_not_called()
+
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess
         with patch.object(setup.subprocess, 'run', return_value=CompletedProcess(['az'], 1, '', 'secret-token')):

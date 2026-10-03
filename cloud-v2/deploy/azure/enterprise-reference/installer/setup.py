@@ -599,6 +599,9 @@ def inspect_teams(args, config):
     # --tenant and --subscription are mutually exclusive for this CLI command.
     guidance = ('Cannot inspect Teams licenses. Ask an Entra administrator with license-read permission to run '
                 'check-teams --teams-user EMPLOYEE_OBJECT_ID in this tenant; no license or permission was changed.')
+    graph_tenant = config.get('teamsGraphTenantId') or config['tenantId']
+    if graph_tenant.lower() != config['tenantId'].lower():
+        raise SetupError('Teams Graph must use the deployment Entra tenant for this installer profile. Correct teamsGraphTenantId before checking licenses; another tenant inventory would not verify employee access.')
     try:
         profile = json.loads(run(['az', 'account', 'get-access-token', '--tenant', config['tenantId'],
                                   '--resource-type', 'ms-graph', '--output', 'json']))
@@ -628,7 +631,7 @@ def inspect_teams(args, config):
                            'next': ('Validate meeting creation and ACS exchange; license alone does not prove policy/consent.' if has_teams
                                     else 'Assign a license that includes Microsoft Teams and wait for provisioning. Unlicensed employees may join as guests; guest meeting creation still needs a licensed organizer.')})
     checks = {'teamsSubscription': 'available' if teams_products else 'missing', 'identities': identities,
-              'meetingCreationConfigured': bool(config.get('teamsGraphClientId')),
+              'meetingCreationClientConfigured': bool(config.get('teamsGraphClientId')),
               'guestOrganizerConfigured': bool(config.get('teamsGraphOrganizerId')),
               'next': ('Confirm employee/organizer license assignments, Graph OnlineMeetings.ReadWrite.All admin consent, and the Teams application access policy. Joining and creating meetings have different requirements.' if teams_products
                        else 'In Microsoft 365 admin center → Marketplace, choose a plan that includes Teams, then assign it to the intended employee and guest organizer. Business Basic without Teams is insufficient. Guest joining is still available; guest meeting creation needs a licensed organizer.'),

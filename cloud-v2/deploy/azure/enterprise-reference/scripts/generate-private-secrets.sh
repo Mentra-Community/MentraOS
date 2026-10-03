@@ -71,21 +71,22 @@ jq -n \
   > "$TEMP_OUTPUT"
 chmod 0600 "$TEMP_OUTPUT"
 
-# Azure Cloud Shell stores persistent files on Azure Files, which has no hard
-# links. Serialize cooperating generators with a permanent advisory-lock inode
-# and publish only complete bytes with a same-filesystem atomic rename. A killed
-# generator releases the lock; it never leaves a partially written signing key.
+# Persistent Cloud Shell HOME supports POSIX permissions and hard links; its
+# clouddrive SMB share was rejected above before generating keys. Publish a
+# complete inode without replacing a file, even if a non-cooperating writer
+# creates the destination concurrently. A killed generator leaves no partial key.
 python3 - "$TEMP_OUTPUT" "$OUTPUT" <<'PYPUBLISH'
-import fcntl, os, sys
+import os, sys
 source, output = sys.argv[1:]
-fd = os.open(output + '.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-with os.fdopen(fd, 'r+') as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    if os.path.lexists(output):
-        sys.exit('Refusing to overwrite existing secret file: ' + output)
-    with open(source, 'rb') as stream:
-        os.fsync(stream.fileno())
-    os.rename(source, output)
+with open(source, 'rb') as stream:
+    os.fsync(stream.fileno())
+try:
+    os.link(source, output)
+except FileExistsError:
+    sys.exit('Refusing to overwrite existing secret file: ' + output)
+except OSError:
+    sys.exit('This filesystem cannot atomically publish secrets without overwriting. Use persistent Cloud Shell HOME or a local POSIX filesystem.')
+os.unlink(source)
 PYPUBLISH
 
 printf 'Created %s with mode 0600. Import it into the approved secret manager, then retain or destroy this copy according to policy.\n' "$OUTPUT"

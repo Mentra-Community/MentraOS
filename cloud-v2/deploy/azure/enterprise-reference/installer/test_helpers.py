@@ -215,7 +215,7 @@ else: sys.exit(9)
             r = subprocess.run(['jq','-e',expression],input=json.dumps(config),capture_output=True,text=True)
             self.assertEqual(r.returncode==0,expected,r.stderr)
 
-    def test_secret_generation_publishes_complete_keys_without_hard_links(self):
+    def test_secret_generation_publishes_complete_keys_without_shell_ln(self):
         output = self.path / 'secrets.json'
         self.executable('ln', 'raise AssertionError("Azure Files does not support hard links")\n')
         command = ['bash', str(ROOT / 'scripts/generate-private-secrets.sh'), str(output)]
@@ -223,6 +223,8 @@ else: sys.exit(9)
         self.assertEqual(result.returncode, 0, result.stderr)
         original = output.read_bytes()
         value = json.loads(original)
+        self.assertEqual(set(value), {'refreshTokenPepper', 'mentraJwtPrivateKey', 'mentraJwtPublicKey',
+                                     'miniappJwtPrivateKey', 'miniappJwtPublicKey'})
         self.assertTrue(all(value.values()))
         self.assertEqual(output.stat().st_mode & 0o777, 0o600)
         retry = subprocess.run(command, env=self.env, capture_output=True, text=True)
