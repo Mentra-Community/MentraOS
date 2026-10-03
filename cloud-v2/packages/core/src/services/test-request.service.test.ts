@@ -3,7 +3,7 @@ import {createHash} from "node:crypto";
 import {requestInputDigest, TestRequestService, type HostAcceptance, type StoredTestRequest, type TestRequestRepository} from "./test-request.service";
 
 const build = {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)};
-function inputFor(routineId = "notes") {return {routineId, definitionRevision: "a".repeat(40), platform: "android", laneId: "android", build};}
+function inputFor(routineId = "notes") {return {routineId, definitionRevision: "a".repeat(40), platform: "android", laneId: "android", resources: [], build};}
 
 function store(): TestRequestRepository {
   const rows = new Map<string, StoredTestRequest>();
