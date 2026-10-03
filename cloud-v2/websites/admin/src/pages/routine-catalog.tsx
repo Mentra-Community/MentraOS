@@ -185,7 +185,7 @@ export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
 }
 function TestHistoryList() {
   const history = useInfiniteQuery({queryKey: ["test-history"], initialPageParam: undefined as string | undefined,
-    queryFn: ({pageParam}) => api<TestHistoryPage>(`/api/admin/test-runs/history?limit=25${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`),
+    queryFn: ({pageParam}) => api<TestHistoryPage>(`/api/admin/test-runs/history/list?limit=25${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`),
     getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
   if (history.isPending) return <p role="status">Loading test history…</p>;
   if (history.error && !history.data) return <p role="alert">Could not load test history: {history.error.message}</p>;
