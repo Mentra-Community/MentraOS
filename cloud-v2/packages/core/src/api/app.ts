@@ -30,6 +30,7 @@ import adminPreinstalled from "./admin/preinstalled.api";
 import reportAgent from "./agent/reports.api";
 import {createTestRequestsApi} from "./internal/test-requests.api";
 import {createFrameworkResultsApi} from "./internal/framework-results.api";
+import {createTestHostStateApi} from "./internal/test-host-state.api";
 import {createRoutineDefinitionsApi} from "./internal/routine-definitions.api";
 import testRunIngest from "./internal/test-runs.api";
 import testHostObservations from "./internal/test-host-observations.api";
@@ -90,6 +91,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/agent/reports", reportAgent);
   app.route("/api/internal/test-requests", createTestRequestsApi());
   app.route("/api/internal/framework-results", createFrameworkResultsApi());
+  app.route("/api/internal/test-host-state", createTestHostStateApi());
   app.route("/api/internal/routine-definitions", createRoutineDefinitionsApi());
   app.route("/api/internal/test-runs", testRunIngest);
   app.route("/api/internal/test-host-observations", testHostObservations);

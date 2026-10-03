@@ -1,23 +1,37 @@
 import {expect, test} from "bun:test";
 import {createTestDispatchAdminApi} from "./test-dispatches.api";
-import type {TestRequestService} from "../../services/test-request.service";
+import {TestRequestService, type StoredTestRequest} from "../../services/test-request.service";
 import type {RoutineDefinitionService} from "../../services/routine-definition.service";
 import type {TestBuildGateway} from "../../services/test-builds.service";
-const selection = {requestId: "request-1", hostId: "mini", laneId: "mac", routineId: "notes-phone", platform: "ios-on-mac",
+import type {TestHostStateService} from "../../services/test-host-state.service";
+const selection = {requestId: "request-1", hostId: "mini", laneId: "mac", routineId: "no-glasses", platform: "ios-on-mac",
  source: {channel: "dev", buildRunId: 15, publicationAttempt: 1}, archiveSha256: "c".repeat(64)};
-function fixture(changed = false) {
- let admitted: unknown;
- const service = {submit: async (requestId: string, hostId: string, input: unknown) => {admitted = {requestId, hostId, input}; return {requestId, state: "queued"};}} as unknown as TestRequestService;
- const definitions = {getCurrent: async () => ({definitionRevision: "a".repeat(40)})} as unknown as RoutineDefinitionService;
- const builds = {resolve: async () => ({source: selection.source, headSha: "b".repeat(40), availability: "available", receipt: {url: "https://artifactscdn.mentraglass.com/receipt.json", sha256: "e".repeat(64), size: 1773}, archive: {name: "app.zip", url: "https://artifactscdn.mentraglass.com/app.zip", size: 100, sha256: (changed ? "d" : "c").repeat(64)}})} as unknown as TestBuildGateway;
- return {app: createTestDispatchAdminApi(service, definitions, builds), admitted: () => admitted};
+const resources = [{id: "mac-app", kind: "app"}, {id: "mac-recorder", kind: "recorder"}];
+function fixture(changed = false, offline = false) {
+ let admitted: StoredTestRequest | undefined, revision = "a".repeat(40), resolves = 0;
+ const service = {get: async () => admitted ?? null, submit: async (requestId: string, hostId: string, input: unknown) => {
+   admitted = {requestId,hostId,input,inputSha256:"test",state:"queued"}; return admitted;}} as unknown as TestRequestService;
+ const definitions = {getCurrent: async () => ({definitionRevision: revision, definition: {execution: {resourceKinds: ["app", "recorder"], policy: {estimatedOutputBytes: 100}}}})} as unknown as RoutineDefinitionService;
+ const builds = {resolve: async (source: unknown, platform: unknown) => {expect(source).toEqual(selection.source); expect(platform).toBe("ios-on-mac"); resolves++;
+   return {source: selection.source, headSha: "b".repeat(40), availability: "available", release:"3.3.0-dev.5",receipt: {url: "https://artifactscdn.mentraglass.com/receipt.json", sha256: "e".repeat(64), size: 1773}, archive: {name: "app.zip", url: "https://artifactscdn.mentraglass.com/app.zip", size: 100, sha256: (changed ? "d" : "c").repeat(64)}};}} as unknown as TestBuildGateway;
+ const hosts = {get: async () => offline ? null : {observedAt:new Date().toISOString(),lanes:[{id:"mac",platform:"ios-on-mac",resources}]}} as unknown as TestHostStateService;
+ return {app: createTestDispatchAdminApi(service, definitions, builds, hosts), admitted: () => admitted, reEnroll:()=>revision="d".repeat(40), resolves:()=>resolves};
 }
-test("picker queues a verified build through the native request service", async () => {
- const f = fixture(); const result = await f.app.request("/test-dispatches/picker", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(selection)});
- expect(result.status).toBe(202);
- expect(f.admitted()).toMatchObject({requestId: "request-1", hostId: "mini", input: {routineId: "notes-phone", definitionRevision: "a".repeat(40), laneId: "mac", build: {headSha: "b".repeat(40), kind: "mac-ci-package", archive: {sha256: "c".repeat(64)}, receipt: {size: 1773}}}});
+const post = (app: ReturnType<typeof createTestDispatchAdminApi>, body: unknown, path="/test-dispatches/picker") => app.request(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+test("picker freezes selected publication and source-defined host inputs", async () => {
+ const f=fixture();expect((await post(f.app,selection)).status).toBe(202);
+ expect(f.admitted()).toMatchObject({requestId:"request-1",hostId:"mini",input:{routineId:"no-glasses",definitionRevision:"a".repeat(40),platform:"ios-on-mac",laneId:"mac",resources,policy:{estimatedOutputBytes:100},build:{headSha:"b".repeat(40),kind:"mac-ci-package",archive:{sha256:"c".repeat(64)}}}});
 });
-test("changed artifact refuses admission instead of silently testing a different build", async () => {
- const f = fixture(true); const result = await f.app.request("/test-dispatches/picker", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(selection)});
- expect(result.status).toBe(409); expect(f.admitted()).toBeUndefined();
+test("changed artifact and unavailable host refuse execution admission", async () => {
+ for(const f of [fixture(true),fixture(false,true)]) {expect((await post(f.app,selection)).status).toBe(409);expect(f.admitted()).toBeUndefined();}
+});
+test("lost admission response keeps original definition after re-enrollment", async () => {
+ const f=fixture();expect((await post(f.app,selection)).status).toBe(202);const original=f.admitted();f.reEnroll();
+ expect((await post(f.app,selection)).status).toBe(202);expect(f.admitted()).toEqual(original);expect(f.resolves()).toBe(1);
+ expect((await post(f.app,{...selection,archiveSha256:"d".repeat(64)})).status).toBe(409);
+});
+test("direct admission cannot bypass immutable build resolver or host bindings", async () => {
+ const f=fixture();await post(f.app,selection);const original=f.admitted()!;
+ const foreign={...original.input as object,build:{repository:"Mentra-Community/MentraOS",headSha:"b".repeat(40),channel:"dev",source:selection.source,archive:{sha256:"f".repeat(64)}}};
+ const fresh=fixture();expect((await post(fresh.app,{requestId:"other",hostId:"mini",input:foreign},"/test-dispatches")).status).toBe(409);expect(fresh.admitted()).toBeUndefined();
 });

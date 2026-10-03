@@ -63,6 +63,8 @@ const mongoRepository: TestRequestRepository = {
 export class TestRequestService {
   constructor(private readonly repository: TestRequestRepository = mongoRepository) {}
 
+  get(requestId: string) {return this.repository.get(requestId);}
+
   async queued(hostId: string, cursor: string | undefined, limit: number) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new TestRequestConflict("Page limit must be between 1 and 100");

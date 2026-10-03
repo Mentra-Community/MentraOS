@@ -16,6 +16,8 @@ export const publishedRoutineDefinitionSchema = z.object({
   requirements: z.array(text).max(30),
   fixtures: z.array(z.object({provider: id, description: text}).strict()).max(30),
   steps: z.array(z.object({id, instruction: text, expected: text}).strict()).min(1).max(500),
+  execution: z.object({resourceKinds: z.array(z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"])).min(1),
+    policy: z.record(z.unknown()).optional()}).strict().optional(),
   source: z.object({repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
     revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^routines\/[\w.-]+\/routine\.ts$/)}).strict(),
 }).strict().superRefine((definition, ctx) => {

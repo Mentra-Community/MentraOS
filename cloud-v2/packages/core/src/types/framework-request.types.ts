@@ -16,4 +16,6 @@ export const frameworkRequestInputSchema = z.object({
   platform: routinePlatformSchema,
   laneId: frameworkIdentitySchema,
   build: frameworkBuildSchema,
+  resources: z.array(z.object({id: frameworkIdentitySchema, kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]), laneId: frameworkIdentitySchema.optional()}).strict()),
+  policy: z.record(z.unknown()).optional(),
 }).passthrough();

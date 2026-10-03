@@ -35,6 +35,8 @@ export async function connectMongo(uri: string): Promise<void> {
   await mongoose.connect(uri, {
     // Fail fast on initial connect; afterwards Mongoose auto-retries.
     serverSelectionTimeoutMS: 10_000,
+    // Startup migrations reconcile native result indexes before creating them.
+    autoIndex: false,
   });
 }
 
