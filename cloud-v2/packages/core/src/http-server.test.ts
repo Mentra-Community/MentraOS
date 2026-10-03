@@ -45,11 +45,14 @@ test("Core listener streams recordings above 128 MiB while retaining the JSON li
 
 test("ordinary handlers retain the body ceiling with known and streamed lengths", async () => {
   let handled = 0;
-  const server = serveCore(async request => {
+  const api = new Hono();
+  api.onError((_error, c) => c.json({error: "nested_handler_error"}, 503));
+  api.all("*", async c => {
     handled++;
-    await request.json();
-    return Response.json({accepted: true});
-  }, 0);
+    const input = await c.req.json();
+    return c.json({accepted: true, input, header: c.req.header("x-forward-check")});
+  });
+  const server = serveCore(api.fetch, 0);
   const textBytes = CORE_ORDINARY_BODY_BYTES + 1;
   const prefix = new TextEncoder().encode('{"text":"'), suffix = new TextEncoder().encode('"}');
   function body() {
@@ -76,7 +79,12 @@ test("ordinary handlers retain the body ceiling with known and streamed lengths"
       expect(handled).toBe(0);
     }
     const small = await fetch(`http://127.0.0.1:${server.port}/api/account/oauth/complete`,
-      {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({text: "valid"})});
-    expect(small.status).toBe(200); expect(handled).toBe(1);
+      {method: "POST", headers: {"content-type": "application/json", "x-forward-check": "retained"},
+        body: new ReadableStream({start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({text: "valid"}))); controller.close();
+        }})});
+    expect(small.status).toBe(200);
+    expect(await small.json()).toEqual({accepted: true, input: {text: "valid"}, header: "retained"});
+    expect(handled).toBe(1);
   } finally {await server.stop(true);}
 }, 15000);
