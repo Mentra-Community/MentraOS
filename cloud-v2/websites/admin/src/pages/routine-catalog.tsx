@@ -124,17 +124,17 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
       {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
     </section>
-    <div className={hasRecording ? "grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
-    {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:sticky lg:top-[calc(var(--admin-header-height,6rem)+1rem)]`}>
-      <h3 className="font-semibold">Recording</h3>
-      <video ref={video} data-asset-id={recordingAsset!} className="mt-3 max-h-[70dvh] w-full rounded-lg bg-black object-contain lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-8rem)]" controls preload="metadata" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
+    <div className={hasRecording ? "grid gap-5 lg:h-[calc(100dvh-var(--admin-header-height,6rem)-2rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
+    {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
+      <h3 className="shrink-0 font-semibold">Recording</h3>
+      <div className="mt-3 lg:min-h-0 lg:flex-1"><video ref={video} data-asset-id={recordingAsset!} className="max-h-[70dvh] w-full scroll-mt-[calc(var(--admin-header-height,6rem)+1rem)] rounded-lg bg-black object-contain lg:h-full lg:max-h-none" controls preload="metadata" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
         if (video.current && pendingOffset.current !== null) {video.current.currentTime = pendingOffset.current; pendingOffset.current = null;}
-      }} />
+      }} /></div>
     </section>}
-    <div className={`min-w-0 space-y-5 ${hasRecording ? "order-2 lg:order-1" : ""}`}>
-    <section aria-label="Execution steps" className={PANEL}><h3 className="font-semibold">Execution</h3>
-      <p className="mt-2">Setup: {run.result.setup.status}{run.result.setup.actionId && ` (${run.result.setup.actionId})`}</p>
-      <ol role="list" className={`mt-3 list-none space-y-2 ${hasRecording ? "lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-10rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>{run.result.steps.map((step, index) => {
+    <section aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasRecording ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
+      <div role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasRecording ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
+      <p>Setup: {run.result.setup.status}{run.result.setup.actionId && ` (${run.result.setup.actionId})`}</p>
+      <ol role="list" className="mt-3 list-none space-y-2">{run.result.steps.map((step, index) => {
         const source = definition?.steps.find(item => item.id === step.id);
         const title = source?.instruction ?? step.id;
         return <li key={step.id} className="flex gap-3 rounded-lg border border-[#e0e4de] p-3">
@@ -151,14 +151,13 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       {run.result.teardown.errors.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={`cleanup-${index}`}>Cleanup / {failure.actionId}: {failure.message}</p>)}
       {run.result.teardown.unavailableResources.map(resource => <p role="alert" className="mt-2 whitespace-pre-wrap" key={resource.resource}>{resource.resource}: {resource.cause}. Next action: {resource.nextAction}</p>)}
       {run.result.failures.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.phase} / {failure.actionId}: {failure.message}</p>)}
+      </div>
     </section>
+    </div>
     <section className={PANEL}><h3 className="font-semibold">Evidence</h3>
       <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className="underline" href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
       <p className="mt-4 text-xs">Source revision: <code>{run.definitionRevision}</code></p>
     </section>
-    </div>
-
-    </div>
   </div>;
 }
 
