@@ -96,3 +96,56 @@ test("teardown evidence errors cannot disappear from run failures when outcome e
     expect(preserved.result.teardown.outcomes[0]).toEqual(cleaned);
   }
 });
+
+test("lifecycle actions preserve old results and reject duplicate identities, invalid timing and recording locations", () => {
+  const old = run();
+  const legacy = frameworkRunSchema.parse(old);
+  expect(legacy.result.setup).not.toHaveProperty("actions");
+  expect(legacy.result.teardown).not.toHaveProperty("actions");
+  const action = {id: "shared:install", instruction: "Install the selected Mentra App", expected: "The selected build is installed",
+    scope: "shared" as const, status: "passed" as const, durationMs: 10, startedAt: old.startedAt, finishedAt: "2026-10-02T19:00:01Z"};
+  const withSetup = (actions: unknown[]) => ({...old, result: {...old.result, setup: {...old.result.setup, actions}}});
+  expect(frameworkRunSchema.parse(withSetup([action])).result.setup.actions).toEqual([action]);
+  for (const actions of [
+    [action, action], [{...action, id: ""}], [{...action, durationMs: -1}], [{...action, status: "unknown"}],
+    [{...action, startedAt: "2026-10-02T18:59:59Z"}], [{...action, finishedAt: "2026-10-02T19:02:01Z"}],
+    [{...action, startedAt: "2026-10-02T19:00:02Z"}], [{...action, startedAt: undefined}],
+    [{...action, recordingLocation: {assetId: "capture", startOffsetMs: 0}}], Array(1001).fill(action),
+    [{...action, status: "not-run", durationMs: 0}],
+  ]) expect(frameworkRunSchema.safeParse(withSetup(actions)).success).toBe(false);
+  const skipped = {...action, status: "not-run", durationMs: 0, startedAt: undefined, finishedAt: undefined, causedBy: "shared:entry"};
+  expect(frameworkRunSchema.safeParse(withSetup([skipped])).success).toBe(true);
+});
+
+test("routine lifecycle failures cannot hide behind aggregate pass while shared evidence failures remain independent", () => {
+  const old = run();
+  const action = {id: "notes-fixture", instruction: "Create the fixture note", expected: "The fixture note is saved",
+    scope: "routine" as const, status: "passed" as const, durationMs: 10};
+  const good = {...old, result: {...old.result, setup: {...old.result.setup, actions: [action]},
+    teardown: {...old.result.teardown, actions: [{...action, id: "remove-fixture"}]}}};
+  expect(frameworkRunOutcome(frameworkRunSchema.parse(good))).toBe("pass");
+  for (const status of ["failed", "cancelled", "not-run"] as const) {
+    const changed = {...action, status, durationMs: status === "not-run" ? 0 : 10};
+    expect(frameworkRunSchema.safeParse({...good, result: {...good.result, setup: {...good.result.setup, actions: [changed]}}}).success).toBe(false);
+    expect(frameworkRunSchema.safeParse({...good, result: {...good.result, teardown: {...good.result.teardown, actions: [changed]}}}).success).toBe(false);
+    const setupFailure = {...good, result: {...good.result, setup: {status: "failed", actions: [changed]}, test: "not-run",
+      steps: [{id: "settings", status: "not-run", durationMs: 0}]}};
+    expect(frameworkRunOutcome(frameworkRunSchema.parse(setupFailure))).toBe("setup-failed");
+    expect(frameworkRunOutcome(frameworkRunSchema.parse({...good, result: {...good.result,
+      teardown: {...good.result.teardown, ready: false, actions: [changed]}}}))).toBe("teardown-failed");
+  }
+  const evidenceError = {phase: "evidence" as const, actionId: "finalize-recording", message: "Recording finalization failed"};
+  const sharedEvidence = {...good, result: {...good.result, failures: [evidenceError], teardown: {...good.result.teardown,
+    actions: [{...action, id: evidenceError.actionId, scope: "shared", status: "failed"}], errors: [evidenceError]}}};
+  const preserved = frameworkRunSchema.parse(sharedEvidence);
+  expect(frameworkRunOutcome(preserved)).toBe("pass");
+  expect(frameworkEvidenceComplete(preserved)).toBe(false);
+  for (const status of ["failed", "cancelled"] as const) {
+    const skipped = {...action, status: "not-run", durationMs: 0};
+    const setupStopped = {...good, result: {...good.result, setup: {status, actions: [skipped]}, test: "not-run",
+      steps: [{id: "settings", status: "not-run", durationMs: 0}], teardown: {...good.result.teardown, actions: [skipped]}}};
+    expect(frameworkRunSchema.safeParse(setupStopped).success).toBe(true);
+    expect(frameworkRunSchema.safeParse({...setupStopped, result: {...setupStopped.result,
+      teardown: {...setupStopped.result.teardown, actions: [{...skipped, status: "failed"}]}}}).success).toBe(false);
+  }
+});

@@ -42,3 +42,23 @@ test("standalone Mongo enrollment uses one immutable insert and reconciles dupli
     await expect(new RoutineDefinitionService().enroll(row)).rejects.toThrow("different contents");
   } finally {insert.mockRestore(); find.mockRestore(); transaction.mockRestore();}
 });
+
+test("lifecycle definitions retain optional hook metadata and unique action IDs across every phase", async () => {
+  const repository: RoutineDefinitionRepository = {async enroll() {}, async current() {return [];}, async getCurrent() {return null;}};
+  const service = new RoutineDefinitionService(repository);
+  const old = enrollment();
+  expect((await service.enroll(old)).definition).not.toHaveProperty("setup");
+  const setup = {id: "create-fixture", instruction: "Create a fixture note", expected: "The fixture note is saved"};
+  const teardown = {id: "remove-fixture", instruction: "Remove the fixture note", expected: "The fixture note is absent"};
+  const submit = (definition: RoutineEnrollment["definition"]) => service.enroll({...old, definition,
+    definitionSha256: requestInputDigest(definition)});
+  const definition = {...old.definition, setup: [setup], teardown: [teardown]};
+  expect((await submit(definition)).definition).toEqual(definition);
+  expect((await submit({...old.definition, setup: [], teardown: []})).definition.setup).toEqual([]);
+  for (const invalid of [
+    {...definition, setup: [setup, setup]}, {...definition, teardown: [{...teardown, id: setup.id}]},
+    {...definition, setup: [{...setup, id: old.definition.steps[0]!.id}]},
+    {...definition, setup: [{...setup, id: "shared:install"}]},
+    {...definition, setup: [{...setup, instruction: ""}]}, {...definition, setup: Array(501).fill(setup)},
+  ]) await expect(submit(invalid)).rejects.toThrow("Invalid routine definition");
+});
