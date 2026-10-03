@@ -12,7 +12,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parents[3]
-FILES = ('setup.sh', 'installer/setup.py', 'main.bicep', 'bootstrap.bicep',
+FILES = ('setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep',
          'deployment.config.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
          'scripts/generate-private-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh')
 
@@ -73,6 +73,8 @@ Run ./setup.sh preflight --directory ../mentra-setup
 Run ./setup.sh plan --directory ../mentra-setup
 Run ./setup.sh configure-entra --directory ../mentra-setup
 Run ./setup.sh install --directory ../mentra-setup
+After Core is deployed: ./setup.sh bootstrap-admin --directory ../mentra-setup
+Store admin-key.json in your secret manager; use its value as MENTRA_ADMIN_TOKEN.
 A custom hostname pauses for the CNAME and TXT in dns-records.json.
 After publishing those records: ./setup.sh resume --directory ../mentra-setup --dns-ready
 The setup directory contains private keys: protect it and back it up to your secret manager.

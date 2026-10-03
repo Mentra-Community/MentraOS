@@ -274,6 +274,22 @@ class InstallerTests(unittest.TestCase):
         with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'Configuration changed'):
             setup.load(self.directory)
 
+    def test_admin_bootstrap_retries_saved_credential_and_preserves_existing_allowlist(self):
+        self.config['coreName'] = 'ca-test-core'
+        self.state['outputs'] = {'coreOrigin': 'https://core.example'}
+        setup.write_json(self.directory/'admin-key.json',dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR',value='msk_local_test.secret'))
+        calls = []
+        def azure(config,*args):
+            calls.append(args)
+            if args[:2]==('containerapp','show'):
+                return {'properties':{'template':{'containers':[{'env':[{'name':'CLOUD_CORE_ADMIN_EMAILS','value':'existing@example.com'}]}]}}}
+            return {}
+        with patch.object(setup,'azure',side_effect=azure), patch.object(setup.subprocess,'run',side_effect=AssertionError('must reuse saved key')), patch.object(setup,'emit'):
+            setup.bootstrap_admin(self.args,self.directory,self.config,self.state)
+        self.assertIn('existing@example.com',self.config['coreAdminEmails'])
+        self.assertIn('api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local',self.config['coreAdminEmails'])
+        self.assertEqual(setup.digest(self.directory/'deployment.config.json'),self.state['configHash'])
+
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess
         with patch.object(setup.subprocess, 'run', return_value=CompletedProcess(['az'], 1, '', 'secret-token')):

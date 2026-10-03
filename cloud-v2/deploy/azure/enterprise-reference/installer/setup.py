@@ -87,7 +87,7 @@ def check_release():
     if release.get('schemaVersion') != 1 or not re.fullmatch(
             r'ghcr\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}', release.get('sourceImage', '')):
         raise SetupError('Invalid release metadata')
-    required = {'setup.sh', 'installer/setup.py', 'main.bicep', 'bootstrap.bicep',
+    required = {'setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep',
                 'deployment.config.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
                 'scripts/generate-private-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh'}
     inventory = release.get('files')
@@ -467,6 +467,82 @@ def verify(args, directory, config, state):
                'remaining': 'Assign employees in Entra, validate a licensed Teams account and guest fallback on the Mentra App, submit/retrieve feedback. Server smoke tests do not certify device or Teams policy behavior.'})
 
 
+def bootstrap_admin(args, directory, config, state):
+    if not state.get('outputs', {}).get('coreOrigin'):
+        raise SetupError('Deploy Core before creating its administrator key')
+    import pty
+    output = directory / 'admin-key.json'
+    if output.exists() and (output.is_symlink() or output.stat().st_mode & 0o077):
+        raise SetupError('Administrator key file must be owner-only and not a symlink')
+    current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
+    if not output.exists():
+        code = base64.b64encode((ROOT / 'installer/admin-key.ts').read_bytes()).decode()
+        owner = state['owner']
+        if not GUID.fullmatch(owner):
+            raise SetupError('Invalid saved deployment owner')
+        remote = '/app/cloud-v2/packages/core/mentra-admin-' + owner + '.ts'
+        command = f'''bun -e "console.log('MENTRA_SCRIPT_READY'); const rl=require('node:readline').createInterface({{input:process.stdin}}); const encoded=await new Promise(resolve=>rl.once('line',resolve)); rl.close(); await Bun.write('{remote}',Buffer.from(encoded,'base64')); process.argv=['bun','{remote}','{owner}']; await import('{remote}')"'''
+        master, slave = pty.openpty()
+        try:
+            process = subprocess.Popen(['az', 'containerapp', 'exec', '--name', config['coreName'],
+                                    '--resource-group', config['resourceGroup'], '--subscription', config['subscriptionId'],
+                                    '--revision', current['properties']['latestReadyRevisionName'],
+                                    '--command', command], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    start_new_session=True)
+            import time
+            import select
+            import signal
+            start = time.monotonic()
+            stdout = b''
+            sent = False
+            while time.monotonic() - start < 120:
+                if select.select([process.stdout], [], [], 1)[0]:
+                    chunk = os.read(process.stdout.fileno(), 65536)
+                    stdout += chunk
+                    if not sent and b'MENTRA_SCRIPT_READY' in stdout:
+                        os.write(master, (code + '\n').encode())
+                        sent = True
+                    if b'MENTRA_ADMIN_END' in stdout or not chunk:
+                        break
+                if process.poll() is not None:
+                    break
+            # Azure's stdin thread can outlive a finished remote command.
+            # Terminate this invocation's process group, never other CLI work.
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    process.terminate()
+            process.communicate(timeout=5)
+            result = subprocess.CompletedProcess([], process.returncode, stdout.decode(), '')
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise SetupError('Admin bootstrap timed out. Retry to retrieve the same saved key; provider output withheld.') from None
+        finally:
+            os.close(slave)
+            os.close(master)
+        match = re.search(r'MENTRA_ADMIN_BEGIN(.*?)MENTRA_ADMIN_END', result.stdout, re.S)
+        if not match:
+            raise SetupError('Core admin bootstrap did not return a credential. Check the selected Core revision; raw output withheld.')
+        credential = json.loads(match.group(1))
+        if not re.fullmatch(r'[0-9A-HJKMNP-TV-Z]{26}', credential.get('id', '')) or not credential.get('value', '').startswith('msk_local_'):
+            raise SetupError('Core returned an invalid administrator credential')
+        write_json(output, credential)
+    credential = read_json(output)
+    email = 'api-key@' + credential['id'] + '.local'
+    values = next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
+                   if entry['name'] == 'CLOUD_CORE_ADMIN_EMAILS'), '')
+    emails = sorted(set(filter(None, (values + ',' + config.get('coreAdminEmails', '') + ',' + email).split(','))))
+    allowlist = ','.join(emails)
+    # Preserve the setting in installer configuration so later resume retains it.
+    config['coreAdminEmails'] = allowlist
+    write_json(directory / 'deployment.config.json', config)
+    checkpoint(directory, state, state['phase'], configHash=digest(directory / 'deployment.config.json'))
+    azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
+          '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
+    emit(args, {'status': 'admin_key_created', 'file': str(output),
+                'next': 'Store this credential in your secret manager. Wait for the new Core revision, then use it as MENTRA_ADMIN_TOKEN for report retrieval.'})
 def configure_entra(args, directory, config, state):
     preflight(config)
     if state.get('outputs') or state.get('configHash'):
@@ -491,7 +567,7 @@ def configure_entra(args, directory, config, state):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'install', 'resume', 'status', 'verify', 'diagnostics'))
+    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'diagnostics'))
     parser.add_argument('--directory', default='./mentra-setup', help='Persistent state and secret directory outside the installer package')
     parser.add_argument('--config', help='JSON answers for init; otherwise edit deployment.config.json')
     parser.add_argument('--json', action='store_true')
@@ -525,6 +601,8 @@ def main():
                 install(args, directory, config, state)
             elif args.command == 'verify':
                 verify(args, directory, config, state)
+            elif args.command == 'bootstrap-admin':
+                bootstrap_admin(args, directory, config, state)
             elif args.command == 'status':
                 emit(args, state)
             else:
