@@ -1,12 +1,10 @@
 import {useEffect, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery} from "@tanstack/react-query";
-import type {TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/services/test-history.service";
-import type {FrameworkRunSummary} from "../../../../packages/core/src/services/framework-result.service";
+import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
-import type {CatalogExample, CatalogHistoryRun} from "../../../../packages/core/src/services/routine-catalog.service";
 
 type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};

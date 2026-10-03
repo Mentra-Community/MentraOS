@@ -4,17 +4,12 @@ import {createLogger} from "@mentra/cloud-shared";
 import {TestRunModel} from "../models/test-run.model";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
-import type {TestSuite} from "../types/test-suite.types";
-import {nativeRunFilter, summarizeFrameworkRun, type FrameworkRunSummary} from "./framework-result.service";
+import type {TestHistoryEntry, TestHistoryPage} from "../types/test-history.types";
+import {nativeRunFilter, summarizeFrameworkRun} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
 import {TestSuiteService} from "./test-suite.service";
 const logger = createLogger("core").child({component: "test-history"});
 
-export type TestHistoryEntry = ({kind: "run"} & FrameworkRunSummary) | {
-  kind: "suite"; suiteId: string; channel: TestSuite["channel"]; trigger: TestSuite["trigger"];
-  startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; build: TestSuite["build"];
-} | {kind: "unavailable"; sourceKind: "run" | "suite"; id: string; startedAt: string; message: "Details unavailable."};
-export interface TestHistoryPage {entries: TestHistoryEntry[]; nextCursor: string | null}
 const cursorSchema = z.object({startedAt: z.string().datetime({offset: true}),
   kind: z.enum(["run", "suite"]), id: frameworkRunIdSchema}).strict();
 type HistoryCursor = z.infer<typeof cursorSchema>;

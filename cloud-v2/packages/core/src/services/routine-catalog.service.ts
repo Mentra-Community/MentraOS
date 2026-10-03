@@ -1,24 +1,16 @@
 import {z} from "zod";
-import {frameworkEvidenceComplete, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
+import {frameworkEvidenceComplete, frameworkRunSchema} from "../types/framework-run.types";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
 import {TestRunModel} from "../models/test-run.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
+import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
 import {nativeRunFilter} from "./framework-result.service";
 
-export interface CatalogExample {
-  runId: string;
-  startedAt: string;
-  finishedAt: string;
-  recordingAssetId: string;
-  definitionRevision: string;
-  build: FrameworkRun["build"];
-}
 export interface CatalogRunRepository {
   latestPassing(definition: RoutineEnrollment): Promise<CatalogExample | null>;
   history(routineId: string, platform: string, after: {startedAt: Date; runId: string} | null, limit: number): Promise<CatalogHistoryRun[]>;
 }
-export interface CatalogHistoryRun {runId: string; startedAt: string; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"; definitionRevision: string}
 export class RoutineCatalogError extends Error {
   constructor(readonly status: 400 | 404, message: string) {super(message);}
 }

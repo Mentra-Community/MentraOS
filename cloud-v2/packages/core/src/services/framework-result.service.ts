@@ -2,6 +2,7 @@ import {testWriteConcern} from "../models/test-write-concern";
 import {TestAssetModel} from "../models/test-run.model";
 import {TestRunModel} from "../models/test-run.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
+import type {FrameworkRunSummary} from "../types/test-history.types";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {TestRequestModel} from "../models/test-request.model";
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
@@ -17,11 +18,6 @@ export interface FrameworkResultRepository {
   getByRun(runId: string): Promise<StoredFrameworkRun | null>;
 }
 export interface StoredFrameworkRun {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean}
-export interface FrameworkRunSummary {
-  runId: string; requestId: string; hostId: string; routineId: string; platform: string; laneId: string;
-  startedAt: string; finishedAt: string; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed";
-  build: Pick<FrameworkRun["build"], "repository" | "channel" | "headSha" | "prNumber"> & {release?: string; producerUrl?: string};
-}
 export function summarizeFrameworkRun(run: FrameworkRun, uploadsComplete: boolean): FrameworkRunSummary {
   const release = typeof run.build.releaseIdentity === "string" ? run.build.releaseIdentity
     : typeof run.build.release === "string" ? run.build.release : undefined;

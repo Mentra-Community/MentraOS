@@ -1,7 +1,7 @@
 import {expect, test} from "bun:test";
 import {RoutineCatalogService} from "./routine-catalog.service";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
-import type {CatalogExample, CatalogHistoryRun} from "./routine-catalog.service";
+import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 
 const example: CatalogExample = {runId: "notes-pass", startedAt: "2026-10-02T18:00:00Z",
   finishedAt: "2026-10-02T18:01:00Z", recordingAssetId: "video", definitionRevision: "a".repeat(40),
