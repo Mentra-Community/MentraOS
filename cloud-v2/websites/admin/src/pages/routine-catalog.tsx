@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery} from "@tanstack/react-query";
 import type {FrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
+import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../../../../packages/core/src/services/routine-catalog.service";
 
@@ -78,7 +79,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
 }
 
 export function frameworkRunHref(runId: string) {
-  return `/?routineCatalog=1&frameworkRun=${encodeURIComponent(runId)}`;
+  return testRunLocation("https://admin.mentraglass.com/", {runID: runId});
 }
 
 export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
@@ -113,6 +114,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   };
   const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(runId)}/assets/${encodeURIComponent(id)}`;
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
+  const hasRecording = Boolean(recordingAsset && uploadsComplete);
   return <div className="space-y-5">
     <a className="underline" href={routineHref(run.routineId, run.platform)}>Back to routine</a>
     <section className={PANEL}><h2 className="text-xl font-semibold">{run.routineId}: {outcome}</h2>
@@ -121,20 +123,28 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       <p className="mt-2">Setup {seconds(run.result.timing.setupMs)} · Test {seconds(run.result.timing.testMs)} · Teardown {seconds(run.result.timing.teardownMs)}</p>
       {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
       {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
-      {recordingAsset && uploadsComplete && <video ref={video} data-asset-id={recordingAsset} className="mt-4 w-full rounded-lg" controls preload="metadata" src={assetHref(recordingAsset)} onLoadedMetadata={() => {
-        if (video.current && pendingOffset.current !== null) {video.current.currentTime = pendingOffset.current; pendingOffset.current = null;}
-      }} />}
     </section>
-    <section className={PANEL}><h3 className="font-semibold">Execution</h3>
+    <div className={hasRecording ? "grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
+    {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:sticky lg:top-[calc(var(--admin-header-height,6rem)+1rem)]`}>
+      <h3 className="font-semibold">Recording</h3>
+      <video ref={video} data-asset-id={recordingAsset!} className="mt-3 max-h-[70dvh] w-full rounded-lg bg-black object-contain lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-8rem)]" controls preload="metadata" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
+        if (video.current && pendingOffset.current !== null) {video.current.currentTime = pendingOffset.current; pendingOffset.current = null;}
+      }} />
+    </section>}
+    <div className={`min-w-0 space-y-5 ${hasRecording ? "order-2 lg:order-1" : ""}`}>
+    <section aria-label="Execution steps" className={PANEL}><h3 className="font-semibold">Execution</h3>
       <p className="mt-2">Setup: {run.result.setup.status}{run.result.setup.actionId && ` (${run.result.setup.actionId})`}</p>
-      <ol className="mt-3 list-decimal space-y-2 pl-5">{run.result.steps.map(step => {
+      <ol role="list" className={`mt-3 list-none space-y-2 ${hasRecording ? "lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-10rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>{run.result.steps.map((step, index) => {
         const source = definition?.steps.find(item => item.id === step.id);
         const title = source?.instruction ?? step.id;
-        return <li key={step.id} className="rounded-lg border border-[#e0e4de] p-3">
+        return <li key={step.id} className="flex gap-3 rounded-lg border border-[#e0e4de] p-3">
+          <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
+          <div className="min-w-0 flex-1">
           {step.recordingLocation && uploadsComplete ? <button className="block w-full text-left" onClick={() => seekStep(step.recordingLocation!)}><span className="underline">{title}</span> · {step.status} · {seconds(step.durationMs)}<span className="block text-sm">Watch this step</span></button>
             : <p>{title} · {step.status}{step.status !== "not-run" && ` · ${seconds(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
           {source && <p className="mt-1 text-sm">Expected: {source.expected}</p>}
           {step.causedBy && <p className="mt-1 text-sm">Caused by: {step.causedBy}</p>}
+          </div>
         </li>;
       })}</ol>
       <p className="mt-3">Teardown: {run.result.teardown.ready ? "ready" : "failed"}</p>
@@ -146,6 +156,9 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className="underline" href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
       <p className="mt-4 text-xs">Source revision: <code>{run.definitionRevision}</code></p>
     </section>
+    </div>
+
+    </div>
   </div>;
 }
 

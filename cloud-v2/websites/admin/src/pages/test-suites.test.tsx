@@ -15,7 +15,7 @@ test("suite shows missing routines and links to published recordings", () => {
   const client = new QueryClient(); client.setQueryData(["test-suite", suite.suiteId], suite);
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
   expect(html).toContain("1/2 passed"); expect(html).toContain("Did not run");
-  expect(html).toContain("/?routineCatalog=1&amp;frameworkRun=run-one"); expect(html).toContain("Failed or incomplete: ota");
+  expect(html).toContain("/?testRun=run-one"); expect(html).toContain("Failed or incomplete: ota");
 });
 test("recent suite link opens aggregate", () => {
   const client = new QueryClient(); client.setQueryData(["test-suites"], {suites: [suite]});
