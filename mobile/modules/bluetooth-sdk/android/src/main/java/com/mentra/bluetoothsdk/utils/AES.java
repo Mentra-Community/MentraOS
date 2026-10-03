@@ -10,7 +10,7 @@ import java.util.Arrays;
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
 
-import android.util.Log;
+import com.mentra.bluetoothsdk.utils.NativeLog;
 
 public class AES {
     private static final String TAG = "WearableIntelligenceSystem_AES";
@@ -29,10 +29,10 @@ public class AES {
             secretKey = new SecretKeySpec(key, "AES");
         }
         catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
+            com.mentra.bluetoothsdk.utils.NativeLog.e("AES", "Native exception", e);
         }
         catch (UnsupportedEncodingException e) {
-            e.printStackTrace();
+            com.mentra.bluetoothsdk.utils.NativeLog.e("AES", "Native exception", e);
         }
     }
 
@@ -47,7 +47,7 @@ public class AES {
         }
         catch (Exception e)
         {
-            Log.d(TAG, "Error while encrypting: " + e.toString());
+            NativeLog.d(TAG, "Error while encrypting: " + e.toString());
         }
         return null;
     }
@@ -64,7 +64,7 @@ public class AES {
         }
         catch (Exception e)
         {
-            Log.d(TAG, "Error while encrypting: " + e.toString());
+            NativeLog.d(TAG, "Error while encrypting: " + e.toString());
         }
         return null;
     }
@@ -74,7 +74,6 @@ public class AES {
     {
         try
         {
-            Log.d(TAG, "Secret key is: " + secret);
             setKey(secret);
             Cipher cipher = Cipher.getInstance("AES/ECB/PKCS7PADDING");
             cipher.init(Cipher.DECRYPT_MODE, secretKey);
@@ -82,7 +81,7 @@ public class AES {
         }
         catch (Exception e)
         {
-            Log.d(TAG, "Error while decrypting: " + e.toString());
+            NativeLog.d(TAG, "Error while decrypting: " + e.toString());
         }
         return null;
     }
@@ -99,7 +98,7 @@ public class AES {
         }
         catch (Exception e)
         {
-            Log.d(TAG, "Error while decrypting: " + e.toString());
+            NativeLog.d(TAG, "Error while decrypting: " + e.toString());
         }
         return null;
     }

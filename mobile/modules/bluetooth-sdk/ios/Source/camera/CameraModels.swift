@@ -62,8 +62,18 @@ public enum ButtonPhotoSize: String {
 
 public enum PhotoCompression: String {
     case none
+    case low
     case medium
-    case heavy
+    case high
+
+    static func parse(_ value: Any?) throws -> PhotoCompression {
+        guard let value else { return .none }
+        guard let raw = value as? String, let compression = PhotoCompression(rawValue: raw) else {
+            throw BluetoothSdkError(code: "invalid_photo_compression",
+                                    message: "Invalid photo compression \(value). Expected none, low, medium, or high.")
+        }
+        return compression
+    }
 }
 
 public struct PhotoCaptureDefaults {
@@ -76,7 +86,7 @@ public struct PhotoCaptureDefaults {
     public let ispAnalogGain: String?
     public let aeExposureDivisor: Int?
     public let isoCap: Int?
-    public let compress: String?
+    public let compress: PhotoCompression?
     public let sound: Bool?
     public let resetCaptureTuning: Bool?
 
@@ -90,7 +100,7 @@ public struct PhotoCaptureDefaults {
         ispAnalogGain: String? = nil,
         aeExposureDivisor: Int? = nil,
         isoCap: Int? = nil,
-        compress: String? = nil,
+        compress: PhotoCompression? = nil,
         sound: Bool? = nil,
         resetCaptureTuning: Bool? = nil
     ) {
@@ -108,12 +118,12 @@ public struct PhotoCaptureDefaults {
         self.resetCaptureTuning = resetCaptureTuning
     }
 
-    static func from(params: [String: Any]) -> PhotoCaptureDefaults {
+    static func from(params: [String: Any]) throws -> PhotoCaptureDefaults {
         let size = (params["size"] as? String).map { PhotoSize(normalizedRawValue: $0) }
         let aeExposureDivisor =
             optionalIntValue(params, "aeExposureDivisor").flatMap { $0 > 1 ? $0 : nil }
         let isoCap = optionalIntValue(params, "isoCap").flatMap { $0 > 0 ? $0 : nil }
-        return PhotoCaptureDefaults(
+        return try PhotoCaptureDefaults(
             size: size,
             mfnr: optionalBoolValue(params, "mfnr"),
             zsl: optionalBoolValue(params, "zsl"),
@@ -123,7 +133,7 @@ public struct PhotoCaptureDefaults {
             ispAnalogGain: optionalStringValue(params, "ispAnalogGain"),
             aeExposureDivisor: aeExposureDivisor,
             isoCap: isoCap,
-            compress: optionalStringValue(params, "compress"),
+            compress: params["compress"].map { try PhotoCompression.parse($0) },
             sound: optionalBoolValue(params, "sound"),
             resetCaptureTuning: optionalBoolValue(params, "resetCaptureTuning")
         )
@@ -242,13 +252,14 @@ public struct CameraFovResult: CustomStringConvertible {
 }
 
 public struct PhotoRequest {
+    public let presendThumbnail: Bool
     public let requestId: String
     public let size: PhotoSize
     public let mode: PhotoMode
     public let transferMethod: String
     public let webhookUrl: String?
     public let authToken: String?
-    public let compress: PhotoCompression?
+    public let compress: PhotoCompression
     public let save: Bool
     public let sound: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
@@ -269,7 +280,7 @@ public struct PhotoRequest {
         size: PhotoSize,
         webhookUrl: String? = nil,
         authToken: String? = nil,
-        compress: PhotoCompression? = nil,
+        compress: PhotoCompression = .none,
         save: Bool = false,
         sound: Bool,
         exposureTimeNs: Double? = nil,
@@ -283,7 +294,8 @@ public struct PhotoRequest {
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil,
         mode: PhotoMode = .photo,
-        transferMethod: String = "auto"
+        transferMethod: String = "auto",
+        presendThumbnail: Bool = false
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -304,11 +316,12 @@ public struct PhotoRequest {
         self.ispAnalogGain = ispAnalogGain
         self.mode = mode
         self.transferMethod = transferMethod
+        self.presendThumbnail = presendThumbnail
     }
 
     public static func from(params: [String: Any]) throws -> PhotoRequest {
         let sizeRaw = params["size"] as? String ?? "medium"
-        let compressRaw = params["compress"] as? String ?? "none"
+        let compress = try PhotoCompression.parse(params["compress"])
         let transferMethod: String
         if let rawValue = params["transferMethod"] {
             guard let rawString = rawValue as? String,
@@ -372,7 +385,7 @@ public struct PhotoRequest {
             size: PhotoSize(normalizedRawValue: sizeRaw),
             webhookUrl: params["webhookUrl"] as? String,
             authToken: (params["authToken"] as? String)?.nilIfBlank,
-            compress: PhotoCompression(rawValue: compressRaw),
+            compress: compress,
             save: (params["save"] as? Bool) ?? (params["saveToGallery"] as? Bool) ?? false,
             sound: params["sound"] as? Bool ?? true,
             exposureTimeNs: exposureTimeNs,
@@ -386,7 +399,8 @@ public struct PhotoRequest {
             ispDigitalGain: optionalInt("ispDigitalGain"),
             ispAnalogGain: params["ispAnalogGain"] as? String,
             mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
-            transferMethod: transferMethod
+            transferMethod: transferMethod,
+            presendThumbnail: params["presend_thumbnail"] as? Bool ?? false
         )
     }
 
@@ -437,7 +451,8 @@ public struct PhotoRequest {
             ispDigitalGain: ispDigitalGain,
             ispAnalogGain: ispAnalogGain,
             mode: mode,
-            transferMethod: transferMethod
+            transferMethod: transferMethod,
+            presendThumbnail: presendThumbnail
         )
     }
 }
@@ -497,7 +512,7 @@ public struct VideoRecordingRequest {
     public let width: Int
     public let height: Int
     public let fps: Int
-    // Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
+    /// Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
     public let maxRecordingTimeMinutes: Int
 
     public init(
@@ -863,4 +878,3 @@ public struct GalleryStatusEvent: CustomStringConvertible {
         "GalleryStatusEvent(total: \(total), photos: \(photos), videos: \(videos))"
     }
 }
-

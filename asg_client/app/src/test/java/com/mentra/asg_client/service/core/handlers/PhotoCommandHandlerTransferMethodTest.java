@@ -81,6 +81,25 @@ public class PhotoCommandHandlerTransferMethodTest {
         handler = new PhotoCommandHandler(null, serviceManager, fileManager, stateManager);
     }
 
+    @Test
+    public void compressionUsesExactWireValuesBeforeCapture() throws Exception {
+      for (String compress : new String[] {"none", "low", "medium", "high"}) {
+        org.mockito.Mockito.clearInvocations(captureService);
+        assertThat(handler.handleCommand("take_photo", takePhotoData().put("compress", compress))).isTrue();
+        Object sent = org.mockito.Mockito.mockingDetails(captureService).getInvocations().stream()
+            .filter(call -> call.getMethod().getName().equals("takePhotoAutoTransfer"))
+            .findFirst().get().getArguments()[10];
+        assertThat(sent).isEqualTo(compress);
+      }
+      for (Object invalid : new Object[] {"heavy", "", "HIGH", JSONObject.NULL, 42, false}) {
+        org.mockito.Mockito.clearInvocations(captureService);
+        assertThat(handler.handleCommand("take_photo", takePhotoData().put("compress", invalid))).isFalse();
+        verify(captureService).sendPhotoErrorResponse(eq("req-1"), eq("PHOTO_COMMAND_FAILED"), anyString());
+        assertThat(org.mockito.Mockito.mockingDetails(captureService).getInvocations().stream()
+            .noneMatch(call -> call.getMethod().getName().startsWith("takePhoto"))).isTrue();
+      }
+    }
+
     private JSONObject takePhotoData() throws Exception {
         return new JSONObject()
                 .put("requestId", "req-1")

@@ -78,7 +78,7 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   },
   [PermissionFeatures.CAMERA]: {
     name: "Camera",
-    description: "Used for the fullscreen mirror mode",
+    description: "Used for fullscreen mirror mode and for miniapps that publish video from this phone",
     ios: [PERMISSIONS.IOS.CAMERA],
     android: [PermissionsAndroid.PERMISSIONS.CAMERA],
     critical: false,
@@ -821,6 +821,15 @@ export const checkPermissionsUI = async (app: AppletInterface) => {
         // if (!hasCamera) {
         //   neededPermissions.push(PermissionFeatures.GLASSES_CAMERA)
         // }
+        break
+      // This phone's own camera, which is a real OS permission — unlike CAMERA above. Prompted
+      // here, when the wearer opens the miniapp, rather than mid-join: an ACS Teams call is
+      // refused outright without it, and a permission dialog on top of a half-built call is both
+      // confusing and too late to explain why it is being asked for.
+      case "PHONE_CAMERA":
+        if (!(await checkFeaturePermissions(PermissionFeatures.CAMERA))) {
+          neededPermissions.push(PermissionFeatures.CAMERA)
+        }
         break
       case "CALENDAR":
         const hasCalendar = await checkFeaturePermissions(PermissionFeatures.CALENDAR)

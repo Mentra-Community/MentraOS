@@ -18,6 +18,7 @@
  * etc.) instead of waiting 30s for cloud's timeout.
  */
 
+import {parsePhotoCompression, type PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {PhotoSize, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
@@ -51,7 +52,7 @@ export interface PhotoOpts {
   mode?: "photo" | "text"
   /** Select direct-only, phone-relayed BLE, or the default Wi-Fi/BLE fallback policy. */
   transferMethod?: PhotoTransferMethod
-  compress?: "none" | "low" | "medium" | "high"
+  compress?: PhotoCompression
   sound?: boolean
   saveToGallery?: boolean
   exposureTimeNs?: number
@@ -120,7 +121,7 @@ interface ActiveRequest {
  */
 export const CAPTURE_PIPELINE_TIMEOUT_MS = 45_000
 export const CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000
-export const CAMERA_WARM_UP_MAX_DURATION_MS = 60_000
+export const CAMERA_WARM_UP_MAX_DURATION_MS = 300_000
 
 let bleRequestCounter = 0
 
@@ -129,12 +130,6 @@ let bleRequestCounter = 0
 function mintBleRequestId(): string {
   bleRequestCounter = (bleRequestCounter + 1) & 0xffff
   return bleRequestCounter.toString(16).padStart(4, "0")
-}
-
-function toNativeCompression(compress: PhotoOpts["compress"]): "none" | "medium" | "heavy" {
-  if (compress === "high") return "heavy"
-  if (compress === "low" || compress === "medium") return "medium"
-  return "none"
 }
 
 export class PhonePhotoCoordinator {
@@ -159,6 +154,7 @@ export class PhonePhotoCoordinator {
   }
 
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
+    const compress = parsePhotoCompression(opts.compress)
     const transferMethod = parsePhotoTransferMethod(opts.transferMethod)
 
     // Pre-check: if glasses aren't even connected, the BLE photo command
@@ -176,8 +172,8 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
-    // Text-mode sensor resolution is owned by ASG constants; keep cloud metadata on a stable
-    // high-capacity tier and let the glasses ignore the public size when mode=text.
+    // Text-mode sensor resolution is owned by ASG constants; the glasses ignore the public
+    // size when mode=text.
     const captureSize = opts.size ?? "medium"
 
     // 1) Presign via the cloud-v2 managed-photo service. Local miniapps use
@@ -190,9 +186,7 @@ export class PhonePhotoCoordinator {
     const flowStarted = performance.now()
     try {
       const presignStarted = performance.now()
-      const r = await cloudClientService.startManagedPhoto({
-        size: opts.mode === "text" ? "max" : captureSize,
-      })
+      const r = await cloudClientService.startManagedPhoto()
       const presignMs = Math.round(performance.now() - presignStarted)
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.debug(
@@ -264,7 +258,7 @@ export class PhonePhotoCoordinator {
         webhookUrl: uploadUrl,
         authToken: null,
         ...(isLoopbackUpload ? {transferMethod: "ble" as const} : transferMethod ? {transferMethod} : {}),
-        compress: toNativeCompression(opts.compress),
+        compress,
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
         exposureTimeNs: opts.exposureTimeNs ?? null,
@@ -277,6 +271,16 @@ export class PhonePhotoCoordinator {
         ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
         ispDigitalGain: opts.ispDigitalGain,
         ispAnalogGain: opts.ispAnalogGain,
+      }).then((response) => {
+        // Native success is emitted only after the direct/phone-relayed upload
+        // completes. It is an independent completion signal when photo.ready
+        // cannot reach this phone (for example, a cross-pod WS routing gap).
+        // Older native bridges may resolve at dispatch with no response: those
+        // must still wait for the cloud push, never return an unuploaded image.
+        if (response?.state !== "success" || response.requestId !== bleRequestId) return
+        const e = this.activeRequests.get(requestId)
+        if (!e || e.abort.signal.aborted) return
+        e.resolve({photoUrl: readUrl, mimeType: "image/jpeg", size: -1})
       }).catch((err) => {
         const e = this.activeRequests.get(requestId)
         if (!e) return

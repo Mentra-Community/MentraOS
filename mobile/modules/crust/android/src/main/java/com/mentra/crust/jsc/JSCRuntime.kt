@@ -459,15 +459,14 @@ class JSCRuntime private constructor(private val appContext: Context) {
      */
     fun dispatchToJs(packageName: String, envelopeJson: String) {
         val record = contexts[packageName] ?: return
-        // Steady-state NACK — re-arm so a wedged QuickJS context surfaces
-        // an __error/ready_nack frame after 3s instead of silently
-        // swallowing the delivery. Skipped during cold-start (timer still
-        // ticking from spawn).
-        if (record.readyAcked) {
-            armReadyNackTimer(record, STEADY_STATE_NACK_TIMEOUT_MS, cold = false)
-        }
         try {
             record.executor.submit {
+                // Arm only once evaluate is about to run. Queue wait during a
+                // long previous turn (WHIP start, etc.) must not count — that
+                // was firing ready_nack while the context was merely busy.
+                if (record.readyAcked) {
+                    armReadyNackTimer(record, STEADY_STATE_NACK_TIMEOUT_MS, cold = false)
+                }
                 // Soft watchdog around evaluate: warn at 5s, kill at 30s.
                 val warn = timerScheduler.schedule({
                     Log.i(TAG, "watchdog: $packageName __deliver blocked >${WATCHDOG_WARN_MS}ms")
@@ -495,12 +494,12 @@ class JSCRuntime private constructor(private val appContext: Context) {
                     runBlocking {
                         record.qjs.evaluate<Any?>(source, filename = "mentrajs:deliver.js")
                     }
-                    // Successful delivery — context is responsive.
-                    record.readyNackTimer?.cancel(false)
-                    record.readyNackTimer = null
                 } catch (e: Throwable) {
                     Log.w(TAG, "dispatchToJs threw in $packageName: ${e.message}", e)
                 } finally {
+                    // Success or throw: the host observed the turn end.
+                    record.readyNackTimer?.cancel(false)
+                    record.readyNackTimer = null
                     warn.cancel(false)
                     killTimer.cancel(false)
                     if (record.watchdogTimer === killTimer) record.watchdogTimer = null

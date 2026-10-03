@@ -17,9 +17,12 @@ import {shallow} from "zustand/shallow"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {useSettingsStore, PAIRING_IDENTITY_KEYS} from "../stores/settings"
 import {useGlassesStore} from "../stores/glasses"
+import {getModelCapabilities} from "../types/hardware"
+import {DeviceTypes} from "../types/enums"
 import {createDebouncedPatchFlusher} from "../utils/debouncedPatch"
 import {isGlassesConnected} from "./GlassesReadiness"
 import micStateCoordinator from "./MicStateCoordinator"
+import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 
 /**
  * Change-pushes are debounced (300ms) and merged so a burst of setSetting
@@ -31,11 +34,42 @@ const flushBluetoothSettingsPatch = createDebouncedPatchFlusher<Record<string, u
   // rejection must not surface as an unhandled promise rejection.
   // Apply mic overrides at flush time, not enqueue time: raw PCM can stop
   // during the debounce window and a captured VAD=false would then be stale.
-  const runtimePatch = micStateCoordinator.applyRuntimeOverrides(patch)
+  const runtimePatch = micStateCoordinator.applyRuntimeOverrides(clampDisplaySettingsForModel(patch, currentModel()))
   void Promise.resolve(BluetoothSdk.updateBluetoothSettings(runtimePatch)).catch((error) => {
     console.warn("GlassesSettingsSync: updateBluetoothSettings failed:", error)
   })
 }, 300)
+
+/** Bound outgoing values without overwriting the user's saved preference for another model. */
+export function clampDisplaySettingsForModel(
+  settings: Record<string, unknown>,
+  model: string,
+): Record<string, unknown> {
+  const capabilities = getModelCapabilities(model as DeviceTypes)
+  const bounded = {...settings}
+  const ranges = {
+    dashboard_depth: capabilities.display?.position?.depth,
+    dashboard_height: capabilities.display?.position?.height,
+    head_up_angle: capabilities.imu?.headUpAngle,
+  }
+  for (const [key, range] of Object.entries(ranges)) {
+    if (!(key in bounded)) continue
+    const value = bounded[key]
+    if (!range || typeof value !== "number" || !Number.isFinite(value)) {
+      delete bounded[key]
+    } else {
+      bounded[key] = Math.min(range.max, Math.max(range.min, value))
+    }
+  }
+  return bounded
+}
+
+function currentModel(): string {
+  const glasses = useGlassesStore.getState()
+  if (isGlassesConnected(glasses.connection) && glasses.deviceModel) return glasses.deviceModel
+  const settings = useSettingsStore.getState().getBluetoothSettings()
+  return String(settings.default_wearable || settings.pending_wearable || "")
+}
 
 /**
  * The changed-keys diff for the change-push, MINUS the pairing-identity keys.
@@ -79,12 +113,15 @@ let unsubConnect: (() => void) | null = null
  * hydration at start, the pre-connect seed (connectDefault targets the seeded
  * identity), the post-demotion re-push, and the abandon re-seed.
  */
-export async function pushAllBluetoothSettings(): Promise<void> {
+export async function pushAllBluetoothSettings(targetModel?: string): Promise<void> {
   // Returns the native write promise so callers can await the seed before the
   // connect handshake replays settings to the glasses (otherwise the handshake
   // can race ahead and replay stale native settings).
   const settings = useSettingsStore.getState().getBluetoothSettings()
-  await BluetoothSdk.updateBluetoothSettings(micStateCoordinator.applyRuntimeOverrides(settings))
+  const model = targetModel ?? String(settings.default_wearable || settings.pending_wearable || "")
+  await BluetoothSdk.updateBluetoothSettings(
+    micStateCoordinator.applyRuntimeOverrides(clampDisplaySettingsForModel(settings, model)),
+  )
 }
 
 /**
@@ -97,7 +134,9 @@ export async function pushAllBluetoothSettings(): Promise<void> {
  */
 export async function pushDeviceSettingsOnConnect(): Promise<void> {
   const settings = stripPairingIdentity(useSettingsStore.getState().getBluetoothSettings())
-  await BluetoothSdk.updateBluetoothSettings(micStateCoordinator.applyRuntimeOverrides(settings))
+  await BluetoothSdk.updateBluetoothSettings(
+    micStateCoordinator.applyRuntimeOverrides(clampDisplaySettingsForModel(settings, currentModel())),
+  )
 }
 
 export function startGlassesSettingsSync(): void {
@@ -110,6 +149,16 @@ export function startGlassesSettingsSync(): void {
     (settings: Record<string, unknown>, previous: Record<string, unknown>) => {
       const changed = diffBluetoothSettingsForPush(settings, previous)
       if (Object.keys(changed).length > 0) {
+        // Mentra Live cs_swit type 11 — log the push hop so phone logs show
+        // the value leaving JS before native BLE, with old → new.
+        if ("auto_power_off_enabled" in changed) {
+          console.log(
+            "GlassesSettingsSync: auto_power_off_enabled",
+            previous.auto_power_off_enabled,
+            "→",
+            changed.auto_power_off_enabled,
+          )
+        }
         flushBluetoothSettingsPatch(changed)
       }
     },
@@ -124,9 +173,18 @@ export function startGlassesSettingsSync(): void {
     const connected = isGlassesConnected(useGlassesStore.getState().connection)
     if (connected && !wasConnected) {
       // Background sync: log-and-continue if the device drops right after connect.
-      void pushDeviceSettingsOnConnect().catch((error) => {
-        console.warn("GlassesSettingsSync: on-connect settings push failed:", error)
-      })
+      void pushDeviceSettingsOnConnect()
+        .catch((error) => {
+          console.warn("GlassesSettingsSync: on-connect settings push failed:", error)
+        })
+        .finally(() => {
+          // That push replays the persistent camera_fov, which stomps whatever
+          // override a miniapp currently owns. Re-assert after it either way:
+          // a failed push may still have written some keys.
+          void phoneCameraFovCoordinator.reapplyEffectiveOverride().catch((error) => {
+            console.warn("GlassesSettingsSync: camera FOV re-apply failed:", error)
+          })
+        })
     }
     wasConnected = connected
   })

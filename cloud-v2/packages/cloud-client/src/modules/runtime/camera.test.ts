@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, mock } from "bun:test";
 
 import type { HttpClient } from "../../http";
 import { systemTimers, type CloudClientTimers } from "../../timers";
@@ -36,4 +36,13 @@ describe("Camera", () => {
     expect(scheduledDelays).toEqual([30_000]);
     expect(cleared).toEqual([timeoutHandle]);
   });
+});
+
+test("allocates photo URLs without a request body", async () => {
+  const result = { requestId: "photo-1", uploadUrl: "https://upload", readUrl: "https://read" };
+  const post = mock(async (_path: string) => result);
+  const camera = new Camera({ http: { post } as unknown as HttpClient });
+
+  await expect(camera.startPhoto()).resolves.toEqual(result);
+  expect(post.mock.calls).toEqual([["/api/camera/photo"]]);
 });

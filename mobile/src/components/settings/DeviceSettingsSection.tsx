@@ -11,11 +11,9 @@ import {showAlert} from "@/contexts/ModalContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {deploymentStore} from "@/services/deployment"
+import {SETTINGS, useSetting, Capabilities, DeviceTypes, getModelCapabilities, engine} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
-
-import {Capabilities, DeviceTypes, getModelCapabilities} from "@mentra/engine"
-import {engine} from "@mentra/engine"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
@@ -80,11 +78,9 @@ export function DeviceSettingsSection() {
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   const otaProgress = otaSnapshot.legacyProgress
-  const isAr99Family =
-    isAr99Identifier(defaultWearable) ||
-    isAr99Identifier(glassesInfo.model) ||
-    isAr99Identifier(glassesInfo.bluetoothName)
+  const isMentraLive = defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
   const showAr99OtaEntry =
+    deploymentStore.getActive().kind === "consumer" &&
     glassesConnected &&
     (isAr99Identifier(defaultWearable) ||
       isAr99Identifier(glassesInfo.model) ||
@@ -107,15 +103,14 @@ export function DeviceSettingsSection() {
       return
     }
     try {
-      await engine.glasses.forget()
+      await engine.glasses.unpair()
       await engine.settings.set(SETTINGS.default_wearable.key, "", false)
       await engine.settings.set(SETTINGS.device_name.key, "", false)
       await engine.settings.set(SETTINGS.device_address.key, "", false)
       await engine.settings.set(SETTINGS.pending_wearable.key, "", false)
       useNavigationStore.getState().clearHistoryAndGoHome()
     } catch (error) {
-      const code =
-        error && typeof error === "object" && "code" in error ? String((error as {code?: unknown}).code) : ""
+      const code = error && typeof error === "object" && "code" in error ? String((error as {code?: unknown}).code) : ""
       // Native used to refuse forget() during CTKD bonding; Unpair now proceeds anyway.
       if (code === "ctkd_bonding_in_progress") {
         await showAlert({
@@ -160,8 +155,8 @@ export function DeviceSettingsSection() {
       {!glassesConnected && <ConnectDeviceButton />}
       {!glassesConnected && <NotConnectedInfo />}
 
-      {/* Display position — binocular glasses only */}
-      {defaultWearable && !isAr99Family && (features?.display?.count ?? 0) > 1 && (
+      {/* Display position — models with physical display adjustment */}
+      {defaultWearable && features?.display?.position && (
         <RouteButton
           icon={<Icon name="locate" size={24} color={theme.colors.secondary_foreground} />}
           label={translate("settings:positionSettings")}
@@ -227,6 +222,14 @@ export function DeviceSettingsSection() {
         onPress={() => push("/miniapps/settings/microphone")}
       />
 
+      {superMode && isMentraLive && (
+        <RouteButton
+          label="Wear Detection"
+          subtitle="Tune the don/doff vote window (cs_weartun)."
+          onPress={() => push("/miniapps/settings/wear-tuning")}
+        />
+      )}
+
       {/* WiFi — connected glasses that support WiFi */}
       {showAr99OtaEntry && (
         <>
@@ -250,7 +253,9 @@ export function DeviceSettingsSection() {
       )}
 
       {/* OTA Progress — OTA-capable glasses in super mode */}
-      {superMode && glassesConnected && features?.hasOta && otaProgress?.progress && otaProgress?.progress < 100 && <OtaProgressSection otaProgress={otaProgress} />}
+      {superMode && glassesConnected && features?.hasOta && otaProgress?.progress && otaProgress?.progress < 100 && (
+        <OtaProgressSection otaProgress={otaProgress} />
+      )}
 
       {/* Nex Developer Settings — Mentra Display only */}
       {defaultWearable && defaultWearable.includes(DeviceTypes.NEX) && (

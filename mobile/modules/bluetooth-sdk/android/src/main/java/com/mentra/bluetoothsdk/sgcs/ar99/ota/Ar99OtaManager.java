@@ -3,7 +3,7 @@ package com.mentra.bluetoothsdk.sgcs.ar99.ota;
 import android.bluetooth.BluetoothGatt;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
+import com.mentra.bluetoothsdk.utils.NativeLog;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -85,7 +85,7 @@ public class Ar99OtaManager {
 
   public synchronized boolean startOTA(byte[] data) {
     if (isOTAInProgress()) {
-      Log.w(TAG, "OTA is already in progress");
+      NativeLog.w(TAG, "OTA is already in progress");
       return false;
     }
     if (data == null || data.length == 0) {

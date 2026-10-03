@@ -20,6 +20,10 @@ public final class WhipCameraFormatSelector {
 
   private static final String TAG = "StreamQuality";
 
+  /** Spans the ~1s window the vendor FOV/ROI override leaves camera ids unresolvable. */
+  private static final int CAMERA_ID_ATTEMPTS = 4;
+  private static final long CAMERA_ID_RETRY_DELAY_MS = 400L;
+
   private WhipCameraFormatSelector() {
   }
 
@@ -79,8 +83,34 @@ public final class WhipCameraFormatSelector {
     return selectCaptureSize(characteristics, requestedWidth, requestedHeight);
   }
 
+  /**
+   * Back-facing camera id, retried while the camera service is still re-registering its ids.
+   *
+   * {@code getCameraIdList()} can report "0" while {@code getCameraCharacteristics("0")} throws
+   * {@code supportsCameraApi:2340: Unknown camera ID 0} for about a second after the vendor
+   * FOV/ROI override reconfigures the sensor. Mentra Call applies its 102° crop and starts WHIP
+   * inside exactly that window, so the call died on the first attempt and started on the next.
+   */
   public static String selectBackCamera(CameraManager cameraManager) throws CameraAccessException {
-    for (String id : cameraManager.getCameraIdList()) {
+    IllegalArgumentException unsettled = null;
+    for (int attempt = 1; attempt <= CAMERA_ID_ATTEMPTS; attempt++) {
+      try {
+        return selectBackCameraOnce(cameraManager);
+      } catch (IllegalArgumentException e) {
+        unsettled = e;
+        Log.w(TAG, "Camera ids unsettled on attempt " + attempt + "/" + CAMERA_ID_ATTEMPTS, e);
+        if (attempt < CAMERA_ID_ATTEMPTS) {
+          awaitCameraIdSettle();
+        }
+      }
+    }
+    throw unsettled;
+  }
+
+  private static String selectBackCameraOnce(CameraManager cameraManager)
+      throws CameraAccessException {
+    String[] ids = cameraManager.getCameraIdList();
+    for (String id : ids) {
       CameraCharacteristics chars = cameraManager.getCameraCharacteristics(id);
       Integer facing = chars.get(CameraCharacteristics.LENS_FACING);
       if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
@@ -88,8 +118,16 @@ public final class WhipCameraFormatSelector {
       }
     }
 
-    String[] ids = cameraManager.getCameraIdList();
+    // Every id above served its characteristics, so the fallback is readable by the caller too.
     return ids.length > 0 ? ids[0] : null;
+  }
+
+  private static void awaitCameraIdSettle() {
+    try {
+      Thread.sleep(CAMERA_ID_RETRY_DELAY_MS);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   /**

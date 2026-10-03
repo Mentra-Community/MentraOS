@@ -7,7 +7,7 @@
  *
  * Responsibilities, fused into one controller:
  *   - Settings        — storage-backed, loaded on start, persisted on change.
- *   - Layout          — wraps the script to the connected glasses via ScriptEngine.
+ *   - Reading state   — follows source words; line boundaries come from render results.
  *   - Scroll drivers  — two ways to advance the reading cursor:
  *       • Voice-follow: live transcription is anchored against the script.
  *       • Timed (WPM):  a wall-clock interval advances at a set words/minute.
@@ -21,11 +21,10 @@
  * flooding the glasses. (See the project's iOS background-pacing notes.)
  */
 
-import type {MiniappSession, TranscriptionData, UnsubscribeFn} from "@mentra/miniapp/background"
+import type {MiniappSession, TranscriptionData, UnsubscribeFn, RenderElement} from "@mentra/miniapp/background"
 
 import {ScriptEngine, normalizeWords} from "../core/ScriptEngine"
-import type {DisplayProfile} from "../core/ScriptEngine"
-import {getModelName, getProfileForModel, hasDisplayCapability, hasMicrophoneCapability} from "../core/DisplayProfiles"
+import {hasDisplayCapability, hasMicrophoneCapability} from "../core/Capabilities"
 import type {Channels} from "../../shared/channels"
 import type {LineWidth, PlaybackState, PlaybackStatus, TeleprompterSettings} from "../../shared/types"
 
@@ -73,17 +72,6 @@ const PROBE_WORDS = 6
 /** Rolling cap on remembered spoken words. */
 const SPOKEN_HISTORY = 16
 
-/**
- * Preserve blank viewport rows without emitting consecutive newlines. Even
- * Realities G2 shuts down its EvenHub page when a text container contains an
- * interior empty line (`\n\n`), leaving the display blank until that row
- * scrolls away. A zero-width space survives the host's line trimming and
- * renders as the same blank row without tripping the firmware parser.
- */
-export function serializeDisplayLines(lines: string[]): string {
-  return lines.map((line) => (line === "" ? "\u200B" : line)).join("\n")
-}
-
 export class TeleprompterController {
   private started = false
   private readonly unsubs: Array<() => void> = []
@@ -92,7 +80,8 @@ export class TeleprompterController {
 
   private settings: TeleprompterSettings = {...DEFAULT_SETTINGS}
   private engine!: ScriptEngine
-  private profile!: DisplayProfile
+  private renderRevision = 0
+  private renderResult: Promise<number | null> = Promise.resolve(null)
   private hasDisplay = false
   private hasMic = true
 
@@ -100,6 +89,7 @@ export class TeleprompterController {
   private state: PlaybackState = "idle"
   private cursor = 0
   private currentTopLine = 0
+  private manualTopLine: number | null = null
   private currentVisible: string[] = []
   private lastRenderedText = ""
 
@@ -129,15 +119,12 @@ export class TeleprompterController {
       onOpen: (cb: () => void) => () => void
     }
 
-    this.profile = getProfileForModel(getModelName(this.session))
     this.hasDisplay = hasDisplayCapability(this.session)
     this.hasMic = hasMicrophoneCapability(this.session)
 
     await this.loadSettings()
 
     this.engine = new ScriptEngine({
-      profile: this.profile,
-      widthSetting: this.settings.lineWidth,
       numberOfLines: this.settings.numberOfLines,
     })
     this.engine.setScript(this.settings.script)
@@ -147,7 +134,7 @@ export class TeleprompterController {
     try {
       this.unsubs.push(this.session.onCapabilitiesChange(() => this.onCapabilitiesChanged()))
     } catch {
-      /* capabilities-change not available — keep current profile */
+      /* Capabilities arrive on ready in older runtimes. */
     }
 
     // CONNECT_ACK populates session.capabilities but only emits "ready" (not a
@@ -160,10 +147,8 @@ export class TeleprompterController {
       /* on() not available in this runtime — ignore */
     }
     if (this.session.ready) {
-      this.profile = getProfileForModel(getModelName(this.session))
       this.hasDisplay = hasDisplayCapability(this.session)
       this.hasMic = hasMicrophoneCapability(this.session)
-      this.engine.setLayout({profile: this.profile})
       this.applyViewport()
     }
 
@@ -199,12 +184,12 @@ export class TeleprompterController {
     // Show the opening lines as a ready-to-read preview on the glasses.
     this.render()
     this.broadcastStatus()
-    console.log(
-      `Teleprompter: started (words=${this.engine.totalWords}, lines=${this.engine.totalLines}, profile=${this.profile.id})`,
-    )
+    console.log(`Teleprompter: started (words=${this.engine.totalWords}, lines=${this.engine.totalLines})`)
   }
 
   stop(): void {
+    this.renderRevision++
+    this.renderResult = Promise.resolve(null)
     this.clearTimer()
     this.unsubscribeTranscription()
     for (const u of this.unsubs) {
@@ -281,7 +266,10 @@ export class TeleprompterController {
    * the editor), this always resets to the top and re-renders — an explicit
    * "open with this text" should land deterministically. Optionally autostarts.
    */
-  async loadScript(script: string, autostart: boolean): Promise<{words: number; lines: number; started: boolean}> {
+  async loadScript(
+    script: string,
+    autostart: boolean,
+  ): Promise<{words: number; lines: number | null; started: boolean}> {
     const next = script ?? ""
     this.settings.script = next
     this.engine.setScript(next)
@@ -292,7 +280,7 @@ export class TeleprompterController {
     // so an explicit "open with this text" must land on-screen rather than be
     // deduped away by render()'s lastRenderedText cache.
     this.lastRenderedText = ""
-    this.render()
+    const lines = await this.render()
     this.broadcastSettings()
     this.broadcastStatus()
     await this.persist(STORAGE_KEYS.script, next)
@@ -300,7 +288,7 @@ export class TeleprompterController {
     const started = autostart && this.engine.totalWords > 0
     if (started) this.play()
 
-    return {words: this.engine.totalWords, lines: this.engine.totalLines, started}
+    return {words: this.engine.totalWords, lines, started}
   }
 
   private sendSnapshot(): void {
@@ -322,6 +310,7 @@ export class TeleprompterController {
   play(): void {
     if (this.engine.totalWords === 0) return
     if (this.state === "finished" || this.cursor >= this.engine.totalWords) {
+      this.manualTopLine = null
       this.cursor = 0
     }
     this.state = "playing"
@@ -348,6 +337,7 @@ export class TeleprompterController {
   }
 
   restart(): void {
+    this.manualTopLine = null
     this.cursor = 0
     this.recentSpoken = []
     if (this.state === "finished") this.state = "paused"
@@ -365,7 +355,7 @@ export class TeleprompterController {
 
   nudge(lines: number): void {
     const newTop = Math.max(0, Math.min(this.currentTopLine + lines, this.engine.maxTopLine))
-    this.moveCursorTo(this.engine.firstWordOfLine(newTop))
+    this.moveCursorTo(this.engine.firstWordOfLine(newTop), newTop)
   }
 
   /**
@@ -373,7 +363,8 @@ export class TeleprompterController {
    * end while playing, run the end-of-script handler so auto-restart and the
    * finished state fire — the timer/voice drivers aren't ticking here.
    */
-  private moveCursorTo(word: number): void {
+  private moveCursorTo(word: number, topLine?: number): void {
+    this.manualTopLine = topLine ?? null
     this.cursor = Math.max(0, Math.min(word, this.engine.totalWords))
     this.recentSpoken = []
     if (this.state === "playing" && this.cursor >= this.engine.totalWords) {
@@ -414,6 +405,7 @@ export class TeleprompterController {
     const advanced = Math.floor((elapsedSec * this.settings.wpm) / 60)
     const next = Math.min(this.timerStartWord + advanced, this.engine.totalWords)
     if (next !== this.cursor) {
+      this.manualTopLine = null
       this.cursor = next
       if (this.cursor >= this.engine.totalWords) {
         this.handleEnd()
@@ -480,6 +472,7 @@ export class TeleprompterController {
 
     const next = this.engine.matchSpoken(probe, this.cursor)
     if (next !== this.cursor) {
+      this.manualTopLine = null
       this.cursor = next
       if (this.cursor >= this.engine.totalWords) {
         this.handleEnd()
@@ -492,6 +485,7 @@ export class TeleprompterController {
 
   private handleEnd(): void {
     if (this.settings.autoRestart) {
+      this.manualTopLine = null
       this.cursor = 0
       this.recentSpoken = []
       if (!this.voiceActive) {
@@ -585,7 +579,9 @@ export class TeleprompterController {
   private async setWidth(width: LineWidth): Promise<void> {
     this.settings.lineWidth = this.clampWidth(width)
     await this.persist(STORAGE_KEYS.lineWidth, String(this.settings.lineWidth))
-    this.engine.setLayout({widthSetting: this.settings.lineWidth})
+    this.manualTopLine = null
+    // Keep the current source boundary while the host reflows the remaining
+    // script; a geometry change must not briefly render the opening page.
     this.render()
     this.broadcastSettings()
     this.broadcastStatus()
@@ -619,9 +615,7 @@ export class TeleprompterController {
   private async setShowTimecode(enabled: boolean): Promise<void> {
     this.settings.showTimecode = enabled
     await this.persist(STORAGE_KEYS.showTimecode, String(enabled))
-    // The timecode footer occupies a row, so the script viewport shrinks by one
-    // when it's on. Re-apply so windowAt builds exactly the rows we display —
-    // otherwise a line scrolls past unseen.
+    // Re-render both elements; the host reports the space left for the script.
     this.applyViewport()
     this.render()
     this.broadcastSettings()
@@ -642,15 +636,12 @@ export class TeleprompterController {
 
   private onCapabilitiesChanged(): void {
     const prevHasMic = this.hasMic
-    const newProfile = getProfileForModel(getModelName(this.session))
     this.hasDisplay = hasDisplayCapability(this.session)
     this.hasMic = hasMicrophoneCapability(this.session)
-    if (newProfile.id !== this.profile.id) {
-      this.profile = newProfile
-      this.engine.setLayout({profile: newProfile})
-    }
-    // maxLines can differ across profiles, so re-derive the viewport (it also
-    // accounts for the timecode footer).
+    this.manualTopLine = null
+    // Keep the current source boundary while the host reflows the remaining
+    // script; a geometry change must not briefly render the opening page.
+    // Re-send the current content so the host applies the new display limits.
     this.applyViewport()
 
     // Capabilities can arrive after the user already hit play (the first reliable
@@ -676,49 +667,77 @@ export class TeleprompterController {
   // Rendering
   // ───────────────────────────────────────────────────────────────────────
 
-  private render(): void {
-    this.currentTopLine = this.engine.topLineForWord(this.cursor)
-    const content = this.engine.windowAt(this.currentTopLine)
-    const display = this.composeDisplay(content)
-    this.currentVisible = display
-
-    const text = serializeDisplayLines(display)
-    // Only mark text as rendered when we actually push it. If we skipped the
-    // push because no display was attached yet, leave the cache untouched so
-    // the first push after the glasses connect isn't deduped away.
-    if (this.hasDisplay && text !== this.lastRenderedText) {
-      // One full-canvas text element with a stable id: each scroll step updates
-      // it in place on the glasses. Box coordinates are raw device px — read
-      // from capabilities, falling back to the largest canvas (the host clamps
-      // to the real one). render() never throws.
-      const d = this.session.capabilities?.display
-      void this.session.display.render([
-        {type: "text", id: "script", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
-      ])
-      this.lastRenderedText = text
+  private render(): Promise<number | null> {
+    this.currentTopLine = Math.min(
+      this.manualTopLine ?? this.engine.topLineForWord(this.cursor),
+      this.engine.maxTopLine,
+    )
+    if (!this.hasDisplay) {
+      this.renderRevision++
+      this.lastRenderedText = ""
+      return (this.renderResult = Promise.resolve(null))
     }
+    const sourceStart = this.engine.sourceStartForLine(this.currentTopLine)
+    const text = this.engine.textFrom(sourceStart)
+    const d = this.session.capabilities?.display
+    const width = Math.round((d?.width ?? d?.resolution?.width ?? 576) * ([0.7, 0.85, 1][this.settings.lineWidth] ?? 1))
+    const height = d?.height ?? d?.resolution?.height ?? 288
+    // Footer placement is app composition; the host owns font size and fitting.
+    const footerHeight = this.settings.showTimecode ? Math.floor(height / 4) : 0
+    const elements: RenderElement[] = [
+      {
+        type: "text",
+        id: "script",
+        box: {x: 0, y: 0, w: width, h: height - footerHeight},
+        text,
+        style: {maxLines: this.settings.numberOfLines, textWindow: "start", breakMode: "word"},
+      },
+    ]
+    if (footerHeight)
+      elements.push({
+        type: "text",
+        id: "timecode",
+        box: {x: 0, y: height - footerHeight, w: width, h: footerHeight},
+        text: this.timecodeLine(),
+        style: {maxLines: 1},
+      })
+    const key = JSON.stringify(elements)
+    if (key === this.lastRenderedText) return this.renderResult
+    this.lastRenderedText = key
+    const revision = ++this.renderRevision
+    return (this.renderResult = this.sendRender(elements, sourceStart, revision))
   }
 
-  /**
-   * Append the timecode footer when enabled. The script viewport already
-   * reserves a row for it (see applyViewport), so `content` fits beneath the
-   * profile's max-lines without trimming — no script row is dropped unseen.
-   */
-  private composeDisplay(content: string[]): string[] {
-    if (!this.settings.showTimecode) return content
-    return [...content, this.timecodeLine()]
+  private async sendRender(elements: RenderElement[], sourceStart: number, revision: number): Promise<number | null> {
+    const result = await this.session.display.render(elements, {includeTextLayout: true})
+    // A ready/visibility/device event can replace an in-flight frame. Its
+    // callers await the replacement's feedback; stale feedback never mutates
+    // the engine. stop() and display loss replace this promise with null.
+    if (revision !== this.renderRevision) return this.renderResult
+    const layout = result.textLayout?.script
+    if (result.status !== "displayed" || !layout) {
+      this.lastRenderedText = ""
+      return null
+    }
+    this.engine.acceptLayout(sourceStart, layout)
+    this.currentVisible = [
+      ...layout.lines.map((line) => line.text),
+      ...(result.textLayout?.timecode?.lines.map((line) => line.text) ?? []),
+    ]
+    // The host may fit fewer rows than requested (including footer space).
+    // Re-pin the final page using its reported capacity.
+    if (
+      Math.min(this.manualTopLine ?? this.engine.topLineForWord(this.cursor), this.engine.maxTopLine) !==
+      this.currentTopLine
+    )
+      await this.render()
+    this.broadcastStatus()
+    return this.engine.totalLines
   }
 
-  /**
-   * Re-derive the on-glasses script viewport from the user's line count, the
-   * device's max lines, and whether the timecode footer steals a row. Keeping
-   * the engine's window in lockstep with what we actually render means scrolling
-   * advances by exactly the rows the reader sees.
-   */
   private applyViewport(): void {
-    const footer = this.settings.showTimecode ? 1 : 0
-    const effective = Math.min(this.settings.numberOfLines, Math.max(2, this.profile.maxLines - footer))
-    this.engine.setLayout({numberOfLines: effective})
+    this.engine.setLines(this.settings.numberOfLines)
+    this.lastRenderedText = ""
   }
 
   private timecodeLine(): string {
@@ -759,6 +778,7 @@ export class TeleprompterController {
 
   private toIdle(): void {
     this.state = "idle"
+    this.manualTopLine = null
     this.cursor = 0
     this.recentSpoken = []
     this.clearTimer()

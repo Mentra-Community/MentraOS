@@ -16,16 +16,27 @@ import Animated, {
 } from "react-native-reanimated"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import {runOnJS, scheduleOnRN} from "react-native-worklets"
-import {BgTimer, saveLastOpenTime, sortAppsByLastOpenTime, engine, type ClientApp, useActiveApps, useSetForeground} from "@mentra/engine"
+import {
+  BgTimer,
+  saveLastOpenTime,
+  sortAppsByLastOpenTime,
+  engine,
+  type ClientApp,
+  useActiveApps,
+  useForegroundApp,
+  useSetForeground,
+} from "@mentra/engine"
 import AppIcon from "@/components/home/AppIcon"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {useNavigationStore} from "@/stores/navigation"
+import {setMiniappOpeningAnimation, useMiniappPresentationStore} from "@/stores/miniappLaunch"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {BlurView} from "expo-blur"
 import GlassView from "@/components/ui/GlassView"
 import {hapticBuzz} from "@/utils/utils"
 import {storage} from "@/utils/storage"
+import {translate} from "@/i18n"
 
 const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get("window")
 const CARD_SCALE = 0.67
@@ -44,19 +55,17 @@ interface AppCard {
 
 interface AppCardItemProps {
   app: ClientApp
-  index: number
   onDismiss: (packageName: string) => void
   onSelect: (packageName: string) => void
   translateX: SharedValue<number>
-  count: number
+  cardOrder: SharedValue<string[]>
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable)
 
-function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCardItemProps) {
+function AppCardItem({app, translateX, cardOrder, onDismiss, onSelect}: AppCardItemProps) {
   const translateY = useSharedValue(0)
   const cardOpacity = useSharedValue(1)
-  const animatedIndex = useSharedValue(index)
   const loadedImage = useImage(
     app.screenshot ??
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=",
@@ -76,18 +85,6 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
   } else {
     storage.save(`app_screenshot_aspect_ratio`, imageAspectRatio)
   }
-
-  useEffect(() => {
-    if (animatedIndex.value < index && index == count - 1) {
-      // teleport to the end of the list if we're updating the order:
-      animatedIndex.value = withTiming(index, {duration: 0})
-      return
-    }
-    // otherwise, animate as normal:
-    if (index != animatedIndex.value) {
-      animatedIndex.value = withSpring(index, {damping: 200, stiffness: 200})
-    }
-  }, [index])
 
   const dismissCard = useCallback(() => {
     onDismiss(app.packageName)
@@ -111,6 +108,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
       const shouldDismiss = translateY.value < DISMISS_THRESHOLD || event.velocityY < VELOCITY_THRESHOLD
 
       if (shouldDismiss) {
+        scheduleOnRN(hapticBuzz)
         translateY.value = withTiming(-SCREEN_HEIGHT, {duration: 250})
         cardOpacity.value = withTiming(0, {duration: 200}, () => {
           scheduleOnRN(dismissCard)
@@ -131,7 +129,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
   let cardWidth = CARD_WIDTH + CARD_SPACING
 
   const cardAnimatedStyle = useAnimatedStyle(() => {
-    let animIndex = animatedIndex.value
+    const animIndex = Math.max(0, cardOrder.value.indexOf(app.packageName))
 
     // let stat = -animIndex * cardWidth
     // let stat = -index * cardWidth // use real index for stat!!
@@ -164,7 +162,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
   })
 
   const titleAnimatedStyle = useAnimatedStyle(() => {
-    let animIndex = animatedIndex.value
+    const animIndex = Math.max(0, cardOrder.value.indexOf(app.packageName))
     let lin = translateX.value / cardWidth + animIndex
     if (lin < 0) {
       lin = 0
@@ -199,6 +197,16 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
   return (
     <GestureDetector gesture={composedGesture}>
       <AnimatedPressable
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={app.name}
+        testID={`runningApps.miniapp.${app.packageName}`}
+        onAccessibilityTap={selectCard}
+        accessibilityActions={[{name: "activate"}, {name: "dismiss", label: translate("navigation:closeMiniapp")}]}
+        onAccessibilityAction={({nativeEvent}) => {
+          if (nativeEvent.actionName === "activate") selectCard()
+          if (nativeEvent.actionName === "dismiss") dismissCard()
+        }}
         className="items-start"
         style={[
           {
@@ -277,12 +285,21 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const targetIndex = useSharedValue(0)
   const prevTranslationX = useSharedValue(0)
   const openX = useSharedValue(-1)
+  const cardOrder = useSharedValue<string[]>([])
   const {push} = useNavigationStore.getState()
   const setForeground = useSetForeground()
   const insets = useSaferAreaInsets()
   let directApps = useActiveApps()
-  let [apps, setApps] = useState<ClientApp[]>([])
-  const prevAppsLength = useRef(0)
+  const [sortedApps, setApps] = useState<ClientApp[]>([])
+  const [dismissingPackages, setDismissingPackages] = useState<Set<string>>(() => new Set())
+  const startedStops = useRef(new Set<string>())
+  const closingPackageName = useMiniappPresentationStore((s) => s.closingPackageName)
+  const apps = sortedApps.filter(
+    (app) =>
+      !dismissingPackages.has(app.packageName) &&
+      app.packageName !== closingPackageName &&
+      directApps.some((active) => active.packageName === app.packageName),
+  )
   const [blurPointerEvents, setBlurPointerEvents] = useState<"auto" | "none">("none")
   const [_androidBlur] = useSetting(SETTINGS.android_blur.key)
   const [showNoAppsMessage, setShowNoAppsMessage] = useState(true)
@@ -301,49 +318,63 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   //   return useAppletStatusStore.getState().apps.filter((a) => activePackageNames.includes(a.packageName))
   // }, [activePackageNames])
 
-  // While a card tap is mid-flight (selection → app opens under the drawer →
-  // drawer closes ~750ms later), the store updates several times
+  // While a card tap is mid-flight (selection → app opens → drawer is hidden),
+  // the store updates several times
   // (last-open-time save, foregrounded flip) and each poll would re-sort the
   // VISIBLE card stack — the tapped card jumps to the end of the list and the
   // whole strip thrashes left/right ("seizure" during open,
   // rep_01KY6D2EMFXC8JQKZH9EGMZ5G3). Freeze the rendered order for the whole
   // selection window and apply the final order once, after the close finishes.
   const selectionInFlight = useRef(false)
+  const [selectedPackage, setSelectedPackage] = useState<string | null>(null)
+  const foregroundApp = useForegroundApp()
+  const revealedPackageName = useMiniappPresentationStore((s) => s.revealedPackageName)
   const directAppsRef = useRef(directApps)
   directAppsRef.current = directApps
+
+  // A stop acknowledgment must clear its dismissal even while selection freezes
+  // the visible order. Otherwise a relaunch can inherit the old hidden marker.
+  useEffect(() => {
+    setDismissingPackages((pending) => {
+      const remaining = new Set([...pending].filter((pkg) => directApps.some((app) => app.packageName === pkg)))
+      return remaining.size === pending.size ? pending : remaining
+    })
+  }, [directApps])
 
   useEffect(() => {
     if (selectionInFlight.current) return
     let cancelled = false
     sortAppsByLastOpenTime(directApps).then((sorted) => {
-      if (!cancelled && !selectionInFlight.current) setApps(sorted)
+      if (cancelled || selectionInFlight.current) return
+      setApps(sorted)
     })
     return () => {
       cancelled = true
     }
   }, [directApps])
 
+  // Stop only after React has committed the card's removal from the tray.
+  useEffect(() => {
+    for (const packageName of startedStops.current) {
+      if (!dismissingPackages.has(packageName)) startedStops.current.delete(packageName)
+    }
+    for (const packageName of dismissingPackages) {
+      if (startedStops.current.has(packageName)) continue
+      startedStops.current.add(packageName)
+      void engine.miniapps.stop(packageName).catch((error) => {
+        console.error(`AppSwitcher: failed to stop ${packageName}`, error)
+        setDismissingPackages((pending) => {
+          const remaining = new Set(pending)
+          remaining.delete(packageName)
+          return remaining
+        })
+      })
+    }
+  }, [dismissingPackages])
+
   const activeIndex = useDerivedValue(() => {
     return -translateX.value / (CARD_WIDTH + CARD_SPACING) + 2
   })
-
-  // Initialize card position when apps load
-  // useEffect(() => {
-  //   if (apps.length > 0) {
-  //     translateX.value = -((apps.length - 2) * CARD_WIDTH)
-  //   }
-  // }, [apps.length])
-  useEffect(() => {
-    if (prevAppsLength.current === 0 && apps.length > 0) {
-      translateX.value = -((apps.length - 2) * CARD_WIDTH)
-      // Opened-before-mount case (see mount-sync effect below): snap to the
-      // most recent card once the async-sorted list lands.
-      if (swipeProgress.value > 0.5) {
-        goToIndex(apps.length - 1, true)
-      }
-    }
-    prevAppsLength.current = apps.length
-  }, [apps.length])
 
   // The Compositor's bottom swipe-up can commit while home isn't mounted
   // (clearHistoryAndGoHome remounts this screen with the shared progress
@@ -579,65 +610,9 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   //   return () => clearInterval(sub)
   // }, [])
 
-  const handleDismiss = useCallback(
-    (packageName: string) => {
-      let lastApp = apps[apps.length - 1]
-      // Adjust if we were on the last card
-      if (lastApp.packageName === packageName) {
-        // let cardWidth = CARD_WIDTH + CARD_SPACING
-        // let newTarget = Math.round(-translateX.value / cardWidth) - 1
-        // // console.log("newTarget", newTarget)
-        // console.log("newTarget", -newTarget * cardWidth)
-        // translateX.value = withSpring(-newTarget * cardWidth, {
-        //   damping: 1000,
-        //   stiffness: 350,
-        //   overshootClamping: true,
-        // })
-
-        let index = apps.length - 2
-        goToIndex(index)
-      }
-      // setTimeout(() => {
-      engine.miniapps.stop(packageName)
-      // }, 100)
-
-      // Auto-close is handled by the drained-list effect (near handleClose)
-      // rather than a guard here: `stop()` updates the store async, and rapid
-      // multi-swipes fire several dismiss callbacks that all close over the
-      // same stale `apps.length`, so an `apps.length === 1` check here never
-      // matches and the switcher gets stuck open on an empty (blurred) screen.
-    },
-    [apps.length, translateX.value, apps],
-  )
-
-  const goToEnd = useCallback(() => {
-    goToIndex(apps.length-1, true)
-  }, [apps.length])
-
-  const goToIndex = useCallback(
-    (index: number, instant: boolean = false) => {
-      index = index - 1
-      const cardWidth = CARD_WIDTH + CARD_SPACING
-      const clamped = Math.max(-1, Math.min(index, apps.length - 1))
-      console.log("APPSWITCHER: goToIndex()", index, clamped, instant, apps.length)
-      if (clamped === targetIndex.value) {
-        // console.log("APPSWITCHER: goToIndex() - already at index", index)
-        return
-      }
-      targetIndex.value = clamped
-      let target = -clamped * cardWidth
-      if (instant) {
-        translateX.value = withTiming(target, {duration: 10})
-      } else {
-        translateX.value = withSpring(target, {
-          damping: 500,
-          stiffness: 350,
-          overshootClamping: true,
-        })
-      }
-    },
-    [apps.length],
-  )
+  const handleDismiss = useCallback((packageName: string) => {
+    setDismissingPackages((pending) => new Set(pending).add(packageName))
+  }, [])
 
   const handleSelect = (packageName: string) => {
     // console.log("selecting", packageName)
@@ -649,8 +624,13 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     }
 
     // Freeze the visible card order until the drawer has fully closed (see
-    // the sort effect above). Released in handleClose's settle timeout.
+    // the sort effect above). Release it after hiding the covered drawer.
     selectionInFlight.current = true
+
+    if (isOfflineHosted(applet.packageName) || applet.local) {
+      setSelectedPackage(applet.packageName)
+      setMiniappOpeningAnimation(applet.packageName, "expand")
+    }
 
     // Handle apps with custom routes (offline or online with offlineRoute override)
     if (applet.offlineRoute && isOfflineHosted(applet.packageName)) {
@@ -674,11 +654,33 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       })
     }
 
-    // do this after the app is started:
-    BgTimer.setTimeout(() => {
-      handleClose()
-    }, 500)
+    // Overlay miniapps hide the tray on actual page reveal, below. Ordinary
+    // router destinations keep their existing dismissal path.
+    if (!isOfflineHosted(applet.packageName) && !applet.local) {
+      BgTimer.setTimeout(() => handleClose(), 500)
+    }
   }
+
+  const finishSelection = useCallback(() => {
+    setSelectedPackage(null)
+    if (!selectionInFlight.current) return
+    selectionInFlight.current = false
+    sortAppsByLastOpenTime(directAppsRef.current).then((sorted) => {
+      if (!selectionInFlight.current) setApps(sorted)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!selectedPackage) return
+    if (revealedPackageName === selectedPackage) {
+      // Startup and the page reveal are done. Hide the covered tray without animation.
+      swipeProgress.value = 0
+      finishSelection()
+    } else if (!foregroundApp || foregroundApp.packageName !== selectedPackage) {
+      // A failed or cancelled launch leaves the tray available instead of frozen.
+      finishSelection()
+    }
+  }, [selectedPackage, revealedPackageName, foregroundApp, swipeProgress, finishSelection])
 
   const handleClose = useCallback(() => {
     // reset the translateX:
@@ -689,14 +691,9 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       // goToIndex(apps.length - 1, true)
       // Selection window over (drawer is fully hidden): unfreeze the card
       // order and apply the sort that was suppressed during the open/close.
-      if (selectionInFlight.current) {
-        selectionInFlight.current = false
-        sortAppsByLastOpenTime(directAppsRef.current).then((sorted) => {
-          if (!selectionInFlight.current) setApps(sorted)
-        })
-      }
+      finishSelection()
     }, 250)
-  }, [apps.length])
+  }, [swipeProgress, finishSelection])
 
   // Edge-triggered close when the open switcher's app list has actually drained
   // to empty. Driven off the real rendered `apps` list (the source of truth),
@@ -712,23 +709,53 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   // while open and consume the event so it doesn't fall through to navigating away
   // from home.
   useEffect(() => {
-    if (Platform.OS !== "android" || !isOpen) return
+    if (Platform.OS !== "android" || !isOpen || foregroundApp) return
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
       handleClose()
       return true
     })
     return () => sub.remove()
-  }, [isOpen, handleClose])
+  }, [isOpen, handleClose, foregroundApp])
 
   useAnimatedReaction(
-    () => swipeProgress.value,
-    (current, previous) => {
+    () => ({progress: swipeProgress.value, appCount: apps.length, packages: apps.map((app) => app.packageName)}),
+    (currentState, previousState) => {
+      const {progress: current, appCount, packages} = currentState
+      const previous = previousState?.progress ?? null
+      // Center on the UI thread before revealing the cards. An async sort can
+      // add the newly launched app after opening starts, so also track growth.
+      // Assign both values even when the target index matches: an old spring
+      // or drag may have left the actual offset somewhere else.
+      if (
+        previousState === null ||
+        current === 0 ||
+        (current > 0 && previous === 0) ||
+        appCount > previousState.appCount
+      ) {
+        const lastTarget = Math.max(-1, appCount - 2)
+        targetIndex.value = lastTarget
+        translateX.value = -lastTarget * (CARD_WIDTH + CARD_SPACING)
+        offsetX.value = translateX.value
+      } else if (packages.join("\n") !== cardOrder.value.join("\n")) {
+        // Preserve the centered miniapp by identity when another card leaves.
+        // If it was removed, choose the nearest surviving slot instead.
+        const previousOrder = cardOrder.value
+        const centeredIndex = Math.max(
+          0,
+          Math.min(previousOrder.length - 1, Math.round(-translateX.value / (CARD_WIDTH + CARD_SPACING)) + 1),
+        )
+        const centeredPackage = previousOrder[centeredIndex]
+        const survivingIndex = packages.indexOf(centeredPackage)
+        const nextIndex = survivingIndex >= 0 ? survivingIndex : Math.min(centeredIndex, appCount - 1)
+        const nextTarget = Math.max(-1, nextIndex - 1)
+        targetIndex.value = nextTarget
+        translateX.value = -nextTarget * (CARD_WIDTH + CARD_SPACING)
+        offsetX.value = translateX.value
+      }
+      // Cards read this same UI-thread order rather than running independent
+      // index springs, so reindexing and offset correction reach one frame.
+      cardOrder.value = packages
       if (previous !== null && current == 1 && previous < 1) {
-        // setTimeout(() => {
-        if (apps.length > 1) {
-          console.log("APPSWITCHER: swipeProgress.value - opening to last index", apps.length - 1)
-          runOnJS(goToEnd)()
-        }
         openX.value = withSpring(0, {damping: 200, stiffness: 1000, overshootClamping: true})
         // }, 200)
         // scheduleOnRN(() => {setIsOpen(true)})
@@ -737,8 +764,6 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // scheduleOnRN(() => {setIsOpen(false)})
       }
       if (previous !== null && current > 0 && previous == 0) {
-        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - opening to last index", apps.length - 1)
-        runOnJS(goToEnd)()
         runOnJS(setBlurPointerEvents)("auto")
         runOnJS(setIsOpen)(true)
         if (apps.length > 0) {
@@ -759,7 +784,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     if (Platform.OS === "android" /*&& !androidBlur*/) {
       return (
         <Animated.View className="absolute inset-0 bg-background/75" style={backdropStyle}>
-          <Pressable className="flex-1" onPress={handleClose} />
+          <Pressable accessible={false} className="flex-1" onPress={handleClose} />
         </Animated.View>
       )
     }
@@ -774,13 +799,16 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         blurReductionFactor={7}
         // blurTarget={blurTargetRef}// doesn't work yet on android for some reason :(
       >
-        <Pressable className="flex-1" onPress={handleClose} />
+        <Pressable accessible={false} className="flex-1" onPress={handleClose} />
       </AnimatedBlurView>
     )
   }
 
   return (
     <Animated.View
+      testID="home.runningApps"
+      accessibilityElementsHidden={!isOpen}
+      importantForAccessibility={isOpen ? "auto" : "no-hide-descendants"}
       className="absolute inset-0"
       pointerEvents="box-none"
       style={[{paddingBottom: insets.bottom}, parentContainerStyle]}>
@@ -806,18 +834,29 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         {/* Cards Carousel */}
         <GestureDetector gesture={panGesture}>
           <Animated.View className="flex-1 justify-center" style={openXAnimatedStyle}>
-            <Pressable className="absolute inset-0" onPress={handleClose} />
-            <Animated.View className="flex-row items-center">
-              {apps.map((app, index) => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={translate("appSwitcher:close")}
+              testID="home.runningApps.close"
+              className="absolute inset-0"
+              onPress={handleClose}
+              onAccessibilityTap={handleClose}
+              accessibilityActions={[{name: "activate"}]}
+              onAccessibilityAction={({nativeEvent}) => {
+                if (nativeEvent.actionName === "activate") handleClose()
+              }}
+            />
+            {/* Absolute cards need a measured parent for the native accessibility tree. */}
+            <Animated.View pointerEvents="box-none" className="flex-row items-center" style={{height: CARD_HEIGHT}}>
+              {apps.map((app) => (
                 <AppCardItem
                   key={app.packageName}
                   app={app}
                   onDismiss={handleDismiss}
                   onSelect={handleSelect}
-                  count={apps.length}
                   // activeIndex={activeIndex}
                   translateX={translateX}
-                  index={index}
+                  cardOrder={cardOrder}
                 />
               ))}
             </Animated.View>

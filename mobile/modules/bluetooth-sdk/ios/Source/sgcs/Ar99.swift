@@ -1850,8 +1850,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     private func ensureOpusDecoder() {
         guard opusDecoder == nil else { return }
         opusDecoder = Ar99OpusPcmDecoder { pcm in
-            DeviceManager.shared.reportGlassesAudioActivity()
-            DeviceManager.shared.handlePcm(pcm)
+            DeviceManager.shared.handleGlassesPcm(pcm)
         }
         if opusDecoder == nil {
             Bridge.log("AR99: system Opus decoder unavailable")

@@ -5,7 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.util.Log;
+import com.mentra.bluetoothsdk.utils.NativeLog;
 import android.os.Build;
 
 import org.json.JSONException;
@@ -78,7 +78,7 @@ public class K900ProtocolUtils {
             return packDataCommand(jsonBytes, CMD_TYPE_STRING, endian);
 
         } catch (JSONException e) {
-            android.util.Log.e("K900ProtocolUtils", "Error creating JSON wrapper", e);
+            com.mentra.bluetoothsdk.utils.NativeLog.e("K900ProtocolUtils", "Error creating JSON wrapper", e);
             return null;
         }
     }
@@ -190,7 +190,7 @@ public class K900ProtocolUtils {
             return packDataCommand(jsonBytes, CMD_TYPE_STRING, endian);
 
         } catch (JSONException e) {
-            android.util.Log.e("K900ProtocolUtils", "Error creating JSON wrapper for K900", e);
+            com.mentra.bluetoothsdk.utils.NativeLog.e("K900ProtocolUtils", "Error creating JSON wrapper for K900", e);
             return null;
         }
     }
@@ -214,7 +214,7 @@ public class K900ProtocolUtils {
      */
     public static byte[] formatMessageForTransmission(String jsonData, K900LengthCodec.Endian endian) {
         try {
-            android.util.Log.e("K900ProtocolUtils", "🔄 Formatting message: " + jsonData);
+            com.mentra.bluetoothsdk.utils.NativeLog.e("K900ProtocolUtils", "🔄 Formatting message: " + jsonData);
 
             // Validate that input is proper JSON
             new JSONObject(jsonData);
@@ -225,7 +225,7 @@ public class K900ProtocolUtils {
             wrapper.put(FIELD_V, 1); // Optional version field
             wrapper.put(FIELD_B, new JSONObject()); // Optional body field
             String wrappedJson = wrapper.toString();
-            android.util.Log.e("K900ProtocolUtils", "🔄 After C-wrapping: " + wrappedJson);
+            com.mentra.bluetoothsdk.utils.NativeLog.e("K900ProtocolUtils", "🔄 After C-wrapping: " + wrappedJson);
 
             // Now format with BES2700 protocol
             byte[] result =
@@ -243,7 +243,7 @@ public class K900ProtocolUtils {
             return result;
 
         } catch (JSONException e) {
-            android.util.Log.e("K900ProtocolUtils", "❌ Error in formatMessageForTransmission", e);
+            com.mentra.bluetoothsdk.utils.NativeLog.e("K900ProtocolUtils", "❌ Error in formatMessageForTransmission", e);
             // Fallback: if json is invalid, still try to pack it without validation
             return packJsonCommand(jsonData, endian);
         }
@@ -262,7 +262,7 @@ public class K900ProtocolUtils {
             wrapper.put(FIELD_C, content);
             return wrapper.toString();
         } catch (JSONException e) {
-            android.util.Log.e("K900ProtocolUtils", "Error creating C-wrapped JSON", e);
+            com.mentra.bluetoothsdk.utils.NativeLog.e("K900ProtocolUtils", "Error creating C-wrapped JSON", e);
             return null;
         }
     }
@@ -374,17 +374,17 @@ public class K900ProtocolUtils {
      * @return Parsed JSON object or null if not valid protocol data or valid JSON
      */
     public static JSONObject processReceivedBytesToJson(byte[] data) {
-        android.util.Log.d("K900ProtocolUtils", "Processing received bytes for JSON extraction");
+        com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Processing received bytes for JSON extraction");
 
         // Check for null or too small data
         if (data == null || data.length < 7) {
-            android.util.Log.d("K900ProtocolUtils", "Received data is null or too short to be valid protocol data");
+            com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Received data is null or too short to be valid protocol data");
             return null;
         }
 
         // Verify if this is K900 protocol format (starts with ##)
         if (!isK900ProtocolFormat(data)) {
-            android.util.Log.d("K900ProtocolUtils", "Not in K900 protocol format (missing ## markers)");
+            com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Not in K900 protocol format (missing ## markers)");
             return null;
         }
 
@@ -399,25 +399,25 @@ public class K900ProtocolUtils {
                         ? detected.length
                         : ((data[3] & 0xFF) | ((data[4] & 0xFF) << 8));
 
-        android.util.Log.d("K900ProtocolUtils", "Command type: 0x" + String.format("%02X", commandType) +
+        com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Command type: 0x" + String.format("%02X", commandType) +
                          ", Payload length: " + payloadLength);
 
         // Verify we have enough data and the right command type
         if (commandType != CMD_TYPE_STRING) {
-            android.util.Log.d("K900ProtocolUtils", "Not a JSON/string command type (0x30), got: 0x" +
+            com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Not a JSON/string command type (0x30), got: 0x" +
                             String.format("%02X", commandType));
             return null;
         }
 
         if (data.length < payloadLength + 7) {
-            android.util.Log.d("K900ProtocolUtils", "Received data size (" + data.length +
+            com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Received data size (" + data.length +
                            ") is less than expected size (" + (payloadLength + 7) + ")");
             return null;
         }
 
         // Check for end markers ($$)
         if (data[5 + payloadLength] != CMD_END_CODE[0] || data[6 + payloadLength] != CMD_END_CODE[1]) {
-            android.util.Log.d("K900ProtocolUtils", "End markers ($$) not found where expected");
+            com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "End markers ($$) not found where expected");
             return null;
         }
 
@@ -429,15 +429,15 @@ public class K900ProtocolUtils {
         String payloadStr;
         try {
             payloadStr = new String(payload, StandardCharsets.UTF_8);
-            android.util.Log.d("K900ProtocolUtils", "Extracted JSON payload bytes: " + payloadLength);
+            com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Extracted JSON payload bytes: " + payloadLength);
         } catch (Exception e) {
-            android.util.Log.e("K900ProtocolUtils", "Error converting payload to string", e);
+            com.mentra.bluetoothsdk.utils.NativeLog.e("K900ProtocolUtils", "Error converting payload to string", e);
             return null;
         }
 
         // Check if it's valid JSON
         if (!payloadStr.startsWith("{") || !payloadStr.endsWith("}")) {
-            android.util.Log.d("K900ProtocolUtils", "Payload is not valid JSON");
+            com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Payload is not valid JSON");
             return null;
         }
 
@@ -448,14 +448,14 @@ public class K900ProtocolUtils {
             // Check if this is C-wrapped format {"C": "..."}
             if (json.has(FIELD_C)) {
                 String innerContent = json.optString(FIELD_C, "");
-                android.util.Log.d("K900ProtocolUtils", "Detected C-wrapped format");
+                com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Detected C-wrapped format");
 
                 // Try to parse the inner content as JSON
                 try {
                     JSONObject innerJson = new JSONObject(innerContent);
                     return innerJson;
                 } catch (JSONException e) {
-                    android.util.Log.d("K900ProtocolUtils", "Inner content is not JSON, returning outer JSON object");
+                    com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Inner content is not JSON, returning outer JSON object");
                     // If inner content is not JSON, return the outer JSON
                     return json;
                 }
@@ -464,7 +464,7 @@ public class K900ProtocolUtils {
                 return json;
             }
         } catch (JSONException e) {
-            android.util.Log.e("K900ProtocolUtils", "Error parsing JSON payload: " + e.getMessage(), e);
+            com.mentra.bluetoothsdk.utils.NativeLog.e("K900ProtocolUtils", "Error parsing JSON payload: " + e.getMessage(), e);
             return null;
         }
     }
@@ -496,29 +496,29 @@ public class K900ProtocolUtils {
 
             // If looks like JSON but not C-wrapped, use the full formatting function
             if (originalData.startsWith("{") && !isCWrappedJson(originalData)) {
-                android.util.Log.d("K900ProtocolUtils", "📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
+                com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
                 byte[] formattedData = formatMessageForTransmission(originalData);
 
                 // Debug log the formatting results if needed
-                if (android.util.Log.isLoggable("K900ProtocolUtils", android.util.Log.DEBUG)) {
+                if (com.mentra.bluetoothsdk.utils.NativeLog.isLoggable("K900ProtocolUtils", com.mentra.bluetoothsdk.utils.NativeLog.DEBUG)) {
                     StringBuilder hexDump = new StringBuilder();
                     for (int i = 0; i < Math.min(formattedData.length, 50); i++) {
                         hexDump.append(String.format("%02X ", formattedData[i]));
                     }
-                    android.util.Log.d("K900ProtocolUtils", "📦 AFTER C-WRAPPING & PROTOCOL FORMATTING (first 50 bytes): " + hexDump.toString());
-                    android.util.Log.d("K900ProtocolUtils", "📦 Total formatted length: " + formattedData.length + " bytes");
+                    com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "📦 AFTER C-WRAPPING & PROTOCOL FORMATTING (first 50 bytes): " + hexDump.toString());
+                    com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "📦 Total formatted length: " + formattedData.length + " bytes");
                 }
 
                 return formattedData;
             } else {
                 // Otherwise just apply protocol formatting
-                android.util.Log.d("K900ProtocolUtils", "📦 Data already C-wrapped or not JSON: " + originalData);
-                android.util.Log.d("K900ProtocolUtils", "Formatting data with K900 protocol (adding ##...)");
+                com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "📦 Data already C-wrapped or not JSON: " + originalData);
+                com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Formatting data with K900 protocol (adding ##...)");
                 return packDataCommand(data, CMD_TYPE_STRING);
             }
         } catch (Exception e) {
             // If we can't interpret as string, just apply protocol formatting to raw bytes
-            android.util.Log.d("K900ProtocolUtils", "Applying protocol format to raw bytes");
+            com.mentra.bluetoothsdk.utils.NativeLog.d("K900ProtocolUtils", "Applying protocol format to raw bytes");
             return packDataCommand(data, CMD_TYPE_STRING);
         }
     }
@@ -573,10 +573,10 @@ public class K900ProtocolUtils {
                 String model = android.os.Build.MODEL.toLowerCase();
                 return model.contains("k900") || model.contains("xyglasses");
             } catch (Exception e) {
-                Log.e("K900ProtocolUtils", "Error checking for K900 specific broadcast", e);
+                NativeLog.e("K900ProtocolUtils", "Error checking for K900 specific broadcast", e);
             }
         } catch (Exception e) {
-            Log.d("K900ProtocolUtils", "Not a K900 device: " + e.getMessage());
+            NativeLog.d("K900ProtocolUtils", "Not a K900 device: " + e.getMessage());
         }
 
         return false;
@@ -711,7 +711,7 @@ public class K900ProtocolUtils {
      */
     public static FilePacketInfo extractFilePacket(byte[] protocolData) {
         if (!isK900ProtocolFormat(protocolData) || protocolData.length < 31) {
-            Log.e("K900ProtocolUtils", "extractFilePacket: Invalid format or too short. Length=" +
+            NativeLog.e("K900ProtocolUtils", "extractFilePacket: Invalid format or too short. Length=" +
                   (protocolData != null ? protocolData.length : 0) +
                   ", isK900Format=" + isK900ProtocolFormat(protocolData));
             return null;
@@ -757,7 +757,7 @@ public class K900ProtocolUtils {
 
         // Verify packet has enough data
         if (protocolData.length < pos + info.packSize + LENGTH_FILE_VERIFY + LENGTH_FILE_END) {
-            Log.e("K900ProtocolUtils", "File packet too short for data. Need: " +
+            NativeLog.e("K900ProtocolUtils", "File packet too short for data. Need: " +
                   (pos + info.packSize + LENGTH_FILE_VERIFY + LENGTH_FILE_END) +
                   ", Have: " + protocolData.length +
                   ", packSize=" + info.packSize + ", pos=" + pos);
@@ -788,13 +788,13 @@ public class K900ProtocolUtils {
         info.isValid = (calculatedVerify == info.verifyCode);
 
         if (!info.isValid) {
-            Log.e("K900ProtocolUtils", "File packet checksum failed. Expected: " +
+            NativeLog.e("K900ProtocolUtils", "File packet checksum failed. Expected: " +
                   String.format("%02X", info.verifyCode) + ", Calculated: " +
                   String.format("%02X", calculatedVerify));
         } else if (info.packIndex == 0
                 || info.packIndex % 32 == 0
                 || info.packIndex == (info.fileSize + FILE_PACK_SIZE - 1) / FILE_PACK_SIZE - 1) {
-            Log.d("K900ProtocolUtils", "File packet extracted successfully: index=" + info.packIndex +
+            NativeLog.d("K900ProtocolUtils", "File packet extracted successfully: index=" + info.packIndex +
                   ", size=" + info.packSize + ", fileName=" + info.fileName);
         }
 
@@ -820,7 +820,7 @@ public class K900ProtocolUtils {
 
             return message.toString();
         } catch (JSONException e) {
-            Log.e("K900ProtocolUtils", "Error creating file transfer ack", e);
+            NativeLog.e("K900ProtocolUtils", "Error creating file transfer ack", e);
             return null;
         }
     }

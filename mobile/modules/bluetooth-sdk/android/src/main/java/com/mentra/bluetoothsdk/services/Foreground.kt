@@ -3,6 +3,7 @@ package com.mentra.bluetoothsdk.services
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -12,6 +13,8 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 
 class ForegroundService : Service() {
@@ -21,14 +24,31 @@ class ForegroundService : Service() {
         const val ACTION_REFRESH_TYPES =
                 "com.mentra.bluetoothsdk.services.action.REFRESH_FOREGROUND_SERVICE_TYPES"
 
-        internal fun bootstrapServiceType(): Int =
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        internal const val DEFAULT_SERVICE_TYPES =
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+
+        internal fun bootstrapServiceType(declaredTypes: Int = DEFAULT_SERVICE_TYPES): Int {
+            // Both types can start without a while-in-use permission. The SDK declares
+            // CHANGE_WIFI_STATE, which satisfies connectedDevice's prerequisite.
+            if (declaredTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0) {
+                return ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            }
+            require(declaredTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE != 0) {
+                "The SDK foreground service must declare connectedDevice or dataSync"
+            }
+            return ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        }
 
         internal fun preferredServiceType(
                 hasConnectedDeviceAccess: Boolean,
                 hasMicrophoneAccess: Boolean,
                 hasLocationAccess: Boolean,
                 includeMediaPlayback: Boolean = true,
+                declaredTypes: Int = DEFAULT_SERVICE_TYPES,
         ): Int {
             var serviceType = 0
 
@@ -47,21 +67,31 @@ class ForegroundService : Service() {
                 serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             }
 
-            return if (serviceType == 0) bootstrapServiceType() else serviceType
+            serviceType = serviceType and declaredTypes
+            return if (serviceType == 0) bootstrapServiceType(declaredTypes) else serviceType
         }
     }
 
     private var locationTypeRequested = false
 
+    private val declaredServiceTypes: Int by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            packageManager.getServiceInfo(ComponentName(this, ForegroundService::class.java), 0)
+                    .foregroundServiceType
+        } else {
+            DEFAULT_SERVICE_TYPES
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         Bridge.log("ForegroundService: onCreate() called")
         BleTraceLogger.logLifecycle(this, "ForegroundService", "service_create")
-        // Enter the foreground immediately with a type that has no runtime
-        // prerequisites. onStartCommand() replaces this bootstrap type with the
+        // Enter the foreground immediately using a type allowed by the host manifest.
+        // onStartCommand() replaces this bootstrap type with the
         // eligible long-running types, deliberately omitting dataSync so Android 15's
         // six-hour dataSync timer no longer applies.
-        startForegroundWithType(bootstrapServiceType())
+        startForegroundWithType(bootstrapServiceType(declaredServiceTypes))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -79,7 +109,38 @@ class ForegroundService : Service() {
         }
         // Re-check permissions in case they changed
         startForegroundWithAutoDetectedType()
+        // A null intent is Android restarting START_STICKY after process death.
+        // Do not wait for an Activity/Expo module to restore the native BLE owner.
+        if (intent == null && !DeviceManager.isInitialized()) {
+            val settings = G2ConnectionRecovery(this).read()
+            if (settings != null && !startHostRuntimeRecovery()) {
+                Bridge.initialize(applicationContext)
+                settings.forEach { (key, value) -> DeviceStore.set("bluetooth", key, value) }
+                Bridge.log("ForegroundService: restoring G2 connection after process restart")
+                try {
+                    DeviceManager.getInstance().connectDefault()
+                } catch (error: Exception) {
+                    Bridge.log("ForegroundService: G2 recovery failed: ${error.message}")
+                }
+            }
+        }
         return START_STICKY
+    }
+
+    private fun startHostRuntimeRecovery(): Boolean {
+        // Keep the standalone SDK free of React dependencies. The Mentra App
+        // opts in with a private headless service declared by its host module.
+        val serviceName = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+                .metaData?.getString("com.mentra.bluetoothsdk.RUNTIME_RECOVERY_SERVICE")
+                ?: return false
+        return try {
+            if (startService(Intent().setClassName(packageName, serviceName)) == null) return false
+            Bridge.log("ForegroundService: requested host JavaScript runtime recovery")
+            true
+        } catch (error: Exception) {
+            Bridge.log("ForegroundService: host runtime recovery could not start: ${error.message}")
+            false
+        }
     }
 
     private fun startForegroundWithAutoDetectedType() {
@@ -114,12 +175,13 @@ class ForegroundService : Service() {
             return 0 // No service types before Android Q
         }
 
-        // Audio prompts can be initiated by glasses while the host Activity is
-        // backgrounded. mediaPlayback has no runtime prerequisite, so keep it
-        // active on the existing Mentra service for the entire connected
-        // session rather than trying to launch a second service after a wake
-        // phrase arrives.
-        Bridge.log("ForegroundService: Added mediaPlayback (supports background audio)")
+        // MentraOS uses background audio prompts; Bluetooth-only hosts can omit
+        // this type from their merged manifest.
+        val includeMediaPlayback =
+                declaredServiceTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK != 0
+        if (includeMediaPlayback) {
+            Bridge.log("ForegroundService: Added mediaPlayback (supports background audio)")
+        }
 
         // Check Bluetooth permissions
         val hasBluetoothPermission =
@@ -168,13 +230,14 @@ class ForegroundService : Service() {
 
         // Check microphone permission
         val hasMicPermission =
-                ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
+                declaredServiceTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0 &&
+                        ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
+                                PackageManager.PERMISSION_GRANTED
 
         if (hasMicPermission) {
             Bridge.log("ForegroundService: Added microphone (has RECORD_AUDIO permission)")
         } else {
-            Bridge.log("ForegroundService: No microphone permission")
+            Bridge.log("ForegroundService: Microphone type disabled or permission not granted")
         }
 
         val hasLocationPermission =
@@ -189,7 +252,9 @@ class ForegroundService : Service() {
         val locationManager = getSystemService(LocationManager::class.java)
         val isLocationEnabled = locationManager?.isLocationEnabled == true
 
-        val hasLocationAccess = locationTypeRequested && hasLocationPermission && isLocationEnabled
+        val hasLocationAccess =
+                declaredServiceTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0 &&
+                        locationTypeRequested && hasLocationPermission && isLocationEnabled
         if (hasLocationAccess) {
             Bridge.log("ForegroundService: Added location (has foreground location permission)")
         } else {
@@ -203,6 +268,8 @@ class ForegroundService : Service() {
                 hasConnectedDeviceAccess = hasConnectedDeviceAccess,
                 hasMicrophoneAccess = hasMicPermission,
                 hasLocationAccess = hasLocationAccess,
+                includeMediaPlayback = includeMediaPlayback,
+                declaredTypes = declaredServiceTypes,
         )
     }
 

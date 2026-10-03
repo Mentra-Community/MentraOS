@@ -1,6 +1,6 @@
 import {DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import type {GlassesNotReadyEvent} from "@mentra/engine"
-import {useState, useEffect, type ReactNode} from "react"
+import {useState, useEffect, useRef, type ReactNode} from "react"
 import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropType, type ViewStyle} from "react-native"
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
@@ -13,6 +13,7 @@ import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
+import {cancelPendingPairing} from "@/utils/PairingUtils"
 import {
   getAr99DisplayName,
   getAr99ImageSource,
@@ -24,6 +25,7 @@ import {
 
 import MicIcon from "assets/icons/component/MicIcon"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
+import G2ConnectionProgress from "@/components/glasses/G2ConnectionProgress"
 
 const getBatteryIcon = (batteryLevel: number): string => {
   if (batteryLevel >= 75) return "battery-3"
@@ -66,14 +68,14 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
   const [isCheckingConnectivity, setIsCheckingConnectivity] = useState(false)
+  const [isCancellingPairing, setIsCancellingPairing] = useState(false)
+  const cancellingPairing = useRef(false)
   const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const glassesInfo = useEngineSnapshot(engine.glasses.info, (onChange) => engine.glasses.onInfo(onChange))
   const pairingReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
     engine.pairing.onReadiness(onChange),
   )
-  const wifiStatus = useEngineSnapshot(engine.glasses.wifi.status, (onChange) =>
-    engine.glasses.wifi.onStatus(onChange),
-  )
+  const wifiStatus = useEngineSnapshot(engine.glasses.wifi.status, (onChange) => engine.glasses.wifi.onStatus(onChange))
   const glassesConnected = glassesStatus.state === "connected"
   const glassesFullyBooted = glassesStatus.fullyBooted
   const glassesStyle = glassesInfo.style
@@ -106,6 +108,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }, [glassesFullyBooted, glassesConnected])
 
   const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, pairingReadiness.nativeLinkBusy)
+
+  const handleCancelPairing = async () => {
+    if (cancellingPairing.current) return
+    cancellingPairing.current = true
+    setIsCancellingPairing(true)
+    await cancelPendingPairing()
+    cancellingPairing.current = false
+    setIsCancellingPairing(false)
+  }
 
   if (pairedModel.includes(DeviceTypes.SIMULATED)) {
     return (
@@ -198,21 +209,25 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       <View style={style}>
         <DeviceStatus
           onPress={() =>
-            identity.model === DeviceTypes.AR99
+            !cancellingPairing.current &&
+            (identity.model === DeviceTypes.AR99
               ? push("/pairing/select-glasses-model", {transition: "simple_push"})
-              : push("/pairing/scan", {deviceModel: identity.model})
+              : push("/pairing/scan", {deviceModel: identity.model}))
           }
-          image={getGlassesImage(identity.model)}>
+          image={getGlassesImage(identity.model)}
+          className={glassesStatus.g2MissingArm ? "min-h-40" : "h-28"}>
           <View className="flex-row items-center gap-3">
             <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
             <Text className="font-semibold text-secondary-foreground text-end self-end" text={identity.model} />
           </View>
+          <G2ConnectionProgress missingArm={glassesStatus.g2MissingArm} />
           <Button
             flex
             compact
             className="max-h-10"
             tx="home:finishPairingGlasses"
             preset="primary"
+            disabled={isCancellingPairing}
             onPress={() =>
               identity.model === DeviceTypes.AR99
                 ? push("/pairing/select-glasses-model", {transition: "simple_push"})
@@ -225,7 +240,16 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
           compact
           preset="secondary"
           tx="home:pairDifferentGlasses"
+          disabled={isCancellingPairing}
           onPress={() => push("/pairing/select-glasses-model", {transition: "simple_push"})}
+        />
+        <Button
+          className="mt-2"
+          compact
+          preset="secondary"
+          tx="pairing:cancelPairing"
+          disabled={isCancellingPairing}
+          onPress={handleCancelPairing}
         />
       </View>
     )
@@ -268,11 +292,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
     return (
-      <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
+      <DeviceStatus
+        onPress={onPress}
+        image={getCurrentGlassesImage()}
+        className={glassesStatus.g2MissingArm ? "min-h-40" : "h-28"}>
         <View className="flex-row items-center gap-3">
           <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
           <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
         </View>
+        <G2ConnectionProgress missingArm={glassesStatus.g2MissingArm} />
         {!isSearching && (
           <Button
             flex
@@ -337,7 +365,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   )
 }
 
-export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
+export const ControllerStatus = ({style: _style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
@@ -416,11 +444,3 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
     </DeviceStatus>
   )
 }
-
-
-
-
-
-
-
-

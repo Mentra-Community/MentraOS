@@ -1,5 +1,6 @@
 import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
+import {VARIANT_RE, resolveAndroidPackageName} from "./scripts/android-package-name.cjs"
 import {getBuildNumber} from "./scripts/build-number.mjs"
 
 const familyBaseVersion = require("../package.json").version as string
@@ -47,18 +48,15 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // a parallel-installable build with package com.mentra.mentra.stable and app
   // label "stable". Leave unset for the normal Mentra build.
   const variantName = process.env.MENTRAOS_BUILD_NAME?.trim() || null
-  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_ ]*$/.test(variantName)
+  const isValidVariant = Boolean(variantName && VARIANT_RE.test(variantName))
   if (variantName && !isValidVariant) {
     throw new Error(
       `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
   const appName = isValidVariant ? variantName : variant.appName
-  const baseId = variant.packageName
-  // replace non-alphanumeric characters with underscores:
-  const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
-  const androidPackage = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
-  const iosBundleId = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+  const androidPackage = resolveAndroidPackageName()
+  const iosBundleId = androidPackage
 
   // Mapbox runtime token (pk.…) — boots the Mapbox Navigation SDK v3 on BOTH
   // platforms now (iOS migrated off Google Nav to match Android). Injected as:
@@ -91,6 +89,21 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
 
   return {
     ...config,
+    ...(process.env.MENTRA_PR_MOBILE_FINGERPRINT
+      ? {
+          extra: {
+            ...config.extra,
+            mentraPrBuild: {
+              schemaVersion: 1,
+              mobileFingerprint: process.env.MENTRA_PR_MOBILE_FINGERPRINT,
+              mobileSourceCommit: process.env.GITHUB_SHA,
+              // Expo's config serializer transforms nested nulls; keep the
+              // unconfigured intermediate explicit until CI packages its pin.
+              otaManifestUrl: "",
+            },
+          },
+        }
+      : {}),
     name: appName,
     slug: "Mentra",
     // Coordinated prereleases expose their full identity (for example,
@@ -128,6 +141,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "ACCESS_NETWORK_STATE",
         "CHANGE_WIFI_STATE",
         "CHANGE_NETWORK_STATE",
+        // Local-network access is implicit through INTERNET while targeting SDK 36.
+        // Declare and request ACCESS_LOCAL_NETWORK when moving to target SDK 37+.
       ],
       // The Google Navigation SDK manifest merges in ACCESS_BACKGROUND_LOCATION,
       // but navigation runs in a location foreground service and works with
@@ -164,6 +179,19 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
+        // Native collection must remain off until the deployment profile has
+        // been restored. FirebaseAnalyticsSetup enables it for consumer or
+        // explicitly opted-in workspace deployments.
+        FIREBASE_ANALYTICS_COLLECTION_ENABLED: false,
+        CFBundleURLTypes: [
+          {
+            CFBundleURLSchemes: ["com.mentra"],
+          },
+          {
+            CFBundleURLSchemes: [`msauth.${iosBundleId}`],
+          },
+        ],
+        LSApplicationQueriesSchemes: ["msauthv2", "msauthv3"],
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
           "The Mentra App uses your phone microphone for features such as live captions, translation, notes, and video recording when they use phone audio. You can connect glasses and use other features without allowing microphone access.",
@@ -223,6 +251,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         usesNonExemptEncryption: false,
       },
       entitlements: {
+        // Preserve the app's default keychain namespace while adding MSAL's
+        // shared cache group. Replacing the default group makes existing app
+        // credentials unreadable after an upgrade.
+        "keychain-access-groups": [
+          `$(AppIdentifierPrefix)${iosBundleId}`,
+          "$(AppIdentifierPrefix)com.microsoft.adalcache",
+        ],
         "com.apple.developer.networking.wifi-info": true,
         "com.apple.developer.networking.HotspotConfiguration": true,
       },
@@ -230,24 +265,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     plugins: [
       // our custom plugins:
       "./plugins/remove-ipad-orientations.js",
-      // crust's own config plugin carries its Android build contract (Mapbox
-      // downloads repo, protobuf-javalite exclusion, core-library desugaring).
+      // Crust owns the Android dependencies and iOS Mapbox SPM/build-order setup.
       "@mentra/crust",
+      "@mentra/acs-meeting",
       "./plugins/android.ts",
-      // Mapbox Navigation SDK v3 for iOS — added as a Swift Package (SPM is the
-      // ONLY supported v3 install path; CocoaPods can't resolve it). The
-      // mapbox-navigation-ios package transitively brings MapboxMaps,
-      // MapboxCommon, MapboxCoreMaps, and Turf, so SPM is the SOLE Mapbox
-      // provider. We intentionally do NOT use @rnmapbox/maps — its CocoaPods
-      // copies of those same frameworks collided with SPM's at the build-graph
-      // level ("Multiple commands produce …MapboxCommon.framework"). The runtime
-      // pk. token is injected into Info.plist as MBXAccessToken (above); the
-      // secret Downloads:Read token is read from ~/.netrc at build time.
-      "./plugins/mapbox-nav-ios.ts",
-      // Crust is a CocoaPods target; SPM products linked to the app project
-      // aren't visible to it. This links the Mapbox products into the Crust
-      // pod target (via Podfile post_install) so its Swift can import them.
-      "./plugins/mapbox-nav-crust-link.ts",
+      // Xcode 26 rejects pod resource-bundle targets still pinned to iOS 11.
+      "./plugins/ios-pod-min-deployment-target.ts",
       [
         "./modules/bluetooth-sdk/app.plugin.js",
         {
@@ -328,6 +351,17 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           ios: {
             deploymentTarget: "15.5", // for react-native-zip-archive
             extraPods: [
+              {
+                // AzureCommunicationCalling is a dynamic binary framework and
+                // links AzureCommunicationCommon as another dynamic framework.
+                // The public Common CocoaPod builds a static library unless the
+                // entire React Native project enables use_frameworks!, which is
+                // incompatible with other binary dependencies in this app. Use
+                // Microsoft's official Common XCFramework (the same artifact its
+                // SwiftPM package consumes) through our small local podspec.
+                name: "AzureCommunicationCommon",
+                podspec: "../podspecs/AzureCommunicationCommon.podspec",
+              },
               {
                 name: "FirebaseCore",
                 modular_headers: true,

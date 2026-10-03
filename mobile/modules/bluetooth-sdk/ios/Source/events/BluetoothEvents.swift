@@ -206,6 +206,21 @@ public struct SettingsAckEvent: CustomStringConvertible {
         stringValue(values, "errorMessage")
     }
 
+    /// Saved setting value, when included in the acknowledgement.
+    public var enabled: Bool? {
+        boolValue(values, "enabled")
+    }
+
+    /// Whether the persistent gallery server is currently available over station Wi-Fi.
+    public var listening: Bool? {
+        boolValue(values, "listening")
+    }
+
+    /// Current gallery base URL, available only with a running server and station Wi-Fi.
+    public var url: String? {
+        stringValue(values, "url")
+    }
+
     public var description: String {
         "SettingsAckEvent(setting: \(setting), status: \(status))"
     }

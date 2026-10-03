@@ -128,6 +128,14 @@ public abstract class AsgServer extends NanoHTTPD {
             return true;
         } catch (IOException e) {
             logger.error(getTag(), "❌ Failed to start " + config.getServerName() + ": " + e.getMessage(), e);
+            // A failed bind can leave the NanoHTTPD listener thread mid-teardown and the
+            // server socket open. Join/close it here so isAlive() reports false deterministically
+            // and the port is not leaked for the next start attempt.
+            try {
+                stop();
+            } catch (Exception stopError) {
+                logger.warn(getTag(), "🧹 Cleanup after failed start error: " + stopError.getMessage());
+            }
             return false;
         }
     }

@@ -4,9 +4,19 @@ import { createHmac } from "node:crypto";
 import { notifyReportSlack, type ReportSlackNotification } from "./report-slack.service";
 
 const WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/reports";
-const AUTOMATIC_WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/automatic";
+const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const AGENT_URL = "https://dev-agent.mentraglass.com";
+const BOT_TOKEN = "xoxb-test-reports-bot-token";
+const CHANNEL_ID = "C0TESTMAIN";
+const AUTOMATIC_CHANNEL_ID = "C0TESTAUTO";
 const AGENT_SIGNING_SECRET = "test-agent-signing-secret-with-at-least-32-bytes";
+
+const categoryEnvKeys = [
+  "CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL", "CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING",
+  "CLOUD_REPORTS_SLACK_WEBHOOK_INTERNAL_URL", "CLOUD_REPORTS_SLACK_WEBHOOK_TESTING_URL",
+  "CLOUD_CORE_ADMIN_EMAILS", "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
+] as const;
+const savedCategoryEnv = Object.fromEntries(categoryEnvKeys.map(key => [key, process.env[key]]));
 
 const savedEnv = {
   CLOUD_REPORTS_SLACK_WEBHOOK_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL,
@@ -17,6 +27,10 @@ const savedEnv = {
   CLOUD_REPORT_AGENT_SIGNING_SECRET: process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET,
   CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED:
     process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED,
+  CLOUD_REPORTS_SLACK_BOT_TOKEN: process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN,
+  CLOUD_REPORTS_SLACK_CHANNEL_ID: process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID,
+  CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC:
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC,
 };
 const realFetch = globalThis.fetch;
 
@@ -25,18 +39,23 @@ type FetchCall = (input: string | URL | Request, init?: RequestInit) => Promise<
 let fetchMock: ReturnType<typeof mock<FetchCall>>;
 
 beforeEach(() => {
+  for (const key of categoryEnvKeys) delete process.env[key];
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
   delete process.env.CLOUD_ADMIN_CONSOLE_URL;
   delete process.env.CLOUD_REPORT_AGENT_URL;
   delete process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET;
   delete process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED;
+  delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC;
   process.env.CLOUD_CORE_ENVIRONMENT = "test-env";
-  fetchMock = mock<FetchCall>(async () => new Response("ok", { status: 200 }));
+  fetchMock = mock<FetchCall>(async () => Response.json({ ok: true, ts: "1.2" }));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
 
 afterEach(() => {
+  for (const key of categoryEnvKeys) restoreEnv(key, savedCategoryEnv[key]);
   globalThis.fetch = realFetch;
   restoreEnv("CLOUD_REPORTS_SLACK_WEBHOOK_URL", savedEnv.CLOUD_REPORTS_SLACK_WEBHOOK_URL);
   restoreEnv(
@@ -51,65 +70,100 @@ afterEach(() => {
     "CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED",
     savedEnv.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED,
   );
+  restoreEnv("CLOUD_REPORTS_SLACK_BOT_TOKEN", savedEnv.CLOUD_REPORTS_SLACK_BOT_TOKEN);
+  restoreEnv("CLOUD_REPORTS_SLACK_CHANNEL_ID", savedEnv.CLOUD_REPORTS_SLACK_CHANNEL_ID);
+  restoreEnv(
+    "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
+    savedEnv.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC,
+  );
 });
 
 describe("notifyReportSlack", () => {
-  test("is a silent no-op when the webhook env var is unset", async () => {
-    const result = await notifyReportSlack(bugNotification());
+  test("routes to the exact dashboard category with Testing > Automatic > Internal precedence", async () => {
+    configureBot();
+    process.env.CLOUD_CORE_ADMIN_EMAILS = " ADMIN@PERSONAL.TEST ";
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = " @MENTRA.GLASS, mentraglass.com ";
+    const cases: Array<[Partial<ReportSlackNotification>, "main" | "automatic" | "internal" | "testing"]> = [
+      [{}, "main"],
+      [{ kind: "feedback", userEmail: "customer@example.test" }, "main"],
+      [{ userEmail: " Admin@Personal.Test " }, "internal"],
+      [{ userEmail: "admin+test@personal.test" }, "internal"],
+      [{ userEmail: "other+admin@personal.test" }, "main"],
+      [{ userEmail: "admin+test@personal.test.evil.test" }, "main"],
+      [{ userEmail: "alice@mentra.glass" }, "internal"],
+      [{ kind: "feedback", userEmail: "alice@mentraglass.com" }, "internal"],
+      [{ kind: "automatic", userEmail: "alice@mentra.glass" }, "automatic"],
+      [{ kind: "automatic", userEmail: "admin+test@personal.test" }, "automatic"],
+      [{ kind: "automatic", userEmail: "customer@example.test" }, "automatic"],
+      [{ userEmail: "alice@sub.mentra.glass" }, "main"],
+      [{ userEmail: "alice@notmentra.glass" }, "main"],
+      [{ userEmail: null, report: { contactEmail: "admin@personal.test" },
+         feedback: { contactEmail: "admin@personal.test" }, context: { email: "admin@personal.test" } }, "main"],
+      // Exact source matching, with no trimming/case folding beyond the dashboard query.
+      [{ trigger: { source: "mentra_automated_testing_extra" } }, "main"],
+      [{ trigger: { source: "MENTRA_AUTOMATED_TESTING" } }, "main"],
+      ...(["bug", "feedback", "automatic"] as const).flatMap(kind =>
+        ["admin@personal.test", "admin+test@personal.test", "customer@example.test"].map(userEmail =>
+          [{ kind, userEmail, trigger: { source: "mentra_automated_testing" } }, "testing"] as
+            [Partial<ReportSlackNotification>, "testing"])),
+    ];
+    for (const [overrides, category] of cases) {
+      fetchMock.mockClear();
+      expect(await notifyReportSlack(bugNotification(overrides))).toEqual({ ok: true });
+      expect(fetchMock.mock.calls).toHaveLength(1);
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(String(url)).toBe(SLACK_POST_MESSAGE_URL);
+      expect(JSON.parse(String(init?.body)).channel).toBe(channels[category]);
+    }
+  });
 
-    expect(result).toEqual({ ok: false, skipped: true });
+  test("does not use legacy webhooks when the bot token is missing", async () => {
+    configureBot();
+    delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    expect(await notifyReportSlack(bugNotification())).toEqual({ ok: false });
     expect(fetchMock.mock.calls).toHaveLength(0);
   });
 
-  test("routes automatic reports to the automatic webhook when configured", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL = AUTOMATIC_WEBHOOK_URL;
+  for (const category of ["main", "automatic", "internal", "testing"] as const) {
+    test(`does not send ${category} reports elsewhere when their channel is missing`, async () => {
+      configureBot();
+      process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@personal.test";
+      const suffix = category === "main" ? "" : `_${category.toUpperCase()}`;
+      delete process.env[`CLOUD_REPORTS_SLACK_CHANNEL_ID${suffix}`];
+      process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+      process.env[`CLOUD_REPORTS_SLACK_WEBHOOK${suffix}_URL`] = WEBHOOK_URL;
+      const notification = bugNotification({
+        kind: category === "automatic" ? "automatic" : "bug",
+        userEmail: category === "internal" ? "admin@personal.test" : "customer@example.test",
+        ...(category === "testing" ? { trigger: { source: "mentra_automated_testing" } } : {}),
+      });
+      expect(await notifyReportSlack(notification)).toEqual({ ok: false });
+      expect(fetchMock.mock.calls).toHaveLength(0);
+    });
+  }
 
-    const result = await notifyReportSlack(bugNotification({ kind: "automatic" }));
-
-    expect(result).toEqual({ ok: true });
-    expect(fetchMock.mock.calls).toHaveLength(1);
-    expect(fetchMock.mock.calls[0][0]).toBe(AUTOMATIC_WEBHOOK_URL);
-  });
-
-  test("falls back to the main webhook for automatic reports when the split is unset", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
-
-    const result = await notifyReportSlack(bugNotification({ kind: "automatic" }));
-
-    expect(result).toEqual({ ok: true });
-    expect(fetchMock.mock.calls).toHaveLength(1);
-    expect(fetchMock.mock.calls[0][0]).toBe(WEBHOOK_URL);
-  });
-
-  test("keeps bug and feedback reports on the main webhook when both are configured", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL = AUTOMATIC_WEBHOOK_URL;
-
-    await notifyReportSlack(bugNotification());
-    await notifyReportSlack(bugNotification({ kind: "feedback", feedback: { message: "hi" } }));
-
-    expect(fetchMock.mock.calls).toHaveLength(2);
-    expect(fetchMock.mock.calls[0][0]).toBe(WEBHOOK_URL);
-    expect(fetchMock.mock.calls[1][0]).toBe(WEBHOOK_URL);
-  });
-
-  test("skips automatic reports silently when neither webhook is set", async () => {
-    const result = await notifyReportSlack(bugNotification({ kind: "automatic" }));
-
-    expect(result).toEqual({ ok: false, skipped: true });
-    expect(fetchMock.mock.calls).toHaveLength(0);
+  test("reads admin allowlist changes at notification time", async () => {
+    configureBot();
+    const notification = bugNotification({ userEmail: "admin@personal.test" });
+    await notifyReportSlack(notification);
+    process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@personal.test";
+    await notifyReportSlack(notification);
+    delete process.env.CLOUD_CORE_ADMIN_EMAILS;
+    await notifyReportSlack(notification);
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).channel))
+      .toEqual([CHANNEL_ID, channels.internal, CHANNEL_ID]);
   });
 
   test("posts a bug report summary with trigger, env, and artifact count", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
 
     const result = await notifyReportSlack(bugNotification({ artifactCount: 3 }));
 
     expect(result).toEqual({ ok: true });
     expect(fetchMock.mock.calls).toHaveLength(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe(WEBHOOK_URL);
+    expect(url).toBe(SLACK_POST_MESSAGE_URL);
     expect(init.method).toBe("POST");
 
     const payload = JSON.parse(String(init.body)) as { text: string; blocks: unknown[] };
@@ -125,13 +179,14 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).toContain("*Env:*\\ntest-env");
   });
 
-  test("keeps the signed confirmation URL until Slack interactivity is enabled", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+  test.each(["bug", "feature"] as const)("keeps the signed confirmation URL for %s until Slack interactivity is enabled", async (kind) => {
+    configureBot();
     process.env.CLOUD_CORE_ENVIRONMENT = "dev";
     process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
     process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
 
-    await notifyReportSlack(bugNotification());
+    const notification = kind === "bug" ? bugNotification() : featureNotification();
+    await notifyReportSlack(notification);
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const payload = JSON.parse(String(init.body)) as {
@@ -141,19 +196,25 @@ describe("notifyReportSlack", () => {
       }>;
     };
     const action = payload.blocks.find((block) => block.type === "actions")?.elements?.[0];
-    expect(action?.text.text).toBe("Run Fix Agent");
+    expect(action?.text.text).toBe(kind === "bug" ? "Run Fix Agent" : "Run Dev Agent");
     expect(action?.value).toBeUndefined();
-    expect(new URL(action?.url ?? "").pathname).toBe("/actions/report");
+    const url = new URL(action?.url ?? "");
+    expect(url.pathname).toBe("/actions/report");
+    const expires = url.searchParams.get("expires");
+    expect(url.searchParams.get("reportId")).toBe(notification.reportId);
+    expect(url.searchParams.get("signature")).toBe(createHmac("sha256", AGENT_SIGNING_SECRET)
+      .update(`${notification.reportId}|dev|${expires}`).digest("hex"));
   });
 
-  test("adds a signed one-click fix-agent button when Slack interactivity is enabled", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+  test.each(["bug", "feature"] as const)("adds a signed one-click agent button for %s when Slack interactivity is enabled", async (kind) => {
+    configureBot();
     process.env.CLOUD_CORE_ENVIRONMENT = "dev";
     process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
     process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
     process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED = "true";
 
-    await notifyReportSlack(bugNotification());
+    const notification = kind === "bug" ? bugNotification() : featureNotification();
+    await notifyReportSlack(notification);
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const payload = JSON.parse(String(init.body)) as {
@@ -163,27 +224,30 @@ describe("notifyReportSlack", () => {
       }>;
     };
     const action = payload.blocks.find((block) => block.type === "actions")?.elements?.[0];
-    expect(action?.text.text).toBe("Run Fix Agent");
+    expect(action?.text.text).toBe(kind === "bug" ? "Run Fix Agent" : "Run Dev Agent");
     expect(action?.action_id).toBe("run_fix_agent");
     const url = new URL(action?.value ?? "");
     expect(`${url.origin}${url.pathname}`).toBe(`${AGENT_URL}/actions/report`);
-    expect(url.searchParams.get("reportId")).toBe("rep_TEST123");
+    expect(url.searchParams.get("reportId")).toBe(notification.reportId);
     expect(url.searchParams.get("environment")).toBe("dev");
     const expires = url.searchParams.get("expires");
     const expectedSignature = createHmac("sha256", AGENT_SIGNING_SECRET)
-      .update(`rep_TEST123|dev|${expires}`)
+      .update(`${notification.reportId}|dev|${expires}`)
       .digest("hex");
     expect(url.searchParams.get("signature")).toBe(expectedSignature);
   });
 
-  test("does not add the fix-agent action to feedback or automatic reports", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+  test("does not add the agent action to other feedback or automatic reports", async () => {
+    configureBot();
     process.env.CLOUD_CORE_ENVIRONMENT = "prod";
     process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
     process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
 
     await notifyReportSlack(bugNotification({ kind: "feedback", feedback: { message: "hi" } }));
+    await notifyReportSlack(bugNotification({ kind: "feedback", feedback: { type: "general", message: "hi" } }));
+    await notifyReportSlack(bugNotification({ kind: "feedback", feedback: null }));
     await notifyReportSlack(bugNotification({ kind: "automatic" }));
+    await notifyReportSlack(bugNotification({ kind: "automatic", feedback: { type: "feature" } }));
 
     for (const call of fetchMock.mock.calls) {
       const [, init] = call as unknown as [string, RequestInit];
@@ -193,7 +257,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("links the report to the admin console for known environments", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
     process.env.CLOUD_CORE_ENVIRONMENT = "dev";
 
     await notifyReportSlack(bugNotification());
@@ -208,7 +272,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("prefers CLOUD_ADMIN_CONSOLE_URL over the derived console link", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
     process.env.CLOUD_ADMIN_CONSOLE_URL = "https://admin.example.test/";
 
     await notifyReportSlack(bugNotification());
@@ -219,7 +283,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("shows the resolved account email as the user, mentraUserId only as fallback", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
 
     await notifyReportSlack(bugNotification({ userEmail: "reporter@example.test" }));
     await notifyReportSlack(bugNotification({ userEmail: null }));
@@ -235,7 +299,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("adds https to a schemeless CLOUD_ADMIN_CONSOLE_URL so Slack links leave Slack", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
     process.env.CLOUD_ADMIN_CONSOLE_URL = "admin.dev.mentraglass.com";
 
     await notifyReportSlack(bugNotification());
@@ -250,7 +314,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("keeps an explicit http scheme on CLOUD_ADMIN_CONSOLE_URL", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
     process.env.CLOUD_ADMIN_CONSOLE_URL = "http://localhost:5173";
 
     await notifyReportSlack(bugNotification());
@@ -261,7 +325,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("omits the console link and System line when environment and context are unknown", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
 
     await notifyReportSlack(bugNotification());
 
@@ -272,7 +336,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("renders a System line from the raw mobile engine context", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
 
     // Shape as the mobile island's collectDiagnosticContext actually sends it:
     // the glasses store state with a GlassesConnectionStatus object and
@@ -296,7 +360,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("accepts a normalized glasses shape in the System line", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
 
     await notifyReportSlack(
       bugNotification({
@@ -310,7 +374,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("escapes client-sourced context values in the System line", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
 
     await notifyReportSlack(
       bugNotification({
@@ -325,7 +389,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("truncates long user-authored text", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
     const longBehavior = "x".repeat(800);
 
     await notifyReportSlack(bugNotification({ report: { actualBehavior: longBehavior } }));
@@ -337,7 +401,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("posts feedback text and escapes Slack control characters", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
 
     await notifyReportSlack({
       reportId: "rep_FEEDBACK1",
@@ -356,7 +420,7 @@ describe("notifyReportSlack", () => {
   });
 
   test("keeps every block text under Slack's 2000-char section limit", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    configureBot();
 
     await notifyReportSlack({
       reportId: "rep_LIMITS",
@@ -389,8 +453,34 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).not.toContain("r".repeat(301));
   });
 
-  test("resolves without throwing when the webhook request fails", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+  test("posts through chat.postMessage when a bot token and channel are configured", async () => {
+    configureBot();
+    process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = CHANNEL_ID;
+    fetchMock.mockImplementation(async () => Response.json({ ok: true, ts: "123.456" }));
+
+    await expect(notifyReportSlack(bugNotification())).resolves.toEqual({ ok: true });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://slack.com/api/chat.postMessage");
+    expect((init?.headers as Record<string, string>).authorization).toBe(`Bearer ${BOT_TOKEN}`);
+    const body = JSON.parse(String(init?.body));
+    expect(body.channel).toBe(CHANNEL_ID);
+    expect(body.blocks.length).toBeGreaterThan(0);
+  });
+
+  test("treats a 200 with ok:false as a failure, not a delivered message", async () => {
+    process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = CHANNEL_ID;
+    // Slack answers 200 for refusals such as not_in_channel or invalid_auth.
+    fetchMock.mockImplementation(async () => Response.json({ ok: false, error: "not_in_channel" }));
+
+    await expect(notifyReportSlack(bugNotification())).resolves.toEqual({ ok: false });
+    expect(fetchMock.mock.calls).toHaveLength(1);
+  });
+
+  test("resolves without throwing when the bot request fails", async () => {
+    configureBot();
     fetchMock.mockImplementation(async () => {
       throw new Error("connection refused");
     });
@@ -400,8 +490,8 @@ describe("notifyReportSlack", () => {
     expect(result).toEqual({ ok: false });
   });
 
-  test("resolves without throwing on a non-2xx webhook response", async () => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+  test("resolves without throwing on a non-2xx bot response", async () => {
+    configureBot();
     fetchMock.mockImplementation(async () => new Response("no_service", { status: 404 }));
 
     const result = await notifyReportSlack(bugNotification());
@@ -409,6 +499,15 @@ describe("notifyReportSlack", () => {
     expect(result).toEqual({ ok: false });
   });
 });
+
+const channels = { main: CHANNEL_ID, automatic: AUTOMATIC_CHANNEL_ID, internal: "C0TESTINTERNAL", testing: "C0TESTTESTING" };
+function configureBot(): void {
+  process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+  for (const [category, channel] of Object.entries(channels)) {
+    const suffix = category === "main" ? "" : `_${category.toUpperCase()}`;
+    process.env[`CLOUD_REPORTS_SLACK_CHANNEL_ID${suffix}`] = channel;
+  }
+}
 
 function bugNotification(overrides: Partial<ReportSlackNotification> = {}): ReportSlackNotification {
   return {
@@ -418,6 +517,15 @@ function bugNotification(overrides: Partial<ReportSlackNotification> = {}): Repo
     trigger: { type: "manual", source: "feedback_screen", reason: "ota_update_failed" },
     report: { actualBehavior: "glasses stuck on boot screen", userSeverity: 4 },
     ...overrides,
+  };
+}
+
+function featureNotification(): ReportSlackNotification {
+  return {
+    reportId: "rep_FEATURE123",
+    mentraUserId: "user-2",
+    kind: "feedback",
+    feedback: { type: "feature", message: "Add a setting to customize notification duration." },
   };
 }
 

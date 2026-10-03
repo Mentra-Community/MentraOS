@@ -43,6 +43,43 @@ export class S3StorageProvider implements StorageProvider {
   async deleteObject(key: string): Promise<void> {
     await this.client.delete(key);
   }
+
+  async putFile(input: { key: string; path: string; contentType: string }): Promise<void> {
+    await this.client.file(input.key).write(Bun.file(input.path), { type: input.contentType });
+  }
+
+  async statObject(key: string): Promise<{ sizeBytes: number }> {
+    // R2 can compress text HEAD responses and omit Content-Length. Bun's
+    // native S3 stat advertises compression and reports that missing size as 0.
+    // Request the object's original representation without downloading it.
+    let response: Response;
+    try {
+      response = await fetch(this.client.file(key).presign({ method: "HEAD", expiresIn: 60 }), {
+        method: "HEAD",
+        headers: { "Accept-Encoding": "identity" },
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      // Fetch errors can include the signed URL. Keep credentials out of logs.
+      throw new Error("storage object metadata request failed");
+    }
+    if (response.status !== 200) throw new Error(`storage object metadata request returned ${response.status}`);
+    const encoding = response.headers.get("content-encoding");
+    if (encoding && encoding.trim().toLowerCase() !== "identity") {
+      throw new Error("storage object metadata response is encoded");
+    }
+    const length = response.headers.get("content-length");
+    if (length === null || !/^(0|[1-9]\d*)$/.test(length) || !Number.isSafeInteger(Number(length))) {
+      throw new Error("storage object metadata has no valid size");
+    }
+    return { sizeBytes: Number(length) };
+  }
+
+  async streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array>> {
+    const file = this.client.file(key);
+    return (range ? file.slice(range.start, range.end + 1) : file).stream();
+  }
 }
 
 export function createS3StorageProvider(provider: "r2" | "s3" = "r2"): S3StorageProvider {

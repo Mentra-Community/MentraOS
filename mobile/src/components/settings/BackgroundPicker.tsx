@@ -8,15 +8,7 @@ import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {translate} from "@/i18n"
-
-const PRESET_BACKGROUNDS = [
-  "https://mentra-wallpapers.mentraglass.com/landscape1.jpeg",
-  "https://mentra-wallpapers.mentraglass.com/landscape2.jpeg",
-  "https://mentra-wallpapers.mentraglass.com/landscape3.jpeg",
-  "https://mentra-wallpapers.mentraglass.com/trees.jpg",
-  "https://mentra-wallpapers.mentraglass.com/clouds.jpeg",
-  "https://mentra-wallpapers.mentraglass.com/firewatch.jpg",
-]
+import {deploymentStore} from "@/services/deployment"
 
 async function saveBackgroundImage(uri: string): Promise<string> {
   const bgDir = new Directory(Paths.document, "backgrounds")
@@ -32,6 +24,8 @@ async function saveBackgroundImage(uri: string): Promise<string> {
 export default function BackgroundPicker() {
   const {theme} = useAppTheme()
   const [background, setBackground] = useSetting<string>(SETTINGS.home_background.key)
+  const deployment = deploymentStore.getActive()
+  const presetBackgrounds = deployment.manifest.content.wallpaperUrls
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -56,7 +50,7 @@ export default function BackgroundPicker() {
   }
 
   const isSelected = (uri: string) => background === uri
-  const isCustom = background && !PRESET_BACKGROUNDS.includes(background)
+  const isCustom = background && !presetBackgrounds.includes(background)
 
   return (
     <Group title={translate("appearanceSettings:homeBackground")}>
@@ -74,7 +68,7 @@ export default function BackgroundPicker() {
         </TouchableOpacity>
 
         {/* Presets */}
-        {PRESET_BACKGROUNDS.map((uri) => (
+        {presetBackgrounds.map((uri) => (
           <TouchableOpacity key={uri} onPress={() => selectPreset(uri)} className="items-center w-[72px]">
             <View
               className="w-[72px] h-[72px] rounded-lg overflow-hidden border-[3px]"

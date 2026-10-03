@@ -7,8 +7,8 @@
 
 import Combine
 import CoreBluetooth
+import CoreGraphics
 import Foundation
-import UIKit
 
 extension Data {
     func chunked(into size: Int) -> [Data] {
@@ -232,7 +232,8 @@ actor ReconnectionManager {
     }
 
     func start(onAttempt: @escaping @Sendable () async -> Bool) {
-        stop()
+        // Multiple command failures must not restart the delay between attempts.
+        guard !isRunning else { return }
         attempts = 0
 
         task = Task {
@@ -257,6 +258,9 @@ actor ReconnectionManager {
                 } catch {
                     break
                 }
+            }
+            if !Task.isCancelled {
+                task = nil
             }
         }
     }
@@ -312,7 +316,7 @@ class G1: NSObject, SGCManager {
 
     func queryGalleryStatus() {}
 
-    func sendOtaStart(otaVersionUrl: String?) {}
+    func sendOtaStart(otaVersionUrl _: String?) {}
     func sendOtaQueryStatus() {}
 
     func ping() {}
@@ -450,13 +454,12 @@ class G1: NSObject, SGCManager {
     }
 
     private var centralManager: CBCentralManager?
+    private var scanRequested = false
 
     private var leftPeripheral: CBPeripheral?
     private var rightPeripheral: CBPeripheral?
     private var connectedDevices: [String: (CBPeripheral?, CBPeripheral?)] = [:]
     var lastConnectionTimestamp: Date = .distantPast
-    private var leftInitialized: Bool = false
-    private var rightInitialized: Bool = false
 
     private var leftGlassUUID: UUID? {
         get {
@@ -468,8 +471,10 @@ class G1: NSObject, SGCManager {
         set {
             if let newValue = newValue {
                 UserDefaults.standard.set(newValue.uuidString, forKey: "leftGlassUUID")
+                UserDefaults.standard.set(DEVICE_SEARCH_ID, forKey: "leftGlassSearchID")
             } else {
                 UserDefaults.standard.removeObject(forKey: "leftGlassUUID")
+                UserDefaults.standard.removeObject(forKey: "leftGlassSearchID")
             }
         }
     }
@@ -484,8 +489,10 @@ class G1: NSObject, SGCManager {
         set {
             if let newValue = newValue {
                 UserDefaults.standard.set(newValue.uuidString, forKey: "rightGlassUUID")
+                UserDefaults.standard.set(DEVICE_SEARCH_ID, forKey: "rightGlassSearchID")
             } else {
                 UserDefaults.standard.removeObject(forKey: "rightGlassUUID")
+                UserDefaults.standard.removeObject(forKey: "rightGlassSearchID")
             }
         }
     }
@@ -497,6 +504,8 @@ class G1: NSObject, SGCManager {
     }
 
     func forget() {
+        isDisconnecting = true
+        stopScan()
         Task {
             await heartbeatManager.stop()
             await reconnectionManager.stop()
@@ -700,11 +709,13 @@ class G1: NSObject, SGCManager {
 
     func connectById(_ id: String) {
         DEVICE_SEARCH_ID = "_" + id + "_"
+        scanRequested = true
         startScan()
     }
 
     func findCompatibleDevices() {
         DEVICE_SEARCH_ID = "NOT_SET"
+        scanRequested = true
         startScan()
     }
 
@@ -732,8 +743,7 @@ class G1: NSObject, SGCManager {
         )
         stopScan()
 
-        // get battery status:
-        getBatteryStatus()
+        // Battery requests start after both arms acknowledge initialization.
         return true
     }
 
@@ -981,11 +991,15 @@ class G1: NSObject, SGCManager {
         connected = leftReady && rightReady
         if fullyBooted {
             stopReconnectionTimer()
+            if !prevLeftReady || !prevRightReady {
+                getBatteryStatus()
+            }
         }
     }
 
     func stopScan() {
-        centralManager!.stopScan()
+        scanRequested = false
+        centralManager?.stopScan()
         Bridge.log("G1: Stopped scanning for devices")
     }
 
@@ -1007,6 +1021,7 @@ class G1: NSObject, SGCManager {
 
     func disconnect() {
         isDisconnecting = true
+        stopScan()
         leftGlassUUID = nil
         rightGlassUUID = nil
         stopReconnectionTimer()
@@ -1038,10 +1053,13 @@ class G1: NSObject, SGCManager {
             let data = Data(chunks[0])
             // CoreCommsService.log("SEND (\(side)) \(data.hexEncodedString())")
 
-            if isDisconnecting {
-                // forget whatever we were doing since we're disconnecting:
-                break
-            }
+            // A queued command can outlive the link that enqueued it. Missing
+            // transport during discovery/pairing is not an ACK timeout and must
+            // not start a reconnect loop before CoreBluetooth finishes connecting.
+            let peripheral = side == "L" ? leftPeripheral : rightPeripheral
+            guard !isDisconnecting, peripheral?.state == .connected,
+                  getWriteCharacteristic(for: peripheral) != nil
+            else { return }
 
             for i in 0 ..< chunks.count - 1 {
                 let chunk = chunks[i]
@@ -1502,18 +1520,9 @@ extension G1 {
     /// don't call semaphore signals here as it's handled elswhere:
     private func handleInitResponse(from peripheral: CBPeripheral, success: Bool) {
         if peripheral == leftPeripheral {
-            leftInitialized = success
-            // CoreCommsService.log("G1: Left arm initialized: \(success)")
-            setReadiness(left: true, right: nil)
+            setReadiness(left: success, right: nil)
         } else if peripheral == rightPeripheral {
-            rightInitialized = success
-            // CoreCommsService.log("G1: Right arm initialized: \(success)")
-            setReadiness(left: nil, right: true)
-        }
-
-        // Only proceed if both glasses are initialized
-        if leftInitialized, rightInitialized {
-            setReadiness(left: true, right: true)
+            setReadiness(left: nil, right: success)
         }
     }
 
@@ -1677,7 +1686,7 @@ extension G1 {
         Task {
             let success = await setBrightnessRaw(brightnessLevel, autoMode: autoMode)
             if !success {
-                NSLog("Failed to set brightness to level \(level)% (mapped to \(mappedLevel))")
+                Bridge.log("Failed to set brightness to level \(level)% (mapped to \(mappedLevel))")
             }
         }
     }
@@ -1733,6 +1742,7 @@ extension G1 {
     }
 
     func getBatteryStatus() {
+        guard !isDisconnecting, leftReady, rightReady else { return }
         Bridge.log("G1: getBatteryStatus()")
         let command: [UInt8] = [Commands.BLE_REQ_BATTERY.rawValue, 0x01]
         queueChunks([command])
@@ -1822,7 +1832,7 @@ extension G1 {
     /// Mirrors G2.convertToG2Bmp() for local miniapp bitmap display support.
     /// G1 uses 1-bit monochrome BMP at 640x400 (576x135 active area).
     func convertToG1Bmp(_ imageData: Data, width: Int = 576, height: Int = 135) -> Data? {
-        guard let image = UIImage(data: imageData), let cgImage = image.cgImage else {
+        guard let image = SdkImage(data: imageData), let cgImage = image.cgImage else {
             Bridge.log("G1: convertToG1Bmp - could not decode image")
             return nil
         }
@@ -2364,6 +2374,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     private func startReconnectionTimer() {
         Task {
+            guard !isDisconnecting else { return }
             await reconnectionManager.start { [weak self] in
                 guard let self else { return false }
 
@@ -2377,6 +2388,8 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
 
                 // Attempt to reconnect
                 await MainActor.run {
+                    guard !self.isDisconnecting else { return }
+                    self.scanRequested = true
                     self.startScan()
                 }
 
@@ -2401,17 +2414,22 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
 
         Bridge.log("G1: 🔵 Attempting to connect by UUID")
-        var foundAny = false
+        var foundSides = 0
 
         if let leftUUID = leftGlassUUID {
             Bridge.log("G1: 🔵 Found stored left glass UUID: \(leftUUID.uuidString)")
             let leftDevices = centralManager!.retrievePeripherals(withIdentifiers: [leftUUID])
 
-            if let leftDevice = leftDevices.first {
+            if let leftDevice = leftDevices.first,
+               G1ConnectionTarget.matchesCachedPeripheral(
+                   name: leftDevice.name, searchID: DEVICE_SEARCH_ID,
+                   cachedSearchID: UserDefaults.standard.string(forKey: "leftGlassSearchID")
+               )
+            {
                 Bridge.log(
                     "G1: 🔵 Successfully retrieved left glass: \(leftDevice.name ?? "Unknown")"
                 )
-                foundAny = true
+                foundSides += 1
                 leftPeripheral = leftDevice
                 leftDevice.delegate = self
                 centralManager!.connect(
@@ -2428,11 +2446,16 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
             Bridge.log("G1: 🔵 Found stored right glass UUID: \(rightUUID.uuidString)")
             let rightDevices = centralManager!.retrievePeripherals(withIdentifiers: [rightUUID])
 
-            if let rightDevice = rightDevices.first {
+            if let rightDevice = rightDevices.first,
+               G1ConnectionTarget.matchesCachedPeripheral(
+                   name: rightDevice.name, searchID: DEVICE_SEARCH_ID,
+                   cachedSearchID: UserDefaults.standard.string(forKey: "rightGlassSearchID")
+               )
+            {
                 Bridge.log(
                     "G1: 🔵 Successfully retrieved right glass: \(rightDevice.name ?? "Unknown")"
                 )
-                foundAny = true
+                foundSides += 1
                 rightPeripheral = rightDevice
                 rightDevice.delegate = self
                 centralManager!.connect(
@@ -2445,7 +2468,8 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
             }
         }
 
-        return foundAny
+        // Continue scanning if only one matching cached half was available.
+        return foundSides == 2
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {
@@ -2502,18 +2526,24 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
     /// called whenever bluetooth is initialized / turned on or off:
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+            self?.handleBluetoothState(central.state)
+        }
+    }
 
-            if central.state == .poweredOn {
-                Bridge.log("G1: Bluetooth was powered on")
-                self.setReadiness(left: false, right: false)
+    func handleBluetoothState(_ state: CBManagerState) {
+        if state == .poweredOn {
+            Bridge.log("G1: Bluetooth was powered on")
+            setReadiness(left: false, right: false)
 
-                if self.DEVICE_SEARCH_ID != "NOT_SET", !self.DEVICE_SEARCH_ID.isEmpty {
-                    self.startScan()
-                }
-            } else {
-                Bridge.log("G1: Bluetooth was turned off.")
+            // Discovery has no search ID, but still needs to resume after the
+            // central manager's initial .unknown state. Preserve selected-pair
+            // reconnects after a power cycle, unless intentionally disconnected.
+            let hasConnectionTarget = DEVICE_SEARCH_ID != "NOT_SET" && !DEVICE_SEARCH_ID.isEmpty
+            if !isDisconnecting, scanRequested || hasConnectionTarget {
+                startScan()
             }
+        } else {
+            Bridge.log("G1: Bluetooth was turned off.")
         }
     }
 

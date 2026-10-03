@@ -32,14 +32,17 @@ import GlassesMenuSettings from "@/app/miniapps/settings/glasses-menu"
 import LayoutSettings from "@/app/miniapps/settings/layout"
 import MainSettings from "@/app/miniapps/settings/main"
 import MicrophoneSettings from "@/app/miniapps/settings/microphone"
+import MicTuningSettings from "@/app/miniapps/settings/mic-tuning"
 import MiniappDevSettings from "@/app/miniapps/settings/miniapp-dev"
 import NotificationSettings from "@/app/miniapps/settings/notifications"
+import OtaPreviewScreen from "@/app/miniapps/settings/ota-preview"
 import PositionSettings from "@/app/miniapps/settings/position"
 import PrivacySettings from "@/app/miniapps/settings/privacy"
 import ProfileSettings from "@/app/miniapps/settings/profile"
 import SpeechSettings from "@/app/miniapps/settings/speech"
 import StressTestScreen from "@/app/miniapps/settings/stress-test"
 import SuperSettings from "@/app/miniapps/settings/super"
+import WearTuningSettings from "@/app/miniapps/settings/wear-tuning"
 
 export interface OfflineAppDef {
   initialRoute: string
@@ -61,18 +64,21 @@ const settingsRoutes: Record<string, ComponentType<any>> = {
   "/miniapps/settings/glasses-menu": GlassesMenuSettings,
   "/miniapps/settings/layout": LayoutSettings,
   "/miniapps/settings/microphone": MicrophoneSettings,
+  "/miniapps/settings/mic-tuning": MicTuningSettings,
   "/miniapps/settings/miniapp-dev": MiniappDevSettings,
   // Miniapp dev tools live under the Miniapp Developer settings screen now,
   // so their routes are hosted by the settings overlay (not a standalone app).
   "/miniapps/miniappdev/developer-url": DeveloperUrlScreen,
   "/miniapps/miniappdev/scanner": ScannerScreen,
   "/miniapps/settings/notifications": NotificationSettings,
+  "/miniapps/settings/ota-preview": OtaPreviewScreen,
   "/miniapps/settings/position": PositionSettings,
   "/miniapps/settings/privacy": PrivacySettings,
   "/miniapps/settings/profile": ProfileSettings,
   "/miniapps/settings/speech": SpeechSettings,
   "/miniapps/settings/stress-test": StressTestScreen,
   "/miniapps/settings/super": SuperSettings,
+  "/miniapps/settings/wear-tuning": WearTuningSettings,
 }
 
 export const offlineAppRegistry: Record<string, OfflineAppDef> = {

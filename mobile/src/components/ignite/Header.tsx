@@ -65,6 +65,10 @@ interface HeaderProps {
    */
   leftIconColor?: string
   /**
+   * Screen-reader label for an icon-only left action.
+   */
+  leftIconAccessibilityLabel?: string
+  /**
    * Left action text to display if not using `leftTx`.
    * Can be used with `onLeftPress`. Overrides `leftIcon`.
    */
@@ -138,6 +142,8 @@ interface HeaderActionProps {
   tx?: TextProps["tx"]
   txOptions?: TextProps["txOptions"]
   onPress?: TouchableOpacityProps["onPress"]
+  accessibilityLabel?: string
+  testID?: string
   ActionComponent?: ReactElement
 }
 
@@ -156,6 +162,7 @@ export function Header(props: HeaderProps) {
     MiddleActionComponent,
     leftIcon,
     leftIconColor,
+    leftIconAccessibilityLabel,
     leftText,
     leftTx,
     leftTxOptions,
@@ -193,6 +200,10 @@ export function Header(props: HeaderProps) {
         text={leftText}
         icon={leftIcon}
         iconColor={leftIconColor}
+        accessibilityLabel={
+          leftIconAccessibilityLabel ?? (leftIcon === "chevron-left" ? translate("common:back") : undefined)
+        }
+        testID={leftIcon === "chevron-left" ? "navigation.back" : undefined}
         onPress={onLeftPress}
         txOptions={leftTxOptions}
         backgroundColor={backgroundColor}
@@ -244,7 +255,7 @@ export function Header(props: HeaderProps) {
  * @returns {JSX.Element} The rendered `HeaderAction` component.
  */
 function HeaderAction(props: HeaderActionProps) {
-  const {backgroundColor, icon, text, tx, txOptions, onPress, ActionComponent, iconColor} = props
+  const {backgroundColor, icon, text, tx, txOptions, onPress, accessibilityLabel, testID, ActionComponent, iconColor} = props
   const {theme, themed} = useAppTheme()
 
   const content = tx ? translate(tx, txOptions) : text
@@ -254,6 +265,9 @@ function HeaderAction(props: HeaderActionProps) {
   if (content) {
     return (
       <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? content}
+        testID={testID}
         style={themed([$actionTextContainer, {backgroundColor}])}
         onPress={onPress}
         disabled={!onPress}
@@ -269,6 +283,9 @@ function HeaderAction(props: HeaderActionProps) {
         size={24}
         name={icon}
         color={iconColor}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        testID={testID}
         onPress={onPress}
         containerStyle={themed([
           $actionIconContainer,

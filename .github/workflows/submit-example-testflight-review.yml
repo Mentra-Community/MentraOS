@@ -47,7 +47,7 @@ jobs:
           base_version="${BETA_IDENTITY%%-*}"
           tag="mentra-builds-v$base_version"
           mkdir -p selected-beta
-          gh release download "$tag" \
+          node .github/scripts/release-assets.mjs download --tag "$tag" \
             --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
             --pattern "mentra-release-$BETA_IDENTITY.json" \
             --dir selected-beta

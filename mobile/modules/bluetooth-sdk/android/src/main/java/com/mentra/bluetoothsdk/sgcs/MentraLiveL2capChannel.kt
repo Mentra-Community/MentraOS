@@ -3,7 +3,7 @@ package com.mentra.bluetoothsdk.sgcs
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.os.Build
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import androidx.annotation.RequiresApi
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.utils.K900ProtocolUtils

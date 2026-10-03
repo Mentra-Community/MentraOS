@@ -213,7 +213,7 @@ export class Runtime implements RuntimeModule {
   setSubscriptions(subs: AudioSubscription[]): Promise<void>
   onTranscript(cb: (d: TranscriptionData) => void): () => void
   onTranslation(cb: (d: TranslationData) => void): () => void
-  requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  requestManagedPhoto(): Promise<{ requestId: string; readUrl: string }>
   startManagedStream(opts: StreamOptions): Promise<ManagedStream>
   stopManagedStream(streamId: string): Promise<void>
   onConnected(cb: () => void): () => void
@@ -281,7 +281,7 @@ features: send a REST request, then resolve when the matching push arrives.
 ```ts
 export class Camera {
   constructor(deps: { http: HttpClient })
-  requestPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  requestPhoto(): Promise<{ requestId: string; readUrl: string }>
   startStream(opts: StreamOptions): Promise<ManagedStream>
   stopStream(streamId: string): Promise<void>
   handlePush(msg: CloudToClientMessage): void   // resolves/rejects a pending request by requestId

@@ -3,6 +3,8 @@ import {createHash} from "node:crypto"
 import path from "node:path"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 import {validateMentraosTestflightDistribution} from "./mentraos-testflight-distribution.mjs"
 
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
@@ -323,10 +325,18 @@ export function createReleasePlan({
   nativeBuildNumber,
   otaInputs = {},
   publicBetaTestflight = false,
+  uploadGooglePlay = true,
+  playTrack = DEFAULT_PLAY_TRACKS[channel],
 }) {
   if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
+  if (typeof playTrack !== "string" || !/^[a-z][a-z0-9-]*$/.test(playTrack)) {
+    throw new Error(`Invalid Google Play track ${JSON.stringify(playTrack)}`)
+  }
   const changelog = validateChangelog(family.changelog, family.familyBaseVersion)
   if (!CHANNELS.has(channel)) throw new Error(`Unknown release channel ${JSON.stringify(channel)}`)
+  if (typeof uploadGooglePlay !== "boolean" || (!uploadGooglePlay && channel !== "dev")) {
+    throw new Error("Google Play uploads may only be disabled for dev releases")
+  }
   if (typeof sourceCommit !== "string" || !COMMIT_PATTERN.test(sourceCommit)) {
     throw new Error("sourceCommit must be a full lowercase Git commit SHA")
   }
@@ -349,7 +359,10 @@ export function createReleasePlan({
         version: releaseIdentity,
         kind: member.kind,
         manifest: member.manifest,
-        publishTargets: member.publishTargets,
+        publishTargets:
+          member.name === "mentraos" && !uploadGooglePlay
+            ? member.publishTargets.filter((target) => target !== "google-play")
+            : member.publishTargets,
         dependencies: Object.fromEntries(member.dependencies.map((dependency) => [dependency, releaseIdentity])),
         privateWorkspaceDependencies: member.privateWorkspaceDependencies,
       },
@@ -372,6 +385,9 @@ export function createReleasePlan({
     native: {
       marketingVersion: family.familyBaseVersion,
       buildNumber: nativeBuildNumber,
+      // The Play destination is frozen in the plan; the record must publish there.
+      playTrack,
+      ...(!uploadGooglePlay ? {googlePlayUpload: false} : {}),
       ...(channel === "beta" && publicBetaTestflight
         ? {testflight: {group: "Mentra Staging Public", audience: "external"}}
         : {}),
@@ -443,21 +459,52 @@ function validatePublication(publication, label) {
   return publication
 }
 
-function expectedPublicationCoordinate(plan, memberName, target) {
+// Where each channel publishes on Google Play unless the plan says otherwise.
+export const DEFAULT_PLAY_TRACKS = Object.freeze({dev: "internal", beta: "beta", production: "production"})
+// Plans made before the destination was frozen published betas to Internal App
+// Sharing for a while (#4037); their archived records still validate.
+const LEGACY_PLAY_TRACKS = Object.freeze({
+  dev: ["internal"],
+  beta: ["beta", "internal-app-sharing"],
+  production: ["production"],
+})
+
+export function expectedPlayTracks(plan) {
+  if (plan.native?.playTrack !== undefined) return [plan.native.playTrack]
+  return LEGACY_PLAY_TRACKS[plan.channel] ?? []
+}
+
+// The Android build may carry a testing track's floor plus one instead of the
+// family number (see resolve-android-version-code.mjs); the results say so.
+export function androidBuildNumberOf(plan, results) {
+  const declared = results?.native?.androidBuildNumber
+  if (declared === undefined) return plan.native.buildNumber
+  if (!Number.isSafeInteger(declared) || declared < plan.native.buildNumber) {
+    throw new Error(`native.androidBuildNumber ${JSON.stringify(declared)} is below the family build number`)
+  }
+  return declared
+}
+
+function expectedPublicationCoordinate(plan, memberName, target, results) {
   const version = plan.members[memberName].version
   if (target === "npm") return `${memberName}@${version}`
   if (target === "maven-central") return `com.mentraglass:bluetooth-sdk:${version}`
   if (target === "swift-package-manager") return `Mentra-Community/mentra-bluetooth-sdk-ios@${version}`
   const channels = {
-    dev: {play: "internal", appStore: "Mentra Dev"},
-    // Betas use Internal App Sharing while the Play beta track serves a
-    // pre-formula build number above every family window.
-    beta: {play: "internal-app-sharing", appStore: "Mentra Staging"},
-    production: {play: "production", appStore: "App Store"},
+    dev: {appStore: "Mentra Dev"},
+    beta: {appStore: "Mentra Staging"},
+    production: {appStore: "App Store"},
   }
   const selected = channels[plan.channel]
   if (!selected) throw new Error(`Unknown release channel ${JSON.stringify(plan.channel)}`)
-  if (target === "google-play") return `com.mentra.mentra:${plan.native.buildNumber}:${selected.play}`
+  if (target === "google-play") {
+    const code = androidBuildNumberOf(plan, results)
+    const tracks = expectedPlayTracks(plan)
+    // A record names one destination; a legacy plan allows its historical ones.
+    const actual = results?.publications?.[memberName]?.[target]?.coordinate
+    const track = tracks.find((candidate) => actual === `com.mentra.mentra:${code}:${candidate}`) ?? tracks[0]
+    return `com.mentra.mentra:${code}:${track}`
+  }
   if (target === "app-store-connect") {
     const group = plan.native.testflight?.group || selected.appStore
     if (
@@ -500,6 +547,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     throw new Error("Release plan has invalid native build identity")
   }
   const changelog = validateChangelog(plan.changelog, plan.familyBaseVersion)
+  const androidBuildNumber = androidBuildNumberOf(plan, results)
 
   const publications = {}
   for (const [memberName, member] of Object.entries(plan.members)) {
@@ -511,7 +559,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     for (const target of member.publishTargets) {
       const label = `publications.${memberName}.${target}`
       const publication = validatePublication(memberResults[target], label)
-      const expected = expectedPublicationCoordinate(plan, memberName, target)
+      const expected = expectedPublicationCoordinate(plan, memberName, target, results)
       if (publication.coordinate !== expected) {
         throw new Error(`${label}.coordinate must be ${expected}`)
       }
@@ -542,6 +590,16 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
   }
   const cloud = validateCloudV2DeploymentRecord({plan, record: results.cloud})
+  const runtimeImage =
+    plan.channel === "production" ? undefined : validateRuntimeImageRecord({plan, record: results.runtimeImage})
+  const privateDeployment =
+    plan.channel === "dev"
+      ? validatePrivateDeploymentRecord({
+          plan,
+          record: results.privateDeployment,
+          runtimeImage,
+        })
+      : undefined
 
   let promotion
   if (plan.channel === "production") {
@@ -569,13 +627,15 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     releaseIdentity: plan.releaseIdentity,
     channel: plan.channel,
     sourceCommit: plan.sourceCommit,
-    native: plan.native,
+    native: androidBuildNumber === plan.native.buildNumber ? plan.native : {...plan.native, androidBuildNumber},
     completedAt,
     releasePlanSha256: releaseRecordSha256(plan),
     publications,
     otaManifest,
     artifacts,
     cloud,
+    ...(runtimeImage ? {runtimeImage} : {}),
+    ...(privateDeployment ? {privateDeployment} : {}),
     ...(promotion ? {promotion} : {}),
   }
 }

@@ -2077,7 +2077,7 @@ class G1FontLoader {
             fontMap[character] = FontGlyph(width: width, height: height)
         }
 
-        print("Hardcoded font data loaded successfully! \(fontMap.count) glyphs mapped.")
+        Bridge.log("Hardcoded font data loaded successfully! \(fontMap.count) glyphs mapped.")
     }
 
     func getGlyph(_ character: Character) -> FontGlyph {

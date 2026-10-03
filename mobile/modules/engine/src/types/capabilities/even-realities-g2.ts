@@ -20,6 +20,7 @@ export const evenRealitiesG2: Capabilities = {
   // Display capabilities - G2 has a green monochrome display (similar to G1)
   hasDisplay: true,
   display: {
+    position: {depth: {min: 1, max: 3}, height: {min: 1, max: 8}},
     count: 2,
     isColor: false,
     color: "green",
@@ -57,7 +58,7 @@ export const evenRealitiesG2: Capabilities = {
 
   // IMU capabilities - G2 has IMU
   hasIMU: true,
-  imu: null,
+  imu: {headUpAngle: {min: 0, max: 60}},
 
   // Button capabilities - G2 has a capacitive touchbar
   hasButton: true,
@@ -88,4 +89,5 @@ export const evenRealitiesG2: Capabilities = {
   // Dashboard - G2 renders Even Realities' native dashboard in firmware, so
   // MentraOS does not manage the dashboard or expose dashboard settings for it
   hasNativeDashboard: true,
+  hasNativeNotifications: true,
 };

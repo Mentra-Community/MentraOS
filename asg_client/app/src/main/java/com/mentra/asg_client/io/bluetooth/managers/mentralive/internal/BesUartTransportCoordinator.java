@@ -244,6 +244,13 @@ public final class BesUartTransportCoordinator {
         }
     }
 
+    /** A framed reply is not permission for normal use during OTA or recovery. */
+    public boolean isReadyForNormalUse() {
+        synchronized (monitor) {
+            return isReadyLocked() && safetyState.currentPolicy() == SafetyPolicy.NORMAL;
+        }
+    }
+
     /** Route bytes only when they belong to the descriptor currently owned by this coordinator. */
     public InboundRoute inboundRoute(SerialSession session) {
         synchronized (monitor) {
@@ -699,6 +706,36 @@ public final class BesUartTransportCoordinator {
             }
             startRecoveryLocked("parser_discards");
         }
+    }
+
+    /**
+     * Request an authoritative BES snapshot without waiting on the UART lane. Callers may retry
+     * after a refused request; a file/OTA owner or baud transition must never be interrupted.
+     */
+    public boolean requestSystemVersionRefresh() {
+        synchronized (monitor) {
+            if (!canRefreshSystemVersionLocked() || executor.isShutdown()) return false;
+            long phase = phaseGeneration;
+            SerialSession session = serialSession;
+            ioLane.submit(() -> {
+                synchronized (monitor) {
+                    if (phase != phaseGeneration || session != serialSession
+                            || !isReadyLocked()
+                            || safetyState.currentPolicy() != SafetyPolicy.NORMAL) return;
+                }
+                // All ownership barriers share this FIFO lane, so a subsequently acquired
+                // operation cannot start writing before this already admitted probe.
+                if (!host.writeControlCommand(buildSystemVersionRequest())) {
+                    Log.w(TAG, "BES status refresh write failed");
+                }
+            });
+            return true;
+        }
+    }
+
+    private boolean canRefreshSystemVersionLocked() {
+        return isReadyLocked() && operation == Operation.NONE
+                && safetyState.currentPolicy() == SafetyPolicy.NORMAL;
     }
 
     public boolean runNormalWrite(WriteAction action) {

@@ -1,0 +1,68 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - hardware
+  - stream-preview
+env:
+  MEETING_URL: ${MEETING_URL || ""}
+  FRAMES_TIMEOUT_MS: ${FRAMES_TIMEOUT_MS || "20000"}
+---
+# A miniapp that declares CAMERA but does not own the meeting is refused the call
+# preview with not_meeting_owner, and the owner (Mentra Call) keeps its preview.
+#
+# Requires everything the lifecycle flow does, plus the Preview Probe test
+# miniapp (mobile/.maestro/fixtures/stream-preview-probe) registered in the
+# Mentra App so it shows on Home. Serve it once with
+#   cd mobile/.maestro/fixtures/stream-preview-probe && bun ../../../../sdk/miniapp-cli/src/index.ts dev
+# and open the printed URL from the Mentra App's miniapp developer screen.
+#
+#   maestro test -e MEETING_URL="<teams meeting url>" .maestro/flows/99-call-stream-preview-non-owner.yaml
+
+- assertTrue: ${MEETING_URL != ""}
+
+- runFlow:
+    file: ../helpers/stream-preview-join-call.yaml
+    env:
+      MEETING_URL: ${MEETING_URL}
+
+# Mentra Call holds the lease once connected; its preview draws.
+- runFlow:
+    file: ../helpers/stream-preview-show.yaml
+    env:
+      FRAMES_TIMEOUT_MS: ${FRAMES_TIMEOUT_MS}
+
+# Leave Mentra Call running in the background and ask from the probe.
+- tapOn:
+    id: "miniapp.minimize"
+- extendedWaitUntil:
+    visible: "Preview Probe"
+    timeout: 10000
+- tapOn: "Preview Probe"
+- extendedWaitUntil:
+    visible: "Request call preview"
+    timeout: 30000
+- tapOn: "Request call preview"
+- extendedWaitUntil:
+    visible: "Preview result: not_meeting_owner"
+    timeout: 15000
+- takeScreenshot: "stream-preview-non-owner-refused"
+
+# The refusal must not have disturbed the owner's lease: back in Mentra Call the
+# preview shows again without a new arm.
+- tapOn:
+    id: "miniapp.minimize"
+- extendedWaitUntil:
+    visible: "Mentra Call"
+    timeout: 10000
+- tapOn: "Mentra Call"
+- extendedWaitUntil:
+    visible: "Turn preview on"
+    timeout: 30000
+- runFlow:
+    file: ../helpers/stream-preview-show.yaml
+    env:
+      FRAMES_TIMEOUT_MS: ${FRAMES_TIMEOUT_MS}
+
+- tapOn: "Leave the call"
+- extendedWaitUntil:
+    notVisible: "Turn preview (on|off)"
+    timeout: 60000

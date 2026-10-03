@@ -21,6 +21,7 @@ public class OtaSessionManager {
      * Set by OtaService.resumeFromSession() and consumed by OtaHelper.onPhoneConnected().
      */
     private static final String KEY_PENDING_APK_STATUS = "pending_apk_status";
+    private static final String KEY_PENDING_APK_SESSION_ID = "pending_apk_session_id";
     private static final long SESSION_EXPIRY_MS = 30 * 60 * 1000L;
     /**
      * Cooldown after APK install before auto-resuming the next OTA step (MTK/BES).
@@ -37,6 +38,8 @@ public class OtaSessionManager {
     private int mCurrentStepIndex;
     private String mCurrentPhase;
     private int mStepPercent;
+    // Live transfer state, deliberately not restored from disk after a process restart.
+    private long mDownloadBytes;
     private String mStatus;
     private String mErrorMessage;
     private String mVersionJsonUrl;
@@ -82,6 +85,7 @@ public class OtaSessionManager {
         mCurrentStepIndex = 0;
         mCurrentPhase = "download";
         mStepPercent = 0;
+        mDownloadBytes = 0;
         mStatus = "in_progress";
         mErrorMessage = null;
         mVersionJsonUrl = versionJsonUrl;
@@ -129,6 +133,15 @@ public class OtaSessionManager {
         return mStatus;
     }
 
+    /** Read the raw activity state without expiring a session or consuming its restart guard. */
+    public synchronized JSONObject getActivitySnapshot() throws JSONException {
+        JSONObject snapshot = new JSONObject();
+        snapshot.put("session_id", mSessionId != null ? mSessionId : "");
+        snapshot.put("status", getStatus());
+        snapshot.put("restart_pending", mRestartingSinceElapsed >= 0);
+        return snapshot;
+    }
+
     /**
      * Builds the JSON payload sent to the phone via BLE as an {@code ota_status} message.
      *
@@ -168,6 +181,7 @@ public class OtaSessionManager {
             state.put("st", getStepType(mCurrentStepIndex));
             state.put("sq", mStepSequence != null ? mStepSequence : new JSONArray());
             state.put("phase", mCurrentPhase);
+            if ("download".equals(mCurrentPhase)) state.put("bytes_downloaded", mDownloadBytes);
             state.put("sp", mStepPercent);
             state.put("op", computeOverallPercent());
             state.put("status", mStatus);
@@ -185,9 +199,17 @@ public class OtaSessionManager {
         mCurrentStepIndex = stepIndex;
         mCurrentPhase = phase;
         mStepPercent = 0;
+        mDownloadBytes = 0;
         mLastPersistedPercent = 0;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
+    }
+
+    /** Update live download evidence owned by the current session step. */
+    public synchronized void updateDownloadProgress(int stepPercent, long bytesDownloaded) {
+        if (!"download".equals(mCurrentPhase) || "complete".equals(mStatus) || "failed".equals(mStatus)) return;
+        mDownloadBytes = Math.max(0, bytesDownloaded);
+        updateProgress(stepPercent);
     }
 
     public synchronized void updateProgress(int stepPercent) {
@@ -216,6 +238,7 @@ public class OtaSessionManager {
         mStatus = "failed";
         mErrorMessage = errorMessage;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        mPrefs.edit().remove(KEY_PENDING_APK_STATUS).remove(KEY_PENDING_APK_SESSION_ID).apply();
         persist();
         Log.e(TAG, "Session failed: " + errorMessage);
     }
@@ -226,6 +249,37 @@ public class OtaSessionManager {
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
         Log.i(TAG, "Session complete: " + mSessionId);
+    }
+
+    /**
+     * Reconcile the native BES terminal result with its owning final install step.
+     *
+     * <p>The durable BES record outlives EventBus delivery and process restarts. An old or debug
+     * transaction must never finish another session, advance a step, or replace an existing failure.
+     */
+    public synchronized boolean reconcileBesTerminalStatus(JSONObject besStatus) {
+        if (besStatus == null
+                || mSessionId == null
+                || mSessionId.isEmpty()
+                || !mSessionId.equals(besStatus.optString("sid", ""))
+                || !"bes".equals(besStatus.optString("st", ""))
+                || !"install".equals(besStatus.optString("phase", ""))
+                || !"in_progress".equals(mStatus)
+                || !"bes".equals(getStepType(mCurrentStepIndex))
+                || !"install".equals(mCurrentPhase)
+                || mCurrentStepIndex != mTotalSteps - 1
+                || mRestartingSinceElapsed >= 0) {
+            return false;
+        }
+        if ("complete".equals(besStatus.optString("status", ""))) {
+            setComplete();
+            return true;
+        }
+        if ("failed".equals(besStatus.optString("status", ""))) {
+            setFailed(besStatus.optString("err", "install_failed"));
+            return true;
+        }
+        return false;
     }
 
     public synchronized boolean setRestarting() {
@@ -283,8 +337,10 @@ public class OtaSessionManager {
      *
      * @param status "step_complete" if more OTA steps follow; "complete" for APK-only sessions.
      */
-    public void setPendingApkStatus(String status) {
-        mPrefs.edit().putString(KEY_PENDING_APK_STATUS, status).apply();
+    public synchronized void setPendingApkStatus(String status) {
+        if (mSessionId == null || "failed".equals(mStatus)) return;
+        mPrefs.edit().putString(KEY_PENDING_APK_STATUS, status)
+                .putString(KEY_PENDING_APK_SESSION_ID, mSessionId).apply();
         Log.i(TAG, "Pending APK status queued for next phone reconnect: " + status);
     }
 
@@ -292,13 +348,14 @@ public class OtaSessionManager {
      * Retrieves and clears the pending APK status. Returns null if none is queued.
      * Intended to be called from OtaHelper.onPhoneConnected().
      */
-    public String consumePendingApkStatus() {
+    public synchronized String consumePendingApkStatus() {
         String status = mPrefs.getString(KEY_PENDING_APK_STATUS, null);
+        String sessionId = mPrefs.getString(KEY_PENDING_APK_SESSION_ID, null);
         if (status != null) {
-            mPrefs.edit().remove(KEY_PENDING_APK_STATUS).apply();
+            mPrefs.edit().remove(KEY_PENDING_APK_STATUS).remove(KEY_PENDING_APK_SESSION_ID).apply();
             Log.i(TAG, "Consumed pending APK status: " + status);
         }
-        return status;
+        return mSessionId != null && mSessionId.equals(sessionId) && !"failed".equals(mStatus) ? status : null;
     }
 
     /**
@@ -333,6 +390,7 @@ public class OtaSessionManager {
     }
 
     public synchronized void clear() {
+        mDownloadBytes = 0;
         mSessionId = null;
         mTotalSteps = 0;
         mStepSequence = new JSONArray();
@@ -345,7 +403,7 @@ public class OtaSessionManager {
         mLastActivityAtElapsed = 0;
         mRestartingSinceElapsed = -1;
         mLastPersistedPercent = 0;
-        mPrefs.edit().remove(KEY_SESSION_DATA).apply();
+        mPrefs.edit().remove(KEY_SESSION_DATA).remove(KEY_PENDING_APK_STATUS).remove(KEY_PENDING_APK_SESSION_ID).apply();
     }
 
     public synchronized String getStepType(int index) {

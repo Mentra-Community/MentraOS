@@ -5,8 +5,17 @@ import {AppState, Platform} from "react-native"
 
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
-import {BgTimer} from "@mentra/engine"
-import { useNavigationStore } from "@/stores/navigation"
+import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
+import {useNavigationStore} from "@/stores/navigation"
+
+/**
+ * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
+ * `?seconds=15&a2dp=none` into `?seconds=15\&a2dp=none`, which the URL parser
+ * reads as `seconds=15\`. Undo that before matching routes.
+ */
+function sanitizeDeeplinkUrl(url: string): string {
+  return url.replace(/\\&/g, "&").replace(/\\(?=$|[?#])/g, "")
+}
 
 /** Returns immediately if the app is already active, otherwise waits for it. */
 const waitForActive = (): Promise<void> => {
@@ -230,6 +239,23 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         return
       }
 
+      if (authParams?.type === "signup" && authParams.access_token) {
+        const res = await mentraAuth.completeSignupVerification(authParams.access_token)
+        try {
+          WebBrowser.dismissBrowser()
+        } catch {
+          // The confirmation link may have opened outside an in-app browser.
+        }
+        if (res.is_error()) {
+          console.error("Email verification sign-in failed:", res.error)
+          nav.replace("/auth/start?authError=invalid_grant")
+          return
+        }
+        nav.setAnimation("none")
+        nav.replaceAll("/")
+        return
+      }
+
       if (authParams && authParams.access_token && authParams.refresh_token) {
         // Fragment tokens come from GoTrue links (email verification, legacy
         // magic links). They are SUPABASE tokens: adopting them as V2 tokens
@@ -355,6 +381,25 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     requiresAuth: true,
   },
 
+  // Dev tooling: glasses LC3 microphone level probe (see engine GlassesMicProbe).
+  {
+    pattern: "/test/mic-probe",
+    handler: async (url: string, params: Record<string, string>) => {
+      const nav = useNavigationStore.getState()
+      const options = parseMicProbeParams(params)
+      const query = new URLSearchParams()
+      query.set("seconds", String(Math.round(options.durationMs / 1000)))
+      query.set("a2dp", options.a2dp)
+      if (options.a2dp === "tone") query.set("level", String(options.toneLevel ?? 0.2))
+      if (options.source) query.set("mic", options.source)
+      // Start here (after auth) so boot remounts of the screen cannot pin the
+      // glasses mic during login or leave an orphaned soak after go-home.
+      void glassesMicProbe.start(options)
+      nav.push(`/test/mic-probe?${query.toString()}` as any)
+    },
+    requiresAuth: true,
+  },
+
   // Search routes
   {
     pattern: "/search",
@@ -415,7 +460,6 @@ const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContext
 export const useDeeplink = () => useContext(DeeplinkContext)
 
 export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
-
   const {setSplashEnabled} = useSplashLoader()
   const lastProcessed = useRef({url: null as string | null, time: 0})
   const nav = useNavigationStore.getState()
@@ -507,9 +551,9 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       }
     }
 
-    // Extract query parameters
+    // Extract query parameters. Trailing `\` is the leftover from an escaped `&`.
     url.searchParams.forEach((value, key) => {
-      params[key] = value
+      params[key] = value.replace(/\\+$/g, "")
     })
 
     return params
@@ -517,6 +561,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
 
   const processUrl = async (url: string, initial: boolean = false) => {
     try {
+      url = sanitizeDeeplinkUrl(url)
       // ignore expo-dev-deeplinks: (this was causing android to restart the app after hot-reloads twice)
       if (url.includes("expo-development-client")) {
         console.log("DEEPLINK: Ignoring expo-development-client URL")

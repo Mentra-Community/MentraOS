@@ -50,9 +50,15 @@ class PhoneAudioMonitor {
 
     /// Check if any audio is currently playing on the device (including our own app)
     func isPlaying() -> Bool {
+        #if os(macOS)
+        // macOS has no AVAudioSession audio-focus contract. Explicit SDK playback
+        // is tracked; other applications retain independent system audio routes.
+        return ownAppAudioPlaying
+        #else
         let session = AVAudioSession.sharedInstance()
         // Combine: other apps playing OR our own app playing
         return session.isOtherAudioPlaying || ownAppAudioPlaying
+        #endif
     }
 
     func isOwnAppAudioPlaying() -> Bool {
@@ -88,6 +94,7 @@ class PhoneAudioMonitor {
             "PhoneAudioMonitor: Starting audio playback monitoring (initial state: \(lastKnownState ? "playing" : "not playing"))"
         )
 
+        #if !os(macOS)
         // Register for silenceSecondaryAudioHint notification
         // This is fired when other apps start/stop playing audio
         NotificationCenter.default.addObserver(
@@ -108,6 +115,7 @@ class PhoneAudioMonitor {
         // Start polling as a fallback mechanism
         // Some audio sources might not trigger notifications reliably
         startPolling()
+        #endif
     }
 
     /// Stop monitoring for phone audio playback changes
@@ -119,6 +127,7 @@ class PhoneAudioMonitor {
 
         Bridge.log("PhoneAudioMonitor: Stopping audio playback monitoring")
 
+        #if !os(macOS)
         NotificationCenter.default.removeObserver(
             self,
             name: AVAudioSession.silenceSecondaryAudioHintNotification,
@@ -132,11 +141,13 @@ class PhoneAudioMonitor {
         )
 
         stopPolling()
+        #endif
 
         listener = nil
         isMonitoring = false
     }
 
+    #if !os(macOS)
     /// Handle silenceSecondaryAudioHint notification
     @objc private func handleSilenceSecondaryAudioHint(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
@@ -190,6 +201,8 @@ class PhoneAudioMonitor {
             break
         }
     }
+
+    #endif
 
     /// Start polling isOtherAudioPlaying as a fallback mechanism
     private func startPolling() {

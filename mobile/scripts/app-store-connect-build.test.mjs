@@ -100,6 +100,47 @@ test("retries App Store Connect reads terminated while consuming the response bo
   assert.equal(requests, 2)
 })
 
+test("retries a spurious App Store Connect 401 on reads with a freshly signed token", async () => {
+  const unauthorized = response(401, {errors: [{title: "Authentication credentials are missing or invalid."}]})
+  const responses = [unauthorized, response(200, {data: {id: "app-1", attributes: {bundleId: "com.mentra.example"}}})]
+  const tokens = []
+  const api = createAppStoreConnectClient({
+    issuerId: "issuer",
+    keyId: "key",
+    privateKey: TEST_PRIVATE_KEY,
+    delay: 0,
+    sleep: async () => {},
+    fetchImpl: async (_url, options) => {
+      tokens.push(options.headers.Authorization)
+      return responses.shift()
+    },
+  })
+
+  const app = await findApp(api, "com.mentra.example", "app-1")
+  assert.equal(app.id, "app-1")
+  assert.equal(tokens.length, 2)
+  assert.notEqual(tokens[0], tokens[1])
+})
+
+test("a persistent App Store Connect 401 still fails after the retry budget", async () => {
+  let requests = 0
+  const api = createAppStoreConnectClient({
+    issuerId: "issuer",
+    keyId: "key",
+    privateKey: TEST_PRIVATE_KEY,
+    attempts: 3,
+    delay: 0,
+    sleep: async () => {},
+    fetchImpl: async () => {
+      requests += 1
+      return response(401, {errors: [{title: "Authentication credentials are missing or invalid."}]})
+    },
+  })
+
+  await assert.rejects(() => findApp(api, "com.mentra.example", "app-1"), /failed with HTTP 401/)
+  assert.equal(requests, 3)
+})
+
 test("does not retry permanent App Store Connect request failures", async () => {
   let requests = 0
   const api = createAppStoreConnectClient({

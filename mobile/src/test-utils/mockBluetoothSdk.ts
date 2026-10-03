@@ -6,6 +6,8 @@ import {
   isReadyGlassesConnectionStatus,
 } from "@mentra/bluetooth-sdk/types"
 
+import {isEnabledHotspotStatus} from "../../modules/bluetooth-sdk/src/BluetoothSdk.types"
+
 type Listener = (payload: any) => void
 
 const listeners = new Map<string, Set<Listener>>()
@@ -49,10 +51,14 @@ export const mentraLocalNetworkMock = {
 }
 
 export const bluetoothSdkMock = {
+  configureNativeNotifications: jest.fn(() => Promise.resolve()),
+  getNativeNotificationStatus: jest.fn(() => Promise.resolve({supported: false, state: "unavailable"})),
+  sendPhoneNotification: jest.fn(() => Promise.resolve()),
   addListener,
   isConnectedGlassesConnectionStatus,
   isReadyGlassesConnectionStatus,
   isBusyGlassesConnectionStatus,
+  isEnabledHotspotStatus,
   requestBluetoothPermissions: jest.fn(() => Promise.resolve(true)),
   getBluetoothStatus: jest.fn(() =>
     Promise.resolve({
@@ -125,11 +131,13 @@ export const bluetoothSdkMock = {
   connectSimulated: jest.fn(() => Promise.resolve()),
   disconnect: jest.fn(() => Promise.resolve()),
   forget: jest.fn(() => Promise.resolve()),
+  unpair: jest.fn(() => Promise.resolve()),
   forgetController: jest.fn(() => Promise.resolve()),
   showDashboard: jest.fn(() => Promise.resolve()),
   ping: jest.fn(() => Promise.resolve()),
   sendIncidentId: jest.fn(() => Promise.resolve()),
   requestWifiScan: jest.fn(() => Promise.resolve([])),
+  getSavedWifiNetworks: jest.fn(() => Promise.resolve([])),
   sendWifiCredentials: jest.fn((ssid: string) =>
     Promise.resolve({type: "wifi_status_change", state: "connected", ssid}),
   ),

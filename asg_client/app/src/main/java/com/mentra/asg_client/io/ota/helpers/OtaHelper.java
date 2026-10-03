@@ -8,6 +8,7 @@ import android.content.pm.Signature;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.content.Intent;
 
@@ -17,6 +18,7 @@ import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.RecoveryWorkerManager;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
@@ -33,8 +35,6 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -42,18 +42,20 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
+import com.mentra.asg_client.io.ota.utils.MtkOtaSelector;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.io.ota.utils.OtaHttpRequest;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.service.utils.SysProp;
+import com.mentra.asg_client.service.utils.ProcessSessionId;
 import com.mentra.asg_client.utils.WakeLockManager;
-
-import org.json.JSONArray;
 
 public class OtaHelper {
 
@@ -87,10 +89,11 @@ public class OtaHelper {
     // window without changing the existing single-worker pipeline.
     private static final Semaphore otaAdmissionPermit = new Semaphore(1);
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
+    // Observation sequence only; the existing semaphore remains the sole admission owner.
+    private static final AtomicLong otaAdmissionGeneration = new AtomicLong();
 
-    // Downgrade handoff verdict plumbing: the watchdog must be cancellable because recovery
-    // answers every handoff synchronously (accepted/refused); "no answer" is reserved for a
-    // dead/missing recovery worker. Guarded by OtaHelper.class.
+    // Recovery owns durable transaction state; this process only retains admission while
+    // correlated status queries reconcile it. Guarded by OtaHelper.class.
     private static final Handler HANDOFF_HANDLER = new Handler(Looper.getMainLooper());
     private static Runnable handoffWatchdog;
     private static OtaHelper handoffOwner;
@@ -98,6 +101,12 @@ public class OtaHelper {
 
     private Handler handler;
     private Context context;
+    private String mDowngradeRequestId = "";
+    private long mDowngradeTarget;
+    private String mDowngradeSha = "";
+    private long mDowngradeWaitStarted;
+    private boolean mDowngradeUnknownReported;
+    private final java.util.concurrent.atomic.AtomicBoolean mRecoveryQueryRunning = new java.util.concurrent.atomic.AtomicBoolean();
 
 
     // Update order configuration - can be easily modified to change update sequence
@@ -121,7 +130,7 @@ public class OtaHelper {
     private PhoneConnectionProvider phoneConnectionProvider;
 
     // Session manager for persisting OTA state across APK restarts
-    private OtaSessionManager sessionManager;
+    private volatile OtaSessionManager sessionManager;
 
     // Track phone-initiated vs glasses-initiated OTA
     private static volatile boolean isPhoneInitiatedOta = false;
@@ -141,6 +150,7 @@ public class OtaHelper {
     // Progress throttling - send every 2s OR every 5% change
     private long lastProgressSentTime = 0;
     private int lastProgressSentPercent = 0;
+    private volatile long downloadBytes = 0;
     private static final long PROGRESS_MIN_INTERVAL_MS = 2000; // 2 seconds
     private static final int PROGRESS_MIN_CHANGE_PERCENT = 5;   // 5%
     // Current update stage for progress reporting
@@ -165,12 +175,47 @@ public class OtaHelper {
     private String lastOtaPhoneError;
 
     private final IBesOtaRegistry besOtaRegistry;
+    private final android.content.SharedPreferences mPendingDowngradePrefs;
 
     public OtaHelper(Context context, IBesOtaRegistry besOtaRegistry) {
         this.besOtaRegistry = besOtaRegistry;
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
         sessionManager = new OtaSessionManager(this.context);
+        mPendingDowngradePrefs = this.context.getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE);
+        synchronized (OtaHelper.class) {
+            if (handoffOwner != null) {
+                OtaHelper previous = handoffOwner;
+                mDowngradeRequestId = previous.mDowngradeRequestId;
+                mDowngradeTarget = previous.mDowngradeTarget;
+                mDowngradeSha = previous.mDowngradeSha;
+                mDowngradeWaitStarted = previous.mDowngradeWaitStarted;
+                mDowngradeUnknownReported = previous.mDowngradeUnknownReported;
+                currentUpdateType = "apk";
+                currentUpdateStage = "install";
+                handoffOwner = this;
+                scheduleRecoveryReconcile();
+            } else {
+                // The phone retains its detour latch and may only send ota_query_status after
+                // process death. Restore polling independently of another ota_start.
+                String pendingId = mPendingDowngradePrefs.getString("request_id", "");
+                long pendingTarget = mPendingDowngradePrefs.getLong("target_version", -1L);
+                String pendingSha = mPendingDowngradePrefs.getString("sha256", "");
+                if (!mPendingDowngradePrefs.contains("terminal_status")
+                        && !pendingId.isEmpty() && pendingTarget > 0 && !pendingSha.isEmpty()) {
+                    mDowngradeRequestId = pendingId;
+                    mDowngradeTarget = pendingTarget;
+                    mDowngradeSha = pendingSha;
+                    mDowngradeWaitStarted = SystemClock.elapsedRealtime();
+                    currentUpdateType = "apk";
+                    currentUpdateStage = "install";
+                    isUpdating = true;
+                    handoffOwner = this;
+                    Log.i(TAG, "Restoring pending downgrade reconciliation: " + pendingId);
+                    scheduleRecoveryReconcile();
+                }
+            }
+        }
 
         // Register for EventBus to receive battery status updates
         EventBus.getDefault().register(this);
@@ -204,7 +249,8 @@ public class OtaHelper {
         }
 
         phoneConnectionProvider = null;
-        context = null;
+        // Recovery reconciliation may outlive this service. The application context remains
+        // safe to retain until a new helper adopts the in-flight transaction or it settles.
     }
 
     // ========== Phone Connection Provider Methods ==========
@@ -236,10 +282,20 @@ public class OtaHelper {
      *   "complete"      → shows "Update installed"
      */
     public void onPhoneConnected() {
+        if (getRetainedDowngradeStatus() != null) {
+            sendOtaStatus();
+            return;
+        }
         // Durable BES truth is read at delivery time; EventBus and process-local retry timers are
         // only wake-ups and never become a second terminal store.
-        sendAuthoritativeBesStatusToPhone();
+        boolean sentBesStatus = sendAuthoritativeBesStatusToPhone();
         if (sessionManager == null || phoneConnectionProvider == null) return;
+        // A later failed step supersedes an APK completion queued before disconnect.
+        if ("failed".equals(sessionManager.getStatus())) {
+            sessionManager.consumePendingApkStatus();
+            if (!sentBesStatus) sendOtaStatus();
+            return;
+        }
         String pendingStatus = sessionManager.consumePendingApkStatus();
         if (pendingStatus == null) return;
         JSONObject apkDoneJson = sessionManager.buildApkDoneJson(pendingStatus);
@@ -253,6 +309,8 @@ public class OtaHelper {
 
     public JSONObject getOtaSessionState() {
         try {
+            JSONObject downgradeStatus = getRetainedDowngradeStatus();
+            if (downgradeStatus != null) return downgradeStatus;
             JSONObject besStatus = getAuthoritativeBesStatus();
             if (besStatus != null) {
                 return besStatus;
@@ -280,6 +338,47 @@ public class OtaHelper {
         }
     }
 
+    /**
+     * Additive diagnostics for an explicitly requested status observation. No admission is
+     * acquired, no worker is started, and raw session reads do not expire or clear state.
+     * A missing owner is reported as null rather than guessed idle. The normal BES-first
+     * status projection remains independent of this process-local activity snapshot.
+     */
+    public JSONObject getOtaActivitySnapshot(String requestId) throws JSONException {
+        long admissionGeneration = otaAdmissionGeneration.get();
+        boolean admissionHeld = otaAdmissionPermit.availablePermits() != 1;
+        boolean updating = isUpdating;
+        boolean mtkInProgress = isMtkOtaInProgress;
+        IBesOtaController controller = getOtaController();
+        OtaSessionManager currentSessionManager = sessionManager;
+        JSONObject session = currentSessionManager != null
+                ? currentSessionManager.getActivitySnapshot() : null;
+        Object besInProgress = controller != null
+                ? controller.isBesOtaInProgress() : JSONObject.NULL;
+
+        JSONObject snapshot = new JSONObject();
+        snapshot.put("schema", 1);
+        snapshot.put("request_id", requestId);
+        snapshot.put("process_sid", ProcessSessionId.SID);
+        snapshot.put("admission_generation", admissionGeneration);
+        // Read flags again after the other owners. An admission observed on either side
+        // remains busy; observing status never takes the semaphore from a real update.
+        snapshot.put("updating", updating || isUpdating);
+        snapshot.put("mtk_in_progress", mtkInProgress || isMtkOtaInProgress);
+        snapshot.put("bes_in_progress", besInProgress);
+        snapshot.put("session", session != null ? session : JSONObject.NULL);
+        snapshot.put("admission_held", admissionHeld || otaAdmissionPermit.availablePermits() != 1);
+        snapshot.put("consistent", admissionGeneration == otaAdmissionGeneration.get());
+        snapshot.put("elapsed_realtime_ms", SystemClock.elapsedRealtime());
+        return snapshot;
+    }
+
+    private static boolean reserveOtaAdmission() {
+        if (!otaAdmissionPermit.tryAcquire()) return false;
+        otaAdmissionGeneration.incrementAndGet();
+        return true;
+    }
+
     private JSONObject getAuthoritativeBesStatus() {
         IBesOtaController controller = getOtaController();
         return controller != null ? controller.getAuthoritativeStatus() : null;
@@ -291,7 +390,19 @@ public class OtaHelper {
      * @return true when a durable projection exists, even if the phone is currently disconnected
      */
     public boolean sendAuthoritativeBesStatusToPhone() {
-        JSONObject status = getAuthoritativeBesStatus();
+        JSONObject status;
+        OtaSessionManager currentSession = sessionManager;
+        if (currentSession == null) {
+            status = getAuthoritativeBesStatus();
+        } else {
+            // Keep the native read and session transition together. New phone admission retires
+            // the old native record before creating its session; it must not reuse this session
+            // between reading the old result and settling it. Phone delivery stays outside.
+            synchronized (currentSession) {
+                status = getAuthoritativeBesStatus();
+                currentSession.reconcileBesTerminalStatus(status);
+            }
+        }
         if (status == null) {
             Log.i(TAG, "BES_OTA_DIAG phone_projection=absent");
             return false;
@@ -386,9 +497,9 @@ public class OtaHelper {
                     break;
                 }
             }
-            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
+            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress()) {
                 String currentMtk = SysProp.getProperty(context, "ro.custom.ota.version");
-                JSONObject mtkPatch = findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtk);
+                JSONObject mtkPatch = MtkOtaSelector.select(rootJson, currentMtk);
                 if (mtkPatch != null) steps.add("mtk");
             }
             if (rootJson.has("bes_firmware")) {
@@ -424,16 +535,18 @@ public class OtaHelper {
     }
 
     private String classifyDownloadError(Exception e) {
-        if (e instanceof FirmwareDownloadException) {
+        if (e instanceof OtaHttpRequest.RequestException) {
+            return ((OtaHttpRequest.RequestException) e).errorCode;
+        } else if (e instanceof FirmwareDownloadException) {
             // Non-network failure (size cap, sha256 mismatch). Carry the stable code through
             // so the phone-side error mapping doesn't confuse this with a transient WiFi issue.
             return ((FirmwareDownloadException) e).getErrorCode();
         } else if (e instanceof java.net.SocketTimeoutException) {
-            return "no_internet";
+            return "download_timeout";
         } else if (e instanceof java.net.UnknownHostException) {
-            return "no_internet";
+            return "dns_failed";
         } else if (e instanceof java.net.ConnectException) {
-            return "no_internet";
+            return "connection_failed";
         } else if (e instanceof javax.net.ssl.SSLException || isClockSkewSslError(e)) {
             if (isClockSkewSslError(e)) {
                 Log.w(TAG, "⏰ OTA failure likely due to glasses clock skew (TLS cert validity): "
@@ -484,7 +597,7 @@ public class OtaHelper {
 
         // Reserve admission before arming phone state or the wake lease. Semaphore ownership can
         // cross threads, so the worker can release the reservation when the pipeline finishes.
-        if (!otaAdmissionPermit.tryAcquire()) {
+        if (!reserveOtaAdmission()) {
             Log.i(
                     TAG,
                     "📱 OTA already in progress - acknowledging ota_start and sending current"
@@ -522,6 +635,7 @@ public class OtaHelper {
             // Reset progress tracking
             lastProgressSentTime = 0;
             lastProgressSentPercent = 0;
+            downloadBytes = 0;
 
             Log.i(
                     TAG,
@@ -558,7 +672,7 @@ public class OtaHelper {
             Log.e(TAG, "Refusing OTA version check without a manifest URL");
             return false;
         }
-        if (!otaAdmissionPermit.tryAcquire()) {
+        if (!reserveOtaAdmission()) {
             Log.w(TAG, "Version check admission is busy; refusing before worker dispatch");
             return false;
         }
@@ -627,6 +741,18 @@ public class OtaHelper {
                     return;
                 }
 
+                // A newly admitted command supersedes the settled result, including when its
+                // manifest fails before createSession. Queries/reconnects never consume it.
+                if (!retireSettledDowngrade()) {
+                    sendOtaStartRejection("apk_restart_guard_not_persisted");
+                    return;
+                }
+                currentUpdateStage = "download";
+                // Firmware continuation refetches the same manifest after advancing its
+                // durable step. Attribute a fetch failure to that step, even without APK.
+                String sessionStep = sessionManager == null ? null
+                        : sessionManager.getStepType(sessionManager.getCurrentStepIndex());
+                currentUpdateType = sessionStep != null ? sessionStep : "apk";
                 stage[0] = "fetch_version_info";
                 // Fetch version info from URL
                 String versionInfo = fetchVersionInfo(resolvedVersionJsonUrl);
@@ -695,47 +821,12 @@ public class OtaHelper {
      * @throws Exception if fetch fails
      */
     private String fetchVersionInfo(String url) throws Exception {
-        Log.d(TAG, "Fetching version info from URL: " + url);
-        try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-            conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
-            conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
-            conn.setRequestMethod("GET");
-            conn.connect();
-
-            int responseCode = conn.getResponseCode();
-            String responseMessage = conn.getResponseMessage();
-            long contentLength = conn.getContentLengthLong();
-            Log.i(TAG, "Version info HTTP response -> code=" + responseCode
-                    + ", message=" + responseMessage
-                    + ", contentLength=" + contentLength);
-
-            InputStream stream = responseCode >= 200 && responseCode < 300 ? conn.getInputStream() : conn.getErrorStream();
-            if (stream == null) {
-                conn.disconnect();
-                throw new IOException("Version info fetch failed: empty response stream, code=" + responseCode);
-            }
-
-            String responseBody;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
-                responseBody = reader.lines().collect(Collectors.joining("\n"));
-            } finally {
-                conn.disconnect();
-            }
-
-            int sampleLength = Math.min(200, responseBody.length());
-            String sample = responseBody.substring(0, sampleLength);
-            Log.d(TAG, "Version info response sample (" + sampleLength + " chars): " + sample);
-
-            if (responseCode < 200 || responseCode >= 300) {
-                throw new IOException("Version info fetch failed with HTTP " + responseCode + ": " + responseMessage);
-            }
-
-            return responseBody;
-        } catch (Exception e) {
-            Log.w(TAG, "fetchVersionInfo: network/parse failure url=" + url + " -> " + e.getClass().getName() + ": "
-                    + (e.getMessage() != null ? e.getMessage() : ""));
-            throw e;
+        try (OtaHttpRequest request = new OtaHttpRequest(context, url, "manifest");
+                BufferedReader reader = new BufferedReader(new InputStreamReader(request.openStream()))) {
+            return reader.lines().collect(Collectors.joining("\n"));
+        } catch (java.io.UncheckedIOException e) {
+            // Stream terminal operations wrap read failures; preserve the request's stable code.
+            throw e.getCause();
         }
     }
 
@@ -750,6 +841,35 @@ public class OtaHelper {
                 // phone-supplied URL under the version-check lock before reaching here.
                 sessionManager.createSession(steps.toArray(new String[0]), lastVersionJsonUrl);
                 Log.i(TAG, "OTA session created with steps: " + steps);
+            }
+        }
+
+        // A process restart loses ASG's in-memory latch, but not recovery's transaction.
+        // Observe it before ANY artifact/firmware work, including while the factory APK is up.
+        if (getInstalledVersion(OtaConstants.RECOVERY_PACKAGE, context) >= OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE) {
+            RecoveryWorkerManager.DowngradeStatus existing;
+            try {
+                existing = RecoveryWorkerManager.awaitDowngradeReady(context);
+            } catch (Exception e) {
+                String unavailable = RecoveryWorkerManager.recoveryAvailabilityError(context);
+                sendProgressToPhone("download", 0, 0, 0, "FAILED",
+                        unavailable == null ? "downgrade_recovery_unavailable" : unavailable);
+                return;
+            }
+            if (existing.busy && !existing.active) {
+                sendProgressToPhone("download", 0, 0, 0, "FAILED", "downgrade_recovery_busy");
+                return;
+            }
+            if (existing.active) {
+                JSONObject pin = apps.optJSONObject(OtaConstants.ASG_PACKAGE);
+                if (pin != null && existing.owns(pin.optLong("versionCode"), pin.optString("sha256"))) {
+                    if (!adoptExistingDowngrade(existing)) {
+                        sendProgressToPhone("download", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
+                    }
+                } else {
+                    sendProgressToPhone("download", 0, 0, 0, "FAILED", "downgrade_recovery_busy");
+                }
+                return;
             }
         }
 
@@ -884,10 +1004,10 @@ public class OtaHelper {
                 } else if (isMtkOtaInProgress()) {
                     Log.i(TAG, "📱 MTK update currently in progress - skipping MTK check");
                     mtkPatch = null;
-                } else if (rootJson.has("mtk_patches")) {
+                } else {
                     String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
                     Log.d(TAG, "Current MTK version: " + currentMtkVersion);
-                    mtkPatch = findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion);
+                    mtkPatch = MtkOtaSelector.select(rootJson, currentMtkVersion);
                     if (mtkPatch != null) {
                         Log.i(TAG, "MTK patch found for current version: " + currentMtkVersion);
                     }
@@ -1144,9 +1264,9 @@ public class OtaHelper {
 
     private boolean hasApplicableFirmwareUpdate(JSONObject rootJson, Context context) {
         try {
-            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
+            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress()) {
                 String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
-                if (findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion) != null) {
+                if (MtkOtaSelector.select(rootJson, currentMtkVersion) != null) {
                     return true;
                 }
             }
@@ -1174,140 +1294,214 @@ public class OtaHelper {
         try {
             currentUpdateType = "apk";
             lastApkFailureErrorCode = null;
+            if (isBesOtaInProgress() || isMtkOtaInProgress) return false;
+            long target = appInfo.getLong("versionCode");
+            String sha = appInfo.optString("sha256", "");
+            if (sha.isEmpty()) return false;
 
-            if (isBesOtaInProgress()) {
-                Log.w(TAG, "BES firmware update in progress - skipping downgrade");
+            RecoveryWorkerManager.DowngradeStatus ready;
+            try {
+                ready = RecoveryWorkerManager.awaitDowngradeReady(context);
+            } catch (Exception e) {
+                lastApkFailureErrorCode = e instanceof java.io.IOException
+                        ? e.getMessage() : "downgrade_recovery_unavailable";
+                Log.w(TAG, "Downgrade readiness failed: " + lastApkFailureErrorCode);
                 return false;
             }
-            if (isMtkOtaInProgress) {
-                Log.w(TAG, "MTK firmware update in progress - skipping downgrade");
+            if ((ready.busy && !ready.active) || (ready.active && !ready.owns(target, sha))) {
+                lastApkFailureErrorCode = "downgrade_recovery_busy";
                 return false;
             }
-
-            long targetVersion = appInfo.getLong("versionCode");
-            String apkUrl = appInfo.getString("apkUrl");
-            String expectedSha = appInfo.optString("sha256", "");
-            if (expectedSha.isEmpty()) {
-                // The recovery worker re-verifies the staged bytes against this hash after ASG is
-                // gone; never hand over bytes that cannot be re-verified.
-                Log.e(TAG, "Refusing downgrade: manifest entry has no sha256");
-                return false;
-            }
-
-            // The recovery worker owns the transaction after the handoff; an older worker would
-            // silently ignore the broadcast. ASG deploys its bundled worker asynchronously at
-            // startup, so a too-old worker here usually means that deploy has not landed yet —
-            // fail this attempt and let the phone's next OTA check retry.
-            long recoveryVersion =
-                    getInstalledVersion(OtaConstants.RECOVERY_PACKAGE, context);
-            if (recoveryVersion < OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE) {
-                Log.e(TAG, "Refusing downgrade: recovery worker version " + recoveryVersion
-                        + " < required " + OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE);
-                return false;
-            }
-
             isUpdating = true;
-            File apkFile = new File(OtaConstants.BASE_DIR, OtaConstants.DOWNGRADE_APK_FILENAME);
-            if (apkFile.exists() && !apkFile.delete()) {
-                Log.w(TAG, "Failed deleting stale downgrade APK: " + apkFile.getAbsolutePath());
-                isUpdating = false;
-                return false;
+            mDowngradeUnknownReported = false;
+            mDowngradeTarget = target;
+            mDowngradeSha = sha;
+            mDowngradeRequestId = ready.active ? ready.transactionId : java.util.UUID.randomUUID().toString();
+            if (!ready.active) {
+                File apk = new File(OtaConstants.BASE_DIR, OtaConstants.DOWNGRADE_APK_FILENAME);
+                // Only the unclaimed path is a cache. Recovery's .txn file belongs to its worker.
+                if (apk.isFile() && verifyApkFile(apk.getAbsolutePath(), appInfo)) {
+                    Log.i(TAG, "Reusing verified downgrade APK for target " + target);
+                } else if (!downloadApk(appInfo.getString("apkUrl"), appInfo, context,
+                        OtaConstants.DOWNGRADE_APK_FILENAME)) {
+                    isUpdating = false;
+                    return false;
+                }
             }
-
-            boolean downloadOk =
-                    downloadApk(apkUrl, appInfo, context, OtaConstants.DOWNGRADE_APK_FILENAME);
-            if (!downloadOk) {
-                isUpdating = false;
-                return false;
+            if (!startRecoveryReconciliation()) return false;
+            if (!ready.active) {
+                Intent handoff = RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
+                handoff.putExtra(AsgConstants.EXTRA_RECOVERY_REQUEST_ID, mDowngradeRequestId);
+                handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_TARGET_VERSION, target);
+                handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_PATH,
+                        new File(OtaConstants.BASE_DIR, OtaConstants.DOWNGRADE_APK_FILENAME).getAbsolutePath());
+                handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_SHA256, sha);
+                Log.i(TAG, "Handing downgrade to ready recovery: id=" + mDowngradeRequestId + ", target=" + target);
+                context.sendOrderedBroadcast(handoff, OtaConstants.RECOVERY_CONTROL_PERMISSION);
             }
-
-            currentUpdateStage = "install";
-            sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
-
-            Intent handoff = new Intent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
-            handoff.setPackage(OtaConstants.RECOVERY_PACKAGE);
-            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_TARGET_VERSION, targetVersion);
-            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_PATH, apkFile.getAbsolutePath());
-            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_SHA256, expectedSha);
-            // Arm before broadcasting: the verdict arrives on the main looper and must always
-            // find an armed watchdog to cancel.
-            Log.i(TAG, "Handing downgrade off to recovery worker (target " + targetVersion
-                    + "); expecting verdict, then uninstall");
-
-            // Recovery answers every handoff synchronously with an accepted/refused verdict
-            // (ACTION_DOWNGRADE_HANDOFF_RESULT -> onDowngradeHandoffResult), which cancels this
-            // watchdog: accepted arms a long-stop instead, refused fails fast with a distinct
-            // error. The timeout below therefore only fires when recovery never answered at all
-            // (dead, missing, or pre-verdict version) — in which case no transaction exists and
-            // reporting failure is safe.
-            armHandoffWatchdog(
-                    OtaConstants.DOWNGRADE_HANDOFF_TIMEOUT_MS,
-                    "downgrade_handoff_failed",
-                    "no verdict from recovery worker");
-            context.sendBroadcast(handoff, OtaConstants.RECOVERY_CONTROL_PERMISSION);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Failed to stage downgrade handoff", e);
+            // Once install presentation/ownership is armed, reconcile even if delivery threw.
+            synchronized (OtaHelper.class) {
+                if (handoffOwner == this) { scheduleRecoveryReconcile(); return true; }
+            }
             isUpdating = false;
             return false;
         }
     }
 
-    /** Arms (replacing any previous) the handoff watchdog; synchronized on the class. */
-    private void armHandoffWatchdog(long delayMs, String errorCode, String logReason) {
+    /** Adopt a snapshot without staging again if recovery finishes between query and adoption. */
+    boolean adoptExistingDowngrade(RecoveryWorkerManager.DowngradeStatus existing) {
+        mDowngradeRequestId = existing.transactionId;
+        mDowngradeTarget = existing.targetVersion;
+        mDowngradeSha = existing.sha256;
+        isUpdating = true;
+        return startRecoveryReconciliation();
+    }
+
+    private boolean startRecoveryReconciliation() {
+        // Commit before announcing install or sending the handoff. A crash in the next
+        // instruction must still leave a poller on the next ASG startup.
+        if (!persistPendingDowngrade()) {
+            lastApkFailureErrorCode = "apk_restart_guard_not_persisted";
+            isUpdating = false;
+            return false;
+        }
+        mDowngradeUnknownReported = false;
+        mDowngradeWaitStarted = SystemClock.elapsedRealtime();
+        currentUpdateType = "apk";
+        currentUpdateStage = "install";
+        synchronized (OtaHelper.class) { handoffOwner = this; }
+        scheduleRecoveryReconcile();
+        sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
+        return true;
+    }
+
+    /** Persist intent before handoff; authenticated idle replaces it with a durable outcome. */
+    @SuppressWarnings("ApplySharedPref")
+    boolean persistPendingDowngrade() {
+        return mPendingDowngradePrefs.edit().clear()
+                .putString("request_id", mDowngradeRequestId)
+                .putLong("target_version", mDowngradeTarget)
+                .putString("sha256", mDowngradeSha).commit();
+    }
+
+    /** Retain the terminal identity and result before relinquishing ownership. */
+    @SuppressWarnings("ApplySharedPref")
+    boolean persistDowngradeTerminal(boolean converged) {
+        return mPendingDowngradePrefs.edit()
+                .putString("request_id", mDowngradeRequestId)
+                .putLong("target_version", mDowngradeTarget)
+                .putString("sha256", mDowngradeSha)
+                .putString("terminal_status", converged ? "complete" : "failed").commit();
+    }
+
+    /** Called only by an admitted OTA worker, before any network or installer work. */
+    @SuppressWarnings("ApplySharedPref")
+    boolean retireSettledDowngrade() {
         synchronized (OtaHelper.class) {
-            if (handoffWatchdog != null) {
-                HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
-            }
-            handoffOwner = this;
-            handoffWatchdog = () -> {
-                synchronized (OtaHelper.class) {
-                    handoffWatchdog = null;
-                }
-                if (isUpdating) {
-                    Log.e(TAG, "Downgrade watchdog (" + logReason + ") after " + (delayMs / 1000)
-                            + "s - clearing OTA latch");
-                    isUpdating = false;
-                    sendProgressToPhone("install", 0, 0, 0, "FAILED", errorCode);
-                }
-            };
-            HANDOFF_HANDLER.postDelayed(handoffWatchdog, delayMs);
+            if (handoffOwner != null) return false;
+            if (!mPendingDowngradePrefs.contains("terminal_status")) return true;
+            if (!mPendingDowngradePrefs.edit().clear().commit()) return false;
+            if (sessionManager != null) sessionManager.clear();
+            lastOtaPhoneEventStatus = null;
+            return true;
         }
     }
 
-    /**
-     * Recovery's synchronous verdict on a downgrade handoff, delivered via
-     * {@link OtaConstants#ACTION_DOWNGRADE_HANDOFF_RESULT}. Refused fails fast with a
-     * distinct error (the phone releases its detour latch ONLY on authenticated refusal or
-     * verdict-timeout — never on an accepted-but-slow transaction). Accepted swaps the short
-     * watchdog for a long-stop sized past recovery's own stale give-up, so a wedged
-     * transaction cannot pin the OTA latch forever.
-     */
-    public static void onDowngradeHandoffResult(boolean accepted, String reason) {
-        OtaHelper owner;
+    private JSONObject getRetainedDowngradeStatus() {
         synchronized (OtaHelper.class) {
-            owner = handoffOwner;
-            if (owner == null || handoffWatchdog == null) {
-                Log.w(TAG, "Handoff verdict (accepted=" + accepted + ") with no pending handoff");
+            // SharedPreferences updates memory even when its disk commit fails. Do not
+            // publish that result until applyRecoveryStatus has released the owner.
+            if (handoffOwner != null) return null;
+            String terminal = mPendingDowngradePrefs.getString("terminal_status", null);
+            if (terminal == null) return null;
+            try {
+                // Compact wire shape, independent of the ordinary session's 30-minute expiry.
+                JSONObject state = new JSONObject();
+                state.put("type", "ota_status");
+                state.put("sid", "");
+                state.put("ts", 1);
+                state.put("cs", 1);
+                state.put("st", "apk");
+                state.put("phase", "install");
+                state.put("sp", "complete".equals(terminal) ? 100 : 0);
+                state.put("op", "complete".equals(terminal) ? 100 : 0);
+                state.put("status", terminal);
+                if ("failed".equals(terminal)) state.put("err", "downgrade_not_owned");
+                return state;
+            } catch (JSONException e) {
+                Log.e(TAG, "Failed to project retained downgrade outcome", e);
+                return null;
+            }
+        }
+    }
+
+    private void scheduleRecoveryReconcile() {
+        synchronized (OtaHelper.class) {
+            if (handoffOwner != this) return;
+            if (handoffWatchdog != null) HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
+            handoffWatchdog = () -> reconcileRecoveryAsync();
+            HANDOFF_HANDLER.postDelayed(handoffWatchdog, AsgConstants.RECOVERY_RECONCILE_INTERVAL_MS);
+        }
+    }
+
+    private void reconcileRecoveryAsync() {
+        if (!mRecoveryQueryRunning.compareAndSet(false, true)) return;
+        new Thread(() -> {
+            try {
+                RecoveryWorkerManager.DowngradeStatus status = RecoveryWorkerManager.queryDowngradeStatus(context);
+                applyRecoveryStatus(status);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                mRecoveryQueryRunning.set(false);
+                scheduleRecoveryReconcile();
+            }
+        }, "ota-recovery-status").start();
+    }
+
+    /** Applies a completed status query without letting timeouts release install ownership. */
+    void applyRecoveryStatus(RecoveryWorkerManager.DowngradeStatus status) {
+        synchronized (OtaHelper.class) {
+            if (handoffOwner != this) return;
+            if (status != null && !status.active && !status.busy) {
+                boolean converged = getInstalledVersion(OtaConstants.ASG_PACKAGE, context) == mDowngradeTarget;
+                if (!persistDowngradeTerminal(converged)) {
+                    sendProgressToPhone("install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
+                    return;
+                }
+                handoffOwner = null;
+                if (handoffWatchdog != null) HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
+                handoffWatchdog = null;
+                isUpdating = false;
+                sendProgressToPhone("install", converged ? 100 : 0, 0, 0,
+                        converged ? "FINISHED" : "FAILED", converged ? null : "downgrade_not_owned");
                 return;
             }
-            HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
-            handoffWatchdog = null;
-        }
-        if (accepted) {
-            Log.i(TAG, "Recovery accepted the downgrade handoff (" + reason
-                    + "); transaction owns the detour");
-            owner.armHandoffWatchdog(
-                    OtaConstants.DOWNGRADE_SUPERVISION_TIMEOUT_MS,
-                    "downgrade_transaction_stalled",
-                    "accepted transaction never uninstalled");
-        } else {
-            Log.e(TAG, "Recovery refused the downgrade handoff: " + reason);
-            if (isUpdating) {
-                isUpdating = false;
-                owner.sendProgressToPhone(
-                        "install", 0, 0, 0, "FAILED", "downgrade_handoff_refused");
+            // Silence and another active transaction both retain the local admission latch.
+            // Time alone never proves that recovery relinquished its staged bytes.
+            if ((status == null || !status.owns(mDowngradeTarget, mDowngradeSha)
+                    || SystemClock.elapsedRealtime() - mDowngradeWaitStarted >= OtaConstants.DOWNGRADE_SUPERVISION_TIMEOUT_MS)
+                    && SystemClock.elapsedRealtime() - mDowngradeWaitStarted >= AsgConstants.RECOVERY_READY_TIMEOUT_MS
+                    && !mDowngradeUnknownReported) {
+                mDowngradeUnknownReported = true;
+                sendProgressToPhone("install", 0, 0, 0, "FAILED", "downgrade_status_unknown");
             }
+        }
+    }
+
+    /** A verdict only prompts a durable query; it cannot release ownership by itself. */
+    public static void onDowngradeHandoffResult(boolean accepted, String reason, String requestId, long target) {
+        synchronized (OtaHelper.class) {
+            OtaHelper owner = handoffOwner;
+            if (owner == null || !owner.mDowngradeRequestId.equals(requestId) || owner.mDowngradeTarget != target) {
+                Log.w(TAG, "Ignoring stale or uncorrelated recovery verdict");
+                return;
+            }
+            Log.i(TAG, "Recovery verdict: accepted=" + accepted + ", reason=" + reason + "; reconciling ownership");
+            owner.reconcileRecoveryAsync();
         }
     }
 
@@ -1529,15 +1723,15 @@ public class OtaHelper {
         if (!isAsgClientApk(pm, apkPath)) {
             return;
         }
-        Intent intent = new Intent(OtaConstants.RECOVERY_INSTALL_IN_PROGRESS);
-        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        Intent intent =
+                RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_INSTALL_IN_PROGRESS);
         context.sendBroadcast(intent, OtaConstants.RECOVERY_CONTROL_PERMISSION);
         Log.d(TAG, "Notified recovery worker: install in progress");
     }
 
     public static void notifyRecoveryInstallCompleted(Context context) {
-        Intent intent = new Intent(OtaConstants.RECOVERY_INSTALL_COMPLETED);
-        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        Intent intent =
+                RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_INSTALL_COMPLETED);
         context.sendBroadcast(intent, OtaConstants.RECOVERY_CONTROL_PERMISSION);
         Log.d(TAG, "Notified recovery worker: install completed");
     }
@@ -1612,55 +1806,49 @@ public class OtaHelper {
 
         Log.d(TAG, "Download started ...");
         // Download new APK file
-        URL url = new URL(urlStr);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
-        conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
-        conn.connect();
+        long fileSize;
+        try (OtaHttpRequest request = new OtaHttpRequest(context, urlStr, "apk");
+                InputStream in = request.openStream();
+                FileOutputStream out = new FileOutputStream(apkFile)) {
+            byte[] buffer = new byte[4096];
+            int len;
+            long total = 0;
+            fileSize = request.contentLength();
+            int lastProgress = 0;
 
-        InputStream in = conn.getInputStream();
-        FileOutputStream out = new FileOutputStream(apkFile);
+            Log.d(TAG, "APK download started, file size: " + fileSize + " bytes");
 
-        byte[] buffer = new byte[4096];
-        int len;
-        long total = 0;
-        long fileSize = conn.getContentLength();
-        int lastProgress = 0;
+            // Set current update stage for phone progress
+            currentUpdateStage = "download";
+            currentUpdateType = "apk";
 
-        Log.d(TAG, "APK download started, file size: " + fileSize + " bytes");
+            // Now that we have the real file size, tell the phone the download is starting.
+            Log.i(TAG, "📥 Sending download STARTED to phone");
+            sendProgressToPhone("download", 0, 0, fileSize, "STARTED", null);
 
-        // Set current update stage for phone progress
-        currentUpdateStage = "download";
-        currentUpdateType = "apk";
+            // Emit download started event
+            EventBus.getDefault().post(DownloadProgressEvent.createStarted(fileSize));
 
-        // Now that we have the real file size, tell the phone the download is starting.
-        Log.i(TAG, "📥 Sending download STARTED to phone");
-        sendProgressToPhone("download", 0, 0, fileSize, "STARTED", null);
+            while ((len = in.read(buffer)) > 0) {
+                out.write(buffer, 0, len);
+                total += len;
 
-        // Emit download started event
-        EventBus.getDefault().post(DownloadProgressEvent.createStarted(fileSize));
+                // Calculate progress percentage
+                int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
 
-        while ((len = in.read(buffer)) > 0) {
-            out.write(buffer, 0, len);
-            total += len;
+                // Log progress at 5% intervals and emit progress events
+                if (progress >= lastProgress + 5 || progress == 100) {
+                    Log.d(TAG, "Download progress: " + progress + "% (" + total + "/" + fileSize + " bytes)");
+                    // Emit progress event
+                    EventBus.getDefault().post(new DownloadProgressEvent(DownloadProgressEvent.DownloadStatus.PROGRESS, progress, total, fileSize));
+                    lastProgress = progress;
+                }
 
-            // Calculate progress percentage
-            int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
-
-            // Log progress at 5% intervals and emit progress events
-            if (progress >= lastProgress + 5 || progress == 100) {
-                Log.d(TAG, "Download progress: " + progress + "% (" + total + "/" + fileSize + " bytes)");
-                // Emit progress event
-                EventBus.getDefault().post(new DownloadProgressEvent(DownloadProgressEvent.DownloadStatus.PROGRESS, progress, total, fileSize));
-                lastProgress = progress;
+                // Send progress to phone (throttled internally)
+                sendProgressToPhone("download", progress, total, fileSize, "PROGRESS", null);
             }
 
-            // Send progress to phone (throttled internally)
-            sendProgressToPhone("download", progress, total, fileSize, "PROGRESS", null);
         }
-
-        out.close();
-        in.close();
 
         Log.d(TAG, "APK downloaded to: " + apkFile.getAbsolutePath());
 
@@ -2034,57 +2222,6 @@ public class OtaHelper {
 
     // ========== BES Firmware Update Methods ==========
     /**
-     * Find MTK firmware patch matching the current version.
-     * MTK requires sequential updates - must find patch starting from current version.
-     * @param patches Array of patch objects with start_firmware, end_firmware, url
-     * @param currentVersion Current MTK firmware version as reported by
-     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260820.1"; both sides are
-     *     normalized before comparison, so a bare "20260820.1" would also match
-     * @return Matching patch object, or null if no match or version unknown
-     */
-    private JSONObject findMatchingMtkPatch(JSONArray patches, String currentVersion) {
-        if (currentVersion == null || currentVersion.isEmpty()) {
-            Log.w(TAG, "Cannot match MTK patch - current version unknown");
-            return null;
-        }
-        String normalizedCurrentVersion = normalizeMtkFirmwareVersion(currentVersion);
-
-        try {
-            for (int i = 0; i < patches.length(); i++) {
-                JSONObject patch = patches.getJSONObject(i);
-                String startFirmware = patch.getString("start_firmware");
-                if (normalizeMtkFirmwareVersion(startFirmware).equals(normalizedCurrentVersion)) {
-                    Log.i(TAG, "Found matching MTK patch: " + startFirmware + " -> " + patch.getString("end_firmware"));
-                    return patch;
-                }
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "Error parsing MTK patches", e);
-            return null;
-        }
-
-        Log.i(TAG, "No MTK patch available for current version: " + currentVersion);
-        return null;
-    }
-
-    /**
-     * Reduce an MTK version string to its version suffix so manifest entries and the device
-     * property match regardless of any "MentraLive_"-style prefix. Both normally carry the
-     * prefix; this is defensive so a bare suffix on either side still matches.
-     */
-    private String normalizeMtkFirmwareVersion(String version) {
-        if (version == null) {
-            return "";
-        }
-        String trimmed = version.trim();
-        int separator = trimmed.lastIndexOf('_');
-        if (separator >= 0 && separator + 1 < trimmed.length()) {
-            return trimmed.substring(separator + 1);
-        }
-        return trimmed;
-    }
-
-    /**
      * Check if BES firmware update is available.
      * BES does not require sequential updates - can install any newer version directly.
      * If current version is unknown, assume update is needed.
@@ -2121,7 +2258,7 @@ public class OtaHelper {
      * Compare two version strings.
      * Supports dotted formats like "17.26.1.14" (BES) or bare dates like "20241130".
      * MTK patch matching does not use this - it uses normalized exact equality in
-     * {@link #findMatchingMtkPatch}.
+     * {@link MtkOtaSelector}.
      * @param version1 First version string
      * @param version2 Second version string
      * @return positive if version1 > version2, negative if version1 < version2, 0 if equal
@@ -2341,59 +2478,49 @@ public class OtaHelper {
 
         Log.d(TAG, "Downloading BES firmware from: " + firmwareUrl);
 
-        URL url = new URL(firmwareUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
-        conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
-        conn.connect();
+        long fileSize;
+        try (OtaHttpRequest request = new OtaHttpRequest(context, firmwareUrl, "bes");
+                InputStream in = request.openStream()) {
+            // 2 MiB hard cap. Server-advertised content-length is checked first; we also
+            // enforce the cap during the streaming loop so a missing/lying header
+            // (Content-Length: -1) cannot drain disk.
+            final long maxBytes = 2L * 1024 * 1024;
+            fileSize = request.contentLength();
 
-        // 2 MiB hard cap. Server-advertised content-length is checked first; we also
-        // enforce the cap during the streaming loop so a missing/lying header
-        // (Content-Length: -1) cannot drain disk.
-        final long maxBytes = 2L * 1024 * 1024;
-        long fileSize = conn.getContentLength();
+            if (fileSize > maxBytes) {
+                throw new FirmwareDownloadException(
+                    FirmwareDownloadException.CODE_FILE_TOO_LARGE,
+                    "BES firmware file too large: " + fileSize + " bytes (max " + maxBytes + ")"
+                );
+            }
 
-        if (fileSize > maxBytes) {
-            conn.disconnect();
-            throw new FirmwareDownloadException(
-                FirmwareDownloadException.CODE_FILE_TOO_LARGE,
-                "BES firmware file too large: " + fileSize + " bytes (max " + maxBytes + ")"
-            );
-        }
+            try (FileOutputStream out = new FileOutputStream(firmwareFile)) {
+                byte[] buffer = new byte[4096];
+                int len;
+                long total = 0;
+                int lastProgress = 0;
 
-        InputStream in = conn.getInputStream();
-        FileOutputStream out = new FileOutputStream(firmwareFile);
+                Log.d(TAG, "Downloading BES firmware, size: " + fileSize + " bytes");
 
-        byte[] buffer = new byte[4096];
-        int len;
-        long total = 0;
-        int lastProgress = 0;
+                currentUpdateType = "bes";
 
-        Log.d(TAG, "Downloading BES firmware, size: " + fileSize + " bytes");
+                while ((len = in.read(buffer)) > 0) {
+                    total += len;
+                    if (total > maxBytes) {
+                        throw new FirmwareDownloadException(
+                            FirmwareDownloadException.CODE_FILE_TOO_LARGE,
+                            "BES firmware exceeded " + maxBytes + " bytes during streaming (Content-Length=" + fileSize + ")"
+                        );
+                    }
+                    out.write(buffer, 0, len);
 
-        currentUpdateType = "bes";
-
-        try {
-            while ((len = in.read(buffer)) > 0) {
-                total += len;
-                if (total > maxBytes) {
-                    throw new FirmwareDownloadException(
-                        FirmwareDownloadException.CODE_FILE_TOO_LARGE,
-                        "BES firmware exceeded " + maxBytes + " bytes during streaming (Content-Length=" + fileSize + ")"
-                    );
-                }
-                out.write(buffer, 0, len);
-
-                int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
-                if (progress >= lastProgress + 10 || progress == 100) {
-                    Log.d(TAG, "BES firmware download progress: " + progress + "%");
-                    lastProgress = progress;
+                    int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
+                    if (progress >= lastProgress + 10 || progress == 100) {
+                        Log.d(TAG, "BES firmware download progress: " + progress + "%");
+                        lastProgress = progress;
+                    }
                 }
             }
-        } finally {
-            try { out.close(); } catch (Exception ignored) {}
-            try { in.close(); } catch (Exception ignored) {}
-            conn.disconnect();
         }
 
         Log.d(TAG, "BES firmware downloaded to: " + firmwareFile.getAbsolutePath());
@@ -2427,8 +2554,8 @@ public class OtaHelper {
     }
 
     private JSONObject buildBesInstallStartStatus() {
-        updateSessionFromProgress("install", 0, "STARTED", null);
-        lastProgressSentTime = System.currentTimeMillis();
+        updateSessionFromProgress("install", 0, 0, "STARTED", null);
+        lastProgressSentTime = android.os.SystemClock.elapsedRealtime();
         lastProgressSentPercent = 0;
         lastOtaPhoneStage = "install";
         lastOtaPhoneProgress = 0;
@@ -2508,13 +2635,11 @@ public class OtaHelper {
                 return false;
             }
 
-            // Detect if this is a patch object (from findMatchingMtkPatch) or legacy firmware info
-            // Patch objects have start_firmware/end_firmware fields and are already version-matched
-            boolean isPatchObject = firmwareInfo.has("start_firmware");
+            // Both delta and full entries were selected before reaching the common installer.
+            boolean isSelectedMtkUpdate = firmwareInfo.has("end_firmware");
 
-            if (isPatchObject) {
-                // Patch object - version matching already done by findMatchingMtkPatch()
-                String startFirmware = firmwareInfo.optString("start_firmware", "unknown");
+            if (isSelectedMtkUpdate) {
+                String startFirmware = firmwareInfo.optString("start_firmware", "full OTA");
                 String endFirmware = firmwareInfo.optString("end_firmware", "unknown");
                 Log.i(TAG, "MTK patch update: " + startFirmware + " -> " + endFirmware);
             } else {
@@ -2594,15 +2719,9 @@ public class OtaHelper {
                 Log.i(TAG, "MTK firmware update initiated - system will handle in background");
             }, 1000); // 1 second delay
 
-            // 10-minute timeout: if no broadcast arrives, clear isMtkOtaInProgress
-            final long MTK_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
-            mtkHandler.postDelayed(() -> {
-                if (isMtkOtaInProgress) {
-                    Log.e(TAG, "MTK install timeout after " + (MTK_INSTALL_TIMEOUT_MS / 60000) + " min — no broadcast received, clearing flag");
-                    isMtkOtaInProgress = false;
-                    sendMtkInstallProgressToPhone("FAILED", 0, "MTK install timed out — no response from system");
-                }
-            }, MTK_INSTALL_TIMEOUT_MS);
+            // Only a terminal system-updater result releases install ownership. The phone
+            // detects stalled progress, but elapsed time does not mean update_engine stopped.
+            // In particular, a retry must not replace the ZIP while it is still being read.
 
             return true;
         } catch (Exception e) {
@@ -2623,7 +2742,7 @@ public class OtaHelper {
      * @param context Application context
      * @return true if downloaded and verified successfully
      */
-    private boolean downloadMtkFirmware(String firmwareUrl, JSONObject firmwareInfo, Context context) {
+    boolean downloadMtkFirmware(String firmwareUrl, JSONObject firmwareInfo, Context context) {
         try {
             boolean success = downloadMtkFirmwareInternal(firmwareUrl, firmwareInfo, context);
             if (success) {
@@ -2668,72 +2787,62 @@ public class OtaHelper {
 
         Log.d(TAG, "Downloading MTK firmware from: " + firmwareUrl);
 
-        URL url = new URL(firmwareUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
-        conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
-        conn.connect();
-
-        // 100 MiB hard cap. Server-advertised content-length is checked first; the
-        // streaming loop also enforces the cap so a missing/lying header
-        // (Content-Length: -1) cannot drain disk.
-        final long maxBytes = 100L * 1024 * 1024;
-        long fileSize = conn.getContentLength();
-
-        if (fileSize > maxBytes) {
-            conn.disconnect();
-            throw new FirmwareDownloadException(
-                FirmwareDownloadException.CODE_FILE_TOO_LARGE,
-                "MTK firmware file too large: " + fileSize + " bytes (max " + maxBytes + ")"
-            );
-        }
-
-        InputStream in = conn.getInputStream();
-        FileOutputStream out = new FileOutputStream(firmwareFile);
-
-        byte[] buffer = new byte[8192];
-        int len;
+        long fileSize;
+        long expectedSize = firmwareInfo.optLong("size", 0);
         long total = 0;
-        int lastProgress = 0;
+        long progressSize;
+        try (OtaHttpRequest request = new OtaHttpRequest(context, firmwareUrl, "mtk");
+                InputStream in = request.openStream()) {
+            // Bounded full-OTA-capable limit. Content-length is checked first; the
+            // streaming loop also enforces the cap so a missing/lying header
+            // (Content-Length: -1) cannot drain disk.
+            fileSize = request.contentLength();
+            validateMtkResponse(expectedSize, fileSize, asgDir.getUsableSpace());
 
-        Log.d(TAG, "Downloading MTK firmware, size: " + fileSize + " bytes");
+            try (FileOutputStream out = new FileOutputStream(firmwareFile)) {
+                byte[] buffer = new byte[8192];
+                int len;
+                int lastProgress = 0;
 
-        currentUpdateType = "mtk";
+                Log.d(TAG, "Downloading MTK firmware, size: " + fileSize + " bytes");
 
-        try {
-            while ((len = in.read(buffer)) > 0) {
-                total += len;
-                if (total > maxBytes) {
-                    throw new FirmwareDownloadException(
-                        FirmwareDownloadException.CODE_FILE_TOO_LARGE,
-                        "MTK firmware exceeded " + maxBytes + " bytes during streaming (Content-Length=" + fileSize + ")"
-                    );
-                }
-                out.write(buffer, 0, len);
+                currentUpdateType = "mtk";
 
-                int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
-                if (progress >= lastProgress + 10 || progress == 100) {
-                    Log.d(TAG, "MTK firmware download progress: " + progress + "%");
-                    EventBus.getDefault().post(new DownloadProgressEvent(
-                        DownloadProgressEvent.DownloadStatus.PROGRESS,
-                        progress,
-                        total,
-                        fileSize
-                    ));
-                    lastProgress = progress;
+                progressSize = expectedSize > 0 ? expectedSize : fileSize;
+                sendProgressToPhone("download", 0, 0, progressSize, "STARTED", null);
+                while ((len = in.read(buffer)) > 0) {
+                    total += len;
+                    validateMtkReceivedBytes(expectedSize, total);
+                    out.write(buffer, 0, len);
+
+                    int progress = progressSize > 0 ? (int) (total * 100 / progressSize) : 0;
+                    sendProgressToPhone("download", progress, total, progressSize, "PROGRESS", null);
+                    if (progress >= lastProgress + 10 || progress == 100) {
+                        Log.d(TAG, "MTK firmware download progress: " + progress + "%");
+                        EventBus.getDefault().post(new DownloadProgressEvent(
+                            DownloadProgressEvent.DownloadStatus.PROGRESS,
+                            progress,
+                            total,
+                            fileSize
+                        ));
+                        lastProgress = progress;
+                    }
                 }
             }
-        } finally {
-            try { out.close(); } catch (Exception ignored) {}
-            try { in.close(); } catch (Exception ignored) {}
-            conn.disconnect();
         }
 
         Log.i(TAG, "MTK firmware downloaded to: " + firmwareFile.getAbsolutePath());
 
+        if (expectedSize > 0 && total != expectedSize) {
+            firmwareFile.delete();
+            throw new FirmwareDownloadException(
+                FirmwareDownloadException.CODE_VERIFY_FAILED, "MTK firmware size does not match manifest");
+        }
+
         boolean verified = verifyMtkFirmwareChecksum(firmwareFile.getAbsolutePath(), firmwareInfo);
         if (verified) {
             Log.i(TAG, "MTK firmware file verified successfully");
+            sendProgressToPhone("download", 100, total, progressSize, "FINISHED", null);
             return true;
         } else {
             firmwareFile.delete();
@@ -2741,6 +2850,30 @@ public class OtaHelper {
                 FirmwareDownloadException.CODE_VERIFY_FAILED,
                 "MTK firmware sha256 verification failed"
             );
+        }
+    }
+
+    static void validateMtkResponse(long expected, long advertised, long freeBytes) throws FirmwareDownloadException {
+        if (expected > 0 && advertised >= 0 && expected != advertised) {
+            throw new FirmwareDownloadException(FirmwareDownloadException.CODE_VERIFY_FAILED,
+                    "MTK response length does not match manifest");
+        }
+        long required = expected > 0 ? expected : Math.max(advertised, 0);
+        validateMtkReceivedBytes(0, required);
+        if (required > 0 && freeBytes < required * 2) {
+            throw new FirmwareDownloadException(AsgConstants.OTA_INSUFFICIENT_STORAGE,
+                    "Insufficient space for MTK ZIP and payload");
+        }
+    }
+
+    static void validateMtkReceivedBytes(long expected, long received) throws FirmwareDownloadException {
+        if (expected > 0 && received > expected) {
+            throw new FirmwareDownloadException(FirmwareDownloadException.CODE_VERIFY_FAILED,
+                    "MTK firmware exceeds manifest size");
+        }
+        if (received > AsgConstants.MTK_OTA_MAX_DOWNLOAD_BYTES) {
+            throw new FirmwareDownloadException(FirmwareDownloadException.CODE_FILE_TOO_LARGE,
+                    "MTK firmware exceeds maximum size");
         }
     }
 
@@ -2822,13 +2955,14 @@ public class OtaHelper {
     private void sendProgressToPhone(String stage, int progress, long bytesDownloaded,
                                      long totalBytes, String status, String errorMessage) {
 
-        updateSessionFromProgress(stage, progress, status, errorMessage);
+        downloadBytes = "download".equals(stage) ? bytesDownloaded : 0;
+        updateSessionFromProgress(stage, progress, bytesDownloaded, status, errorMessage);
 
         if (phoneConnectionProvider == null || !isPhoneConnected()) {
             return;
         }
 
-        long now = System.currentTimeMillis();
+        long now = android.os.SystemClock.elapsedRealtime();
         boolean shouldSend = false;
 
         // Always send STARTED, FINISHED, FAILED immediately
@@ -2859,8 +2993,16 @@ public class OtaHelper {
         sendOtaStatus();
     }
 
-    private void updateSessionFromProgress(String stage, int progress, String status, String errorMessage) {
-        if (sessionManager == null || sessionManager.getSessionState() == null) return;
+    private void updateSessionFromProgress(String stage, int progress, long bytesDownloaded, String status, String errorMessage) {
+        if (sessionManager == null) return;
+        if (sessionManager.getSessionState() == null) {
+            // A retry retires the old terminal before fetching its new manifest. Retain a
+            // failure in the normal session store even if BLE is down and no steps were
+            // parsed yet, so reconnect/query and a fresh ASG process can report this attempt.
+            if (!"FAILED".equals(status) || lastVersionJsonUrl == null
+                    || !sessionManager.createSession(new String[]{currentUpdateType}, lastVersionJsonUrl)) return;
+            sessionManager.advanceStep(0, stage);
+        }
 
         int stepIndex = findStepIndex(currentUpdateType);
         if (stepIndex < 0) return;
@@ -2890,6 +3032,9 @@ public class OtaHelper {
             }
         } else if ("FAILED".equals(status)) {
             sessionManager.setFailed(errorMessage != null ? errorMessage : "Update failed");
+        }
+        if ("download".equals(stage) && !"FAILED".equals(status)) {
+            sessionManager.updateDownloadProgress(progress, bytesDownloaded);
         }
     }
 
@@ -2999,7 +3144,8 @@ public class OtaHelper {
     }
 
     private JSONObject buildOtaStatusForPhone() {
-        JSONObject sessionState = getAuthoritativeBesStatus();
+        JSONObject sessionState = getRetainedDowngradeStatus();
+        if (sessionState == null) sessionState = getAuthoritativeBesStatus();
         if (sessionState == null && sessionManager != null) {
             sessionState = sessionManager.getSessionState();
         }
@@ -3073,6 +3219,7 @@ public class OtaHelper {
             o.put("current_step", 1);
             o.put("step_type", currentUpdateType != null ? currentUpdateType : "apk");
             o.put("phase", lastOtaPhoneStage != null ? lastOtaPhoneStage : "download");
+            if ("download".equals(o.optString("phase"))) o.put("bytes_downloaded", downloadBytes);
             o.put("step_percent", lastOtaPhoneProgress);
             o.put("overall_percent", lastOtaPhoneProgress);
             String ev = lastOtaPhoneEventStatus;
@@ -3244,7 +3391,7 @@ public class OtaHelper {
             String targetVersion,
             String expectedSha256,
             String artifactId) {
-        if (!otaAdmissionPermit.tryAcquire()) {
+        if (!reserveOtaAdmission()) {
             Log.e(TAG, "DEBUG BES install blocked - phone OTA admission is active");
             return false;
         }

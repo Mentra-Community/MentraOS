@@ -125,6 +125,13 @@ data class SettingsAckEvent(
     val hardwareApplied: Boolean get() = boolValue(values, "hardwareApplied", "hardware_applied") ?: false
     val errorCode: String? get() = stringValue(values, "errorCode")
     val errorMessage: String? get() = stringValue(values, "errorMessage")
+    /** Saved setting value, when included in the acknowledgement. */
+    val enabled: Boolean? get() = values["enabled"] as? Boolean
+    /** Whether the persistent gallery server is currently available over station Wi-Fi. */
+    val listening: Boolean? get() = values["listening"] as? Boolean
+    /** Current gallery base URL, available only with a running server and station Wi-Fi. */
+    val url: String? get() = stringValue(values, "url")
+
 }
 
 data class RgbLedControlResponseEvent(

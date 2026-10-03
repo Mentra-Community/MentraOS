@@ -9,6 +9,15 @@ import org.json.JSONObject;
  */
 public interface IMediaManager {
 
+    /** Begin authoritative state tracking before dispatching a stream start. */
+    void beginStreamSession(String streamId);
+
+    /** Return retained stream state, including terminal events missed while disconnected. */
+    JSONObject getStreamSnapshot();
+
+    /** Observe accepted publisher state; the consumer must dispatch onto its lifecycle owner. */
+    void setStreamStatusListener(java.util.function.Consumer<JSONObject> listener);
+
     /** Start streaming (test/dev helper — production starts via StreamCommandHandler) */
     void startStreaming();
 

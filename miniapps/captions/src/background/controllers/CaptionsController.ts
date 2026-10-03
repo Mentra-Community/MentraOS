@@ -42,15 +42,7 @@ import type {
   UnsubscribeFn,
 } from "@mentra/miniapp/background"
 
-import {
-  CaptionsFormatter,
-  G1_PROFILE,
-  G2_PROFILE,
-  Z100_PROFILE,
-  NEX_PROFILE,
-  type DisplayProfile,
-  type TranscriptHistoryEntry,
-} from "../../core/CaptionsFormatter"
+import {CaptionsFormatter} from "../../core/CaptionsFormatter"
 import {convertToPinyin} from "../../core/ChineseUtils"
 import type {Channels} from "../../shared/channels"
 import {
@@ -101,81 +93,6 @@ const STORAGE_KEYS = {
 } as const
 const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
 
-// ── Profile selection (verbatim from DisplayManager) ───────────────────────
-function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
-  if (!modelName) return G1_PROFILE
-  const lower = modelName.toLowerCase()
-  if (lower.includes("g2") || lower.includes("even_g2")) {
-    return G2_PROFILE
-  }
-  if (lower.includes("g1") || lower.includes("even realities") || lower.includes("even_g1")) {
-    return G1_PROFILE
-  }
-  if (lower.includes("z100") || lower.includes("vuzix") || lower.includes("mach1") || lower.includes("mach 1")) {
-    return Z100_PROFILE
-  }
-  if (lower.includes("nex") || lower.includes("mentra display") || lower.includes("mentra_nex")) {
-    return NEX_PROFILE
-  }
-  return G1_PROFILE
-}
-
-/** Read the glasses model name from capabilities (best-effort). */
-function getModelName(session: MiniappSession): string | null {
-  try {
-    const caps = session.capabilities as Record<string, unknown> | null
-    const m = caps?.modelName
-    return typeof m === "string" ? m : null
-  } catch {
-    return null
-  }
-}
-
-export interface CaptionBoxOptions {
-  canvasWidth: number
-  canvasHeight: number
-  canPosition: boolean
-  position: CaptionPosition
-  lineCount: number
-  maxTextLines?: number
-  lineHeightPx?: number
-}
-
-/** Build a stable top- or bottom-anchored text band for the selected line count. */
-export function calculateCaptionBox({
-  canvasWidth,
-  canvasHeight,
-  canPosition,
-  position,
-  lineCount,
-  maxTextLines,
-  lineHeightPx,
-}: CaptionBoxOptions): {x: number; y: number; w: number; h: number} {
-  const width = Number.isFinite(canvasWidth) && canvasWidth > 0 ? Math.floor(canvasWidth) : 576
-  const height = Number.isFinite(canvasHeight) && canvasHeight > 0 ? Math.floor(canvasHeight) : 288
-
-  if (!canPosition) {
-    return {x: 0, y: 0, w: width, h: height}
-  }
-
-  const lines = Math.max(1, Math.floor(lineCount))
-  const deviceMaxLines =
-    maxTextLines !== undefined && Number.isFinite(maxTextLines) && maxTextLines > 0 ? Math.floor(maxTextLines) : lines
-  const inferredLineHeight = Math.max(1, Math.floor(height / deviceMaxLines))
-  const lineHeight =
-    lineHeightPx !== undefined && Number.isFinite(lineHeightPx) && lineHeightPx > 0
-      ? Math.floor(lineHeightPx)
-      : inferredLineHeight
-  const bandHeight = Math.min(height, Math.max(lineHeight, lines * lineHeight))
-
-  return {
-    x: 0,
-    y: position === "bottom" ? height - bandHeight : 0,
-    w: width,
-    h: bandHeight,
-  }
-}
-
 export class CaptionsController {
   private subscribed = false
   private readonly unsubs: Array<() => void> = []
@@ -200,12 +117,9 @@ export class CaptionsController {
   private readonly maxTranscripts = 100
 
   // ── Display state (DisplayManager) ───────────────────────────────────────
-  private formatter!: CaptionsFormatter
-  private currentProfile: DisplayProfile = G1_PROFILE
-  private currentDisplayWidthPx: number = G1_PROFILE.displayWidthPx
-  private currentMaxLines: number = G1_PROFILE.maxLines
-  private currentWordBreaking = true
-  private currentWidthSetting = 1 // matches default displayWidth (Medium)
+  private formatter = new CaptionsFormatter()
+  private renderRevision = 0
+  private currentIsFinal = true
   private lastSpeakerId: string | undefined = undefined
   private lastDisplayPreview: DisplayPreview | null = null
   private currentDisplayText = ""
@@ -225,40 +139,13 @@ export class CaptionsController {
       onOpen: (cb: () => void) => () => void
     }
 
-    // Detect initial profile from glasses capabilities.
-    this.currentProfile = getProfileForModel(getModelName(this.session))
-    this.currentDisplayWidthPx = this.currentProfile.displayWidthPx
-    this.currentMaxLines = this.currentProfile.maxLines
-    this.createFormatter()
-
-    // React to glasses model changes (re-pick profile).
-    try {
-      this.unsubs.push(
-        this.session.onCapabilitiesChange(() => {
-          const newProfile = getProfileForModel(getModelName(this.session))
-          if (newProfile.id !== this.currentProfile.id) {
-            this.updateProfile(newProfile)
-          } else {
-            // Canvas dimensions/positioning support can change independently
-            // of the formatter profile (for example after a reconnect).
-            this.refreshDisplay()
-          }
-          this.broadcastDisplayCapabilities()
-        }),
-      )
-    } catch {
-      // capabilities change not available — keep default profile.
-    }
-
-    // registerMiniapp starts the controller before it calls connect(), so the
-    // first lookup above necessarily sees null capabilities. CONNECT_ACK fills
-    // them without emitting onCapabilitiesChange; explicitly wait and select
-    // the connected profile before settings create the live formatter.
+    this.unsubs.push(
+      this.session.onCapabilitiesChange(() => {
+        this.refreshDisplay()
+        this.broadcastDisplayCapabilities()
+      }),
+    )
     await this.session.waitForReady()
-    this.currentProfile = getProfileForModel(getModelName(this.session))
-    this.currentDisplayWidthPx = this.currentProfile.displayWidthPx
-    this.currentMaxLines = this.currentProfile.maxLines
-    this.createFormatter()
 
     // Load persisted settings, then subscribe to transcription accordingly.
     await this.loadSettings()
@@ -267,10 +154,11 @@ export class CaptionsController {
     this.subscribeCloudStatus()
 
     this.registerUiHandlers()
-    console.log(`LocalCaptions: started (lang=${this.settings.language}, profile=${this.currentProfile.id})`)
+    console.log(`LocalCaptions: started (lang=${this.settings.language})`)
   }
 
   stop(): void {
+    this.renderRevision++
     if (this.transcriptionCleanup) {
       try {
         this.transcriptionCleanup()
@@ -515,8 +403,7 @@ export class CaptionsController {
 
   private getDisplayCapabilities(): CaptionsDisplayCapabilities {
     return {
-      canPosition:
-        this.session.capabilities?.display?.canPosition === true && this.currentProfile.lineHeightPx !== undefined,
+      canPosition: this.session.capabilities?.display?.canPosition === true,
     }
   }
 
@@ -737,69 +624,13 @@ export class CaptionsController {
   // Display (DisplayManager port)
   // ───────────────────────────────────────────────────────────────────────
 
-  private createFormatter(): void {
-    this.formatter = new CaptionsFormatter(this.currentProfile, {
-      maxFinalTranscripts: 30,
-      breakMode: this.currentWordBreaking ? "character" : "word",
-      displayWidthPx: this.currentDisplayWidthPx,
-      maxLines: this.currentMaxLines,
-    })
-  }
-
-  private calculateDisplayWidth(widthSetting: number, profile: DisplayProfile): number {
-    const maxWidthPx = profile.displayWidthPx
-    let widthPercent: number
-    switch (widthSetting) {
-      case 0:
-        widthPercent = 0.7
-        break
-      case 1:
-        widthPercent = 0.85
-        break
-      case 2:
-      default:
-        widthPercent = 1.0
-        break
-    }
-    return Math.round(maxWidthPx * widthPercent)
-  }
-
-  /** Apply the current settings object to the display formatter. */
   private applySettingsToDisplay(): void {
-    this.updateDisplaySettings(this.settings.displayWidth, this.settings.displayLines, this.settings.wordBreaking)
-  }
-
-  private updateDisplaySettings(displayWidth: number, numberOfLines: number, wordBreaking: boolean): void {
-    this.currentWidthSetting = displayWidth
-    this.currentDisplayWidthPx = this.calculateDisplayWidth(displayWidth, this.currentProfile)
-    this.currentMaxLines = Math.min(Math.max(2, numberOfLines), this.currentProfile.maxLines)
-    this.currentWordBreaking = wordBreaking
-
-    const previousHistory = this.formatter.getFinalTranscriptHistory()
-    this.createFormatter()
-    this.restoreHistory(previousHistory)
     this.refreshDisplay()
-  }
-
-  private updateProfile(newProfile: DisplayProfile): void {
-    const previousHistory = this.formatter.getFinalTranscriptHistory()
-    this.currentProfile = newProfile
-    this.currentDisplayWidthPx = this.calculateDisplayWidth(this.currentWidthSetting, newProfile)
-    this.currentMaxLines = Math.min(this.currentMaxLines, newProfile.maxLines)
-    this.createFormatter()
-    this.restoreHistory(previousHistory)
-    this.refreshDisplay()
-  }
-
-  private restoreHistory(previousHistory: TranscriptHistoryEntry[]): void {
-    for (const e of previousHistory) {
-      this.formatter.processTranscription(e.text, true, e.speakerId, e.hadSpeakerChange)
-    }
   }
 
   private refreshDisplay(): void {
     // Interim text is not part of formatter final-history. Reprocess its raw
-    // frame after capability/profile/settings changes so new width/line limits
+    // frame after capability/settings changes so new width/line limits
     // take effect without replacing it with stale finalized text.
     if (this.activeInterim) {
       const result = this.formatter.processTranscription(
@@ -809,9 +640,7 @@ export class CaptionsController {
         this.activeInterim.speakerChanged,
       )
       const cleaned = this.cleanTranscriptText(result.displayText)
-      const lines = cleaned.split("\n")
       this.showTextWall(cleaned)
-      this.broadcastDisplayPreview(cleaned, lines, false)
       return
     }
 
@@ -823,9 +652,7 @@ export class CaptionsController {
     const result = this.formatter.processTranscription("", true, undefined, false)
     if (result.displayText.trim()) {
       const cleaned = this.cleanTranscriptText(result.displayText)
-      const lines = cleaned.split("\n")
       this.showTextWall(cleaned)
-      this.broadcastDisplayPreview(cleaned, lines, true)
     }
   }
 
@@ -841,30 +668,45 @@ export class CaptionsController {
   }
 
   private showOnGlasses(text: string, isFinal: boolean): void {
+    this.currentIsFinal = isFinal
     const cleaned = this.cleanTranscriptText(text)
-    const lines = cleaned.split("\n")
     this.showTextWall(cleaned)
-    this.broadcastDisplayPreview(cleaned, lines, isFinal)
   }
 
   private showTextWall(text: string): void {
-    // One stable scene element: successive captions update in place without
-    // flicker. Positioning displays get a fixed-height band so new transcript
-    // lines never make the content jump vertically. Legacy displays retain the
-    // full-canvas text wall and degrade host-side as before.
-    const d = this.session.capabilities?.display
     this.currentDisplayText = text
-    const maxTextLines = typeof d?.maxTextLines === "number" ? d.maxTextLines : undefined
-    const box = calculateCaptionBox({
-      canvasWidth: d?.width ?? 576,
-      canvasHeight: d?.height ?? 288,
-      canPosition: this.getDisplayCapabilities().canPosition,
-      position: this.settings.captionPosition,
-      lineCount: this.currentMaxLines,
-      maxTextLines,
-      lineHeightPx: this.currentProfile.lineHeightPx,
-    })
-    void this.session.display.render([{type: "text", id: "caption", box, text}])
+    const revision = ++this.renderRevision
+    const d = this.session.capabilities?.display
+    const widthFraction = [0.7, 0.85, 1][this.settings.displayWidth] ?? 1
+    const isFinal = this.currentIsFinal
+    void this.session.display
+      .render(
+        [
+          {
+            type: "text",
+            id: "caption",
+            box: {
+              x: 0,
+              y: 0,
+              w: Math.round((d?.width ?? d?.resolution?.width ?? 576) * widthFraction),
+              h: d?.height ?? d?.resolution?.height ?? 288,
+            },
+            text,
+            style: {
+              maxLines: this.settings.displayLines,
+              textWindow: "end",
+              breakMode: this.settings.wordBreaking ? "character" : "word",
+              verticalAlign: this.settings.captionPosition,
+            },
+          },
+        ],
+        {includeTextLayout: true},
+      )
+      .then((result) => {
+        if (revision !== this.renderRevision) return
+        const lines = result.textLayout?.caption?.lines.map((line) => line.text)
+        if (lines) this.broadcastDisplayPreview(lines.join("\n"), lines, isFinal)
+      })
   }
 
   private cleanTranscriptText(text: string): string {
@@ -890,9 +732,10 @@ export class CaptionsController {
     // Clear the formatter + glasses display after the configured period of inactivity.
     this.inactivityTimer = setTimeout(() => {
       this.inactivityTimer = null
+      this.renderRevision++
+      this.currentDisplayText = ""
       this.formatter.clear()
       this.lastSpeakerId = undefined
-      this.currentDisplayText = ""
       this.activeInterim = null
       void this.session.display.render([])
     }, this.settings.captionTimeoutSeconds * 1000)

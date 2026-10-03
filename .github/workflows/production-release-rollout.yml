@@ -24,6 +24,10 @@ concurrency:
   group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
   cancel-in-progress: false
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   record:
     name: Record protected rollout decision
@@ -107,6 +111,8 @@ jobs:
       - name: Publish immutable rollout evidence and checkpoint
         if: steps.checkpoint.outputs.changed == 'true'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.checkpoint.outputs.asset_path }}" --name "${{ steps.checkpoint.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
@@ -129,17 +135,19 @@ jobs:
         if: inputs.action == 'complete'
         id: stable
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           record=promotion-input/finalizing.json
           [[ "$(jq -er .state "$record")" == finalizing ]]
           promotion_release_id="${{ steps.finalizing.outputs.release_id }}"
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$promotion_release_id/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$promotion_release_id")
           promotion_plan_name="production-release-plan-${{ inputs.release_identity }}.json"
           plan_asset_id=$(jq -er --arg name "$promotion_plan_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("production plan must be unique") end' <<< "$assets")
           mkdir -p production-finalization
-          gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$plan_asset_id" > production-finalization/release-plan.json
+          node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$plan_asset_id" > production-finalization/release-plan.json
           plan=production-finalization/release-plan.json
           [[ "$(jq -er .channel "$plan")" == production ]]
           [[ "$(jq -er .releaseIdentity "$plan")" == "${{ inputs.release_identity }}" ]]
@@ -170,7 +178,7 @@ jobs:
           cp "$plan" "production-finalization/$plan_name"
           cp "$record" "production-finalization/$checkpoint_name"
           stable_release_id=$(jq -er .id <<< "$stable_release")
-          checkpoint_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$checkpoint_name"
+          checkpoint_url="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$checkpoint_name"
           node .github/scripts/publish-immutable-release-asset.mjs \
             --file "production-finalization/$plan_name" --name "$plan_name" \
             --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
@@ -187,7 +195,7 @@ jobs:
             --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
 
           manifest_sha=$(sha256sum "production-finalization/$manifest_name" | cut -d' ' -f1)
-          manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$manifest_name"
+          manifest_url="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$manifest_name"
           jq -n \
             --arg kind production-release-manifest \
             --arg url "$manifest_url" \

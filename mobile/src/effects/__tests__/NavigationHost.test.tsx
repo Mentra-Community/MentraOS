@@ -59,6 +59,19 @@ describe("NavigationHost hardware back", () => {
     expect(mockRouter.back).not.toHaveBeenCalled()
   })
 
+  it("keeps foreground miniapp history ahead of a home handler overwritten after render", () => {
+    const exitHome = jest.fn()
+    const webViewBack = jest.fn(() => true)
+    useNavigationStore.setState({interceptor: interceptorStub(webViewBack), preventBack: true})
+    render(<NavigationHost />)
+    // The still-mounted home capsule re-registers while a miniapp detail is open.
+    useNavigationStore.getState().setAndroidBackFn(exitHome)
+    expect(pressHardwareBack()).toBe(true)
+    expect(webViewBack).toHaveBeenCalledTimes(1)
+    expect(exitHome).not.toHaveBeenCalled()
+    expect(mockRouter.back).not.toHaveBeenCalled()
+  })
+
   it("does not let a declining interceptor bypass a locked screen", () => {
     // An offline miniapp host stays mounted (and registered) through its
     // ~260ms exit fade after pushing an external route. Its interceptor

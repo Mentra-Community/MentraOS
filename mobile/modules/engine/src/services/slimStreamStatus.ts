@@ -11,7 +11,10 @@ import type {StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
  */
 export const ENABLE_PIPELINE_FPS_TELEMETRY = false
 
-/** Fields forwarded to cloud / miniapps after the first resolvedConfig ack. */
+/**
+ * Select stream-status fields for local miniapps. Include resolvedConfig only
+ * when requested by the caller; include stats only when FPS telemetry is enabled.
+ */
 export function slimStreamStatusEvent(
   event: StreamStatusEvent,
   options: {includeResolvedConfig?: boolean; enableFpsTelemetry?: boolean} = {},
@@ -23,6 +26,16 @@ export function slimStreamStatusEvent(
     status: event.status,
   }
   if (event.streamId) slim.streamId = event.streamId
+  if (event.sid) slim.sid = event.sid
+  if (typeof event.revision === "number") slim.revision = event.revision
+  if (typeof event.terminal === "boolean") slim.terminal = event.terminal
+  if ("willRetry" in event && typeof event.willRetry === "boolean") slim.willRetry = event.willRetry
+  if (event.errorDetails) slim.errorDetails = event.errorDetails
+  if (event.kind === "reconnect") {
+    if ("reason" in event) slim.reason = event.reason
+    if ("attempt" in event) slim.attempt = event.attempt
+    if ("maxAttempts" in event) slim.maxAttempts = event.maxAttempts
+  }
   const ts = event.timestamp
   if (typeof ts === "number" && Number.isFinite(ts)) slim.timestamp = ts
   if (options.includeResolvedConfig && event.resolvedConfig) {

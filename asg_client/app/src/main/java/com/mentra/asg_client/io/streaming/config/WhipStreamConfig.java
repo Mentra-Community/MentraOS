@@ -23,14 +23,24 @@ public class WhipStreamConfig {
 
   public static final String DEFAULT_STUN_SERVER = "stun:stun.cloudflare.com:3478";
 
+  public static final String DEFAULT_DEGRADATION_PREFERENCE = "MAINTAIN_FRAMERATE";
+  public static final String DEGRADATION_MAINTAIN_FRAMERATE = "MAINTAIN_FRAMERATE";
+  public static final String DEGRADATION_MAINTAIN_RESOLUTION = "MAINTAIN_RESOLUTION";
+  public static final String DEGRADATION_BALANCED = "BALANCED";
+  public static final String DEGRADATION_DISABLED = "DISABLED";
+
   private int videoWidth = DEFAULT_VIDEO_WIDTH;
   private int videoHeight = DEFAULT_VIDEO_HEIGHT;
   private int videoFps = DEFAULT_VIDEO_FPS;
   private int videoBitrate = DEFAULT_VIDEO_BITRATE;
+  private Integer videoMinBitrateBps;
+  private Integer videoInitialBitrateBps;
   private volatile double statusVideoFps = Double.NaN;
+  private String degradationPreference = DEFAULT_DEGRADATION_PREFERENCE;
 
   private boolean echoCancellation = DEFAULT_ECHO_CANCELLATION;
   private boolean noiseSuppression = DEFAULT_NOISE_SUPPRESSION;
+  private boolean captureAudio = true;
 
   private String stunServer = DEFAULT_STUN_SERVER;
 
@@ -46,6 +56,20 @@ public class WhipStreamConfig {
    * When both a full key and its compact alias are present, the full key wins.
    */
   public static WhipStreamConfig fromJson(JSONObject videoJson, JSONObject audioJson) {
+    return fromJson(videoJson, audioJson, null);
+  }
+
+  /**
+   * As {@link #fromJson(JSONObject, JSONObject)}, plus the optional {@code ice} block.
+   *
+   * <p>{@code ice} carries {@code stun} (compact alias {@code s}). SoftAP calling sends an empty
+   * string to mean "no STUN server, gather host candidates only", because the phone WHIP server
+   * sits on the hotspot subnet and a reflexive candidate is meaningless there. An absent key keeps
+   * the Cloudflare default, and a value that is not a stun URI is ignored rather than silently
+   * disabling ICE.
+   */
+  public static WhipStreamConfig fromJson(
+      JSONObject videoJson, JSONObject audioJson, JSONObject iceJson) {
     WhipStreamConfig config = new WhipStreamConfig();
 
     if (videoJson != null) {
@@ -60,14 +84,57 @@ public class WhipStreamConfig {
       config.videoHeight = normalizeDimension(height, 240, 1080);
       config.videoBitrate = clamp(config.videoBitrate, 100000, 10000000);
       config.videoFps = clamp(config.videoFps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
+      int requestedInitial = videoJson.optInt("initialBitrateBps", 0);
+      if (requestedInitial > 0) config.videoInitialBitrateBps = requestedInitial;
+      int requestedMinimum = videoJson.optInt("minBitrateBps", 0);
+      if (requestedMinimum > 0) {
+        config.videoMinBitrateBps = Math.min(requestedMinimum, config.videoBitrate);
+      }
+      String dp = optStringWithFallback(videoJson, "degradationPreference", "dp", null);
+      if (dp != null && !dp.trim().isEmpty()) {
+        config.degradationPreference = normalizeDegradationPreference(dp);
+      }
     }
 
     if (audioJson != null) {
       config.echoCancellation = optBoolWithFallback(audioJson, "echoCancellation", "ec", DEFAULT_ECHO_CANCELLATION);
       config.noiseSuppression = optBoolWithFallback(audioJson, "noiseSuppression", "ns", DEFAULT_NOISE_SUPPRESSION);
+      config.captureAudio = optBoolWithFallback(audioJson, "captureAudio", "ca", true);
+    }
+
+    if (iceJson != null) {
+      config.stunServer = resolveStunServer(iceJson, config.stunServer);
     }
 
     return config;
+  }
+
+  /**
+   * Empty string wins (host-only), a stun/stuns URI overrides, anything else keeps the default.
+   * Returning the default for a malformed value matters: silently treating "garbage" as host-only
+   * would strand a normal Cloudflare stream with no reflexive candidate.
+   */
+  private static String resolveStunServer(JSONObject iceJson, String defaultValue) {
+    String key = iceJson.has("stun") ? "stun" : (iceJson.has("s") ? "s" : null);
+    if (key == null) return defaultValue;
+    if (iceJson.isNull(key)) return defaultValue;
+
+    String value = iceJson.optString(key, defaultValue);
+    if (value == null) return defaultValue;
+
+    String trimmed = value.trim();
+    if (trimmed.isEmpty()) return ""; // explicit host-only
+    if (trimmed.startsWith("stun:") || trimmed.startsWith("stuns:")) return trimmed;
+    return defaultValue;
+  }
+
+  /**
+   * True when no STUN server is configured, so only local host candidates will be gathered.
+   * This is the SoftAP path: the WHIP server is on the hotspot subnet and reflexive
+   * candidates are useless.
+   */
+  public boolean isHostOnlyIce() {
+    return stunServer == null || stunServer.trim().isEmpty();
   }
 
   /**
@@ -92,6 +159,28 @@ public class WhipStreamConfig {
   private static boolean optBoolWithFallback(JSONObject json, String fullKey, String compactKey, boolean defaultValue) {
     if (json.has(fullKey)) return json.optBoolean(fullKey, defaultValue);
     return json.optBoolean(compactKey, defaultValue);
+  }
+
+  private static String optStringWithFallback(JSONObject json, String fullKey, String compactKey, String defaultValue) {
+    if (json.has(fullKey)) return json.optString(fullKey, defaultValue);
+    if (json.has(compactKey)) return json.optString(compactKey, defaultValue);
+    return defaultValue;
+  }
+
+  private static String normalizeDegradationPreference(String value) {
+    if (value == null) return DEFAULT_DEGRADATION_PREFERENCE;
+    String normalized = value.trim().toUpperCase().replace('-', '_');
+    switch (normalized) {
+      case DEGRADATION_MAINTAIN_RESOLUTION:
+        return DEGRADATION_MAINTAIN_RESOLUTION;
+      case DEGRADATION_BALANCED:
+        return DEGRADATION_BALANCED;
+      case DEGRADATION_DISABLED:
+        return DEGRADATION_DISABLED;
+      case DEGRADATION_MAINTAIN_FRAMERATE:
+      default:
+        return DEGRADATION_MAINTAIN_FRAMERATE;
+    }
   }
 
   private static int clamp(int value, int min, int max) {
@@ -155,9 +244,19 @@ public class WhipStreamConfig {
   public int getVideoHeight() { return videoHeight; }
   public int getVideoFps() { return videoFps; }
   public int getVideoBitrate() { return videoBitrate; }
+
+  /** Optional caller-supplied WHIP startup bitrate, bounded when applied. */
+  public Integer getVideoInitialBitrateBps() { return videoInitialBitrateBps; }
+
+  /** Optional WHIP video bitrate floor, bounded by the current maximum. */
+  public Integer getVideoMinBitrateBps() {
+    return videoMinBitrateBps == null ? null : Math.min(videoMinBitrateBps, videoBitrate);
+  }
   public boolean isEchoCancellation() { return echoCancellation; }
   public boolean isNoiseSuppression() { return noiseSuppression; }
+  public boolean isCaptureAudio() { return captureAudio; }
   public String getStunServer() { return stunServer; }
+  public String getDegradationPreference() { return degradationPreference; }
 
   // Setters with validation (fluent API)
   public WhipStreamConfig setVideoWidth(int width) {
@@ -202,6 +301,7 @@ public class WhipStreamConfig {
       video.put("height", getVideoHeight());
       video.put("bitrate", getVideoBitrate());
       video.put("fps", oneDecimal(getStatusVideoFps()));
+      video.put("degradationPreference", getDegradationPreference());
       resolvedConfig.put("video", video);
       audio.put("echoCancellation", isEchoCancellation());
       audio.put("noiseSuppression", isNoiseSuppression());
@@ -217,6 +317,11 @@ public class WhipStreamConfig {
     return this;
   }
 
+  public WhipStreamConfig setDegradationPreference(String preference) {
+    this.degradationPreference = normalizeDegradationPreference(preference);
+    return this;
+  }
+
   public WhipStreamConfig setEchoCancellation(boolean enabled) {
     this.echoCancellation = enabled;
     return this;
@@ -224,6 +329,11 @@ public class WhipStreamConfig {
 
   public WhipStreamConfig setNoiseSuppression(boolean enabled) {
     this.noiseSuppression = enabled;
+    return this;
+  }
+
+  public WhipStreamConfig setCaptureAudio(boolean enabled) {
+    this.captureAudio = enabled;
     return this;
   }
 
@@ -237,8 +347,10 @@ public class WhipStreamConfig {
     return "WhipStreamConfig{"
         + "video=" + videoWidth + "x" + videoHeight + "@" + videoFps + "fps, "
         + (videoBitrate / 1000) + "kbps"
+        + ", degradation=" + degradationPreference
         + ", echo=" + echoCancellation
         + ", noise=" + noiseSuppression
+        + ", captureAudio=" + captureAudio
         + ", stun=" + stunServer
         + '}';
   }

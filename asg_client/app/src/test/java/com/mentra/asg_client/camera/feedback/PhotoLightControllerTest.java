@@ -2,90 +2,124 @@ package com.mentra.asg_client.camera.feedback;
 
 import android.os.Handler;
 import android.os.Looper;
-
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import com.mentra.asg_client.AsgConstants;
-import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import androidx.test.core.app.ApplicationProvider;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.robolectric.Shadows.shadowOf;
+import java.time.Duration;
+import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
-
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
-import org.robolectric.shadows.ShadowLooper;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class PhotoLightControllerTest {
-    private IHardwareManager hardwareManager;
+    private BaseHardwareManager hardware;
     private PhotoLightController controller;
-
-    @Before
-    public void setUp() {
-        hardwareManager = mock(IHardwareManager.class);
-        when(hardwareManager.supportsRgbLed()).thenReturn(true);
-        controller = new PhotoLightController(hardwareManager, new Handler(Looper.getMainLooper()));
+    @Before public void setup() {
+        hardware = spy(new BaseHardwareManager(ApplicationProvider.getApplicationContext()));
+        doReturn(true).when(hardware).supportsRecordingLed();
+        doReturn(true).when(hardware).supportsRgbLed();
+        controller = new PhotoLightController(hardware, new Handler(Looper.getMainLooper()));
     }
-
-    @Test
-    public void exposureBoundary_flashesPhotoLightOnce() {
-        PhotoLightController.Token token = controller.prepare(true);
-
-        controller.onCaptureBoundary(token, "sensor exposure");
-        controller.onCaptureBoundary(token, "JPEG fallback");
-
-        verify(hardwareManager, never()).flashRgbLedWhite(
-                AsgConstants.PHOTO_LIGHT_DURATION_MS,
+    private void advance(long ms) {
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms));
+    }
+    @Test public void bothStartAtRequestAndShortCaptureHonorsMinimum() {
+        PhotoLightController.Token token = controller.prepare("request", true);
+        verify(hardware).acquireRecordingLed(token);
+        verify(hardware).setRgbLedSolidWhite(120_000,
                 RgbLedConstants.DEFAULT_BRIGHTNESS);
-        ShadowLooper.idleMainLooper();
-
-        verify(hardwareManager)
-                .flashRgbLedWhite(
-                        AsgConstants.PHOTO_LIGHT_DURATION_MS,
-                        RgbLedConstants.DEFAULT_BRIGHTNESS);
+        controller.onCaptureBoundary(token, "JPEG");
+        advance(1499);
+        verify(hardware, never()).releaseRecordingLed(token);
+        verify(hardware, never()).setRgbLedOff();
+        advance(1);
+        verify(hardware).releaseRecordingLed(token);
+        verify(hardware).setRgbLedOff();
     }
-
-    @Test
-    public void longExposure_keepsPhotoLightOnThroughExposure() {
-        PhotoLightController.Token token = controller.prepare(true);
-
-        controller.onCaptureBoundary(token, "sensor exposure", 3_500_000_000L);
-        ShadowLooper.idleMainLooper();
-
-        verify(hardwareManager)
-                .flashRgbLedWhite(3500, RgbLedConstants.DEFAULT_BRIGHTNESS);
+    @Test public void longCaptureStaysLitUntilFrameAndCompletesOnce() {
+        PhotoLightController.Token token = controller.prepare("request", true);
+        controller.onCaptureBoundary(token, "exposure", 3_000_000_000L);
+        advance(4000);
+        verify(hardware, never()).setRgbLedOff();
+        controller.onCaptureBoundary(token, "JPEG");
+        controller.onCaptureBoundary(token, "saved");
+        verify(hardware).releaseRecordingLed(token);
+        verify(hardware).setRgbLedOff();
     }
-
-    @Test
-    public void disabledCapture_neverFlashesPhotoLight() {
-        PhotoLightController.Token token = controller.prepare(false);
-
-        controller.onCaptureBoundary(token, "sensor exposure");
-        ShadowLooper.idleMainLooper();
-
-        verify(hardwareManager, never()).flashRgbLedWhite(
-                AsgConstants.PHOTO_LIGHT_DURATION_MS,
-                RgbLedConstants.DEFAULT_BRIGHTNESS);
+    @Test public void overlappingRequestKeepsLightsOn() {
+        PhotoLightController.Token first = controller.prepare("request", true);
+        advance(1000);
+        PhotoLightController.Token second = controller.prepare("second", true);
+        controller.finish(first);
+        advance(500);
+        verify(hardware).releaseRecordingLed(first);
+        verify(hardware, never()).setRgbLedOff();
+        controller.finish(second);
+        advance(1000);
+        verify(hardware).releaseRecordingLed(second);
+        verify(hardware).setRgbLedOff();
     }
-
-    @Test
-    public void unsupportedHardware_consumesTokenWithoutRetrying() {
-        when(hardwareManager.supportsRgbLed()).thenReturn(false);
-        PhotoLightController.Token token = controller.prepare(true);
-
-        controller.onCaptureBoundary(token, "sensor exposure");
-        ShadowLooper.idleMainLooper();
-        when(hardwareManager.supportsRgbLed()).thenReturn(true);
-        controller.onCaptureBoundary(token, "JPEG fallback");
-        ShadowLooper.idleMainLooper();
-
-        verify(hardwareManager, never()).flashRgbLedWhite(
-                AsgConstants.PHOTO_LIGHT_DURATION_MS,
-                RgbLedConstants.DEFAULT_BRIGHTNESS);
+    @Test public void timeoutLeavesOtherRequestsLitAndLateCompletionIsHarmless() {
+        PhotoLightController.Token first = controller.prepare("first", true);
+        advance(1000);
+        PhotoLightController.Token second = controller.prepare("second", true);
+        advance(500);
+        controller.finishForTimeout("first");
+        controller.finishForTimeout("first");
+        controller.onCaptureBoundary(first, "late JPEG");
+        verify(hardware).releaseRecordingLed(first);
+        verify(hardware, never()).releaseRecordingLed(second);
+        verify(hardware, never()).setRgbLedOff();
+        controller.onCaptureBoundary(second, "JPEG");
+        advance(1000);
+        verify(hardware).releaseRecordingLed(second);
+        verify(hardware).setRgbLedOff();
+    }
+    @Test public void timeoutPreservesMinimumDurationAndUnknownRequestIsHarmless() {
+        PhotoLightController.Token token = controller.prepare("request", true);
+        controller.finishForTimeout("missing");
+        advance(100);
+        controller.finishForTimeout("request");
+        advance(1399);
+        verify(hardware, never()).releaseRecordingLed(token);
+        advance(1);
+        verify(hardware).releaseRecordingLed(token);
+        verify(hardware).setRgbLedOff();
+    }
+    @Test public void cleanupCancelsPendingReleaseAndDropsAllOwnership() {
+        PhotoLightController.Token token = controller.prepare("request", true);
+        controller.finish(token);
+        controller.cleanup();
+        advance(2000);
+        verify(hardware).releaseRecordingLed(token);
+        verify(hardware).setRgbLedOff();
+    }
+    @Test public void otherRecordingOwnerKeepsItsIndicator() {
+        PhotoLightController.Token token = controller.prepare("request", true);
+        Object recordingOwner = new Object();
+        hardware.acquireRecordingLed(recordingOwner);
+        controller.cleanup();
+        verify(hardware).releaseRecordingLed(token);
+        verify(hardware, never()).setRgbLedOff();
+        hardware.releaseRecordingLed(recordingOwner);
+        verify(hardware).setRgbLedOff();
+    }
+    @Test public void disabledRequestDoesNotAcquireOrToggle() {
+        controller.finish(controller.prepare("request", false));
+        advance(2000);
+        verify(hardware, never()).acquireRecordingLed(any());
+        verify(hardware, never()).setRgbLedOff();
+    }
+    @Test public void failedPrivacyAcquisitionDoesNotStartRgb() {
+        doReturn(false).when(hardware).acquireRecordingLed(any());
+        controller.finish(controller.prepare("request", true));
+        controller.cleanup();
+        verify(hardware, never()).setRgbLedSolidWhite(anyInt(), anyInt());
     }
 }

@@ -11,6 +11,7 @@ import {useConnectionStore} from "../stores/connection"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
+import {getAppBuildInfo} from "./appBuildInfo"
 import {buildMiniappDiagnosticContext} from "./miniappDiagnostics"
 
 const SENSITIVE_SETTINGS_KEYS = ["core_token", "auth_token", "auth_email"] as const
@@ -124,13 +125,7 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
   })
 
   return {
-    app: {
-      appVersion: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version",
-      buildCommit: process.env.EXPO_PUBLIC_BUILD_COMMIT || "commit",
-      buildBranch: process.env.EXPO_PUBLIC_BUILD_BRANCH || "branch",
-      buildTime: process.env.EXPO_PUBLIC_BUILD_TIME || "time",
-      buildUser: process.env.EXPO_PUBLIC_BUILD_USER || "user",
-    },
+    app: getAppBuildInfo(),
     phone: {
       deviceName: Constants.deviceName || "deviceName",
       osVersion: `${Platform.OS} ${Platform.Version}`,

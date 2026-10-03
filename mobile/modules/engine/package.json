@@ -1,6 +1,6 @@
 {
   "name": "@mentra/engine",
-  "version": "3.1.1",
+  "version": "3.2.1",
   "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -90,18 +90,20 @@
     "url": "https://github.com/Mentra-Community/MentraOS/issues"
   },
   "author": "Mentra Community",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/engine#readme",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "3.1.1",
-    "@mentra/cloud-client": "3.1.1",
-    "@mentra/cloud-protocol": "3.1.1",
-    "@mentra/crust": "3.1.1",
-    "@mentra/miniapp": "3.1.1",
+    "@mentra/acs-meeting": "3.2.1",
+    "@mentra/glasses-media": "3.2.1",
+    "@mentra/bluetooth-sdk": "3.2.1",
+    "@mentra/cloud-client": "3.2.1",
+    "@mentra/cloud-protocol": "3.2.1",
+    "@mentra/crust": "3.2.1",
+    "@mentra/miniapp": "3.2.1",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
     "react-native-marked": "8.1.1",

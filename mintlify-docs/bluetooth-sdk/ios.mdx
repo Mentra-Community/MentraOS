@@ -6,6 +6,10 @@ icon: "apple"
 
 Native iOS apps use the `MentraBluetoothSDK` Swift package.
 
+The same package also supports [native macOS with AppKit or SwiftUI](/bluetooth-sdk/macos).
+The permissions and background modes below apply to iOS, including iOS apps
+running on Apple silicon Macs. Native Mac apps use the separate macOS setup.
+
 ## Requirements
 
 - iOS deployment target `15.1` or newer.
@@ -63,7 +67,7 @@ Add usage descriptions to `Info.plist`:
 
 ## Background Operation
 
-If your iOS app needs to keep the glasses BLE link alive while the phone is locked or the app is backgrounded, enable Core Bluetooth background mode:
+Declare Core Bluetooth background mode in your app's `Info.plist`. It is required, not optional: iOS reads background modes only from the app's own `Info.plist`, so the Swift package cannot add it for you.
 
 ```xml
 <key>UIBackgroundModes</key>
@@ -71,6 +75,12 @@ If your iOS app needs to keep the glasses BLE link alive while the phone is lock
   <string>bluetooth-central</string>
 </array>
 ```
+
+Mentra Live drops its Bluetooth link for short periods in normal use. During a software update, the glasses restart their Bluetooth chip and are unreachable for about 45 seconds; walking out of range or powering the glasses off has the same effect. When the link drops, the SDK keeps a pending connection to the same glasses open, and iOS completes it as soon as they advertise again. With `bluetooth-central`, iOS completes that reconnection and wakes your app even while the phone is locked in a pocket. Without it, iOS suspends your app and nothing reconnects until the user opens it again, so a software update started on a locked phone stalls after the Bluetooth chip restarts.
+
+App Review asks apps that declare `bluetooth-central` to need it; a companion app for connected glasses does.
+
+At startup the SDK checks your `Info.plist` and logs a warning when `bluetooth-central` is missing. Read `MentraBluetoothSDK.supportsBackgroundReconnect` to check it from code, for example in a debug assertion or a setup screen.
 
 If your app also keeps microphone capture or an audio session active in the background, add `audio` as well:
 
@@ -90,7 +100,7 @@ try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoot
 try session.setActive(true)
 ```
 
-`bluetooth-central` allows iOS to continue BLE central activity in the background, subject to iOS scheduling and power-management limits. `audio` is required only for apps that intentionally keep recording or audio playback active after backgrounding.
+`bluetooth-central` lets iOS deliver BLE events to your app and complete its pending reconnection in the background, subject to iOS scheduling and power-management limits. `audio` is required only for apps that intentionally keep recording or audio playback active after backgrounding.
 
 <Warning>
 This SDK version does not enable terminated-app Core Bluetooth state restoration with `CBCentralManagerOptionRestoreIdentifierKey`. If iOS terminates the app, relaunch the app and reconnect from your normal startup flow.

@@ -12,12 +12,14 @@ import {
   deriveReleaseIdentity,
   finalizeReleaseManifest,
   familyBuildNumber,
+  expectedPlayTracks,
   loadReleaseFamily,
   releaseRecordSha256,
   requirePublicHttpsUrl,
   serializeReleaseRecord,
 } from "./release-family.mjs"
 import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
+import {runtimeImageRecordForPlan} from "./coordinated-runtime-image-test-helpers.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const repositoryVersion = JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version
@@ -44,14 +46,22 @@ test("accepts only credential-free public HTTPS URLs without fragments", () => {
 })
 
 test("loads the repository release family and derives dependency-first publication order", () => {
-  const family = loadReleaseFamily({rootDir: repositoryRoot})
+  const family = loadReleaseFamily({rootDir: repositoryRoot, requireVersionMirrors: true})
+  const repositoryVersion = JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version
 
-  assert.equal(family.familyBaseVersion, `${repositoryVersion}`)
-  assert.equal(family.changelog.version, `${repositoryVersion}`)
+  assert.equal(family.familyBaseVersion, repositoryVersion)
+  assert.equal(family.changelog.version, repositoryVersion)
   assert.equal(family.changelog.path, `changelogs/${repositoryVersion}.md`)
   assert.match(family.changelog.sha256, /^[0-9a-f]{64}$/)
   assert.deepEqual(family.products, ["mentraos", "@mentra/engine", "@mentra/bluetooth-sdk"])
-  assert.equal(family.members.length, 8)
+  assert.equal(family.members.length, 10)
+  assert.ok(
+    family.publicationOrder.indexOf("@mentra/cloud-protocol") <
+      family.publicationOrder.indexOf("@mentra/bluetooth-sdk"),
+  )
+  assert.ok(
+    family.publicationOrder.indexOf("@mentra/glasses-media") < family.publicationOrder.indexOf("@mentra/acs-meeting"),
+  )
   assert.ok(family.publicationOrder.indexOf("@mentra/jspolyfill") < family.publicationOrder.indexOf("@mentra/crust"))
   assert.ok(
     family.publicationOrder.indexOf("@mentra/bluetooth-sdk") < family.publicationOrder.indexOf("@mentra/engine"),
@@ -111,21 +121,24 @@ test("creates a deterministic release plan with exact dependency versions", () =
     nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
     otaInputs: {firmwareManifest: "firmware_live.json"},
   })
+  const baseVersion = family.familyBaseVersion
+  const releaseIdentity = `${baseVersion}-beta.57`
 
-  assert.equal(plan.releaseSetId, `mentra-${repositoryVersion}-beta.57`)
-  assert.equal(plan.artifactContainerTag, `mentra-builds-v${repositoryVersion}`)
-  assert.equal(plan.artifactContainerName, `Mentra ${repositoryVersion} development builds`)
-  assert.equal(plan.native.marketingVersion, `${repositoryVersion}`)
+  assert.equal(plan.releaseSetId, `mentra-${releaseIdentity}`)
+  assert.equal(plan.artifactContainerTag, `mentra-builds-v${baseVersion}`)
+  assert.equal(plan.artifactContainerName, `Mentra ${baseVersion} development builds`)
+  assert.equal(plan.native.marketingVersion, baseVersion)
   assert.equal(plan.native.buildNumber, familyBuildNumber(family.familyBaseVersion, 57))
   assert.deepEqual(plan.changelog, family.changelog)
-  assert.equal(plan.products["@mentra/engine"], `${repositoryVersion}-beta.57`)
-  assert.equal(plan.members["@mentra/engine"].dependencies["@mentra/bluetooth-sdk"], `${repositoryVersion}-beta.57`)
+  assert.equal(plan.products["@mentra/engine"], releaseIdentity)
+  assert.equal(plan.members["@mentra/engine"].dependencies["@mentra/bluetooth-sdk"], releaseIdentity)
   assert.equal(plan.members["@mentra/bluetooth-sdk"].publishTargets.length, 3)
-  assert.equal(plan.artifactNames.otaManifest, `mentra-live-ota-${repositoryVersion}-beta.57.json`)
-  assert.equal(plan.artifactNames.otaBundle, `mentra-live-ota-bundle-${repositoryVersion}-beta.57.zip`)
-  assert.equal(plan.artifactNames.asgSelection, `mentra-live-asg-selection-${repositoryVersion}-beta.57.json`)
-  assert.equal(plan.artifactNames.androidStoreApp, `mentraos-${repositoryVersion}-beta.57-android.aab`)
-  assert.equal(plan.artifactNames.iosSdkArchive, `mentra-bluetooth-sdk-ios-${repositoryVersion}-beta.57.tar`)
+  assert.equal(plan.members["@mentra/bluetooth-sdk"].dependencies["@mentra/cloud-protocol"], releaseIdentity)
+  assert.equal(plan.artifactNames.otaManifest, `mentra-live-ota-${releaseIdentity}.json`)
+  assert.equal(plan.artifactNames.otaBundle, `mentra-live-ota-bundle-${releaseIdentity}.zip`)
+  assert.equal(plan.artifactNames.asgSelection, `mentra-live-asg-selection-${releaseIdentity}.json`)
+  assert.equal(plan.artifactNames.androidStoreApp, `mentraos-${releaseIdentity}-android.aab`)
+  assert.equal(plan.artifactNames.iosSdkArchive, `mentra-bluetooth-sdk-ios-${releaseIdentity}.tar`)
   assert.equal(plan.otaInputs.firmwareManifest, "firmware_live.json")
 
   const productionPlan = createReleasePlan({
@@ -134,8 +147,8 @@ test("creates a deterministic release plan with exact dependency versions", () =
     sourceCommit: "b".repeat(40),
     nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
   })
-  assert.equal(productionPlan.artifactContainerTag, `mentra-v${repositoryVersion}`)
-  assert.equal(productionPlan.artifactContainerName, `Mentra ${repositoryVersion}`)
+  assert.equal(productionPlan.artifactContainerTag, `mentra-v${baseVersion}`)
+  assert.equal(productionPlan.artifactContainerName, `Mentra ${baseVersion}`)
 })
 
 test("serializes records canonically and finalizes only complete release results", () => {
@@ -158,7 +171,7 @@ test("serializes records canonically and finalizes only complete release results
     "npm": (name) => `${name}@${plan.releaseIdentity}`,
     "maven-central": () => `com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`,
     "swift-package-manager": () => `Mentra-Community/mentra-bluetooth-sdk-ios@${plan.releaseIdentity}`,
-    "google-play": () => `com.mentra.mentra:${plan.native.buildNumber}:internal-app-sharing`,
+    "google-play": () => `com.mentra.mentra:${plan.native.buildNumber}:beta`,
     "app-store-connect": () =>
       `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:Mentra Staging`,
   }
@@ -173,6 +186,7 @@ test("serializes records canonically and finalizes only complete release results
   const results = {
     releaseSetId: plan.releaseSetId,
     cloud: cloudRecordForPlan(plan),
+    runtimeImage: runtimeImageRecordForPlan(plan),
     publications,
     otaManifest: publication(plan.artifactNames.otaManifest),
     artifacts: [
@@ -187,10 +201,11 @@ test("serializes records canonically and finalizes only complete release results
 
   const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-24T20:00:00.000Z"})
   assert.equal(manifest.releasePlanSha256, releaseRecordSha256(plan))
-  assert.equal(manifest.publications["@mentra/engine"].npm.coordinate, `@mentra/engine@${repositoryVersion}-beta.57`)
+  assert.equal(manifest.publications["@mentra/engine"].npm.coordinate, `@mentra/engine@${plan.releaseIdentity}`)
   assert.deepEqual(manifest.native, plan.native)
   assert.deepEqual(manifest.changelog, plan.changelog)
   assert.equal(manifest.cloud.environment, "staging")
+  assert.equal(manifest.runtimeImage.reference, `ghcr.io/mentra-community/mentra-cloud@sha256:${"8".repeat(64)}`)
   const publicPlan = createReleasePlan({
     family,
     channel: "beta",
@@ -277,15 +292,15 @@ test("serializes records canonically and finalizes only complete release results
   )
 
   results.publications["@mentra/bluetooth-sdk"]["maven-central"] = publication(
-    `com.mentraglass:bluetooth-sdk:${repositoryVersion}-beta.56`,
+    `com.mentraglass:bluetooth-sdk:${family.familyBaseVersion}-beta.56`,
   )
   assert.throws(
     () => finalizeReleaseManifest({plan, results, completedAt: "2026-08-24T20:00:00.000Z"}),
-    /coordinate must be com\.mentraglass:bluetooth-sdk:\d+\.\d+\.\d+-beta\.57/,
+    new RegExp(`coordinate must be com\\.mentraglass:bluetooth-sdk:${plan.releaseIdentity.replaceAll(".", "\\.")}`),
   )
 
   results.publications["@mentra/bluetooth-sdk"]["maven-central"] = publication(
-    `com.mentraglass:bluetooth-sdk:${repositoryVersion}-beta.57`,
+    `com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`,
   )
   results.artifacts = results.artifacts.filter((artifact) => artifact.coordinate !== plan.artifactNames.iosApp)
   assert.throws(
@@ -461,4 +476,154 @@ test("rejects family dependencies hidden from the configured graph or declared a
   familyDefinition.members[1].privateWorkspaceDependencies = ["@mentra/outside"]
   writeFileSync(path.join(root, ".github/release-family.json"), JSON.stringify(familyDefinition))
   assert.doesNotThrow(() => loadReleaseFamily({rootDir: root, requireVersionMirrors: true}))
+})
+
+test("a manifest carries the Android build's version code when a testing track floor raised it", () => {
+  const family = loadReleaseFamily({rootDir: repositoryRoot})
+  const plan = createReleasePlan({
+    family,
+    channel: "beta",
+    sequence: 57,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
+  })
+  const publication = (coordinate) => ({
+    status: "published",
+    coordinate,
+    url: `https://artifacts.example.com/${encodeURIComponent(coordinate)}`,
+    sha256: "b".repeat(64),
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/attestations/123",
+  })
+  const results = {
+    releaseSetId: plan.releaseSetId,
+    native: {androidBuildNumber: 310000213},
+    publications: {},
+    otaManifest: publication(plan.artifactNames.otaManifest),
+    artifacts: ["asgSelection", "otaBundle", "androidApp", "androidStoreApp", "iosApp", "enginePackage"].map((key) =>
+      publication(plan.artifactNames[key]),
+    ),
+    cloud: cloudRecordForPlan(plan),
+    runtimeImage: runtimeImageRecordForPlan(plan),
+  }
+  for (const [name, member] of Object.entries(plan.members)) {
+    results.publications[name] = {}
+    for (const target of member.publishTargets) {
+      const coordinate =
+        target === "google-play"
+          ? "com.mentra.mentra:310000213:beta"
+          : target === "app-store-connect"
+            ? `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:Mentra Staging`
+            : target === "npm"
+              ? `${name}@${plan.releaseIdentity}`
+              : target === "maven-central"
+                ? `com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`
+                : `Mentra-Community/mentra-bluetooth-sdk-ios@${plan.releaseIdentity}`
+      results.publications[name][target] = publication(coordinate)
+    }
+  }
+  const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-09-21T10:00:00.000Z"})
+  assert.equal(manifest.native.buildNumber, plan.native.buildNumber)
+  assert.equal(manifest.native.androidBuildNumber, 310000213)
+  // The manifest round-trips through finalize, as the release page requires.
+  assert.deepEqual(finalizeReleaseManifest({plan, results: manifest, completedAt: manifest.completedAt}), manifest)
+  results.publications.mentraos["google-play"] = publication(`com.mentra.mentra:${plan.native.buildNumber}:beta`)
+  assert.throws(
+    () => finalizeReleaseManifest({plan, results, completedAt: "2026-09-21T10:00:00.000Z"}),
+    /coordinate must be com\.mentra\.mentra:310000213:beta/,
+  )
+})
+
+test("plans freeze their Play destination and archived Internal App Sharing betas still validate", () => {
+  const family = loadReleaseFamily({rootDir: repositoryRoot})
+  const plan = createReleasePlan({
+    family,
+    channel: "beta",
+    sequence: 58,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 58),
+  })
+  assert.equal(plan.native.playTrack, "beta")
+  assert.deepEqual(expectedPlayTracks(plan), ["beta"])
+  const dev = createReleasePlan({
+    family,
+    channel: "dev",
+    sequence: 1,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 1),
+    uploadGooglePlay: false,
+  })
+  assert.equal(dev.native.playTrack, "internal")
+  assert.throws(
+    () =>
+      createReleasePlan({
+        family,
+        channel: "beta",
+        sequence: 1,
+        sourceCommit: "a".repeat(40),
+        nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 1),
+        playTrack: "Open Testing",
+      }),
+    /Invalid Google Play track/,
+  )
+  const legacy = {
+    ...plan,
+    native: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
+  }
+  assert.deepEqual(expectedPlayTracks(legacy), ["beta", "internal-app-sharing"])
+  const publication = (coordinate) => ({
+    status: "published",
+    coordinate,
+    url: `https://artifacts.example.com/${encodeURIComponent(coordinate)}`,
+    sha256: "b".repeat(64),
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/attestations/123",
+  })
+  const resultsFor = (basePlan, playCoordinate) => {
+    const results = {
+      releaseSetId: basePlan.releaseSetId,
+      publications: {},
+      otaManifest: publication(basePlan.artifactNames.otaManifest),
+      artifacts: ["asgSelection", "otaBundle", "androidApp", "androidStoreApp", "iosApp", "enginePackage"].map((key) =>
+        publication(basePlan.artifactNames[key]),
+      ),
+      cloud: cloudRecordForPlan(basePlan),
+      runtimeImage: runtimeImageRecordForPlan(basePlan),
+    }
+    for (const [name, member] of Object.entries(basePlan.members)) {
+      results.publications[name] = {}
+      for (const target of member.publishTargets) {
+        results.publications[name][target] = publication(
+          target === "google-play"
+            ? playCoordinate
+            : target === "app-store-connect"
+              ? `com.mentra.mentra:${basePlan.native.marketingVersion}:${basePlan.native.buildNumber}:Mentra Staging`
+              : target === "npm"
+                ? `${name}@${basePlan.releaseIdentity}`
+                : target === "maven-central"
+                  ? `com.mentraglass:bluetooth-sdk:${basePlan.releaseIdentity}`
+                  : `Mentra-Community/mentra-bluetooth-sdk-ios@${basePlan.releaseIdentity}`,
+        )
+      }
+    }
+    return results
+  }
+  const archived = resultsFor(legacy, `com.mentra.mentra:${legacy.native.buildNumber}:internal-app-sharing`)
+  const manifest = finalizeReleaseManifest({plan: legacy, results: archived, completedAt: "2026-09-14T10:00:00.000Z"})
+  assert.equal(
+    manifest.publications.mentraos["google-play"].coordinate,
+    `com.mentra.mentra:${legacy.native.buildNumber}:internal-app-sharing`,
+  )
+  assert.deepEqual(
+    finalizeReleaseManifest({plan: legacy, results: manifest, completedAt: manifest.completedAt}),
+    manifest,
+  )
+  // A frozen plan accepts only its own destination.
+  assert.throws(
+    () =>
+      finalizeReleaseManifest({
+        plan,
+        results: resultsFor(plan, `com.mentra.mentra:${plan.native.buildNumber}:internal-app-sharing`),
+        completedAt: "2026-09-21T10:00:00.000Z",
+      }),
+    /coordinate must be com\.mentra\.mentra:\d+:beta/,
+  )
 })

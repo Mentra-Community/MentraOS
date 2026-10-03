@@ -19,6 +19,17 @@ class NimoCrc16Test {
 }
 
 class NimoFrameCodecTest {
+    @Test
+    fun `system English and factory reset match firmware wire commands`() {
+        fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02X".format(it.toInt() and 255) }
+        assertThat(hex(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_SET_PARAMETER,
+            NimoProtocol.SET_SYSTEM_LANGUAGE, byteArrayOf(NimoProtocol.LANGUAGE_ENGLISH.toByte()))))
+            .isEqualTo("BF020500702500000324010001")
+        assertThat(hex(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_CONTROL_FACTORY,
+            NimoProtocol.FACTORY_RECOVER, byteArrayOf())))
+            .isEqualTo("BF0204005358000008030000")
+    }
+
 
     @Test
     fun `transport header layout`() {

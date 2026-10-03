@@ -1,6 +1,9 @@
-import {beforeEach, describe, expect, test} from "bun:test"
+import {beforeEach, describe, expect, mock, test} from "bun:test"
 
-import {beginOtaAutoChain, otaAutoChainReleaseRange, stopOtaAutoChain, tryAdvanceOtaAutoChain} from "../OtaAutoChain"
+mock.module("../OtaDeviceSession", () => ({otaDeviceSessionRevision: () => 0}))
+
+const {beginOtaAutoChain, otaAutoChainReleaseRange, stopOtaAutoChain, tryAdvanceOtaAutoChain} =
+  require("../OtaAutoChain") as typeof import("../OtaAutoChain")
 
 describe("OtaAutoChain release range", () => {
   beforeEach(() => stopOtaAutoChain())

@@ -5,7 +5,10 @@ import {DeeplinkProvider, useDeeplink} from "./DeeplinkContext"
 
 const mockSetSplashEnabled = jest.fn()
 const mockReplaceAll = jest.fn()
+const mockReplace = jest.fn()
 const mockCompleteOAuthHandoff = jest.fn()
+const mockCompleteSignupVerification = jest.fn()
+let mockPendingRoute: string | null = null
 
 jest.mock("expo-linking", () => ({
   addEventListener: jest.fn(() => ({remove: jest.fn()})),
@@ -20,7 +23,15 @@ jest.mock("@/contexts/SplashLoaderProvider", () => ({
 }))
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {
-    getState: () => ({replaceAll: mockReplaceAll, replace: jest.fn(), setAnimation: jest.fn()}),
+    getState: () => ({
+      replaceAll: mockReplaceAll,
+      replace: mockReplace,
+      setAnimation: jest.fn(),
+      setPendingRoute: (url: string) => {
+        mockPendingRoute = url
+      },
+      getPendingRoute: () => mockPendingRoute,
+    }),
   },
 }))
 jest.mock("@/utils/auth/authClient", () => ({
@@ -28,6 +39,7 @@ jest.mock("@/utils/auth/authClient", () => ({
   default: {
     getSession: jest.fn(async () => ({is_error: () => false, value: {token: undefined}})),
     completeOAuthHandoff: (...args: unknown[]) => mockCompleteOAuthHandoff(...args),
+    completeSignupVerification: (...args: unknown[]) => mockCompleteSignupVerification(...args),
   },
 }))
 
@@ -43,6 +55,9 @@ beforeEach(() => {
   jest.useFakeTimers()
   jest.clearAllMocks()
   mockCompleteOAuthHandoff.mockResolvedValue({is_error: () => false})
+  mockCompleteSignupVerification.mockResolvedValue({is_error: () => false})
+  mockPendingRoute = null
+  jest.mocked(Linking.getInitialURL).mockResolvedValue(null)
 })
 
 afterEach(() => jest.useRealTimers())
@@ -108,4 +123,79 @@ it("removes its native URL subscription on unmount", () => {
   const subscription = jest.mocked(Linking.addEventListener).mock.results[0].value
   tree.unmount()
   expect(subscription.remove).toHaveBeenCalledTimes(1)
+})
+
+const signupCallback = "com.mentra://auth/callback#access_token=signup-token&refresh_token=provider-refresh&type=signup"
+
+it("waits for signup sign-in before navigating and ignores duplicate callbacks", async () => {
+  let finish!: (result: {is_error: () => boolean}) => void
+  mockCompleteSignupVerification.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve
+    }),
+  )
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  let processing!: Promise<void>
+  await act(async () => {
+    processing = processUrl(signupCallback)
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token")
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  await act(async () => {
+    finish({is_error: () => false})
+    await processing
+    await processUrl(signupCallback)
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledTimes(1)
+  expect(mockReplaceAll).toHaveBeenCalledWith("/")
+  expect(mockSetSplashEnabled).toHaveBeenLastCalledWith(false)
+})
+
+it("completes a signup link that launches the app", async () => {
+  jest.mocked(Linking.getInitialURL).mockResolvedValue(signupCallback)
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await Promise.resolve()
+  })
+  await act(async () => {
+    await jest.runAllTimersAsync()
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token")
+  expect(mockReplaceAll).toHaveBeenCalledWith("/")
+})
+
+it("shows a login error when signup exchange fails", async () => {
+  mockCompleteSignupVerification.mockResolvedValue({is_error: () => true, error: new Error("expired")})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(signupCallback)
+  })
+  expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=invalid_grant")
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockSetSplashEnabled).toHaveBeenLastCalledWith(false)
+})
+
+it("does not exchange an expired confirmation link", async () => {
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl("com.mentra://auth/callback#error=access_denied&error_code=otp_expired&type=signup")
+  })
+  expect(mockCompleteSignupVerification).not.toHaveBeenCalled()
+  expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=otp_expired")
 })

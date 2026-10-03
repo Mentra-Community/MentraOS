@@ -2,8 +2,10 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.io.bes.log.BesLivenessLog;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
+import com.mentra.asg_client.io.ota.utils.OtaHttpRequest;
 import com.mentra.asg_client.reporting.GlassesLogBuffer;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -134,7 +136,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             }
             String url = buildReportArtifactsUrl(baseUrl, incidentId);
 
-            JSONArray logs = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
+            JSONArray logs = buildGlassesLogEntries();
 
             JSONObject body = new JSONObject();
             body.put("type", "logs");
@@ -321,12 +323,54 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     }
 
     private String buildGlassesLogcatJson() throws Exception {
-        JSONArray logs = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
+        JSONArray logs = buildGlassesLogEntries();
         JSONObject body = new JSONObject();
         body.put("type", "logs");
         body.put("source", "glasses");
         body.put("entries", logs);
         return body.toString();
+    }
+
+    /**
+     * Merges the logcat tail with the BES liveness and retained OTA request rings, oldest first.
+     *
+     * <p>{@link #MAX_LOG_LINES} deliberately stays small because the BLE relay path has to push
+     * this whole payload over a K900 file transfer. That window cannot hold a BES fault: the
+     * reboot's BLE re-handshake and stream teardown emit thousands of lines afterwards and evict
+     * it. {@link BesLivenessLog} is kept out of band for exactly that reason, so splice it back in
+     * here rather than widening the tail.
+     */
+    private JSONArray buildGlassesLogEntries() {
+        JSONArray logcat = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
+        JSONArray liveness = BesLivenessLog.recentEntries();
+        return mergeByTimestamp(mergeByTimestamp(logcat, liveness),
+                OtaHttpRequest.recentEntries(mContext));
+    }
+
+    /** Both inputs are already ascending by timestamp, so a single pass interleaves them. */
+    private static JSONArray mergeByTimestamp(JSONArray left, JSONArray right) {
+        JSONArray merged = new JSONArray();
+        int i = 0;
+        int j = 0;
+        while (i < left.length() && j < right.length()) {
+            if (timestampOf(left, i) <= timestampOf(right, j)) {
+                merged.put(left.opt(i++));
+            } else {
+                merged.put(right.opt(j++));
+            }
+        }
+        while (i < left.length()) {
+            merged.put(left.opt(i++));
+        }
+        while (j < right.length()) {
+            merged.put(right.opt(j++));
+        }
+        return merged;
+    }
+
+    private static long timestampOf(JSONArray entries, int index) {
+        JSONObject entry = entries.optJSONObject(index);
+        return entry != null ? entry.optLong("timestamp", 0L) : 0L;
     }
 
     private static String buildReportArtifactsUrl(String baseUrl, String reportId) {

@@ -6,7 +6,14 @@ import com.mentra.crust.services.NotificationListener
 import com.mentra.crust.services.NotificationProcessBridge
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.functions.Queues
 import java.net.URL
+import java.util.concurrent.Executors
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 
 import com.mentra.crust.navigation.NavigationManager
 import com.mentra.crust.heading.HeadingManager
@@ -76,6 +83,22 @@ class CrustModule : Module() {
   // __dispatch from a per-miniapp QuickJS context (SUBSCRIBE, mic, location,
   // display, send, etc.) would be silently dropped on Android.
   @Volatile private var runtimeInstalled: Boolean = false
+
+  // MentraJS calls get their own serial queue. Expo runs every module's default-queue
+  // AsyncFunction on one shared thread, so a blocking call in another module held every
+  // host→miniapp message behind it: the ACS scoped Wi-Fi join waits on the glasses hotspot for
+  // tens of seconds, the miniapp never saw the host's PING, and the host respawned Mentra Call
+  // mid-join. Serial, so spawn, dispatch and kill still run in the order JS issued them.
+  private val mentraJsExecutor =
+          Executors.newSingleThreadExecutor { r ->
+            Thread(r, "MentraJS-bridge").apply { isDaemon = true }
+          }
+  private val mentraJsQueue =
+          CoroutineScope(
+                  mentraJsExecutor.asCoroutineDispatcher() +
+                          SupervisorJob() +
+                          CoroutineName("MentraJS-bridge"),
+          )
   private var notificationEventReceiver: BroadcastReceiver? = null
   private var notificationBridgeContext: android.content.Context? = null
 
@@ -149,6 +172,8 @@ class CrustModule : Module() {
       notificationEventReceiver = null
       notificationBridgeContext = null
       eventEmitter = null
+      mentraJsQueue.cancel()
+      mentraJsExecutor.shutdown()
     }
 
     Function("hello") {
@@ -254,7 +279,7 @@ class CrustModule : Module() {
           polyfillBundleOverride = polyfillBundle.takeIf { it.isNotEmpty() },
           miniappJs = miniappJs,
       )
-    }
+    }.runOnQueue(mentraJsQueue)
 
     AsyncFunction("mentraJsEvaluate") { packageName: String, source: String ->
       val ctx =
@@ -262,7 +287,7 @@ class CrustModule : Module() {
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("MentraJS: no context")
       JSCRuntime.shared(ctx).evaluate(packageName, source)
-    }
+    }.runOnQueue(mentraJsQueue)
 
     AsyncFunction("mentraJsKill") { packageName: String ->
       val ctx =
@@ -270,7 +295,7 @@ class CrustModule : Module() {
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("MentraJS: no context")
       JSCRuntime.shared(ctx).kill(packageName)
-    }
+    }.runOnQueue(mentraJsQueue)
 
     AsyncFunction("mentraJsDispatchToJs") { packageName: String, envelope: Map<String, Any?> ->
       val ctx =
@@ -279,7 +304,7 @@ class CrustModule : Module() {
                               ?: throw IllegalStateException("MentraJS: no context")
       val json = org.json.JSONObject(envelope as Map<*, *>).toString()
       JSCRuntime.shared(ctx).dispatchToJs(packageName, json)
-    }
+    }.runOnQueue(mentraJsQueue)
 
     AsyncFunction("mentraJsSetManifest") { packageName: String, permissions: List<String> ->
       val ctx =
@@ -290,7 +315,7 @@ class CrustModule : Module() {
           packageName,
           InstalledMiniappManifest(permissions.toSet()),
       )
-    }
+    }.runOnQueue(mentraJsQueue)
 
     Function("mentraJsAlivePackages") {
       val ctx =
@@ -308,7 +333,7 @@ class CrustModule : Module() {
                       ?: appContext.currentActivity
                               ?: return@AsyncFunction false
       JSCRuntime.shared(ctx).debugForceGC(packageName)
-    }
+    }.runOnQueue(mentraJsQueue)
 
     Function("mentraJsLoadPolyfillBundle") {
       val ctx =
@@ -922,7 +947,7 @@ class CrustModule : Module() {
         android.util.Log.e("CrustModule", "stopNavigation failed", e)
         mapOf("ok" to false, "error" to (e.message ?: "stop failed"))
       }
-    }
+    }.runOnQueue(Queues.MAIN)
 
     // Dev-only: nudge the simulated position ~offsetMeters off-route to
     // exercise the Nav SDK's onRerouting() pipeline without having to

@@ -1,0 +1,45 @@
+name: Release Artifact Storage Checks
+
+on:
+  pull_request:
+    paths:
+      - ".github/artifact-storage/**"
+      - ".github/scripts/*artifact*.mjs"
+      - ".github/scripts/release-assets.mjs"
+      - ".github/workflows/artifact-storage-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  storage:
+    # Forks have no R2 credentials. Unit tests also run in release-family-checks.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    name: R2 multipart upload (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, blacksmith-4vcpu-ubuntu-2404]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Test artifact publication and reconciliation
+        run: node --test .github/scripts/release-artifact-storage.test.mjs
+      - name: Verify multipart uploads through the public CDN
+        env:
+          ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          ARTIFACTS_R2_BUCKET: artifactscdn
+        run: node .github/scripts/check-r2-artifact-storage.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: artifact-storage-check-${{ matrix.runner }}
+          path: artifact-storage-check.json
+          retention-days: 7

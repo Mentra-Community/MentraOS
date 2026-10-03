@@ -280,7 +280,7 @@ object STTTools {
                                     Bridge.log(
                                             "ERROR extracting entry ${entry?.name}: ${e.javaClass.simpleName}: ${e.message}"
                                     )
-                                    e.printStackTrace()
+                                    com.mentra.bluetoothsdk.utils.NativeLog.e("STTTools", "Native exception", e)
                                     throw e
                                 }
                             }
@@ -348,7 +348,7 @@ object STTTools {
             return true
         } catch (e: Exception) {
             Bridge.log("EXTRACTION_ERROR: ${e.javaClass.simpleName}: ${e.message}")
-            e.printStackTrace()
+            com.mentra.bluetoothsdk.utils.NativeLog.e("STTTools", "Native exception", e)
             return false
         }
     }

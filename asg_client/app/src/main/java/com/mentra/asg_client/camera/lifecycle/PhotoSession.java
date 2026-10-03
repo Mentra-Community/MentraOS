@@ -2286,6 +2286,12 @@ public final class PhotoSession {
             return;
         }
 
+        // Queueing and cold-camera preparation can outlive charging evidence.
+        if (hooks.isCameraBatteryLow()) {
+            finishFailedPhotoCapture("Battery too low for photo capture");
+            return;
+        }
+
         if (wouldCaptureHdrBurst()) {
             captureHdrBurst();
             return;
@@ -2918,6 +2924,9 @@ public final class PhotoSession {
 
     /** Service-level bridge for threading, wake, camera open, and shared builders. */
     public interface Hooks {
+        /** Evaluate current battery policy, not the value at queue admission. */
+        boolean isCameraBatteryLow();
+
         Object serviceLock();
 
         @Nullable

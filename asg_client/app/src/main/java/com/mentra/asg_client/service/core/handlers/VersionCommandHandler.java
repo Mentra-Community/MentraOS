@@ -35,7 +35,8 @@ public class VersionCommandHandler implements ICommandHandler {
                 case "cs_syvr":
                     Log.d(TAG, "📊 Received " + commandType + " command - delegating to AsgClientService");
                     if (serviceManager.getService() != null) {
-                        serviceManager.getService().sendVersionInfo();
+                        String requestId = data.optString("request_id", null);
+                        serviceManager.getService().sendVersionInfo(requestId);
                         return true;
                     } else {
                         Log.e(TAG, "Service is null, cannot send version info");
@@ -50,4 +51,4 @@ public class VersionCommandHandler implements ICommandHandler {
             return false;
         }
     }
-} 
+}

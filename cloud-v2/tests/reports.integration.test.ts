@@ -40,10 +40,15 @@ const STORAGE_DIR = join(tmpdir(), `mentra-reports-test-${process.pid}`);
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
   process.env.SUPABASE_URL = "https://testproj.supabase.co";
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
-  // Only the Slack notification tests opt in to a (mocked) webhook; everything
+  // Only the Slack notification tests opt in to the mocked bot. Everything
   // else must run with the notifier disabled, whatever the shell env says.
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
+  delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING;
 }
 
 // eslint-disable-next-line import/first
@@ -59,6 +64,7 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
+import { getReport, listReports } from "../packages/core/src/services/report.service";
 import {
   createStorageService,
   sha256Hex,
@@ -214,6 +220,23 @@ describe("reports artifact asset store", () => {
     expect(res.status).toBe(404);
     expect(await ReportAssetModel.countDocuments({})).toBe(0);
   });
+
+  test("retrieves ordered report assets using an available sort index", async () => {
+    const reportId = await submitBugReport();
+    const form = new FormData();
+    form.append("files", new File([new Uint8Array([1])], "one.png", { type: "image/png" }));
+    form.append("files", new File([new Uint8Array([2])], "two.png", { type: "image/png" }));
+    expect((await postArtifacts(reportId, form)).status).toBe(200);
+    // Force a known order that differs from insertion order. The explicit hint
+    // reproduces Cosmos's requirement: ordinary Mongo otherwise permits an
+    // unindexed sort and would miss this deployment failure.
+    await ReportAssetModel.collection.updateOne({ reportId, fileName: "one.png" }, { $set: { createdAt: new Date(2000) } });
+    await ReportAssetModel.collection.updateOne({ reportId, fileName: "two.png" }, { $set: { createdAt: new Date(1000) } });
+    const indexed = await ReportAssetModel.find({ reportId }).sort({ createdAt: 1 }).hint({ createdAt: 1 }).lean();
+    expect(indexed.map(asset => asset.fileName)).toEqual(["two.png", "one.png"]);
+    const detail = await getReport(reportId);
+    expect(detail?.assets.map(asset => asset.artifactId)).toEqual(indexed.map(asset => asset.artifactId));
+  });
 });
 
 describe("reports upload limits", () => {
@@ -276,28 +299,60 @@ describe("reports upload limits", () => {
 });
 
 describe("report Slack notifications", () => {
-  const SLACK_WEBHOOK = "https://hooks.slack.test/services/T0/B0/reports";
+  const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
   const realFetch = globalThis.fetch;
-  let slackCalls: Array<{ url: string; payload: { text: string; blocks: unknown[] } }>;
+  const routingKeys = ["CLOUD_REPORTS_SLACK_BOT_TOKEN", "CLOUD_REPORTS_SLACK_CHANNEL_ID",
+    "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC", "CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL", "CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING", "CLOUD_CORE_ADMIN_EMAILS", "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
+    "SUPABASE_SERVICE_ROLE_KEY"] as const;
+  const savedRoutingEnv = Object.fromEntries(routingKeys.map(key => [key, process.env[key]]));
+  let directoryEmail: string | null;
+  let slackCalls: Array<{ url: string; payload: { channel: string; text: string; blocks: unknown[] } }>;
+  // Resolves when the mocked bot receives its first POST. The service
+  // notifies fire-and-forget after an async account-email lookup, so the
+  // response can return before the bot call starts.
+  let delivered: Promise<void>;
 
   // The in-process app is invoked via coreApp.fetch (a plain handler call),
   // so replacing globalThis.fetch intercepts only the notifier's outbound
-  // webhook POST.
+  // bot POST and the mocked account-directory lookup.
   beforeEach(() => {
-    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = SLACK_WEBHOOK;
+    for (const key of routingKeys) delete process.env[key];
+    directoryEmail = null;
+    process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = "xoxb-test-reports-bot";
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = "C_MAIN";
     slackCalls = [];
+    let markDelivered!: () => void;
+    delivered = new Promise((resolve) => {
+      markDelivered = resolve;
+    });
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.hostname === "testproj.supabase.co") {
+        const identity = { id: "reports-user-1", email: directoryEmail };
+        if (url.pathname === "/auth/v1/admin/users/reports-user-1") {
+          return directoryEmail ? Response.json(identity) : new Response(null, { status: 404 });
+        }
+        if (url.pathname === "/auth/v1/admin/users") {
+          return Response.json({ users: directoryEmail ? [identity] : [] });
+        }
+      }
+      if (url.href !== SLACK_POST_MESSAGE_URL) throw new Error("Unexpected notification test destination");
       slackCalls.push({
         url: String(input),
-        payload: JSON.parse(String(init?.body)) as { text: string; blocks: unknown[] },
+        payload: JSON.parse(String(init?.body)) as { channel: string; text: string; blocks: unknown[] },
       });
-      return new Response("ok", { status: 200 });
+      markDelivered();
+      return Response.json({ ok: true, ts: "1.2" });
     }) as typeof fetch;
   });
 
   afterEach(() => {
+    for (const key of routingKeys) {
+      const value = savedRoutingEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     globalThis.fetch = realFetch;
-    delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   });
 
   test("notifies Slack when feedback is submitted", async () => {
@@ -316,10 +371,11 @@ describe("report Slack notifications", () => {
     const body = (await res.json()) as { reportId: string; status: string };
     expect(body.status).toBe("ready");
 
-    // The notifier fires before the response resolves (fire-and-forget, but
-    // the webhook call starts synchronously), so no waiting is needed.
+    // Wait for the bot POST itself, before afterEach clears the bot env.
+    await delivered;
     expect(slackCalls).toHaveLength(1);
-    expect(slackCalls[0].url).toBe(SLACK_WEBHOOK);
+    expect(slackCalls[0].url).toBe(SLACK_POST_MESSAGE_URL);
+    expect(slackCalls[0].payload.channel).toBe("C_MAIN");
     expect(slackCalls[0].payload.text).toContain("feedback");
     expect(slackCalls[0].payload.text).toContain(body.reportId);
     expect(slackCalls[0].payload.text).toContain(mentraUserId);
@@ -340,6 +396,7 @@ describe("report Slack notifications", () => {
 
     const complete = await completeReport(reportId);
     expect(complete.status).toBe(200);
+    await delivered;
     expect(slackCalls).toHaveLength(1);
     expect(slackCalls[0].payload.text).toContain("bug");
     expect(slackCalls[0].payload.text).toContain(reportId);
@@ -355,8 +412,54 @@ describe("report Slack notifications", () => {
     expect(slackCalls).toHaveLength(1);
   });
 
-  test("submits successfully with no Slack call when the webhook env is unset", async () => {
-    delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
+  for (const scenario of [
+    { kind: "bug", email: "customer@example.test", source: "feedback_screen", category: "bug", channel: "main" },
+    { kind: "feedback", email: "customer@example.test", source: "feedback_screen", category: "feedback", channel: "main" },
+    { kind: "bug", email: "admin@personal.test", source: "feedback_screen", category: "internal", channel: "internal" },
+    { kind: "bug", email: "admin+test@personal.test", source: "feedback_screen", category: "internal", channel: "internal" },
+    { kind: "feedback", email: "team@mentra.glass", source: "feedback_screen", category: "internal", channel: "internal" },
+    { kind: "automatic", email: "team@mentra.glass", source: "watchdog", category: "automatic", channel: "automatic" },
+    { kind: "automatic", email: "admin+test@personal.test", source: "watchdog", category: "automatic", channel: "automatic" },
+    { kind: "automatic", email: "team@mentra.glass", source: "mentra_automated_testing", category: "testing", channel: "testing" },
+    { kind: "automatic", email: "admin+test@personal.test", source: "mentra_automated_testing", category: "testing", channel: "testing" },
+    { kind: "bug", email: "customer@example.test", source: "mentra_automated_testing", category: "testing", channel: "testing" },
+  ] as const) {
+    test(`routes submitted ${scenario.kind} / ${scenario.email} / ${scenario.source} to the same category as the dashboard`, async () => {
+      process.env.SUPABASE_SERVICE_ROLE_KEY = "mock-service-role-key";
+      process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@personal.test";
+      process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "mentra.glass";
+      for (const category of ["internal", "automatic", "testing"]) {
+        process.env[`CLOUD_REPORTS_SLACK_CHANNEL_ID_${category.toUpperCase()}`] = `C_${category.toUpperCase()}`;
+      }
+      directoryEmail = scenario.email;
+      const payload = scenario.kind === "feedback"
+        ? { kind: "feedback", feedback: { message: "category routing", contactEmail: "admin@personal.test" }, context: {} }
+        : { kind: scenario.kind, trigger: { type: scenario.kind === "automatic" ? "automatic" : "manual",
+            source: scenario.source, reason: "category_routing" },
+            report: { actualBehavior: "category routing", contactEmail: "admin@personal.test" }, context: {} };
+      const response = await coreApp.fetch(new Request(REPORTS_PATH, { method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json" }, body: JSON.stringify(payload) }));
+      expect(response.status).toBe(200);
+      const { reportId, status } = await response.json() as { reportId: string; status: string };
+      if (scenario.kind !== "feedback") {
+        expect(status).toBe("collecting");
+        expect(slackCalls).toHaveLength(0);
+        expect((await completeReport(reportId)).status).toBe(200);
+      } else expect(status).toBe("ready");
+      await delivered;
+      expect(slackCalls).toHaveLength(1);
+      expect(slackCalls[0]!.url).toBe(SLACK_POST_MESSAGE_URL);
+      expect(slackCalls[0]!.payload.channel).toBe(`C_${scenario.channel.toUpperCase()}`);
+      // Exercise the database filters and the notifier against the same trusted directory.
+      for (const kind of ["bug", "feedback", "internal", "automatic", "testing"] as const) {
+        const ids = (await listReports({ category: kind })).map(report => report.reportId);
+        expect(ids.includes(reportId)).toBe(kind === scenario.category);
+      }
+    });
+  }
+
+  test("submits successfully with no Slack call when the bot token is unset", async () => {
+    delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
 
     const res = await coreApp.fetch(
       new Request(REPORTS_PATH, {

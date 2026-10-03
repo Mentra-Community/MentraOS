@@ -407,9 +407,12 @@ export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare}
         style={themed($actionButton)}>
         <Icon name="chevron-left" size={28} color={theme.colors.foreground} />
       </TouchableOpacity>
-      <Text pointerEvents="none" style={themed($counterText)}>
-        {currentIndex + 1} / {total}
-      </Text>
+      {/* Android honors pointerEvents on View, not this full-width Text overlay. */}
+      <View pointerEvents="none" style={themed($counter)}>
+        <Text style={themed($counterText)}>
+          {currentIndex + 1} / {total}
+        </Text>
+      </View>
       <View style={themed($headerActions)}>
         <TouchableOpacity
           accessibilityLabel="Show media details"
@@ -613,11 +616,14 @@ const $headerActions: ThemedStyle<any> = () => ({
   alignItems: "center",
 })
 
-const $counterText: ThemedStyle<any> = ({colors, spacing}) => ({
+const $counter: ThemedStyle<any> = ({spacing}) => ({
   position: "absolute",
   left: 0,
   right: 0,
   bottom: spacing.s6,
+})
+
+const $counterText: ThemedStyle<any> = ({colors}) => ({
   color: colors.foreground,
   fontSize: 16,
   fontWeight: "600",

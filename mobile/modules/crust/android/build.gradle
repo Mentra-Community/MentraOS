@@ -82,6 +82,9 @@ android {
 }
 
 dependencies {
+  testImplementation 'junit:junit:4.13.2'
+
+  implementation 'com.facebook.react:react-android'
   // Mapbox Navigation SDK v3 (replaces Google Navigation SDK).
   // Drives headless turn-by-turn nav in NavigationManager.kt: route
   // progress, off-route + automatic rerouting, enhanced (map-matched)
@@ -143,4 +146,10 @@ dependencies {
   // `runBlocking(dispatcher)` from the per-miniapp single-thread executor.
   implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
   implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+}
+
+// Notification lifecycle tests run against Android APIs without a device.
+dependencies {
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.11.1'
 }

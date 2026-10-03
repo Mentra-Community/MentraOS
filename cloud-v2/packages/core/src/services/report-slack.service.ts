@@ -1,24 +1,19 @@
 /**
- * @fileoverview Slack notifications for Cloud V2 reports.
- *
- * Cloud V2 replacement for the retired V1 feedback Slack path: bug reports
- * and feedback submitted through /api/client/reports post a summary to the
- * team channel via a Slack Incoming Webhook. Automatic reports can be
- * routed to their own channel via CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
- * falling back to the main webhook when unset — the same routing V1 used for
- * SLACK_WEBHOOK_AUTOMATIC_INCIDENTS.
- *
- * Best-effort by design: an unset webhook (local dev, tests) is a silent
- * skip, and send failures are logged, never thrown, so a notification can
- * never delay or fail the report API response. Callers fire-and-forget.
+ * Slack notifications for Cloud V2 reports, posted through the existing report
+ * bot so the agent can update its messages. Each dashboard category has one
+ * configured channel. Missing configuration or a failed post is logged and
+ * returned as a failure; there is no webhook or cross-channel fallback.
+ * Callers fire-and-forget so Slack never blocks report submission.
  */
 
 import { createLogger } from "@mentra/cloud-shared";
 import { createHmac } from "node:crypto";
+import { reportCategory, type ReportCategory } from "./report-category";
 
 const logger = createLogger("core").child({ service: "report-slack.service" });
 
 const SLACK_TIMEOUT_MS = 10_000;
+const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const REPORT_AGENT_ACTION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 /** How much user-authored text a Slack field keeps, mirroring V1 limits. */
@@ -66,7 +61,6 @@ export interface ReportSlackNotification {
 
 export interface ReportSlackResult {
   ok: boolean;
-  skipped?: boolean;
 }
 
 interface SlackBlock {
@@ -85,64 +79,70 @@ type SlackButton = {
   | { action_id: string; value: string; url?: never }
 );
 
-/**
- * Post a report summary to the reports Slack channel. Resolves with
- * `{ok: false, skipped: true}` when CLOUD_REPORTS_SLACK_WEBHOOK_URL is unset
- * and `{ok: false}` on send failure; it never rejects.
- */
+const CHANNEL_ENV_BY_CATEGORY: Record<ReportCategory, string> = {
+  bug: "CLOUD_REPORTS_SLACK_CHANNEL_ID",
+  feedback: "CLOUD_REPORTS_SLACK_CHANNEL_ID",
+  automatic: "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
+  internal: "CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL",
+  testing: "CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING",
+};
+
+/** Post to exactly one category channel. Configuration/send failures never reject. */
 export async function notifyReportSlack(
   notification: ReportSlackNotification,
 ): Promise<ReportSlackResult> {
-  const webhookUrl = webhookUrlFor(notification.kind);
-  if (!webhookUrl) {
-    logger.debug(
-      { reportId: notification.reportId, kind: notification.kind },
-      "no Slack webhook configured for this report kind; skipping notification",
+  const category = reportCategory(notification);
+  const channelKey = CHANNEL_ENV_BY_CATEGORY[category];
+  const token = process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN?.trim();
+  const channel = process.env[channelKey]?.trim();
+  if (!token || !channel) {
+    logger.error(
+      { reportId: notification.reportId, category,
+        missing: [!token && "CLOUD_REPORTS_SLACK_BOT_TOKEN", !channel && channelKey].filter(Boolean) },
+      "report Slack notification not sent: missing configuration",
     );
-    return { ok: false, skipped: true };
+    return { ok: false };
   }
 
   try {
-    const res = await fetch(webhookUrl, {
+    const message = buildSlackMessage(notification);
+    const res = await fetch(SLACK_POST_MESSAGE_URL, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(buildSlackMessage(notification)),
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ channel, ...message }),
       signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
     });
     if (!res.ok) {
       logger.error(
-        {
-          reportId: notification.reportId,
-          status: res.status,
-          body: await res.text().catch(() => ""),
-        },
+        { reportId: notification.reportId, category, channel, status: res.status,
+          body: await res.text().catch(() => "") },
         "report Slack notification failed",
       );
       return { ok: false };
     }
-    logger.info({ reportId: notification.reportId }, "report Slack notification sent");
+    // The Web API also answers 200 with {ok:false} on refusal.
+    const body = (await res.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; ts?: string }
+      | null;
+    if (!body?.ok) {
+      logger.error(
+        { reportId: notification.reportId, category, channel, error: body?.error ?? "unknown_error" },
+        "report Slack notification rejected by chat.postMessage",
+      );
+      return { ok: false };
+    }
+    logger.info({ reportId: notification.reportId, category, channel, ts: body.ts }, "report Slack notification sent");
     return { ok: true };
   } catch (error) {
     logger.error(
-      { reportId: notification.reportId, error: (error as Error)?.message },
+      { reportId: notification.reportId, category, channel, error: (error as Error)?.message },
       "report Slack notification error",
     );
     return { ok: false };
   }
-}
-
-/**
- * Automatic reports post to their own channel when
- * CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL is set, falling back to the main
- * webhook otherwise, so the feedback channel stays free of watchdog noise
- * without making the split mandatory.
- */
-function webhookUrlFor(kind: ReportSlackNotification["kind"]): string | undefined {
-  const main = process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
-  if (kind === "automatic") {
-    return process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL || main;
-  }
-  return main;
 }
 
 function buildSlackMessage(notification: ReportSlackNotification): {
@@ -218,18 +218,19 @@ function buildSlackMessage(notification: ReportSlackNotification): {
 
   const agentActionUrl = reportAgentActionUrl(notification);
   if (agentActionUrl) {
+    const agentButtonText = kind === "feedback" ? "Run Dev Agent" : "Run Fix Agent";
     const agentButton: SlackButton =
       process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED === "true"
         ? {
             type: "button",
-            text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+            text: { type: "plain_text", text: agentButtonText, emoji: true },
             action_id: "run_fix_agent",
             style: "primary",
             value: agentActionUrl,
           }
         : {
             type: "button",
-            text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+            text: { type: "plain_text", text: agentButtonText, emoji: true },
             style: "primary",
             url: agentActionUrl,
           };
@@ -263,11 +264,12 @@ function buildSlackMessage(notification: ReportSlackNotification): {
  * confirmation-page fallback working. Explicitly setting
  * CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED=true switches to a one-click
  * action value, which Slack sends only when a human presses the button. Bug
- * reports are the deliberately narrow MVP scope; feedback and automatic
- * diagnostics never receive it.
+ * reports and feature requests receive it; other feedback and automatic
+ * diagnostics do not.
  */
 function reportAgentActionUrl(notification: ReportSlackNotification): string | null {
-  if (notification.kind !== "bug") return null;
+  const isFeatureRequest = notification.kind === "feedback" && notification.feedback?.type === "feature";
+  if (notification.kind !== "bug" && !isFeatureRequest) return null;
   const configuredBase = process.env.CLOUD_REPORT_AGENT_URL?.trim();
   const signingSecret = process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET;
   const environment = reportAgentEnvironment();

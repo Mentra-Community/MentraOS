@@ -57,6 +57,8 @@ ciGates:
     workflows:
       - "Mobile App Quality Checks"
       - "Mobile App Android Build"
+      # Publishes the OTA manifest every PR Android APK pins.
+      - "MentraOS ASG Client Build"
   - paths:
       - "asg_client/**"
     workflows:

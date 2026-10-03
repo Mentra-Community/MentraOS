@@ -22,7 +22,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import android.util.SparseArray
 
 import java.io.IOException
@@ -1370,8 +1370,8 @@ class G1 : SGCManager() {
         context!!.registerReceiver(bondingReceiver, filter)
         isBondingReceiverRegistered = true
 
-        preferredG1DeviceId = DeviceStore.get("bluetooth", "device_name") as String?
-
+        // Keep the target supplied by connectById. device_name still belongs to
+        // the previous pairing until DeviceManager promotes the ready device.
         if (!bluetoothAdapter!!.isEnabled()) {
             return
         }

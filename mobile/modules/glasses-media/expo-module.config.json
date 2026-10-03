@@ -1,0 +1,16 @@
+{
+  "platforms": [
+    "apple",
+    "android"
+  ],
+  "apple": {
+    "modules": [
+      "GlassesMediaRelayModule"
+    ]
+  },
+  "android": {
+    "modules": [
+      "com.mentra.glassesmedia.GlassesMediaRelayModule"
+    ]
+  }
+}

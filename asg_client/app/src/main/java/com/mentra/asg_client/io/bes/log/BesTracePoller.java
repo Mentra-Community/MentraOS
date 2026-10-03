@@ -105,6 +105,9 @@ public class BesTracePoller {
       scheduleNextLocked();
     }
     emitDelta(delta);
+    // Every snapshot carries BES's uptime counter, so polling also confirms reboots outright
+    // instead of leaving them inferred from UART silence.
+    BesLivenessMonitor.get().onTraceSnapshot(snapshot);
   }
 
   private String extractDelta(String snapshot) {

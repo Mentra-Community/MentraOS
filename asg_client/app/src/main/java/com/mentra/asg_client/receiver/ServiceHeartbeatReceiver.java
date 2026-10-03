@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
+import com.mentra.asg_client.RecoveryWorkerManager;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.core.AsgClientService;
@@ -29,7 +31,9 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
             boolean accepted = intent.getBooleanExtra(OtaConstants.EXTRA_HANDOFF_ACCEPTED, false);
             String reason = intent.getStringExtra(OtaConstants.EXTRA_HANDOFF_REASON);
             Log.i(TAG, "Downgrade handoff verdict: accepted=" + accepted + ", reason=" + reason);
-            OtaHelper.onDowngradeHandoffResult(accepted, reason == null ? "" : reason);
+            OtaHelper.onDowngradeHandoffResult(accepted, reason == null ? "" : reason,
+                    intent.getStringExtra(AsgConstants.EXTRA_RECOVERY_REQUEST_ID),
+                    intent.getLongExtra("target_version", -1L));
             return;
         }
         if (ACTION_HEARTBEAT_LEGACY.equals(action) || ACTION_PING.equals(action)) {
@@ -55,8 +59,7 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
             lastHeartbeatTime = currentTime;
 
             try {
-                Intent pongIntent = new Intent(ACTION_PONG);
-                pongIntent.setPackage("com.mentra.recovery");
+                Intent pongIntent = RecoveryWorkerManager.newRecoveryIntent(ACTION_PONG);
                 context.sendBroadcast(pongIntent, RECOVERY_HEARTBEAT_PERMISSION);
                 Log.d(TAG, "Sent heartbeat acknowledgment");
             } catch (Exception e) {

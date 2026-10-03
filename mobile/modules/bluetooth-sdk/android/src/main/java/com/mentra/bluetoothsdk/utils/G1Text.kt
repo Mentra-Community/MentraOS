@@ -423,7 +423,7 @@ class G1FontLoaderKt {
             fontMap[glyph.char] = FontGlyph(glyph.width, glyph.height)
         }
 
-        println("Hardcoded font data loaded successfully! ${fontMap.size} glyphs mapped.")
+        com.mentra.bluetoothsdk.Bridge.log("Hardcoded font data loaded successfully! ${fontMap.size} glyphs mapped.")
     }
 
     fun getGlyph(character: Char): FontGlyph {

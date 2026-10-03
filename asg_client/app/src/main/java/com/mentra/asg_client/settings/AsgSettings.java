@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
+import com.mentra.asg_client.io.media.core.PhotoCompression;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 
@@ -62,6 +63,31 @@ public class AsgSettings {
         this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         migrateLegacyZslMfnrPreferences();
         Log.d(TAG, "AsgSettings initialized");
+    }
+
+    /** Whether site-network HTTP gallery access is enabled across restarts. Defaults off. */
+    public boolean isGalleryServerEnabled() {
+        synchronized (prefs) {
+            return prefs.getBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, false);
+        }
+    }
+
+    /** Persist the explicit site-network gallery opt-in; return whether storage succeeded. */
+    public boolean setGalleryServerEnabled(boolean enabled) {
+        synchronized (prefs) {
+            boolean previous = isGalleryServerEnabled();
+            if (prefs.edit().putBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, enabled)
+                    .commit()) {
+                return true;
+            }
+            // commit() changes the in-memory value even when the disk write fails. Restore it
+            // before readers (including other AsgSettings instances) can observe the failed edit.
+            if (!prefs.edit().putBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, previous)
+                    .commit()) {
+                Log.e(TAG, "Gallery setting rollback was restored in memory but could not be saved");
+            }
+            return false;
+        }
     }
 
     /**
@@ -458,10 +484,11 @@ public class AsgSettings {
     }
 
     public void setButtonPhotoCompress(String compress) {
-        if (compress == null || compress.isEmpty()) {
+        if (compress == null) {
             prefs.edit().remove(KEY_BUTTON_PHOTO_COMPRESS).commit();
             return;
         }
+        PhotoCompression.fromValue(compress);
         Log.d(TAG, "Setting button photo compress to: " + compress);
         prefs.edit().putString(KEY_BUTTON_PHOTO_COMPRESS, compress).commit();
     }

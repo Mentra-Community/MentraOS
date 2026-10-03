@@ -25,18 +25,20 @@ const SKIP_NAME_PREFIXES = [
   "awdl",
   "llw",
   "bridge",
-  "docker",
-  "veth",
-  "vmnet",
   "tun",
   "tap",
-  "zt",
-  "tailscale",
   "ipsec",
   "ppp",
   "ap",
   "phy",
 ]
+
+/** Virtual / overlay adapter names to demote to last-resort fallback. */
+const VIRTUAL_NAME_REGEX =
+  /vEthernet|WSL|Hyper-V|VirtualBox|VMware|Tailscale|ZeroTier|docker|^vmnet|^veth|^zt/i
+
+/** RFC 6598 Carrier Grade NAT (CGNAT) address space (100.64.0.0/10), used by Tailscale. */
+const CGNAT_REGEX = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./
 
 /** Prefer these when present (macOS Wi-Fi is usually en0). */
 const PREFERRED_NAMES = new Set(["en0", "en1", "eth0", "eth1", "wlan0", "wlan1", "wlp0s20f3"])
@@ -49,10 +51,17 @@ function isLinkLocal(address: string): boolean {
   return address.startsWith("169.254.")
 }
 
-function isPrivateLan(address: string): boolean {
-  if (address.startsWith("192.168.")) return true
-  if (address.startsWith("10.")) return true
-  return /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
+function isCgnat(address: string): boolean {
+  return CGNAT_REGEX.test(address)
+}
+
+function isVirtualName(name: string): boolean {
+  return VIRTUAL_NAME_REGEX.test(name)
+}
+
+function isPreferredName(name: string): boolean {
+  const lower = name.toLowerCase()
+  return PREFERRED_NAMES.has(name) || PREFERRED_NAMES.has(lower) || /^(wi-fi|ethernet)(\s+\d+)?$/i.test(name)
 }
 
 function shouldSkipName(name: string): boolean {
@@ -86,22 +95,46 @@ export function scoreLanIface(iface: LanIface): number {
   if (isLinkLocal(iface.address)) return -1
   if (shouldSkipName(iface.name)) return -1
   // Zero MAC is typical of virtual/tunnel adapters on macOS.
-  if (iface.mac === "00:00:00:00:00:00" && !PREFERRED_NAMES.has(iface.name)) return -1
+  // Reject unless it qualifies as a virtual/CGNAT fallback candidate.
+  if (
+    iface.mac === "00:00:00:00:00:00" &&
+    !isPreferredName(iface.name) &&
+    !isVirtualName(iface.name) &&
+    !isCgnat(iface.address)
+  ) {
+    return -1
+  }
+
+  const isVirtual = isVirtualName(iface.name)
+  const isCgnatAddr = isCgnat(iface.address)
 
   let score = 0
-  if (isPrivateLan(iface.address)) score += 50
-  else score += 5 // public / unusual — last resort
+  // Prioritize standard private physical LAN ranges
+  if (iface.address.startsWith("192.168.")) {
+    score += 100
+  } else if (iface.address.startsWith("10.")) {
+    score += 80
+  } else if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(iface.address)) {
+    score += 60
+  } else if (isCgnatAddr) {
+    score += 5
+  } else {
+    score += 10 // other public / unusual — last resort
+  }
 
-  if (PREFERRED_NAMES.has(iface.name)) score += 40
-  else if (
-    /^en\d+$/i.test(iface.name) ||
-    /^eth\d+$/i.test(iface.name) ||
-    /^wlan\d+$/i.test(iface.name) ||
-    // Predictable NetworkManager names on modern Linux (wlp3s0, enp0s3, …).
-    /^wlp\w+/i.test(iface.name) ||
-    /^enp\w+/i.test(iface.name)
-  ) {
-    score += 25
+  if (!isVirtual) {
+    if (isPreferredName(iface.name)) {
+      score += 40
+    } else if (
+      /^en\d+$/i.test(iface.name) ||
+      /^eth\d+$/i.test(iface.name) ||
+      /^wlan\d+$/i.test(iface.name) ||
+      // Predictable NetworkManager names on modern Linux (wlp3s0, enp0s3, …).
+      /^wlp\w+/i.test(iface.name) ||
+      /^enp\w+/i.test(iface.name)
+    ) {
+      score += 25
+    }
   }
 
   const specificity = netmaskSpecificity(iface.netmask)
@@ -110,10 +143,19 @@ export function scoreLanIface(iface: LanIface): number {
   else if (specificity > 24) score += 10
   else if (specificity > 0 && specificity < 16) score -= 20
 
-  // 192.168/16 is the common home/office Wi-Fi shape.
-  if (iface.address.startsWith("192.168.")) score += 10
+  if (!isVirtual && !isCgnatAddr) {
+    // Primary tier: all non-virtual, non-CGNAT candidates are offset by +1000
+    // so physical scores are always >= 1000.
+    score += 1000
+    return Math.max(1000, score)
+  }
 
-  return score
+  // Fallback tier: virtual adapter names and CGNAT addresses
+  if (isVirtual) score -= 100
+  if (isCgnatAddr) score -= 50
+
+  // Clamped between 1 and 100 so virtual/CGNAT acts as last-resort fallback.
+  return Math.min(100, Math.max(1, score))
 }
 
 /**

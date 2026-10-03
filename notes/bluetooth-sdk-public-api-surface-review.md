@@ -200,7 +200,7 @@ type HotspotStatus =
 setGalleryModeEnabled(enabled: boolean)
 type PhotoSize = "small" | "medium" | "large" | "full"
 type ButtonPhotoSize = "small" | "medium" | "large"
-type PhotoCompression = "none" | "medium" | "heavy"
+type PhotoCompression = "none" | "low" | "medium" | "high"
 const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
 const CAMERA_FOV_DEFAULT = 102

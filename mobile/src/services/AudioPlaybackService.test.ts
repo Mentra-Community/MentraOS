@@ -1,5 +1,5 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {createAudioPlayer, setAudioModeAsync} from "expo-audio"
+import {AudioStatus, createAudioPlayer, setAudioModeAsync} from "expo-audio"
 
 import audioPlaybackService from "@/../modules/engine/src/services/AudioPlaybackService"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
@@ -26,10 +26,7 @@ const mockPlayer = {
   volume: 1,
 }
 
-type MockPlaybackStatus = {
-  didJustFinish: boolean
-  duration: number
-}
+type MockPlaybackStatus = Partial<AudioStatus>
 
 function getLatestStatusListener() {
   const calls = mockPlayer.addListener.mock.calls
@@ -178,5 +175,66 @@ describe("AudioPlaybackService", () => {
     expect(mockPlayer.replace).toHaveBeenCalledWith({uri: "https://example.com/slow.mp3"})
     expect(mockPlayer.play).toHaveBeenCalled()
     expect(BluetoothSdk.setGlassesMediaVolume).not.toHaveBeenCalled()
+  })
+
+  it("does not trigger a late fallback when startup emits no status events", async () => {
+    const onComplete = jest.fn()
+    await audioPlaybackService.play({requestId: "stalled", audioUrl: "https://example.com/tts"}, onComplete)
+
+    jest.advanceTimersByTime(20_000)
+    expect(onComplete).not.toHaveBeenCalled()
+    expect(mockPlayer.replace).toHaveBeenLastCalledWith({uri: "https://example.com/tts"})
+  })
+
+  it.each(["idle", "failed"])(
+    "allows a native %s error to start fallback playback without a later stop",
+    async (state) => {
+      const fallbackComplete = jest.fn()
+      let fallbackStart: Promise<void> | undefined
+      const onComplete = jest.fn(() => {
+        fallbackStart = audioPlaybackService.play(
+          {requestId: "offline", audioUrl: "file://speech.wav"},
+          fallbackComplete,
+        )
+      })
+      await audioPlaybackService.play({requestId: "cloud", audioUrl: "https://example.com/tts"}, onComplete)
+      jest.advanceTimersByTime(2_000)
+      getLatestStatusListener()({playbackState: state, isLoaded: false, isBuffering: false})
+      await fallbackStart
+      jest.advanceTimersByTime(2_000)
+      expect(onComplete).toHaveBeenCalledTimes(1)
+      expect(mockPlayer.replace).toHaveBeenLastCalledWith({uri: "file://speech.wav"})
+      expect(BluetoothSdk.setOwnAppAudioPlaying).toHaveBeenLastCalledWith(true)
+      expect(fallbackComplete).not.toHaveBeenCalled()
+    },
+  )
+
+  it("ignores ambiguous idle during source replacement without scheduling a retry", async () => {
+    const onComplete = jest.fn()
+    await audioPlaybackService.play({requestId: "loading", audioUrl: "https://example.com/tts"}, onComplete)
+    getLatestStatusListener()({playbackState: "idle", isLoaded: false, isBuffering: false})
+    jest.advanceTimersByTime(20_000)
+    expect(onComplete).not.toHaveBeenCalled()
+    getLatestStatusListener()({didJustFinish: true, duration: 2})
+    expect(onComplete).toHaveBeenCalledWith("loading", true, null, 2000, "completed")
+  })
+
+  it.each([
+    ["idle", 2_000],
+    ["failed", 0],
+    ["failed", 2_000],
+  ] as const)("reports native %s failure at %d ms once and unloads the source", async (state, delayMs) => {
+    const onComplete = jest.fn()
+    await audioPlaybackService.play({requestId: "failed", audioUrl: "https://example.com/tts"}, onComplete)
+    jest.advanceTimersByTime(delayMs)
+    const status = {playbackState: state, isLoaded: false, isBuffering: false}
+    getLatestStatusListener()(status)
+    getLatestStatusListener()(status)
+    jest.advanceTimersByTime(2_000)
+    expect(onComplete).toHaveBeenCalledTimes(1)
+    expect(onComplete).toHaveBeenCalledWith("failed", false, expect.any(String), null, "error")
+    expect(mockPlayer.replace).toHaveBeenLastCalledWith(9001)
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+    expect(BluetoothSdk.setOwnAppAudioPlaying).toHaveBeenLastCalledWith(false)
   })
 })

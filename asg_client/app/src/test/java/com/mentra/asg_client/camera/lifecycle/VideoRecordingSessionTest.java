@@ -3,6 +3,7 @@ package com.mentra.asg_client.camera.lifecycle;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import android.util.Size;
+import android.media.MediaRecorder;
 
 import com.mentra.asg_client.sensors.ImuRecorder;
 import com.mentra.asg_client.settings.VideoSettings;
@@ -16,22 +17,51 @@ import org.robolectric.annotation.Config;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class VideoRecordingSessionTest {
+    private boolean batteryLow;
 
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     private final VideoRecordingSession.Hooks hooks = new VideoRecordingSession.Hooks() {
+        @Override public boolean isCameraBatteryLow() { return batteryLow; }
         @Override public ImuRecorder ensureImuRecorder() { return null; }
         @Override public ImuRecorder currentImuRecorder() { return null; }
         @Override public int videoOrientation() { return 90; }
         @Override public void onSessionTerminated() {}
     };
+
+    @Test
+    public void chargingLossDuringCameraPreparationRejectsRecorderStart() throws Exception {
+        VideoRecordingSession session = newSession();
+        MediaRecorder recorder = org.mockito.Mockito.mock(MediaRecorder.class);
+        Field recorderField = VideoRecordingSession.class.getDeclaredField("mediaRecorder");
+        recorderField.setAccessible(true);
+        recorderField.set(session, recorder);
+        File captureDir = temporaryFolder.newFolder("VID_rejected");
+        File output = new File(captureDir, "base.mp4");
+        assertThat(output.createNewFile()).isTrue();
+        session.prepareRequest("queued", output.getAbsolutePath(), null);
+        batteryLow = true;
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> session.startRecording(null, null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Battery too low for video capture");
+        assertThat(session.isRecording()).isFalse();
+        // Rejection must not release a surface still owned by the camera session.
+        // The service closes that session, releases the recorder, then deletes output.
+        assertThat(captureDir).exists();
+        org.mockito.Mockito.verify(recorder, org.mockito.Mockito.never()).release();
+        session.release();
+        org.mockito.Mockito.verify(recorder).release();
+        VideoRecordingSession.deleteCorruptCapture(session.currentVideoPath());
+        assertThat(captureDir).doesNotExist();
+    }
 
     @Test
     public void prepareRequest_storesVideoIdPathAndSettings() {

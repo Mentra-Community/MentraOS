@@ -13,7 +13,10 @@
 
 export const ALLOWED_PERMISSIONS = [
   'MICROPHONE',
+  // The glasses camera. For this phone's own camera — which a miniapp needs when it publishes
+  // video from the phone rather than capturing it on the glasses — declare PHONE_CAMERA.
   'CAMERA',
+  'PHONE_CAMERA',
   'CALENDAR',
   'LOCATION',
   'BACKGROUND_LOCATION',

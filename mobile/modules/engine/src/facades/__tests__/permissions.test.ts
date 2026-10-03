@@ -17,7 +17,9 @@ const androidRequestMultiple = mock(async (permissions: string[]) => {
   )
 })
 
-mock.module("react-native", () => ({
+import {reactNative} from "../../services/__tests__/reactNativeTestMock"
+
+Object.assign(reactNative, {
   Linking: {openSettings: mock(async () => {})},
   PermissionsAndroid: {
     PERMISSIONS: {
@@ -43,7 +45,7 @@ mock.module("react-native", () => ({
     requestMultiple: androidRequestMultiple,
   },
   Platform: {OS: "android", Version: 30},
-}))
+})
 
 mock.module("react-native-permissions", () => ({
   PERMISSIONS: {

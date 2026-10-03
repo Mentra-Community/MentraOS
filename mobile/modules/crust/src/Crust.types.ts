@@ -14,6 +14,9 @@ export type CrustModuleEvents = {
   onNavRoute: (params: NavRoutePayload) => void
   onNavOffRoute: (params: NavOffRoutePayload) => void
   onHeading: (params: HeadingPayload) => void
+  phone_notification: (event: PhoneNotificationEvent) => void
+  phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
+  captions_tester_incident: (event: CaptionsTesterIncidentEvent) => void
 }
 
 export type NavOffRoutePayload = {
@@ -65,9 +68,6 @@ export type NavLocationPayload = {
   accuracy: number | null
   /** Unix ms timestamp of the fix. */
   timestamp: number
-  phone_notification: (event: PhoneNotificationEvent) => void
-  phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
-  captions_tester_incident: (event: CaptionsTesterIncidentEvent) => void
 }
 
 export type ChangeEventPayload = {

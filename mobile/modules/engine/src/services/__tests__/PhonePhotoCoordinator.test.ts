@@ -5,17 +5,17 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 // Mock module dependencies BEFORE importing the coordinator.
 
 // --- BLE native bridge (@mentra/bluetooth-sdk/internal) -------------------
-const requestPhotoNative = mock(async (_req: unknown): Promise<undefined> => undefined)
+const requestPhotoNative = mock(async (_req: unknown): Promise<unknown> => undefined)
 const warmUpCameraNative = mock(async (_req: unknown): Promise<undefined> => undefined)
 const stopCameraWarmUpNative = mock(async (_requestId: string): Promise<undefined> => undefined)
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {
-    requestPhoto: requestPhotoNative,
-    warmUpCamera: warmUpCameraNative,
-    stopCameraWarmUp: stopCameraWarmUpNative,
-  },
-}))
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
+Object.assign(bluetoothSdk, {
+  requestPhoto: requestPhotoNative,
+  warmUpCamera: warmUpCameraNative,
+  stopCameraWarmUp: stopCameraWarmUpNative,
+})
 
 // --- cloud-v2 managed-photo service (CloudClientService singleton) --------
 const PRESIGN = {
@@ -23,14 +23,14 @@ const PRESIGN = {
   uploadUrl: "https://cloud.test/api/v2/runtime/photo/upload/rq-test-1",
   readUrl: "https://cloud.test/api/v2/runtime/photo/read/rq-test-1",
 }
-const startManagedPhoto = mock(async (_opts: {size?: string}) => PRESIGN)
+const startManagedPhoto = mock(async () => PRESIGN)
 const awaitManagedPhotoReady = mock(
   async (_requestId: string): Promise<{readUrl?: string}> => ({readUrl: "https://r2.test/signed"}),
 )
 
-mock.module("../CloudClientService", () => ({
-  cloudClientService: {startManagedPhoto, awaitManagedPhotoReady},
-}))
+import {cloudClientService} from "./cloudClientServiceTestMock"
+
+Object.assign(cloudClientService, {startManagedPhoto, awaitManagedPhotoReady})
 
 // --- glasses store + readiness ---------------------------------------------
 // The coordinator's connected precheck reads the engine glasses store via
@@ -50,6 +50,11 @@ mock.module("../GlassesReadiness", () => ({
 const {CAPTURE_PIPELINE_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} = await import("../PhonePhotoCoordinator")
 
 beforeEach(() => {
+  Object.assign(bluetoothSdk, {
+    requestPhoto: requestPhotoNative,
+    warmUpCamera: warmUpCameraNative,
+    stopCameraWarmUp: stopCameraWarmUpNative,
+  })
   requestPhotoNative.mockClear()
   warmUpCameraNative.mockClear()
   stopCameraWarmUpNative.mockClear()
@@ -112,7 +117,7 @@ describe("PhonePhotoCoordinator", () => {
       expect(result.mimeType).toBe("image/jpeg")
       expect(result.requestId).toBe("rq-test-1")
 
-      expect(startManagedPhoto).toHaveBeenCalledWith({size: "medium"})
+      expect(startManagedPhoto).toHaveBeenCalledWith()
       expect(awaitManagedPhotoReady).toHaveBeenCalledWith("rq-test-1")
 
       // BLE call shape: wire v2 sends a short 4-hex correlation id (not the
@@ -226,7 +231,7 @@ describe("PhonePhotoCoordinator", () => {
     test("passes text mode through without forcing public max quality", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {mode: "text", size: "low"})
-      expect(startManagedPhoto).toHaveBeenCalledWith({size: "max"})
+      expect(startManagedPhoto).toHaveBeenCalledWith()
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text", size: "low"})
     })
 
@@ -248,13 +253,13 @@ describe("PhonePhotoCoordinator", () => {
       // Legacy wire values may still arrive from older callers at runtime.
       await coord.takePhoto("com.a", {size: "full"})
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size: "max"})
-      expect(startManagedPhoto).toHaveBeenCalledWith({size: "full"})
+      expect(startManagedPhoto).toHaveBeenCalledWith()
     })
 
-    test.each(["low", "high", "max"] as const)("presign accepts canonical size %s without HTTP 400", async (size) => {
+    test.each(["low", "high", "max"] as const)("keeps size %s on the native request only", async (size) => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {size})
-      expect(startManagedPhoto).toHaveBeenCalledWith({size})
+      expect(startManagedPhoto).toHaveBeenCalledWith()
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size})
     })
 
@@ -477,10 +482,10 @@ describe("PhonePhotoCoordinator", () => {
       expect(err.transport).toBe("ble")
     })
 
-    test("caps warm-up leases at 60 seconds", async () => {
+    test("caps warm-up leases at five minutes", async () => {
       const coord = new PhonePhotoCoordinator()
-      await coord.warmUpCamera("com.a", {durationMs: 120_000})
-      expect(warmUpCameraNative.mock.calls[0]![0]).toMatchObject({durationMs: 60_000})
+      await coord.warmUpCamera("com.a", {durationMs: 600_000})
+      expect(warmUpCameraNative.mock.calls[0]![0]).toMatchObject({durationMs: 300_000})
       await coord.stopWarmUpForApp("com.a")
     })
 
@@ -523,4 +528,44 @@ describe("PhonePhotoCoordinator", () => {
       expect(stopCameraWarmUpNative.mock.calls).toEqual([[requestId], [requestId]])
     })
   })
+})
+
+
+describe("native upload completion fallback", () => {
+  test("resolves a confirmed upload without a cloud ready push", async () => {
+    awaitManagedPhotoReady.mockImplementation(() => new Promise(() => {}))
+    requestPhotoNative.mockImplementation(async (request: unknown) => ({
+      state: "success", requestId: (request as {requestId: string}).requestId,
+    }))
+    const coord = new PhonePhotoCoordinator()
+    const result = await coord.takePhoto("com.a", {transferMethod: "ble"})
+    expect(result.photoUrl).toBe(PRESIGN.readUrl)
+    expect(result.requestId).toBe(PRESIGN.requestId)
+  })
+
+  test("does not resolve an old bridge's dispatch-only acknowledgement", async () => {
+    let push!: (value: {readUrl: string}) => void
+    awaitManagedPhotoReady.mockImplementation(() => new Promise(resolve => {push = resolve}))
+    requestPhotoNative.mockResolvedValue(undefined)
+    const coord = new PhonePhotoCoordinator()
+    let settled = false
+    const pending = coord.takePhoto("com.a", {}).then(result => {settled = true; return result})
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(settled).toBe(false)
+    push({readUrl: PRESIGN.readUrl})
+    expect((await pending).photoUrl).toBe(PRESIGN.readUrl)
+  })
+})
+
+test.each(["none", "low", "medium", "high"] as const)("sends compression %s only to native, not Cloud", async (compress) => {
+  const coordinator = new PhonePhotoCoordinator()
+  await coordinator.takePhoto("com.a", {compress})
+  expect(startManagedPhoto).toHaveBeenCalledWith()
+  expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({compress})
+})
+
+test.each(["heavy", "", "HIGH", null, 1])("rejects compression %p before allocating cloud or native work", async (compress) => {
+  await expect(new PhonePhotoCoordinator().takePhoto("com.a", {compress} as never)).rejects.toThrow("Invalid photo compression")
+  expect(startManagedPhoto).not.toHaveBeenCalled()
+  expect(requestPhotoNative).not.toHaveBeenCalled()
 })

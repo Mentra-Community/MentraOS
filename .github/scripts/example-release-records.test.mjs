@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import {execFileSync} from "node:child_process"
+import {mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync} from "node:fs"
+import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
@@ -438,4 +441,90 @@ test("a rerun reconciles its re-observed candidates against the published produc
       }),
     /Google Play bundle digest/,
   )
+})
+
+test("redispatching a historical example preserves its complete GitHub record", (t) => {
+  const plan = planFor()
+  const f = fixtures(plan)
+  const record = assemble(plan)
+  const original = JSON.stringify(record, null, 2) + "\n"
+  const directory = mkdtempSync(path.join(tmpdir(), "legacy-example-retry-"))
+  t.after(() => rmSync(directory, {recursive: true, force: true}))
+  symlinkSync(path.join(rootDir, ".github"), path.join(directory, ".github"), "dir")
+  const write = (file, contents) => {
+    mkdirSync(path.dirname(path.join(directory, file)), {recursive: true})
+    writeFileSync(path.join(directory, file), contents)
+  }
+  write("release-input/plan/release-plan.json", JSON.stringify(plan))
+  write(`release-input/finalized/${plan.artifactNames.releaseManifest}`, JSON.stringify(f.betaManifest))
+  write("release-input/starter-kit/starter-kit-release-test.json", JSON.stringify(f.starterKit))
+  write(
+    "release-input/example-testflight/example-testflight-publication.json",
+    JSON.stringify({...f.exampleTestflight, build: {...f.exampleTestflight.build, uploadStatus: "reused"}}),
+  )
+  // A retry now observes the mirrored CDN URL, while the frozen record keeps
+  // the old GitHub AAB URL and the first run's timestamp/provenance.
+  const observed = {
+    ...f.exampleGooglePlay,
+    uploadStatus: "reused",
+    aab: {
+      ...f.exampleGooglePlay.aab,
+      url: f.exampleGooglePlay.aab.url
+        .replace("https://github.com/", "https://artifactscdn.mentraglass.com/")
+        .replace("/releases/download/", "/releases/"),
+    },
+  }
+  write("release-input/example-google-play/example-google-play-publication.json", JSON.stringify(observed))
+  write("legacy.json", original)
+  const recordName = exampleReleaseAssetName(plan.releaseIdentity)
+  const recordUrl = `https://github.com/Mentra-Community/MentraOS/releases/download/${plan.artifactContainerTag}/${recordName}`
+  mkdirSync(path.join(directory, "bin"))
+  writeFileSync(
+    path.join(directory, "bin/node"),
+    `#!${process.execPath}\n
+const {execFileSync} = require('node:child_process');
+const {readFileSync, realpathSync} = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] !== '.github/scripts/release-assets.mjs') {
+  execFileSync(process.execPath, [realpathSync(args[0]), ...args.slice(1)], {stdio: 'inherit'});
+} else if (args[1] === 'list') {
+  console.log(JSON.stringify([{id: 123, name: ${JSON.stringify(recordName)}, state: 'uploaded'}]));
+} else if (args[1] === 'fetch') {
+  process.stdout.write(readFileSync('legacy.json'));
+} else if (args[1] === 'url') {
+  console.log(${JSON.stringify(recordUrl)});
+} else { throw Error('Unexpected artifact command'); }
+`,
+    {mode: 0o755},
+  )
+  const workflow = readFileSync(path.join(rootDir, ".github/workflows/coordinated-example-release.yml"), "utf8")
+  const step = workflow
+    .split("      - name: Assemble the example release record against the finalized beta\n")[1]
+    .split("\n      - name:")[0]
+  const script = step
+    .split("        run: |\n")[1]
+    .replace(/^          /gm, "")
+    .replace(/\$\{\{.*?\}\}/g, "unused")
+  const run = () =>
+    execFileSync("bash", ["-c", script], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        PATH: `${directory}/bin:${process.env.PATH}`,
+        GITHUB_OUTPUT: path.join(directory, "outputs"),
+        GITHUB_REPOSITORY: "Mentra-Community/MentraOS",
+        GITHUB_RUN_ID: "999",
+      },
+      stdio: "pipe",
+    })
+  run()
+  assert.equal(readFileSync(path.join(directory, "finalized-example", recordName), "utf8"), original)
+  const outputs = readFileSync(path.join(directory, "outputs"), "utf8")
+  assert.match(outputs, /published=true/)
+  assert.ok(outputs.includes(`record_url=${recordUrl}`))
+  write(
+    "release-input/example-google-play/example-google-play-publication.json",
+    JSON.stringify({...observed, aab: {...observed.aab, sha256: "f".repeat(64)}}),
+  )
+  assert.throws(run, /Google Play bundle digest/)
 })

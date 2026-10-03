@@ -2,13 +2,10 @@
 
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
 const mockGetDefaultDevice = mock((): Promise<Record<string, unknown> | null> => Promise.resolve(null))
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  __esModule: true,
-  default: {
-    getDefaultDevice: mockGetDefaultDevice,
-  },
-}))
+bluetoothSdk.getDefaultDevice = mockGetDefaultDevice
 
 const okResult = {is_error: () => false} as const
 const settingsValues: Record<string, unknown> = {}
@@ -60,6 +57,7 @@ function resetSettings(values: Record<string, unknown>) {
 
 describe("DeviceStoreHydration", () => {
   beforeEach(() => {
+    bluetoothSdk.getDefaultDevice = mockGetDefaultDevice
     resetDeviceStoreHydrationForTests()
     mockGetDefaultDevice.mockClear()
     mockLoadAllSettings.mockClear()

@@ -1,13 +1,13 @@
-import CrustModule from "@mentra/crust"
 import {useState, useEffect, useCallback, useMemo, useRef} from "react"
-import {View, Platform, TextInput, FlatList, ActivityIndicator, Image} from "react-native"
+import {View, Platform, TextInput, FlatList, ActivityIndicator, Image, ScrollView} from "react-native"
 import Toast from "react-native-toast-message"
 
+import NativeNotificationSettings from "@/components/settings/NativeNotificationSettings"
 import {Screen, Text, Header, Switch} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {notifyPackageName} from "@/constants/miniapps"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {useRegisterCapsule} from "@/stores/capsule"
 
 interface InstalledApp {
@@ -44,11 +44,18 @@ export default function NotificationSettingsScreen() {
   }, [])
 
   const loadInstalledApps = async () => {
+    if (Platform.OS !== "android") {
+      setLoading(false)
+      setRefreshing(false)
+      return
+    }
     try {
-      const installedApps = await CrustModule.getInstalledApps()
+      const installedApps = await engine.phoneNotifications.installedApps()
 
       // Sort alphabetically by app name
-      let sortedApps = installedApps.sort((a: InstalledApp, b: InstalledApp) => a.appName.localeCompare(b.appName))
+      const sortedApps = installedApps
+        .map((app) => ({...app, isBlocked: blocklist.includes(app.packageName)}))
+        .sort((a, b) => a.appName.localeCompare(b.appName))
 
       // set any apps in the blocklist to be disabled
       // TODO: fix this
@@ -74,7 +81,6 @@ export default function NotificationSettingsScreen() {
 
   useEffect(() => {
     loadInstalledApps()
-    console.log(blocklist)
   }, [blocklist])
 
   const toggleApp = useCallback(
@@ -107,7 +113,7 @@ export default function NotificationSettingsScreen() {
         })
       }
     },
-    [apps],
+    [apps, blocklist, setBlocklist],
   )
 
   const onRefresh = useCallback(() => {
@@ -173,16 +179,6 @@ export default function NotificationSettingsScreen() {
     [theme, toggleApp],
   )
 
-  // Simplified getItemLayout with consistent height
-  const getItemLayout = useCallback(
-    (_: any, index: number) => ({
-      length: ITEM_HEIGHT,
-      offset: ITEM_HEIGHT * index,
-      index,
-    }),
-    [],
-  )
-
   // Memoize filtered apps to prevent recalculation
   const filteredApps = useMemo(
     () =>
@@ -216,21 +212,9 @@ export default function NotificationSettingsScreen() {
     return (
       <Screen preset="fixed" ref={viewShotRef}>
         <Header title={translate("settings:notificationsSettings")} />
-        <View style={{flex: 1, justifyContent: "center", alignItems: "center", padding: theme.spacing.s6}}>
-          <Text
-            style={{
-              fontSize: 18,
-              fontWeight: "600",
-              color: theme.colors.text,
-              textAlign: "center",
-              marginBottom: theme.spacing.s4,
-            }}>
-            {translate("settings:notificationsIosTitle")}
-          </Text>
-          <Text style={{color: theme.colors.textDim, textAlign: "center", lineHeight: 22}}>
-            {translate("settings:notificationsIosMessage")}
-          </Text>
-        </View>
+        <ScrollView>
+          <NativeNotificationSettings />
+        </ScrollView>
       </Screen>
     )
   }
@@ -297,13 +281,13 @@ export default function NotificationSettingsScreen() {
 
       {/* Apps List */}
       <FlatList
+        ListHeaderComponent={<NativeNotificationSettings />}
         data={filteredApps}
         keyExtractor={keyExtractor}
         renderItem={renderAppItem}
         contentContainerStyle={{paddingBottom: theme.spacing.s8}}
         onRefresh={onRefresh}
         refreshing={refreshing}
-        getItemLayout={getItemLayout}
         removeClippedSubviews={false}
         maxToRenderPerBatch={20}
         windowSize={21}

@@ -146,13 +146,12 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   const devBlock = channelBlock.slice(channelBlock.indexOf("dev)"), channelBlock.indexOf("staging)"))
   const stagingBlock = channelBlock.slice(channelBlock.indexOf("staging)"))
   assert.match(devBlock, /echo "play_track=internal"/)
-  assert.match(stagingBlock, /echo "play_track=internal-app-sharing"/)
-  assert.doesNotMatch(devBlock, /echo "play_track=beta|echo "play_track=internal-app-sharing"/)
+  assert.match(stagingBlock, /echo "play_track=beta"/)
+  assert.doesNotMatch(devBlock, /echo "play_track=beta"/)
   assert.doesNotMatch(stagingBlock, /echo "play_track=internal"/)
-  assert.match(channelBlock, /example_play_track=internal/)
-  assert.match(channelBlock, /example_play_track=beta/)
-  assert.match(workflow, /needs\.example-google-play\.result == 'success'/)
-  assert.match(workflow, /--example-google-play release-input\/example-google-play/)
+  const examples = readFileSync(new URL("../workflows/coordinated-example-release.yml", import.meta.url), "utf8")
+  assert.match(examples, /needs\.example-google-play\.result == 'success'/)
+  assert.match(examples, /--example-google-play release-input\/example-google-play/)
   const reusable = readFileSync(
     new URL("../workflows/reusable-coordinated-example-google-play.yml", import.meta.url),
     "utf8",
@@ -161,9 +160,7 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.match(reusable, /starter_release_commit/)
   assert.match(reusable, /cancel-in-progress: false/)
   assert.match(reusable, /queue: max/)
-  assert.ok(
-    reusable.indexOf(".mjs verify-aab") < reusable.indexOf("node .github/scripts/publish-immutable-release-asset.mjs"),
-  )
+  assert.ok(reusable.indexOf(".mjs verify-aab") < reusable.indexOf("publish-immutable-release-asset.mjs"))
   const verificationStep = reusable.slice(
     reusable.indexOf("- name: Verify and persist"),
     reusable.indexOf("- name: Require Play access"),

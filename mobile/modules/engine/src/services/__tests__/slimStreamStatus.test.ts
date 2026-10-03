@@ -14,6 +14,24 @@ const event: StreamStatusEvent = {
 }
 
 describe("slimStreamStatusEvent", () => {
+  test("preserves retry intent so miniapps cannot mistake transient errors for stream end", () => {
+    const retrying = {...event, kind: "error", status: "error", willRetry: true} as StreamStatusEvent
+    expect(slimStreamStatusEvent(retrying)).toMatchObject({status: "error", willRetry: true})
+  })
+  test("preserves terminal publisher error and reconciliation metadata", () => {
+    expect(
+      slimStreamStatusEvent({
+        type: "stream_status",
+        kind: "error",
+        status: "error",
+        sid: "asg",
+        revision: 4,
+        terminal: true,
+        errorDetails: "WHIP rejected: HTTP 403",
+      }),
+    ).toMatchObject({sid: "asg", revision: 4, terminal: true, errorDetails: "WHIP rejected: HTTP 403"})
+  })
+
   test("drops stats when FPS telemetry is off without mutating the incoming event", () => {
     const slim = slimStreamStatusEvent(event, {enableFpsTelemetry: false})
     expect(slim.stats).toBeUndefined()

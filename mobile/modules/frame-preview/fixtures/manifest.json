@@ -1,0 +1,338 @@
+[
+  {
+    "file": "valid-i420-even-r0-bt601-limited.bin",
+    "expect": "ok",
+    "width": 16,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 192,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "valid-i420-odd-r1-bt709-full.bin",
+    "expect": "ok",
+    "width": 17,
+    "height": 9,
+    "format": "i420",
+    "rotation": 1,
+    "matrix": "bt709",
+    "range": "full",
+    "flags": 0,
+    "generation": 7,
+    "sequence": 42,
+    "payloadLength": 243,
+    "timestampNs": "123456789",
+    "sentAtNs": "987654321",
+    "fill": {
+      "y": 17,
+      "u": 34,
+      "v": 51
+    }
+  },
+  {
+    "file": "valid-nv12-even-r2-bt709-limited.bin",
+    "expect": "ok",
+    "width": 32,
+    "height": 18,
+    "format": "nv12",
+    "rotation": 2,
+    "matrix": "bt709",
+    "range": "limited",
+    "flags": 0,
+    "generation": 3,
+    "sequence": 1000,
+    "payloadLength": 864,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 16,
+      "u": 112,
+      "v": 144
+    }
+  },
+  {
+    "file": "valid-nv12-odd-r3-bt601-full.bin",
+    "expect": "ok",
+    "width": 15,
+    "height": 7,
+    "format": "nv12",
+    "rotation": 3,
+    "matrix": "bt601",
+    "range": "full",
+    "flags": 0,
+    "generation": 4294967294,
+    "sequence": 4294967295,
+    "payloadLength": 169,
+    "timestampNs": "72623859790382856",
+    "sentAtNs": "72623859790382857",
+    "fill": {
+      "y": 235,
+      "u": 1,
+      "v": 254
+    }
+  },
+  {
+    "file": "valid-i420-unknown-color-fallback.bin",
+    "expect": "ok",
+    "width": 6,
+    "height": 4,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "unknown",
+    "range": "unknown",
+    "flags": 1,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 36,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 85,
+      "u": 102,
+      "v": 119
+    }
+  },
+  {
+    "file": "valid-nv12-1x1-unknown-matrix-limited.bin",
+    "expect": "ok",
+    "width": 1,
+    "height": 1,
+    "format": "nv12",
+    "rotation": 0,
+    "matrix": "unknown",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 3,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 66,
+      "u": 36,
+      "v": 129
+    }
+  },
+  {
+    "file": "valid-i420-2x2-bt709-unknown-range.bin",
+    "expect": "ok",
+    "width": 2,
+    "height": 2,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt709",
+    "range": "unknown",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 6,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 0,
+      "u": 255,
+      "v": 127
+    }
+  },
+  {
+    "file": "reject-short-buffer.bin",
+    "expect": "short-buffer",
+    "width": 16,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 192,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "reject-bad-magic.bin",
+    "expect": "bad-magic",
+    "width": 16,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 192,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "reject-unsupported-version.bin",
+    "expect": "unsupported-version",
+    "width": 16,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 192,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "reject-bad-header-length.bin",
+    "expect": "bad-header-length",
+    "width": 16,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 192,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "reject-bad-dimensions-zero-width.bin",
+    "expect": "bad-dimensions",
+    "width": 0,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 0,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "reject-bad-dimensions-oversize.bin",
+    "expect": "bad-dimensions",
+    "width": 4097,
+    "height": 1,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 8195,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "reject-unknown-pixel-format.bin",
+    "expect": "unknown-pixel-format",
+    "width": 16,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 192,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "reject-payload-size-mismatch.bin",
+    "expect": "payload-size-mismatch",
+    "width": 16,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 193,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  },
+  {
+    "file": "reject-truncated-payload.bin",
+    "expect": "truncated-payload",
+    "width": 16,
+    "height": 8,
+    "format": "i420",
+    "rotation": 0,
+    "matrix": "bt601",
+    "range": "limited",
+    "flags": 0,
+    "generation": 1,
+    "sequence": 1,
+    "payloadLength": 192,
+    "timestampNs": "0",
+    "sentAtNs": "0",
+    "fill": {
+      "y": 128,
+      "u": 64,
+      "v": 192
+    }
+  }
+]

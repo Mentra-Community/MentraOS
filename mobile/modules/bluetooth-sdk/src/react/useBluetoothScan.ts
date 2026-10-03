@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from "react"
 
 import BluetoothSdk, {DeviceModels} from "../index"
-import type {Device, DeviceModel} from "../BluetoothSdk.types"
+import type {Device, DeviceModel, ScanDiagnostic} from "../BluetoothSdk.types"
 
 export type BluetoothScanDedupe = "id" | "name" | ((device: Device) => string)
 
@@ -15,6 +15,7 @@ export type UseBluetoothScanOptions = {
 export type BluetoothScanHookResult = {
   clearResults: () => void
   devices: Device[]
+  diagnostic: ScanDiagnostic | null
   error: unknown | null
   model: DeviceModel
   scanning: boolean
@@ -61,6 +62,7 @@ function hasDevice(devices: Device[], selectedDevice: Device | null, dedupe: Blu
 
 export function useBluetoothScan(options: UseBluetoothScanOptions = {}): BluetoothScanHookResult {
   const [devices, setDevices] = useState<Device[]>([])
+  const [diagnostic, setDiagnostic] = useState<ScanDiagnostic | null>(null)
   const [error, setError] = useState<unknown | null>(null)
   const [model, setModelState] = useState<DeviceModel>(options.model ?? DeviceModels.MentraLive)
   const [scanning, setScanning] = useState(false)
@@ -98,11 +100,13 @@ export function useBluetoothScan(options: UseBluetoothScanOptions = {}): Bluetoo
   }, [])
 
   function clearResults() {
+    setDiagnostic(null)
     setDevices([])
     selectDevice(null)
   }
 
   function setModel(nextModel: DeviceModel) {
+    if (scanningRef.current) void stopScan()
     setModelState(nextModel)
     clearResults()
   }
@@ -116,6 +120,7 @@ export function useBluetoothScan(options: UseBluetoothScanOptions = {}): Bluetoo
     }
 
     setError(null)
+    setDiagnostic(null)
     setScanning(true)
     scanningRef.current = true
     setDevices([])
@@ -124,10 +129,14 @@ export function useBluetoothScan(options: UseBluetoothScanOptions = {}): Bluetoo
     try {
       const nextDevices = await BluetoothSdk.scan(scanModel, {
         ...(timeoutMsRef.current == null ? {} : {timeoutMs: timeoutMsRef.current}),
+        onDiagnostic: (hint) => {
+          if (activeScanRef.current === scanId) setDiagnostic(hint)
+        },
         onResults: (results) => {
           if (activeScanRef.current !== scanId) {
             return
           }
+          if (results.length > 0) setDiagnostic(null)
           setDevices(dedupeDevices(results, dedupeRef.current))
         },
       })
@@ -152,6 +161,7 @@ export function useBluetoothScan(options: UseBluetoothScanOptions = {}): Bluetoo
   }
 
   async function stopScan() {
+    setDiagnostic(null)
     activeScanRef.current += 1
     setScanning(false)
     scanningRef.current = false
@@ -161,6 +171,7 @@ export function useBluetoothScan(options: UseBluetoothScanOptions = {}): Bluetoo
   return {
     clearResults,
     devices,
+    diagnostic,
     error,
     model,
     scanning,

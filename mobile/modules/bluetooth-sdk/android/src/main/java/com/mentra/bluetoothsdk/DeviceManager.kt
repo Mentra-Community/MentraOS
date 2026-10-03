@@ -13,9 +13,11 @@ import androidx.core.content.ContextCompat
 import com.mentra.bluetoothsdk.controllers.ControllerManager
 import com.mentra.bluetoothsdk.controllers.R1
 import com.mentra.bluetoothsdk.services.ForegroundService
+import com.mentra.bluetoothsdk.services.G2ConnectionRecovery
 import com.mentra.bluetoothsdk.services.PhoneMic
 import com.mentra.bluetoothsdk.sgcs.Ar99
 import com.mentra.bluetoothsdk.sgcs.G1
+import com.mentra.bluetoothsdk.sgcs.GlassesLinkDiagnostics
 import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.SceneElement
 import com.mentra.bluetoothsdk.sgcs.SceneFrame
@@ -28,11 +30,15 @@ import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.MicMap
+import com.mentra.bluetoothsdk.utils.MicSourcePin
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -43,11 +49,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.jvm.JvmStatic
 
-class DeviceManager {
+class DeviceManager internal constructor(initializeHardware: Boolean) {
+    constructor() : this(initializeHardware = true)
     companion object {
 
         @Volatile
         private var _instance: DeviceManager? = null
+
+        internal fun isInitialized(): Boolean = _instance != null
 
         @JvmStatic
         fun getInstance(): DeviceManager {
@@ -57,6 +66,10 @@ class DeviceManager {
     }
 
     // MARK: - Unique (Android)
+    private val connectionRecovery = G2ConnectionRecovery(Bridge.getContext())
+    private val recoveryLock = Any()
+    private var recoverG2Connection = false
+    private var recoveryListenerId: String? = null
     private var serviceStarted = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -77,7 +90,8 @@ class DeviceManager {
     // MARK: - End Unique
 
     // MARK: - Properties
-    var sgc: SGCManager? = null
+    // Read by the welcome executor as well as device lifecycle handlers.
+    @Volatile var sgc: SGCManager? = null
     var controller: ControllerManager? = null
 
     // settings:
@@ -281,7 +295,22 @@ class DeviceManager {
 
     init {
         Bridge.log("DeviceManager: init()")
+        recoveryListenerId = DeviceStore.store.addListener { category, changes ->
+            if (category == "bluetooth" && changes.keys.any { it in G2ConnectionRecovery.keys }) {
+                synchronized(recoveryLock) {
+                    if (recoverG2Connection) {
+                        connectionRecovery.save(DeviceStore.store.getCategory("bluetooth"))
+                    }
+                }
+            }
+        }
         initializeViewStates()
+        if (initializeHardware) initializeHardwareServices()
+    }
+
+    // Keep host routing usable without starting audio codecs, receivers or services.
+    // The public constructor always initializes the hardware environment.
+    private fun initializeHardwareServices() {
         startForegroundService()
         // setupPermissionMonitoring()
         setupBluetoothStateMonitoring()
@@ -664,7 +693,7 @@ class DeviceManager {
                 " ",
                 " ",
                 "text_wall",
-                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                DashboardContentFormatter.template(""),
                 null,
                 null
             )
@@ -676,7 +705,7 @@ class DeviceManager {
                 " ",
                 " ",
                 "text_wall",
-                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                DashboardContentFormatter.template(""),
                 null,
                 null
             )
@@ -722,6 +751,8 @@ class DeviceManager {
     // native re-dispatch coherent (dashboard exit re-applies a complete scene,
     // not whatever element happened to arrive last).
     private val sceneStates = arrayOfNulls<SceneFrame>(2)
+    private var dashboardSceneCleanupPending = false
+    private val pendingDashboardSceneElementIds = linkedSetOf<String>()
     // MARK: - End Unique
 
     // MARK: - Voice Data Handling
@@ -848,6 +879,9 @@ class DeviceManager {
             }
         }
         if (pcmData != null && pcmData.isNotEmpty()) {
+            // #region agent log — per-second RX window: LC3 bytes in, fingerprint, decoded PCM level (H-E)
+            micDbgLc3Window(rawLC3Data, sequenceNumber, pcmData)
+            // #endregion
             // Re-encode to canonical LC3 via handlePcm (outside lock to avoid deadlock)
             recordMicPcmProduced()
             handlePcm(pcmData)
@@ -856,6 +890,73 @@ class DeviceManager {
             recordMicDecodeFailure()
         }
     }
+
+    // #region agent log — glasses LC3 RX diagnostics (debug session 828181)
+    private var micDbgWindowStart = 0L
+    private var micDbgPkts = 0
+    private var micDbgLc3Bytes = 0L
+    private var micDbgPcmBytes = 0L
+    private var micDbgSumAbs = 0L
+    private var micDbgSamples = 0L
+    private var micDbgPeak = 0
+    private var micDbgDcSum = 0L
+    private var micDbgDistinctFrames = HashSet<Int>()
+    private var micDbgFirstSeq = -1
+    private var micDbgLastSeq = -1
+    private var micDbgSeqGaps = 0
+
+    private fun micDbgLc3Window(lc3: ByteArray, seq: Int?, pcm: ByteArray) {
+        val now = System.currentTimeMillis()
+        GlassesLinkDiagnostics.recordMicPacket(now)
+        if (micDbgWindowStart == 0L) micDbgWindowStart = now
+        micDbgPkts++
+        micDbgLc3Bytes += lc3.size
+        micDbgPcmBytes += pcm.size
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val v = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xff)).toShort().toInt()
+            val a = if (v < 0) -v else v
+            micDbgSumAbs += a
+            micDbgDcSum += v
+            if (a > micDbgPeak) micDbgPeak = a
+            micDbgSamples++
+            i += 2
+        }
+        var off = 0
+        while (off + 40 <= lc3.size) {
+            var h = 17
+            for (k in off until off + 40) h = h * 31 + lc3[k]
+            micDbgDistinctFrames.add(h)
+            off += 40
+        }
+        if (seq != null) {
+            if (micDbgFirstSeq < 0) micDbgFirstSeq = seq
+            if (micDbgLastSeq >= 0 && ((micDbgLastSeq + 1) and 0xff) != seq) micDbgSeqGaps++
+            micDbgLastSeq = seq
+        }
+        if (now - micDbgWindowStart >= 1000) {
+            val meanAbs = if (micDbgSamples > 0) micDbgSumAbs / micDbgSamples else 0
+            val dc = if (micDbgSamples > 0) micDbgDcSum / micDbgSamples else 0
+            val head = lc3.take(8).joinToString("") { String.format("%02x", it.toInt() and 0xff) }
+            Bridge.log(
+                "MICDBG-RX pkts=$micDbgPkts lc3B=$micDbgLc3Bytes pcmB=$micDbgPcmBytes samples=$micDbgSamples " +
+                    "meanAbs=$meanAbs peak=$micDbgPeak dc=$dc distinctLc3Frames=${micDbgDistinctFrames.size} " +
+                    "seq=$micDbgFirstSeq..$micDbgLastSeq gaps=$micDbgSeqGaps frameSizeArg=40 lastLen=${lc3.size} head=$head"
+            )
+            micDbgWindowStart = now
+            micDbgPkts = 0
+            micDbgLc3Bytes = 0
+            micDbgPcmBytes = 0
+            micDbgSumAbs = 0
+            micDbgSamples = 0
+            micDbgPeak = 0
+            micDbgDcSum = 0
+            micDbgDistinctFrames = HashSet()
+            micDbgFirstSeq = -1
+            micDbgSeqGaps = 0
+        }
+    }
+    // #endregion
 
     fun handlePcm(pcmData: ByteArray) {
         // Audio always flows. The previous phone-side Silero VAD gate was a
@@ -907,11 +1008,13 @@ class DeviceManager {
 
         // allow the sgc to make changes to the micRanking:
         micRanking = sgc?.sortMicRanking(micRanking) ?: micRanking
-        Bridge.log("MAN: updateMicState() micRanking: $micRanking")
+        val pin = micSourcePin
+        val ranking: List<String> = MicSourcePin.selectionOrder(micRanking, pin)
+        Bridge.log("MAN: updateMicState() micRanking: $micRanking pin: $pin")
 
         if (micEnabled) {
 
-            for (micMode in micRanking) {
+            for (micMode in ranking) {
                 if (micMode == MicTypes.PHONE_INTERNAL ||
                     micMode == MicTypes.BLUETOOTH_CLASSIC ||
                     micMode == MicTypes.BLUETOOTH
@@ -959,9 +1062,55 @@ class DeviceManager {
 
         if (micUsed == "" && micEnabled) {
             Bridge.log("MAN: No available mic found!")
+            if (pin == null) return
+            // A pin taken while another microphone was already recording must still close it:
+            // leaving it open would keep feeding PCM that the pinned consumer will reject, with
+            // the phone's indicator lit for audio nobody uses.
+            stopMicsExcept(micUsed)
+            reportPinnedSourceUnavailable(pin)
             return
         }
 
+        stopMicsExcept(micUsed)
+    }
+
+    /**
+     * Call-scoped microphone source lock, or null for the normal ranking.
+     *
+     * Only [MicTypes.GLASSES_CUSTOM] is supported today: it exists so an ACS call can promise that
+     * the wearer's own microphone — and nothing else — is what reaches the far end.
+     */
+    @Volatile private var micSourcePin: String? = null
+
+    /**
+     * Restrict microphone selection to one source for the duration of a call, or release it.
+     *
+     * Releasing re-runs selection so every other consumer (cloud LC3, miniapp `audio_chunk`,
+     * on-device STT) gets the source its own preference asks for back. A `preferred_mic` change
+     * made while the pin is held is stored but not applied until this releases.
+     */
+    fun setMicSourcePin(source: String?) {
+        val normalized = MicSourcePin.normalize(source)
+        if (micSourcePin == normalized) return
+        micSourcePin = normalized
+        Bridge.log("MAN: setMicSourcePin($normalized)")
+        updateMicState()
+    }
+
+    /** The microphone the SDK is currently recording from, for consumers that must verify it. */
+    fun activeMicSource(): String = currentMic
+
+    /**
+     * Report a pinned source that cannot be opened. Emitted rather than silently fixed, because the
+     * fix — opening a different microphone — is the thing the pin exists to forbid.
+     */
+    private fun reportPinnedSourceUnavailable(pin: String) {
+        Bridge.log("MAN: pinned mic source '$pin' is unavailable; no fallback will be started")
+        val health = synchronized(micHealthLock) { micHealthSnapshotLocked() }
+        Bridge.sendMicHealth(health, "pinned-source-unavailable")
+    }
+
+    private fun stopMicsExcept(micUsed: String) {
         // go through and disable all mics after the first used one:
         val allMics = micRanking
         // add any missing mics to the list:
@@ -1019,6 +1168,8 @@ class DeviceManager {
             Bridge.log("MAN: DeviceManager.sendCurrentState(): sgc not ready")
             return
         }
+
+        clearPendingDashboardSceneElements(currentStateIndex)
 
         // Cancel any pending clear display work item
         // sendStateWorkItem?.let { mainHandler.removeCallbacks(it) }
@@ -1230,7 +1381,8 @@ class DeviceManager {
             Bridge.log("MAN: Cleaning up previous sgc type: ${sgc?.type}")
             sgc?.cleanup()
             sgc = null
-            resetSystemTimeSync()
+            DeviceStore.apply("glasses", "micEnabled", false)
+            resetConnectionReadyState()
         }
 
         if (sgc != null) {
@@ -1353,11 +1505,15 @@ class DeviceManager {
             return
         }
 
+        // A new identity must never inherit the previous glasses' address when
+        // pairing supplied only a name. Same-device reconnects retain their cache.
+        val identityChanged = pendingDeviceName.isNotEmpty() &&
+            (pendingDeviceName != deviceName || sgc?.type != defaultWearable)
+        if (identityChanged || pendingDeviceAddress.isNotEmpty()) {
+            deviceAddress = pendingDeviceAddress
+        }
         if (pendingDeviceName.isNotEmpty()) {
             deviceName = pendingDeviceName
-        }
-        if (pendingDeviceAddress.isNotEmpty()) {
-            deviceAddress = pendingDeviceAddress
         }
         clearPendingConnection()
 
@@ -1373,6 +1529,10 @@ class DeviceManager {
         Bridge.log("MAN: handleDeviceReady() ${sgc?.type}")
         resetMicHealth()
         defaultWearable = sgc?.type ?: ""
+        synchronized(recoveryLock) {
+            recoverG2Connection = defaultWearable == DeviceTypes.G2
+            connectionRecovery.save(DeviceStore.store.getCategory("bluetooth"))
+        }
         searching = false
 
         syncSystemTimeOnceForConnection(readyKey)
@@ -1380,6 +1540,7 @@ class DeviceManager {
         // re-apply display height/depth after reconnection
         mainHandler.postDelayed(
             {
+                val device = sgc ?: return@postDelayed
                 val h =
                     (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
                         ?.toInt()
@@ -1388,19 +1549,24 @@ class DeviceManager {
                     (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
                         ?.toInt()
                         ?: dashboardDepth // canonical default (2), not 1
-                val d = rawDepth.coerceIn(1, 4)
-                sgc?.setDashboardPosition(h, d)
+                val d = if (device.type == DeviceTypes.NIMO) rawDepth.coerceIn(0, 10) else rawDepth.coerceIn(1, 4)
+                device.setDashboardPosition(h, d)
             },
             2000
         )
 
-        // Show welcome message on first connect for all display glasses
+        // A full-canvas device can opt out so this temporary message does not
+        // erase the host's connected-edge scene replay.
         if (shouldSendBootingMessage) {
             shouldSendBootingMessage = false
-            executor.execute {
-                sgc?.sendTextWall("// MentraOS Connected")
-                Thread.sleep(3000)
-                sgc?.clearDisplay()
+            val device = sgc
+            if (device?.showConnectionConfirmation == true) {
+                executor.execute {
+                    if (sgc !== device) return@execute
+                    device.sendTextWall("// MentraOS Connected")
+                    Thread.sleep(3000)
+                    if (sgc === device) device.clearDisplay()
+                }
             }
         }
 
@@ -1413,10 +1579,11 @@ class DeviceManager {
             handleMach1Ready() // Z100 uses same initialization as Mach1
         }
 
-        // Re-apply microphone settings after reconnection
-        // Cache was cleared on disconnect, so this will definitely send commands
+        // Disconnect clears micEnabled but preserves the consumers' audio requests.
+        // Recompute that derived flag before selecting a microphone; replaying an
+        // unchanged should_send_* setting is deduplicated by DeviceStore.apply().
         Bridge.log("MAN: Re-applying microphone settings after reconnection")
-        updateMicState()
+        setMicState()
 
         // send to the server our battery status:
         Bridge.sendBatteryStatus(sgc?.batteryLevel ?: -1, false)
@@ -1456,7 +1623,11 @@ class DeviceManager {
         mainHandler.postDelayed(sync, 3000)
     }
 
-    private fun resetSystemTimeSync() {
+    private fun resetConnectionReadyState() {
+        // Suppress duplicate readiness only within one connection, never across
+        // a genuine disconnect/reconnect of the same glasses inside two seconds.
+        lastReadyHandledKey = ""
+        lastReadyHandledAtMs = 0L
         pendingSystemTimeSync?.let { mainHandler.removeCallbacks(it) }
         pendingSystemTimeSync = null
         lastSystemTimeSyncConnectionKey = ""
@@ -1474,7 +1645,7 @@ class DeviceManager {
 
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
-        resetSystemTimeSync()
+        resetConnectionReadyState()
         resetMicHealth()
         DeviceStore.apply("glasses", "headUp", false)
         DeviceStore.apply(
@@ -1519,6 +1690,45 @@ class DeviceManager {
         sgc?.clearDisplay()
     }
 
+    internal fun setDashboardContent(content: String) {
+        val nextState =
+            ViewState(
+                " ",
+                " ",
+                " ",
+                "text_wall",
+                DashboardContentFormatter.template(content),
+                null,
+                null,
+            )
+        val previousScene = sceneStates[1]
+        if (previousScene == null && viewStates[1] == nextState) {
+            return
+        }
+
+        previousScene?.let { frame ->
+            dashboardSceneCleanupPending = true
+            pendingDashboardSceneElementIds.addAll(frame.elements.map { it.id })
+        }
+        sceneStates[1] = null
+        viewStates[1] = nextState
+
+        if (headUp && contextualDashboard) {
+            sendCurrentState()
+        }
+    }
+
+    private fun clearPendingDashboardSceneElements(stateIndex: Int) {
+        if (stateIndex != 1 || !dashboardSceneCleanupPending) return
+
+        dashboardSceneCleanupPending = false
+        val elementIds = pendingDashboardSceneElementIds.toList()
+        pendingDashboardSceneElementIds.clear()
+        if (elementIds.isNotEmpty() && sgc?.sceneHandoffRequiresClear == true) {
+            sgc?.clearSceneElements(elementIds)
+        }
+    }
+
     fun displayEvent(event: Map<String, Any>) {
         val view = event["view"] as? String
         if (view == null) {
@@ -1549,7 +1759,9 @@ class DeviceManager {
         // wipes everything anyway.
         sceneStates[stateIndex]?.let { prevFrame ->
             sceneStates[stateIndex] = null
-            if (layoutType != "clear_view") {
+            if (stateIndex == 1 && dashboardSceneCleanupPending) {
+                pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
+            } else if (layoutType != "clear_view" && shouldClearSceneHandoff(stateIndex)) {
                 sgc?.clearSceneElements(prevFrame.elements.map { it.id })
             }
         }
@@ -1614,7 +1826,13 @@ class DeviceManager {
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
             // on G2 — no page rebuild).
             val prevLegacyType = viewStates[stateIndex].layoutType
-            if (prevLegacyType.isNotEmpty() && prevLegacyType != "clear_view" && prevLegacyType != "scene") {
+            val cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending
+            if (
+                !cleanupDeferred && shouldClearSceneHandoff(stateIndex) &&
+                    prevLegacyType.isNotEmpty() &&
+                    prevLegacyType != "clear_view" &&
+                    prevLegacyType != "scene"
+            ) {
                 sgc?.clearDisplay()
             }
         } else if (prevFrame.appId != frame.appId) {
@@ -1624,7 +1842,11 @@ class DeviceManager {
             // them), then paint the new frame from scratch. In practice the
             // boot message interposes between apps, so this isn't visible as a
             // blank.
-            sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            if (stateIndex == 1 && dashboardSceneCleanupPending) {
+                pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
+            } else if (shouldClearSceneHandoff(stateIndex)) {
+                sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            }
             frame = frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
         }
 
@@ -1637,18 +1859,28 @@ class DeviceManager {
 
         val hUp = headUp && contextualDashboard
         if ((stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp)) {
-            dispatchSceneFrame(frame)
+            dispatchSceneFrame(stateIndex, frame)
         }
     }
 
+    // Hidden-view updates only change their replay slot. They must never clear
+    // the visible view, and full-frame adapters need no separate handoff sweep.
+    private fun shouldClearSceneHandoff(stateIndex: Int): Boolean {
+        val visibleIndex = if (headUp && contextualDashboard) 1 else 0
+        val device = sgc ?: return false
+        return stateIndex == visibleIndex && !screenDisabled && device.fullyBooted &&
+            !device.type.contains(DeviceTypes.SIMULATED) && device.sceneHandoffRequiresClear
+    }
+
     /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
-    private fun dispatchSceneFrame(frame: SceneFrame) {
+    private fun dispatchSceneFrame(stateIndex: Int, frame: SceneFrame) {
         if (screenDisabled) return
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) return
         if (sgc?.fullyBooted != true) {
             Bridge.log("MAN: dispatchSceneFrame(): sgc not ready")
             return
         }
+        clearPendingDashboardSceneElements(stateIndex)
         sgc?.applySceneFrame(frame)
     }
 
@@ -1707,6 +1939,31 @@ class DeviceManager {
         sgc?.dbg2()
     }
 
+    fun queryWearState() {
+        Bridge.log("MAN: queryWearState()")
+        sgc?.queryWearState()
+    }
+
+    fun setWearReporting(enabled: Boolean) {
+        Bridge.log("MAN: setWearReporting($enabled)")
+        sgc?.setWearReporting(enabled)
+    }
+
+    fun setWearTuning(intervalMs: Int, count: Int, majority: Int) {
+        Bridge.log("MAN: setWearTuning($intervalMs, $count, $majority)")
+        sgc?.setWearTuning(intervalMs, count, majority)
+    }
+
+    fun requestWearTuning() {
+        Bridge.log("MAN: requestWearTuning()")
+        sgc?.requestWearTuning()
+    }
+
+    fun resetWearTuning() {
+        Bridge.log("MAN: resetWearTuning()")
+        sgc?.resetWearTuning()
+    }
+
     fun startStream(message: MutableMap<String, Any>) {
         Bridge.log("MAN: startStream")
         sgc?.startStream(message)
@@ -1728,9 +1985,20 @@ class DeviceManager {
         sgc?.requestWifiScan(scanId)
     }
 
+    fun requestSavedWifiNetworks(requestId: String, sid: String): Boolean =
+        sgc?.requestSavedWifiNetworks(requestId, sid) ?: false
+
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
         Bridge.log("MAN: Sending incidentId to glasses for log upload: $incidentId")
         sgc?.sendIncidentId(incidentId, apiBaseUrl)
+    }
+
+    /** Push a notification into the glasses' own notification centre; rejects unsupported or disconnected devices. */
+    fun sendPhoneNotification(notification: Map<String, Any>) {
+        // Package only - never the notification text.
+        Bridge.log("MAN: sendPhoneNotification from ${notification["packageName"]}")
+        val driver = sgc ?: throw IllegalStateException("Glasses are not connected")
+        driver.sendPhoneNotification(notification)
     }
 
     fun sendWifiCredentials(ssid: String, password: String) {
@@ -1738,10 +2006,8 @@ class DeviceManager {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    fun forgetWifiNetwork(ssid: String) {
-        Bridge.log("MAN: Forgetting wifi network: $ssid")
-        sgc?.forgetWifiNetwork(ssid)
-    }
+    fun forgetWifiNetwork(ssid: String, requestId: String? = null, sid: String? = null): Boolean =
+        sgc?.forgetWifiNetwork(ssid, requestId, sid) ?: false
 
     fun setHotspotState(enabled: Boolean) {
         Bridge.log("MAN: Setting glasses hotspot state: $enabled")
@@ -1791,6 +2057,11 @@ class DeviceManager {
         ar99.sendFactoryReset()
     }
 
+    fun sendGalleryServerEnabled(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendGalleryServerEnabled(requestId, enabled)
+    }
+
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryMode(requestId, enabled)
@@ -1813,7 +2084,7 @@ class DeviceManager {
             settings.ispAnalogGain,
             settings.aeExposureDivisor,
             settings.isoCap,
-            settings.compress,
+            settings.compress?.value,
             settings.sound,
             settings.resetCaptureTuning == true,
         )
@@ -1952,9 +2223,14 @@ class DeviceManager {
      * Request version info from glasses. Glasses will respond with version_info message containing
      * build number, firmware version, etc.
      */
-    fun requestVersionInfo() {
+    fun requestVersionInfo(requestId: String? = null) {
         Bridge.log("MAN: 📱 Requesting version info from glasses")
-        sgc?.requestVersionInfo()
+        val controller = sgc
+        if (controller is MentraLive) {
+            controller.requestVersionInfo(requestId)
+        } else {
+            controller?.requestVersionInfo()
+        }
     }
 
     /** Send shutdown command to glasses. This will initiate a graceful shutdown of the device. */
@@ -2169,10 +2445,20 @@ class DeviceManager {
     }
 
     fun disconnect(clearPendingIdentity: Boolean = true) {
+        synchronized(recoveryLock) {
+            recoverG2Connection = false
+            connectionRecovery.clear()
+        }
         sgc?.clearDisplay()
-        sgc?.disconnect()
+        // NIMO owns a background canvas encoder and this path discards its instance.
+        // A link-level reconnect keeps the instance (and encoder) through disconnect().
+        val device = sgc
+        if (device is Nimo) device.cleanup() else device?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
-        resetSystemTimeSync()
+        // This cache belongs to the discarded connection. Keep consumer demand,
+        // but require a new mic-enable command when replacement glasses are ready.
+        DeviceStore.apply("glasses", "micEnabled", false)
+        resetConnectionReadyState()
         resetMicHealth()
         searching = false
         micEnabled = false
@@ -2219,7 +2505,42 @@ class DeviceManager {
         controller = null
     }
 
+    private var unpairInProgress = false
+
+    /** Explicit user Unpair, separate from passive pairing cleanup and logout. */
+    suspend fun unpair() = withContext(Dispatchers.Main) {
+        check(!unpairInProgress) { "Unpair already in progress" }
+        unpairInProgress = true
+        try {
+            val target = sgc
+            val nimo = target as? Nimo
+            val savedNimoAddress = when {
+                defaultWearable == DeviceTypes.NIMO -> deviceAddress
+                pendingWearable == DeviceTypes.NIMO -> pendingDeviceAddress
+                else -> null
+            }
+            if (nimo != null) {
+                suspendCancellableCoroutine<Boolean> { continuation ->
+                    nimo.resetForUnpair { if (continuation.isActive) continuation.resume(it) }
+                }
+                check(sgc === target) { "Glasses changed during Unpair" }
+                // Drop the encrypted link before removing the phone's bond.
+                nimo.disconnect()
+                nimo.removeBluetoothBond()
+            } else if (target == null && savedNimoAddress != null) {
+                Nimo.removeBluetoothBond(savedNimoAddress)
+            }
+            forget()
+        } finally {
+            unpairInProgress = false
+        }
+    }
+
     fun forget() {
+        synchronized(recoveryLock) {
+            recoverG2Connection = false
+            connectionRecovery.clear()
+        }
         Bridge.log("MAN: Forgetting smart glasses")
 
         val live = sgc as? MentraLive
@@ -2231,7 +2552,8 @@ class DeviceManager {
             // session state without calling disconnect() again (that would hit a dead instance
             // and leave a destroyed MentraLive retained for the next scan).
             sgc = null
-            resetSystemTimeSync()
+            DeviceStore.apply("glasses", "micEnabled", false)
+            resetConnectionReadyState()
             searching = false
             micEnabled = false
             updateMicState()
@@ -2334,6 +2656,8 @@ class DeviceManager {
 
     // MARK: Cleanup
     fun cleanup() {
+        recoveryListenerId?.let { DeviceStore.store.removeListener(it) }
+        recoveryListenerId = null
         stopBluetoothStateMonitoring()
 
         micReinitRunnable?.let { mainHandler.removeCallbacks(it) }

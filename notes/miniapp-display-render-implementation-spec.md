@@ -1,5 +1,6 @@
 # Miniapp Display `render()` — Implementation Spec & Plan
 
+> Text fitting update (2026-09-16): the public measurement-helper proposal below is superseded by optional controls and feedback on `render()` itself. See `nimo-dynamic-canvas-integration.md`, Text rendering migration.
 **Status:** Spec v3 — supersedes the phasing in `miniapp-display-api-redesign.md` §5 for execution; that doc's API contract (§3–4) remains normative (one flagged refinement, §4 here) and is referenced as **[DESIGN]**.
 **Base:** new branch off `ya/mentra-display-add-canvas` (Yash's Mentra Display canvas work — the firmware protocol, SGC verbs, and nav HUD from that branch are foundations here, not throwaways).
 **Firmware reference (READ-ONLY):** `~/Programming/OSSG/Mentra-Zephyr-Glasses-Client`, branch `ya/add-bitmap-rendering-support` (Yash's latest; the canvas system exists ONLY there, not on fw main/dev). **The firmware repo is 100% Yash's domain — we never modify it.** Facts cited as **[FW]** were read from that source. The loaner Mentra Display runs a canvas-branch build (confirmed by Alex).

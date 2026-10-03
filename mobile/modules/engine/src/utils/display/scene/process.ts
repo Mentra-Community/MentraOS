@@ -13,12 +13,16 @@ import {TextWrapper} from "../wrapper/TextWrapper"
 import type {DisplayProfile} from "../profiles/types"
 import type {DiffableElement} from "./differ"
 import type {SceneBox, SceneDisplayCapabilities, SceneElementInput, SceneTextStyle} from "./types"
+import {processText, sourceLines} from "./text"
+import type {SceneTextLayout} from "./types"
 import {elementContentHash} from "./types"
+import {sceneBudget} from "./budget"
 
 export interface ProcessedScene {
   elements: DiffableElement[]
   degraded: boolean
   dropped: string[]
+  textLayout?: Record<string, SceneTextLayout>
 }
 
 /** Reporting id for an element the app may not have named. */
@@ -67,9 +71,11 @@ export function processScene(
   input: readonly SceneElementInput[],
   caps: SceneDisplayCapabilities,
   profile: DisplayProfile,
+  includeTextLayout = false,
 ): ProcessedScene {
   const dropped: string[] = []
   let degraded = false
+  const textLayout: Record<string, SceneTextLayout> = Object.create(null)
 
   const measurer = new TextMeasurer(profile)
   const wrapper = new TextWrapper(measurer)
@@ -112,6 +118,17 @@ export function processScene(
   let textBudget = caps.maxTextElements
   let imageBudget = caps.maxImageElements
   const out: DiffableElement[] = []
+  const reserve = sceneBudget(profile)
+  const append = (element: DiffableElement, index: number) => {
+    if (reserve(element)) {
+      out.push(element)
+    } else {
+      const id = element.id ?? `${element.type}[${index}]`
+      dropped.push(id)
+      delete textLayout[id]
+      degraded = true
+    }
+  }
 
   for (const {el, index} of valid) {
     const clamped = clampBox(el.box, caps.width, caps.height)
@@ -143,13 +160,16 @@ export function processScene(
         continue
       }
       imageBudget--
-      out.push({
-        id: el.id,
-        type: "image",
-        box: clamped,
-        data: el.data,
-        contentHash: elementContentHash({type: "image", data: el.data}),
-      })
+      append(
+        {
+          id: el.id,
+          type: "image",
+          box: clamped,
+          data: el.data,
+          contentHash: elementContentHash({type: "image", data: el.data}),
+        },
+        index,
+      )
       continue
     }
 
@@ -162,13 +182,16 @@ export function processScene(
     textBudget--
 
     if (el.type === "rect") {
-      out.push({
-        id: el.id,
-        type: "rect",
-        box: clamped,
-        style: el.style,
-        contentHash: elementContentHash({type: "rect", style: el.style}),
-      })
+      append(
+        {
+          id: el.id,
+          type: "rect",
+          box: clamped,
+          style: el.style,
+          contentHash: elementContentHash({type: "rect", style: el.style}),
+        },
+        index,
+      )
       continue
     }
 
@@ -177,6 +200,28 @@ export function processScene(
     // Height clipping only applies with a CALIBRATED line height — otherwise
     // the firmware clips vertically in-box (legacy behavior).
     const style: SceneTextStyle = el.style ?? {}
+    if (style.maxLines !== undefined && (!Number.isFinite(style.maxLines) || style.maxLines < 1)) {
+      dropped.push(reportId(el, index))
+      degraded = true
+      continue
+    }
+    if (style.maxLines !== undefined || style.textWindow || style.verticalAlign) {
+      const processed = processText(el.text ?? "", clamped, style, profile)
+      degraded ||= processed.degraded
+      textLayout[reportId(el, index)] = processed.layout
+      append(
+        {
+          id: el.id,
+          type: "text",
+          box: processed.box,
+          text: processed.text,
+          style: el.style,
+          contentHash: elementContentHash({type: "text", text: processed.text, style: el.style}),
+        },
+        index,
+      )
+      continue
+    }
     const maxLines = lineHeight ? Math.max(1, Math.floor(clamped.h / lineHeight)) : profile.maxLines
     const result = wrapper.wrap(el.text ?? "", {
       maxWidthPx: clamped.w,
@@ -199,16 +244,28 @@ export function processScene(
         lines = [...lines.slice(0, -1), ellipsized]
       }
     }
+    if (includeTextLayout) {
+      const all = sourceLines(el.text ?? "", clamped.w, style, profile)
+      textLayout[reportId(el, index)] = {
+        lines: all.slice(0, lines.length).map((line, i) => ({...line, text: lines[i]})),
+        lineStarts: all.map((line) => line.start),
+        capacity: maxLines,
+        truncated: result.truncated,
+      }
+    }
     const wrappedText = lines.join("\n")
-    out.push({
-      id: el.id,
-      type: "text",
-      box: clamped,
-      text: wrappedText,
-      style: el.style,
-      contentHash: elementContentHash({type: "text", text: wrappedText, style: el.style}),
-    })
+    append(
+      {
+        id: el.id,
+        type: "text",
+        box: clamped,
+        text: wrappedText,
+        style: el.style,
+        contentHash: elementContentHash({type: "text", text: wrappedText, style: el.style}),
+      },
+      index,
+    )
   }
 
-  return {elements: out, degraded, dropped}
+  return {elements: out, degraded, dropped, ...(includeTextLayout ? {textLayout} : {})}
 }

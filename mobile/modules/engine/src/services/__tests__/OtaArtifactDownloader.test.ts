@@ -112,6 +112,16 @@ function contentFor(url: string): string {
 }
 
 describe("planArtifacts", () => {
+  test("plans and rewrites the selected full OTA for hotspot serving", () => {
+    const full = {end_firmware: "20260908.0", url: MTK_URL, sha256: hashes.mtk, size: 640341205}
+    const body = JSON.stringify({mtk_patches: [], mtk_full_ota: full})
+    const plan = planArtifacts(checkResult({updates: ["mtk"], mtkPatch: full, manifestBody: body}))
+    expect(plan).toEqual([{kind: "mtk", url: MTK_URL, sha256: hashes.mtk}])
+    const rewritten = JSON.parse(
+      rewriteManifestForLocalServer(body, [{...plan[0], filePath: "/full.zip"}], "http://phone:8791"),
+    )
+    expect(rewritten.mtk_full_ota).toEqual({...full, url: `http://phone:8791/artifacts/${hashes.mtk}`})
+  })
   test("plans every pending artifact from the raw manifest", () => {
     const plan = planArtifacts(checkResult())
     expect(plan).toEqual([

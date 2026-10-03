@@ -3,7 +3,9 @@ import {appRegistry} from "@mentra/engine-host-internal"
 import {Directory, File, Paths} from "expo-file-system"
 import semver from "semver"
 
+import {shouldHideMiniapp} from "./miniappVisibility"
 import {cloudClient} from "@/services/cloudClient"
+import {deploymentStore} from "@/services/deployment/store"
 
 const LOG_TAG = "PreinstalledMiniappSync"
 
@@ -43,6 +45,10 @@ function isMobileVersionSupported(entry: PreinstalledMiniappRegistryEntry): bool
 }
 
 function shouldInstall(entry: PreinstalledMiniappRegistryEntry): boolean {
+  if (shouldHideMiniapp(entry.packageName)) {
+    console.log(`${LOG_TAG}: skipping ${entry.packageName}@${entry.version} — hidden on this platform`)
+    return false
+  }
   if (!isMobileVersionSupported(entry)) {
     console.log(
       `${LOG_TAG}: skipping ${entry.packageName}@${entry.version} — mobile ${MOBILE_APP_VERSION} outside [${entry.minMobileVersion ?? "*"}, ${entry.maxMobileVersion ?? "*"}]`,
@@ -55,11 +61,12 @@ function shouldInstall(entry: PreinstalledMiniappRegistryEntry): boolean {
   return true
 }
 
-async function installEntry(entry: PreinstalledMiniappRegistryEntry): Promise<void> {
+async function installEntry(entry: PreinstalledMiniappRegistryEntry, isCurrent: () => boolean): Promise<void> {
   if (!shouldInstall(entry)) return
 
   console.log(`${LOG_TAG}: installing ${entry.packageName}@${entry.version} (${entry.installPolicy})`)
   const zipPath = await downloadVerifiedBundle(entry)
+  if (!isCurrent() || shouldHideMiniapp(entry.packageName)) return
   const result = await appRegistry.installFromLocalZip(zipPath, {
     releaseIdentity: {
       source: "preinstalled_registry",
@@ -99,7 +106,7 @@ async function downloadVerifiedBundle(entry: PreinstalledMiniappRegistryEntry): 
   return output.uri
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   if (globalThis.crypto?.subtle) {
     const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
     const digest = await globalThis.crypto.subtle.digest("SHA-256", data)
@@ -209,6 +216,9 @@ function rotr(value: number, bits: number): number {
 
 export const preinstalledMiniappSync = {
   async sync(): Promise<void> {
+    const deployment = deploymentStore.getActive()
+    if (deployment.kind !== "consumer") return
+    const isCurrent = () => deploymentStore.getActive() === deployment
     let registry
     try {
       registry = await cloudClient.getPreinstalledMiniappRegistry()
@@ -218,8 +228,9 @@ export const preinstalledMiniappSync = {
     }
 
     for (const entry of registry.entries) {
+      if (!isCurrent()) return
       try {
-        await installEntry(entry)
+        await installEntry(entry, isCurrent)
       } catch (error) {
         console.warn(
           `${LOG_TAG}: failed to install ${entry.packageName}@${entry.version}: ${(error as Error)?.message ?? error}`,

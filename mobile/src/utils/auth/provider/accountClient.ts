@@ -15,6 +15,7 @@ import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/a
 import {AuthStateListener, createAuthStateFanout} from "@/utils/auth/provider/authStateFanout"
 import {randomUrlSafe, s256Challenge} from "@/utils/auth/pkce"
 import {resolvedEndpoints} from "@/services/cloudClient"
+import {deploymentStore} from "@/services/deployment"
 import {storage} from "@/utils/storage"
 
 const ACCESS_KEY = "mentra.account.accessToken"
@@ -61,6 +62,9 @@ function saveCachedProfile(user: MentraAuthUser): void {
 }
 
 function core(path: string): string {
+  if (deploymentStore.getActive().kind === "workspace") {
+    throw new Error("Mentra account services are unavailable in an organization workspace")
+  }
   return `${resolvedEndpoints().core.replace(/\/+$/, "")}${path}`
 }
 
@@ -300,6 +304,45 @@ export class AccountAuthProvider extends AuthClient {
         headers: {"content-type": "application/json"},
         body: JSON.stringify({email}),
       })
+    })
+  }
+
+  public completeSignupVerification(accessToken: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      // Email confirmation links carry GoTrue tokens. Use the existing public
+      // exchange; never save those tokens as a Cloud V2 session.
+      const res = await fetch(core("/api/client/auth/exchange"), {
+        method: "POST",
+        headers: {"content-type": "application/x-www-form-urlencoded"},
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+          subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+          subject_token: accessToken,
+        }).toString(),
+      })
+      if (!res.ok) await throwApiError(res)
+      const body = (await res.json()) as {access_token?: string; refresh_token?: string}
+      if (!body.access_token || !body.refresh_token) throw new Error("verification returned no session")
+
+      // Resolve the first-party account before replacing any existing session.
+      // getSession() can fall back to a cached profile, which may belong to the
+      // previous account. A failed /me must not sign in with that stale identity.
+      const meRes = await fetch(core("/api/account/me"), {
+        headers: {authorization: `Bearer ${body.access_token}`},
+      })
+      if (!meRes.ok) await throwApiError(meRes)
+      const me = (await meRes.json()) as {mentraUserId?: string; email?: string; name?: string; avatarUrl?: string}
+      if (!me.mentraUserId) throw new Error("verification returned no account")
+      const user: MentraAuthUser = {
+        id: me.mentraUserId,
+        email: me.email,
+        name: me.name ?? me.email ?? "",
+        avatarUrl: me.avatarUrl,
+      }
+      saveTokens({access: body.access_token, refresh: body.refresh_token})
+      saveCachedProfile(user)
+      // AuthContext and the engine must receive the account before navigation.
+      authState.emit("SIGNED_IN", {token: body.access_token, user})
     })
   }
 

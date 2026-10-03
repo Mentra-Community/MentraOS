@@ -6,7 +6,7 @@ import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.os.Build;
-import android.util.Log;
+import com.mentra.bluetoothsdk.utils.NativeLog;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -62,7 +62,7 @@ public class PCMAudioPlayer {
         // Calculate buffer size
         this.bufferSize = AudioTrack.getMinBufferSize(sampleRate, channelConfig, audioFormat);
         if (this.bufferSize == AudioTrack.ERROR_BAD_VALUE) {
-            Log.e(TAG, "Invalid audio configuration");
+            NativeLog.e(TAG, "Invalid audio configuration");
             return;
         }
 
@@ -95,15 +95,15 @@ public class PCMAudioPlayer {
 
             if (audioTrack.getState() == AudioTrack.STATE_INITIALIZED) {
                 isInitialized.set(true);
-                Log.d(TAG, "AudioTrack initialized successfully with USAGE_VOICE_COMMUNICATION");
+                NativeLog.d(TAG, "AudioTrack initialized successfully with USAGE_VOICE_COMMUNICATION");
 
                 // Route to Bluetooth SCO if available
                 routeToBluetoothIfAvailable();
             } else {
-                Log.e(TAG, "Failed to initialize AudioTrack");
+                NativeLog.e(TAG, "Failed to initialize AudioTrack");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error initializing AudioTrack", e);
+            NativeLog.e(TAG, "Error initializing AudioTrack", e);
         }
     }
 
@@ -125,7 +125,7 @@ public class PCMAudioPlayer {
             for (AudioDeviceInfo device : devices) {
                 if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
                     bluetoothDevice = device;
-                    Log.d(TAG, "Found Bluetooth SCO device: " + device.getProductName());
+                    NativeLog.d(TAG, "Found Bluetooth SCO device: " + device.getProductName());
                     break;
                 }
             }
@@ -134,15 +134,15 @@ public class PCMAudioPlayer {
             if (bluetoothDevice != null) {
                 boolean success = audioTrack.setPreferredDevice(bluetoothDevice);
                 if (success) {
-                    Log.d(TAG, "Successfully routed audio to Bluetooth SCO device");
+                    NativeLog.d(TAG, "Successfully routed audio to Bluetooth SCO device");
                 } else {
-                    Log.w(TAG, "Failed to route audio to Bluetooth SCO device");
+                    NativeLog.w(TAG, "Failed to route audio to Bluetooth SCO device");
                 }
             } else {
-                Log.d(TAG, "No Bluetooth SCO device available, using default routing");
+                NativeLog.d(TAG, "No Bluetooth SCO device available, using default routing");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error routing to Bluetooth: " + e.getMessage());
+            NativeLog.e(TAG, "Error routing to Bluetooth: " + e.getMessage());
         }
     }
 
@@ -154,12 +154,12 @@ public class PCMAudioPlayer {
      */
     public boolean playPCMData(byte[] pcmData) {
         if (!isInitialized.get() || audioTrack == null) {
-            Log.e(TAG, "AudioTrack not initialized");
+            NativeLog.e(TAG, "AudioTrack not initialized");
             return false;
         }
 
         if (isPlaying.get()) {
-            Log.w(TAG, "Already playing audio");
+            NativeLog.w(TAG, "Already playing audio");
             return false;
         }
 
@@ -173,16 +173,16 @@ public class PCMAudioPlayer {
                 int written = audioTrack.write(pcmData, 0, pcmData.length);
 
                 if (written < 0) {
-                    Log.e(TAG, "Error writing audio data: " + written);
+                    NativeLog.e(TAG, "Error writing audio data: " + written);
                 } else {
-                    Log.d(TAG, "Successfully wrote " + written + " bytes of audio data");
+                    NativeLog.d(TAG, "Successfully wrote " + written + " bytes of audio data");
                 }
 
                 // Wait for playback to complete
                 audioTrack.stop();
 
             } catch (Exception e) {
-                Log.e(TAG, "Error during playback", e);
+                NativeLog.e(TAG, "Error during playback", e);
             } finally {
                 isPlaying.set(false);
             }
@@ -200,7 +200,7 @@ public class PCMAudioPlayer {
      */
     public boolean streamPCMData(byte[] pcmData) {
         if (!isInitialized.get() || audioTrack == null) {
-            Log.e(TAG, "AudioTrack not initialized");
+            NativeLog.e(TAG, "AudioTrack not initialized");
             return false;
         }
 
@@ -214,13 +214,13 @@ public class PCMAudioPlayer {
             int written = audioTrack.write(pcmData, 0, pcmData.length);
 
             if (written < 0) {
-                Log.e(TAG, "Error writing audio data: " + written);
+                NativeLog.e(TAG, "Error writing audio data: " + written);
                 return false;
             }
 
             return true;
         } catch (Exception e) {
-            Log.e(TAG, "Error streaming audio data", e);
+            NativeLog.e(TAG, "Error streaming audio data", e);
             return false;
         }
     }
@@ -233,12 +233,12 @@ public class PCMAudioPlayer {
      */
     public boolean playPCMData(short[] pcmData) {
         if (!isInitialized.get() || audioTrack == null) {
-            Log.e(TAG, "AudioTrack not initialized");
+            NativeLog.e(TAG, "AudioTrack not initialized");
             return false;
         }
 
         if (isPlaying.get()) {
-            Log.w(TAG, "Already playing audio");
+            NativeLog.w(TAG, "Already playing audio");
             return false;
         }
 
@@ -252,16 +252,16 @@ public class PCMAudioPlayer {
                 int written = audioTrack.write(pcmData, 0, pcmData.length);
 
                 if (written < 0) {
-                    Log.e(TAG, "Error writing audio data: " + written);
+                    NativeLog.e(TAG, "Error writing audio data: " + written);
                 } else {
-                    Log.d(TAG, "Successfully wrote " + written + " samples of audio data");
+                    NativeLog.d(TAG, "Successfully wrote " + written + " samples of audio data");
                 }
 
                 // Wait for playback to complete
                 audioTrack.stop();
 
             } catch (Exception e) {
-                Log.e(TAG, "Error during playback", e);
+                NativeLog.e(TAG, "Error during playback", e);
             } finally {
                 isPlaying.set(false);
             }
@@ -279,7 +279,7 @@ public class PCMAudioPlayer {
      */
     public boolean streamPCMData(short[] pcmData) {
         if (!isInitialized.get() || audioTrack == null) {
-            Log.e(TAG, "AudioTrack not initialized");
+            NativeLog.e(TAG, "AudioTrack not initialized");
             return false;
         }
 
@@ -293,13 +293,13 @@ public class PCMAudioPlayer {
             int written = audioTrack.write(pcmData, 0, pcmData.length);
 
             if (written < 0) {
-                Log.e(TAG, "Error writing audio data: " + written);
+                NativeLog.e(TAG, "Error writing audio data: " + written);
                 return false;
             }
 
             return true;
         } catch (Exception e) {
-            Log.e(TAG, "Error streaming audio data", e);
+            NativeLog.e(TAG, "Error streaming audio data", e);
             return false;
         }
     }

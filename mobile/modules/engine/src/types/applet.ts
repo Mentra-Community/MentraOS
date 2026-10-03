@@ -19,7 +19,18 @@ export type AppletType = "standard" | "background" | "system_dashboard"
 export type AppPermissionType =
   | "ALL"
   | "MICROPHONE"
+  /** The glasses camera. */
   | "CAMERA"
+  /**
+   * This phone's own camera.
+   *
+   * Separate from `CAMERA` because that one has always meant the glasses, for every miniapp, and
+   * is never prompted for as an OS permission. A miniapp that publishes video *from the phone*
+   * (an ACS Teams call does, even though the frames originate on the glasses) needs the Android
+   * `CAMERA` runtime permission, and asking for it under the existing type would start prompting
+   * every miniapp on the platform for a camera it does not use.
+   */
+  | "PHONE_CAMERA"
   | "CALENDAR"
   | "LOCATION"
   | "BACKGROUND_LOCATION"

@@ -81,6 +81,9 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             K900BluetoothManager k900Manager = getK900BluetoothManager();
             if (k900Manager != null) {
                 k900Manager.addPhoneWireCapsIfSupported(response);
+                // A phone handshake can follow a BLE edge lost while MTK was asleep. Ask BES
+                // for the authoritative state; the command itself is not a presence report.
+                k900Manager.requestSystemVersionRefresh();
             }
             Log.d(TAG, "📱 📤 Sending glasses_ready response: " + response.toString());
 

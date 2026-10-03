@@ -65,6 +65,10 @@ public class CrustModule: Module {
     public func definition() -> ModuleDefinition {
         Name("Crust")
 
+        Constant("isIOSAppOnMac") {
+            ProcessInfo.processInfo.isiOSAppOnMac
+        }
+
         Constant("PI") {
             Double.pi
         }

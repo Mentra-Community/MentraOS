@@ -41,6 +41,10 @@ permissions:
   # Upload/replace assets on the rolling `oem-app-builds` release.
   contents: write
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   build:
     # Same runner class as the MentraOS Android build: an ubuntu compile job
@@ -129,6 +133,22 @@ jobs:
         working-directory: sdk/example-oem-app
         run: bun expo prebuild --platform android
 
+      - name: Raise the Gradle heap for dexing
+        working-directory: sdk/example-oem-app/android
+        # Expo's template leaves the daemon at -Xmx2048m, which was enough when
+        # this APK last built in July but now OOMs D8 while dexing the grown
+        # module set ("ERROR: D8: java.lang.OutOfMemoryError: Java heap space").
+        # The Mentra App raises its own host the same way, to -Xmx8192m, from
+        # mobile/plugins/android.ts. Rewrite only the size tokens so the
+        # generated -Dorg.gradle.project.nodePath argument survives.
+        run: |
+          set -euo pipefail
+          sed -i \
+            -e 's/-Xmx[0-9]*m/-Xmx6144m/' \
+            -e 's/-XX:MaxMetaspaceSize=[0-9]*m/-XX:MaxMetaspaceSize=1536m/' \
+            gradle.properties
+          grep '^org.gradle.jvmargs=' gradle.properties
+
       - name: Build release APK (debug-signed)
         working-directory: sdk/example-oem-app/android
         run: ./gradlew assembleRelease --build-cache --parallel
@@ -169,6 +189,10 @@ jobs:
         # MentraOS Android build maintains for PR APKs):
         # https://github.com/Mentra-Community/MentraOS/releases/tag/oem-app-builds
         if: github.event_name != 'pull_request'
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -189,34 +213,17 @@ jobs:
               })).data;
             }
 
-            for (const asset of release.assets) {
-              if (asset.name === apkName) {
-                await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
-              }
-            }
-
-            const data = fs.readFileSync(apkName);
-            console.log(`Uploading ${apkName} (${data.length} bytes)...`);
-            await github.rest.repos.uploadReleaseAsset({
-              owner, repo, release_id: release.id, name: apkName, data,
-            });
+            require('child_process').execFileSync('node', [
+              '.github/scripts/publish-immutable-release-asset.mjs',
+              '--file', apkName, '--name', apkName, '--release-id', String(release.id),
+              '--repository', `${owner}/${repo}`, '--replace', 'true',
+            ], {stdio: 'inherit', env: {...process.env, GH_TOKEN: process.env.GITHUB_TOKEN}});
 
       - name: Sweep old release assets
         if: github.event_name != 'pull_request'
         continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const {owner, repo} = context.repo;
-            const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-            try {
-              const release = (await github.rest.repos.getReleaseByTag({owner, repo, tag: 'oem-app-builds'})).data;
-              for (const asset of release.assets) {
-                if (new Date(asset.created_at) < cutoff) {
-                  console.log(`Deleting expired asset: ${asset.name} (created ${asset.created_at})`);
-                  await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
-                }
-              }
-            } catch (e) {
-              console.log('Sweep skipped:', e.message);
-            }
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-assets.mjs sweep --tag oem-app-builds --days 14

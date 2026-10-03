@@ -1,0 +1,17 @@
+name: Codex review scripts tests
+
+on:
+  pull_request:
+    branches: [dev, staging, main]
+    paths:
+      - "scripts/codex-review/**"
+      - ".github/workflows/codex-review-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Lifecycle tests with fake gh and codex
+        run: bun test scripts/codex-review

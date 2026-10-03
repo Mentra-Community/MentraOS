@@ -1,6 +1,9 @@
+// This test exercises engine-private projection and stores; no public test export exists.
+/* eslint-disable no-restricted-imports */
 import {
   startGlassesStatusProjection,
   stopGlassesStatusProjection,
+  toMiniappConnectionData,
 } from "../../modules/engine/src/services/GlassesStatusProjection"
 import {useCoreStore} from "../../modules/engine/src/stores/core"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
@@ -15,6 +18,25 @@ describe("GlassesStatusProjection", () => {
 
   afterEach(() => {
     stopGlassesStatusProjection()
+  })
+
+  it("carries the delayed G2 arm notice through hydration, the facade and live clearing", async () => {
+    const {glasses} = jest.requireActual(
+      "../../modules/engine/src/facades/glasses",
+    ) as typeof import("../../modules/engine/src/facades/glasses")
+    ;(bluetoothSdkMock.getGlassesStatus as jest.Mock).mockResolvedValueOnce({
+      connection: {state: "disconnected"},
+      g2MissingArm: "left",
+    })
+    await startGlassesStatusProjection()
+    expect(glasses.status().g2MissingArm).toBe("left")
+    expect(glasses.status().fullyBooted).toBe(false)
+    const listener = jest.fn()
+    const unsubscribe = glasses.onStatus(listener)
+    emitBluetoothSdkEvent("glasses_status", {g2MissingArm: null})
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({g2MissingArm: null}))
+    expect(glasses.status().g2MissingArm).toBeNull()
+    unsubscribe()
   })
 
   it("hydrates the initial bluetooth and glasses status snapshots", async () => {
@@ -105,5 +127,37 @@ describe("GlassesStatusProjection", () => {
     emitBluetoothSdkEvent("glasses_status", changed)
 
     expect(forward).toHaveBeenCalledWith(changed)
+  })
+})
+
+describe("toMiniappConnectionData", () => {
+  it("maps nested connection.state to the miniapp connected boolean", () => {
+    expect(
+      toMiniappConnectionData({
+        connection: {state: "connected", fullyBooted: true},
+        deviceModel: "Mentra Live",
+        batteryLevel: 80,
+      }),
+    ).toEqual({connected: true, modelName: "Mentra Live"})
+  })
+
+  it("maps a disconnect delta without inventing a model name", () => {
+    expect(toMiniappConnectionData({connection: {state: "disconnected"}})).toEqual({connected: false})
+  })
+
+  it("returns null for battery-only deltas so they cannot flip the link", () => {
+    expect(toMiniappConnectionData({batteryLevel: 80})).toBeNull()
+  })
+
+  it("passes through an already-shaped ConnectionData payload", () => {
+    expect(toMiniappConnectionData({connected: true, modelName: "Mentra Live"})).toEqual({
+      connected: true,
+      modelName: "Mentra Live",
+    })
+  })
+
+  it("returns null for empty or non-object payloads", () => {
+    expect(toMiniappConnectionData(null)).toBeNull()
+    expect(toMiniappConnectionData(undefined)).toBeNull()
   })
 })

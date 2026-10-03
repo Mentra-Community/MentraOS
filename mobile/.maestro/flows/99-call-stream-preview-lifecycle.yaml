@@ -1,0 +1,121 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - hardware
+  - stream-preview
+env:
+  MEETING_URL: ${MEETING_URL || ""}
+  TOGGLES: ${TOGGLES || "50"}
+  REOPENS: ${REOPENS || "10"}
+  RELOADS: ${RELOADS || "3"}
+  RELOAD_HOOK_URL: ${RELOAD_HOOK_URL || ""}
+  BACKGROUND_MS: ${BACKGROUND_MS || "10000"}
+  FRAMES_TIMEOUT_MS: ${FRAMES_TIMEOUT_MS || "20000"}
+---
+# Mentra Call stream preview lifecycle, also used as the release memory gate:
+# join a Teams call, show the preview, then TOGGLES hide/show toggles, REOPENS
+# dismiss/reopen cycles of the miniapp UI, RELOADS page reloads, and one trip to
+# the background and back. Each step waits until frames replace the uplink card.
+#
+# Run it through scripts/stream-preview-run.sh, which starts the reload hook
+# (Android debug builds) and pulls the frame-preview NDJSON run logs afterwards:
+#
+#   mobile/.maestro/scripts/stream-preview-run.sh android "<teams meeting url>"
+#
+# Requires: signed in, Mentra Live connected, the Mentra Call build that adopts
+# <StreamPreview>, and a Teams meeting the wearer can join without waiting in a
+# lobby. Without RELOAD_HOOK_URL the reload step is skipped (see the script).
+
+- assertTrue: ${MEETING_URL != ""}
+
+- runFlow:
+    file: ../helpers/stream-preview-join-call.yaml
+    env:
+      MEETING_URL: ${MEETING_URL}
+- takeScreenshot: "stream-preview-in-call"
+
+- runFlow:
+    file: ../helpers/stream-preview-show.yaml
+    env:
+      FRAMES_TIMEOUT_MS: ${FRAMES_TIMEOUT_MS}
+- takeScreenshot: "stream-preview-frames"
+
+# Hide/show: unmounting <StreamPreview> stops production but keeps the lease and
+# the document's connection, so every show must start without a new handshake.
+- repeat:
+    times: ${TOGGLES}
+    commands:
+      - tapOn: "Turn preview off"
+      - extendedWaitUntil:
+          visible: "Turn preview on"
+          timeout: 5000
+      - runFlow:
+          file: ../helpers/stream-preview-show.yaml
+          env:
+            FRAMES_TIMEOUT_MS: ${FRAMES_TIMEOUT_MS}
+
+# Dismiss/reopen: minimizing keeps Mentra Call and its call running in the
+# background (the lease survives), while the reopened UI is a new document that
+# must handshake again. Close would stop the miniapp and end the call.
+- repeat:
+    times: ${REOPENS}
+    commands:
+      - tapOn:
+          id: "miniapp.minimize"
+      - extendedWaitUntil:
+          visible: "Mentra Call"
+          timeout: 10000
+      - tapOn: "Mentra Call"
+      - extendedWaitUntil:
+          visible: "Turn preview on"
+          timeout: 30000
+      - runFlow:
+          file: ../helpers/stream-preview-show.yaml
+          env:
+            FRAMES_TIMEOUT_MS: ${FRAMES_TIMEOUT_MS}
+
+# Reload: the same WebView loads a new document. Bundled miniapps have no reload
+# control, so the host-side hook reloads it through the WebView DevTools socket.
+- runFlow:
+    when:
+      true: ${RELOAD_HOOK_URL != ""}
+    commands:
+      - repeat:
+          times: ${RELOADS}
+          commands:
+            - runScript:
+                file: ../scripts/stream-preview-reload.js
+                env:
+                  RELOAD_HOOK_URL: ${RELOAD_HOOK_URL}
+            - extendedWaitUntil:
+                visible: "Turn preview on"
+                timeout: 30000
+            - runFlow:
+                file: ../helpers/stream-preview-show.yaml
+                env:
+                  FRAMES_TIMEOUT_MS: ${FRAMES_TIMEOUT_MS}
+
+# Background and return with the preview still mounted: the host pauses
+# production (paused_background) and resumes it for the same mount on return.
+- pressKey: Home
+# Dwell in the background. Maestro has no sleep; waiting for text that never
+# appears, optionally, is the usual stand-in.
+- extendedWaitUntil:
+    visible: "stream-preview-dwell-never-shown"
+    timeout: ${BACKGROUND_MS}
+    optional: true
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible: "Turn preview off"
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      text: "(?i).*glasses camera.*"
+    timeout: ${FRAMES_TIMEOUT_MS}
+- takeScreenshot: "stream-preview-after-background"
+
+# Leaving ends the call, which releases the lease and closes the run log.
+- tapOn: "Leave the call"
+- extendedWaitUntil:
+    notVisible: "Turn preview (on|off)"
+    timeout: 60000

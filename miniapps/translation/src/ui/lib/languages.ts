@@ -12,6 +12,10 @@ export interface Language {
  * languages (later 12 when Vietnamese was added).
  */
 export const TARGET_LANGUAGES: Language[] = [
+  {code: "en", name: "English", nativeName: "English", flag: "🇺🇸"},
+  {code: "de", name: "German", nativeName: "Deutsch", flag: "🇩🇪"},
+  {code: "fr", name: "French", nativeName: "Français", flag: "🇫🇷"},
+  {code: "ja", name: "Japanese", nativeName: "日本語", flag: "🇯🇵"},
   {code: "af", name: "Afrikaans", nativeName: "Afrikaans", flag: "🇿🇦"},
   {code: "sq", name: "Albanian", nativeName: "Shqip", flag: "🇦🇱"},
   {code: "ar", name: "Arabic", nativeName: "العربية", flag: "🇸🇦"},
@@ -27,12 +31,9 @@ export const TARGET_LANGUAGES: Language[] = [
   {code: "cs", name: "Czech", nativeName: "Čeština", flag: "🇨🇿"},
   {code: "da", name: "Danish", nativeName: "Dansk", flag: "🇩🇰"},
   {code: "nl", name: "Dutch", nativeName: "Nederlands", flag: "🇳🇱"},
-  {code: "en", name: "English", nativeName: "English", flag: "🇺🇸"},
   {code: "et", name: "Estonian", nativeName: "Eesti", flag: "🇪🇪"},
   {code: "fi", name: "Finnish", nativeName: "Suomi", flag: "🇫🇮"},
-  {code: "fr", name: "French", nativeName: "Français", flag: "🇫🇷"},
   {code: "gl", name: "Galician", nativeName: "Galego", flag: "🇪🇸"},
-  {code: "de", name: "German", nativeName: "Deutsch", flag: "🇩🇪"},
   {code: "el", name: "Greek", nativeName: "Ελληνικά", flag: "🇬🇷"},
   {code: "gu", name: "Gujarati", nativeName: "ગુજરાતી", flag: "🇮🇳"},
   {code: "he", name: "Hebrew", nativeName: "עברית", flag: "🇮🇱"},
@@ -40,7 +41,6 @@ export const TARGET_LANGUAGES: Language[] = [
   {code: "hu", name: "Hungarian", nativeName: "Magyar", flag: "🇭🇺"},
   {code: "id", name: "Indonesian", nativeName: "Bahasa Indonesia", flag: "🇮🇩"},
   {code: "it", name: "Italian", nativeName: "Italiano", flag: "🇮🇹"},
-  {code: "ja", name: "Japanese", nativeName: "日本語", flag: "🇯🇵"},
   {code: "kn", name: "Kannada", nativeName: "ಕನ್ನಡ", flag: "🇮🇳"},
   {code: "kk", name: "Kazakh", nativeName: "Қазақ тілі", flag: "🇰🇿"},
   {code: "ko", name: "Korean", nativeName: "한국어", flag: "🇰🇷"},

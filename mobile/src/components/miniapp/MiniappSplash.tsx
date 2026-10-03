@@ -28,6 +28,7 @@ interface MiniappSplashProps {
   devApp?: boolean
   /** Render at full opacity immediately instead of fading in (fade out still applies). */
   disableFadeIn?: boolean
+  onHidden?: () => void
 }
 
 const FADE_IN_DURATION_MS = 50
@@ -43,6 +44,7 @@ export default function MiniappSplash({
   label,
   devApp = false,
   disableFadeIn = false,
+  onHidden,
 }: MiniappSplashProps) {
   const {theme} = useAppTheme()
   const size = 128
@@ -66,6 +68,10 @@ export default function MiniappSplash({
       if (finished) runOnJS(setHidden)(true)
     })
   }, [isLoaded, minVisibleElapsed, opacity])
+
+  useEffect(() => {
+    if (hidden) onHidden?.()
+  }, [hidden, onHidden])
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
@@ -102,7 +108,7 @@ export default function MiniappSplash({
               source={iconUrl}
               style={{width: "100%", height: "100%"}}
               contentFit="cover"
-              transition={200}
+              transition={disableFadeIn ? 0 : 200}
               cachePolicy="memory-disk"
             />
           ) : devApp ? (

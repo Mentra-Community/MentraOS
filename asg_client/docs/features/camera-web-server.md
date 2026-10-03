@@ -6,11 +6,48 @@ Source: `app/src/main/java/com/mentra/asg_client/io/server/`. Main class: `AsgCa
 
 ## When the server runs
 
-The server starts only after the Mentra Live hotspot reports ready and stops as soon as the hotspot stops. `AsgClientService.onHotspotStateChanged()` drives the matching server lifecycle through `AsgClientServiceManager`. At process startup, an already-active hotspot is adopted before the service manager synchronizes the server state.
+By default, the server starts only after the Mentra Live hotspot reports ready and stops as soon as the hotspot stops. `AsgClientService.onHotspotStateChanged()` drives the matching server lifecycle through `AsgClientServiceManager`. At process startup, an already-active hotspot is adopted before the service manager synchronizes the server state.
 
-NanoHTTPD binds specifically to the active hotspot gateway address, not to every interface. Ordinary station-mode WiFi connections never start the server and cannot reach it.
+With persistent access disabled, NanoHTTPD binds specifically to the active hotspot gateway address. Ordinary station-mode WiFi connections do not start the server.
 
-`AsgClientServiceManager.getCameraServer()` exposes the running instance to other components. The gallery command handler, for example, reads counts from the server's `FileManager`.
+`AsgClientServiceManager.getCameraServer()` exposes the running instance to other components. Gallery counts are read independently from the shared `FileManager`, so BLE status queries also work without a listener.
+
+### Persistent site-network gallery opt-in
+
+`set_gallery_server_enabled` keeps the existing camera server running on all local interfaces at port 8089. It defaults off. The saved setting survives BLE disconnection, hotspot shutdown, and glasses restart until disabled; it has no idle timeout. The server remains running across Wi-Fi disconnections and DHCP changes. A five-second reconciliation loop retries failed starts. Service cleanup stops the server without clearing the saved setting.
+
+Both modes use the same `AsgCameraServer`, factory configuration, camera callbacks, and complete endpoint table below. There is no separate route allowlist or HTTP API variant. Clients can use the existing listing, download, sync, deletion, restore, capture, and browser APIs on the site-network IP.
+
+The server uses plain HTTP without a password or token. Any reachable client can use the complete API, and traffic is unencrypted. This is an explicit opt-in for deployments whose network policy permits that access.
+
+BLE request:
+
+```json
+{"type":"set_gallery_server_enabled","request_id":"gallery-1","enabled":true}
+```
+
+Response when the setting is saved and a site-network endpoint is available:
+
+```json
+{"type":"settings_ack","request_id":"gallery-1","setting":"gallery_server","status":"applied","enabled":true,"listening":true,"url":"http://10.0.0.42:8089","timestamp":1234567890}
+```
+
+`enabled` describes the persisted setting; `listening` describes current site-network availability. An enable can succeed with `listening:false` and no `url`, for example without station Wi-Fi or while a bind is being retried. Repeat the same enable to obtain a fresh acknowledgement without restarting a healthy server. Send `enabled:false` to restore hotspot-only access: the listener rebinds to an active hotspot's address or stops if the hotspot is off. Switching binding modes restarts the listener and can interrupt in-flight requests; normal HTTP retries apply.
+
+Commands require a nonempty `request_id` and a JSON boolean `enabled`. Malformed input returns an `invalid_request` error ack without changing the setting. Settings storage failure returns `settings_unavailable`. Native SDKs expose this as `setGalleryServerEnabled`; older firmware that does not handle the command will time out rather than claim success.
+
+### End-to-end device qualification
+
+Use updated glasses firmware and a native SDK build on a managed iPad with both devices joined to the same site Wi-Fi:
+
+1. With the hotspot off and the setting disabled, confirm port 8089 is unavailable on the glasses' site-network IP.
+2. Call `setGalleryServerEnabled(true)` through the client SDK. Check `enabled:true`, `listening:true`, and the returned station URL; list `/api/gallery` and download a finished recording through `/api/download`.
+3. Background the client and disconnect BLE. Confirm the HTTP transfer completes. Restart the glasses and reconnect Wi-Fi; confirm the server returns without another enable command. Repeat enable after reconnecting BLE to obtain the current URL if DHCP changed it.
+4. Exercise capture, deletion, and restore with disposable media using the same HTTP requests as on the hotspot.
+5. Call `setGalleryServerEnabled(false)` and confirm `enabled:false`, `listening:false`, no URL, and no station-network access. Start the hotspot and verify the original gallery APIs still work; stop it and verify the server stops.
+6. Switch modes during a transfer and verify the client retries an interrupted request. On older firmware, verify the SDK reports a timeout rather than success.
+
+Automated tests complement this hardware path: `GalleryServerCommandTests` replays native SDK commands and raw receive bytes through the real Swift event bridge and request resolver; `galleryServerBridge.test.ts` checks the public TypeScript adapter; ASG lifecycle and HTTP tests cover the device side. Radio, MDM policy, and background execution still require the physical run above.
 
 ## Construction
 

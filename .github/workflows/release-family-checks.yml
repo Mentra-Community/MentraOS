@@ -7,6 +7,7 @@ on:
       - ".github/release-family.json"
       - ".github/production-release/**"
       - ".github/scripts/*.mjs"
+      - ".github/artifact-storage/**"
       - ".github/workflows/coordinated-*.yml"
       - ".github/workflows/release-family-checks.yml"
       - ".github/workflows/reusable-coordinated-*.yml"
@@ -26,6 +27,8 @@ on:
       - "mobile/modules/bluetooth-sdk/ios/Source/GeneratedChangelogCatalog.swift"
       - "mobile/modules/crust/package.json"
       - "mobile/modules/engine/package.json"
+      - "mobile/modules/acs-meeting/package.json"
+      - "mobile/modules/glasses-media/package.json"
       - "mobile/modules/engine/scripts/*.mjs"
       - "mobile/modules/jspolyfill/package.json"
       - "mobile/modules/miniapp/package.json"
@@ -56,8 +59,11 @@ jobs:
             mobile/modules/engine/scripts \
             -maxdepth 1 -name '*.test.mjs' -print | sort)
           tests+=(mobile/scripts/app-store-connect-build.test.mjs scripts/production-release.test.mjs)
+          tests+=(mobile/scripts/native-build-cache.test.mjs mobile/ci/pr-ios/xcode-attempt.test.mjs)
           test "${#tests[@]}" -gt 0
           node --test "${tests[@]}"
+      - name: Test coordinated Apple package identity
+        run: python3 mobile/ci/coordinated-downloads-test.py
       - name: Validate repository definition
         run: node .github/scripts/release-family-cli.mjs validate --require-version-mirrors
       - name: Verify generated changelog catalogs

@@ -1,13 +1,20 @@
 package com.mentra.asg_client.service.core.handlers.subscribers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
+import static org.robolectric.Shadows.shadowOf;
 
+import android.os.Looper;
+
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -18,6 +25,7 @@ import com.mentra.asg_client.io.peripheral.events.ButtonEvent;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.AsgSettings;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Queue;
 import org.junit.Before;
@@ -40,6 +48,7 @@ public class ButtonEventSubscriberTest {
     private K900BluetoothManager bluetoothManager;
     private LinkStateMachine linkState;
     private IHardwareManager hardwareManager;
+    private IStateManager stateManager;
     private Queue<Runnable> batteryTasks;
     private ButtonEventSubscriber subscriber;
 
@@ -49,6 +58,7 @@ public class ButtonEventSubscriberTest {
         captureService = mock(MediaCaptureService.class);
         bluetoothManager = mock(K900BluetoothManager.class);
         hardwareManager = mock(IHardwareManager.class);
+        stateManager = mock(IStateManager.class);
         batteryTasks = new ArrayDeque<>();
         AsgSettings asgSettings = mock(AsgSettings.class);
         linkState = new LinkStateMachine();
@@ -67,8 +77,36 @@ public class ButtonEventSubscriberTest {
                 new ButtonEventSubscriber(
                         serviceManager,
                         hardwareManager,
-                        mock(IStateManager.class),
+                        stateManager,
                         batteryTasks::add);
+    }
+
+    @Test
+    public void longPressUsesSharedChargingExceptionAndPreservesNormalBoundary() {
+        for (boolean active : new boolean[] {false, true}) {
+            for (int level : new int[] {-1, 0, 3, 4, 14, 15, 19}) {
+                when(stateManager.getBatteryLevel()).thenReturn(level);
+                when(hardwareManager.getBatteryLevel()).thenReturn(level);
+                when(hardwareManager.allowsLowBatteryCamera(level)).thenReturn(active);
+                clearInvocations(captureService);
+                subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.CAMERA_LONG_PRESS));
+                if (level < 0 || level >= 15 || (level > 3 && active)) {
+                    verify(captureService).startVideoRecording(null, true, 0, level);
+                } else {
+                    verify(captureService).playBatteryLowSound();
+                    verify(captureService, never()).startVideoRecording(null, true, 0, level);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void lowBatteryNeverBlocksButtonStopOfExistingRecording() {
+        when(stateManager.getBatteryLevel()).thenReturn(3);
+        when(captureService.isRecordingVideo()).thenReturn(true);
+        subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.CAMERA_LONG_PRESS));
+        verify(captureService).stopVideoRecording();
+        verify(captureService, never()).playBatteryLowSound();
     }
 
     private void shortPress() {
@@ -169,5 +207,55 @@ public class ButtonEventSubscriberTest {
         shortPress();
 
         verify(captureService).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void mashedCameraButton_capturesOnceWithinTheMinimumInterval() {
+        // Every camera sound is ASG-side (MediaPlayer -> I2S -> BES), so stacking captures stacks
+        // overlapping players on that path. One press through, the rest dropped.
+        shortPress();
+        shortPress();
+        shortPress();
+        shortPress();
+
+        verify(captureService, times(1))
+                .takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void cameraButton_capturesAgainOnceTheIntervalElapses() {
+        shortPress();
+        shadowOf(Looper.getMainLooper())
+                .idleFor(Duration.ofMillis(AsgConstants.BUTTON_PHOTO_MIN_INTERVAL_MS));
+
+        shortPress();
+
+        verify(captureService, times(2))
+                .takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void droppedCameraPress_isStillForwardedToThePhone() {
+        // The phone/app path must stay unthrottled: only local capture is rate-limited.
+        when(bluetoothManager.isConnected()).thenReturn(true);
+
+        shortPress();
+        shortPress();
+
+        verify(captureService, times(1))
+                .takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+        verify(bluetoothManager, times(2)).sendMessage(any(byte[].class));
+    }
+
+    @Test
+    public void rateLimit_doesNotBlockStoppingAVideoRecording() {
+        when(captureService.isRecordingVideo()).thenReturn(true);
+
+        shortPress();
+        shortPress();
+
+        verify(captureService, times(2)).stopVideoRecording();
+        verify(captureService, never())
+                .takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
     }
 }

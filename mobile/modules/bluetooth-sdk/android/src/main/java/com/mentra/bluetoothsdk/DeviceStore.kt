@@ -31,6 +31,16 @@ object DeviceStore {
                 JSONObject(mapOf("v" to newValue)).toString()
     }
 
+    /**
+     * Empty/`reset` mic tuning must still be written to the glasses. Native
+     * `update` drops null, and equal empty maps would otherwise skip BLE.
+     */
+    private fun isMicTuningReset(value: Any): Boolean {
+        val map = value as? Map<*, *> ?: return true
+        if (map.isEmpty()) return true
+        return map.entries.none { (key, field) -> key != "reset" && field is Number }
+    }
+
     private fun scheduleDashboardHeightToGlasses() {
         pendingDashboardHeightRunnable?.let { dashboardBleHandler.removeCallbacks(it) }
         val r = Runnable {
@@ -132,6 +142,7 @@ object DeviceStore {
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("bluetooth", "loudness_gate_enabled", BluetoothSdkDefaults.LOUDNESS_GATE_ENABLED)
+        store.set("bluetooth", "auto_power_off_enabled", BluetoothSdkDefaults.AUTO_POWER_OFF_ENABLED)
         store.set("bluetooth", "screen_disabled", false)
         store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
@@ -164,7 +175,10 @@ object DeviceStore {
     fun apply(category: String, key: String, value: Any) {
         val oldValue = store.get(category, key)
         store.set(category, key, value)
-        if (observableStoreWouldHaveSkipped(oldValue, value)) {
+        val skipped = observableStoreWouldHaveSkipped(oldValue, value)
+        val forceMicReset =
+                category == ObservableStore.BLUETOOTH_CATEGORY && key == "mic_tuning" && isMicTuningReset(value)
+        if (skipped && !forceMicReset) {
             return
         }
 
@@ -206,14 +220,30 @@ object DeviceStore {
             }
 
             // BLUETOOTH:
+            "bluetooth" to "contextual_dashboard" -> {
+                if (value is Boolean) {
+                    CoroutineScope(Dispatchers.Main.immediate).launch {
+                        // The setting changes the selected view even without a new head event.
+                        // Re-read state on Main and retain the manager's readiness/display guards.
+                        if (store.get("glasses", "headUp") == true) {
+                            DeviceManager.getInstance().sendCurrentState()
+                        }
+                    }
+                }
+            }
             "bluetooth" to "brightness" -> {
                 val b = (value as? Number)?.toInt()  ?: 50
                 val auto = (store.get("bluetooth", "auto_brightness") as? Boolean) ?: true
                 CoroutineScope(Dispatchers.Main).launch {
-                    DeviceManager.getInstance().sgc?.setBrightness(b, auto)
-                    DeviceManager.getInstance().sgc?.sendTextWall("Set brightness to $b%")
-                    delay(800) // 0.8 seconds
-                    DeviceManager.getInstance().sgc?.clearDisplay()
+                    val device = DeviceManager.getInstance().sgc ?: return@launch
+                    device.setBrightness(b, auto)
+                    if (device.showBrightnessConfirmation) {
+                        device.sendTextWall("Set brightness to $b%")
+                        delay(800) // 0.8 seconds
+                        if (DeviceManager.getInstance().sgc === device) {
+                            device.clearDisplay()
+                        }
+                    }
                 }
             }
             "bluetooth" to "auto_brightness" -> {
@@ -221,16 +251,17 @@ object DeviceStore {
                 val auto = (value as? Boolean) ?: true
                 val autoBrightnessChanged = (oldValue as? Boolean) != auto
                 CoroutineScope(Dispatchers.Main).launch {
-                    DeviceManager.getInstance().sgc?.setBrightness(b, auto)
-                    if (autoBrightnessChanged) {
-                        DeviceManager.getInstance()
-                                .sgc
-                                ?.sendTextWall(
-                                        if (auto) "Enabled auto brightness"
-                                        else "Disabled auto brightness"
-                                )
+                    val device = DeviceManager.getInstance().sgc ?: return@launch
+                    device.setBrightness(b, auto)
+                    if (autoBrightnessChanged && device.showBrightnessConfirmation) {
+                        device.sendTextWall(
+                                if (auto) "Enabled auto brightness"
+                                else "Disabled auto brightness"
+                        )
                         delay(800) // 0.8 seconds
-                        DeviceManager.getInstance().sgc?.clearDisplay()
+                        if (DeviceManager.getInstance().sgc === device) {
+                            device.clearDisplay()
+                        }
                     }
                 }
             }
@@ -277,6 +308,18 @@ object DeviceStore {
             }
             "bluetooth" to "loudness_gate_enabled" -> {
                 DeviceManager.getInstance().sgc?.sendLoudnessGateSetting()
+            }
+            "bluetooth" to "auto_power_off_enabled" -> {
+                Bridge.log(
+                        "DeviceStore: auto_power_off_enabled changed to $value — sending cs_swit type 11"
+                )
+                DeviceManager.getInstance().sgc?.sendAutoPowerOffSetting()
+            }
+            // Deliberately has no seeded default above: the key starts absent so
+            // that a session where the engine has not authorized tuning can only
+            // ever send a reset.
+            "bluetooth" to "mic_tuning" -> {
+                DeviceManager.getInstance().sgc?.sendMicTuningSetting()
             }
             "bluetooth" to "nex_lc3_audio_playback" -> {
                 (value as? Boolean)?.let { enabled ->

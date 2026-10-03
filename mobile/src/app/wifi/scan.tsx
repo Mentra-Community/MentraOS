@@ -125,7 +125,7 @@ export default function WifiScanScreen() {
       if (networksRef.current.length === 0) {
         Toast.show({
           type: "error",
-          text1: "Failed to scan for WiFi networks",
+          text1: "Failed to scan for Wi-Fi networks",
         })
       }
     }

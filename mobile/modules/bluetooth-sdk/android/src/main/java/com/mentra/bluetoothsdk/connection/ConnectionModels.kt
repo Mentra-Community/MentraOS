@@ -53,13 +53,50 @@ enum class ScanStopReason {
     ERROR,
 }
 
+/**
+ * Callbacks for `MentraBluetoothSdk.scan`.
+ *
+ * Completed and cancelled scans report [onComplete]. A failure to start reports
+ * [onError] and is thrown to the caller. Optional empty-scan hints are delivered
+ * separately through [ScanDiagnosticCallback], never as errors.
+ */
 interface ScanCallback {
     fun onResults(devices: List<Device>) {}
     fun onComplete(devices: List<Device>) {}
     fun onError(error: BluetoothError) {}
 }
 
-abstract class MentraBluetoothScanCallback : ScanCallback
+/** A non-fatal scan hint; it does not establish the cause of an empty result. */
+data class ScanDiagnostic(val code: String, val message: String)
+
+/**
+ * Optional scan diagnostics, delivered before [onComplete] for an empty completed
+ * scan. Kept separate so existing compiled [ScanCallback] implementations do not
+ * need a new method. Android's `device_connected_on_phone` hint identifies a
+ * model-compatible GATT connection on this phone, not which app owns it.
+ */
+interface ScanDiagnosticCallback : ScanCallback {
+    fun onDiagnostic(diagnostic: ScanDiagnostic)
+}
+
+abstract class MentraBluetoothScanCallback : ScanDiagnosticCallback {
+    override fun onDiagnostic(diagnostic: ScanDiagnostic) {}
+}
+
+/** Complete once, with an optional advisory that never replaces completion. */
+internal fun ScanCallback.completeScan(
+    reason: ScanStopReason,
+    devices: List<Device>,
+    diagnostic: () -> ScanDiagnostic?,
+) {
+    try {
+        if (this is ScanDiagnosticCallback && reason == ScanStopReason.COMPLETED && devices.isEmpty()) {
+            diagnostic()?.let { onDiagnostic(it) }
+        }
+    } finally {
+        onComplete(devices)
+    }
+}
 
 class ScanSession internal constructor(
     private val stopAction: () -> Unit,

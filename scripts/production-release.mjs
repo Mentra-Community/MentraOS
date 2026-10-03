@@ -376,25 +376,21 @@ export function releaseBranchSources(result, betaIdentity) {
 function loadReleaseBranchSources(betaIdentity) {
   const family = betaIdentity.slice(0, betaIdentity.indexOf("-beta."))
   const assetName = `mentra-release-${betaIdentity}.json`
-  const matches = parseJsonLines(
-    execGh([
-      "release",
-      "view",
-      `mentra-builds-v${family}`,
-      "--repo",
-      REPOSITORY,
-      "--json",
-      "assets",
-      "--jq",
-      `.assets[] | select(.name == ${JSON.stringify(assetName)}) | {name, apiUrl, digest} | tojson`,
-    ]),
-  )
-  if (matches.length > 1) throw new Error(`Release contains duplicate asset ${assetName}`)
+  const tooling = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.github/scripts/release-assets.mjs")
+  const matches = JSON.parse(
+    execFileSync(process.execPath, [tooling, "list", "--tag", `mentra-builds-v${family}`, "--repository", REPOSITORY], {
+      encoding: "utf8",
+      maxBuffer: GH_MAX_BUFFER,
+    }),
+  ).filter((asset) => asset.name === assetName)
+  if (matches.length !== 1)
+    throw new Error(`Expected one completed release asset ${assetName}; found ${matches.length}`)
   const asset = matches[0]
-  if (!asset) throw new Error(`Completed release asset ${assetName} was not found`)
-  const contents = execGh(["api", "-H", "Accept: application/octet-stream", asset.apiUrl], {
-    maxBuffer: 20 * 1024 * 1024,
-  })
+  const contents = execFileSync(
+    process.execPath,
+    [tooling, "fetch", "--repository", REPOSITORY, "--asset-id", String(asset.id)],
+    {encoding: "utf8", maxBuffer: 20 * 1024 * 1024},
+  )
   if (asset.digest) {
     const digest = `sha256:${createHash("sha256").update(contents).digest("hex")}`
     if (digest !== asset.digest) throw new Error(`${assetName} digest is ${digest}, expected ${asset.digest}`)

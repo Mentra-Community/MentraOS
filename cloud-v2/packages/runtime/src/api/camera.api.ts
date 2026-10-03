@@ -24,7 +24,7 @@ import {
   createLogger,
   verifyRuntimeToken,
 } from "@mentra/cloud-shared";
-import { photoOptionsSchema, streamOptionsSchema } from "@mentra/cloud-protocol/camera";
+import { streamOptionsSchema } from "@mentra/cloud-protocol/camera";
 import { getStorageProvider } from "../services/storage/storage.service";
 import * as camera from "../services/camera/camera.service";
 
@@ -80,21 +80,12 @@ cameraApi.post("/photo", async (c) => {
   const auth = await authUser(c);
   if ("error" in auth) return auth.error;
 
-  let body: unknown = {};
-  try {
-    body = await c.req.json();
-  } catch {
-    /* an empty body is fine: a default photo */
-  }
-  const parsed = photoOptionsSchema.safeParse(body ?? {});
-  if (!parsed.success) {
-    return c.json({ error: "invalid photo options", issues: parsed.error.issues }, 400);
-  }
+  // Allocating upload URLs needs no capture options. Ignore any body sent by older clients.
 
   // The local provider builds absolute URLs back at this runtime; pass the
   // origin the client used so the device/test can reach them.
   const origin = publicOrigin(c);
-  const result = await camera.requestPhoto(auth.mentraUserId, parsed.data, origin);
+  const result = await camera.requestPhoto(auth.mentraUserId, origin);
   return c.json(result, 200);
 });
 

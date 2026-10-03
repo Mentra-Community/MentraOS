@@ -11,6 +11,14 @@ const baseParams = {
 }
 
 describe("photoRequestParamsForNative", () => {
+  it("presends a thumbnail only when opted in, preserving the full-photo options", () => {
+    expect(photoRequestParamsForNative(baseParams)).not.toHaveProperty("presend_thumbnail")
+    expect(photoRequestParamsForNative({...baseParams, presend_thumbnail: false})).not.toHaveProperty("presend_thumbnail")
+    expect(photoRequestParamsForNative({...baseParams, presend_thumbnail: true})).toEqual({
+      ...photoRequestParamsForNative(baseParams), presend_thumbnail: true,
+    })
+    expect(photoRequestParamsForNative({...baseParams, presend_thumbnail: true, transferMethod: "direct"}).transferMethod).toBe("direct")
+  })
   it("produces only supported native payload keys", () => {
     const payload = photoRequestParamsForNative(baseParams)
     expect(Object.keys(payload).sort()).toEqual(
@@ -137,5 +145,17 @@ describe("warmUpCameraParamsForNative", () => {
     const payload = warmUpCameraParamsForNative({size: "medium"})
     expect(payload).not.toHaveProperty("zsl")
     expect(payload).not.toHaveProperty("mfnr")
+  })
+})
+
+describe("canonical photo compression", () => {
+  it.each(["none", "low", "medium", "high"] as const)("sends %s unchanged", (compress) => {
+    expect(photoRequestParamsForNative({...baseParams, compress}).compress).toBe(compress)
+  })
+  it("defaults omission to none", () => {
+    expect(photoRequestParamsForNative({...baseParams, compress: undefined}).compress).toBe("none")
+  })
+  it.each(["heavy", "", "HIGH", null, 1, false])("rejects invalid compression %p", (compress) => {
+    expect(() => photoRequestParamsForNative({...baseParams, compress} as never)).toThrow("Invalid photo compression")
   })
 })

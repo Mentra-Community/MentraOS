@@ -1,13 +1,18 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, FileText, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
+import { api, ApiError } from "./lib/api";
+import {
+  readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
+} from "./lib/test-run-links";
+import { TestRunsPage } from "./pages/test-runs";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents";
+type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
@@ -124,6 +129,7 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "preinstalled", label: "Preinstalled miniapps", icon: PackageCheck },
   { key: "audit", label: "Audit log", icon: History },
   { key: "incidents", label: "Incident system", icon: Bug },
+  { key: "test-runs", label: "Test runs", icon: FlaskConical },
 ];
 
 /**
@@ -154,11 +160,17 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
+const initialTestRunLink = readTestRunLink(window.location.search);
+const initialTestRunListScope = readTestRunListScope(window.location.search);
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
-  const [page, setPage] = useState<AdminPageKey>(pendingDeepLinkReportId ? "incidents" : "home");
+  const [page, setPage] = useState<AdminPageKey>(
+    initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
+  );
+  const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
+  const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
@@ -187,9 +199,33 @@ function AdminPage() {
     // the parameter to survive the auth round-trip. Idempotent on re-runs.
     if (me.isSuccess && pendingDeepLinkReportId) {
       pendingDeepLinkReportId = null;
-      window.history.replaceState(null, "", window.location.pathname);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("report");
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
   }, [me.isSuccess]);
+  useEffect(() => {
+    const restore = () => {
+      const selection = readTestRunLink(window.location.search);
+      const scope = readTestRunListScope(window.location.search);
+      setTestRunLink(selection);
+      setTestRunListScope(scope);
+      if (selection || scope) setPage("test-runs");
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+
+  function selectTestRun(selection: TestRunLink | null, replace = false) {
+    setTestRunLink(selection);
+    window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
+  }
+
+  function clearTestRunListScope() {
+    setTestRunListScope(null);
+    window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
+  }
+
   const submissions = useQuery({
     queryKey: ["admin-submissions"],
     queryFn: () => api<{ submissions: ReleaseSummary[] }>("/api/admin/submissions"),
@@ -303,6 +339,7 @@ function AdminPage() {
     preinstalled: { title: "Preinstalled miniapps", body: "The managed default set MentraOS installs and keeps updated without a mobile app release." },
     audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or promoted something." },
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
+    "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
   };
 
   if (me.isLoading) return <Splash label="Checking admin session" />;
@@ -324,6 +361,10 @@ function AdminPage() {
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
         setDeepLinkReportId(null);
+        if (key !== "test-runs") {
+          selectTestRun(null, true);
+          clearTestRunListScope();
+        }
       }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
@@ -381,6 +422,10 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
+      {page === "test-runs" ? (
+        <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
+          scope={testRunListScope} onClearScope={clearTestRunListScope} />
+      ) : null}
 
       {detailRelease ? (
         <SubmissionDetail
@@ -843,15 +888,15 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
 }
 
 function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
-  const [kind, setKind] = useState<"all" | ReportKind>("all");
+  const [category, setCategory] = useState<"all" | ReportKind | "internal" | "testing">("bug");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
   const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
   const reports = useQuery({
-    queryKey: ["admin-reports", kind, status],
+    queryKey: ["admin-reports", category, status],
     queryFn: () => {
       const params = new URLSearchParams();
-      if (kind !== "all") params.set("kind", kind);
+      if (category !== "all") params.set("category", category);
       if (status !== "all") params.set("status", status);
       const qs = params.toString();
       return api<{ reports: ReportSummary[] }>(`/api/admin/reports${qs ? `?${qs}` : ""}`);
@@ -866,14 +911,14 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
           <div>
             <h2 className="text-xl font-bold">User reports</h2>
             <p className="mt-1 text-sm text-[#68746d]">
-              Everything filed through the Mentra App reporting flow — open a report for its context, screenshots, and logs.
+              Internal contains bugs and feedback from admin accounts. Testing contains harness reports; other automatic reports stay in Automatic.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <FilterPills
-              value={kind}
-              onChange={setKind}
-              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["automatic", "Automatic"]]}
+              value={category}
+              onChange={setCategory}
+              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["internal", "Internal"], ["testing", "Testing"], ["automatic", "Automatic"]]}
             />
             <FilterPills
               value={status}
@@ -897,7 +942,7 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
         ) : reports.isError ? (
           <div className="p-5"><ErrorText error={reports.error} /></div>
         ) : rows.length === 0 ? (
-          <EmptyState title="No reports" body="Bug reports and feedback submitted from the Mentra App will appear here." />
+          <EmptyState title="No reports" body={category === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : category === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
         ) : (
           <div className="divide-y divide-[#eceeeb]">
             {rows.map(report => (
@@ -946,12 +991,12 @@ function FilterPills<T extends string>(props: {
   options: ReadonlyArray<readonly [T, string]>;
 }) {
   return (
-    <div className="flex h-9 items-center gap-1 rounded-full border border-[#e0e4de] bg-[#f7f8f6] p-1">
+    <div className="flex min-h-9 flex-wrap items-center gap-1 rounded-[18px] border border-[#e0e4de] bg-[#f7f8f6] p-1">
       {props.options.map(([value, label]) => (
         <button
           key={value}
           onClick={() => props.onChange(value)}
-          className={`h-7 rounded-full px-3 text-xs font-semibold ${
+          className={`h-7 whitespace-nowrap rounded-full px-3 text-xs font-semibold ${
             props.value === value ? "bg-white text-[#14151b] shadow-sm" : "text-[#68746d] hover:text-[#14151b]"
           }`}
         >
@@ -1236,7 +1281,7 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function LoginGate({ denied = false }: { denied?: boolean }) {
-  // The full URL (not just the origin) so a /?report=… deep link survives the
+  // The full URL preserves report and testRun/step deep links through the
   // login round-trip; safeReturnTo on Core validates the origin either way.
   const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
 
@@ -1333,34 +1378,6 @@ function ErrorText({ error }: { error: unknown }) {
       {error instanceof Error ? error.message : "Request failed"}
     </p>
   );
-}
-
-class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-  }
-}
-
-async function api<T>(path: string, opts?: { method?: string; body?: unknown }): Promise<T> {
-  const res = await fetch(path, {
-    method: opts?.method ?? "GET",
-    headers: {
-      accept: "application/json",
-      ...(opts?.body ? { "content-type": "application/json" } : {}),
-    },
-    body: opts?.body ? JSON.stringify(opts.body) : undefined,
-  });
-  if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    try {
-      const body = await res.json() as { error_description?: string; message?: string };
-      detail = body.error_description ?? body.message ?? detail;
-    } catch {
-      // keep status detail
-    }
-    throw new ApiError(detail, res.status);
-  }
-  return res.json() as Promise<T>;
 }
 
 export default App;

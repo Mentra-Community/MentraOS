@@ -1,0 +1,106 @@
+---
+title: "Back navigation"
+description: "Make the phone's back gesture step back through your miniapp's screens and dialogs before it minimizes the miniapp."
+icon: "arrow-left"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+The Mentra App sends the phone's back gesture (the left-edge swipe on iOS, the back button or gesture on Android) to your UI WebView's browser history first:
+
+- **While your WebView has history**, back runs `history.back()` inside your miniapp. Your router or `useHistoryState` hook sees the `popstate` and shows the previous screen.
+- **When the history is empty**, back minimizes your miniapp. The UI WebView unmounts, but your [background layer](/app-devs/core-concepts/session) keeps running with its session. When the user reopens the miniapp, the UI starts again on its first screen with empty history. Keep anything that must survive in the background layer and send it to the UI when it reopens.
+
+The host can only see browser history. A screen or dialog that exists only in React state (`useState`, `MemoryRouter`, `createMemoryRouter`, or wouter's `memoryLocation`) never creates a history entry, so back skips past it and minimizes the whole miniapp. Anything the user should be able to go back from must push a history entry.
+
+## Pages: a router in hash mode
+
+For page-level navigation, use your router's hash mode. Each navigation becomes a real history entry, and hash URLs keep working when the host reloads your bundle from disk.
+
+<CodeGroup>
+
+```tsx react-router
+import { HashRouter, Route, Routes } from "react-router-dom";
+
+<HashRouter>
+  <Routes>
+    <Route path="/" element={<Home />} />
+    <Route path="/settings" element={<Settings />} />
+  </Routes>
+</HashRouter>
+```
+
+```tsx wouter
+import { Router } from "wouter";
+import { useHashLocation } from "wouter/use-hash-location";
+
+<Router hook={useHashLocation}>
+  <App />
+</Router>
+```
+
+</CodeGroup>
+
+A back button in your own header should also go back, not forward to the parent route. Otherwise the next back gesture returns the user to the page they just left.
+
+```tsx
+import { MiniappHeader } from "@mentra/miniapp/ui";
+
+<MiniappHeader title="Settings" onBack={() => history.back()} />
+```
+
+## Tabs, dialogs, and screens: `useHistoryState`
+
+For UI state that is not a route, such as tabs, dialogs, sheets, pickers, or a multi-step screen, use `useHistoryState` from `@mentra/miniapp/ui`. It works like `useState`, except that the phone's back gesture undoes each change.
+
+```tsx
+import { useHistoryState } from "@mentra/miniapp/ui";
+
+export function App() {
+  const [tab, setTab] = useHistoryState<"home" | "settings">("tab", "home");
+  const [pickerOpen, setPickerOpen] = useHistoryState("languagePicker", false);
+
+  return (
+    <>
+      {tab === "home" ? <Home onOpenPicker={() => setPickerOpen(true)} /> : <Settings />}
+      {pickerOpen && <LanguagePicker onClose={() => setPickerOpen(false)} />}
+      <BottomNav active={tab} onSelect={setTab} />
+    </>
+  );
+}
+```
+
+| Action | Result |
+|---|---|
+| Set a new value | Pushes a history entry. Back restores the previous value. |
+| Set the value it had before its latest change, such as `setPickerOpen(false)` from the picker's close button | Goes back instead of pushing, so the next back gesture does not reopen the picker. |
+| Set the same value again | Does nothing, so repeated taps do not stack entries. |
+
+Rules for keys and values:
+
+- **`key` names the value inside the history entry.** Use a different key for each piece of state on the page. Two components that pass the same key share one value.
+- **Values are stored in `history.state`,** so they must survive structured clone: strings, numbers, booleans, `null`, and plain objects and arrays. For a dialog about one item, store the item's id rather than an object with methods.
+- **The value belongs to the current history entry.** A component that remounts, or a page that reloads, reads it back. Minimizing the miniapp discards it along with the WebView.
+
+`useHistoryState` and a hash router can live in the same app. A route change starts a fresh entry, so hook values fall back to their initial values on the new page and come back when the user returns.
+
+## Check it on a phone
+
+1. Open a nested page or dialog, then swipe back. You land on its parent.
+2. Open a dialog, close it with its own button, then swipe back. The dialog does not reopen.
+3. From the first screen, swipe back. The miniapp minimizes.
+
+On Android, repeat each step with the system back button.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="The UI layer" icon="code" href="/app-devs/core-concepts/webviews/react-webviews">
+    The `mentra` bridge, hooks, and components.
+  </Card>
+  <Card title="Safe areas & layout" icon="border-outer" href="/app-devs/core-concepts/webviews/safe-areas">
+    Keep content clear of the capsule menu.
+  </Card>
+</CardGroup>

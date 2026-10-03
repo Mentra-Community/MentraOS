@@ -19,6 +19,7 @@ import {getConfigValues} from "../runtime/bootstrap"
 import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
 import {registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "../services/AppRegistry"
 import {useAppStatusStore} from "../stores/apps"
+import {scopeCloudUrlOverrides} from "../services/cloudEndpointPolicy"
 
 type CloudUrlOverrides = {core?: string; runtime?: string}
 
@@ -28,6 +29,11 @@ type CloudUrlOverrides = {core?: string; runtime?: string}
  * host's Metro/env URL resolution); both empty clears the live override.
  */
 function applyCloudUrlReconnect(urls: CloudUrlOverrides = currentCloudUrlOverrides()): void {
+  const hostResolver = getConfigValues().resolveCloudEndpoints
+  if (hostResolver) {
+    cloudClientService.reconnect(null)
+    return
+  }
   const resolved = resolveCloudUrlReconnectTarget(urls)
   if (resolved === undefined) {
     cloudClientService.reconnect(null)
@@ -91,6 +97,32 @@ export const dev = {
   },
   /** Override the cloud-v2 URLs and reconnect the live client onto them. */
   setCloudUrls: (urls: {core?: string; runtime?: string}) => {
+    const config = getConfigValues()
+    if (config.resolveCloudEndpoints) {
+      const scope = config.cloudDebugScope ?? ""
+      const scoped = scopeCloudUrlOverrides(
+        {
+          scope: useSettingsStore.getState().getSetting(SETTINGS.cloud_url_deployment.key),
+          ...currentCloudUrlOverrides(),
+        },
+        scope,
+        urls,
+      )
+      const values: Record<string, unknown> = {
+        [SETTINGS.cloud_url_deployment.key]: scope,
+        [SETTINGS.cloud_core_url.key]: scoped.core,
+        [SETTINGS.cloud_runtime_url.key]: scoped.runtime,
+        [SETTINGS.cached_required_version.key]: "",
+      }
+      void useSettingsStore
+        .getState()
+        .setManyLocally(values)
+        .then((result) => {
+          if (result.is_error()) console.error("engine.dev.setCloudUrls: could not save URLs", result.error)
+          else applyCloudUrlReconnect()
+        })
+      return
+    }
     const next = {...currentCloudUrlOverrides(), ...urls}
     const resolved = resolveCloudUrlReconnectTarget(next)
     if (resolved === null) {

@@ -1,14 +1,14 @@
-import BluetoothSdk, {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
-import {engine} from "@mentra/engine"
+import BluetoothSdk, {type Device, type DeviceModel, type ScanDiagnostic} from "@mentra/bluetooth-sdk"
+import {engine, DeviceTypes} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
+import {ActivityIndicator, Image, Platform, ScrollView, View} from "react-native"
 
-import {DeviceTypes} from "@mentra/engine"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
-import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
+import {Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import Divider from "@/components/ui/Divider"
+import {DiscoveredGlassesRow} from "@/components/pairing/DiscoveredGlassesRow"
+import {NimoBluetoothSetup} from "@/components/pairing/NimoBluetoothSetup"
 import {Group} from "@/components/ui/Group"
 import GlassView from "@/components/ui/GlassView"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
@@ -20,6 +20,7 @@ import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {AR99_MODEL_OPTIONS, getAr99DisplayName, getAr99ImageSource, getGlassesOpenImage} from "@/utils/getGlassesImage"
 import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
+import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 
 const normalizeProjectName = (value?: string | null) => value?.trim().toUpperCase() ?? ""
 const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((option) => option.projectName))
@@ -27,6 +28,14 @@ const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((opt
 const PAIRING_SCAN_TIMEOUT_MS = 15_000
 
 export default function SelectGlassesBluetoothScreen() {
+  const {deviceModel} = useLocalSearchParams<{deviceModel: DeviceModel}>()
+  if (Platform.OS === "ios" && deviceModel === DeviceTypes.NIMO && isGlassesModelAllowedByDeployment(deviceModel)) {
+    return <NimoBluetoothSetup />
+  }
+  return <GlassesScanScreen />
+}
+
+function GlassesScanScreen() {
   const {deviceModel, ar99ProjectName} = useLocalSearchParams() as {deviceModel: DeviceModel; ar99ProjectName?: string}
   const {theme} = useAppTheme()
   const {goBack, replace, push} = useNavigationStore.getState()
@@ -38,11 +47,13 @@ export default function SelectGlassesBluetoothScreen() {
   const searchResults = useEngineSnapshot(engine.pairing.searchResults, (onChange) => engine.pairing.onFound(onChange))
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
   const [scanTimedOut, setScanTimedOut] = useState(false)
+  const [scanDiagnostic, setScanDiagnostic] = useState<ScanDiagnostic | null>(null)
   const connectingRef = useRef(false)
   const scanGenerationRef = useRef(0)
   const [scanGeneration, setScanGeneration] = useState(0)
   const isMentraLivePairingScan = deviceModel === DeviceTypes.LIVE
   const securePairingEnabled = isMentraLiveSecurePairingEnabled()
+  const allowedByDeployment = isGlassesModelAllowedByDeployment(deviceModel, ar99ProjectName)
 
   const selectedDisplayName = useMemo(() => {
     return deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
@@ -70,16 +81,22 @@ export default function SelectGlassesBluetoothScreen() {
   )
 
   useEffect(() => {
+    if (!allowedByDeployment) {
+      replace("/pairing/select-glasses-model")
+      return
+    }
     // Two-phase identity: reaching the scan screen marks the chosen model as the
     // PENDING selection. Promotion to `paired` only happens natively when pairing
     // succeeds; until then the home card renders a finish-pairing affordance.
     engine.pairing.markPendingSelection(deviceModel)
-  }, [deviceModel])
+  }, [allowedByDeployment, deviceModel, replace])
 
   const backOutRanRef = useRef(false)
   const runBackOutCleanup = () => {
     if (backOutRanRef.current) return false
     backOutRanRef.current = true
+    scanGenerationRef.current += 1
+    setScanDiagnostic(null)
     // Non-destructive back-out: abandonAttempt decides from the LIVE hydrated
     // default-device read — a re-pair's existing pairing survives, and so does
     // a pairing that PROMOTED while this flow was open (glasses can finish
@@ -107,11 +124,13 @@ export default function SelectGlassesBluetoothScreen() {
   }
 
   const startScanAttempt = useCallback(async () => {
+    if (!allowedByDeployment) return
     const generation = scanGenerationRef.current + 1
     scanGenerationRef.current = generation
     setScanGeneration(generation)
     connectingRef.current = false
     setScanTimedOut(false)
+    setScanDiagnostic(null)
     setRememberedSearchResults([])
     try {
       await engine.pairing.scan(deviceModel)
@@ -120,11 +139,27 @@ export default function SelectGlassesBluetoothScreen() {
         console.error("Failed to start glasses scan:", error)
       }
     }
-  }, [deviceModel])
+  }, [allowedByDeployment, deviceModel])
 
   const visibleResults = useMemo(
     () => rememberedSearchResults.filter((r) => r.name !== "NOTREQUIREDSKIP" && matchesSelectedModel(r)),
     [rememberedSearchResults, matchesSelectedModel],
+  )
+
+  const visibleResultCountRef = useRef(visibleResults.length)
+  visibleResultCountRef.current = visibleResults.length
+  const hasConnectedDeviceHint = scanDiagnostic?.code === "device_connected_on_phone" && visibleResults.length === 0
+
+  useEffect(() => {
+    if (visibleResults.length > 0) setScanDiagnostic(null)
+  }, [visibleResults.length])
+
+  useEffect(
+    () => () => {
+      // Invalidate an in-flight platform lookup when leaving this screen.
+      scanGenerationRef.current += 1
+    },
+    [],
   )
 
   // Secure Mentra Live ads with pairingMode=false are nearby but not pairable yet.
@@ -140,13 +175,14 @@ export default function SelectGlassesBluetoothScreen() {
   }, [startScanAttempt])
 
   useEffect(() => {
+    if (!allowedByDeployment) return
     const skipDevice = searchResults.find((result) => result.name === "NOTREQUIREDSKIP")
     if (skipDevice) {
       void triggerGlassesPairingGuide(skipDevice)
     }
     // triggerGlassesPairingGuide is intentionally not memoized; run only when results change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchResults])
+  }, [allowedByDeployment, searchResults])
 
   // Pairability controls whether tapping a Mentra Live can connect, not whether it is shown.
   // Keep every discovered unit visible so users can put the correct glasses into pairing mode
@@ -175,7 +211,7 @@ export default function SelectGlassesBluetoothScreen() {
   useEffect(() => {
     // Keep scanning after an idle secure unit appears. Advertisements arrive one
     // at a time, so another nearby unit may still be pairable or use existing pairing behavior.
-    if (!isMentraLivePairingScan || scanTimedOut || pairableResults.length > 0) {
+    if (scanTimedOut || pairableResults.length > 0) {
       return
     }
 
@@ -186,14 +222,26 @@ export default function SelectGlassesBluetoothScreen() {
       }
       setScanTimedOut(true)
       void BluetoothSdk.stopScan()
+      if (visibleResultCountRef.current === 0) {
+        void engine.pairing.diagnoseEmptyScan(deviceModel).then((diagnostic) => {
+          if (
+            generation === scanGenerationRef.current &&
+            !connectingRef.current &&
+            visibleResultCountRef.current === 0
+          ) {
+            setScanDiagnostic(diagnostic)
+          }
+        })
+      }
     }, PAIRING_SCAN_TIMEOUT_MS)
 
     return () => {
       clearTimeout(timer)
     }
-  }, [isMentraLivePairingScan, pairableResults.length, scanGeneration, scanTimedOut])
+  }, [deviceModel, pairableResults.length, scanGeneration, scanTimedOut])
 
   const triggerGlassesPairingGuide = async (device: Device) => {
+    if (!allowedByDeployment) return
     if (isMentraLivePairingScan && !isLivePairable(device)) {
       showAlert(translate("pairing:notInPairingModeAlertTitle"), translate("pairing:notInPairingModeAlertMessage"), [
         {text: "OK"},
@@ -205,6 +253,7 @@ export default function SelectGlassesBluetoothScreen() {
       return
     }
     connectingRef.current = true
+    setScanDiagnostic(null)
 
     if (Platform.OS === "android") {
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
@@ -314,6 +363,7 @@ export default function SelectGlassesBluetoothScreen() {
   }
 
   const scanTitle = (() => {
+    if (hasConnectedDeviceHint) return translate("pairing:connectedOnPhoneTitle")
     if (!isMentraLivePairingScan) {
       return scanTimedOut
         ? translate("pairing:noGlassesFound")
@@ -332,6 +382,7 @@ export default function SelectGlassesBluetoothScreen() {
   })()
 
   const showLivePairingHelp =
+    !hasConnectedDeviceHint &&
     isMentraLivePairingScan &&
     securePairingEnabled &&
     !shouldShowDeviceList &&
@@ -373,11 +424,13 @@ export default function SelectGlassesBluetoothScreen() {
               <Text
                 className="text-center text-sm text-muted-foreground"
                 text={
-                  isMentraLivePairingScan && !securePairingEnabled
-                    ? translate("pairing:liveScanHelpInfo")
-                    : hasNearbyNotInPairingMode
-                      ? translate("pairing:nearbyNotInPairingModeHint")
-                      : translate("pairing:noGlassesFoundHint")
+                  hasConnectedDeviceHint
+                    ? translate("pairing:connectedOnPhoneHint")
+                    : !isMentraLivePairingScan || !securePairingEnabled
+                      ? translate("pairing:liveScanHelpInfo")
+                      : hasNearbyNotInPairingMode
+                        ? translate("pairing:nearbyNotInPairingModeHint")
+                        : translate("pairing:noGlassesFoundHint")
                 }
               />
               {shouldShowDeviceList ? (
@@ -393,17 +446,12 @@ export default function SelectGlassesBluetoothScreen() {
                             ? formatLiveSubtitle(res)
                             : filterDeviceName(res.name)
                       return (
-                        <View
+                        <DiscoveredGlassesRow
                           key={res.id}
-                          className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
-                          <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
-                            <View className="flex-1 px-2.5 flex-col">
-                              <Text text={deviceTitle} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
-                              <Text text={deviceSubtitle} className="text-xs text-muted-foreground" numberOfLines={2} />
-                            </View>
-                          </TouchableOpacity>
-                          <Icon name="chevron-right" size={24} color={theme.colors.text} />
-                        </View>
+                          title={deviceTitle}
+                          subtitle={deviceSubtitle}
+                          onPress={() => triggerGlassesPairingGuide(res)}
+                        />
                       )
                     })}
                   </Group>
@@ -434,29 +482,16 @@ export default function SelectGlassesBluetoothScreen() {
                         ? formatLiveSubtitle(res)
                         : filterDeviceName(res.name)
                   return (
-                    <View
+                    <DiscoveredGlassesRow
                       key={res.id}
-                      className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
-                      <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
-                        <View className="flex-1 px-2.5 flex-col">
-                          <Text text={deviceTitle} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
-                          <Text text={deviceSubtitle} className="text-xs text-muted-foreground" numberOfLines={2} />
-                        </View>
-                      </TouchableOpacity>
-                      <Icon name="chevron-right" size={24} color={theme.colors.text} />
-                    </View>
+                      title={deviceTitle}
+                      subtitle={deviceSubtitle}
+                      onPress={() => triggerGlassesPairingGuide(res)}
+                    />
                   )
                 })}
               </Group>
             </ScrollView>
-          )}
-          {!scanTimedOut && (
-            <>
-              <Divider />
-              <View className="flex-row justify-end">
-                <Button preset="primary" compact tx="common:cancel" onPress={handleBackOut} className="min-w-[100px]" />
-              </View>
-            </>
           )}
         </GlassView>
       </View>

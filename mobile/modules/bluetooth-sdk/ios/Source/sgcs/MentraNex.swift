@@ -994,7 +994,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // global "last" one. peripheralToConnectName == nil means an auto-reconnect with no
         // specific target, so the cached device is exactly what we want — keep using it.)
         if let targetName = peripheralToConnectName,
-           !(peripheralToConnect.name?.contains(targetName) ?? false)
+           peripheralToConnect.name != targetName
         {
             Bridge.log(
                 "NEX-CONN: 🔵 Stored UUID is '\(peripheralToConnect.name ?? "unnamed")' but target is '\(targetName)'. Skipping UUID fast-path; will scan for the target."
@@ -1088,7 +1088,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             ])
             if let targetName = peripheralToConnectName,
                let existingPeripheral = connectedPeripherals.first(where: {
-                   $0.name?.contains(targetName) == true
+                   $0.name == targetName
                })
             {
                 Bridge.log(
@@ -2724,35 +2724,12 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // Always emit the discovered device for the UI list
         emitDiscoveredDevice(deviceName)
 
-        // Auto-connect logic based on target or saved device (from Java MentraNexSGC)
-        var shouldConnect = false
-        var connectionReason = ""
-
-        // Check if this matches our target device name for connection
-        if let targetName = peripheralToConnectName, deviceName.contains(targetName) {
-            shouldConnect = true
-            connectionReason = "Target device name match: \(targetName)"
-        }
-        // During a user-initiated discovery scan, only list devices — never auto-connect a
-        // saved/preferred device, so the user can pick a different one.
-        else if isDiscoveryScan {
-            shouldConnect = false
-        }
-        // Check if this matches our saved device for reconnection
-        else if let savedName = savedDeviceName, deviceName == savedName {
-            shouldConnect = true
-            connectionReason = "Saved device reconnection: \(savedName)"
-        }
-        // Check if this matches preferred device ID
-        else if let preferredId = preferredDeviceId {
-            if let extractedId = extractDeviceId(from: deviceName), extractedId == preferredId {
-                shouldConnect = true
-                connectionReason = "Preferred device ID match: \(preferredId)"
-            }
-        }
-
-        if shouldConnect {
-            connectToFoundDevice(peripheral, reason: connectionReason)
+        if NexConnectionTarget.shouldConnect(
+            name: deviceName, target: peripheralToConnectName, discoveryOnly: isDiscoveryScan,
+            savedName: savedDeviceName, preferredID: preferredDeviceId,
+            discoveredID: extractDeviceId(from: deviceName)
+        ) {
+            connectToFoundDevice(peripheral, reason: "Selected target or saved reconnect identity")
         }
     }
 

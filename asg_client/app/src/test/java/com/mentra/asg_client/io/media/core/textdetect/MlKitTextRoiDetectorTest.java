@@ -3,6 +3,7 @@ package com.mentra.asg_client.io.media.core.textdetect;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,12 +15,16 @@ import androidx.test.core.app.ApplicationProvider;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
+import com.google.mlkit.common.MlKit;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.MockedStatic;
 import org.robolectric.RobolectricTestRunner;
 
 import java.lang.reflect.Field;
@@ -56,13 +61,24 @@ public class MlKitTextRoiDetectorTest {
                 MlKitTextRoiDetector.class.getDeclaredMethod("getOrCreateRecognizer");
         getOrCreate.setAccessible(true);
 
-        TextRecognizer created = (TextRecognizer) getOrCreate.invoke(detector);
+        TextRecognizer recognizer = mock(TextRecognizer.class);
+        // A real getClient() starts model-loading work that can outlive Robolectric's
+        // sandbox and poison Android static initialization for later tests.
+        try (MockedStatic<TextRecognition> textRecognition = mockStatic(TextRecognition.class);
+                MockedStatic<MlKit> mlKit = mockStatic(MlKit.class)) {
+            textRecognition
+                    .when(() -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS))
+                    .thenReturn(recognizer);
 
-        assertThat(created).isNotNull();
-        Field recognizerField = MlKitTextRoiDetector.class.getDeclaredField("recognizer");
-        recognizerField.setAccessible(true);
-        assertThat(recognizerField.get(detector)).isSameAs(created);
-        detector.close();
+            assertThat(getOrCreate.invoke(detector)).isSameAs(recognizer);
+            assertThat(getOrCreate.invoke(detector)).isSameAs(recognizer);
+            textRecognition.verify(
+                    () -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS));
+            mlKit.verifyNoInteractions();
+        } finally {
+            detector.close();
+        }
+        verify(recognizer).close();
     }
 
     @Test

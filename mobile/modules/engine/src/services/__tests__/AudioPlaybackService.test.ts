@@ -13,9 +13,12 @@ import {
   setOwnAppAudioPlaying,
 } from "./audioTestMocks"
 
+import {reactNative, reactNativeAppState} from "./reactNativeTestMock"
+
 const setAudioModeAsync = mock(async () => {})
 const tailTimerCallbacks: Array<() => void> = []
-const appState = {currentState: "active"}
+const startupTimerCallbacks = new Map<number, () => void>()
+let nextStartupTimerId = 2
 const silentAudioSource = 9001
 
 const audioPlayer = {
@@ -24,6 +27,7 @@ const audioPlayer = {
   play: mock(() => {}),
   remove: mock(() => {}),
   replace: mock(() => {}),
+  seekTo: mock(async (_seconds: number) => {}),
   volume: 1,
 }
 
@@ -36,15 +40,20 @@ mock.module("../audioPlaybackAssets", () => ({
   SILENT_AUDIO_SOURCE: silentAudioSource,
 }))
 
-mock.module("react-native", () => ({
-  AppState: appState,
-  Platform: {OS: "android"},
-}))
+reactNative.Platform = {OS: "android"}
+reactNativeAppState.currentState = "active"
 
 mock.module("../../utils/timers", () => ({
   BgTimer: {
-    clearTimeout: () => {},
+    clearTimeout: (timerId: number) => {
+      startupTimerCallbacks.delete(timerId)
+    },
     setTimeout: (callback: () => void, delayMs: number) => {
+      if (delayMs === 5000) {
+        const timerId = nextStartupTimerId++
+        startupTimerCallbacks.set(timerId, callback)
+        return timerId
+      }
       if (delayMs === 700) {
         tailTimerCallbacks.push(callback)
         return 1
@@ -63,9 +72,9 @@ describe("AudioPlaybackService live PCM streams", () => {
     await audioPlaybackService.stopAll()
     stopAudioCloudUplink()
     resetAudioTestMocks()
-    appState.currentState = "active"
-    Object.assign(audioPlaybackService, {audioRouteWarmUntil: 0})
+    reactNativeAppState.currentState = "active"
     tailTimerCallbacks.length = 0
+    startupTimerCallbacks.clear()
     startAudioCloudUplink()
     setAudioModeAsync.mockClear()
     setAudioModeAsync.mockImplementation(async () => {})
@@ -73,6 +82,8 @@ describe("AudioPlaybackService live PCM streams", () => {
     audioPlayer.play.mockClear()
     audioPlayer.remove.mockClear()
     audioPlayer.replace.mockClear()
+    audioPlayer.seekTo.mockClear()
+    audioPlayer.seekTo.mockImplementation(async () => {})
   })
 
   afterEach(async () => {
@@ -80,18 +91,137 @@ describe("AudioPlaybackService live PCM streams", () => {
     stopAudioCloudUplink()
   })
 
-  test("prewarms a cold Android route by aborting silence before URL playback", async () => {
+  test("stalled cloud playback unloads its source before reporting one startup error", async () => {
+    const completed = mock(() => {
+      expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+      expect(audioPlaybackService.isPlaying()).toBe(false)
+    })
+    await audioPlaybackService.play(
+      {requestId: "stalled", audioUrl: "https://example.test/stalled", startupTimeoutMs: 5000},
+      completed,
+    )
+    audioPlaybackService.onPlaybackStatusUpdate({playing: true, isBuffering: true, currentTime: 0})
+    audioPlaybackService.onPlaybackStatusUpdate({playing: true, isBuffering: false, currentTime: 0})
+    expect(startupTimerCallbacks.size).toBe(1)
+    const timeout = [...startupTimerCallbacks.values()][0]
+    timeout()
+    timeout()
+    expect(completed).toHaveBeenCalledTimes(1)
+    expect(completed).toHaveBeenCalledWith("stalled", false, "Playback did not start within 5000ms", null, "error")
+    expect(setOwnAppAudioPlaying).toHaveBeenLastCalledWith(false)
+  })
+
+  test("audible progress clears the startup deadline without timing out a long answer", async () => {
+    const completed = mock(() => {})
+    await audioPlaybackService.play(
+      {requestId: "started", audioUrl: "https://example.test/started", startupTimeoutMs: 5000},
+      completed,
+    )
+    const timeout = [...startupTimerCallbacks.values()][0]
+    audioPlaybackService.onPlaybackStatusUpdate({playing: true, isBuffering: false, currentTime: 0.5})
+    expect(startupTimerCallbacks.size).toBe(0)
+    timeout()
+    expect(completed).not.toHaveBeenCalled()
+    expect(audioPlaybackService.isPlaying()).toBe(true)
+  })
+
+  test("cancelling stalled speech clears its deadline and a stale timeout cannot stop new audio", async () => {
+    const completed = mock(() => {})
+    await audioPlaybackService.play(
+      {requestId: "cancelled", audioUrl: "https://example.test/cancelled", startupTimeoutMs: 5000},
+      completed,
+    )
+    const timeout = [...startupTimerCallbacks.values()][0]
+    audioPlaybackService.cancelPlayback("cancelled")
+    expect(startupTimerCallbacks.size).toBe(0)
+    await audioPlaybackService.play({requestId: "new", audioUrl: "file://new.wav"}, () => {})
+    timeout()
+    expect(completed).toHaveBeenCalledTimes(1)
+    expect(completed).toHaveBeenCalledWith("cancelled", true, null, expect.any(Number), "interrupted")
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith({uri: "file://new.wav"})
+    expect(audioPlaybackService.isPlaying()).toBe(true)
+  })
+
+  test("ordinary audio does not receive a speech startup deadline", async () => {
+    await audioPlaybackService.play({requestId: "ordinary", audioUrl: "https://example.test/music"}, () => {})
+    expect(startupTimerCallbacks.size).toBe(0)
+  })
+
+  test("native completion clears the startup deadline before draining the audio tail", async () => {
+    const completed = mock(() => {})
+    await audioPlaybackService.play(
+      {requestId: "finished", audioUrl: "https://example.test/finished", startupTimeoutMs: 5000},
+      completed,
+    )
+    const timeout = [...startupTimerCallbacks.values()][0]
+    audioPlaybackService.onPlaybackStatusUpdate({didJustFinish: true, duration: 0.1})
+    expect(startupTimerCallbacks.size).toBe(0)
+    timeout()
+    expect(completed).toHaveBeenCalledTimes(1)
+    tailTimerCallbacks.shift()?.()
+    expect(completed).toHaveBeenCalledTimes(1)
+    expect(completed).toHaveBeenCalledWith("finished", true, null, 100, "completed")
+  })
+
+  test("native failure clears the startup deadline and cannot report twice", async () => {
+    const completed = mock(() => {})
+    await audioPlaybackService.play(
+      {requestId: "failed", audioUrl: "https://example.test/failed", startupTimeoutMs: 5000},
+      completed,
+    )
+    const timeout = [...startupTimerCallbacks.values()][0]
+    audioPlaybackService.onPlaybackStatusUpdate({playbackState: "failed"})
+    expect(startupTimerCallbacks.size).toBe(0)
+    timeout()
+    expect(completed).toHaveBeenCalledTimes(1)
+    expect(completed).toHaveBeenCalledWith("failed", false, "Playback failed (native player failed)", null, "error")
+  })
+
+  test("seeks before playing and permits a new position in the same recording", async () => {
+    await audioPlaybackService.play(
+      {requestId: "seek-one", audioUrl: "file://seek.wav", startPositionMs: 5000},
+      () => {},
+    )
+    expect(audioPlayer.seekTo).toHaveBeenLastCalledWith(5)
+    await audioPlaybackService.play(
+      {requestId: "seek-two", audioUrl: "file://seek.wav", startPositionMs: 9000},
+      () => {},
+    )
+    expect(audioPlayer.seekTo).toHaveBeenLastCalledWith(9)
+    expect(audioPlayer.play).toHaveBeenCalledTimes(2)
+  })
+
+  test("a stopped pending seek cannot restart playback", async () => {
+    let completeSeek!: () => void
+    audioPlayer.seekTo.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          completeSeek = resolve
+        }),
+    )
+    const playing = audioPlaybackService.play(
+      {requestId: "seek-stop", audioUrl: "file://seek-stop.wav", startPositionMs: 1000},
+      () => {},
+    )
+    while (!completeSeek) await Promise.resolve()
+    await audioPlaybackService.stopAll()
+    completeSeek()
+    await playing
+    expect(audioPlayer.play).not.toHaveBeenCalled()
+  })
+
+  test("plays a cold Android URL without a silent PCM warmup", async () => {
     await audioPlaybackService.play({audioUrl: "https://example.test/click.wav", requestId: "click"}, () => {})
 
-    expect(pcmStreamOpen).toHaveBeenCalledTimes(1)
-    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
-    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
+    expect(pcmStreamOpen).not.toHaveBeenCalled()
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    expect(pcmStreamAbort).not.toHaveBeenCalled()
     expect(pcmStreamClose).not.toHaveBeenCalled()
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
   })
 
-  test("skips optional route prewarm so background URL playback cannot stall", async () => {
-    appState.currentState = "background"
+  test("plays a background URL without a silent PCM warmup", async () => {
+    reactNativeAppState.currentState = "background"
     await audioPlaybackService.play(
       {audioUrl: "https://example.test/background.wav", requestId: "background"},
       () => {},
@@ -104,7 +234,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
   })
 
-  test("prewarms a cold Android route before opening a live PCM stream", async () => {
+  test("opens a cold live PCM stream without a silent warmup", async () => {
     const coldNow = Date.now() + 10_000
     const dateNow = spyOn(Date, "now").mockReturnValue(coldNow)
     try {
@@ -120,11 +250,23 @@ describe("AudioPlaybackService live PCM streams", () => {
       dateNow.mockRestore()
     }
 
-    expect(pcmStreamOpen).toHaveBeenCalledTimes(2)
-    expect(pcmStreamOpen).toHaveBeenNthCalledWith(1, expect.stringContaining("audio-route-prewarm-"), 16_000, 1, 1)
-    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
-    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
-    expect(pcmStreamOpen).toHaveBeenNthCalledWith(2, "stream-cold", 24_000, 1, 0.75)
+    expect(pcmStreamOpen).toHaveBeenCalledTimes(1)
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    expect(pcmStreamAbort).not.toHaveBeenCalled()
+    expect(pcmStreamOpen).toHaveBeenNthCalledWith(1, "stream-cold", 24_000, 1, 0.75, undefined)
+  })
+
+  test("forwards a requested jitter budget to native", async () => {
+    await audioPlaybackService.openStream({
+      appId: "com.example.call",
+      channels: 1,
+      jitterMs: 120,
+      onEnded: () => {},
+      sampleRate: 16_000,
+      streamId: "stream-realtime",
+    })
+
+    expect(pcmStreamOpen).toHaveBeenCalledWith("stream-realtime", 16_000, 1, 1, 120)
   })
 
   test("opens, writes, drains, and reports active stream state", async () => {
@@ -139,7 +281,7 @@ describe("AudioPlaybackService live PCM streams", () => {
       volume: 0.75,
     })
 
-    expect(pcmStreamOpen).toHaveBeenCalledWith("stream-1", 24_000, 1, 0.75)
+    expect(pcmStreamOpen).toHaveBeenCalledWith("stream-1", 24_000, 1, 0.75, undefined)
     emitLc3Frame([1])
     expect(sendAudioFrame).toHaveBeenCalledTimes(1)
     expect(audioPlaybackService.isPlaying()).toBe(true)

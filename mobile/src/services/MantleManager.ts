@@ -1,3 +1,4 @@
+import {Platform} from "react-native"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
@@ -6,13 +7,18 @@ import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
+import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
+import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
+import {storage} from "@/utils/storage"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
-import {cloudConfigValues} from "@/services/cloudClient"
+import {deploymentCloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
+import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
@@ -24,18 +30,19 @@ import {
   micStateCoordinator,
   miniappLauncher,
   offlineSpeechModelService,
-  phoneLocationService,
+  saveLocalAppRunningState,
   ttsModelManager,
   useAppStatusStore,
 } from "@mentra/engine-host-internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
-import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
+import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
+import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -89,6 +96,7 @@ const SPOKEN_NOTIFICATION_MAX_MS = 30_000
 const SPOKEN_NOTIFICATION_GAP_MS = 10_000
 
 class MantleManager {
+  private iosMiniappVisibility = new Map<string, IosMiniappVisibility>()
   private static instance: MantleManager | null = null
   private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
   private micDataTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
@@ -97,6 +105,12 @@ class MantleManager {
   private lastMicDataAt: number = 0
   private subs: Array<any> = []
   private initialized: boolean = false
+  private miniappGeneration = 0
+  private initialization: Promise<void> | null = null
+  private initializationGeneration = 0
+  private cleanupTask: Promise<void> | null = null
+  private miniappInitialization: Promise<void> | null = null
+  private foregroundMiniappSyncNeeded = false
   private activePhoneNotificationId: string | null = null
   /** A notification is being read aloud right now. */
   private speakingNotification: boolean = false
@@ -335,76 +349,176 @@ class MantleManager {
   // run at app start on the init.tsx screen:
   // should only ever be run once
   // sets up the bridge and initializes app state
-  public async init() {
-    console.log("MANTLE: init()")
-
-    if (this.initialized) {
-      console.log("MANTLE: already initialized")
-      return
+  public async init(options: {background?: boolean} = {}): Promise<void> {
+    const generation = this.miniappGeneration
+    if (this.cleanupTask) await this.cleanupTask
+    // An obsolete startup may still be inside a native call. Let it settle
+    // before configuring the next session, but never reuse it as that session.
+    if (this.initialization && this.initializationGeneration !== generation) {
+      await this.initialization.catch(() => {})
     }
-    this.initialized = true
+    this.assertInitializationCurrent(generation)
+    if (!this.initialization && !this.initialized) {
+      this.initializationGeneration = generation
+      const initialization = this.initialize(options)
+        .then(() => {
+          this.assertInitializationCurrent(generation)
+          this.initialized = true
+        })
+        .finally(() => {
+          if (this.initialization === initialization) this.initialization = null
+        })
+      this.initialization = initialization
+    }
+    if (this.initialization) await this.initialization
+    this.assertInitializationCurrent(generation)
+    if (!options.background) this.resumeForegroundMiniappSync(generation)
+  }
+
+  private assertInitializationCurrent(generation: number): void {
+    if (generation !== this.miniappGeneration) throw new Error("MANTLE: initialization cancelled by cleanup")
+  }
+
+  private resumeForegroundMiniappSync(generation: number): void {
+    if (!this.foregroundMiniappSyncNeeded) return
+    this.foregroundMiniappSyncNeeded = false
+    const previous = this.miniappInitialization
+    const synchronization = (async () => {
+      // Finish local restoration before reconciling remote releases. A failed
+      // prior reconciliation can be retried by a later foreground init.
+      await previous?.catch(() => {})
+      this.assertInitializationCurrent(generation)
+      await this.restoreMiniapps()
+    })()
+    this.miniappInitialization = synchronization
+    void synchronization.catch((error) => {
+      if (generation === this.miniappGeneration && this.miniappInitialization === synchronization) {
+        this.foregroundMiniappSyncNeeded = true
+      }
+      console.warn("MANTLE: foreground miniapp synchronization failed", error)
+    })
+  }
+
+  public async waitForMiniapps(): Promise<void> {
+    await this.miniappInitialization
+  }
+
+  private async initialize(options: {background?: boolean}) {
+    console.log("MANTLE: init()", {background: !!options.background})
+    const miniappGeneration = this.miniappGeneration
 
     // Island front door: hand island the host's auth provider and config, then
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
     // startup, not an island configuration seam.
+    const deployment = deploymentStore.getActive()
+    const workspaceAuth = deployment.kind === "workspace" ? createDeploymentAuthProvider(deployment) : null
     engine.configure({
-      auth: {
-        getSubjectToken: async () => {
-          // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
-          // token which cloud-client exchanges at /api/client/auth/exchange.
-          const res = await mentraAuth.getSubjectToken()
-          if (res.is_error() || !res.value.token) {
-            throw new Error("engine.configure: no subject token available")
-          }
-          return {token: res.value.token, type: res.value.type}
-        },
-        // Hand back a synchronous handle with a real unsubscribe.
-        //
-        // mentraAuth is a lazy Proxy whose every method returns a Promise, so
-        // this call resolves to the Result rather than being one. The engine
-        // (CloudClientService.ensureAuthWatch) inspects the return value
-        // synchronously, finds no `unsubscribe` on a Promise, and keeps its
-        // no-op placeholder — so stopAuthWatch() never removed the listener.
-        //
-        // That used to be invisible: the provider held one callback slot, so
-        // the orphan was overwritten by whoever registered next. Now that every
-        // listener is retained, each engine.start() would stack another one, and
-        // a later SIGNED_IN would have several callbacks calling reconnect() on
-        // the same client. Resolve the real unsubscribe out of the promise, and
-        // honour an unsubscribe that arrives before it settles.
-        onStateChange: (callback) => {
-          const pending = Promise.resolve(
-            mentraAuth.onAuthStateChange((event: string, session: any) => callback(event, session)),
-          )
-          let resolved: (() => void) | null = null
-          let cancelled = false
-
-          void pending
-            .then((res: any) => {
-              const handle = res?.value ?? res
-              resolved = typeof handle?.unsubscribe === "function" ? handle.unsubscribe : null
-              if (cancelled) resolved?.()
-            })
-            .catch(() => {
-              resolved = null
-            })
-
-          return {
-            unsubscribe: () => {
-              cancelled = true
-              resolved?.()
+      auth: workspaceAuth
+        ? {
+            getMeetingAccount: async () => {
+              const session = await workspaceAuth.getSession()
+              if (!session) throw new Error("Sign in to your workspace to use Teams")
+              const {displayName, email} = session.identity
+              return {displayName, email}
             },
+            getTeamsToken: async () => {
+              if (deployment.manifest.auth.mode !== "microsoft-entra") {
+                throw new Error("This workspace does not have a Microsoft Entra identity")
+              }
+              return workspaceAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
+            },
+            getSubjectToken: async () => ({
+              token: await workspaceAuth.getAccessToken({
+                scopes:
+                  deployment.kind === "workspace" && deployment.manifest.auth.mode === "microsoft-entra"
+                    ? deployment.manifest.auth.sessionScopes
+                    : [],
+              }),
+              type: "oidc",
+            }),
+            getUserId: async () => {
+              const current = await workspaceAuth.getSession()
+              if (!current) throw new Error("engine.configure: no workspace identity available")
+              const {identity} = current
+              return `workspace:${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
+            },
+            onStateChange: (callback) => ({
+              unsubscribe: workspaceAuth.onStateChange((session) =>
+                callback(session ? "SIGNED_IN" : "SIGNED_OUT", session ? {token: session.accessToken ?? null} : null),
+              ),
+            }),
           }
-        },
-      },
+        : {
+            getSubjectToken: async () => {
+              // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
+              // token which cloud-client exchanges at /api/client/auth/exchange.
+              const res = await mentraAuth.getSubjectToken()
+              if (res.is_error() || !res.value.token) {
+                throw new Error("engine.configure: no subject token available")
+              }
+              return {token: res.value.token, type: res.value.type}
+            },
+            // Hand back a synchronous handle with a real unsubscribe.
+            //
+            // mentraAuth is a lazy Proxy whose every method returns a Promise, so
+            // this call resolves to the Result rather than being one. The engine
+            // (CloudClientService.ensureAuthWatch) inspects the return value
+            // synchronously, finds no `unsubscribe` on a Promise, and keeps its
+            // no-op placeholder — so stopAuthWatch() never removed the listener.
+            //
+            // That used to be invisible: the provider held one callback slot, so
+            // the orphan was overwritten by whoever registered next. Now that every
+            // listener is retained, each engine.start() would stack another one, and
+            // a later SIGNED_IN would have several callbacks calling reconnect() on
+            // the same client. Resolve the real unsubscribe out of the promise, and
+            // honour an unsubscribe that arrives before it settles.
+            onStateChange: (callback) => {
+              const pending = Promise.resolve(
+                mentraAuth.onAuthStateChange((event: string, session: any) => callback(event, session)),
+              )
+              let resolved: (() => void) | null = null
+              let cancelled = false
+
+              void pending
+                .then((res: any) => {
+                  const handle = res?.value ?? res
+                  resolved = typeof handle?.unsubscribe === "function" ? handle.unsubscribe : null
+                  if (cancelled) resolved?.()
+                })
+                .catch(() => {
+                  resolved = null
+                })
+
+              return {
+                unsubscribe: () => {
+                  cancelled = true
+                  resolved?.()
+                },
+              }
+            },
+          },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
-      config: cloudConfigValues(),
+      config: deploymentCloudConfigValues(deployment),
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
+        isPhoneWifiEnabled,
+        requestPhoneWifiEnable,
         requestWifiSetup: (reason?: string, packageName?: string) =>
           new Promise<void>((resolve) => {
+            // Wi-Fi setup drives the glasses over Bluetooth (scan, credentials,
+            // status), so with the link down the wizard cannot succeed and the
+            // reconnecting overlay would cover it anyway. Tell the user the real
+            // blocker instead of sending them into a flow that ends at Home.
+            if (engine.glasses.status().state !== "connected") {
+              showAlert(
+                translate("glasses:wifiSetupNeedsGlassesTitle"),
+                translate("glasses:wifiSetupNeedsGlassesMessage"),
+                [{text: translate("common:ok"), onPress: resolve}],
+              )
+              return
+            }
             showAlert("Connect to Wi-Fi", reason || "This miniapp needs your glasses to be connected to Wi-Fi.", [
               {text: "Cancel", style: "cancel", onPress: resolve},
               {
@@ -428,6 +542,8 @@ class MantleManager {
       },
     })
     await engine.start()
+    this.assertInitializationCurrent(miniappGeneration)
+    this.setupIosMiniappVisibility()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
@@ -454,47 +570,75 @@ class MantleManager {
     builtInMiniappCatalog.init()
 
     await migrate() // do any local migrations here
+    this.assertInitializationCurrent(miniappGeneration)
 
     // Cloud V1 settings pull removed with the login cutover: the endpoint only
     // exists on V1 and authenticated with a token the app no longer mints.
     // Settings are local-first until a V2 sync lands (tracked in the ripout
     // issue; island's per-change server write is the island-side cleanup).
 
-    const userRes = await mentraAuth.getUser()
-    if (userRes.is_ok()) {
-      await ensureDevModeForUser(userRes.value.email)
+    if (deployment.kind === "consumer") {
+      const userRes = await mentraAuth.getUser()
+      this.assertInitializationCurrent(miniappGeneration)
+      if (userRes.is_ok()) {
+        await ensureDevModeForUser(userRes.value.email)
+        this.assertInitializationCurrent(miniappGeneration)
+      }
     }
 
-    offlineSpeechModelService.startBackgroundDownloads()
+    if (deployment.manifest.features.onDeviceSpeech) {
+      offlineSpeechModelService.startBackgroundDownloads()
+    }
 
     // Spacing only, not a correctness barrier: engine.start() already awaited
     // the device-store hydration (the persisted-settings seed to native), so the
     // reconnect decision's hasDefaultDevice read is trustworthy whenever this
     // fires. The delay just keeps auto-connect off the critical boot path.
-    BgTimer.setTimeout(() => {
-      attemptReconnectToDefaultWearable()
-    }, 1000)
+    if (!options.background) {
+      BgTimer.setTimeout(() => {
+        if (miniappGeneration !== this.miniappGeneration) return
+        attemptReconnectToDefaultWearable()
+      }, 1000)
+    }
     // (Initial notification-config push now happens in island's
     // PhoneNotificationsSync, started by engine.start().)
 
-    this.initServices()
-    this.initMiniapps()
+    this.assertInitializationCurrent(miniappGeneration)
+    await this.initServices()
+    this.assertInitializationCurrent(miniappGeneration)
+    this.foregroundMiniappSyncNeeded = !!options.background
+    this.miniappInitialization = this.initMiniapps(!!options.background)
+    void this.miniappInitialization.catch((error) => console.warn("MANTLE: miniapp initialization failed", error))
     this.setupPeriodicTasks()
     this.setupSubscriptions()
+    if (options.background) await this.miniappInitialization
   }
 
-  public async cleanup() {
+  public cleanup(): Promise<void> {
+    if (this.cleanupTask) return this.cleanupTask
+    this.miniappGeneration += 1
+    this.initialized = false
+    this.foregroundMiniappSyncNeeded = false
+    const cleanup = this.cleanupRuntime().finally(() => {
+      if (this.cleanupTask === cleanup) this.cleanupTask = null
+    })
+    this.cleanupTask = cleanup
+    return cleanup
+  }
+
+  private async cleanupRuntime(): Promise<void> {
+    const managedSyncStopped = deploymentManagedMiniappSync.cancel()
+    for (const visibility of this.iosMiniappVisibility.values()) visibility.dispose()
+    this.iosMiniappVisibility.clear()
     // Stop timers
     if (this.calendarSyncTimer) {
-      clearInterval(this.calendarSyncTimer)
+      BgTimer.clearInterval(this.calendarSyncTimer)
       this.calendarSyncTimer = null
     }
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
     this.activePhoneNotificationId = null
-
-    phoneLocationService.stopPhoneLocation()
 
     // Spoken notifications: a queued summary would otherwise synthesize and play
     // after the subscriptions that produced it are gone, or carry its count and
@@ -520,6 +664,7 @@ class MantleManager {
     this.speakingNotification = false
     this.lastSpokenAt = 0
 
+    await managedSyncStopped
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
 
@@ -527,6 +672,7 @@ class MantleManager {
     // logout→login-in-the-same-process path and the dev backend-URL
     // cleanup()→init() cycle both depend on init() re-running after cleanup().
     this.initialized = false
+    this.miniappInitialization = null
   }
 
   private async initServices() {
@@ -542,32 +688,68 @@ class MantleManager {
     }
   }
 
-  private async initMiniapps() {
+  private async initMiniapps(background = false) {
+    const generation = this.miniappGeneration
+    const deployment = deploymentStore.getActive()
+    const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
+    // Reconcile resources before disk restoration, including an empty registry.
+    localMiniappRuntime.initialize()
+
     // Warm the local miniapp registry by reading lmas/ off disk. Cheap call —
     // it populates AppRegistry's cache so the first refreshApplets() doesn't
     // pay the disk-walk cost in the UI thread.
     await appRegistry.getInstalledMiniapps()
+    if (!isCurrent()) return
 
-    // Initialize local miniapp runtime
-    localMiniappRuntime.initialize()
+    await this.restoreMiniapps(background)
+  }
+
+  /** Reconcile installations without reinitializing the running miniapp runtime. */
+  private async restoreMiniapps(background = false): Promise<void> {
+    const generation = this.miniappGeneration
+    const deployment = deploymentStore.getActive()
+    const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
+
+    // Remove previous workspace releases before restoring consumer bundles,
+    // including an identical bundled release adopted by a workspace.
+    if (!background) await deploymentManagedMiniappSync.sync(deployment)
+    if (!isCurrent()) return
 
     // Install any bundled miniapps that ship with the app and aren't on disk
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
+    if (!isCurrent()) return
+
+    // Publish iOS enablement only after managed installation has finished.
+    // Every startup/retry follows this order, including recovery from a failed
+    // download with a previously forced-hidden Call entry.
+    for (const visibility of this.iosMiniappVisibility.values()) {
+      await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+      if (!isCurrent()) return
+    }
 
     // Then reconcile the admin-managed preinstall registry from Cloud V2. This
     // lets Core move users to newer bundled miniapp releases without shipping a
     // new mobile binary.
-    await preinstalledMiniappSync.sync()
+    if (!background && deploymentStore.getActive().kind === "consumer") {
+      await preinstalledMiniappSync.sync()
+      if (!isCurrent()) return
+    }
+
+    // Region-restricted miniapps must not surface or autostart from an old install.
+    this.hidePlatformBlockedMiniapps()
+    for (const visibility of this.iosMiniappVisibility.values()) visibility.applyRestriction()
 
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
     // miniapps have no server to bring them back, so the launcher restarts them
     // here from the persisted running flags. Runs last so newly installed/
-    // upgraded bundles are on disk first. Best-effort — never block miniapp
-    // init on it.
-    miniappLauncher.autostartLocalMiniapps().catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
+    // upgraded bundles are on disk first. Already-running contexts are left
+    // alone when foreground reconciliation follows background recovery.
+    await miniappLauncher
+      .autostartLocalMiniapps()
+      .catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
   }
 
   /**
@@ -584,50 +766,136 @@ class MantleManager {
    * installs it.
    */
   private async installBundledMiniapps() {
+    const generation = this.miniappGeneration
     for (const module of BUNDLED_MINIAPPS) {
+      if (generation !== this.miniappGeneration) return
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
-        if (!parsed) {
-          console.warn(`MANTLE: bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
-          continue
-        }
-        const {packageName, version} = parsed
-
-        // China build: don't install hidden bundled miniapps (e.g. Mentra Map).
-        if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) {
-          continue
-        }
-
-        if (appRegistry.getInstalledVersions(packageName).includes(version)) {
-          continue
-        }
-
-        let superMode = await engine.settings.get(SETTINGS.super_mode.key)
-        if (!superMode && packageName === "com.mentra.example") {
-          // skip installing the example miniapp if super mode is not enabled
-          continue
-        }
-
-        await asset.downloadAsync()
-        if (!asset.localUri) {
-          console.warn(`MANTLE: bundled miniapp ${packageName} has no localUri after download`)
-          continue
-        }
-
-        const res = await appRegistry.installFromLocalZip(asset.localUri)
-        if (res.is_error()) {
-          console.error(`MANTLE: failed to install bundled miniapp ${packageName}@${version}:`, res.error)
-          continue
-        }
-        console.log(`MANTLE: installed bundled miniapp ${res.value.packageName}@${res.value.version}`)
+        // iOS Call uses its visibility controller (consumer) or managed sync (workspace).
+        if (Platform.OS === "ios" && parsed?.packageName === mentraCallPackageName) continue
+        await this.installBundledMiniapp(asset)
       } catch (error) {
-        console.error(`MANTLE: error installing bundled miniapp:`, error)
+        console.error("MANTLE: error installing bundled miniapp:", error)
       }
     }
   }
 
+  private async prepareIosCall() {
+    const deployment = deploymentStore.getActive()
+    if (deployment.kind === "workspace") {
+      // Managed releases must retain manifest ownership and digest verification;
+      // the consumer binary's ZIP is outside the workspace system-app allowlist.
+      // initMiniapps owns managed synchronization; never start an independent
+      // retry that could install a bundle without publishing its visibility.
+      if (shouldHideMiniapp(mentraCallPackageName)) {
+        throw new Error("The workspace Call bundle could not be installed and verified")
+      }
+      return
+    }
+    const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
+      (asset) => parseBundledMiniappName(asset.name)?.packageName === mentraCallPackageName,
+    )
+    if (!asset) throw new Error(`Missing bundled miniapp: ${mentraCallPackageName}`)
+    await this.installBundledMiniapp(asset)
+  }
+
+  /** Install one bundle, or skip it when current policy/version makes it unnecessary. */
+  private async installBundledMiniapp(asset: Asset) {
+    const generation = this.miniappGeneration
+    const parsed = parseBundledMiniappName(asset.name)
+    if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
+    const {packageName, version} = parsed
+    const deployment = deploymentStore.getActive()
+    // A workspace pin owns this package even when the system-app allowlist is
+    // unrestricted. A newer consumer ZIP must not replace its active version.
+    if (
+      deployment.kind === "workspace" &&
+      deployment.manifest.miniapps.managed.some((app) => app.packageName === packageName)
+    )
+      return
+    const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
+    // Bundled consumer assets excluded by the workspace are expected skips.
+    if (approved !== null && !approved.includes(packageName)) return
+    if (shouldHideMiniapp(packageName) || appRegistry.getInstalledVersions(packageName).includes(version)) return
+    if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
+
+    await asset.downloadAsync()
+    // The user can disable Call while the bundle is being materialized.
+    if (
+      generation !== this.miniappGeneration ||
+      deploymentStore.getActive() !== deployment ||
+      shouldHideMiniapp(packageName)
+    )
+      return
+    if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
+    const result = await appRegistry.installFromLocalZip(asset.localUri)
+    if (result.is_error()) throw result.error
+    console.log(`MANTLE: installed bundled miniapp ${result.value.packageName}@${result.value.version}`)
+  }
+
+  private setupIosMiniappVisibility(): void {
+    if (Platform.OS !== "ios") return
+    for (const [packageName, settingKey, policyKey] of [
+      [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key, "mentra_call_ios_last_enabled"],
+      [notifyPackageName, SETTINGS.show_notify_ios.key, "notify_ios_last_enabled"],
+    ]) {
+      const visibility = new IosMiniappVisibility({
+        isEnabled: () => !shouldHideMiniapp(packageName),
+        wasEnabled: () => {
+          const result = storage.load<boolean>(policyKey)
+          return result.is_ok() && result.value === true
+        },
+        saveEnabled: (enabled) => {
+          const result = storage.save(policyKey, enabled)
+          if (result.is_error()) throw result.error
+        },
+        setHidden: (hidden) => engine.miniapps.setHiddenStatus(packageName, hidden),
+        clearRunningState: () => saveLocalAppRunningState(packageName, false),
+        install: async () => {
+          if (packageName === mentraCallPackageName) await this.prepareIosCall()
+          else builtInMiniappCatalog.installNotify()
+        },
+        stop: async () => {
+          if (useAppStatusStore.getState().foregroundedPackage === packageName) {
+            engine.miniapps.clearForeground()
+          }
+          if (packageName === notifyPackageName) {
+            // Native built-ins have no JS context; stop their presentation owner.
+            engine.phoneNotifications.setPresentationActive(false)
+            this.stopPhoneNotificationPresentation()
+            if (engine.miniapps.list().some((app) => app.packageName === packageName)) {
+              await engine.miniapps.stop(packageName)
+            }
+          } else {
+            await miniappLauncher.stop(packageName)
+          }
+        },
+      })
+      this.iosMiniappVisibility.set(settingKey, visibility)
+      visibility.applyRestriction()
+    }
+  }
+
+  private reportMiniappVisibilityError(error: unknown): void {
+    console.warn("MANTLE: miniapp visibility reconciliation failed", error)
+    showAlert(translate("common:error"), translate("debugSettings:miniappVisibilityError"))
+  }
+
+  /**
+   * Hide (and stop) miniapps this build must not surface, including leftover installs.
+   */
+  private hidePlatformBlockedMiniapps() {
+    for (const packageName of CHINA_HIDDEN_APPS) {
+      if (!shouldHideMiniapp(packageName)) continue
+      engine.miniapps.setHiddenStatus(packageName, true)
+      saveLocalAppRunningState(packageName, false)
+      void miniappLauncher.stop(packageName)
+    }
+  }
+
   private async setupPeriodicTasks() {
+    if (this.calendarSyncTimer) BgTimer.clearInterval(this.calendarSyncTimer)
     this.sendCalendarEvents()
     // Calendar sync every hour
     this.calendarSyncTimer = BgTimer.setInterval(
@@ -636,18 +904,6 @@ class MantleManager {
       },
       60 * 60 * 1000,
     ) // 1 hour
-
-    try {
-      // only start location updates if we have the location permission (host UI gate);
-      // the island PhoneLocationService owns the background task + accuracy at the saved tier.
-      const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
-      if (hasLocation) {
-        const savedTier = await engine.settings.get<string>(SETTINGS.location_tier.key)
-        await phoneLocationService.setLocationTier(savedTier as string)
-      }
-    } catch (error) {
-      console.error("MANTLE: Error starting location updates", error)
-    }
 
     // check for requirements immediately, but only if we've passed through onboarding:
     // const onboardingCompleted = await engine.settings.get(SETTINGS.onboarding_completed.key)
@@ -679,6 +935,14 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
+    for (const [settingKey, visibility] of this.iosMiniappVisibility) {
+      this.subs.push({
+        remove: engine.settings.onChanged(settingKey, () => {
+          void visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+        }),
+      })
+    }
+
     // LocalDisplayManager arbitrates foreground miniapp frames against
     // temporary background frames (notably phone notifications). Keep its
     // core owner projected from the app store so a notification can briefly
@@ -690,6 +954,7 @@ class MantleManager {
       localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
 
       const notifyIsRunning = apps.some((app) => app.packageName === notifyPackageName && app.running)
+      engine.phoneNotifications.setPresentationActive(notifyIsRunning)
       if (notifyWasRunning && !notifyIsRunning) {
         this.stopPhoneNotificationPresentation()
       }
@@ -698,6 +963,11 @@ class MantleManager {
     syncAppPresentationState()
     const unsubscribeAppPresentationState = useAppStatusStore.subscribe(syncAppPresentationState)
     this.subs.push({remove: unsubscribeAppPresentationState})
+    this.subs.push({
+      remove: engine.settings.onChanged(SETTINGS.native_notifications_enabled.key, () => {
+        this.stopPhoneNotificationPresentation()
+      }),
+    })
 
     // A remembered speaker-capable model survives disconnects, but its audio
     // route does not. Tear down queued and active Notify speech on the
@@ -720,12 +990,8 @@ class MantleManager {
 
     // Subscribe to individual Bluetooth SDK events.
     {
-      this.subs.push(
-        BluetoothSdk.addListener("log", (event) => {
-          if (event.message?.startsWith("MAN: displayEvent ")) return
-          console.log("CORE:", event.message)
-        }),
-      )
+      // The Bluetooth SDK forwards native diagnostics to the JS console itself,
+      // including for external hosts. A second listener here would duplicate them.
 
       // wifi_status_change / glasses_wifi / hotspot_status_change:
       // moved to island DeviceEventRouter (started by engine.start())
@@ -818,10 +1084,22 @@ class MantleManager {
 
         // Capture/forwarding is independent from presentation. Notify is the
         // user-controlled presentation surface: if it is not running, no card
-        // and no speech may interrupt the wearer. This also keeps presentation
-        // intentionally unavailable on iOS while Notify is omitted from the
-        // built-in catalog there.
+        // and no speech may interrupt the wearer on either platform.
         if (!this.isNotifyRunning()) return
+        // One presentation owner: firmware history/popups replace the Mentra card.
+        // Miniapp forwarding above stays independent. A failed native upload must
+        // not fall back to a second overlay whose delivery cannot be correlated.
+        if (engine.phoneNotifications.usesNativePresentation()) {
+          try {
+            await engine.phoneNotifications.presentNative(event)
+          } catch (error) {
+            console.warn("MANTLE: native notification delivery failed", error)
+          }
+          return
+        }
+        // iOS Notify currently supports firmware presentation on G2. Metadata-only
+        // relay must not be rendered as a pretend full-content notification.
+        if (Platform.OS === "ios" && !title && !content) return
 
         // Cloud V1 used to relay this event to the Notify miniapp, which then
         // painted the glasses. Notify is now an offline built-in, so render the

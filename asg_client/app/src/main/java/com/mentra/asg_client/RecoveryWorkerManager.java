@@ -45,7 +45,7 @@ public class RecoveryWorkerManager {
     // recovery_worker/app/build.gradle versionCode (the asset is built from that project in
     // CI): if this lags, a device already on the previous worker skips the redeploy and every
     // pinned downgrade is refused by the MIN_RECOVERY_VERSION_FOR_DOWNGRADE gate.
-    private static final int ASSETS_RECOVERY_VERSION = 10;
+    private static final int ASSETS_RECOVERY_VERSION = 11;
     private static final String PREFS = "RecoveryWorkerManagerPrefs";
     private static final String KEY_PURGED_LEGACY = "legacy_updater_purged";
 
@@ -415,9 +415,128 @@ public class RecoveryWorkerManager {
         }
     }
 
+    /**
+     * Builds an intent addressed to the recovery worker. Every ASG-to-worker intent must be
+     * created here. The worker is installed by the OEM installer and sits in Android's
+     * "stopped" state until one of its components has run once; Android adds
+     * FLAG_EXCLUDE_STOPPED_PACKAGES to every broadcast by default and also withholds
+     * BOOT_COMPLETED from stopped packages, so without FLAG_INCLUDE_STOPPED_PACKAGES a freshly
+     * deployed worker is never woken: start requests and downgrade handoffs are dropped
+     * silently and the worker stays dormant across reboots. Delivering a manifest-received
+     * intent (start request, downgrade handoff) runs the receiver, which clears the stopped
+     * state until the next force-stop or fresh install.
+     */
+    public static Intent newRecoveryIntent(String action) {
+        Intent intent = new Intent(action);
+        intent.setPackage(RECOVERY_PACKAGE);
+        intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+        return intent;
+    }
+
+    /** A permission-authenticated, correlated snapshot of recovery's durable ownership. */
+    public static final class DowngradeStatus {
+        public final boolean active;
+        public final boolean busy;
+        public final String transactionId;
+        public final long targetVersion;
+        public final String sha256;
+        public final String terminalReason;
+
+        public DowngradeStatus(android.os.Bundle result) {
+            active = result.getBoolean("active");
+            busy = result.getBoolean("busy");
+            transactionId = result.getString("transaction_id", "");
+            targetVersion = result.getLong("target_version", -1L);
+            sha256 = result.getString("sha256", "");
+            terminalReason = result.getString("terminal_reason", "");
+        }
+
+        public boolean owns(long target, String sha) {
+            return active && targetVersion == target && sha != null && sha.equalsIgnoreCase(sha256);
+        }
+    }
+
+    /** Query on a background thread. Null means unknown, never proof that no install exists. */
+    public static DowngradeStatus queryDowngradeStatus(Context context) throws InterruptedException {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            throw new IllegalStateException("Recovery status must be queried off the main thread");
+        }
+        String requestId = java.util.UUID.randomUUID().toString();
+        Intent query = newRecoveryIntent(AsgConstants.RECOVERY_QUERY_STATUS);
+        query.setClassName(RECOVERY_PACKAGE, "com.mentra.recovery.service.RecoveryControlReceiver");
+        query.putExtra(AsgConstants.EXTRA_RECOVERY_REQUEST_ID, requestId);
+        java.util.concurrent.CountDownLatch response = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<DowngradeStatus> status = new java.util.concurrent.atomic.AtomicReference<>();
+        try {
+            context.sendOrderedBroadcast(query, RECOVERY_CONTROL_PERMISSION, new BroadcastReceiver() {
+                @Override public void onReceive(Context ignored, Intent intent) {
+                    android.os.Bundle extras = getResultExtras(false);
+                    if (getResultCode() == android.app.Activity.RESULT_OK && extras != null
+                            && extras.getInt("protocol") == AsgConstants.RECOVERY_STATUS_PROTOCOL
+                            && requestId.equals(extras.getString(AsgConstants.EXTRA_RECOVERY_REQUEST_ID))) {
+                        DowngradeStatus candidate = new DowngradeStatus(extras);
+                        if (!candidate.active || (candidate.targetVersion > 0
+                                && !candidate.transactionId.isEmpty() && !candidate.sha256.isEmpty())) {
+                            status.set(candidate);
+                        }
+                    }
+                    response.countDown();
+                }
+            }, new Handler(Looper.getMainLooper()), android.app.Activity.RESULT_CANCELED, null, null);
+            response.await(AsgConstants.RECOVERY_QUERY_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (SecurityException e) {
+            Log.w(TAG, "Recovery status permission denied");
+        }
+        return status.get();
+    }
+
+    /** Specific pre-download failures; a disabled package cannot be repaired by a reboot. */
+    public static String recoveryAvailabilityError(Context context) {
+        PackageManager pm = context.getPackageManager();
+        try {
+            PackageInfo info = pm.getPackageInfo(RECOVERY_PACKAGE, 0);
+            if (!info.applicationInfo.enabled) return "downgrade_recovery_disabled";
+            if (pm.checkSignatures(context.getPackageName(), RECOVERY_PACKAGE) != PackageManager.SIGNATURE_MATCH
+                    || pm.checkPermission(RECOVERY_CONTROL_PERMISSION, context.getPackageName()) != PackageManager.PERMISSION_GRANTED
+                    || pm.checkPermission(AsgConstants.RECOVERY_HEARTBEAT_PERMISSION, RECOVERY_PACKAGE) != PackageManager.PERMISSION_GRANTED) {
+                return "downgrade_recovery_incompatible";
+            }
+            if (info.getLongVersionCode() < OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE) {
+                return "downgrade_recovery_unavailable";
+            }
+            Intent query = newRecoveryIntent(AsgConstants.RECOVERY_QUERY_STATUS);
+            if (pm.queryBroadcastReceivers(query, 0).isEmpty()) return "downgrade_recovery_disabled";
+            return null;
+        } catch (PackageManager.NameNotFoundException e) {
+            return "downgrade_recovery_unavailable";
+        }
+    }
+
+    /** Deploy the bundled worker if needed, then prove readiness before staging any large APK. */
+    public static DowngradeStatus awaitDowngradeReady(Context context) throws Exception {
+        String initialError = recoveryAvailabilityError(context);
+        if ("downgrade_recovery_disabled".equals(initialError)
+                || "downgrade_recovery_incompatible".equals(initialError)) {
+            throw new java.io.IOException(initialError);
+        }
+        if (initialError != null) {
+            RecoveryWorkerManager manager = new RecoveryWorkerManager(context);
+            try { manager.ensureRecoveryWorker(); }
+            finally { manager.cleanup(); }
+        }
+        long deadline = android.os.SystemClock.elapsedRealtime() + AsgConstants.RECOVERY_READY_TIMEOUT_MS;
+        do {
+            if (recoveryAvailabilityError(context) == null) {
+                DowngradeStatus result = queryDowngradeStatus(context);
+                if (result != null) return result;
+            }
+            Thread.sleep(250);
+        } while (android.os.SystemClock.elapsedRealtime() < deadline);
+        throw new java.io.IOException("downgrade_recovery_unavailable");
+    }
+
     private boolean sendStartRecoveryBroadcast() {
-        Intent startIntent = new Intent(ACTION_START_RECOVERY);
-        startIntent.setPackage(RECOVERY_PACKAGE);
+        Intent startIntent = newRecoveryIntent(ACTION_START_RECOVERY);
         List<ResolveInfo> receivers =
                 context.getPackageManager().queryBroadcastReceivers(startIntent, 0);
         if (receivers == null || receivers.isEmpty()) {

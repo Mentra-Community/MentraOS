@@ -1,0 +1,22 @@
+{
+  "rules": [
+    {
+      "id": "Expire rolling PR artifacts",
+      "enabled": true,
+      "conditions": {"prefix": "Mentra-Community/MentraOS/releases/pr-builds/"},
+      "deleteObjectsTransition": {"condition": {"type": "Age", "maxAge": 604800}}
+    },
+    {
+      "id": "Expire rolling OEM artifacts",
+      "enabled": true,
+      "conditions": {"prefix": "Mentra-Community/MentraOS/releases/oem-app-builds/"},
+      "deleteObjectsTransition": {"condition": {"type": "Age", "maxAge": 1209600}}
+    },
+    {
+      "id": "Expire interrupted storage checks",
+      "enabled": true,
+      "conditions": {"prefix": "Mentra-Community/MentraOS/releases/storage-check-"},
+      "deleteObjectsTransition": {"condition": {"type": "Age", "maxAge": 86400}}
+    }
+  ]
+}

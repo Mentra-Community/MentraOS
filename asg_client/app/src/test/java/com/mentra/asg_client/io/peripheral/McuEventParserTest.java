@@ -95,6 +95,16 @@ public class McuEventParserTest {
         BatteryEvent battery = (BatteryEvent) event;
         assertThat(battery.getPercentage()).isEqualTo(85);
         assertThat(battery.getVoltageMillivolts()).isEqualTo(3900);
+        assertThat(battery.isActiveCharging()).isFalse();
+    }
+
+    @Test
+    public void hmBatv_onlyBooleanTrueGrantsActiveChargeEvidence() throws Exception {
+        for (Object value : new Object[] {true, false, 1, "true", JSONObject.NULL}) {
+            BatteryEvent event = (BatteryEvent) McuEventParser.parse(cmd("hm_batv",
+                    new JSONObject().put("pt", 4).put("vt", 4200).put("active_charging", value)));
+            assertThat(event.isActiveCharging()).isEqualTo(Boolean.TRUE.equals(value));
+        }
     }
 
     @Test

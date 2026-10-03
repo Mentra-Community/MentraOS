@@ -63,6 +63,8 @@ export default function App() {
   const [aeDivisor, setAeDivisor] = useState<3 | 5>(3)
   const [isoCap, setIsoCap] = useState(800)
   const [capturing, setCapturing] = useState(false)
+  const [presendThumbnail, setPresendThumbnail] = useState(false)
+  const [thumbnail, setThumbnail] = useState<{uri: string; bytes: number} | null>(null)
   const [lastCapture, setLastCapture] = useState<CaptureResult | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const receiverStarted = useRef(false)
@@ -88,6 +90,9 @@ export default function App() {
     const statusSub = BluetoothSdk.addListener("photo_status", (event: PhotoStatusEvent) => {
       if (pendingRequestId.current && event.requestId === pendingRequestId.current) {
         setStatusMessage(event.status)
+        if (event.status === "thumbnail_received" && event.thumbnailUrl) {
+          setThumbnail({uri: event.thumbnailUrl, bytes: event.fileSizeBytes ?? 0})
+        }
         if (event.captureMetadata) {
           metadataRef.current = event.captureMetadata
         }
@@ -172,7 +177,10 @@ export default function App() {
   }, [aeDivisor, isoCap, pushScanButtonPreset, scanMode])
 
   const handleTakePhoto = async () => {
+    if (pendingRequestId.current) return
     setCapturing(true)
+    setThumbnail(null)
+    setLastCapture(null)
     setStatusMessage("starting")
     metadataRef.current = undefined
     uploadedUriRef.current = null
@@ -185,6 +193,7 @@ export default function App() {
         requestId,
         webhookUrl,
         authToken: null,
+        presend_thumbnail: presendThumbnail,
         ...fields,
         size: fields.size ?? "medium",
         compress: fields.compress ?? "none",
@@ -257,6 +266,21 @@ export default function App() {
             <Group name="Scan Mode capture">
               <View style={styles.row}>
                 <View style={styles.labelBlock}>
+                  <Text style={styles.label}>Presend thumbnail</Text>
+                  <Text style={styles.hintInline}>500px long edge, JPEG quality 50, then the full photo.</Text>
+                </View>
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityLabel="Presend thumbnail"
+                  accessibilityState={{checked: presendThumbnail, disabled: capturing}}
+                  disabled={capturing}
+                  hitSlop={12}
+                  onPress={() => setPresendThumbnail(value => !value)}>
+                  <Text style={{fontSize: 28}}>{presendThumbnail ? "☑" : "☐"}</Text>
+                </Pressable>
+              </View>
+              <View style={styles.row}>
+                <View style={styles.labelBlock}>
                   <Text style={styles.label}>ZSL</Text>
                   <Text style={styles.hintInline}>Zero-shutter-lag preview buffering. Off for scan mode.</Text>
                 </View>
@@ -314,6 +338,12 @@ export default function App() {
               </View>
               {statusMessage ? <Text style={styles.status}>Status: {statusMessage}</Text> : null}
             </Group>
+            {thumbnail ? (
+              <Group name="Thumbnail">
+                <Image source={{uri: thumbnail.uri}} style={styles.preview} resizeMode="contain" />
+                <Text style={styles.meta}>{(thumbnail.bytes / 1024).toFixed(1)} KB</Text>
+              </Group>
+            ) : null}
             {lastCapture?.fileUri ? (
               <Group name="Last capture">
                 <Image source={{uri: lastCapture.fileUri}} style={styles.preview} resizeMode="contain" />

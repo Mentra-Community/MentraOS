@@ -5,6 +5,12 @@
   <uses-permission android:name="${applicationId}.permission.CRUST_NOTIFICATION_BRIDGE" />
 
   <application>
+    <meta-data
+      android:name="com.mentra.bluetoothsdk.RUNTIME_RECOVERY_SERVICE"
+      android:value="com.mentra.crust.services.RuntimeRecoveryService" />
+    <service
+      android:name="com.mentra.crust.services.RuntimeRecoveryService"
+      android:exported="false" />
     <service
       android:name="com.mentra.crust.services.NotificationListenerServiceImpl"
       android:label="@string/mentra_crust_notification_listener_label"
@@ -15,6 +21,9 @@
       <intent-filter>
         <action android:name="android.service.notification.NotificationListenerService" />
       </intent-filter>
+      <!-- Use on-demand binding (Android 14+) so startup and permission-grant
+           recovery can explicitly request a bind after applying listener config. -->
+      <meta-data android:name="android.service.notification.default_autobind_listenerservice" android:value="false" />
       <meta-data android:name="android.service.notification.default_filter_types" android:value="conversations|alerting" />
       <meta-data android:name="android.service.notification.disabled_filter_types" android:value="ongoing|silent" />
     </service>

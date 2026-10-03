@@ -1,18 +1,19 @@
 import {ScrollView, View} from "react-native"
 
-import {SETTINGS, useSetting} from "@mentra/engine"
-import {DeviceTypes} from "@mentra/engine"
+import {DeviceTypes, SETTINGS, useSetting} from "@mentra/engine"
 import {MicrophoneGateSettings} from "@/components/glasses/settings/MicrophoneGateSettings"
 import {MicrophoneSelector} from "@/components/glasses/settings/MicrophoneSelector"
 import {Header, Screen, Text} from "@/components/ignite"
+import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 
 export default function MicrophoneScreen() {
   const {theme} = useAppTheme()
-  const {goBack} = useNavigationStore.getState()
+  const {goBack, push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [superMode] = useSetting<boolean>(SETTINGS.super_mode.key)
   const isMentraLive =
     defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
 
@@ -23,6 +24,13 @@ export default function MicrophoneScreen() {
         <View className="gap-6 pt-6">
           <MicrophoneSelector />
           {isMentraLive && <MicrophoneGateSettings />}
+          {superMode && isMentraLive && (
+            <RouteButton
+              label={translate("microphoneSettings:tuningTitle")}
+              subtitle={translate("microphoneSettings:tuningEntrySubtitle")}
+              onPress={() => push("/miniapps/settings/mic-tuning")}
+            />
+          )}
           <View className="px-1">
             <Text
               style={{color: theme.colors.textDim, fontSize: 13, lineHeight: 18}}

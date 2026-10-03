@@ -1,0 +1,20 @@
+# The frame path runs beside a live call. A force-unwrap or unchecked index here is a process
+# crash, not a caught error, so these files forbid them. Run: swiftlint lint --config this file.
+only_rules:
+  - force_unwrapping
+  - force_cast
+  - force_try
+included:
+  - FramePreviewSession.swift
+  - PreviewKit/Sources/FramePreviewCore/PixelPack.swift
+  - PreviewKit/Sources/FramePreviewCore/PreviewGeometry.swift
+  - PreviewKit/Sources/FramePreviewCore/PreviewPacer.swift
+  - PreviewKit/Sources/FramePreviewCore/PreviewPipeline.swift
+  - PreviewKit/Sources/FramePreviewCore/PreviewScaler.swift
+  - PreviewKit/Sources/FramePreviewCore/PreviewSlotPool.swift
+  - PreviewKit/Sources/FramePreviewCore/LoopbackFrameSocket.swift
+  - ../../glasses-media/ios/DecodedFrameTap.swift
+  - ../../glasses-media/ios/CoreKit/Sources/GlassesMediaCore/DecodedFrameTapCore.swift
+force_unwrapping: error
+force_cast: error
+force_try: error

@@ -8,6 +8,7 @@ export type NormalizedOtaStatusEvent = {
   step_type: string
   phase: "download" | "install"
   step_percent: number
+  bytes_downloaded?: number
   overall_percent: number
   status: string
   error_message?: string
@@ -21,6 +22,7 @@ export function normalizeOtaStatusEvent(event: Record<string, unknown>): Normali
   const e = event as Record<string, any>
   const phase: "download" | "install" = e?.phase === "install" ? "install" : "download"
   const err = e?.error_message ?? e?.errorMessage
+  const bytes = e?.bytes_downloaded ?? e?.bytesDownloaded
   return {
     session_id: String(e?.session_id ?? e?.sessionId ?? ""),
     total_steps: Number(e?.total_steps ?? e?.totalSteps ?? 0),
@@ -28,6 +30,7 @@ export function normalizeOtaStatusEvent(event: Record<string, unknown>): Normali
     step_type: String(e?.step_type ?? e?.stepType ?? "apk"),
     phase,
     step_percent: Number(e?.step_percent ?? e?.stepPercent ?? 0),
+    bytes_downloaded: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : undefined,
     overall_percent: Number(e?.overall_percent ?? e?.overallPercent ?? 0),
     status: String(e?.status ?? "idle"),
     error_message: err == null || err === "" ? undefined : String(err),
@@ -42,6 +45,7 @@ export function otaStatusFromNormalized(n: NormalizedOtaStatusEvent): OtaStatus 
     stepType: n.step_type as OtaStatus["stepType"],
     phase: n.phase,
     stepPercent: n.step_percent,
+    bytesDownloaded: n.bytes_downloaded,
     overallPercent: n.overall_percent,
     status: n.status as OtaStatus["status"],
     error: n.error_message,
@@ -63,7 +67,7 @@ export function legacyOtaProgressFromOtaStatusEvent(
     stage: n.phase === "install" ? "install" : "download",
     status: st,
     progress: Math.round(raw),
-    bytesDownloaded: 0,
+    bytesDownloaded: n.bytes_downloaded ?? 0,
     totalBytes: 0,
     currentUpdate: n.step_type || "apk",
     errorMessage: n.error_message,

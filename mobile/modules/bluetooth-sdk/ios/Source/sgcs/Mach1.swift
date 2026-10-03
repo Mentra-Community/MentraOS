@@ -133,6 +133,15 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     /// Store discovered peripherals by their identifier
     private var discoveredPeripherals: [String: CBPeripheral] = [:]
+    private var selectedPeripheralID: String?
+
+    private var currentDeviceMatchesSelection: Bool {
+        guard let selectedPeripheralID else { return true }
+        let currentDevice = UltraliteManager.shared.currentDevice
+        return VuzixConnectionTarget.matches(
+            name: currentDevice?.peripheral?.name ?? currentDevice?.getName(), target: selectedPeripheralID
+        )
+    }
 
     private var textHandle: Int?
     private var tapTextHandle: Int?
@@ -146,6 +155,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         if setupDone { return }
         isConnectedListener = BondListener(listener: { [weak self] value in
             guard let self else { return }
+            guard !value || self.currentDeviceMatchesSelection else { return }
             Bridge.log("MACH1: isConnectedListener: \(value)")
 
             if value {
@@ -171,6 +181,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
         batteryLevelListener = BondListener(listener: { [weak self] value in
             guard let self else { return }
+            guard self.currentDeviceMatchesSelection else { return }
             Bridge.log("MACH1: batteryLevelListener: \(value)")
             batteryLevel = value
             DeviceStore.shared.apply("glasses", "batteryLevel", value)
@@ -238,23 +249,22 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
         // Extract the ID from the device name if it contains brackets
         // e.g., "Vuzix Z100 [f1b87c]" -> "f1b87c"
-        var peripheralId = id
-        if let deviceId = id.split(separator: "[").last?.split(separator: "]").first {
-            peripheralId = String(deviceId)
-        }
+        let peripheralId = VuzixConnectionTarget.identifier(id)
+        selectedPeripheralID = peripheralId
 
         let isLinked = UltraliteManager.shared.isLinked.value
         let currentDevice = UltraliteManager.shared.currentDevice
         let isConnected =
             isLinked && currentDevice != nil && currentDevice!.isPaired
                 && currentDevice!.isConnected.value
-        let peripheral = discoveredPeripherals[peripheralId] ?? currentDevice?.peripheral
+        let matchesSelection = currentDeviceMatchesSelection
+        let peripheral = discoveredPeripherals[peripheralId] ?? (matchesSelection ? currentDevice?.peripheral : nil)
 
         // Bind listeners to get notified when device connects
         UltraliteManager.shared.currentDevice?.isConnected.bind(listener: isConnectedListener!)
         UltraliteManager.shared.currentDevice?.batteryLevel.bind(listener: batteryLevelListener!)
 
-        if isConnected {
+        if isConnected && matchesSelection {
             // Already connected, request control now
             let gotControl = currentDevice?.requestControl(
                 layout: UltraliteSDK.Ultralite.Layout.textBottomLeftAlign, timeout: 0,
@@ -266,7 +276,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
             return
         }
 
-        if !isLinked {
+        if !isLinked || !matchesSelection {
             if peripheral == nil {
                 Bridge.log("Mach1Manager: No peripheral found or stored with ID: \(peripheralId)")
                 CONNECTING_DEVICE = peripheralId
@@ -279,6 +289,8 @@ class Mach1: UltraliteBaseViewController, SGCManager {
             UltraliteManager.shared.stopScan()
             CONNECTING_DEVICE = ""
 
+            // Replace the SDK link only after finding the explicitly selected device.
+            if isLinked { UltraliteManager.shared.unlink() }
             UltraliteManager.shared.link(device: peripheral!, callback: linked)
             UltraliteManager.shared.currentDevice?.isConnected.bind(listener: isConnectedListener!)
             UltraliteManager.shared.currentDevice?.batteryLevel.bind(

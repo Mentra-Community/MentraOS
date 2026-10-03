@@ -18,6 +18,15 @@ describe("OtaService projection", () => {
     stopOtaService()
   })
 
+  it("preserves real download bytes independently of rounded progress", () => {
+    emitBluetoothSdkEvent("ota_status", {
+      session_id: "s1", total_steps: 1, current_step: 1, step_type: "mtk",
+      phase: "download", step_percent: 0, overall_percent: 0,
+      bytes_downloaded: 8192, status: "in_progress",
+    })
+    expect(useGlassesStore.getState().otaStatus).toMatchObject({bytesDownloaded: 8192, stepPercent: 0})
+  })
+
   it("projects ota_status into the store and clears the available flag on completion", () => {
     useGlassesStore.getState().setOtaUpdateAvailable({
       available: true,

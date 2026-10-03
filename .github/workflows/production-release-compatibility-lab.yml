@@ -22,6 +22,10 @@ concurrency:
   group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
   cancel-in-progress: false
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   load:
     name: Load frozen Mobile N compatibility inputs
@@ -58,6 +62,8 @@ jobs:
       - name: Download frozen current-production provenance
         id: inputs
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -65,12 +71,11 @@ jobs:
           [[ "$(jq -er .state promotion-input/current.json)" == "selected" ]]
           [[ "$(jq '[.evidence[] | select(.kind == "staging-mobile-n-compatibility-lab")] | length' promotion-input/current.json)" == "0" ]]
           release_id="${{ steps.promotion.outputs.release_id }}"
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id")
           mkdir -p promotion-input/current-production
           for name in current-production-release-plan.json current-production-release-manifest.json; do
             asset_id=$(jq -er --arg name "$name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("required frozen asset must be unique") end' <<< "$assets")
-            gh api -H "Accept: application/octet-stream" \
-              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+            node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" \
               > "promotion-input/current-production/$name"
           done
           plan=promotion-input/current-production/current-production-release-plan.json
@@ -207,6 +212,8 @@ jobs:
 
       - name: Publish immutable lab evidence and state
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           node .github/scripts/publish-immutable-release-asset.mjs \

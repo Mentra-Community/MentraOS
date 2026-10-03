@@ -6,6 +6,7 @@ import {AllowedHardwareType, AllowedPermission} from "./manifest.js"
 const PERMISSION_HINTS: Record<AllowedPermission, string> = {
   MICROPHONE: "Required for transcription, audio chunks, voice activity detection",
   CAMERA: "Required for taking photos via session.camera.takePhoto()",
+  PHONE_CAMERA: "Required when the miniapp publishes video from this phone",
   CALENDAR: "Required to receive calendar event subscriptions",
   LOCATION: "Required for foreground location updates",
   BACKGROUND_LOCATION: "Required for location updates while app is backgrounded",
