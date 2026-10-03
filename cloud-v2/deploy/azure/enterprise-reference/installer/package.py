@@ -72,7 +72,14 @@ Run ./setup.sh init --directory ../mentra-setup
 Run ./setup.sh preflight --directory ../mentra-setup
 Run ./setup.sh plan --directory ../mentra-setup
 Run ./setup.sh configure-entra --directory ../mentra-setup
+Run ./setup.sh check-teams --directory ../mentra-setup --teams-user EMPLOYEE_OBJECT_ID
+If Teams is missing, Microsoft 365 admin center > Marketplace: choose a plan with Teams.
+Assign it to intended Teams employees and a customer-owned guest meeting organizer; wait for provisioning.
+Guest joining does not require an employee Teams license. Guest creation needs a licensed organizer.
+Creating meetings also needs Graph OnlineMeetings.ReadWrite.All consent and a Teams application access policy.
+Ask Mentra for the IT guide before configuring these; never reuse Mentra's consumer organizer.
 Run ./setup.sh install --directory ../mentra-setup
+Install/verify checks Teams licensing when the operator has permission; otherwise it gives an Entra-admin handoff.
 After Core is deployed: ./setup.sh bootstrap-admin --directory ../mentra-setup
 Store admin-key.json in your secret manager; use its value as MENTRA_ADMIN_TOKEN.
 A custom hostname pauses for the CNAME and TXT in dns-records.json.

@@ -409,12 +409,67 @@ class InstallerTests(unittest.TestCase):
                 setup.configure_azure_dns(self.args, self.directory, self.config, self.state)
         run.assert_not_called()
 
+    def test_teams_check_explains_missing_subscription_without_granting_access(self):
+        self.args.teams_user = None
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self): return json.dumps({'value': []}).encode()
+        with patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})) as run, \
+             patch.object(setup.urllib.request, 'urlopen', return_value=Response()), patch.object(setup, 'emit') as emit:
+            setup.check_teams(self.args, self.directory, self.config, self.state)
+        result = emit.call_args.args[1]
+        self.assertEqual(result['teamsSubscription'], 'missing')
+        self.assertIn('Business Basic without Teams is insufficient', result['next'])
+        self.assertNotIn('--subscription', run.call_args.args[0])
+        self.assertFalse(result['verifiedMeetingCreation'])
+
+    def test_teams_check_distinguishes_unlicensed_employee_and_licensed_organizer(self):
+        self.args.teams_user = 'employee@example.com'
+        self.config['teamsGraphOrganizerId'] = SUB
+        class Response:
+            def __init__(self, value): self.value = value
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self): return json.dumps({'value': self.value}).encode()
+        product = {'capabilityStatus': 'Enabled', 'servicePlans': [{'servicePlanName': 'TEAMS1'}]}
+        license = {'servicePlans': [{'servicePlanName': 'TEAMS1', 'provisioningStatus': 'Success'}]}
+        with patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})), \
+             patch.object(setup.urllib.request, 'urlopen', side_effect=[Response([product]), Response([license]), Response([])]), \
+             patch.object(setup, 'emit') as emit:
+            setup.check_teams(self.args, self.directory, self.config, self.state)
+        identities = emit.call_args.args[1]['identities']
+        self.assertEqual(identities[0]['teamsLicense'], 'enabled')
+        self.assertEqual(identities[1]['teamsLicense'], 'missing_or_provisioning')
+        self.assertIn('Unlicensed employees may join as guests', identities[1]['next'])
+
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess
         with patch.object(setup.subprocess, 'run', return_value=CompletedProcess(['az'], 1, '', 'secret-token')):
             with self.assertRaises(setup.SetupError) as error:
                 setup.run(['az', 'deployment'])
         self.assertNotIn('secret-token', str(error.exception))
+
+    def test_verification_guides_azure_operator_without_license_read_permission(self):
+        self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com'}
+        with patch.object(setup, 'run'), \
+             patch.object(setup, 'inspect_teams', side_effect=setup.SetupError('Ask an Entra administrator to run check-teams')), \
+             patch.object(setup, 'emit') as emit:
+            setup.verify(self.args, self.directory, self.config, self.state)
+        result = emit.call_args.args[1]
+        self.assertEqual(result['status'], 'infrastructure_verified')
+        self.assertEqual(result['teamsSetup']['teamsSubscription'], 'unknown')
+        self.assertIn('Entra administrator', result['teamsSetup']['next'])
+        self.assertFalse(self.state['teamsSetupChecks']['verifiedMeetingCreation'])
+
+    def test_license_read_failure_does_not_claim_missing_license_or_print_provider_body(self):
+        import urllib.error
+        with patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'private-fixture'})), \
+             patch.object(setup.urllib.request, 'urlopen', side_effect=urllib.error.HTTPError('url', 403, 'private-provider-body', {}, None)):
+            with self.assertRaisesRegex(setup.SetupError, 'license-read permission') as error:
+                setup.inspect_teams(self.args, self.config)
+        self.assertNotIn('private', str(error.exception))
+        self.assertNotIn('teamsSetupChecks', self.state)
 
 
 if __name__ == '__main__':

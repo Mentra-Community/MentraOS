@@ -45,6 +45,12 @@ The employee signs in once. Customer Core exchanges the Entra token for a
 Mentra session; Runtime accepts only Core-issued Runtime tokens. The same MSAL
 account can separately supply the employee's ACS token.
 
+## Check Teams prerequisites
+
+With the packaged installer, run `./setup.sh check-teams --directory ../mentra-setup --teams-user EMPLOYEE_OBJECT_ID` before deployment. Installation verification also checks when the operator can read Entra license inventory. An Azure resource administrator without that permission receives an Entra-admin handoff; access failure is not classified as a missing license.
+
+The check identifies enabled Teams subscriptions and provisioned Teams service plans for the employee and configured customer guest organizer. If missing, it directs Microsoft 365 administrators to purchase a plan **including Teams**, assign it under Users → Active users → Licenses and apps, and wait for provisioning. Business Basic without Teams is insufficient. An unlicensed employee can join as a guest, but creating guest meetings requires a licensed customer-owned organizer. License inventory alone does not verify Graph consent or Teams policy. See [meeting creation](./entra-setup.md#meeting-creation) for those separate steps.
+
 ## 2. Deploy the image and infrastructure
 
 Copy the complete public configuration example and replace every placeholder:

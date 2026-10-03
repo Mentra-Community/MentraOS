@@ -418,6 +418,7 @@ def preflight(config, require_identity=False):
     return {'tenant': account['tenantId'], 'subscription': account['id'], 'providers': providers,
             'sourceImageAccess': source_access,
             'resourceGroup': 'owned' if group else 'new',
+            'teamsSetup': 'Run check-teams --teams-user EMPLOYEE_OBJECT_ID before installation. Guest joining needs no employee Teams license; meeting creation needs Graph consent, an organizer license and a Teams access policy.',
             'permissionNote': 'Azure Owner, or Contributor plus RBAC assignment permission, is required. Install runs ARM validation before deployment. Some policy/quota constraints are only evaluated when Azure provisions resources.'}
 
 
@@ -573,9 +574,68 @@ def verify(args, directory, config, state):
     if config['workspaceHostname'] and (not state.get('domainVerified') or origin != 'https://' + config['workspaceHostname']):
         raise SetupError('Final customer domain is not deployed yet. Complete DNS and run resume --dns-ready.')
     run(['bash', str(ROOT / 'scripts/smoke-test.sh'), origin], env=environment(config))
+    # Azure resource administrators need not have Entra license-read rights.
+    # Check when possible, but report an unknown result rather than blocking
+    # working Core/guest joining or interpreting permission errors as no license.
+    try:
+        teams = inspect_teams(args, config)
+    except SetupError as exc:
+        teams = {'teamsSubscription': 'unknown', 'verifiedMeetingCreation': False,
+                 'next': str(exc)}
     checkpoint(directory, state, 'infrastructure_verified', verifiedAt=now())
+    checkpoint(directory, state, state['phase'], teamsSetupChecks=teams)
     emit(args, {'status': 'infrastructure_verified', 'workspace': origin,
+               'teamsSetup': teams,
                'remaining': 'Assign employees in Entra, validate a licensed Teams account and guest fallback on the Mentra App, submit/retrieve feedback. Server smoke tests do not certify device or Teams policy behavior.'})
+
+
+def inspect_teams(args, config):
+    # Installer-operator Graph access only; do not grant the Runtime license
+    # inventory permissions or infer Teams identity from an M365 product name.
+    # --tenant and --subscription are mutually exclusive for this CLI command.
+    guidance = ('Cannot inspect Teams licenses. Ask an Entra administrator with license-read permission to run '
+                'check-teams --teams-user EMPLOYEE_OBJECT_ID in this tenant; no license or permission was changed.')
+    try:
+        profile = json.loads(run(['az', 'account', 'get-access-token', '--tenant', config['tenantId'],
+                                  '--resource-type', 'ms-graph', '--output', 'json']))
+        token = profile['accessToken']
+    except (SetupError, ValueError, KeyError):
+        raise SetupError(guidance) from None
+    def graph(path):
+        request = urllib.request.Request('https://graph.microsoft.com/v1.0/' + path,
+                                        headers={'Authorization': 'Bearer ' + token})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except (urllib.error.URLError, ValueError):
+            raise SetupError(guidance) from None
+    inventory = graph('subscribedSkus')['value']
+    teams_products = [s for s in inventory if s.get('capabilityStatus') == 'Enabled'
+                      and any(p.get('servicePlanName') == 'TEAMS1' for p in s.get('servicePlans', []))]
+    identities = []
+    for label, user in (('guest meeting organizer', config.get('teamsGraphOrganizerId')),
+                        ('test employee', getattr(args, 'teams_user', None))):
+        if not user:
+            continue
+        licensed = graph('users/' + urllib.parse.quote(user, safe='') + '/licenseDetails')['value']
+        has_teams = any(p.get('servicePlanName') == 'TEAMS1' and p.get('provisioningStatus') == 'Success'
+                        for sku in licensed for p in sku.get('servicePlans', []))
+        identities.append({'role': label, 'teamsLicense': 'enabled' if has_teams else 'missing_or_provisioning',
+                           'next': ('Validate meeting creation and ACS exchange; license alone does not prove policy/consent.' if has_teams
+                                    else 'Assign a license that includes Microsoft Teams and wait for provisioning. Unlicensed employees may join as guests; guest meeting creation still needs a licensed organizer.')})
+    checks = {'teamsSubscription': 'available' if teams_products else 'missing', 'identities': identities,
+              'meetingCreationConfigured': bool(config.get('teamsGraphClientId')),
+              'guestOrganizerConfigured': bool(config.get('teamsGraphOrganizerId')),
+              'next': ('Confirm employee/organizer license assignments, Graph OnlineMeetings.ReadWrite.All admin consent, and the Teams application access policy. Joining and creating meetings have different requirements.' if teams_products
+                       else 'In Microsoft 365 admin center → Marketplace, choose a plan that includes Teams, then assign it to the intended employee and guest organizer. Business Basic without Teams is insufficient. Guest joining is still available; guest meeting creation needs a licensed organizer.'),
+              'verifiedMeetingCreation': False}
+    return checks
+
+
+def check_teams(args, directory, config, state):
+    checks = inspect_teams(args, config)
+    checkpoint(directory, state, state['phase'], teamsSetupChecks=checks)
+    emit(args, checks)
 
 
 def bootstrap_admin(args, directory, config, state):
@@ -681,7 +741,7 @@ def configure_entra(args, directory, config, state):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'diagnostics'))
+    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns', 'check-teams', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'diagnostics'))
     parser.add_argument('--directory', default='./mentra-setup', help='Persistent state and secret directory outside the installer package')
     parser.add_argument('--config', help='JSON answers for init; otherwise edit deployment.config.json')
     parser.add_argument('--json', action='store_true')
@@ -691,6 +751,7 @@ def main():
     parser.add_argument('--dns-zone', help='Existing Azure DNS zone for configure-azure-dns')
     parser.add_argument('--dns-resource-group', help='Resource group containing the Azure DNS zone')
     parser.add_argument('--dns-subscription', help='DNS subscription, if different; must belong to the same Entra tenant')
+    parser.add_argument('--teams-user', help='Employee object ID or UPN for check-teams; no license assignment is performed')
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     try:
@@ -711,14 +772,17 @@ def main():
                             'billing': 'These resources incur Azure charges. Review Azure Pricing Calculator and company budget before install.',
                             'network': 'Authenticated public HTTPS ingress and Cosmos endpoint; this profile does not provision private endpoints.',
                             'handoffs': ['DNS admin (custom hostname)', 'Entra admin consent and employee assignment',
+                                         'Microsoft 365 admin: Teams license for employees using Teams identity and the guest meeting organizer; check-teams explains missing licenses',
                                          'Teams admin: Graph application permission and application access policy for meeting creation'],
-                            'next': 'configure-entra, then install. Plan performs no Azure writes.'})
+                            'next': 'configure-entra, check-teams --teams-user EMPLOYEE_OBJECT_ID, then install. Plan performs no Azure writes.'})
             elif args.command == 'configure-entra':
                 configure_entra(args, directory, config, state)
             elif args.command == 'configure-mirror':
                 configure_mirror(args, directory, config, state)
             elif args.command == 'configure-azure-dns':
                 configure_azure_dns(args, directory, config, state)
+            elif args.command == 'check-teams':
+                check_teams(args, directory, config, state)
             elif args.command in ('install', 'resume'):
                 install(args, directory, config, state)
             elif args.command == 'verify':
