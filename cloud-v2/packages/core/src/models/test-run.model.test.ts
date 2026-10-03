@@ -2,6 +2,7 @@ import {expect, test} from "bun:test";
 import {reconcileTestRunIndexes, TestRunModel, TEST_RUN_COMPLETION_INDEX} from "./test-run.model";
 
 test("index cutover removes conflicting definitions without touching historical documents", async () => {
+  expect(TestRunModel.schema.options.autoIndex).toBe(false);
   const indexes = [
     {name: "_id_", key: {_id: 1}}, {name: "requestId_1", key: {requestId: 1}},
     {name: TEST_RUN_COMPLETION_INDEX, key: {completedAt: -1, startedAt: -1, runId: -1}},

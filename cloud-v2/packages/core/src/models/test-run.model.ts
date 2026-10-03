@@ -1,7 +1,7 @@
 import {Schema} from "mongoose";
 import {registerModel} from "./register-model";
 
-/** Native framework results only. No legacy payload reader or migration fallback. */
+/** Native framework results. Startup reconciles this model's indexes before creating them. */
 const schema = new Schema({
   runId: {type: String, required: true, unique: true},
   requestId: {type: String, required: true},
@@ -10,7 +10,7 @@ const schema = new Schema({
   startedAt: {type: Date, required: true}, completedAt: {type: Date, required: true},
   payloadSha256: {type: String, required: true}, payload: {type: Schema.Types.Mixed, required: true},
   uploadsComplete: {type: Boolean, required: true}, outcome: {type: String, required: true},
-}, {collection: "test_runs", timestamps: true});
+}, {collection: "test_runs", timestamps: true, autoIndex: false});
 schema.index({requestId: 1}, {unique: true, name: "test_runs_terminal_request",
   partialFilterExpression: {"payload.schemaVersion": 1}});
 schema.index({routineId: 1, platform: 1, definitionRevision: 1, outcome: 1, uploadsComplete: 1, startedAt: -1, runId: -1});

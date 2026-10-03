@@ -33,7 +33,7 @@ services:
       nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
-      nginx.ingress.kubernetes.io/proxy-body-size: "128m"
+      nginx.ingress.kubernetes.io/proxy-body-size: "2g"
     terminationGracePeriodSeconds: 10
 
   - name: runtime
