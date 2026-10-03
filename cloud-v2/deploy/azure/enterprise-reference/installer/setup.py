@@ -227,14 +227,17 @@ def recover_upgrade(directory, config, state):
 
 def release_version(release):
     value = release['releaseTag']
-    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z0-9.-]+))?', value)
+    match = re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([A-Za-z0-9.-]+))?', value)
     if not match:
         raise SetupError('Upgrade requires a coordinated semantic release identity')
     base = tuple(int(x) for x in match.group(1, 2, 3))
     suffix = match.group(4)
     if suffix is None:
         return base + (1, ())
-    parts = tuple((0, int(x)) if x.isdigit() else (1, x) for x in suffix.split('.'))
+    identifiers = suffix.split('.')
+    if any(not x or (x.isdigit() and len(x) > 1 and x.startswith('0')) for x in identifiers):
+        raise SetupError('Upgrade requires a canonical semantic release identity')
+    parts = tuple((0, int(x)) if x.isdigit() else (1, x) for x in identifiers)
     return base + (0, parts)
 
 

@@ -287,11 +287,42 @@ jobs:
 
       - name: Package Azure installer for the published image
         if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE: ${{ inputs.source_commit }}
+          EXPECTED_IMAGE: ${{ steps.coordinates.outputs.image }}@${{ steps.published.outputs.digest }}
+          INSTALLER_TAG: mentra-private-cloud-${{ steps.coordinates.outputs.release_identity }}
         run: |
-          python3 cloud-v2/deploy/azure/enterprise-reference/installer/package.py \
-            --publication runtime-image-publication.json \
-            --sbom "${{ steps.coordinates.outputs.sbom_name }}" \
-            --output mentra-private-cloud.tar.gz
+          set -euo pipefail
+          url=$(node .github/scripts/release-assets.mjs url --repository "$GITHUB_REPOSITORY" --tag "$INSTALLER_TAG" --name mentra-private-cloud.tar.gz)
+          status=$(curl --silent --show-error --location --connect-timeout 30 --max-time 120 --output installer-existing.tar.gz --write-out '%{http_code}' "$url")
+          case "$status" in
+            200)
+              # SBOM timestamps and publication completion times vary on rerun.
+              # Reuse the attested original archive, including its evidence.
+              gh attestation verify installer-existing.tar.gz --repo "$GITHUB_REPOSITORY"
+              python3 - <<'PYVERIFY'
+          import json, os, tarfile
+          with tarfile.open('installer-existing.tar.gz') as archive:
+              release = json.load(archive.extractfile('mentra-private-cloud/release.json'))
+          if (release['installerSourceCommit'] != os.environ['EXPECTED_SOURCE']
+                  or release['imageSourceCommit'] != os.environ['EXPECTED_SOURCE']
+                  or release['sourceImage'] != os.environ['EXPECTED_IMAGE']
+                  or 'mentra-private-cloud-' + release['releaseTag'] != os.environ['INSTALLER_TAG']):
+              raise SystemExit('Existing installer belongs to different immutable release coordinates')
+          PYVERIFY
+              mv installer-existing.tar.gz mentra-private-cloud.tar.gz
+              sha256sum mentra-private-cloud.tar.gz > mentra-private-cloud.tar.gz.sha256
+              ;;
+            404)
+              rm installer-existing.tar.gz
+              python3 cloud-v2/deploy/azure/enterprise-reference/installer/package.py \
+                --publication runtime-image-publication.json \
+                --sbom "${{ steps.coordinates.outputs.sbom_name }}" \
+                --output mentra-private-cloud.tar.gz
+              ;;
+            *) echo "Cannot inspect existing installer (HTTP $status); refusing to replace immutable bytes" >&2; exit 1 ;;
+          esac
 
       - name: Attest Azure installer
         if: inputs.dry_run != true

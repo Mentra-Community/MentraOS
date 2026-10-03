@@ -216,7 +216,8 @@ files.
 
 ## Packaged installer upgrade
 
-Keep the original installer archive and the protected setup directory. First
+Keep the original installer archive, an extracted copy of its package directory
+for `--previous-package`, and the protected setup directory. First
 run `verify` from the original package. Back up the Core database, report
 attachment share, deployment state and original signing/refresh secrets using
 your approved recovery process. Confirm the target release's provenance and

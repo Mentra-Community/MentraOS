@@ -116,6 +116,13 @@ class InstallerTests(unittest.TestCase):
                     setup.upgrade(self.args, self.directory)
                 self.assertFalse((self.directory / 'upgrade.pending.json').exists())
 
+    def test_upgrade_rejects_noncanonical_semantic_release_identities(self):
+        for value in ('03.3.0', '3.03.0', '3.3.00', '3.3.0-dev.01', '3.3.0-dev..1', '3.3.0-.'):
+            with self.subTest(value=value), self.assertRaisesRegex(setup.SetupError, 'semantic'):
+                setup.release_version(dict(RELEASE, releaseTag=value))
+        self.assertLess(setup.release_version(dict(RELEASE, releaseTag='3.3.0-dev.9')),
+                        setup.release_version(dict(RELEASE, releaseTag='3.3.0-dev.10')))
+
     def test_upgrade_requires_backups_and_original_verified_package(self):
         with self.upgrade_context():
             self.args.backup_confirmed = False
@@ -135,6 +142,7 @@ class InstallerTests(unittest.TestCase):
             pending = setup.read_json(self.directory / 'upgrade.pending.json')
             pending['updatedConfig']['subscriptionId'] = 'foreign'
             setup.write_json(self.directory / 'upgrade.pending.json', pending)
+            setup.write_json(self.directory / 'deployment.config.json', pending['updatedConfig'])
             with self.assertRaisesRegex(setup.SetupError, 'conflicts'):
                 setup.load(self.directory)
 
