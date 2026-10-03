@@ -75,7 +75,7 @@ test("persisted suite completion lists passing members with incomplete publicati
  const row: any = {payload};
  const query = {read() {return this;}, readConcern() {return this;}, lean: async () => row};
  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any));
- const run = {schemaVersion: 1, requestId: "request", routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
+ const run = {schemaVersion: 1, hostId: "mini", requestId: "request", routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
   build: {repository: "Mentra-Community/MentraOS", headSha: "a".repeat(40), channel: "dev"}, startedAt: payload.startedAt, finishedAt: "2026-10-01T11:01:00Z", assets: [],
   result: {runId: "request", finishedAt: "2026-10-01T11:01:00Z", setup: {status: "passed"}, test: "passed", steps: [{id: "one", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [], timing: {startedAt: payload.startedAt, setupMs: 1, testMs: 1, teardownMs: 1}}};
  const runs = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [{payload: run, uploadsComplete: false}]};

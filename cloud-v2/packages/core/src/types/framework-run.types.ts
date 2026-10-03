@@ -15,7 +15,7 @@ const cleanupOutcome = z.discriminatedUnion("state", [
   z.object({state: z.literal("failed"), resourceId: id, failure}).strict(),
 ]);
 export const frameworkRunSchema = z.object({
-  schemaVersion: z.literal(1), requestId: id, routineId: routineIdentitySchema,
+  schemaVersion: z.literal(1), requestId: id, hostId: id, routineId: routineIdentitySchema,
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/), platform: routinePlatformSchema,
   laneId: id, build: frameworkBuildSchema, startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
   recordingAssetId: id.optional(),
@@ -24,7 +24,9 @@ export const frameworkRunSchema = z.object({
     mimeType: z.enum(["video/mp4", "video/webm", "image/png", "image/jpeg", "application/json", "text/plain"])}).strict()).max(2000),
   result: z.object({runId: id, finishedAt: z.string().datetime({offset: true}), test: z.enum(["passed", "failed", "not-run", "cancelled"]),
     setup: z.object({status: z.enum(["passed", "failed", "cancelled"]), actionId: id.optional()}).strict(),
-    steps: z.array(z.object({id, status: z.enum(["passed", "failed", "not-run"]), durationMs: ms, causedBy: id.optional()}).strict()).max(2000),
+    steps: z.array(z.object({id, status: z.enum(["passed", "failed", "not-run"]), durationMs: ms, causedBy: id.optional(),
+      startedAt: z.string().datetime({offset: true}).optional(), finishedAt: z.string().datetime({offset: true}).optional(),
+      recordingLocation: z.object({assetId: id, startOffsetMs: ms, endOffsetMs: ms.optional()}).strict().optional()}).strict()).max(2000),
     teardown: z.object({ready: z.boolean(), outcomes: z.array(cleanupOutcome), errors: z.array(failure),
       unavailableResources: z.array(z.object({resource: id, cause: z.string(), nextAction: z.string()}).strict())}).strict(),
     failures: z.array(failure), evidence: z.array(id),
@@ -44,6 +46,15 @@ export const frameworkRunSchema = z.object({
   if (run.recordingAssetId && (assets.get(run.recordingAssetId)?.kind !== "recording"
     || assets.get(run.recordingAssetId)?.mimeType !== "video/mp4")) problem("Recording is not a declared MP4 recording");
   if (run.result.evidence.some(assetId => !assets.has(assetId))) problem("Evidence identity is not declared");
+  for (const step of run.result.steps) {
+    if (step.status === "not-run" && (step.startedAt || step.finishedAt || step.recordingLocation))
+      problem("Unexecuted step cannot have execution or recording timing");
+    if (step.finishedAt && (!step.startedAt || Date.parse(step.finishedAt) < Date.parse(step.startedAt)))
+      problem("Step finish precedes its execution start");
+    if (step.recordingLocation && (assets.get(step.recordingLocation.assetId)?.kind !== "recording"
+      || (step.recordingLocation.endOffsetMs !== undefined && step.recordingLocation.endOffsetMs < step.recordingLocation.startOffsetMs)))
+      problem("Step recording location is invalid or undeclared");
+  }
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
   if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || run.result.failures.some(failure => failure.phase === "setup" || failure.phase === "test") || run.result.steps.some(step => step.status !== "passed")))
     problem("Passing test contradicts setup or steps");

@@ -6,7 +6,7 @@ const schema = new Schema({
   runId: {type: String, required: true, unique: true},
   requestId: {type: String, required: true},
   routineId: {type: String, required: true}, definitionRevision: {type: String, required: true},
-  platform: {type: String, required: true}, laneId: {type: String, required: true},
+  hostId: {type: String, required: true}, platform: {type: String, required: true}, laneId: {type: String, required: true},
   startedAt: {type: Date, required: true}, completedAt: {type: Date, required: true},
   payloadSha256: {type: String, required: true}, payload: {type: Schema.Types.Mixed, required: true},
   uploadsComplete: {type: Boolean, required: true}, outcome: {type: String, required: true},
@@ -15,6 +15,7 @@ schema.index({requestId: 1}, {unique: true, name: "test_runs_terminal_request",
   partialFilterExpression: {"payload.schemaVersion": 1}});
 schema.index({routineId: 1, platform: 1, definitionRevision: 1, outcome: 1, uploadsComplete: 1, startedAt: -1, runId: -1});
 schema.index({startedAt: -1, runId: -1});
+schema.index({hostId: 1, laneId: 1, startedAt: -1, runId: -1});
 export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
 schema.index({completedAt: -1, runId: -1}, {name: TEST_RUN_COMPLETION_INDEX});
 export const TestRunModel = registerModel("TestRun", schema);

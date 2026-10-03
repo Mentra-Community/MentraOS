@@ -29,7 +29,7 @@ type Submission = {requestId: string; hostId: string; laneId: string; routineId:
 
 /** The picker resolves a published artifact; the controller's request queue executes it. */
 export function NativeDispatchPanel() {
-  const catalog = useQuery({queryKey: ["routine-catalog"], queryFn: () => api<{routines: RoutineEnrollment[]}>("/api/admin/routine-catalog")});
+  const routines = useQuery({queryKey: ["dispatch-routines"], queryFn: () => api<{routines: RoutineEnrollment[]}>("/api/admin/test-routines"), refetchInterval: 15000});
   const [routine, setRoutine] = useState("");
   const [channel, setChannel] = useState("dev");
   const [pr, setPr] = useState("");
@@ -40,7 +40,7 @@ export function NativeDispatchPanel() {
   const [message, setMessage] = useState("");
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [sending, setSending] = useState(false);
-  const definition = catalog.data?.routines.find(row => `${row.routineId}/${row.platform}` === routine);
+  const definition = routines.data?.routines.find(row => `${row.routineId}/${row.platform}` === routine);
   const builds = useQuery({queryKey: ["picker-builds", inventory], enabled: !!inventory, queryFn: () => api<{builds: TestBuild[]}>(inventory!)});
   const selected = builds.data?.builds.find(build => buildKey(build) === selection);
   function findBuilds() {
@@ -65,11 +65,11 @@ export function NativeDispatchPanel() {
   }
   const locked = !!submission || sending;
   return <section className="rounded-xl border bg-white p-5 space-y-3"><h2 className="font-semibold">Run a routine</h2>
-    <div className="flex flex-wrap gap-3"><label>Routine <select aria-label="Routine" value={routine} disabled={locked} onChange={event => {setRoutine(event.target.value); changed();}}><option value="">Select routine</option>{catalog.data?.routines.map(row => <option key={`${row.routineId}/${row.platform}`} value={`${row.routineId}/${row.platform}`}>{row.definition.title} · {row.platform}</option>)}</select></label>
+    <div className="flex flex-wrap gap-3"><label>Routine <select aria-label="Routine" value={routine} disabled={locked} onChange={event => {setRoutine(event.target.value); changed();}}><option value="">Select routine</option>{routines.data?.routines.map(row => <option key={`${row.routineId}/${row.platform}`} value={`${row.routineId}/${row.platform}`}>{row.definition.title} · {row.platform}</option>)}</select></label>
     <label>Build channel <select aria-label="Build channel" value={channel} disabled={locked} onChange={event => {setChannel(event.target.value); changed();}}><option value="dev">Dev</option><option value="staging">Staging</option><option value="pr">PR</option></select></label>
     {channel === "pr" && <label>PR number <input aria-label="PR number" value={pr} disabled={locked} onChange={event => {setPr(event.target.value); changed();}} /></label>}
     <Button disabled={locked || !definition} onClick={findBuilds}>Find builds</Button></div>
-    {catalog.error && <p role="alert">Could not load routines: {catalog.error.message}</p>}
+    {routines.error && <p role="alert">Could not load routines: {routines.error.message}</p>}
     {builds.isFetching && <p role="status">Finding published builds…</p>}
     {builds.error && <p role="alert">Could not find builds: {builds.error.message}</p>}
     {builds.data?.builds.map(build => <TestBuildOption key={buildKey(build)} build={build} checked={selection === buildKey(build)} disabled={locked} onSelect={() => setSelection(buildKey(build))} />)}

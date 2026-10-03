@@ -14,7 +14,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     async getByRequest() {return stored;},
     async getByRun() {return stored;},
   };
-  const run = {schemaVersion: 1, requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
+  const run = {schemaVersion: 1, hostId: "mini", requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
     platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
     assets: [], result: {runId: "r1", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [{id: "required", status: "not-run", durationMs: 0, causedBy: "install"}],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
@@ -35,6 +35,9 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   await expect(service.complete("r1", "mini")).rejects.toThrow("not acknowledged");
   await expect(service.ingest({...run, finishedAt: "2026-10-02T19:02:00Z", result: {...run.result, finishedAt: "2026-10-02T19:02:00Z"}}, "mini")).rejects.toThrow("different terminal result");
   await expect(service.ingest(run, "other")).rejects.toThrow("accepted request");
+  await expect(service.ingest({...run, hostId: "other"}, "mini")).rejects.toThrow("accepted request");
+  const {hostId: omitted, ...withoutHost} = run;
+  await expect(service.ingest(withoutHost, "mini")).rejects.toThrow("Invalid frozen");
   await expect(service.ingest({...run, build: {...run.build, different: true}}, "mini")).rejects.toThrow("accepted request");
   let attempts = 0;
   const retrying = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
@@ -62,7 +65,7 @@ test("a completed test can publish a teardown failure without becoming a catalog
   const {frameworkRunSchema, frameworkRunOutcome} = await import("../types/framework-run.types");
   let stored: FrameworkRun | undefined;
   const failure = {phase: "teardown" as const, actionId: "uninstall", message: "App removal failed"};
-  const run = frameworkRunSchema.parse({schemaVersion: 1, requestId: "local:teardown", routineId: "notes",
+  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "local:teardown", routineId: "notes",
     definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
     build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
     startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z", assets: [],

@@ -2,7 +2,7 @@ import {expect, test} from "bun:test";
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
 
 function run() {
-  return {schemaVersion: 1, requestId: "run-1", routineId: "no-glasses", definitionRevision: "a".repeat(40),
+  return {schemaVersion: 1, hostId: "mini", requestId: "run-1", routineId: "no-glasses", definitionRevision: "a".repeat(40),
     platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
     startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:02:00Z", assets: [],
     result: {runId: "run-1", finishedAt: "2026-10-02T19:02:00Z", setup: {status: "passed"}, test: "passed",

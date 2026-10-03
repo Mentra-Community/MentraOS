@@ -35,7 +35,7 @@ const definitionFor = async (run: FrameworkRun): Promise<RoutineEnrollment | nul
 const mongoRepository: FrameworkResultRepository = {
   async insert(run, payloadSha256) {
     await TestRunModel.create([{runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
-      definitionRevision: run.definitionRevision, platform: run.platform, laneId: run.laneId,
+      definitionRevision: run.definitionRevision, hostId: run.hostId, platform: run.platform, laneId: run.laneId,
       startedAt: new Date(run.startedAt), completedAt: new Date(run.finishedAt),
       outcome: frameworkRunOutcome(run), payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
   },
@@ -67,7 +67,7 @@ export class FrameworkResultService {
     if (!parsed.success) throw new TestRunError(400, "Invalid frozen framework result");
     const run = parsed.data, payloadSha256 = requestInputDigest(run);
     const binding = await this.request(run.requestId);
-    if (!binding || !buildDigest(binding.input?.build) || binding.hostId !== authenticatedHostId || binding.input.routineId !== run.routineId
+    if (!binding || !buildDigest(binding.input?.build) || binding.hostId !== authenticatedHostId || run.hostId !== authenticatedHostId || binding.input.routineId !== run.routineId
       || binding.input.definitionRevision !== run.definitionRevision || binding.input.platform !== run.platform
       || binding.input.laneId !== run.laneId || buildDigest(binding.input.build) !== requestInputDigest(run.build))
       throw new FrameworkResultConflict("Result does not match this host's accepted request");
@@ -117,7 +117,7 @@ export class FrameworkResultService {
 
   async list(scope: Record<string, string> = {}) {
     const filter: Record<string, unknown> = {...nativeRunFilter};
-    for (const field of ["routineId", "platform"])
+    for (const field of ["routineId", "platform", "hostId", "laneId"])
       if (scope[field]) filter[field] = scope[field];
     if (scope.archiveSha256) filter["payload.build.archive.sha256"] = scope.archiveSha256;
     for (const field of ["repository", "headSha", "channel", "prNumber"])
@@ -126,7 +126,7 @@ export class FrameworkResultService {
       .sort({startedAt: -1, runId: -1}).limit(100).read("primary").readConcern("majority").lean();
     return {runs: rows.map(row => {
       const run = frameworkRunSchema.parse(row.payload);
-      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, laneId: run.laneId,
+      return {runId: run.result.runId, requestId: run.requestId, hostId: run.hostId, routineId: run.routineId, platform: run.platform, laneId: run.laneId,
         startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
         uploadsComplete: row.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
     })};
