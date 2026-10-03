@@ -1,5 +1,6 @@
 import {writeFile} from "node:fs/promises"
 import {publishedCoordinatedBuild} from "./coordinated-routine-request.mjs"
+import {DEVICE_ROUTINES} from "./device-routines.mjs"
 
 export const ROUTINE_BLOCK = "mentra-release-routines"
 export const REPOSITORY = "Mentra-Community/MentraOS"
@@ -8,7 +9,12 @@ export const hash = value => /^[a-f0-9]{64}$/.test(value ?? "")
 export const positive = value => Number.isSafeInteger(value) && value > 0
 export const requireThat = (condition, message) => { if (!condition) throw new Error(message) }
 export const receiptName = (runId, attempt) => `release-slack-message-${runId}-${attempt}`
-const routineNames = {"no-glasses": "No-glasses UI", "day1-ota": "Day-one OTA", "mentra-call": "Mentra Call"}
+// Every catalogued routine and its display name come from the shared DEVICE_ROUTINES catalog. `displayFirst` only keeps
+// the historical row order of existing posts; it is filtered by the catalog and never admits a routine by itself.
+const displayFirst = ["no-glasses", "no-glasses-android", "day1-ota", "mentra-call"]
+const routineNames = Object.freeze(Object.fromEntries([...displayFirst, ...Object.keys(DEVICE_ROUTINES)]
+  .filter((id, index, ids) => Object.hasOwn(DEVICE_ROUTINES, id) && ids.indexOf(id) === index)
+  .map(id => [id, DEVICE_ROUTINES[id].name])))
 
 export function slackDestination(env) {
   const channel = env.BRANCH === "dev" ? env.SLACK_DEV_BUILDS_CHANNEL_ID
@@ -43,8 +49,11 @@ export async function postReleaseMessage(env, payload, {fetchImpl = fetch, selec
         release: env.RELEASE_IDENTITY, archiveSha256: selection.archive.sha256}
     } catch { /* Keep the existing release notification; this post cannot receive device results. */ }
   }
+  const updateDetail = env.FINALIZE_RESULT !== "success" || !env.MAC_URL
+    ? "This post has no verified Mac build to attach test results to."
+    : "Test result updates are disabled for this post because its Mac download could not be verified."
   const messagePayload = build ? payload : {...payload, blocks: payload.blocks.map(block => block.block_id === ROUTINE_BLOCK
-    ? {...block, text: {...block.text, text: `${block.text.text}\nTerminal Slack updates unavailable: no verified archive receipt for this post.`}} : block)}
+    ? {...block, text: {...block.text, text: `${block.text.text}\n${updateDetail}`}} : block)}
   // No automatic POST retry and no webhook fallback after an attempted bot send.
   const result = await slackCall("chat.postMessage", env.SLACK_BUILDS_BOT_TOKEN,
     {channel, text: `Mentra ${env.BRANCH} release ${env.RELEASE_IDENTITY}`, ...messagePayload, unfurl_links: false, unfurl_media: false}, fetchImpl)
@@ -70,21 +79,29 @@ export function assertNotification(value) {
 
 const generation = row => [row.requestRunId, row.requestAttempt, row.privateRunId, row.privateAttempt]
 const compare = (a, b) => { for (let i = 0; i < a.length; i++) { if (a[i] !== b[i]) return a[i] - b[i] } return 0 }
+// A request cancelled before any runner accepted it has no test result. It may
+// only fill a pending row; any worker-attested result outranks it.
+const CANCELLED = "cancelled"
 
 /** All unaffected blocks are retained verbatim; a late older result cannot regress a row. */
 export function applyRoutineResult(notification, row) {
   assertNotification(notification)
   requireThat(Object.hasOwn(routineNames, row?.routineId) && generation(row).every(positive) &&
-    ["passed", "failed", "blocked", "aborted", "upload-incomplete"].includes(row.status) &&
+    ["passed", "failed", "blocked", "aborted", "upload-incomplete", CANCELLED].includes(row.status) &&
+    (row.status !== CANCELLED || row.resultRunId === undefined) &&
     (!row.resultRunId || /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(row.resultRunId)), "Invalid routine result row")
   const previous = notification.rows[row.routineId]
-  if (previous && compare(generation(previous), generation(row)) >= 0) return notification
+  if (previous && (row.status === CANCELLED ? previous.status !== CANCELLED || compare(generation(previous), generation(row)) >= 0
+    : previous.status !== CANCELLED && compare(generation(previous), generation(row)) >= 0)) return notification
   const rows = {...notification.rows, [row.routineId]: row}
-  const labels = {passed: "Passed", failed: "Failed", blocked: "Blocked", aborted: "Aborted", "upload-incomplete": "Result upload incomplete"}
+  const labels = {passed: "Passed", failed: "Failed", blocked: "Blocked", aborted: "Aborted", "upload-incomplete": "Result upload incomplete",
+    [CANCELLED]: "Cancelled before execution; no test result"}
   const lines = Object.keys(routineNames).filter(id => rows[id]).map(id => {
     const result = rows[id]
+    // A worker stopped before any claim links its attempt-bound preparation result, which has no recording.
+    const preparation = result.resultRunId?.endsWith(`-prep-${result.privateRunId}-${result.privateAttempt}`)
     const resultLink = result.resultRunId
-      ? ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(result.resultRunId)}|Recording and result>` : ""
+      ? ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(result.resultRunId)}|${preparation ? "Preparation result" : "Recording and result"}>` : ""
     return `${routineNames[id]} — *${labels[result.status]}*${resultLink} · <https://github.com/${REPOSITORY}/actions/runs/${result.requestRunId}/attempts/${result.requestAttempt}|Request>`
   })
   return {...notification, rows, payload: {...notification.payload, blocks: notification.payload.blocks.map(block =>

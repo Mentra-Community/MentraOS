@@ -59,3 +59,25 @@ export function coordinatedFixture(channel = "dev") {
       workflowRef: `${repository}/.github/workflows/request-e2e-routine.yml@refs/heads/dev`, actor: "synthetic-operator"}}
   return {state, options, pin: value => createHash("sha256").update(JSON.stringify(value)).digest("hex")}
 }
+
+
+export function coordinatedAndroidFixture(channel = "dev") {
+  const f = coordinatedFixture(channel), {state, options} = f, plan = state.plan
+  plan.artifactNames.androidApp = `mentraos-${plan.releaseIdentity}-android.apk`
+  plan.artifactNames.releaseManifest = `mentra-release-${plan.releaseIdentity}.json`
+  const prefix = `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/${plan.artifactContainerTag}/`
+  state.androidReceipt = {schemaVersion: 1, releaseSetId: plan.releaseSetId, releaseIdentity: plan.releaseIdentity,
+    releasePlanSha256: f.pin(plan),
+    sourceCommit: plan.sourceCommit, channel: plan.channel, native: structuredClone(plan.native), artifacts: [{
+      coordinate: plan.artifactNames.androidApp, status: "built", url: prefix + plan.artifactNames.androidApp,
+      sha256: "2".repeat(64), size: 9999, provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/100"}]}
+  const original = options.fetchImpl
+  options.fetchImpl = async (url, opts) => {
+    if (url === prefix + plan.artifactNames.releaseManifest) return new Response(JSON.stringify(state.androidReceipt))
+    if (url === prefix + plan.artifactNames.androidApp && opts?.method === "HEAD")
+      return new Response(null, {headers: {"content-length": String(state.androidSize ?? 9999)}})
+    return original(url, opts)
+  }
+  options.routine = "no-glasses-android"
+  return f
+}

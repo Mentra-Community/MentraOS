@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -9,10 +9,11 @@ import {
   readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
 import { TestRunsPage } from "./pages/test-runs";
+import { RoutineCatalogPage } from "./pages/routine-catalog";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs";
+type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "routine-catalog";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
@@ -130,6 +131,7 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "audit", label: "Audit log", icon: History },
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
+  { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
 ];
 
 /**
@@ -162,12 +164,13 @@ export function App() {
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
+const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
@@ -211,6 +214,7 @@ function AdminPage() {
       setTestRunLink(selection);
       setTestRunListScope(scope);
       if (selection || scope) setPage("test-runs");
+      else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -340,6 +344,7 @@ function AdminPage() {
     audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or promoted something." },
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
+    "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
   };
 
   if (me.isLoading) return <Splash label="Checking admin session" />;
@@ -365,6 +370,10 @@ function AdminPage() {
           selectTestRun(null, true);
           clearTestRunListScope();
         }
+        const location = new URL(window.location.href);
+        location.searchParams.delete("routineCatalog");
+        if (key === "routine-catalog") location.searchParams.set("routineCatalog", "1");
+        window.history.replaceState(null, "", `${location.pathname}${location.search}${location.hash}`);
       }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
@@ -422,6 +431,9 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
+      {page === "routine-catalog" ? <RoutineCatalogPage onResult={runID => {
+        setPage("test-runs"); selectTestRun({runID}); clearTestRunListScope();
+      }} /> : null}
       {page === "test-runs" ? (
         <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
           scope={testRunListScope} onClearScope={clearTestRunListScope} />

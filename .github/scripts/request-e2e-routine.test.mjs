@@ -1,11 +1,14 @@
+import {ANDROID_PUBLICATION_STEP} from "./pr-android-artifacts.mjs"
 import assert from "node:assert/strict"
 import {createHash} from "node:crypto"
+import {readFile} from "node:fs/promises"
 import test from "node:test"
 import {
   createRoutineRequest,
   REQUEST_LABEL,
   REQUEST_WORKFLOW,
   successfulMacPublication,
+  successfulAndroidPublication,
 } from "./request-e2e-routine.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -111,6 +114,8 @@ function fixture() {
     baseRef: {ref: "refs/heads/dev", object: {type: "commit", sha: base}},
     baseReads: 0,
     changeBaseOnReread: false,
+    retargetOnReread: false,
+    refReads: [],
   }
   const github = {
     rest: {
@@ -120,13 +125,15 @@ function fixture() {
           if (state.prReads++ > 0) {
             if (state.changeOnReread) data.head.sha = "f".repeat(40)
             if (state.removeLabelOnReread) data.labels = []
+            if (state.retargetOnReread) data.base.ref = data.base.ref === "dev" ? "staging" : "dev"
           }
           return {data}
         },
       },
       git: {
         getRef: async ({ref}) => {
-          assert.equal(ref, "heads/dev")
+          state.refReads.push(ref)
+          assert.equal(ref, `heads/${pr.base.ref}`)
           const data = structuredClone(state.baseRef)
           if (state.changeBaseOnReread && state.baseReads > 0) data.object.sha = "e".repeat(40)
           state.baseReads++
@@ -187,10 +194,105 @@ function fixture() {
     source.ref = "refs/heads/dev"
     source.workflowRef = `${repository}/${REQUEST_WORKFLOW}@refs/heads/dev`
   }
-  return {state, context, source, github, resolve, manual}
+  // A staging-targeted PR still resolves on the trusted dev issuer.
+  const staging = () => {
+    for (const target of [pr, context.payload.pull_request]) target.base.ref = "staging"
+    state.baseRef.ref = "refs/heads/staging"
+    receipt.app.backend = "staging"
+  }
+  return {state, context, source, github, resolve, manual, staging}
 }
 
 const originalPublication = {sourceBuildRunId: "100", sourcePublicationAttempt: "2", requestOrigin: "pr-label"}
+
+test("the shared private/public PR wire fixture is the actual producer output", async () => {
+  // The private harness projects each request's authenticated failure source from these exact bytes.
+  const label = fixture(), manual = fixture(), stagingLabel = fixture()
+  label.manual()
+  manual.manual()
+  manual.state.pr.labels = []
+  stagingLabel.staging()
+  stagingLabel.manual()
+  const produced = JSON.parse(JSON.stringify({
+    bootstrap: await fixture().resolve(),
+    labelCallback: await label.resolve(originalPublication),
+    manual: await manual.resolve({routine: "no-glasses", requestOrigin: "workflow-dispatch"}),
+    stagingLabelCallback: await stagingLabel.resolve(originalPublication),
+  }))
+  for (const [name, kind, authorization] of [["bootstrap", "pull_request", "pr-label"],
+    ["labelCallback", "workflow_dispatch", "pr-label"], ["manual", "workflow_dispatch", "workflow-dispatch"],
+    ["stagingLabelCallback", "workflow_dispatch", "pr-label"]]) {
+    assert.equal(produced[name].status, "ready")
+    assert.equal(produced[name].trigger.kind, kind)
+    assert.equal(produced[name].routine.authorization, authorization)
+  }
+  assert.deepEqual(JSON.parse(await readFile(new URL("./fixtures/pr-routine-requests.json", import.meta.url))), produced)
+})
+
+test("dev and staging PRs share the trusted dev issuer and bind their exact current base and backend", async () => {
+  for (const destination of ["dev", "staging"]) {
+    for (const options of [{}, originalPublication, {routine: "no-glasses", requestOrigin: "workflow-dispatch"}]) {
+      const f = fixture()
+      if (destination === "staging") f.staging()
+      f.manual()
+      if (options.requestOrigin === "workflow-dispatch") f.state.pr.labels = []
+      const request = await f.resolve(options)
+      assert.equal(request.status, "ready", request.reason)
+      assert.equal(request.schemaVersion, 1)
+      assert.equal(request.trigger.ref, "refs/heads/dev")
+      assert.equal(request.trigger.workflowRef, `${repository}/${REQUEST_WORKFLOW}@refs/heads/dev`)
+      assert.equal(request.pullRequest.baseRef, destination)
+      assert.equal(request.pullRequest.baseSha, base)
+      assert.equal(request.selection.app.backend, destination)
+      assert.deepEqual(request.selection.build, {headSha: head, baseSha: base, buildSha: merge})
+      assert.deepEqual(f.state.refReads, [`heads/${destination}`, `heads/${destination}`])
+    }
+  }
+})
+
+test("a staging PR bootstrap label uses its PR merge checkout and exact staging tip", async () => {
+  const f = fixture()
+  f.staging()
+  const request = await f.resolve()
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.trigger.ref, "refs/pull/4136/merge")
+  assert.equal(request.pullRequest.baseRef, "staging")
+})
+
+test("backend mismatches, retargets, stale bases and other destinations never become ready", async () => {
+  for (const [setup, reason] of [
+    [f => { f.staging(); f.state.receipt.app.backend = "dev" }, /backend differs/],
+    [f => { f.state.receipt.app.backend = "staging" }, /backend differs/],
+    [f => { f.staging(); f.state.receipt.app.backend = "prod" }, /disagrees/],
+    [f => { f.staging(); f.state.retargetOnReread = true }, /changed while resolving/],
+    [f => { f.state.retargetOnReread = true }, /changed while resolving/],
+    [f => { f.staging(); f.state.changeBaseOnReread = true }, /changed while resolving/],
+    [f => { f.staging(); f.state.baseRef.object.sha = "e".repeat(40) }, /current base/],
+    [f => { f.staging(); f.context.payload.pull_request.base.ref = "dev" }, /superseded/],
+  ]) {
+    for (const trusted of [false, true]) {
+      const f = fixture()
+      setup(f)
+      if (trusted) f.manual()
+      if (trusted && reason.source === "superseded") continue
+      const request = await f.resolve(trusted ? originalPublication : {})
+      assert.equal(request.status, "no-artifact")
+      assert.equal(request.selection, null)
+      assert.match(request.reason, reason)
+    }
+  }
+  for (const other of ["main", "feature"]) {
+    const f = fixture()
+    f.manual()
+    f.state.pr.base.ref = other
+    const request = await f.resolve(originalPublication)
+    assert.equal(request.status, "no-artifact")
+    assert.match(request.reason, /targeting dev or staging/)
+    assert.equal(request.pullRequest.baseRef, other)
+    assert.deepEqual(f.state.refReads, [])
+    assert.equal(f.state.apiCalls.length, 0)
+  }
+})
 
 test("delayed automatic requests keep the original run while manual requests select the newer build", async () => {
   const f = fixture()
@@ -307,7 +409,7 @@ test("freezes original build attempt, retained publication and exact raw manifes
   assert.match(request.reason, /has not run/)
 })
 
-for (const routine of ["no-glasses", "mentra-call"]) test(`trusted explicit ${routine} requests need no label with latest or exact publication selection`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone", "livestreamer", "account-miniapps"]) test(`trusted explicit ${routine} requests need no label with latest or exact publication selection`, async () => {
   for (const selection of [{}, {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}]) {
     const f = fixture()
     f.manual()
@@ -321,7 +423,7 @@ for (const routine of ["no-glasses", "mentra-call"]) test(`trusted explicit ${ro
   }
 })
 
-for (const routine of ["no-glasses", "mentra-call"]) test(`automatic ${routine} requests require their own current label before and after selection`, async () => {
+for (const routine of ["no-glasses", "mentra-call", "captions-phone", "notes-phone", "livestreamer", "account-miniapps"]) test(`automatic ${routine} requests require their own current label before and after selection`, async () => {
   for (const [labels, removed, ready] of [
     [[{name: `routine:${routine}`}], false, true], [[{name: REQUEST_LABEL}], false, false],
     [[{name: `routine:${routine}`}], true, false], [[], false, false],
@@ -335,6 +437,95 @@ for (const routine of ["no-glasses", "mentra-call"]) test(`automatic ${routine} 
     assert.equal(request.routine.authorization, "pr-label")
     assert.ok(request.routine.reason.includes(`routine:${routine}`))
   }
+})
+
+test("the workflow admits and selects exactly the registered routine labels; planned labels stay out", async () => {
+  const {DEVICE_ROUTINES, isRegisteredRoutine} = await import("./device-routines.mjs")
+  const workflow = await readFile(new URL("../workflows/request-e2e-routine.yml", import.meta.url), "utf8")
+  const admission = workflow.split("\n  request:\n")[1]?.split("\n    runs-on:")[0]
+  const chain = workflow.split("REQUEST_ROUTINE: ")[1]?.split("\n")[0]
+  assert.ok(admission && chain)
+  const labels = text => [...text.matchAll(/'routine:([a-z0-9-]+)'/g)].map(match => match[1]).sort()
+  const registered = Object.keys(DEVICE_ROUTINES).filter(id => isRegisteredRoutine(id)).sort()
+  assert.deepEqual(labels(admission), registered)
+  // mentra-call is the chain's final default rather than a label test.
+  assert.deepEqual(labels(chain), registered.filter(id => id !== "mentra-call"))
+  assert.match(chain, /\|\| 'mentra-call'\) \}\}$/)
+  assert.ok(["livestreamer", "connected-glasses", "account-miniapps"].every(id => registered.includes(id)))
+  // No catalogued routine is planned now, so every catalogued label is admitted and selected.
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES).filter(id => !isRegisteredRoutine(id)), [])
+})
+
+test("planned routines refuse PR requests, labelled or explicit, with their pending reason", async () => {
+  const {DEVICE_ROUTINES, isRegisteredRoutine} = await import("./device-routines.mjs")
+  // Every catalogued routine is registered now; a synthetic planned model of the former planned routines keeps the refusal.
+  assert.deepEqual(Object.keys(DEVICE_ROUTINES).filter(id => !isRegisteredRoutine(id)), [])
+  const routineCatalog = {...DEVICE_ROUTINES, ...Object.fromEntries(["account-miniapps", "connected-glasses", "livestreamer"].map(id =>
+    [id, {...DEVICE_ROUTINES[id], pending: "Synthetic planned model"}]))}
+  for (const routine of ["account-miniapps", "connected-glasses", "livestreamer"]) for (const manual of [false, true]) {
+    const f = fixture()
+    if (manual) f.manual()
+    f.state.pr.labels = [{name: `routine:${routine}`}]
+    await assert.rejects(f.resolve({routine, routineCatalog}), /planned but not registered/)
+  }
+  // An unknown routine ID is refused directly, labelled or explicit.
+  for (const manual of [false, true]) {
+    const f = fixture()
+    if (manual) f.manual()
+    f.state.pr.labels = [{name: "routine:synthetic-unregistered"}]
+    await assert.rejects(f.resolve({routine: "synthetic-unregistered"}), /Unsupported device routine/)
+  }
+})
+
+test("registered account-miniapps requests bind the exact selected Mac build and backend, on dev and staging", async () => {
+  const account = (destination, options = {}) => {
+    const f = fixture()
+    if (destination === "staging") f.staging()
+    f.manual()
+    f.state.pr.labels = [{name: "routine:account-miniapps"}]
+    return {f, resolve: () => f.resolve({...originalPublication, routine: "account-miniapps", ...options})}
+  }
+  for (const destination of ["dev", "staging"]) {
+    for (const options of [{}, {requestOrigin: "workflow-dispatch"}]) {
+      const {f, resolve} = account(destination, options)
+      if (options.requestOrigin) f.state.pr.labels = []
+      const request = await resolve()
+      assert.equal(request.status, "ready", request.reason)
+      assert.equal(request.routine.id, "account-miniapps")
+      assert.equal(request.routine.authorization, options.requestOrigin ?? "pr-label")
+      assert.equal(request.requestId, "routine-200-1-4136-account-miniapps")
+      assert.equal(request.selection.platform, "ios-on-mac")
+      assert.equal(request.pullRequest.baseRef, destination)
+      assert.equal(request.selection.app.backend, destination)
+      assert.deepEqual(request.selection.app, f.state.receipt.app)
+      assert.deepEqual(request.selection.build, {headSha: head, baseSha: base, buildSha: merge})
+      assert.deepEqual([request.selection.producer.buildAttempt, request.selection.producer.publicationAttempt], [1, 2])
+      assert.equal(request.selection.archive.sha256, digest)
+      assert.equal(request.selection.otaManifest.sha256,
+        createHash("sha256").update(JSON.stringify(f.state.manifest)).digest("hex"))
+    }
+  }
+  // The Mac route's own backend, identity, artifact and label checks apply unchanged.
+  for (const [destination, change, reason] of [
+    ["staging", f => { f.state.receipt.app.backend = "dev" }, /backend differs/],
+    ["dev", f => { f.state.receipt.app.backend = "staging" }, /backend differs/],
+    ["dev", f => { f.state.receipt.app.executableSha256 = "invalid" }, /identity or its packaged OTA pin disagrees/],
+    ["staging", f => { f.state.missingArchive = true }, /archive is missing/],
+    ["dev", f => { f.state.removeLabelOnReread = true }, /changed while resolving/],
+    ["staging", f => { f.state.pr.labels = [{name: "routine:no-glasses"}] }, /opt-in was removed/],
+    ["dev", f => { f.state.baseRef.object.sha = "e".repeat(40) }, /current base/]]) {
+    const {f, resolve} = account(destination)
+    change(f)
+    const request = await resolve()
+    assert.equal(request.status, "no-artifact")
+    assert.equal(request.selection, null)
+    assert.match(request.reason, reason)
+  }
+  // An Android publication never provides the Mac routine's archive.
+  const android = androidFixture(); android.manual(); android.state.pr.labels = [{name: "routine:account-miniapps"}]
+  const fromApk = await android.resolve({...originalPublication, routine: "account-miniapps"})
+  assert.equal(fromApk.status, "no-artifact")
+  assert.match(fromApk.reason, /Unexpected Mac producer identity/)
 })
 
 test("explicit opt-in cannot weaken artifact/current-PR checks or originate from PR code", async () => {
@@ -479,4 +670,106 @@ test("cloned successful jobs retain original attempts but an active/new failed b
     ]),
     null,
   )
+})
+
+
+function androidFixture() {
+  const f = fixture(), run = f.state.runs[0]
+  run.path = ".github/workflows/mentra-app-android-build.yml"
+  f.state.pr.labels = [{name: "routine:no-glasses-android"}]
+  f.state.jobs = [{...job("build", 2), steps: [{name: ANDROID_PUBLICATION_STEP, status: "completed", conclusion: "success"}]}]
+  const receipt = {schemaVersion: 1, pr: 4136, headSha: head, baseSha: base, buildSha: merge, runId: 100, runAttempt: 2,
+    app: {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: head, buildSha: merge,
+      backend: "dev", otaManifestUrl: otaUrl}, artifacts: {android: {name: `mentra-android-pr-4136-${head}-100-2.apk`,
+      sha256: digest, size: 1234}}}
+  f.state.receipts[url(`mentra-android-pr-4136-${head}-100-2.json`)] = receipt
+  return {...f, android: receipt, resolveAndroid: overrides => f.resolve({routine: "no-glasses-android", ...overrides})}
+}
+
+test("Android requests select the exact APK receipt, version and merge without a Mac publication", async () => {
+  const f = androidFixture()
+  const request = await f.resolveAndroid()
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.selection.platform, "android")
+  assert.equal(request.selection.producer.workflow, f.state.runs[0].path)
+  assert.deepEqual(request.selection.producer.buildAttempt, 2)
+  assert.deepEqual(request.selection.app, f.android.app)
+  assert.equal(request.selection.archive.name, f.android.artifacts.android.name)
+  f.manual()
+  assert.equal((await f.resolveAndroid({...originalPublication})).status, "ready")
+})
+
+test("staging Android requests select only a staging APK for the current staging tip", async () => {
+  const f = androidFixture()
+  f.staging()
+  f.android.app.backend = "staging"
+  const request = await f.resolveAndroid()
+  assert.equal(request.status, "ready", request.reason)
+  assert.equal(request.pullRequest.baseRef, "staging")
+  assert.equal(request.selection.app.backend, "staging")
+  for (const change of [g => { g.android.app.backend = "dev" }, g => { g.android.baseSha = head }]) {
+    const g = androidFixture()
+    g.staging()
+    g.android.app.backend = "staging"
+    change(g)
+    assert.equal((await g.resolveAndroid()).status, "no-artifact")
+  }
+})
+
+test("Android rejects missing publication steps, mismatching APK identity and stale bases", async () => {
+  for (const change of [f => f.state.jobs[0].steps = [], f => f.state.jobs[0].steps[0].conclusion = "failure",
+    f => f.android.runAttempt++, f => f.android.app.packageId += ".other", f => f.android.baseSha = head,
+    f => f.android.app.otaManifestUrl += "old", f => f.state.parents.reverse(), f => f.state.missingArchive = true,
+    f => f.state.runs[0].path = ".github/workflows/mentra-app-ios-build.yml", f => f.state.removeLabelOnReread = true]) {
+    const f = androidFixture(); change(f)
+    assert.equal((await f.resolveAndroid()).status, "no-artifact")
+  }
+})
+
+test("registered connected-glasses requests select the exact Android APK under their own label, on dev and staging", async () => {
+  const connected = f => { f.state.pr.labels = [{name: "routine:connected-glasses"}]; return overrides => f.resolve({routine: "connected-glasses", ...overrides}) }
+  for (const channel of ["dev", "staging"]) {
+    const f = androidFixture()
+    if (channel === "staging") { f.staging(); f.android.app.backend = "staging" }
+    const request = await connected(f)()
+    assert.equal(request.status, "ready", request.reason)
+    assert.equal(request.routine.id, "connected-glasses")
+    assert.equal(request.routine.authorization, "pr-label")
+    assert.ok(request.routine.reason.includes("routine:connected-glasses"))
+    assert.match(request.requestId, /-connected-glasses$/)
+    assert.equal(request.selection.platform, "android")
+    assert.equal(request.selection.producer.workflow, f.state.runs[0].path)
+    assert.deepEqual(request.selection.app, f.android.app)
+    assert.equal(request.selection.archive.name, f.android.artifacts.android.name)
+    assert.equal(request.pullRequest.baseRef, channel)
+  }
+  // An explicit trusted request needs no label; an automatic one needs this routine's own current label.
+  for (const selection of [{}, {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}]) {
+    const manual = androidFixture(); manual.manual(); manual.state.pr.labels = []
+    const explicit = await manual.resolve({routine: "connected-glasses", ...selection})
+    assert.equal(explicit.status, "ready", explicit.reason)
+    assert.equal(explicit.routine.authorization, "workflow-dispatch")
+    assert.equal(explicit.selection.archive.name, manual.android.artifacts.android.name)
+  }
+  for (const labels of [[{name: "routine:no-glasses-android"}], [{name: REQUEST_LABEL}], []]) {
+    const f = androidFixture(); f.manual(); f.state.pr.labels = labels
+    assert.equal((await f.resolve({routine: "connected-glasses", ...originalPublication})).status, "no-artifact")
+  }
+  // The exact APK identity, publication, backend and producer checks are the Android route's own.
+  for (const change of [f => f.android.app.packageId += ".other", f => f.android.runAttempt++, f => f.android.app.otaManifestUrl += "old",
+    f => f.state.jobs[0].steps = [], f => f.state.missingArchive = true, f => f.state.removeLabelOnReread = true,
+    f => f.state.runs[0].path = ".github/workflows/mentra-app-ios-build.yml"]) {
+    const f = androidFixture(); change(f)
+    assert.equal((await connected(f)()).status, "no-artifact")
+  }
+  const wrongBackend = androidFixture(); wrongBackend.staging(); wrongBackend.android.app.backend = "dev"
+  assert.equal((await connected(wrongBackend)()).status, "no-artifact")
+})
+
+test("Android retained build jobs select the first publication attempt and a failed newest build is not reused", () => {
+  const first = {...job("build"), steps: [{name: ANDROID_PUBLICATION_STEP, status: "completed", conclusion: "success"}]}
+  const retained = {...first, id: 30, run_attempt: 2}
+  assert.deepEqual(successfulAndroidPublication({run_attempt: 2, status: "completed"}, [first, retained]),
+    {buildAttempt: 1, publicationAttempt: 1})
+  assert.equal(successfulAndroidPublication({run_attempt: 2, status: "completed"}, [first, {...retained, conclusion: "failure"}]), null)
 })
