@@ -324,6 +324,7 @@ class InstallerTests(unittest.TestCase):
         self.config['coreName'] = 'ca-test-core'
         self.state['binding']['coreName'] = 'ca-test-core'
         self.save()
+        self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
         self.state['outputs'] = {'coreOrigin': 'https://core.example'}
         setup.write_json(self.directory/'admin-key.json',dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR',value='msk_local_test.secret'))
         calls = []
