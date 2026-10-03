@@ -50,7 +50,7 @@ export function createTestDispatchAdminApi(service = new TestRequestService(), d
     const snapshot = await hosts.get(selected.hostId);
     const lane = snapshot?.lanes.find(lane => lane.id === selected.laneId && lane.platform === selected.platform);
     const execution = definition.definition.execution;
-    if (!snapshot || Date.now() - Date.parse(snapshot.observedAt) > 120_000 || !lane || !execution)
+    if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > 120_000 || !lane || !execution)
       return c.json({error: "host_unavailable", message: "Selected host has no current matching execution capability."}, 409);
     const resources = execution.resourceKinds.map(kind => {
       const candidates = lane.resources.filter(resource => resource.kind === kind);
@@ -84,7 +84,7 @@ export function createTestDispatchAdminApi(service = new TestRequestService(), d
       return c.json({error: "selected_build_changed"}, 409);
     const snapshot = await hosts.get(hostId), lane = snapshot?.lanes.find(lane => lane.id === input.laneId && lane.platform === input.platform);
     const execution = definition.definition.execution;
-    if (!snapshot || Date.now() - Date.parse(snapshot.observedAt) > 120_000 || !lane || !execution)
+    if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > 120_000 || !lane || !execution)
       return c.json({error: "host_unavailable"}, 409);
     const resources = execution.resourceKinds.map(kind => {
       const matches = lane.resources.filter(resource => resource.kind === kind);
