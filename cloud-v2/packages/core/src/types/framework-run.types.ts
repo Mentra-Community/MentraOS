@@ -10,7 +10,7 @@ const failure = z.object({phase: z.enum(["setup", "test", "teardown", "evidence"
 const json: z.ZodType<unknown> = z.lazy(() => z.union([z.null(), z.boolean(), z.string(),
   z.number().finite(), z.array(json), z.record(json)]));
 const cleanupOutcome = z.discriminatedUnion("state", [
-  z.object({state: z.literal("cleaned"), resourceId: id, evidence: z.array(z.string())}).strict(),
+  z.object({state: z.literal("cleaned"), resourceId: id, evidence: z.array(z.string()), errors: z.array(failure).optional()}).strict(),
   z.object({state: z.literal("still-active"), resourceId: id, writer: json, evidence: z.array(z.string())}).strict(),
   z.object({state: z.literal("failed"), resourceId: id, failure}).strict(),
 ]);
@@ -58,7 +58,14 @@ export const frameworkRunSchema = z.object({
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
   if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || run.result.failures.some(failure => failure.phase === "setup" || failure.phase === "test") || run.result.steps.some(step => step.status !== "passed")))
     problem("Passing test contradicts setup or steps");
-  if (run.result.teardown.ready && (run.result.failures.some(failure => failure.phase === "teardown") || run.result.teardown.errors.length || run.result.teardown.unavailableResources.length
+  const sameFailure = (left: z.infer<typeof failure>, right: z.infer<typeof failure>) =>
+    left.phase === right.phase && left.actionId === right.actionId && left.message === right.message;
+  for (const outcome of run.result.teardown.outcomes) if (outcome.state === "cleaned") for (const error of outcome.errors ?? []) {
+    if (!run.result.teardown.errors.some(flattened => sameFailure(error, flattened))
+      || !run.result.failures.some(flattened => sameFailure(error, flattened))) problem("Cleanup diagnostics must remain in teardown errors and run failures");
+  }
+  if (run.result.teardown.ready && (run.result.failures.some(failure => failure.phase === "teardown")
+    || run.result.teardown.errors.some(error => error.phase !== "evidence") || run.result.teardown.unavailableResources.length
     || run.result.teardown.outcomes.some(outcome => outcome.state !== "cleaned"))) problem("Ready teardown contradicts cleanup outcomes");
 });
 export type FrameworkRun = z.infer<typeof frameworkRunSchema>;

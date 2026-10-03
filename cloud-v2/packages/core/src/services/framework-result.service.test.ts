@@ -98,3 +98,17 @@ test("native result list scopes the archive digest and excludes retained old pay
     expect(filter as Record<string, unknown> | null).toEqual({"payload.schemaVersion": 1, routineId: "walkthrough", platform: "ios-on-mac", "payload.build.archive.sha256": "a".repeat(64), "payload.build.prNumber": 12, "payload.build.channel": "pr"});
   } finally {find.mockRestore();}
 });
+
+test("invalid frozen result reports bounded issue codes and paths without payload values", async () => {
+  const service = new FrameworkResultService();
+  try {
+    await service.ingest({requestId: "private-payload-value", schemaVersion: "secret-invalid-version"}, "mini");
+    throw new Error("Expected schema refusal");
+  } catch (error) {
+    expect(error).toMatchObject({status: 400});
+    expect((error as Error).message).toContain("Invalid frozen framework result: invalid_literal at schemaVersion");
+    expect((error as Error).message).not.toContain("secret-invalid-version");
+    expect((error as Error).message).not.toContain("private-payload-value");
+    expect((error as Error).message.split(";").length).toBeLessThanOrEqual(5);
+  }
+});

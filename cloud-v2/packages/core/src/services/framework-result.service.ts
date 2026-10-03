@@ -64,7 +64,8 @@ export class FrameworkResultService {
     private readonly definition: (run: FrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
-    if (!parsed.success) throw new TestRunError(400, "Invalid frozen framework result");
+    if (!parsed.success) throw new TestRunError(400, `Invalid frozen framework result: ${parsed.error.issues.slice(0, 5)
+      .map(issue => `${issue.code} at ${issue.path.join(".") || "root"}`).join("; ")}`);
     const run = parsed.data, payloadSha256 = requestInputDigest(run);
     const binding = await this.request(run.requestId);
     if (!binding || !buildDigest(binding.input?.build) || binding.hostId !== authenticatedHostId || run.hostId !== authenticatedHostId || binding.input.routineId !== run.routineId
