@@ -838,7 +838,7 @@ def bootstrap_admin(args, directory, config, state):
     else:
         # Previous installer versions left a plaintext share cache. Remove it
         # even when the protected local key allows skipping key creation.
-        cleanup = b'const fs=require("node:fs");const p="/mnt/core-attachments/operator/admin-"+process.argv[2]+".json";if(fs.existsSync(p))fs.unlinkSync(p);console.log("MENTRA_ADMIN_END");'
+        cleanup = b'const fs=require("node:fs");const p="/mnt/core-attachments/operator/admin-"+process.argv[2]+".json";try{fs.unlinkSync(p)}catch(e){if(e.code!=="ENOENT")throw e}console.log("MENTRA_ADMIN_END");'
         result = execute_admin_script(config, current, state['owner'], cleanup)
         if 'MENTRA_ADMIN_END' not in result.stdout:
             raise SetupError('Legacy admin credential cleanup did not complete; retry bootstrap-admin')

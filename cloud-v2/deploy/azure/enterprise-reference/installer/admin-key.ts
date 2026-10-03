@@ -82,8 +82,8 @@ try {
   credential.adminEmail = `api-key@${credential.id}.local`;
   // Never leave an administrator token in the report attachment share, whose
   // SMB mount permissions do not provide owner-only access.
-  try { if (existsSync(output)) unlinkSync(output); }
-  catch { credential.cleanupRequired = true; }
+  try { unlinkSync(output); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") credential.cleanupRequired = true; }
 } finally {
   await mongoose.disconnect();
 }

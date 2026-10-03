@@ -22,13 +22,15 @@ class HelperTests(unittest.TestCase):
         path.write_text('#!/usr/bin/env python3\n' + body)
         path.chmod(0o755)
 
-    def test_admin_cleanup_failure_preserves_recovered_credential_marker(self):
+    def test_admin_cleanup_distinguishes_absence_from_permission_failure(self):
         code = (ROOT / 'installer/admin-key.ts').read_text()
-        block = code[code.index('  try { if (existsSync(output))'):code.index('} finally {', code.index('  try { if (existsSync(output))'))]
-        script = 'const credential={id:"saved"};const output="legacy";const existsSync=()=>true;const unlinkSync=()=>{throw Error("denied")};\n' + block + '\nif(!credential.cleanupRequired)throw Error("not signaled");console.log(JSON.stringify(credential));'
-        result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(json.loads(result.stdout)['cleanupRequired'])
+        block = code[code.index('  try { unlinkSync(output);'):code.index('} finally {', code.index('  try { unlinkSync(output);'))]
+        block = block.replace('(error as NodeJS.ErrnoException).code', 'error.code')
+        for error, required in (('EACCES', True), ('ENOENT', False)):
+            script = 'const credential={id:"saved"};const output="legacy";const unlinkSync=()=>{throw Object.assign(Error("test"),{code:"'+error+'"})};\n' + block + '\nconsole.log(JSON.stringify(credential));'
+            result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(bool(json.loads(result.stdout).get('cleanupRequired')), required)
 
     def test_mirror_import_keeps_credentials_out_of_arguments_and_checks_digest(self):
         self.env.update(SOURCE_REGISTRY_USERNAME='reader', SOURCE_REGISTRY_PASSWORD='private-value',
