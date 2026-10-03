@@ -215,6 +215,39 @@ else: sys.exit(9)
             r = subprocess.run(['jq','-e',expression],input=json.dumps(config),capture_output=True,text=True)
             self.assertEqual(r.returncode==0,expected,r.stderr)
 
+    def test_secret_generation_publishes_complete_keys_without_hard_links(self):
+        output = self.path / 'secrets.json'
+        self.executable('ln', 'raise AssertionError("Azure Files does not support hard links")\n')
+        command = ['bash', str(ROOT / 'scripts/generate-private-secrets.sh'), str(output)]
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original = output.read_bytes()
+        value = json.loads(original)
+        self.assertTrue(all(value.values()))
+        self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+        retry = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(retry.returncode, 0)
+        self.assertEqual(output.read_bytes(), original)
+        self.assertNotIn(value['mentraJwtPrivateKey'], result.stdout + result.stderr)
+
+    def test_concurrent_secret_generators_publish_one_unchanged_credential(self):
+        output = self.path / 'concurrent.json'
+        command = ['bash', str(ROOT / 'scripts/generate-private-secrets.sh'), str(output)]
+        processes = [subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(2)]
+        results = [p.communicate(timeout=30) for p in processes]
+        self.assertEqual(sorted(p.returncode for p in processes), [0, 1], results)
+        self.assertTrue(all(json.loads(output.read_text()).values()))
+        self.assertFalse(list(self.path.glob('.concurrent.json.tmp.*')))
+
+    def test_secret_generator_refuses_dangling_symlink(self):
+        output = self.path / 'secrets.json'
+        target = self.path / 'absent.json'
+        output.symlink_to(target)
+        result = subprocess.run(['bash', str(ROOT / 'scripts/generate-private-secrets.sh'), str(output)],
+                                env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(target.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

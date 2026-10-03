@@ -102,6 +102,14 @@ class InstallerTests(unittest.TestCase):
         with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'Original secrets file is missing'):
             setup.load(self.directory)
 
+    def test_shared_setup_directory_stops_before_writing_state_or_secrets(self):
+        self.directory.chmod(0o777)
+        with self.assertRaisesRegex(setup.SetupError, 'clouddrive SMB share'):
+            with setup.locked(self.directory):
+                self.fail('Shared directory was accepted')
+        self.assertFalse((self.directory / '.setup-lock').exists())
+        self.directory.chmod(0o700)
+
     def test_shared_or_symlinked_secrets_are_rejected(self):
         secrets = self.directory / 'secrets.json'
         secrets.write_text('{}')

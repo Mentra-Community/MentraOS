@@ -66,7 +66,8 @@ def build(publication_path, sbom_path, output):
     contents['release.json'] = (json.dumps(release, indent=2) + '\n').encode()
     contents['INSTALL.txt'] = b'''Mentra Private Cloud Azure installer
 Use Azure Portal > Cloud Shell > Bash on Windows, macOS, or Linux.
-Keep persistent setup state outside this extracted package, on mounted Cloud Shell storage.
+Select Cloud Shell persistent storage, then use $HOME/mentra-install for the package and setup state.
+Do not put private keys directly in clouddrive: its SMB permissions cannot restrict access.
 Read release.json and verify the archive checksum and publisher attestations before executing.
 Run ./setup.sh init --directory ../mentra-setup
 Run ./setup.sh preflight --directory ../mentra-setup

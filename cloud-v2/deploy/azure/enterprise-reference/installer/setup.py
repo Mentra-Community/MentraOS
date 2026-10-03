@@ -121,6 +121,9 @@ def locked(directory):
     # Cloud Shell, Linux and macOS release this advisory lock even if the
     # installer is killed. Keep the inode in place to prevent recovery races.
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    value = directory.stat()
+    if value.st_uid != os.getuid() or stat.S_IMODE(value.st_mode) & 0o077:
+        raise SetupError('Setup directory must be owner-only (chmod 700). In persistent Cloud Shell use $HOME/mentra-install, not the clouddrive SMB share.')
     path = directory / '.setup-lock'
     if path.is_symlink():
         raise SetupError('Refusing a symlink setup lock')
