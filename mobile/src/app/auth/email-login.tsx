@@ -1,6 +1,16 @@
 import {FontAwesome} from "@expo/vector-icons"
 import {useState} from "react"
-import {ActivityIndicator, Keyboard, Modal, Platform, ScrollView, TextInput, TouchableOpacity, View} from "react-native"
+import {
+  ActivityIndicator,
+  Keyboard,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native"
 
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
@@ -81,6 +91,7 @@ export default function EmailLoginScreen() {
   }
   const handleGoogleSignIn = () => handleSocialSignIn("google")
   const handleAppleSignIn = () => handleSocialSignIn("apple")
+  const handleForgotPassword = () => push("/auth/forgot-password")
 
   return (
     <Screen preset="fixed">
@@ -149,9 +160,13 @@ export default function EmailLoginScreen() {
 
             <Text className="text-xs text-muted-foreground text-center mt-3">{translate("login:termsTextSignIn")}</Text>
 
-            <TouchableOpacity onPress={() => push("/auth/forgot-password")} className="self-center mt-4">
+            <Pressable
+              onPress={handleForgotPassword}
+              onAccessibilityTap={handleForgotPassword}
+              style={({pressed}) => ({opacity: pressed ? 0.2 : 1})}
+              className="self-center mt-4">
               <Text tx="login:forgotPassword" className="text-sm text-primary" />
-            </TouchableOpacity>
+            </Pressable>
 
             {/* Divider */}
             <View className="flex-row items-center my-6">

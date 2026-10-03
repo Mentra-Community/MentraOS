@@ -24,7 +24,9 @@ export interface ButtonAccessoryProps {
   disabled?: boolean
 }
 
-export interface ButtonProps extends PressableProps {
+export interface ButtonProps extends Omit<PressableProps, "onPress"> {
+  /** The business action shared by touch and native accessibility activation. */
+  onPress?: () => void
   /**
    * Text which is looked up via i18n.
    */
@@ -142,6 +144,8 @@ function OriginalButton(props: ButtonProps) {
     RightAccessory,
     LeftAccessory,
     disabled,
+    onPress,
+    onAccessibilityTap,
     disabledStyle: $disabledViewStyleOverride,
     compact = false,
     flex = false,
@@ -191,6 +195,10 @@ function OriginalButton(props: ButtonProps) {
       accessibilityRole="button"
       accessibilityState={{disabled: !!disabled}}
       {...rest}
+      onPress={onPress}
+      onAccessibilityTap={() => {
+        if (!disabled) (onAccessibilityTap ?? onPress)?.()
+      }}
       disabled={disabled}>
       {(state) => (
         <View
