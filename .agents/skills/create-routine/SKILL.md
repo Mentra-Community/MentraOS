@@ -13,11 +13,11 @@ MentraOS contains their public catalog and `routine:<id>` request labels.
 
 ## Find the closest working example
 
-Read the [routine catalog](../../../.github/scripts/device-routines.mjs), then the
-closest flow and platform adapter in the selected private checkout. Extend an
-existing routine when the behavior belongs in it; create an ID for independently
-selectable coverage. Published catalog links may precede the working source.
-
+Read the deployed Admin routine catalog, then the closest source definition in
+`routines/<id>/routine.ts` in the selected private checkout. The catalog uses
+previous passing runs as examples; it is not a hardcoded source registry. Extend
+an existing routine for related behavior, or use a new ID for independently
+selectable coverage.
 Confirm the example's actual platform and resources: an Android phone-only
 walkthrough does not demonstrate physical glasses setup or firmware restoration.
 Read its adapter as well as its flow. Record the selected checkout and revision,
@@ -66,11 +66,12 @@ before using its APIs or commands:
 
 | Entry point | Purpose |
 | --- | --- |
-| `tools/mentra-e2e/runner/routine-plan.ts` | Build, platform, entry, account, fixtures and resources |
-| `tools/mentra-e2e/runner/standard-routine.ts` | Common setup/test/teardown composition |
-| `worker/local.ts` | Local run, authoring, cleanup and publication commands; inspect `--help` |
-| `worker/local-mac.ts`, `worker/local-android.ts` | Platform implementation of that contract |
-| `tools/mentra-e2e/flows/` | Small flow definitions, including walkthrough, Captions and Notes |
+| `routines/<id>/routine.ts` | English requirements and executable saved steps |
+| `framework/run.ts` | Shared setup, held authoring, replay and teardown |
+| `framework/drivers/` | Actions and assertions used during authoring and replay |
+| `framework/authoring/` | Held command/session adapters that reload edited steps |
+| `orchestration/entrypoints/cli.ts` | Controller client commands and lane reservation |
+| `framework/platforms/` | Installation, entry, recording and resource providers |
 
 The contract for every routine is:
 
@@ -137,38 +138,33 @@ action rather than inventing a pass or starting over. Do not make calibration or
 measurement probes prerequisites to basic exploration; keep unsupported
 measurements explicitly unverified.
 
-On revisions containing [the shared authoring interface](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/248),
-use `bun --no-env-file worker/local.ts author --config /absolute/private-config.json`.
-It runs shared setup and holds its owner/recorder for `steps`, `snapshot`,
-`step <ID>`, `section <ID> <ID>`, semantic `press`, and, on Android,
-`maestro /absolute/section.yaml`. Check the selected checkout's help and
-`docs/DEVELOPMENT-ENTRY.md` for supported adapters and commands. Keep retries
-inside that session. Edit/rerun Maestro files directly; for TypeScript, use the
-selected revision's edited-flow loading command if present. Named steps loaded
-at startup do not automatically reload changed source.
-End the complete traversal with `teardown`. If the authoring process exits,
-the existing `cleanup` command requires the original `--config` and
-`--run-directory`; after teardown, a new session establishes its own prerequisites.
+Use the selected revision's controller-owned authoring interface under a granted
+lane reservation. Read its help/API before invoking commands; the old
+`worker/local.ts author` interface has been removed. A reservation alone does not
+start authoring: the installed controller must expose the held session adapter.
+If it is missing, report that framework gap and extend the shared adapter rather
+than starting a separate local runner or opening controller SQLite directly.
 
-On older revisions, use or extend the selected checkout's shared authoring/section
-entry point and owner for input, recording and local retries. Do not invent CLI
-flags, create a second runner or replay an uncertain firmware write. Authoring
-section evidence documents progress; it cannot publish a full routine result or
-replace the complete traversal.
+The held interface provides `steps`, `snapshot`, a saved `step` by ID, and
+`finish`. It runs setup once, keeps the app and recorder owned, loads the edited
+saved action before executing it, and records each settled attempt. For the UI
+Mac walkthrough, edited actions share the onboarding state held by the same
+routine factory. The current adapter supports existing step IDs; changing the
+inventory needs an explicit shared interface extension. Never claim a manually
+executed action or stale startup-loaded action proved its edited implementation.
 
+After a failed saved step, observe the current prerequisite state, edit that
+step, and retry within the same session. The controller verifies that prior
+input/writers settled and records the attempt; ordinary product failures do not
+require human permission or another setup. Finish performs shared teardown before
+returning the reservation. Authoring evidence remains exploration evidence and
+must not be published as a passing full routine run.
 After reaching the end, run the **same saved flow** without AI through complete
 shared setup/test/teardown. Remove exploration-only actions and order the proven
 steps; do not rewrite working interactions merely to adopt another selector or
 input technique. Prefer stable selectors where they work, use the simplest
 supported alternative where they do not, and assert the actual outcome.
 
-The current authoring CLI holds the session and records attempts; it is not an
-automatic script generator. Inspect its actual loading behavior. Android Maestro
-files can be edited and rerun in the held session; TypeScript flows may be loaded
-only at startup. If that prevents testing a changed saved step in place, extend
-the shared authoring entry point to execute updated flow sections under the same
-owner and recorder. Do not work around that gap by repeatedly rebuilding setup
-or by claiming manual exploration proved an unexecuted replay implementation.
 
 Keep flow files small and readable. Reuse shared mechanics for setup,
 authentication, recording, publication and cleanup.
