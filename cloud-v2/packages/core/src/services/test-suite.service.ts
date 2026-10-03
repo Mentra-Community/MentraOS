@@ -1,6 +1,5 @@
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
 import {z} from "zod";
-import {createHash} from "node:crypto";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
 import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun} from "../types/test-suite.types";
@@ -14,7 +13,7 @@ export class TestSuiteService {
     if (!parsed.success) throw new TestRunError(400, "invalid test suite");
     const payload = parsed.data;
     const payloadSha256 = requestInputDigest(payload);
-    try { await TestSuiteModel.create([{suiteId: payload.suiteId, payload, payloadSha256}], {writeConcern}); }
+    try { await TestSuiteModel.create([{suiteId: payload.suiteId, startedAt: new Date(payload.startedAt), payload, payloadSha256}], {writeConcern}); }
     catch (error) { if ((error as {code?: number}).code !== 11000) throw error; }
     const stored = await TestSuiteModel.findOne({suiteId: payload.suiteId}).read("primary").readConcern("majority").lean();
     if (!stored || stored.payloadSha256 !== payloadSha256) throw new TestRunError(409, "suite ID already has a different plan");
@@ -92,13 +91,16 @@ export class TestSuiteService {
       "payload.members.requestId": {$in: requestIds}}).select({suiteId: 1, payload: 1}).limit(100).lean();
     return {labels: rows.flatMap(row => {
       const suite = row.payload as TestSuite;
+      if (suite.members.length < 2) return [];
       return suite.members.filter(member => !!member.requestId && requestIds.includes(member.requestId)).map(member => ({...member,
         suiteId: suite.suiteId, channel: suite.channel, headSha: member.headSha ?? suite.build.headSha,
         label: `${suite.channel} ${suite.trigger} · ${suite.build.release ?? suite.build.headSha.slice(0, 7)}`}));
     })};
   }
   async list() {
-    const rows = await TestSuiteModel.find({"payload.members.1": {$exists: true}}).sort({createdAt: -1}).select({suiteId: 1}).limit(20).lean();
-    return {suites: await Promise.all(rows.map(row => this.detail(row.suiteId)))};
+    const rows = await TestSuiteModel.find({"payload.members.1": {$exists: true}}).sort({createdAt: -1})
+      .select({suiteId: 1, "payload.members": 1}).limit(20).lean();
+    return {suites: await Promise.all(rows.filter(row => (row.payload as TestSuite).members.length >= 2)
+      .map(row => this.detail(row.suiteId)))};
   }
 }

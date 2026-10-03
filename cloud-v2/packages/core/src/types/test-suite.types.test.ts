@@ -19,8 +19,9 @@ describe("suite verdict", () => {
     expect(result.failedRoutines).toEqual(["ota"]);
     expect(summarizeSuite(plan, [run(0), run(1, "blocked")], "2026-10-01T11:03:00Z").outcome).toBe("failed");
   });
-  test("wrong build or lane and ambiguous retries cannot satisfy member", () => {
-    for (const wrong of [{...run(1), provenance: {headSha: "b".repeat(40)}}, {...run(1), platform: "ios-on-mac"}])
+  test("wrong request, routine, platform, channel or build and ambiguous retries cannot satisfy member", () => {
+    for (const wrong of [{...run(1), requestId: "another-request"}, {...run(1), routineId: "another-routine"},
+      {...run(1), platform: "ios-on-mac"}, {...run(1), channel: "staging"}, {...run(1), provenance: {headSha: "b".repeat(40)}}])
       expect(summarizeSuite(plan, [run(0), wrong], "2026-10-01T11:03:00Z").passed).toBe(1);
     expect(summarizeSuite(plan, [run(0), run(1), {...run(1), runId: "another"}], "2026-10-01T11:03:00Z").passed).toBe(1);
   });
@@ -30,9 +31,11 @@ describe("suite verdict", () => {
     const differentBuild = {...plan, members: [plan.members[0]!, {...plan.members[1]!, headSha: "b".repeat(40)}]};
     expect(summarizeSuite(differentBuild, [run(0), {...run(1), provenance: {headSha: "b".repeat(40)}}], "2026-10-01T11:03:00Z").outcome).toBe("passed");
   });
-  test("rejects empty and duplicated member plans", () => {
+  test("rejects empty, single and duplicated member plans but accepts two unbound members", () => {
     expect(testSuiteSchema.safeParse({...plan, members: []}).success).toBe(false);
+    expect(testSuiteSchema.safeParse({...plan, members: [plan.members[0]]}).success).toBe(false);
     expect(testSuiteSchema.safeParse({...plan, members: [plan.members[0], plan.members[0]]}).success).toBe(false);
+    expect(testSuiteSchema.safeParse({...plan, members: plan.members.map(({requestId, ...member}) => member)}).success).toBe(true);
   });
 });
 
@@ -40,7 +43,7 @@ test("suite membership and history filters share enrolled routine identity", asy
   const {routineIdentitySchema} = await import("./routine-definition.types");
   const routineId = "notes.search_v2";
   expect(routineIdentitySchema.safeParse(routineId).success).toBe(true);
-  expect(testSuiteSchema.safeParse({...plan, members: [{...plan.members[0], routineId}]}).success).toBe(true);
+  expect(testSuiteSchema.safeParse({...plan, members: [{...plan.members[0], routineId}, plan.members[1]]}).success).toBe(true);
 });
 
 test("missing publication fails suite completeness without rewriting a member pass", () => {

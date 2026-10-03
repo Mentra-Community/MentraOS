@@ -2,6 +2,7 @@ import {frameworkRunHref} from "./routine-catalog";
 import {useQuery} from "@tanstack/react-query";
 import {api} from "../lib/api";
 import {runDuration} from "../lib/run-duration";
+import {frameworkIdentitySchema} from "../../../../packages/core/src/types/framework-request.types";
 
 export interface TestSuiteResult {
   suiteId: string; channel: string; trigger: string; startedAt: string; finishedAt?: string;
@@ -12,7 +13,7 @@ export interface TestSuiteResult {
 export function readSuiteId(search: string) {
   const query = new URLSearchParams(search);
   const id = query.get("testSuite");
-  return query.getAll("testSuite").length === 1 && id && /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(id) ? id : null;
+  return query.getAll("testSuite").length === 1 && id && frameworkIdentitySchema.safeParse(id).success ? id : null;
 }
 const panel = "rounded-2xl border border-[#e0e4de] bg-white p-6";
 export function TestSuitePage({suiteId}: {suiteId: string}) {
@@ -22,6 +23,15 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   if (result.isPending) return <p role="status">Loading test suite…</p>;
   if (result.error) return <div role="alert" className={panel}><p>Could not load the test suite: {result.error.message}</p><button onClick={() => result.refetch()}>Try again</button></div>;
   const suite = result.data!;
+  if (suite.members.length < 2) {
+    const member = suite.members[0];
+    return <section className={panel}>
+      <a className="text-sm underline" href="/?testRuns=1">All test runs</a>
+      <h2 className="mt-4 text-xl font-bold">Individual routine run</h2>
+      <p className="mt-2">This job contains {suite.members.length} routine{suite.members.length === 1 ? "" : "s"} and is not a test suite.</p>
+      {member && <p className="mt-3">{member.routineId} · {member.status}{member.runId && <> · <a className="underline" href={frameworkRunHref(member.runId)}>View run</a></>}</p>}
+    </section>;
+  }
   return <section className={panel}>
     <a className="text-sm underline" href="/?testRuns=1">All test runs</a>
     <div className="mt-4 flex items-start justify-between gap-4">

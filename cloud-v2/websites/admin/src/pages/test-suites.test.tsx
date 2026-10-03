@@ -10,6 +10,9 @@ test("suite link survives as a validated distinct URL", () => {
   expect(readSuiteId("?testSuite=nightly-123")).toBe("nightly-123");
   expect(readSuiteId("?testSuite=one&testSuite=two")).toBeNull();
   expect(readSuiteId("?testSuite=../bad")).toBeNull();
+  expect(readSuiteId("?testSuite=nightly:dev.123")).toBe("nightly:dev.123");
+  expect(readSuiteId(`?testSuite=${"a".repeat(240)}`)).toBe("a".repeat(240));
+  expect(readSuiteId(`?testSuite=${"a".repeat(241)}`)).toBeNull();
 });
 test("suite shows missing routines and links to published recordings", () => {
   const client = new QueryClient(); client.setQueryData(["test-suite", suite.suiteId], suite);
@@ -29,4 +32,15 @@ test("running suites explain automatic refresh and empty history stays hidden", 
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
   expect(html).toContain("In progress"); expect(html).toContain("Refreshes every 15 seconds");
   expect(renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>)).toBe("");
+});
+
+test("a one-member job opens its individual run instead of claiming to be a suite", () => {
+  const client = new QueryClient();
+  client.setQueryData(["test-suite", suite.suiteId], {...suite, members: [suite.members[0]!], passed: 1, failedRoutines: []});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
+  expect(html).toContain("Individual routine run");
+  expect(html).toContain("is not a test suite");
+  expect(html).toContain('href="/?testRun=run-one"');
+  expect(html).not.toContain("nightly test suite");
+  expect(html).not.toContain("1/1 passed");
 });

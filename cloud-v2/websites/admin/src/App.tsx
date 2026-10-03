@@ -1,5 +1,5 @@
 import {NativeDispatchPanel, NativeActivityPanel} from "./pages/framework-dispatch";
-import {TestSuitePage, RecentTestSuites, readSuiteId} from "./pages/test-suites";
+import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -376,15 +376,14 @@ function AdminPage() {
       onSelect={key => {
         setPage(key as AdminPageKey);
         const location = new URL(window.location.href);
-        for (const param of ["systemHealth", "routineCatalog", "testSuite"]) location.searchParams.delete(param);
+        for (const param of ["systemHealth", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
         setDeepLinkReportId(null);
-        if (key !== "test-runs") {
-          selectTestRun(null, true);
-          clearTestRunListScope();
-        }
+        selectTestRun(null, true);
+        clearTestRunListScope();
+        if (key === "test-runs") window.history.replaceState(null, "", "/?testRuns=1");
         if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
         setSuiteId(null);
         if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
@@ -450,7 +449,15 @@ function AdminPage() {
       {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (
-        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <><NativeActivityPanel /><NativeDispatchPanel /><RecentTestSuites /><FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key === "platform" && value === "ios-mac" ? "platform" : key, key === "platform" && value === "ios-mac" ? "ios-on-mac" : value])) : undefined} /></>
+        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <>
+          {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
+            <h2 className="font-semibold">Results for the selected build</h2>
+            <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
+            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
+          </section>}
+          <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key === "platform" && value === "ios-mac" ? "platform" : key, key === "platform" && value === "ios-mac" ? "ios-on-mac" : value])) : undefined} />
+          <NativeActivityPanel /><NativeDispatchPanel />
+        </>
       ) : null}
 
       {detailRelease ? (

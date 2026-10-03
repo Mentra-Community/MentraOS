@@ -13,13 +13,14 @@ test("query overflow refuses a verdict rather than truncating duplicate evidence
 test("suite creation retries preserve the frozen plan and use durable writes", async () => {
   const {testSuiteSchema} = await import("../types/test-suite.types");
   const {requestInputDigest} = await import("./test-request.service");
-  const {createHash} = await import("node:crypto");
   const payload = testSuiteSchema.parse({suiteId: "nightly-retry", channel: "dev", trigger: "nightly",
     startedAt: "2026-10-01T11:00:00Z", build: {headSha: "a".repeat(40)},
-    members: [{memberId: "mac", routineId: "captions-phone", platform: "ios-on-mac"}]});
+    members: [{memberId: "mac", routineId: "captions-phone", platform: "ios-on-mac"},
+      {memberId: "android", routineId: "captions-phone", platform: "android"}]});
   const row = {payload, payloadSha256: requestInputDigest(payload)};
-  mocks.push(spyOn(TestSuiteModel, "create").mockImplementation((async (_rows: unknown, options: any) => {
+  mocks.push(spyOn(TestSuiteModel, "create").mockImplementation((async (rows: any, options: any) => {
     expect(options.writeConcern).toEqual({w: "majority", j: true, wtimeout: 10000});
+    expect(rows[0].startedAt).toEqual(new Date(payload.startedAt));
     throw Object.assign(new Error("duplicate"), {code: 11000});
   }) as any));
   const query = {read(value: string) {expect(value).toBe("primary"); return this;},
@@ -30,6 +31,43 @@ test("suite creation retries preserve the frozen plan and use durable writes", a
     passed: 0, outcome: "running", failedRoutines: []}) as any));
   await service.create(payload);
   await expect(service.create({...payload, build: {headSha: "b".repeat(40)}})).rejects.toThrow("different plan");
+});
+
+test("new suites reject a single declared member before writing", async () => {
+  const writes = spyOn(TestSuiteModel, "create"); mocks.push(writes);
+  await expect(new TestSuiteService().create({suiteId: "single-job", channel: "local", trigger: "manual",
+    startedAt: "2026-10-03T19:00:00Z", build: {headSha: "a".repeat(40)},
+    members: [{memberId: "mac", routineId: "notes", platform: "ios-on-mac"}]})).rejects.toThrow("invalid test suite");
+  expect(writes).not.toHaveBeenCalled();
+});
+
+test("suite labels require multiple declared members and retain exact member identity", async () => {
+  const member = {memberId: "mac", requestId: "request:mac.v2", routineId: "notes.search_v2", platform: "ios-on-mac" as const};
+  const single = {suiteId: "single-job", channel: "local", trigger: "manual", build: {headSha: "a".repeat(40)}, members: [member]};
+  const multiple = {...single, suiteId: "suite:nightly.v2", channel: "dev", trigger: "nightly", members: [
+    {...member, headSha: "b".repeat(40)}, {memberId: "unstarted", routineId: "ota", platform: "android" as const},
+  ]};
+  const find = spyOn(TestSuiteModel, "find").mockImplementation(((filter: unknown) => {
+    expect(filter).toEqual({"payload.members.1": {$exists: true}, "payload.members.requestId": {$in: [member.requestId]}});
+    return {select() {return this;}, limit() {return this;}, lean: async () => [{payload: single}, {payload: multiple}]};
+  }) as any); mocks.push(find);
+  expect(await new TestSuiteService().labels([member.requestId])).toEqual({labels: [{...multiple.members[0],
+    suiteId: multiple.suiteId, channel: "dev", headSha: "b".repeat(40), label: "dev nightly · aaaaaaa"}]});
+});
+
+test("suite index excludes single-member jobs and includes an unstarted declared second member", async () => {
+  const find = spyOn(TestSuiteModel, "find").mockImplementation(((filter: unknown) => {
+    expect(filter).toEqual({"payload.members.1": {$exists: true}});
+    return {sort() {return this;}, select() {return this;}, limit() {return this;}, lean: async () => [
+      {suiteId: "single-job", payload: {members: [{memberId: "mac", requestId: "request"}]}},
+      {suiteId: "multiple-job", payload: {members: [{memberId: "mac", requestId: "request"}, {memberId: "unstarted"}]}},
+    ]};
+  }) as any); mocks.push(find);
+  const service = new TestSuiteService();
+  const detail = spyOn(service, "detail").mockResolvedValue({suiteId: "multiple-job"} as any); mocks.push(detail);
+  expect(await service.list()).toEqual({suites: [{suiteId: "multiple-job"}] as any});
+  expect(detail).toHaveBeenCalledTimes(1);
+  expect(detail).toHaveBeenCalledWith("multiple-job");
 });
 
 test("finished suite stays frozen when later member evidence arrives", async () => {
