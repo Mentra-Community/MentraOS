@@ -211,6 +211,19 @@ jq -n \
 WORKSPACE_HOSTNAME="$(jq -r '.workspaceHostname // ""' "$CONFIG")"
 if [[ -n "$WORKSPACE_HOSTNAME" ]]; then
   RUNTIME_NAME="$(jq -r .runtimeName "$CONFIG")"
+  APPS="$(az containerapp list --resource-group "$RESOURCE_GROUP" --output json)"
+  if ! jq -e --arg app "$RUNTIME_NAME" 'any(.name == $app)' <<<"$APPS" >/dev/null; then
+    # The standalone entry point needs the same two-phase DNS handoff as the
+    # packaged installer. Azure cannot bind a hostname to an absent app.
+    az deployment group validate --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+      --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" --output none
+    az deployment group create --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+      --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" --output none
+    az deployment group show --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+      --query properties.outputs --output json
+    printf 'Initial app created. Configure DNS for %s using the generated hostname and custom-domain verification ID, then rerun this same command. Signing keys and image pins must remain unchanged.\n' "$WORKSPACE_HOSTNAME" >&2
+    exit 3
+  fi
   HOSTNAMES="$(az containerapp hostname list --name "$RUNTIME_NAME" --resource-group "$RESOURCE_GROUP" --output json)"
   if ! jq -e --arg host "$WORKSPACE_HOSTNAME" 'any(.name == $host)' <<<"$HOSTNAMES" >/dev/null; then
     az containerapp hostname add --name "$RUNTIME_NAME" --resource-group "$RESOURCE_GROUP" \

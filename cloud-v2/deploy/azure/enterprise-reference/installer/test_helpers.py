@@ -146,6 +146,30 @@ else:sys.exit(9)
         self.assertEqual((original / 'azureProfile.json').read_text(), '{"default":"original"}')
         self.assertFalse(list(self.path.glob('mentra-entra-azure.*')))
 
+    def test_first_standalone_custom_domain_deploy_pauses_before_hostname_binding(self):
+        script = (ROOT / 'scripts/deploy.sh').read_text()
+        block = script[script.index('WORKSPACE_HOSTNAME='):script.index('# Provider validation')]
+        (self.path / 'config.json').write_text(json.dumps({'workspaceHostname': 'mentra.example.com', 'runtimeName': 'new-app'}))
+        (self.path / 'params.json').write_text('{}')
+        self.env.update(CONFIG=str(self.path / 'config.json'), PARAMETERS=str(self.path / 'params.json'),
+                        RESOURCE_GROUP='qa', DEPLOYMENT_NAME='qa', TEMPLATE_DIR=str(ROOT), HELPER_TEST_DIRECTORY=str(self.path))
+        self.executable('az', """import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
+with (p/'calls').open('a') as f:f.write(json.dumps(a)+'\\n')
+if a[:2]==['containerapp','list']:print('[]')
+elif a[:3] in (['deployment','group','validate'],['deployment','group','create']):
+ assert 'workspaceHostname=' in a
+elif a[:3]==['deployment','group','show']:print('{}')
+else:sys.exit(9)
+""")
+        result = subprocess.run(['bash', '-c', 'set -euo pipefail\naz() { command az "$@"; }\n' + block],
+                                env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn('Configure DNS', result.stderr)
+        calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
+        self.assertFalse(any('hostname' in call for call in calls))
+
     def test_acr_role_assignment_parameters_preserve_false_and_default_only_null(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()
         expression = source.split('--arg cloudImage "$IMPORTED_IMAGE" \'\n', 1)[1].split("\n  ' > \"$PARAMETERS\"", 1)[0]
@@ -188,7 +212,8 @@ else:sys.exit(9)
         self.executable('az', '''import json,os,sys
 from pathlib import Path
 p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
-if a[:3]==['containerapp','hostname','list']: print((p/'hostnames.json').read_text())
+if a[:2]==['containerapp','list']: print('[{\"name\":\"ca-test\"}]')
+elif a[:3]==['containerapp','hostname','list']: print((p/'hostnames.json').read_text())
 elif a[:3]==['containerapp','hostname','add']:
  assert a[a.index('--hostname')+1]=='mentra.example.com'
  (p/'added').touch()
