@@ -2,7 +2,7 @@ import type {PipelineStage} from "mongoose";
 import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestRunModel} from "../models/test-run.model";
-import {TestSuiteModel} from "../models/test-suite.model";
+import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
 import type {TestHistoryEntry, TestHistoryPage} from "../types/test-history.types";
 import {nativeRunFilter, summarizeFrameworkRun} from "./framework-result.service";
@@ -38,7 +38,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number): 
     {$lookup: {from: TestSuiteModel.collection.name, localField: "payload.requestId", foreignField: "payload.members.requestId",
       let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform",
         channel: "$payload.build.channel", headSha: "$payload.build.headSha", runId: "$runId"},
-      pipeline: [{$match: {"payload.members.1": {$exists: true}, $expr: {$and: [
+      pipeline: [{$match: {"payload.members.1": {$exists: true}, startedAt: {$type: "date"}, $expr: {$and: [
         {$eq: ["$payload.channel", "$$channel"]},
         {$anyElementTrue: [{$map: {input: "$payload.members", as: "member", in: {$and: [
           {$eq: ["$$member.requestId", "$$requestId"]}, {$eq: ["$$member.routineId", "$$routineId"]},
@@ -54,7 +54,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number): 
       historySuppressed: {$gt: [{$size: "$historySuites"}, 0]}}},
   ];
   const suites: PipelineStage[] = [
-      {$match: {"payload.members.1": {$exists: true}, ...sourceCursor(after, "suite", "suiteId")}},
+      {$match: {"payload.members.1": {$exists: true}, startedAt: {$type: "date"}, ...sourceCursor(after, "suite", "suiteId")}},
       {$sort: {startedAt: -1, suiteId: -1}},
       {$limit: limit + 1},
       {$project: {_id: 0, historyKind: {$literal: "suite"}, historyId: "$suiteId",
@@ -81,9 +81,13 @@ async function readStandaloneRuns(queries: HistorySourceQueries) {
 
 export class TestHistoryService {
   constructor(private readonly suites: Pick<TestSuiteService, "detail"> = new TestSuiteService(),
-    private readonly read: (queries: HistorySourceQueries) => Promise<StoredHistoryRow[][]> = queries =>
-      Promise.all([readStandaloneRuns(queries), TestSuiteModel.aggregate<StoredHistoryRow>(queries.suites)
-        .collation({locale: "simple"}).read("primary").readConcern("majority").exec()])) {}
+    private readonly read: (queries: HistorySourceQueries) => Promise<StoredHistoryRow[][]> = async queries => {
+      await backfillTestSuiteStartedAt();
+      // Older writers racing this repair become eligible on the next refresh, with their real date.
+      const [runs, suites] = await Promise.all([readStandaloneRuns(queries), TestSuiteModel.aggregate<StoredHistoryRow>(queries.suites)
+        .collation({locale: "simple"}).read("primary").readConcern("majority").exec()]);
+      return [runs, suites];
+    }) {}
 
   async list(input: Record<string, string> = {}): Promise<TestHistoryPage> {
     const query = querySchema.safeParse(input);

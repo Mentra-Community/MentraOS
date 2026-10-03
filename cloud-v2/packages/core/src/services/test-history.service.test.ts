@@ -1,4 +1,4 @@
-import {afterAll, beforeAll, describe, expect, test} from "bun:test";
+import {afterAll, beforeAll, describe, expect, spyOn, test} from "bun:test";
 import {randomUUID} from "node:crypto";
 import mongoose from "mongoose";
 import {TestRunModel} from "../models/test-run.model";
@@ -181,6 +181,65 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect(row!.startedAt).toEqual(new Date("2026-10-03T21:00:00Z"));
     expect(row!.payload).toEqual(suite); expect(row!.payloadSha256).toBe("frozen-hash");
     expect((await new TestHistoryService().list()).entries[0]!.startedAt).toBe(suite.startedAt);
+  });
+
+  test("each read repairs old-writer missing and null projections and paginates their real dates", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await backfillTestSuiteStartedAt();
+    for (const [index, id] of ["old-writer-newest", "old-writer-middle", "old-writer-oldest"].entries()) {
+      const payload = {...plan(id, [member(`${id}-a`), member(`${id}-b`)]),
+        startedAt: new Date(Date.parse(at) - index * 1000).toISOString()};
+      await TestSuiteModel.collection.insertOne({suiteId: id, payload, ...(index === 1 ? {startedAt: null} : {})});
+    }
+    const service = new TestHistoryService();
+    const first = await service.list({limit: "2"});
+    expect(first.entries.map(entry => entry.kind === "suite" ? entry.suiteId : "unexpected"))
+      .toEqual(["old-writer-newest", "old-writer-middle"]);
+    expect(JSON.parse(Buffer.from(first.nextCursor!, "base64url").toString()).startedAt).toBe("2026-10-03T18:59:59.000Z");
+    const second = await service.list({limit: "2", cursor: first.nextCursor!});
+    expect(second.entries.map(entry => entry.kind === "suite" ? entry.suiteId : "unexpected"))
+      .toEqual(["old-writer-oldest"]);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  test("an older writer racing read normalization becomes visible on the next refresh without a broken cursor", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await saveSuite(plan("existing", [member("a"), member("b")]));
+    await saveRun(run("c"));
+    const payload = {...plan("racing-old-writer", [member("c"), member("d")]), startedAt: "2026-10-03T19:01:00Z"};
+    const originalAggregate = TestRunModel.aggregate.bind(TestRunModel);
+    let inserted = false;
+    const aggregate = spyOn(TestRunModel, "aggregate").mockImplementation(((...args: any[]) => {
+      const query = originalAggregate(...args as Parameters<typeof TestRunModel.aggregate>);
+      const exec = query.exec.bind(query);
+      query.exec = (async () => {
+        if (!inserted) {
+          inserted = true;
+          await TestSuiteModel.collection.insertOne({suiteId: payload.suiteId, payload});
+        }
+        return exec();
+      }) as typeof query.exec;
+      return query;
+    }) as any);
+    try {
+      const service = new TestHistoryService();
+      expect((await service.list()).entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : "unexpected"))
+        .toEqual(["existing", "c"]);
+      expect((await service.list()).entries.map(entry => entry.kind === "suite" ? entry.suiteId : "unexpected"))
+        .toEqual(["racing-old-writer", "existing"]);
+    } finally {aggregate.mockRestore();}
+  });
+
+  test("corrupt payload timestamps are logged and cannot break valid history rows", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await saveSuite(plan("valid", [member("a"), member("b")]));
+    await saveRun(run("c"));
+    const payload = {...plan("invalid", [member("c"), member("d")]), startedAt: "not-a-date"};
+    await TestSuiteModel.collection.insertOne({suiteId: payload.suiteId, payload, startedAt: null});
+    const page = await new TestHistoryService().list();
+    expect(page.entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : "unexpected"))
+      .toEqual(["valid", "c"]);
+    expect(page.nextCursor).toBeNull();
   });
 
   test("source keysets use indexes and stop after eligible candidates instead of scanning all history", async () => {

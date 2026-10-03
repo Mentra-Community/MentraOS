@@ -1,5 +1,7 @@
 import {Schema} from "mongoose";
 import {registerModel} from "./register-model";
+import {createLogger} from "@mentra/cloud-shared";
+const logger = createLogger("core").child({component: "suite-timestamp-projection"});
 const schema = new Schema({
   suiteId: {type: String, required: true, unique: true},
   payload: {type: Schema.Types.Mixed, required: true},
@@ -17,6 +19,10 @@ export const TestSuiteModel = registerModel("TestSuite", schema);
 
 /** Project the immutable payload timestamp without rewriting its plan or terminal verdict. */
 export async function backfillTestSuiteStartedAt(collection = TestSuiteModel.collection) {
-  await collection.updateMany({startedAt: {$exists: false}, "payload.startedAt": {$type: "string"}},
+  await collection.updateMany({startedAt: null, "payload.startedAt": {$type: "string"}},
     [{$set: {startedAt: {$convert: {input: "$payload.startedAt", to: "date", onError: null, onNull: null}}}}]);
+  const invalid = await collection.find({startedAt: null, "payload.members.1": {$exists: true},
+    $expr: {$eq: [{$convert: {input: "$payload.startedAt", to: "date", onError: null, onNull: null}}, null]}})
+    .project({suiteId: 1}).limit(25).toArray();
+  for (const row of invalid) logger.error({suiteId: row.suiteId}, "Suite payload timestamp cannot be projected for history");
 }
