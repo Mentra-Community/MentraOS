@@ -43,7 +43,11 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
   expect(html).toContain("lg:overflow-y-auto");
   expect(html).not.toContain("lg:sticky");
   expect(html).toContain("object-contain lg:h-full lg:max-h-none");
-  expect(html).toContain('Teardown: ready</p></div></section></div><section');
+  expect(html.indexOf('aria-label="Setup details"')).toBeLessThan(html.indexOf('aria-label="Run recording"'));
+  expect(html.indexOf('aria-label="Teardown details"')).toBeGreaterThan(html.indexOf('aria-label="Execution steps"'));
+  expect(html.indexOf('aria-label="Teardown details"')).toBeLessThan(html.indexOf('<h3 class="font-semibold">Evidence</h3>'));
+  expect(html).toContain("Routine-specific setup details were not recorded for this run.");
+  expect(html).toContain("Routine-specific teardown details were not recorded for this run.");
   expect(html.match(/Watch this step/g)).toHaveLength(71);
   expect(html).toContain("Search steps");
   expect(html).toContain("Watch this step · 01:10");
@@ -61,6 +65,52 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
   expect(pending).toContain("Evidence upload pending");
   expect(pending).not.toContain("<video");
   expect(pending).not.toContain("lg:overflow-y-auto");
+});
+
+test("routine lifecycle rows report real actions without video and keep failures in their phase", () => {
+  const run = frameworkRunSchema.parse({schemaVersion: 1, requestId: "lifecycle-request", hostId: "mini", routineId: "notes-phone",
+    definitionRevision: "c".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:02:00Z", recordingAssetId: "recording",
+    assets: [{id: "recording", kind: "recording", path: "video.mp4", sha256: "a".repeat(64), size: 100, mimeType: "video/mp4"}],
+    result: {runId: "lifecycle-request", finishedAt: "2026-10-03T19:02:00Z", setup: {status: "passed", actions: [
+      {id: "install", instruction: "Install the selected Mentra App", expected: "Requested build installed", scope: "shared", status: "passed", durationMs: 1000},
+      {id: "prepare-note", instruction: "Prepare a note fixture", expected: "Fixture available", scope: "routine", status: "passed", durationMs: 1500,
+        startedAt: "2026-10-03T19:00:01Z", finishedAt: "2026-10-03T19:00:02.500Z"}]}, test: "passed",
+      steps: [{id: "create", status: "passed", durationMs: 1000, recordingLocation: {assetId: "recording", startOffsetMs: 0}}],
+      teardown: {ready: false, outcomes: [], errors: [], unavailableResources: [], actions: [
+        {id: "delete-note", instruction: "Remove the note fixture", expected: "Fixture absent", scope: "routine", status: "failed", durationMs: 2500},
+        {id: "stop-audio", instruction: "Stop fixture audio", expected: "Audio stopped", scope: "routine", status: "not-run", durationMs: 0, causedBy: "lost-ownership"},
+        {id: "uninstall", instruction: "Uninstall the Mentra App", expected: "Test app absent", scope: "shared", status: "passed", durationMs: 800}]},
+      failures: [{phase: "teardown", actionId: "delete-note", message: "Fixture removal failed"},
+        {phase: "evidence", actionId: "upload-log", message: "Log upload unavailable"}], evidence: ["recording"],
+      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 2500, testMs: 1000, teardownMs: 3300}}});
+  const client = new QueryClient();
+  client.setQueryData(["framework-run", "lifecycle-run"], {run, definition: routine.definition, outcome: "teardown-failed", uploadsComplete: true, evidenceStatus: "failed"});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId="lifecycle-run" /></QueryClientProvider>);
+  const setup = html.slice(html.indexOf('aria-label="Setup details"'), html.indexOf('aria-label="Run recording"'));
+  const teardown = html.slice(html.indexOf('aria-label="Teardown details"'), html.indexOf('<h3 class="font-semibold">Evidence</h3>'));
+  expect(setup).toContain("Prepare a note fixture");
+  expect(setup).toContain("1.5 seconds");
+  expect(setup).toContain("Started ");
+  expect(setup).toContain("Shared framework setup");
+  expect(teardown).toContain("Remove the note fixture");
+  expect(teardown).toContain("2.5 seconds");
+  expect(teardown).toContain("Not run");
+  expect(teardown).not.toContain("0.0 seconds");
+  expect(teardown).toContain("lost-ownership");
+  expect(teardown).toContain("Fixture removal failed");
+  for (const phase of [setup, teardown]) {
+    expect(phase).not.toContain("<video");
+    expect(phase).not.toContain("Watch this step");
+  }
+  expect(teardown).not.toContain("Log upload unavailable");
+  expect(html.slice(html.indexOf('<h3 class="font-semibold">Evidence</h3>'))).toContain("Log upload unavailable");
+  run.result.setup.actions = [];
+  run.result.teardown.actions = [];
+  client.setQueryData(["framework-run", "lifecycle-run"], {run: {...run}, definition: routine.definition, outcome: "teardown-failed", uploadsComplete: true, evidenceStatus: "failed"});
+  const empty = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId="lifecycle-run" /></QueryClientProvider>);
+  expect(empty).toContain("No routine-specific setup steps.");
+  expect(empty).toContain("No routine-specific teardown steps.");
 });
 
 test("catalog run links use the result route understood by the Admin shell", () => {

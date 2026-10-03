@@ -91,6 +91,14 @@ export class FrameworkResultService {
     if (!definition || run.result.steps.length !== definition.definition.steps.length
       || run.result.steps.some((step, index) => step.id !== definition.definition.steps[index]?.id))
       throw new FrameworkResultConflict("Result must contain the complete ordered source step list");
+    for (const phase of ["setup", "teardown"] as const) {
+      const declared = definition.definition[phase], reported = run.result[phase].actions;
+      const routineActions = reported?.filter(action => action.scope === "routine") ?? [];
+      if ((declared !== undefined && reported === undefined) || routineActions.length !== (declared?.length ?? 0)
+        || routineActions.some((action, index) => action.id !== declared?.[index]?.id
+          || action.instruction !== declared?.[index]?.instruction || action.expected !== declared?.[index]?.expected))
+        throw new FrameworkResultConflict(`Result must contain the complete ordered source ${phase} action list and English descriptions`);
+    }
     let created = true;
     try {await this.repository.insert(run, payloadSha256);}
     catch (error) {

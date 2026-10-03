@@ -5,6 +5,10 @@ import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition
 export const frameworkRunIdSchema = frameworkIdentitySchema;
 const id = frameworkRunIdSchema;
 const ms = z.number().finite().nonnegative();
+const lifecycleAction = z.object({id, instruction: z.string().min(1).max(2000), expected: z.string().min(1).max(2000),
+  scope: z.enum(["shared", "routine"]), status: z.enum(["passed", "failed", "cancelled", "not-run"]), durationMs: ms,
+  startedAt: z.string().datetime({offset: true}).optional(), finishedAt: z.string().datetime({offset: true}).optional(),
+  causedBy: id.optional()}).strict();
 const failure = z.object({phase: z.enum(["setup", "test", "teardown", "evidence"]),
   actionId: id, message: z.string().min(1).max(20000)}).strict();
 const json: z.ZodType<unknown> = z.lazy(() => z.union([z.null(), z.boolean(), z.string(),
@@ -23,11 +27,13 @@ export const frameworkRunSchema = z.object({
     size: z.number().int().positive().max(2 * 1024 * 1024 * 1024),
     mimeType: z.enum(["video/mp4", "video/webm", "image/png", "image/jpeg", "application/json", "text/plain"])}).strict()).max(2000),
   result: z.object({runId: id, finishedAt: z.string().datetime({offset: true}), test: z.enum(["passed", "failed", "not-run", "cancelled"]),
-    setup: z.object({status: z.enum(["passed", "failed", "cancelled"]), actionId: id.optional()}).strict(),
+    setup: z.object({status: z.enum(["passed", "failed", "cancelled"]), actionId: id.optional(),
+      actions: z.array(lifecycleAction).max(1000).optional()}).strict(),
     steps: z.array(z.object({id, status: z.enum(["passed", "failed", "not-run"]), durationMs: ms, causedBy: id.optional(),
       startedAt: z.string().datetime({offset: true}).optional(), finishedAt: z.string().datetime({offset: true}).optional(),
       recordingLocation: z.object({assetId: id, startOffsetMs: ms, endOffsetMs: ms.optional()}).strict().optional()}).strict()).max(2000),
-    teardown: z.object({ready: z.boolean(), outcomes: z.array(cleanupOutcome), errors: z.array(failure),
+    teardown: z.object({ready: z.boolean(), actions: z.array(lifecycleAction).max(1000).optional(),
+      outcomes: z.array(cleanupOutcome), errors: z.array(failure),
       unavailableResources: z.array(z.object({resource: id, cause: z.string(), nextAction: z.string()}).strict())}).strict(),
     failures: z.array(failure), evidence: z.array(id),
     timing: z.object({startedAt: z.string().datetime({offset: true}), setupMs: ms, testMs: ms, teardownMs: ms}).strict(),
@@ -56,6 +62,24 @@ export const frameworkRunSchema = z.object({
       problem("Step recording location is invalid or undeclared");
   }
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
+  for (const phase of ["setup", "teardown"] as const) {
+    const actions = run.result[phase].actions ?? [];
+    if (new Set(actions.map(action => action.id)).size !== actions.length) problem(`Duplicate ${phase} action identity`);
+    for (const action of actions) {
+      if (action.status === "not-run" && (action.durationMs !== 0 || action.startedAt || action.finishedAt))
+        problem(`Unexecuted ${phase} action cannot have execution timing`);
+      if (action.finishedAt && (!action.startedAt || Date.parse(action.finishedAt) < Date.parse(action.startedAt)))
+        problem(`${phase} action finish precedes its execution start`);
+      for (const timestamp of [action.startedAt, action.finishedAt]) if (timestamp
+        && (Date.parse(timestamp) < Date.parse(run.startedAt) || Date.parse(timestamp) > Date.parse(run.finishedAt)))
+        problem(`${phase} action timing is outside the run`);
+    }
+  }
+  if (run.result.setup.status === "passed" && run.result.setup.actions?.some(action => action.scope === "routine" && action.status !== "passed"))
+    problem("Passing setup contradicts routine setup actions");
+  if (run.result.teardown.ready && run.result.teardown.actions?.some(action => action.scope === "routine" && action.status !== "passed"
+    && !(action.status === "not-run" && run.result.setup.status !== "passed")))
+    problem("Ready teardown contradicts routine teardown actions");
   if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || run.result.failures.some(failure => failure.phase === "setup" || failure.phase === "test") || run.result.steps.some(step => step.status !== "passed")))
     problem("Passing test contradicts setup or steps");
   const sameFailure = (left: z.infer<typeof failure>, right: z.infer<typeof failure>) =>
