@@ -41,10 +41,10 @@ test("new suites reject a single declared member before writing", async () => {
 });
 
 test("suite labels require multiple declared members and retain exact member identity", async () => {
-  const member = {memberId: "mac", requestId: "request:mac.v2", routineId: "notes.search_v2", platform: "ios-on-mac"};
+  const member = {memberId: "mac", requestId: "request:mac.v2", routineId: "notes.search_v2", platform: "ios-on-mac" as const};
   const single = {suiteId: "single-job", channel: "local", trigger: "manual", build: {headSha: "a".repeat(40)}, members: [member]};
   const multiple = {...single, suiteId: "suite:nightly.v2", channel: "dev", trigger: "nightly", members: [
-    {...member, headSha: "b".repeat(40)}, {memberId: "unstarted", routineId: "ota", platform: "android"},
+    {...member, headSha: "b".repeat(40)}, {memberId: "unstarted", routineId: "ota", platform: "android" as const},
   ]};
   const find = spyOn(TestSuiteModel, "find").mockImplementation(((filter: unknown) => {
     expect(filter).toEqual({"payload.members.1": {$exists: true}, "payload.members.requestId": {$in: [member.requestId]}});

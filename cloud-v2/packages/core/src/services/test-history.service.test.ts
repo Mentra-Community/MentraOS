@@ -10,7 +10,8 @@ import {TestHistoryService, type StoredHistoryRow} from "./test-history.service"
 test("history validates cursor and page limits before querying", async () => {
   let reads = 0;
   const service = new TestHistoryService({detail: async () => {throw new Error("not used");}}, async () => {reads++; return [];});
-  for (const query of [{cursor: "invalid"}, {limit: "0"}, {limit: "101"}, {limit: "2.5"}, {scope: "unexpected"}])
+  const invalid: Record<string, string>[] = [{cursor: "invalid"}, {limit: "0"}, {limit: "101"}, {limit: "2.5"}, {scope: "unexpected"}];
+  for (const query of invalid)
     await expect(service.list(query)).rejects.toMatchObject({status: 400});
   expect(reads).toBe(0);
 });
