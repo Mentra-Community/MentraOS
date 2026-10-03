@@ -15,7 +15,7 @@ import { OemModel } from "../models/oem.model";
 import {TestHostStateModel} from "../models/test-host-state.model";
 import {TestRequestModel} from "../models/test-request.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
-import {TestSuiteModel} from "../models/test-suite.model";
+import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
 import { reconcileTestRunIndexes, TestAssetModel, TestRunModel } from "../models/test-run.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
@@ -58,6 +58,7 @@ export async function runStartupMigrations(): Promise<void> {
   await RoutineDefinitionModel.createIndexes();
   await reconcileTestRunIndexes();
   await TestRunModel.createIndexes();
+  await backfillTestSuiteStartedAt();
   await TestSuiteModel.createIndexes();
   await TestAssetModel.createIndexes();
   // No device execution grant is safe until request IDs are unique across all Core instances.

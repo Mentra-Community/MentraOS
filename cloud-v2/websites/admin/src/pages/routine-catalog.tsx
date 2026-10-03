@@ -126,6 +126,9 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(runId)}/assets/${encodeURIComponent(id)}`;
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
   const hasRecording = Boolean(recordingAsset && uploadsComplete);
+  const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
+  const visibleSteps = run.result.steps.map((step, index) => ({step, index, source: definitionSteps.get(step.id)}))
+    .filter(({step, source}) => matchesStepSearch(step, source, stepSearch));
   return <div className="space-y-5">
     <a className="underline" href={routineHref(run.routineId, run.platform)}>Back to routine</a>
     {result.error && <p role="alert">Run could not refresh: {result.error.message}</p>}
@@ -150,10 +153,8 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       <label className="mt-3 block shrink-0 text-sm">Search steps<input type="search" className="mt-1 block w-full rounded-lg border border-[#cbd3c8] p-2" value={stepSearch} onChange={event => setStepSearch(event.target.value)} placeholder="Instruction, expected result or step ID" /></label>
       <div role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasRecording ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
       <p>Setup: {run.result.setup.status}{run.result.setup.actionId && ` (${run.result.setup.actionId})`}</p>
-      {!run.result.steps.some(step => matchesStepSearch(step, definition, stepSearch)) && <p className="mt-3">No steps match your search.</p>}
-      <ol role="list" className="mt-3 list-none space-y-2">{run.result.steps.map((step, index) => {
-        if (!matchesStepSearch(step, definition, stepSearch)) return null;
-        const source = definition?.steps.find(item => item.id === step.id);
+      {!visibleSteps.length && <p className="mt-3">No steps match your search.</p>}
+      <ol role="list" className="mt-3 list-none space-y-2">{visibleSteps.map(({step, index, source}) => {
         const title = source?.instruction ?? step.id;
         return <li key={step.id} className={`flex gap-3 rounded-lg border p-3 ${selectedStep === step.id ? "border-[#3b7650] bg-[#edf6ef]" : "border-[#e0e4de]"}`}>
           <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
@@ -193,11 +194,15 @@ function TestHistoryList() {
     <p className="mt-2 text-sm text-[#68746d]">Dispatched test suites and standalone routine runs, newest first.</p>
     {history.error && <p role="alert" className="mt-3">History could not refresh: {history.error.message} <button className="underline" onClick={() => history.refetch()}>Retry</button></p>}
     {!entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
-    <ul className="mt-4 space-y-3">{entries.map(entry => <TestHistoryItem key={`${entry.kind}:${entry.kind === "suite" ? entry.suiteId : entry.requestId}`} entry={entry}/>)}</ul>
+    <ul className="mt-4 space-y-3">{entries.map(entry => <TestHistoryItem key={entry.kind === "unavailable" ? `${entry.sourceKind}:${entry.id}` : `${entry.kind}:${entry.kind === "suite" ? entry.suiteId : entry.runId}`} entry={entry}/>)}</ul>
     {history.hasNextPage && <button className="mt-4 underline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</button>}
   </section>;
 }
 function TestHistoryItem({entry}: {entry: TestHistoryEntry}) {
+  if (entry.kind === "unavailable") return <li className="rounded-lg border border-[#e0e4de] p-4">
+    <a className="font-semibold underline" href={entry.sourceKind === "run" ? frameworkRunHref(entry.id) : `/?testSuite=${encodeURIComponent(entry.id)}`}>{entry.sourceKind === "run" ? "Routine run" : "Test suite"} · {entry.id} · {new Date(entry.startedAt).toLocaleString()}</a>
+    <p role="alert" className="mt-1 text-sm">{entry.message}</p>
+  </li>;
   if (entry.kind === "run") return <FrameworkRunListItem run={entry}/>;
   return <li className="rounded-lg border border-[#e0e4de] p-4">
     <a className="font-semibold underline" href={`/?testSuite=${encodeURIComponent(entry.suiteId)}`}>{entry.channel} {entry.trigger} suite · {new Date(entry.startedAt).toLocaleString()}</a> · {entry.outcome} · {entry.passed}/{entry.expectedCount} passed
@@ -228,8 +233,7 @@ export function recordingOffset(ms: number) {
   const seconds = Math.floor(ms / 1000);
   return `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
 }
-export function matchesStepSearch(step: FrameworkRun["result"]["steps"][number], definition: RoutineEnrollment["definition"] | null, search: string) {
-  const source = definition?.steps.find(item => item.id === step.id);
+export function matchesStepSearch(step: FrameworkRun["result"]["steps"][number], source: RoutineEnrollment["definition"]["steps"][number] | undefined, search: string) {
   return `${step.id} ${source?.instruction ?? ""} ${source?.expected ?? ""} ${step.status}`.toLowerCase().includes(search.trim().toLowerCase());
 }
 function StepStatus({status}: {status: FrameworkRun["result"]["steps"][number]["status"]}) {

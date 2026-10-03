@@ -74,10 +74,10 @@ test("catalog run links use the result route understood by the Admin shell", () 
 
 test("step search matches recorded identity and English definition text without changing recording offsets", () => {
   const step = {id: "create", status: "passed" as const, durationMs: 1000, recordingLocation: {assetId: "video", startOffsetMs: 123456}};
-  expect(matchesStepSearch(step, routine.definition, "  NOTE SAVED ")).toBe(true);
-  expect(matchesStepSearch(step, routine.definition, "create")).toBe(true);
-  expect(matchesStepSearch(step, null, "create")).toBe(true);
-  expect(matchesStepSearch(step, routine.definition, "login")).toBe(false);
+  expect(matchesStepSearch(step, routine.definition.steps[0], "  NOTE SAVED ")).toBe(true);
+  expect(matchesStepSearch(step, routine.definition.steps[0], "create")).toBe(true);
+  expect(matchesStepSearch(step, undefined, "create")).toBe(true);
+  expect(matchesStepSearch(step, routine.definition.steps[0], "login")).toBe(false);
   expect(recordingOffset(step.recordingLocation.startOffsetMs)).toBe("02:03");
   expect(recordingOffset(59999)).toBe("00:59");
 });
@@ -112,4 +112,21 @@ test("history distinguishes empty data and cached refresh failures while keeping
   expect(scoped).toContain("Filtered routine runs");
   expect(scoped).not.toContain("nightly-two");
   expect(scoped).toContain("dev.577");
+});
+
+test("unavailable history details retain their links without hiding neighboring results", () => {
+  const client = new QueryClient();
+  client.setQueryData(["test-history"], {pages: [{entries: [historyRun,
+    {kind: "unavailable", sourceKind: "run", id: "unreadable-run", startedAt: "2026-10-03T18:00:00Z", message: "Details unavailable."},
+    {kind: "unavailable", sourceKind: "suite", id: "unreadable-suite", startedAt: "2026-10-03T17:00:00Z", message: "Details unavailable."},
+    {kind: "suite", suiteId: "older-suite", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T16:00:00Z", outcome: "passed", expectedCount: 2, passed: 2, build: {headSha: "a".repeat(40)}}], nextCursor: null}], pageParams: [undefined]});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage/></QueryClientProvider>);
+  expect(html).toContain('href="/?testRun=unreadable-run"');
+  expect(html).toContain('href="/?testSuite=unreadable-suite"');
+  expect(html).toContain('href="/?testRun=standalone-run"');
+  expect(html).toContain('href="/?testSuite=older-suite"');
+  expect(html.match(/Details unavailable\./g)).toHaveLength(2);
+  expect(html).toContain("2/2 passed");
+  expect(html.indexOf("standalone-run")).toBeLessThan(html.indexOf("unreadable-run"));
+  expect(html.indexOf("unreadable-suite")).toBeLessThan(html.indexOf("older-suite"));
 });

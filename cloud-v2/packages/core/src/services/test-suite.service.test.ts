@@ -18,8 +18,9 @@ test("suite creation retries preserve the frozen plan and use durable writes", a
     members: [{memberId: "mac", routineId: "captions-phone", platform: "ios-on-mac"},
       {memberId: "android", routineId: "captions-phone", platform: "android"}]});
   const row = {payload, payloadSha256: requestInputDigest(payload)};
-  mocks.push(spyOn(TestSuiteModel, "create").mockImplementation((async (_rows: unknown, options: any) => {
+  mocks.push(spyOn(TestSuiteModel, "create").mockImplementation((async (rows: any, options: any) => {
     expect(options.writeConcern).toEqual({w: "majority", j: true, wtimeout: 10000});
+    expect(rows[0].startedAt).toEqual(new Date(payload.startedAt));
     throw Object.assign(new Error("duplicate"), {code: 11000});
   }) as any));
   const query = {read(value: string) {expect(value).toBe("primary"); return this;},

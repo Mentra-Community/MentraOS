@@ -13,7 +13,7 @@ export class TestSuiteService {
     if (!parsed.success) throw new TestRunError(400, "invalid test suite");
     const payload = parsed.data;
     const payloadSha256 = requestInputDigest(payload);
-    try { await TestSuiteModel.create([{suiteId: payload.suiteId, payload, payloadSha256}], {writeConcern}); }
+    try { await TestSuiteModel.create([{suiteId: payload.suiteId, startedAt: new Date(payload.startedAt), payload, payloadSha256}], {writeConcern}); }
     catch (error) { if ((error as {code?: number}).code !== 11000) throw error; }
     const stored = await TestSuiteModel.findOne({suiteId: payload.suiteId}).read("primary").readConcern("majority").lean();
     if (!stored || stored.payloadSha256 !== payloadSha256) throw new TestRunError(409, "suite ID already has a different plan");
