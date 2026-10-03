@@ -1,5 +1,5 @@
 import { LogOut, Menu, MoreHorizontal, type LucideIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import mentraLogo from "@/assets/mentra-logo.svg";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -57,6 +57,16 @@ export function AppShell({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const scrollArea = useRef<HTMLDivElement>(null);
+  const header = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!scrollArea.current || !header.current) return;
+    const update = () => scrollArea.current?.style.setProperty("--admin-header-height", `${header.current!.getBoundingClientRect().height}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(header.current);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div className="h-dvh overflow-hidden bg-[#f5f6f4] text-[#14151b]">
@@ -165,12 +175,13 @@ export function AppShell({
       </aside>
 
       <div
+        ref={scrollArea}
         className={cn(
           "h-dvh overflow-y-auto overflow-x-hidden overscroll-contain transition-[padding]",
           sidebarCollapsed ? "md:pl-[76px]" : "md:pl-[248px]",
         )}
       >
-        <header className="sticky top-0 z-10 border-b border-[#e4e6e2] bg-white/88 backdrop-blur">
+        <header ref={header} className="sticky top-0 z-10 border-b border-[#e4e6e2] bg-white/88 backdrop-blur">
           <div className="mx-auto flex min-h-[68px] max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5 md:min-h-[76px] md:flex-nowrap md:px-8 md:py-4">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <Button

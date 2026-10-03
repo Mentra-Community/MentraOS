@@ -1,7 +1,8 @@
 import {expect, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
-import {FrameworkRunPage, RoutineCatalogCard, routineHref} from "./routine-catalog";
+import {FrameworkRunPage, RoutineCatalogCard, frameworkRunHref, routineHref} from "./routine-catalog";
+import {readTestRunLink} from "../lib/test-run-links";
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types";
 import {frameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types";
 
@@ -37,12 +38,23 @@ test("run keeps every timestamp-linked step beside a bounded recording and stack
   expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]");
   expect(html).toContain("order-2 lg:order-1");
   expect(html).toContain("lg:overflow-y-auto");
-  expect(html).toContain("lg:sticky lg:top-4");
-  expect(html).toContain("object-contain lg:max-h-[calc(100dvh-8rem)]");
+  expect(html).toContain("lg:sticky lg:top-[calc(var(--admin-header-height,6rem)+1rem)]");
+  expect(html).toContain("object-contain lg:max-h-[calc(100dvh-var(--admin-header-height,6rem)-8rem)]");
   expect(html.match(/Watch this step/g)).toHaveLength(71);
+  expect(html).toContain("Started ");
+  expect(html).toContain("Setup 1.0 seconds · Test 71.0 seconds · Teardown 1.0 seconds");
   expect(html).toContain("/api/admin/routine-catalog/results/by-run/saved-run/assets/recording");
   const pending = render(false);
   expect(pending).toContain("Evidence upload pending");
   expect(pending).not.toContain("<video");
   expect(pending).not.toContain("lg:overflow-y-auto");
+});
+
+test("catalog run links use the result route understood by the Admin shell", () => {
+  const href = frameworkRunHref("old-pass");
+  expect(href).toBe("/?testRun=old-pass");
+  expect(readTestRunLink(new URL(href, "https://admin.mentraglass.com").search)).toEqual({runID: "old-pass"});
+  const html = renderToStaticMarkup(<RoutineCatalogCard routine={{...routine, example: null,
+    latestAttempt: {runId: "old-pass", startedAt: "2026-10-02T18:00:00Z", outcome: "pass", uploadsComplete: true, evidenceStatus: "complete", definitionRevision: "c".repeat(40)}}} />);
+  expect(html).toContain('href="/?testRun=old-pass"');
 });
