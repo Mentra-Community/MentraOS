@@ -24,7 +24,7 @@ on:
 permissions:
   actions: read
   attestations: write
-  contents: read
+  contents: write
   id-token: write
   packages: write
 
@@ -310,6 +310,34 @@ jobs:
             mentra-private-cloud.tar.gz.sha256
           if-no-files-found: error
           retention-days: 90
+
+      - name: Publish persistent installer downloads
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+          ARTIFACTS_R2_BUCKET: artifactscdn
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          tag="mentra-private-cloud-${{ steps.coordinates.outputs.release_identity }}"
+          status=$(gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > installer-release-response.txt 2>/dev/null && echo found || echo missing)
+          if [[ "$status" == missing ]]; then
+            if ! head -n 1 installer-release-response.txt | grep -Eq '^HTTP/[^ ]+ 404'; then
+              echo "Cannot resolve installer release; authentication/network errors must not be treated as an absent release" >&2
+              exit 1
+            fi
+            gh release create "$tag" --target "${{ inputs.source_commit }}" --prerelease \
+              --title "Mentra Private Cloud ${{ steps.coordinates.outputs.release_identity }}" \
+              --notes "Versioned Azure installer, checksum and publication evidence. Obtain the private IT guide and approved image access from Mentra before deployment."
+          fi
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
+          for file in mentra-private-cloud.tar.gz mentra-private-cloud.tar.gz.sha256; do
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --repository "$GITHUB_REPOSITORY" --release-id "$release_id" --file "$file" --name "$file"
+          done
+          echo "Installer downloads: https://artifactscdn.mentraglass.com/$GITHUB_REPOSITORY/releases/$tag/index.html" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Name coordinated result artifact
         id: artifact

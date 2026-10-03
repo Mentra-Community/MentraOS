@@ -138,6 +138,29 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(setup.SetupError, 'conflicts'):
                 setup.load(self.directory)
 
+    def test_verify_cannot_certify_selected_but_undeployed_upgrade(self):
+        with self.upgrade_context():
+            setup.upgrade(self.args, self.directory)
+            state = setup.read_json(self.directory / 'state.json')
+            with patch.object(setup, 'run') as run:
+                for phase in ('upgrade_ready', 'deploying'):
+                    state['phase'] = phase
+                    with self.assertRaisesRegex(setup.SetupError, 'Run resume'):
+                        setup.verify(self.args, self.directory, self.config, state)
+                run.assert_not_called()
+
+    def test_interrupted_backup_does_not_publish_partial_destination(self):
+        destination = self.directory / 'backup.json'
+        with patch.object(setup.os, 'fsync', side_effect=OSError('interrupted')):
+            with self.assertRaises(OSError):
+                setup.publish_backup(destination, b'complete original bytes')
+        self.assertFalse(destination.exists())
+        setup.publish_backup(destination, b'complete original bytes')
+        self.assertEqual(destination.read_bytes(), b'complete original bytes')
+        with self.assertRaises(FileExistsError):
+            setup.publish_backup(destination, b'different')
+        self.assertEqual(destination.read_bytes(), b'complete original bytes')
+
     def test_generated_global_names_differ_for_same_deployment_name(self):
         args = argparse.Namespace(config=str(self.directory / 'answers.json'), json=True)
         setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT,

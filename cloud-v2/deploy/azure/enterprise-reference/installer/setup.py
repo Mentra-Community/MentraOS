@@ -238,6 +238,21 @@ def release_version(release):
     return base + (0, parts)
 
 
+def publish_backup(destination, contents):
+    fd, name = tempfile.mkstemp(dir=destination.parent, prefix='.upgrade-backup-')
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        # Same supported owner-only POSIX filesystem as setup state. Publish
+        # a complete inode without replacing a concurrently created backup.
+        os.link(name, destination)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
 def upgrade(args, directory):
     if not args.backup_confirmed:
         raise SetupError('Upgrade requires --backup-confirmed after backing up the database, attachments and original signing material')
@@ -280,9 +295,7 @@ def upgrade(args, directory):
             if destination.is_symlink() or destination.read_bytes() != original:
                 raise SetupError('Upgrade backup conflicts with original state; never overwrite recovery evidence')
         else:
-            with destination.open('xb') as stream:
-                os.chmod(destination, 0o600)
-                stream.write(original)
+            publish_backup(destination, original)
     temporary = directory / 'upgrade.update.json'
     write_json(temporary, updated)
     summary = {'fromRelease': old_release['releaseTag'], 'toRelease': target['releaseTag'],
@@ -671,6 +684,8 @@ def install(args, directory, config, state):
 
 
 def verify(args, directory, config, state):
+    if state.get('upgrade') and state['phase'] not in ('deployed', 'infrastructure_verified'):
+        raise SetupError('Selected upgrade has not completed deployment. Run resume with the target package before verify.')
     origin = state.get('outputs', {}).get('workspaceOrigin')
     if not origin:
         raise SetupError('No deployment outputs saved. Run resume first.')

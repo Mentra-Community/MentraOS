@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a portable installer from an attested coordinated runtime publication."""
 import argparse
+import gzip
 import hashlib
 import io
 import json
@@ -101,7 +102,7 @@ An image rollback is not database rollback. Follow the approved recovery procedu
     with tempfile.NamedTemporaryFile(dir=output.parent, delete=False) as tmp:
         temp_path = Path(tmp.name)
     try:
-        with tarfile.open(temp_path, 'w:gz') as archive:
+        with temp_path.open('wb') as output_stream, gzip.GzipFile(filename='', fileobj=output_stream, mode='wb', mtime=0) as compressed, tarfile.open(fileobj=compressed, mode='w') as archive:
             for name, data in sorted(contents.items()):
                 info = tarfile.TarInfo('mentra-private-cloud/' + name)
                 info.size = len(data)
