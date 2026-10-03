@@ -153,12 +153,46 @@ routine factory. The current adapter supports existing step IDs; changing the
 inventory needs an explicit shared interface extension. Never claim a manually
 executed action or stale startup-loaded action proved its edited implementation.
 
+The controller CLI takes one JSON file per operation. Set
+`MENTRA_TEST_CLIENT_CONFIG` to the provisioned private client file; use the
+installed harness checkout and keep payload files private. Request and wait for
+`lane.request` / `lane.inspect` (or `lane.wait`) until state is `granted`, then use
+its reservation ID and generation in every authoring operation:
+
+```sh
+bun orchestration/entrypoints/cli.ts author start @/absolute/author-start.json
+bun orchestration/entrypoints/cli.ts author inspect @/absolute/author-inspect.json
+bun orchestration/entrypoints/cli.ts author command @/absolute/author-command.json
+```
+
+`author-start.json` contains `{reservationId, generation, operationId, build,
+sourcePath}`. Use the requested published build selection and the editable
+walkthrough source file. `author-command.json` contains `{reservationId,
+generation, operationId, command}` where command is `{op:"steps"}`,
+`{op:"snapshot"}`, `{op:"step",stepId:"HOME-02-open"}` (optional `retryReason`),
+or `{op:"finish"}`. `author-inspect.json` contains `{reservationId,generation}`.
+Each start/command has a new stable operation ID. They return admission, not
+completion. `author inspect` returns `operations`; find your `operationId`.
+For start, wait for `receipt.phase:"ready"` (its session remains `state:"active"`).
+For a command, wait for `state:"settled"` and read its receipt's result/error;
+`receipt.phase:"complete"` or `"failed"` describes the command outcome.
+A result larger than 8 KB is `{path,bytes,summary}`: read the private local file
+for the full snapshot/result. Finish settles the session with phase `"finished"`;
+then call `lane give-back` with the reservation ID, generation and a stable
+request ID. Do not give the lane back while an action or finish is running.
+After a lost response, inspect that operation; never submit a different ID to
+blindly repeat input. An `"unknown"` operation or `"interrupted"` receipt requires
+controller inspection, not replay of uncertain input. Only use these commands
+when present in the selected installed revision; an uninstalled adapter is a
+framework gap.
+
 After a failed saved step, observe the current prerequisite state, edit that
 step, and retry within the same session. The controller verifies that prior
 input/writers settled and records the attempt; ordinary product failures do not
 require human permission or another setup. Finish performs shared teardown before
 returning the reservation. Authoring evidence remains exploration evidence and
 must not be published as a passing full routine run.
+
 After reaching the end, run the **same saved flow** without AI through complete
 shared setup/test/teardown. Remove exploration-only actions and order the proven
 steps; do not rewrite working interactions merely to adopt another selector or
