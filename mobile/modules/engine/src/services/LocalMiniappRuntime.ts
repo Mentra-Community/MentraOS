@@ -5614,6 +5614,14 @@ class LocalMiniappRuntime {
   }
 
   private async handleMeetingGetState(packageName: string, requestId?: string): Promise<void> {
+    // No meeting and no join in flight means nothing to adopt. Native keeps reading `connecting`
+    // from a retired SoftAP attempt's `prepareAgent` until its teardown reaches the ACS leave; a
+    // respawned Mentra Call adopted that as its own join and, with no owner to push it a terminal
+    // state, sat on "Starting call…" until the wearer cancelled.
+    if (acsMeetingService.ownerPackage() !== packageName && !this.hasLiveSoftapAttempt(packageName)) {
+      this.sendResult(packageName, requestId, true, {state: "idle", muted: false})
+      return
+    }
     try {
       const state = await acsMeetingService.readState(packageName)
       this.sendResult(packageName, requestId, true, state)
@@ -6714,7 +6722,9 @@ class LocalMiniappRuntime {
       if (current.lastPongAt >= probeStartedAt) return
       // Respawning tears down an ACS call and its hotspot. A busy background during a join
       // misses one short ping; leave it to the regular ping loop, which needs several misses.
-      if (acsMeetingService.ownerPackage() === packageName) {
+      // Nobody owns the meeting until the `acsJoin` step, so a live SoftAP attempt counts as well:
+      // respawning during the hotspot or scoped Wi-Fi join cancels the join outright.
+      if (acsMeetingService.ownerPackage() === packageName || this.hasLiveSoftapAttempt(packageName)) {
         console.warn(`${LOG_TAG}: ${packageName} missed a foreground probe (${reason}) during a call; not respawning`)
         return
       }
@@ -6749,12 +6759,7 @@ class LocalMiniappRuntime {
     const toRemove: string[] = []
 
     for (const [packageName, app] of this.connectedApps) {
-      const holdPingLiveness = shouldHoldMiniappPingLiveness({
-        packageName,
-        softapPackageName: this.softapAttempt?.packageName,
-        softapCancelled: this.softapAttempt?.cancelled,
-      })
-      if (!holdPingLiveness) {
+      if (!this.hasLiveSoftapAttempt(packageName)) {
         const liveness = advanceMiniappPingLiveness(app.unansweredPingRounds, PING_TIMEOUT_THRESHOLD)
         if (liveness.shouldUnregister) {
           console.warn(`${LOG_TAG}: ${packageName} missed ${PING_TIMEOUT_THRESHOLD} pings, unregistering`)
@@ -6789,6 +6794,15 @@ class LocalMiniappRuntime {
       app.unansweredPingRounds = 0
       this.clearForegroundProbe(packageName)
     }
+  }
+
+  /** This miniapp's SoftAP join is in flight and has not been cancelled. */
+  private hasLiveSoftapAttempt(packageName: string): boolean {
+    return shouldHoldMiniappPingLiveness({
+      packageName,
+      softapPackageName: this.softapAttempt?.packageName,
+      softapCancelled: this.softapAttempt?.cancelled,
+    })
   }
 
   private clearForegroundProbe(packageName: string): void {
