@@ -479,6 +479,19 @@ class InstallerTests(unittest.TestCase):
         self.assertNotIn('private', str(error.exception))
         self.assertNotIn('teamsSetupChecks', self.state)
 
+    def test_graph_body_connection_loss_keeps_successful_infrastructure_verification(self):
+        import http.client
+        self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com'}
+        for failure in (http.client.IncompleteRead(b'private-partial-body'), ConnectionResetError('private-provider-body')):
+            with self.subTest(failure=type(failure).__name__), \
+                 patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})), \
+                 patch.object(setup.urllib.request, 'urlopen', side_effect=failure), patch.object(setup, 'emit') as emit:
+                setup.verify(self.args, self.directory, self.config, self.state)
+            result = emit.call_args.args[1]
+            self.assertEqual(result['status'], 'infrastructure_verified')
+            self.assertEqual(result['teamsSetup']['teamsSubscription'], 'unknown')
+            self.assertNotIn('private', json.dumps(result))
+
 
 if __name__ == '__main__':
     unittest.main()

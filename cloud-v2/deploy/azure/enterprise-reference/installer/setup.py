@@ -5,6 +5,7 @@ import base64
 import contextlib
 import datetime
 import hashlib
+import http.client
 import fcntl
 import json
 import os
@@ -610,7 +611,7 @@ def inspect_teams(args, config):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 return json.load(response)
-        except (urllib.error.URLError, ValueError):
+        except (OSError, http.client.HTTPException, ValueError):
             raise SetupError(guidance) from None
     inventory = graph('subscribedSkus')['value']
     teams_products = [s for s in inventory if s.get('capabilityStatus') == 'Enabled'
