@@ -117,7 +117,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     <a className="underline" href={routineHref(run.routineId, run.platform)}>Back to routine</a>
     <section className={PANEL}><h2 className="text-xl font-semibold">{run.routineId}: {outcome}</h2>
       <p className="mt-2">Started {new Date(run.startedAt).toLocaleString()} · Finished {new Date(run.finishedAt).toLocaleString()}</p>
-      <p className="mt-2">Lane: {run.laneId} · {run.platform}</p>
+      <p className="mt-2">Computer: {run.hostId} · Lane: {run.laneId} · {run.platform}</p>
       <p className="mt-2">Setup {seconds(run.result.timing.setupMs)} · Test {seconds(run.result.timing.testMs)} · Teardown {seconds(run.result.timing.teardownMs)}</p>
       {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
       {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
@@ -152,8 +152,8 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
 export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
  const params = new URLSearchParams(scope);
 
- const query = useQuery({queryKey: ["framework-runs", params.toString()], queryFn: () => api<{runs: {runId: string; requestId: string; routineId: string; platform: string; laneId: string; startedAt: string; finishedAt: string; outcome: string; evidenceStatus: string; uploadsComplete: boolean}[]}>(`/api/admin/routine-catalog/results?${params}`), refetchInterval: 15000});
+ const query = useQuery({queryKey: ["framework-runs", params.toString()], queryFn: () => api<{runs: {runId: string; requestId: string; hostId: string; routineId: string; platform: string; laneId: string; startedAt: string; finishedAt: string; outcome: string; evidenceStatus: string; uploadsComplete: boolean}[]}>(`/api/admin/routine-catalog/results?${params}`), refetchInterval: 15000});
  if (query.isPending) return <p role="status">Loading runs…</p>;
  if (query.error && !query.data) return <p role="alert">Could not load runs: {query.error.message}</p>;
- return <section className={PANEL}><h2 className="text-xl font-semibold">Routine runs</h2><ul className="mt-4 space-y-3">{query.data.runs.map(run => <li key={run.requestId}><a className="underline" href={frameworkRunHref(run.runId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome} · {((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000).toFixed(1)} seconds · {run.laneId}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · upload pending"}</li>)}</ul></section>;
+ return <section className={PANEL}><h2 className="text-xl font-semibold">Routine runs</h2><ul className="mt-4 space-y-3">{query.data.runs.map(run => <li key={run.requestId}><a className="underline" href={frameworkRunHref(run.runId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome} · {((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000).toFixed(1)} seconds · {run.hostId}/{run.laneId}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · upload pending"}</li>)}</ul></section>;
 }
