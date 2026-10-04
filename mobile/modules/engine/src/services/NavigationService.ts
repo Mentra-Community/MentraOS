@@ -45,7 +45,7 @@ export type NavOffRoute = {
 
 export type NavRerouting = {kind: "rerouting"}
 export type NavArrived = {kind: "arrived"}
-export type NavError = {kind: "error"; message: string}
+export type NavError = {kind: "error"; message: string; terminal?: boolean}
 
 export type NavUpdate = NavManeuver | NavOffRoute | NavRerouting | NavArrived | NavError
 
@@ -384,15 +384,18 @@ class NavigationService {
       }),
       CrustModule.addListener("onNavError", (data) => {
         console.log(`${LOG_TAG}: ← onNavError`, data?.message)
-        // Native startup errors terminate the trip. Invalidate a pending
-        // start result too, so it cannot restore the failed trip's snapshot.
-        this.sessionGeneration += 1
-        this.state = "idle"
-        this.lastRoute = null
-        this.lastManeuver = null
-        this.tripStops = []
-        this.tripMode = "driving"
-        this.fanout({kind: "error", message: data.message})
+        // Only terminal errors end a trip. iOS also reports recoverable
+        // reroute errors while native guidance continues on its existing route.
+        const terminal = data.terminal === true
+        if (terminal) {
+          this.sessionGeneration += 1
+          this.state = "idle"
+          this.lastRoute = null
+          this.lastManeuver = null
+          this.tripStops = []
+          this.tripMode = "driving"
+        }
+        this.fanout({kind: "error", message: data.message, terminal})
       }),
       CrustModule.addListener("onNavLocation", (data) => {
         const loc: NavLocation = {
