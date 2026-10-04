@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import {expect, test} from "bun:test";
-import {StateRepairDiagnosticsService, STATE_REPAIR_DIAGNOSTIC_BYTES} from "./state-repair-diagnostics.service";
+import {StateRepairDiagnosticsService, STATE_REPAIR_DIAGNOSTIC_BYTES, STATE_REPAIR_FAILURE_BYTES} from "./state-repair-diagnostics.service";
 import {requestInputDigest} from "./test-request.service";
 
 const payload = {ownerId: "fixer:execution-1", generation: 3, source: "state-repair" as const,
@@ -43,6 +43,8 @@ test("invalid identity, changed digest and oversized diagnostics fail before inc
   const {originalFailure: _, ...missingFailure} = envelope();
   await expect(service.publish("mini", "repair:1", missingFailure)).rejects.toThrow("Invalid repair diagnostics");
   await expect(service.publish("mini", "repair:1", {...envelope(), originalFailure: undefined})).rejects.toThrow("finite JSON");
+  const oversizedFailure = {...payload, originalFailure: {...payload.originalFailure, message: "x".repeat(STATE_REPAIR_FAILURE_BYTES)}};
+  await expect(service.publish("mini", "repair:1", envelope(oversizedFailure))).rejects.toThrow("failure summary exceeds");
   const oversized = {...payload, entries: [{timestamp: 0, level: "info", source: "harness-state-repair", message: "x".repeat(STATE_REPAIR_DIAGNOSTIC_BYTES)}]};
   await expect(service.publish("mini", "repair:1", envelope(oversized))).rejects.toThrow("bound");
   expect(called).toBe(false);

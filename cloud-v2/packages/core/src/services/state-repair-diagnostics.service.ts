@@ -8,6 +8,7 @@ import {requestInputDigest} from "./test-request.service";
 import {TestRunError} from "./test-result-error";
 
 export const STATE_REPAIR_DIAGNOSTIC_BYTES = 10 * 1024 * 1024;
+export const STATE_REPAIR_FAILURE_BYTES = 64 * 1024;
 export const stateRepairDiagnosticSchema = z.object({
   ownerId: frameworkIdentitySchema,
   generation: z.number().int().nonnegative().safe(),
@@ -59,6 +60,8 @@ export class StateRepairDiagnosticsService {
     let digest: string;
     try {digest = requestInputDigest(payload);} catch {throw new TestRunError(400, "Repair diagnostics must be finite JSON");}
     if (digest !== payloadSha256) throw new TestRunError(409, "Repair diagnostic digest differs");
+    if (Buffer.byteLength(JSON.stringify(payload.originalFailure), "utf8") > STATE_REPAIR_FAILURE_BYTES)
+      throw new TestRunError(413, "Repair failure summary exceeds its bound; use a diagnostic attachment for details");
     // SQLite and JSON callers can reorder keys. Use the report log format for the byte receipt.
     const entries = payload.entries.map(({timestamp, level, message, source}) =>
       ({timestamp, level, message, ...(source === undefined ? {} : {source})}));
