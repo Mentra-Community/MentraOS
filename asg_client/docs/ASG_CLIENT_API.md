@@ -648,6 +648,15 @@ The glasses also emit `battery_status` outbound:
 {"type": "request_version", "request_id": "version-request-123"}
 ```
 
+Optional `fresh_bes: true` requests one `cs_syvr` snapshot through the existing
+Mentra Live UART coordinator before sending the version chunks. Busy file/OTA
+ownership, restricted safety state or an unready transport can refuse the probe;
+the command does not reset phone readiness or wait/retry the probe. The immediate
+version response still contains cached BES data and is not freshness proof.
+Diagnostics consumers must observe a later current-session BES reply within their
+own bounded deadline; a handled version request does not prove that reply arrived.
+Requests without the flag and the `cs_syvr` alias retain their existing behavior.
+
 Returns version information in chunks to fit the BLE MTU:
 
 - `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`, `wifi_forget_result_version`, `saved_wifi_networks_version`
