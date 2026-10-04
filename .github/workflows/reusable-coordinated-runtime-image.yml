@@ -24,7 +24,7 @@ on:
 permissions:
   actions: read
   attestations: write
-  contents: read
+  contents: write
   id-token: write
   packages: write
 
@@ -284,6 +284,91 @@ jobs:
             --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
             --workflow-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --output runtime-image-publication.json
+
+      - name: Package Azure installer for the published image
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE: ${{ inputs.source_commit }}
+          EXPECTED_IMAGE: ${{ steps.coordinates.outputs.image }}@${{ steps.published.outputs.digest }}
+          INSTALLER_TAG: mentra-private-cloud-${{ steps.coordinates.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          url=$(node .github/scripts/release-assets.mjs url --repository "$GITHUB_REPOSITORY" --tag "$INSTALLER_TAG" --name mentra-private-cloud.tar.gz)
+          status=$(curl --silent --show-error --location --connect-timeout 30 --max-time 120 --output installer-existing.tar.gz --write-out '%{http_code}' "$url")
+          case "$status" in
+            200)
+              # SBOM timestamps and publication completion times vary on rerun.
+              # Reuse the attested original archive, including its evidence.
+              gh attestation verify installer-existing.tar.gz --repo "$GITHUB_REPOSITORY"
+              python3 - <<'PYVERIFY'
+          import json, os, tarfile
+          with tarfile.open('installer-existing.tar.gz') as archive:
+              release = json.load(archive.extractfile('mentra-private-cloud/release.json'))
+          if (release['installerSourceCommit'] != os.environ['EXPECTED_SOURCE']
+                  or release['imageSourceCommit'] != os.environ['EXPECTED_SOURCE']
+                  or release['sourceImage'] != os.environ['EXPECTED_IMAGE']
+                  or 'mentra-private-cloud-' + release['releaseTag'] != os.environ['INSTALLER_TAG']):
+              raise SystemExit('Existing installer belongs to different immutable release coordinates')
+          PYVERIFY
+              mv installer-existing.tar.gz mentra-private-cloud.tar.gz
+              sha256sum mentra-private-cloud.tar.gz > mentra-private-cloud.tar.gz.sha256
+              ;;
+            404)
+              rm installer-existing.tar.gz
+              python3 cloud-v2/deploy/azure/enterprise-reference/installer/package.py \
+                --publication runtime-image-publication.json \
+                --sbom "${{ steps.coordinates.outputs.sbom_name }}" \
+                --output mentra-private-cloud.tar.gz
+              ;;
+            *) echo "Cannot inspect existing installer (HTTP $status); refusing to replace immutable bytes" >&2; exit 1 ;;
+          esac
+
+      - name: Attest Azure installer
+        if: inputs.dry_run != true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: mentra-private-cloud.tar.gz
+
+      - name: Upload Azure installer
+        if: inputs.dry_run != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-private-cloud-${{ steps.coordinates.outputs.release_identity }}
+          overwrite: true
+          path: |
+            mentra-private-cloud.tar.gz
+            mentra-private-cloud.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish persistent installer downloads
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+          ARTIFACTS_R2_BUCKET: artifactscdn
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          tag="mentra-private-cloud-${{ steps.coordinates.outputs.release_identity }}"
+          status=$(gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > installer-release-response.txt 2>/dev/null && echo found || echo missing)
+          if [[ "$status" == missing ]]; then
+            if ! head -n 1 installer-release-response.txt | grep -Eq '^HTTP/[^ ]+ 404'; then
+              echo "Cannot resolve installer release; authentication/network errors must not be treated as an absent release" >&2
+              exit 1
+            fi
+            gh release create "$tag" --target "${{ inputs.source_commit }}" --prerelease \
+              --title "Mentra Private Cloud ${{ steps.coordinates.outputs.release_identity }}" \
+              --notes "Versioned Azure installer, checksum and publication evidence. Obtain the private IT guide and approved image access from Mentra before deployment."
+          fi
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
+          for file in mentra-private-cloud.tar.gz mentra-private-cloud.tar.gz.sha256; do
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --repository "$GITHUB_REPOSITORY" --release-id "$release_id" --file "$file" --name "$file"
+          done
+          echo "Installer downloads: https://artifactscdn.mentraglass.com/$GITHUB_REPOSITORY/releases/$tag/index.html" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Name coordinated result artifact
         id: artifact

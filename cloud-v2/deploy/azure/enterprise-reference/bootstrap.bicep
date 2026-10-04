@@ -1,5 +1,6 @@
 @description('Azure region for the container registry.')
 param location string = resourceGroup().location
+param resourceTags object = {}
 
 @minLength(5)
 @maxLength(50)
@@ -9,6 +10,7 @@ param registryName string = take('mentra${uniqueString(subscription().id, resour
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: registryName
   location: location
+  tags: resourceTags
   sku: { name: 'Basic' }
   properties: { adminUserEnabled: false }
 }

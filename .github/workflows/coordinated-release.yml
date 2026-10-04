@@ -341,7 +341,7 @@ jobs:
     permissions:
       actions: read
       attestations: write
-      contents: read
+      contents: write
       id-token: write
       packages: write
     uses: ./.github/workflows/reusable-coordinated-runtime-image.yml
