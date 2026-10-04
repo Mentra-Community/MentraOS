@@ -1,201 +1,118 @@
 ---
 name: create-routine
-description: Create or extend a Mentra automated testing routine with readable English steps, saved actions verified during authoring, and deterministic replay through the shared framework. To request existing coverage on a PR, use select-pr-routines instead.
+description: Create, edit or port a Mentra automated testing routine with English requirements, saved actions verified during authoring, and deterministic replay through the shared framework. To request existing coverage on a PR, use select-pr-routines instead.
 ---
 
-# Create or extend a routine
+# Create, edit or port a routine
 
-Routines must be **fast, reliable and easy to make**. Keep English instructions,
-observable expectations and executable actions together. Work in the private
+Routines should be **fast, reliable and easy to create or edit**. Keep English
+instructions, observable expectations and executable actions together in the private
 [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing).
+Read its [porting guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-PORTING.md)
+when migrating old coverage; it links the deleted source and explains what to reuse.
 
-## Find the working source
+## Put the behavior in the routine
 
-Inspect the selected revision's `routines/`, `framework/` and README. Choose the
-closest routine for the required platform and glasses. A published video from a
-previous framework is useful evidence, not proof that its adapter still exists.
-Reuse proven steps and drivers; replace old orchestration wrappers rather than
-copying their leases, backups or retry systems.
+Inspect the selected harness revision's `routines/`, `framework/` and controller
+schemas. Start from the closest routine for the platform and glasses. Preserve
+proven product actions and fixtures; replace old executor/ownership wrappers.
 
 | Location | Responsibility |
 | --- | --- |
-| `routines/<id>/routine.ts` | `createRoutine(state)` factory, English metadata, product setup/steps/teardown |
-| `framework/index.ts` | Routine-facing `defineRoutine`, `step` and types |
-| `framework/drivers/` | Shared platform actions and observations |
-| `framework/platforms/` | Platform app installation, entry, recording and lane adapter |
-| `framework/glasses/` | Shared glasses-model software and hardware lifecycle |
-| `framework/authoring/` | Held setup, editable saved steps and teardown |
-| `orchestration/` | Job submission, reservation, ownership, repair and publication |
+| `routines/<id>/routine.ts` | Export `createRoutine(state)` using `defineRoutine` and `step`; English metadata, product setup/steps/teardown and fixtures |
+| `framework/drivers/` | Shared interactions and recorded observations; Mac uses `executeMacStep(action, context)` with the supplied `context.ui` |
+| `framework/platforms/`, `framework/glasses/` | Composed platform and glasses lifecycle providers |
+| `framework/authoring/`, `orchestration/` | Held sessions, jobs, lane ownership, repair and publication |
 
-Adding a routine must not require routine-name branches elsewhere, worker edits,
-manual catalog entries or hardcoded videos. Enrollment discovers current definitions;
-the catalog uses acknowledged passing runs with recordings. Its nightly toggle
-controls future suite membership.
+Declare platforms, entry (`home` or `sign-in`), account, requirements, fixtures,
+stable ordered step IDs, `glasses.models` and required capability IDs in `requires`.
+Keep device identities, secrets and tool paths in private lane configuration.
+Confirm the installed lane offers those capabilities. Add a reusable provider once
+for missing shared functionality; do not hide host setup in product steps.
+No routine-name branches in workers, dispatch or catalog, and no hardcoded videos:
+source enrollment discovers definitions; published passing runs supply examples.
 
-Declare ID, title, purpose, platforms, entry (`home` or `sign-in`), account,
-English requirements, fixtures and named steps. Declare acceptable glasses models
-with `glasses.models` and required capability IDs with `requires`. Physical device
-IDs, account secrets and tool paths belong to private lane configuration. Verify
-that the installed adapter supports those declarations before touching hardware.
-Do not advertise an injected/mock provider as a physical capability.
+## Hold one session and verify the saved actions
 
-## Use the controller for live iteration
-
-Use the provisioned `MENTRA_TEST_CLIENT_CONFIG`. The CLI calls the same controller
-API as its MCP tools:
+Use the provisioned `MENTRA_TEST_CLIENT_CONFIG` and the current `mentra-test` CLI:
 
 ```sh
 bun run mentra-test lane request @reservation.json
-bun run mentra-test lane wait @reservation-wait.json
-bun run mentra-test author start @author-start.json
-bun run mentra-test author inspect @author-inspect.json
-bun run mentra-test author command @author-command.json
-bun run mentra-test lane give-back @reservation-return.json
+bun run mentra-test lane wait @wait.json
+bun run mentra-test author start @start.json
+bun run mentra-test author command @command.json
+bun run mentra-test author inspect @scope.json
+bun run mentra-test lane give-back @give-back.json
 ```
 
-Read `contracts/controller.ts` and `orchestration/controller.ts` for request schemas. Reservation
-request contains `requestId`, `laneId`, `purpose` and `admissionExpiresAt`. Wait for
-`granted`; keep its `reservationId` and `generation`. Author start contains those
-two fields plus a unique `operationId`, exact selected `build` and canonical `sourcePath`.
-Default start runs framework and routine setup, verifies entry and starts the original
-recorder. The merged framework supports held Mac and Android authoring and optional
-`setupMode: "manual"` for individual original lifecycle actions. Confirm the
-installed controller revision and strict schemas before using those inputs.
-Inspect operation receipts; ready in manual mode is not completed setup.
+Read harness `contracts/controller.ts` and `orchestration/controller.ts` for exact
+schemas and admission helpers; do not invent IDs or use an old standalone author CLI.
+Reservation request supplies `requestId`, `laneId`, `purpose`, `admissionExpiresAt`.
+Wait with `{reservationId, afterGeneration, timeoutMs}` until granted. Start supplies
+the granted `reservationId`, `generation`, a stable `operationId`, selected `build`
+and canonical editable `sourcePath`. Default start performs setup and starts the
+original recorder; optional `setupMode: "manual"` exposes individual lifecycle actions.
 
-Example author-start and command envelopes are:
+Each author command carries `{reservationId, generation, operationId, command}`.
+Nested commands are `steps`, `snapshot`, `step` with `stepId`, `actions` with
+`phase: "setup" | "test" | "teardown"`, `action` with setup/teardown `phase` and
+`actionId`, or `finish`. Use returned IDs and inspect `{reservationId, generation}`
+until each operation settles; a settled operation may contain a failed assertion.
+Use a new operation ID for each action; a lost response reuses its original ID to
+reconcile that call. Direct driver calls must retain the supplied owned context.
 
-```json
-{"reservationId":"...","generation":1,"operationId":"...","build":{},"sourcePath":"/absolute/routines/example/routine.ts"}
-{"reservationId":"...","generation":1,"operationId":"...","command":{"op":"step","stepId":"STEP-ID"}}
-```
-
-Use the selected build object, not the empty placeholder above. The nested
-`command` is one of:
-
-```json
-{"op":"steps"}
-{"op":"actions","phase":"setup"}
-{"op":"action","phase":"setup","actionId":"ACTION-ID"}
-{"op":"snapshot"}
-{"op":"step","stepId":"STEP-ID"}
-{"op":"step","stepId":"STEP-ID","retryReason":"Corrected the saved action after observing its prerequisite"}
-{"op":"finish"}
-```
-
-`author inspect` takes `{reservationId, generation}` and returns `operations`
-with the original operation IDs, states and receipts. `lane inspect` and `lane cancel`
-take `{id: reservationId}`. `lane wait` takes
-`{reservationId, afterGeneration, timeoutMs}`; `lane give-back` takes
-`{reservationId, generation, requestId}`. Use the schemas above for bounds.
-
-Inspect each operation's receipt for its outcome. A settled receipt may contain
-a failed assertion. `finish` performs routine and shared teardown; give the lane
-back afterward for ordinary boundary cleanup. Reuse the same operation ID only
-to inspect/reconcile the same call, not to repeat a mutation. These APIs retain
-one owner and recorder; do not launch a competing setup or cleanup process.
-
-The generic held interface is not proof every platform adapter implements it.
-Check the installed lane adapter's authoring support and exact revision. If an
-operation is missing, implement it once through this interface, not through a
-routine-specific shell runner. Direct subsystem calls still require the current
-grant and durable controller callbacks.
-When the installed granular API is available, `actions` accepts `setup`, `test` and
-`teardown`, returning the original inventory, outcomes and current eligibility.
-`action` accepts `setup` or `teardown` and an `actionId`; it executes an eligible original lifecycle action. Use the returned
-IDs rather than inventing them. Setup permits the next unmet action; product steps
-require completed setup. Completed actions cannot be repeated; a failed retry
-requires the existing settled authorization and may include `retryReason`.
-`finish` executes the remaining original teardown once, respecting recorder and
-resource dependencies. Mac/Android lifecycle snapshots can run before recording
-or after recorder cleanup when the actual UI is available. Check the installed
-Mini revision before relying on these source APIs.
-
-## Build the replay while traversing the whole flow
-
-Use computer use to discover the next control. Save the action with its assertion,
-then execute that saved step through the same driver/helper replay will call.
-Continue through the **entire English flow** in the held session. A manual click
-that worked does not qualify a different action written afterward.
-
-When a step fails, inspect the actual error, fix that action and retry it from the
-smallest safe prerequisite state. Do not reinstall, redo setup or replay the
-completed prefix for an ordinary authoring mistake. Do not blindly repeat an
-uncertain submission or firmware write. Keep source edits compatible with the
-held routine identity, inputs and lifecycle. Existing product-step implementations
-in the owned `routine.ts` can reload under the granular source loader with the
-original step IDs/order while the original setup/teardown callbacks, metadata and
-private inputs remain in use.
-Changed lifecycle action IDs/text/callback text, requirements, fixtures, platforms,
-entry/account or glasses declarations are refused; finish before changing them or
-the step inventory. Source bytes must remain stable across loading. Shared helpers,
-platform drivers and native tools remain loaded or pinned, so changing them needs
-a fresh session and the corresponding installed source/tool revision. The older
-published hook-bearing loader freezes the complete source file; if that version is
-installed, finish and update the source rather than pretending the new boundary exists.
-
-Use the simplest supported interaction that works. Prefer stable selectors where
-useful, but do not replace verified working actions merely to adopt a different
-selector technique. Assert outcomes, not successful clicks. If the app control is
-broken, fix the app rather than accumulating input workarounds.
-
-File actual bugs through the existing incident path and continue independent
-remaining checks. Keep failed expectations failed. Flag genuinely impossible or
-human-only requirements to the user with the exact step and proposed alternative.
-An authoring action failure does not warrant framework state repair unless its
-actual machine/resource state is unusable. After terminal cleanup, the old app UI
-cannot resume: separately authorized reproduction reserves fresh ownership, runs
-setup once and executes the saved prerequisites needed for the failed action.
-Within a valid held session, keep the original grant/recorder and completed prefix.
+Declare the complete flow before starting. Use computer use to discover controls,
+save each action and assertion, then execute that saved action through the same
+driver/helper replay will use. Traverse the **whole English flow** this way: a manual
+click does not prove a different script written afterward. Prefer the simplest
+supported interaction that works; verify outcomes rather than successful clicks.
+On a settled step failure, inspect the actual error, edit that existing action and
+retry with a concrete `retryReason` from its current safe prerequisite state. Keep
+the same owner, recorder and passing prefix; do not reinstall or restart setup for
+an ordinary authoring mistake. Do not repeat an uncertain submission/firmware write.
+The held loader preserves `createRoutine(state)` state and original lifecycle while
+reloading existing product steps. Changing step IDs/order, lifecycle callbacks or
+metadata requires finishing the session first. Shared helper/native changes require
+the updated installed revision and a fresh session. Fix a broken app control rather
+than accumulating alternate input or focus algorithms.
+Flag actual bugs and impossible/human-only requirements with the exact failed step.
+Routine code does not repair the harness. Finish runs the original teardown; then
+give back with `{reservationId, generation, requestId}` for ordinary boundary cleanup.
 
 ## Shared lifecycle and modified miniapps
 
-The framework installs the exact selected Mentra App, signs in if requested and
-establishes entry. Installed providers own applicable glasses software and declared
-fixtures; check actual support, since generic fixture loading and physical glasses
-integration may still be unavailable. Recording begins after shared preparations
-and routine setup. Routine setup/teardown own only
-product fixtures and behavior. Shared teardown settles recording, restores declared
-changed glasses state, uninstalls/stops the owned app and cleans acquired resources.
-Routine code must not repair the harness or depend on the previous routine's state.
+Shared providers install the selected Mentra App, establish requested account/entry,
+prepare applicable glasses/fixtures, record, settle resources and uninstall the owned
+app. Routine setup/teardown own only product-specific effects. Backend fixtures need
+their own exact owned-ID cleanup; uninstall does not delete cloud data. Cleanup must
+not wait for a product effect that failed to be created.
+To try a modified miniapp, build/pack it in its source repo, then from MentraOS run
+`bun scripts/load-authoring-miniapp.mjs <packed.zip> --mac` (set `MENTRA_MAC_APP`)
+or `--android <phone-serial>`. The installed app needs existing Super Mode and miniapp
+permissions. Keep the temporary server until loading completes, verify the changed
+saved step, then stop it. See the [miniapp CLI guide](../../../sdk/miniapp-cli/README.md#try-a-packed-miniapp-during-routine-authoring).
 
-To try a modified external miniapp in the held app, build/pack it in its source repo,
-then use `bun scripts/load-authoring-miniapp.mjs <packed.zip> --mac` (set
-`MENTRA_MAC_APP` to the installed app) or `--android <phone-serial>` from MentraOS.
-This needs the existing Super Mode, install-and-open handler and granted miniapp
-permissions. Keep the temporary server alive until loading completes, verify the
-changed saved step in the current session, then stop it. See the
-[CLI guide](../../../sdk/miniapp-cli/README.md#try-a-packed-miniapp-during-routine-authoring).
+## Replay and publish
 
-## Submit the completed routine and publish its result
-
-After the whole saved flow has worked during authoring, replay that **same flow**
-without AI through ordinary setup/test/teardown:
+After the full saved flow works, commit/enroll its exact source and replay the **same
+actions** through normal setup/test/teardown:
 
 ```sh
 bun run mentra-test source enroll @source-enrollment.json
 bun run mentra-test run submit @run-request.json
-bun run mentra-test run dispatch-once @accepted-local-request.json
-bun run mentra-test run inspect @accepted-local-request.json
+bun run mentra-test run dispatch-once '{"id":"ACCEPTED_LOCAL_REQUEST_ID"}'
+bun run mentra-test run inspect '{"id":"ACCEPTED_LOCAL_REQUEST_ID"}'
 ```
 
-Source enrollment uses the exact committed definition/revision and digest. Local
-submission needs a fresh admission identity; inspect the installed schemas/helpers
-rather than inventing request IDs or flags. One-shot dispatch starts an accepted
-local job while automatic dispatch stays paused. Admin/CI uses the same orchestration.
-For `dispatch-once` and `inspect`, the file contains `{"id":"accepted-local-id"}`;
-do not pass the complete acceptance receipt.
-
-Verify the actual assertions, teardown and recording. Root coordinator owns hosted
-Admin/playback checks when Mini authoring agents lack the signed-in browser. Report
-exact source/build/platform, run URL, recording, timings and cleanup/publication.
-Source tests and partial sections are not a physical passing run. Do not prescribe
-repeated qualifications: replay again only for changed code or an unresolved failure.
-
-The controller uploads frozen evidence/diagnostics through the existing result and
-incident attachment paths and disposes owned payloads after acknowledgement.
-Publication retries do not rerun hardware. Preserve native Codex/Claude histories
-and shared tools; remove disposable authoring/fixer checkouts when no task needs them.
-Run focused checks for meaningful changed behavior. Apply the user's PR timing and
-[codex-pr-review](../codex-pr-review/SKILL.md); use
-[select-pr-routines](../select-pr-routines/SKILL.md) for relevant PR coverage labels.
+Use `enrollRoutine`/platform enrollment and `localAdmissionId` helpers for source
+provenance and local admission. Ordinary replay stops at its first failed product
+step, preserves remaining steps as `not-run` and still tears down; other runs stay
+independent. Preserve the original error if cleanup/publication also fails.
+Completion needs passing assertions, teardown, acknowledged evidence and working
+recording/step seeking. The coordinator owns deployed Admin/playback verification.
+Report exact source/build/platform, result URL, recording and timings. Do not add
+repeated qualification runs without changed code or unresolved failures.
+`run retry-publication` retries delivery without hardware replay. Dispose owned local
+payloads after acknowledgement; preserve shared tools and native Codex/Claude history.
+Use focused checks and [codex-pr-review](../codex-pr-review/SKILL.md) for the PR;
+[select-pr-routines](../select-pr-routines/SKILL.md) selects relevant coverage labels.
