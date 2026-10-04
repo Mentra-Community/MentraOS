@@ -86,7 +86,7 @@ export class TestAssetService {
       }
       const storage = this.storageFactory();
       // Unique keys mean a racing/failed upload can never replace a committed object.
-      const segment = (id: string) => Buffer.from(id).toString("base64url");
+      const segment = (id: string) => createHash("sha256").update(id).digest("hex");
       const storageKey = `test-runs/${segment(runId)}/${segment(assetId)}/${randomUUID()}`;
       try {
         await storage.putFile({ key: storageKey, path, contentType: asset.contentType });
