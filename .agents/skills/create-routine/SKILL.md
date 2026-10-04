@@ -58,11 +58,9 @@ request contains `requestId`, `laneId`, `purpose` and `admissionExpiresAt`. Wait
 `granted`; keep its `reservationId` and `generation`. Author start contains those
 two fields plus a unique `operationId`, exact selected `build` and canonical `sourcePath`.
 Default start runs framework and routine setup, verifies entry and starts the original
-recorder. The agreed granular API adds optional `setupMode: "manual"` for individual original
-setup actions. Published Harness [58098e1](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58098e1/framework/authoring/session.ts)
-has only complete setup, test steps and complete teardown. Granular integration has
-source tests but awaits a published implementation revision; confirm installed
-schemas before using the conditional commands below.
+recorder. The merged framework supports held Mac and Android authoring and optional
+`setupMode: "manual"` for individual original lifecycle actions. Confirm the
+installed controller revision and strict schemas before using those inputs.
 Inspect operation receipts; ready in manual mode is not completed setup.
 
 Example author-start and command envelopes are:
