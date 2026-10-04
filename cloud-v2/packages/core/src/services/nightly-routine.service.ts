@@ -236,10 +236,11 @@ export class NightlyRoutineService {
   async complete(occurrenceId: string) {
     const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId);
     if (completed) return completed;
-    const completionAt = this.now(), cancellationAt = new Date(completionAt).toISOString();
-    const deadlineReached = completionAt >= Date.parse(plan.startedAt) + 3 * 3600_000;
-    if (deadlineReached) {
+    const deadline = Date.parse(plan.startedAt) + 3 * 3600_000;
+    let deadlineReached = this.now() >= deadline;
+    const cancelAtDeadline = async () => {
       // Cancellation custody cannot depend on a result service being available.
+      const cancellationAt = new Date(this.now()).toISOString();
       const eligible = plan.members.filter(member => member.input);
       const cancellations = await Promise.allSettled(eligible.map(member =>
         this.requests.cancel(member.requestId, cancellationAt, "Nightly occurrence reached its completion boundary.")));
@@ -248,8 +249,14 @@ export class NightlyRoutineService {
       });
       if (cancellations.some(result => result.status === "rejected"))
         throw new TestRunError(503, "Nightly deadline cancellation is unavailable; retry this occurrence completion.");
-    }
+    };
+    if (deadlineReached) await cancelAtDeadline();
     const detail = await this.snapshot(plan);
+    // Reads may cross the deadline. Finish cancellation custody before returning or freezing their snapshot.
+    if (!deadlineReached && this.now() >= deadline) {
+      deadlineReached = true;
+      await cancelAtDeadline();
+    }
     if (detail.status === "running" && !deadlineReached) return detail;
     const finishedAt = new Date(this.now()).toISOString();
     // The occurrence receipt is the only frozen verdict. Admin derives its suite projection from it.

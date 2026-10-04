@@ -53,7 +53,7 @@ test("later admission rejection preserves earlier selectors and attempts subsequ
     }})
   assert.deepEqual(attempts, fixtures.map(f => f.definition.id))
   assert.deepEqual(result.outcomes.map(outcome => outcome.status), ["accepted", "failed", "accepted"])
-  const retained = JSON.parse(JSON.stringify({requestIds: result.requests.map(request => request.requestId), outcomes: result.outcomes}))
+  const retained = JSON.parse(JSON.stringify({requestIds: result.requestIds, outcomes: result.outcomes}))
   assert.equal(retained.requestIds.length, 2); assert.equal(retained.outcomes[1].retryable, false)
   assert.throws(() => assertRoutineRequestOutcomes(retained.outcomes), error => error instanceof AggregateError && /second.rejected.*Required recorder/.test(error.message))
   assert.doesNotThrow(() => assertRoutineRequestOutcomes(result.outcomes.filter(outcome => outcome.status !== "failed")))
@@ -62,10 +62,29 @@ test("later admission rejection preserves earlier selectors and attempts subsequ
 test("request workflow retains accepted selectors before reporting member failures, including failed summary", async () => {
   const {readFile} = await import("node:fs/promises")
   const workflow = await readFile(new URL("../workflows/request-e2e-routine.yml", import.meta.url), "utf8")
-  assert.match(workflow, /JSON\.stringify\(\{requestIds: result\.requests\.map\(request => request\.requestId\), outcomes: result\.outcomes\}\)/)
+  assert.match(workflow, /JSON\.stringify\(\{requestIds: result\.requestIds, outcomes: result\.outcomes\}\)/)
   assert.equal((workflow.match(/if: always\(\) && steps\.queue\.outputs\.persisted == 'true'/g) ?? []).length, 2)
   assert.ok(workflow.indexOf("actions/upload-artifact@v4") < workflow.indexOf("Report independent member admission failures"))
   assert.ok(workflow.indexOf("core.setOutput('persisted', 'true')") < workflow.indexOf("core.summary"))
+})
+
+test("manual response loss retains accepted acknowledgements or durable uncertain selectors before outcome failure", async () => {
+  for (const lookupStatus of [200, 503, 404]) {
+    const f = routineFixture({channel: "dev"}), plan = planForDefinition({routineId: f.definition.id, platform: "ios-on-mac"}, f.source)
+    const result = await createRoutineRequests({context, token: "fixture", routine: f.definition.id, platform: "ios-on-mac", source: f.source,
+      fetchImpl: async (url, init) => {
+        if (url.endsWith("/routine-catalog")) return f.fetchImpl(url, init)
+        if (init.method === "POST") throw new Error("lost after commit")
+        return lookupStatus === 200 ? Response.json({...f.detail, request: {...f.request, requestId: plan.requestId}})
+          : new Response(null, {status: lookupStatus})
+      }})
+    const retained = JSON.parse(JSON.stringify({requestIds: result.requestIds, outcomes: result.outcomes}))
+    assert.deepEqual(retained.requestIds, [plan.requestId])
+    assert.equal(result.requests.length, lookupStatus === 200 ? 1 : 0)
+    assert.equal(result.outcomes[0].status, lookupStatus === 200 ? "accepted" : "uncertain")
+    if (lookupStatus === 200) assert.doesNotThrow(() => assertRoutineRequestOutcomes(retained.outcomes))
+    else assert.throws(() => assertRoutineRequestOutcomes(retained.outcomes), /admission failed/)
+  }
 })
 
 test("stored admission outcomes bound API reasons and do not copy raw source-provider failures", async () => {

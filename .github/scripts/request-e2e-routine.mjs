@@ -1,4 +1,4 @@
-import {routineApi, routineLabelIds, selectedCatalog, exactSource, stableRequestId, ensure, positive} from "./routine-api.mjs"
+import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, exactSource, stableRequestId, ensure, positive} from "./routine-api.mjs"
 import {ANDROID_PUBLICATION_STEP} from "./pr-android-artifacts.mjs"
 
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
@@ -97,17 +97,13 @@ export async function createRoutineRequests({github, context, token, routine, pl
   const explicit = context.eventName === "workflow_dispatch"
   ensure(explicit ? context.ref === "refs/heads/dev" : context.eventName === "pull_request_target", "Requests require trusted workflow metadata")
   const catalog = await routineApi({token, operation: "catalog", fetchImpl})
-  const requests = [], pending = [], outcomes = []
+  const requests = [], requestIds = [], pending = [], outcomes = []
   const dispatch = async (definition, selected) => {
     const plan = planForDefinition(definition, selected)
-    try {
-      const request = await routineApi({token, operation: "dispatch", request: plan, fetchImpl})
-      requests.push(request)
-      outcomes.push({routineId: definition.routineId, platform: definition.platform, requestId: request.requestId, status: "accepted"})
-    } catch (error) {
-      outcomes.push({routineId: definition.routineId, platform: definition.platform, requestId: plan.requestId,
-        status: "failed", reason: String(error.message ?? "Routine API admission failed").replace(/[\r\n]/g, " ").slice(0, 600), retryable: error.retryable === true})
-    }
+    const {request, ...outcome} = await submitRoutineRequest({token, request: plan, fetchImpl})
+    if (request) requests.push(request)
+    if (outcome.status === "accepted" || outcome.status === "uncertain") requestIds.push(plan.requestId)
+    outcomes.push(outcome)
   }
   if (explicit) {
     const selected = exactSource(source)
@@ -115,11 +111,11 @@ export async function createRoutineRequests({github, context, token, routine, pl
     const definitions = selectedCatalog(catalog, [routine], platform)
     ensure(platform && definitions.length === 1, "An explicit request requires an enrolled routine and platform")
     await dispatch(definitions[0], selected)
-    return {requests, pending, outcomes}
+    return {requests, requestIds, pending, outcomes}
   }
   const pr = await authenticatedPr(github, context, number)
   const ids = routineLabelIds(pr)
-  if (!ids.length) return {requests, pending, outcomes}
+  if (!ids.length) return {requests, requestIds, pending, outcomes}
   const definitions = selectedCatalog(catalog, ids), sources = new Map()
   for (const definition of definitions) {
     try {
@@ -137,12 +133,12 @@ export async function createRoutineRequests({github, context, token, routine, pl
         reason: "Current PR app publication could not be authenticated", retryable: error.retryable === true})
     }
   }
-  return {requests, pending, outcomes}
+  return {requests, requestIds, pending, outcomes}
 }
 
-/** Call only after accepted selectors and all member outcomes have been retained. */
+/** Call only after accepted/uncertain selectors and all member outcomes have been retained. */
 export function assertRoutineRequestOutcomes(outcomes) {
-  const failures = outcomes.filter(outcome => outcome.status === "failed")
+  const failures = outcomes.filter(outcome => outcome.status === "failed" || outcome.status === "uncertain")
   if (failures.length) throw new AggregateError(failures.map(outcome => new Error(`${outcome.routineId}/${outcome.platform}: ${outcome.reason}`)),
     `Routine request admission failed for ${failures.length} member(s): ${failures.map(outcome => `${outcome.routineId}/${outcome.platform}: ${outcome.reason}`).join("; ")}`)
 }

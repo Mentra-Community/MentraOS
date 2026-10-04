@@ -42,7 +42,7 @@ function fixture(initial = [row("a-new-routine", "android"), row("different.rout
     {async cancel(id) {completionEvents.push("cancel:" + id); cancelled.push(id); if (id === cancelFailId) throw new TestRunError(503, "Cancellation storage unavailable."); return null;}, async get(id) {if (requestErrors.has(id)) throw requestErrors.get(id)!; return requestRows.get(id) ?? null;}, async submit(requestId, hostId, input) {if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input}); requestRows.set(requestId, {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}); return {} as any;}},
     repository ?? {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
     () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
-    {async detail(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
+    {async detail(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
     () => clock);
   return {service, admitted, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
@@ -70,6 +70,22 @@ test("one failed admission does not suppress neighboring members and retries the
   expect(retry.admissions.map(row => row.admitted)).toEqual([false, true]);
   state.failId = undefined;
   expect((await state.service.start(occurrence)).admissions.every(row => row.admitted)).toBe(true);
+});
+
+test("evidence reads crossing the deadline cancel every member before freezing the occurrence", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  state.clock = now + 3 * 3600_000 - 1;
+  state.resultRows.set(plan.members[0]!.requestId, () => {
+    state.clock = now + 3 * 3600_000;
+    throw new TestRunError(503, "Evidence unavailable across deadline.");
+  });
+  const result = await state.service.complete(occurrence.occurrenceId);
+  expect(state.cancelled).toEqual(plan.members.map(member => member.requestId));
+  expect(result).toMatchObject({status: "incomplete", finishedAt: new Date(now + 3 * 3600_000).toISOString()});
+  expect(result.members[0]!.unavailableReason).toContain("Evidence unavailable");
+  expect(result.members.every(member => member.status === "incomplete")).toBe(true);
+  expect(await state.service.complete(occurrence.occurrenceId)).toEqual(result);
+  expect(state.cancelled).toHaveLength(2);
 });
 test("a missing platform binding retains its expected member and never creates a false all-pass", async () => {
   let plan: NightlyPlan | null = null;

@@ -1,4 +1,4 @@
-import {routineApi, routineLabelIds, selectedCatalog, ensure, positive} from "./routine-api.mjs"
+import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, ensure, positive} from "./routine-api.mjs"
 import {authenticatedPr, publicationForPlatform, platformProducer, planForDefinition} from "./request-e2e-routine.mjs"
 import {COORDINATED_WORKFLOW} from "./coordinated-routine-request.mjs"
 
@@ -33,5 +33,5 @@ export async function planDeviceDispatches({github, context, token, fetchImpl = 
 }
 
 export async function dispatchRoutinePlan({token, plan, fetchImpl = fetch}) {
-  return routineApi({token, operation: "dispatch", request: plan, fetchImpl})
+  return submitRoutineRequest({token, request: plan, fetchImpl})
 }

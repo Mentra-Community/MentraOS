@@ -87,16 +87,43 @@ export async function routineApi({token, operation, request, requestId = request
     let message; try {message = (await response.json()).message} catch {}
     const error = new Error(`Routine API ${operation} failed (${response.status})${typeof message === "string" ? `: ${message.slice(0, 500)}` : ""}`)
     error.retryable = response.status >= 500 || response.status === 429
+    error.httpStatus = response.status
     throw error
   }
-  const result = await response.json()
+  let result
+  try {result = await response.json()}
+  catch {const error = new Error(`Routine API ${operation} response body is unavailable`); error.retryable = true; throw error}
   if (operation === "catalog") {selectedCatalog(result); return result}
   const acknowledged = operation === "dispatch" ? result : result.request
   ensure(acknowledged?.requestId === requestId && routineId(acknowledged.input?.routineId) && platforms.includes(acknowledged.input.platform),
     "Routine API acknowledgement differs from its request")
-  if (operation === "dispatch") ensure(acknowledged.input.routineId === request.routineId && acknowledged.input.platform === request.platform &&
+  if (request) ensure(acknowledged.input.routineId === request.routineId && acknowledged.input.platform === request.platform &&
     isDeepStrictEqual(acknowledged.input.build?.source, exactSource(request.source)), "Routine API changed the original routine or source")
   return result
+}
+
+const admissionReason = error => String(error?.message ?? "Routine API admission failed").replace(/[\r\n]/g, " ").slice(0, 600)
+
+/** One POST; a lost acknowledgement is reconciled by the same ID, never another admission identity. */
+export async function submitRoutineRequest({token, request, fetchImpl = fetch}) {
+  const identity = {routineId: request.routineId, platform: request.platform, requestId: request.requestId}
+  let dispatchError
+  try {
+    const acknowledged = await routineApi({token, operation: "dispatch", request, fetchImpl})
+    return {...identity, status: "accepted", request: acknowledged}
+  } catch (error) {
+    if (!error.retryable) return {...identity, status: "failed", reason: admissionReason(error), retryable: false}
+    dispatchError = error
+  }
+  try {
+    const detail = await routineApi({token, operation: "detail", request, fetchImpl})
+    return {...identity, status: "accepted", request: detail.request}
+  } catch (error) {
+    // HTTP failure/absence cannot settle a possibly committed POST. A contradictory acknowledgement is a hard refusal.
+    if (!error.retryable && error.httpStatus === undefined)
+      return {...identity, status: "failed", reason: admissionReason(error), retryable: false}
+    return {...identity, status: "uncertain", reason: admissionReason(new Error(`${admissionReason(dispatchError)}; reconciliation: ${admissionReason(error)}`)), retryable: true}
+  }
 }
 
 /** Refuse a report whose request, source, host or frozen definition is inconsistent. */
@@ -129,7 +156,7 @@ export async function waitForRoutineResult({token, requestId, fetchImpl = fetch,
   for (;;) {
     let detail
     try {detail = await routineApi({token, operation: "detail", requestId, fetchImpl})}
-    catch (error) {if (!error.retryable) throw error}
+    catch (error) {if (!error.retryable && error.httpStatus !== 404) throw error}
     if (detail) {
       const row = boundRoutineResult(detail)
       if (row && (!detail.result || detail.result.uploadsComplete || now() >= deadline)) return detail

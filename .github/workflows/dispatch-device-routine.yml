@@ -55,6 +55,7 @@ jobs:
         with:
           node-version: '20'
       - name: Queue frozen Core request
+        id: queue
         uses: actions/github-script@v7
         env:
           TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
@@ -63,12 +64,28 @@ jobs:
           retries: 0
           script: |
             const {dispatchRoutinePlan} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
-            const request = await dispatchRoutinePlan({token: process.env.TEST_RUN_INGEST_TOKEN, plan: JSON.parse(process.env.DISPATCH_PLAN)});
             const {writeFile} = await import('node:fs/promises');
-            await writeFile('routine-dispatch.json', JSON.stringify({requestIds: [request.requestId]}));
-            await core.summary.addRaw(`Core request: ${request.requestId}`).write();
+            const plan = JSON.parse(process.env.DISPATCH_PLAN);
+            await writeFile('routine-dispatch.json', JSON.stringify({requestIds: [plan.requestId], outcomes: [{
+              routineId: plan.routineId, platform: plan.platform, requestId: plan.requestId, status: 'uncertain', reason: 'Dispatch outcome is not yet known',
+            }]}));
+            core.setOutput('persisted', 'true');
+            const {request, ...outcome} = await dispatchRoutinePlan({token: process.env.TEST_RUN_INGEST_TOKEN, plan});
+            await writeFile('routine-dispatch.json', JSON.stringify({requestIds: outcome.status === 'failed' ? [] : [plan.requestId], outcomes: [outcome]}));
+            await core.summary.addRaw(`Core request ${plan.requestId}: ${outcome.status}`).write();
       - uses: actions/upload-artifact@v4
+        if: always() && steps.queue.outputs.persisted == 'true'
         with:
           name: routine-dispatch-${{ matrix.requestId }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: routine-dispatch.json
           if-no-files-found: error
+      - name: Report admission outcome after retaining selectors
+        if: always() && steps.queue.outputs.persisted == 'true'
+        uses: actions/github-script@v7
+        with:
+          retries: 0
+          script: |
+            const {assertRoutineRequestOutcomes} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
+            const {readFile} = await import('node:fs/promises');
+            const {outcomes} = JSON.parse(await readFile('routine-dispatch.json', 'utf8'));
+            assertRoutineRequestOutcomes(outcomes);

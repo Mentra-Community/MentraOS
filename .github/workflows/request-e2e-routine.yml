@@ -74,7 +74,7 @@ jobs:
             const result = await createRoutineRequests({github, context, token: process.env.TEST_RUN_INGEST_TOKEN,
               routine: process.env.REQUEST_ROUTINE, platform: process.env.REQUEST_PLATFORM, source, number: Number(process.env.REQUEST_PR)});
             const {writeFile} = await import('node:fs/promises');
-            await writeFile('routine-dispatches.json', JSON.stringify({requestIds: result.requests.map(request => request.requestId), outcomes: result.outcomes}));
+            await writeFile('routine-dispatches.json', JSON.stringify({requestIds: result.requestIds, outcomes: result.outcomes}));
             core.setOutput('persisted', 'true');
             await core.summary.addRaw(JSON.stringify(result)).write();
       - uses: actions/upload-artifact@v4

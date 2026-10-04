@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {routineApi, routineLabelIds, selectedCatalog, stableRequestId, boundRoutineResult, waitForRoutineResult, requestInputDigest} from "./routine-api.mjs"
+import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, stableRequestId, boundRoutineResult, waitForRoutineResult, requestInputDigest} from "./routine-api.mjs"
 import {routineFixture, terminalRoutineFixture} from "./routine-api-fixture.mjs"
 
 test("unfamiliar routine labels resolve only through enrolled definitions", () => {
@@ -26,6 +26,59 @@ test("API authenticates source-bound acknowledgements and reports explicit admis
     fetchImpl: async () => Response.json({...f.request, input: {...f.request.input, routineId: "another-check"}})}), /changed the original/)
   await assert.rejects(routineApi({token: "fixture", operation: "dispatch", request,
     fetchImpl: async () => Response.json({message: "Host lacks required recorder"}, {status: 409})}), /Host lacks required recorder/)
+})
+test("response loss after Core admission reconciles the original stable selector, including partial JSON", async () => {
+  for (const partialBody of [false, true]) {
+    const f = routineFixture(), request = {requestId: f.request.requestId, routineId: f.definition.id, platform: f.request.input.platform, source: f.source}, calls = []
+    const result = await submitRoutineRequest({token: "fixture", request, fetchImpl: async (url, init) => {
+      calls.push(init.method)
+      if (init.method === "POST") {
+        if (partialBody) return new Response('{"requestId":', {status: 200})
+        throw new Error("response lost after commit")
+      }
+      assert.ok(url.endsWith(`/${request.requestId}`))
+      return Response.json(f.detail)
+    }})
+    assert.equal(result.status, "accepted"); assert.deepEqual(result.request, f.request)
+    assert.deepEqual(calls, ["POST", "GET"])
+  }
+})
+test("unknown dispatch acceptance retains the stable ID and bounded diagnostics without another POST", async () => {
+  for (const status of [503, 404]) {
+    const f = routineFixture(), request = {requestId: f.request.requestId, routineId: f.definition.id, platform: f.request.input.platform, source: f.source}, calls = []
+    const result = await submitRoutineRequest({token: "fixture", request, fetchImpl: async (url, init) => {
+      calls.push(init.method)
+      if (init.method === "POST") throw new Error("response lost")
+      return Response.json({message: `lookup unavailable\n${"x".repeat(1000)}`}, {status})
+    }})
+    assert.equal(result.status, "uncertain"); assert.equal(result.requestId, request.requestId); assert.equal(result.request, undefined)
+    assert.ok(result.reason.length <= 600); assert.doesNotMatch(result.reason, /[\r\n]/)
+    assert.deepEqual(calls, ["POST", "GET"])
+  }
+})
+test("dispatch reconciliation refuses changed source, routine, platform or ID without falsely accepting it", async () => {
+  for (const mutate of [d => {d.request.input.build.source.publicationAttempt++}, d => {d.request.input.routineId = "changed"},
+    d => {d.request.input.platform = "android"}, d => {d.request.requestId = "changed"}]) {
+    const f = routineFixture(), detail = structuredClone(f.detail), request = {requestId: f.request.requestId, routineId: f.definition.id, platform: f.request.input.platform, source: f.source}
+    mutate(detail)
+    const result = await submitRoutineRequest({token: "fixture", request, fetchImpl: async (url, init) => {
+      if (init.method === "POST") throw new Error("response lost")
+      return Response.json(detail)
+    }})
+    assert.equal(result.status, "failed"); assert.equal(result.retryable, false); assert.equal(result.request, undefined)
+  }
+  const f = routineFixture(), request = {requestId: f.request.requestId, routineId: f.definition.id, platform: f.request.input.platform, source: f.source}, calls = []
+  const result = await submitRoutineRequest({token: "fixture", request, fetchImpl: async (url, init) => {
+    calls.push(init.method)
+    return Response.json({...f.request, input: {...f.request.input, build: {...f.build, source: {...f.source, buildRunId: 999}}}})
+  }})
+  assert.equal(result.status, "failed"); assert.deepEqual(calls, ["POST"])
+})
+test("retained uncertain selectors use the normal result wait across temporary absence", async () => {
+  const f = routineFixture(); let calls = 0, now = 0
+  const detail = await waitForRoutineResult({token: "fixture", requestId: f.request.requestId, now: () => now, timeoutMilliseconds: 60_000,
+    sleep: async ms => {now += ms}, fetchImpl: async () => ++calls === 1 ? new Response(null, {status: 404}) : Response.json(f.detail)})
+  assert.deepEqual(detail, f.detail); assert.equal(calls, 2)
 })
 test("result refuses mismatched source, host and definition; upload/evidence failure never passes", () => {
   const f = routineFixture()

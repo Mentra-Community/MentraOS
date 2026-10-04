@@ -16,9 +16,33 @@ test("completed app publication routes all current labels through Core and retai
   const plans = await planDeviceDispatches(options)
   assert.equal(plans.length, 1); assert.equal(plans[0].routineId, f.definition.id)
   assert.deepEqual(plans[0].source, f.source)
-  await dispatchRoutinePlan({token: "fixture", plan: plans[0], fetchImpl: f.fetchImpl})
+  assert.equal((await dispatchRoutinePlan({token: "fixture", plan: plans[0], fetchImpl: f.fetchImpl})).status, "accepted")
   assert.equal(f.calls.at(-1).options.method, "POST")
   f.pr.head.sha = "d".repeat(40); assert.deepEqual(await planDeviceDispatches(options), [])
+})
+
+test("callback dispatch uses bound stable-ID reconciliation and keeps uncertain outcomes honest", async () => {
+  for (const lookupStatus of [200, 503, 404]) {
+    const f = fixture(), [plan] = await planDeviceDispatches({...f, token: "fixture"}), calls = []
+    const outcome = await dispatchRoutinePlan({token: "fixture", plan, fetchImpl: async (url, init) => {
+      calls.push(init.method)
+      if (init.method === "POST") throw new Error("lost after commit")
+      return lookupStatus === 200 ? Response.json({...f.detail, request: {...f.request, requestId: plan.requestId}})
+        : new Response(null, {status: lookupStatus})
+    }})
+    assert.equal(outcome.requestId, plan.requestId); assert.equal(outcome.status, lookupStatus === 200 ? "accepted" : "uncertain")
+    assert.equal(Boolean(outcome.request), lookupStatus === 200); assert.deepEqual(calls, ["POST", "GET"])
+  }
+})
+
+test("callback workflow writes intent before dispatch and uploads before reporting failed outcomes", async () => {
+  const {readFile} = await import("node:fs/promises")
+  const workflow = await readFile(new URL("../workflows/dispatch-device-routine.yml", import.meta.url), "utf8")
+  assert.ok(workflow.indexOf("await writeFile('routine-dispatch.json'") < workflow.indexOf("await dispatchRoutinePlan"))
+  assert.ok(workflow.indexOf("core.setOutput('persisted', 'true')") < workflow.indexOf("await dispatchRoutinePlan"))
+  assert.match(workflow, /requestIds: outcome\.status === 'failed' \? \[\] : \[plan\.requestId\]/)
+  assert.equal((workflow.match(/if: always\(\) && steps\.queue\.outputs\.persisted == 'true'/g) ?? []).length, 2)
+  assert.ok(workflow.indexOf("actions/upload-artifact@v4") < workflow.indexOf("Report admission outcome after retaining selectors"))
 })
 test("coordinated publication alone requests no coverage; unknown selected label refuses", async () => {
   const f = fixture(), options = {...f, token: "fixture"}
