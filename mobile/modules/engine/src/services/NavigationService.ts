@@ -100,6 +100,7 @@ class NavigationService {
   private routeListeners = new Set<NavRouteListener>()
   private subs: Array<{remove: () => void}> = []
   private state: NavState = "idle"
+  private sessionGeneration = 0
   /** Last emitted route — replayed to late subscribers so they get the
    *  current geometry immediately. */
   private lastRoute: NavRoute | null = null
@@ -192,6 +193,7 @@ class NavigationService {
       missedTurnRerouteMeters?: number
     },
   ): Promise<{ok: boolean; error?: string}> {
+    const generation = ++this.sessionGeneration
     console.log(
       `${LOG_TAG}: start ${coords.lat},${coords.lng} sim=${options?.simulate ?? false} speed=${options?.speedMultiplier ?? 5}`,
     )
@@ -208,6 +210,7 @@ class NavigationService {
       avoid: options?.avoid,
       missedTurnRerouteMeters: options?.missedTurnRerouteMeters,
     })
+    if (generation !== this.sessionGeneration) return result
     if (!result.ok) {
       console.warn(`${LOG_TAG}: start failed — ${result.error}`)
       this.state = "idle"
@@ -246,8 +249,10 @@ class NavigationService {
   }
 
   public async stop(): Promise<{ok: boolean; error?: string}> {
+    const generation = ++this.sessionGeneration
     console.log(`${LOG_TAG}: stop`)
     const result = await CrustModule.stopNavigation()
+    if (generation !== this.sessionGeneration) return result
     this.state = "idle"
     this.lastRoute = null
     this.lastManeuver = null

@@ -1097,13 +1097,7 @@ class LocalMiniappRuntime {
     // so a crashed/closed miniapp doesn't leak partial files or file handles.
     this.blobStore.onAppGone(packageName)
 
-    // Detach the per-app nav event forwarder but leave the native nav session
-    // running. The user may have just closed the mini-app UI and will reopen
-    // it; stopping the session here would kill an active trip mid-route.
-    // Navigation is only stopped when the mini-app explicitly calls
-    // navigation.stop() or when the trip arrives/errors naturally.
-    // (See NavigationHandlers — activeNavApps stays populated so a reconnect
-    // can reattach listeners and resume.)
+    // Release native navigation and its GPS request when the miniapp stops.
     this.navigationHandlers.onDisconnect(packageName)
 
     // Recompute heading subscription — if this app was the last subscriber,
