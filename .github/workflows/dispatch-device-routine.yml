@@ -1,19 +1,15 @@
 name: Dispatch requested device routine
-run-name: Device request callback ${{ github.event.workflow_run.id }} / attempt ${{ github.event.workflow_run.run_attempt }}
-
 on:
   workflow_run:
-    workflows: [Mobile App iOS Build, Mobile App Android Build, Coordinated Mentra Release, Request device routine]
+    workflows: [Mobile App iOS Build, Mobile App Android Build, Coordinated Mentra Release]
     types: [completed]
-
 permissions:
   contents: read
-  actions: write
+  actions: read
   pull-requests: read
-
 jobs:
   resolve:
-    if: github.repository == 'Mentra-Community/MentraOS'
+    if: github.repository == 'Mentra-Community/MentraOS' && vars.DEVICE_ROUTINE_PR_DISPATCH_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -26,37 +22,30 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-      - name: Resolve completed producer from GitHub metadata
+          node-version: '20'
+      - name: Resolve exact publications and enrolled routine selections
         id: plan
         uses: actions/github-script@v7
+        env:
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
         with:
           retries: 0
           script: |
             const {planDeviceDispatches} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
-            const plans = await planDeviceDispatches({github, context, callbackAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), nightlyOnly: true});
-            const work = plans.filter(plan => ['request', 'dispatch'].includes(plan.mode));
-            core.setOutput('matrix', JSON.stringify({include: work}));
-            core.setOutput('has-work', String(work.length > 0));
-            for (const plan of plans.filter(plan => !work.includes(plan))) {
-              await core.summary.addRaw(JSON.stringify(plan)).write();
-              if (plan.mode === 'reconcile') core.setFailed(plan.reason);
-            }
-
+            const plans = await planDeviceDispatches({github, context, token: process.env.TEST_RUN_INGEST_TOKEN});
+            core.setOutput('matrix', JSON.stringify({include: plans}));
+            core.setOutput('has-work', String(plans.length > 0));
   dispatch:
     needs: resolve
     if: needs.resolve.outputs.has-work == 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
-    # This name binds the retained send step to one routine/build/publication.
-    name: ${{ matrix.mode == 'request' && (matrix.channel && format('Request coordinated source {0} / routine {1}', matrix.sourceRunId, matrix.routine) || format('Request publication {0} / attempt {1} / routine {2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine)) || 'Dispatch trusted request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
-      group: ${{ matrix.mode == 'request' && (matrix.channel && format('device-coordinated-{0}-{1}', matrix.sourceRunId, matrix.routine) || format('device-publication-{0}-{1}-{2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine)) || format('device-request-callback-{0}-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt) }}
+      group: routine-dispatch-${{ matrix.requestId }}
       cancel-in-progress: false
-    # Never delete callback history to authorize replay; unknown sends need reconciliation.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,61 +53,39 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-      # An App-created request can emit the workflow_run callback that queues it.
-      - name: Create scoped public request token
-        if: matrix.mode == 'request'
-        id: request-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ vars.TEST_RUN_GITHUB_APP_ID }}
-          private-key: ${{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY }}
-          owner: Mentra-Community
-          repositories: MentraOS
-          permission-actions: write
-      - name: Send trusted publication request
-        if: matrix.mode == 'request'
+          node-version: '20'
+      - name: Queue frozen Core request
+        id: queue
         uses: actions/github-script@v7
         env:
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
           DISPATCH_PLAN: ${{ toJSON(matrix) }}
-        with:
-          github-token: ${{ steps.request-token.outputs.token }}
-          retries: 0
-          script: |
-            const {requestAfterPublication} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
-            const result = await requestAfterPublication({github, context, plan: JSON.parse(process.env.DISPATCH_PLAN)});
-            await core.summary.addRaw(JSON.stringify(result)).write();
-            if (result.status !== 'request-dispatched') core.setFailed(result.reason);
-      - name: Download the exact immutable request artifact
-        if: matrix.mode == 'dispatch'
-        uses: actions/download-artifact@v4
-        with:
-          artifact-ids: ${{ matrix.artifactId }}
-          run-id: ${{ matrix.runId }}
-          github-token: ${{ github.token }}
-          path: routine-request
-          merge-multiple: true
-      - name: Create scoped private dispatch token
-        if: matrix.mode == 'dispatch'
-        id: dispatch-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ vars.TEST_RUN_GITHUB_APP_ID }}
-          private-key: ${{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY }}
-          owner: Mentra-Community
-          repositories: Mentra-Automated-Testing
-          permission-actions: write
-      - name: Queue the ready request in the private repository
-        if: matrix.mode == 'dispatch'
-        uses: actions/github-script@v7
-        env:
-          DISPATCH_PLAN: ${{ toJSON(matrix) }}
-          TEST_RUN_DISPATCH_TOKEN: ${{ steps.dispatch-token.outputs.token }}
         with:
           retries: 0
           script: |
-            const {dispatchReadyRequest, readRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
-            const privateGithub = process.env.TEST_RUN_DISPATCH_TOKEN ? new github.constructor({auth: process.env.TEST_RUN_DISPATCH_TOKEN, retry: {enabled: false}}) : null;
-            const result = await dispatchReadyRequest({github, privateGithub, context,
-              plan: JSON.parse(process.env.DISPATCH_PLAN), bytes: await readRequest('routine-request/request.json'), nightlyOnly: true});
-            await core.summary.addRaw(JSON.stringify(result)).write();
+            const {dispatchRoutinePlan} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
+            const {writeFile} = await import('node:fs/promises');
+            const plan = JSON.parse(process.env.DISPATCH_PLAN);
+            await writeFile('routine-dispatch.json', JSON.stringify({requestIds: [plan.requestId], outcomes: [{
+              routineId: plan.routineId, platform: plan.platform, requestId: plan.requestId, status: 'uncertain', reason: 'Dispatch outcome is not yet known',
+            }]}));
+            core.setOutput('persisted', 'true');
+            const {request, ...outcome} = await dispatchRoutinePlan({token: process.env.TEST_RUN_INGEST_TOKEN, plan});
+            await writeFile('routine-dispatch.json', JSON.stringify({requestIds: outcome.status === 'failed' ? [] : [plan.requestId], outcomes: [outcome]}));
+            await core.summary.addRaw(`Core request ${plan.requestId}: ${outcome.status}`).write();
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.queue.outputs.persisted == 'true'
+        with:
+          name: routine-dispatch-${{ matrix.requestId }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: routine-dispatch.json
+          if-no-files-found: error
+      - name: Report admission outcome after retaining selectors
+        if: always() && steps.queue.outputs.persisted == 'true'
+        uses: actions/github-script@v7
+        with:
+          retries: 0
+          script: |
+            const {assertRoutineRequestOutcomes} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
+            const {readFile} = await import('node:fs/promises');
+            const {outcomes} = JSON.parse(await readFile('routine-dispatch.json', 'utf8'));
+            assertRoutineRequestOutcomes(outcomes);

@@ -19,3 +19,12 @@ export const frameworkRequestInputSchema = z.object({
   resources: z.array(z.object({id: frameworkIdentitySchema, kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]), laneId: frameworkIdentitySchema.optional()}).strict()),
   policy: z.record(z.unknown()).optional(),
 }).passthrough();
+
+/** Admin delivery projection; it describes a request without claiming execution evidence. */
+export interface FrameworkRequestDisplay {
+  requestId: string; hostId: string; inputSha256: string; routineId: string; platform: string;
+  definitionRevision: string; laneId: string; build: z.infer<typeof frameworkBuildSchema>;
+  state: "queued" | "accepted" | "running" | "terminal"; terminalStatus?: string;
+  createdAt?: string; acceptedAt?: string; reason?: string; reasonAt?: string;
+  cancellationRequested?: boolean; cancellationAcknowledged?: boolean;
+}

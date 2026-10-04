@@ -1,153 +1,95 @@
 name: Request device routine
-
 on:
   workflow_dispatch:
     inputs:
-      pr:
-        description: Current PR number (PR channel only)
-        type: number
-        required: false
+      routine:
+        description: Enrolled routine ID from the Core catalog
+        type: string
+        required: true
+      platform:
+        description: Enrolled execution platform
+        type: choice
+        options: [android, ios-on-mac]
+        required: true
       channel:
-        description: Build source channel
+        description: Exact build source channel
         type: choice
         options: [pr, dev, staging]
-        default: pr
         required: true
-      routine:
-        description: Requested device routine
-        type: choice
-        # No catalogued routine is planned now; a planned routine refuses until its automatic worker is
-        # registered in device-routines.mjs; only then add its label to the pull_request routing below.
-        options: [day1-ota, no-glasses, no-glasses-android, mentra-call, account-miniapps, connected-glasses, livestreamer, captions-phone, notes-phone, ota-roundtrip-android, open-close-miniapps]
-        default: day1-ota
-        required: true
-      request_origin:
-        description: Explicit dispatch, current PR label, or successful coordinated build
-        type: choice
-        options: [workflow-dispatch, pr-label, successful-build]
-        default: workflow-dispatch
-        required: true
+      pr:
+        description: PR number for the PR channel
+        type: number
+        required: false
       source_build_run_id:
-        description: Optional exact source build run ID (requires publication attempt)
+        description: Exact published app or coordinated build run
         type: string
-        required: false
+        required: true
       source_publication_attempt:
-        description: Optional exact publication attempt (requires source build run ID)
+        description: Original publication attempt
         type: string
-        required: false
-      expected_harness_sha:
-        description: Optional exact merged private harness revision for verification (internal)
-        type: string
-        required: false
-      original_request_run_id:
-        description: Optional original request run ID to replay exactly (PR channel, explicit workflow_dispatch only)
-        type: string
-        required: false
-      nightly_run_id:
-        description: Optional authenticated nightly sequence run ID (internal)
-        type: string
-        required: false
-      nightly_run_attempt:
-        description: Optional authenticated nightly sequence attempt (internal)
-        type: string
-        required: false
-      nightly_mode:
-        description: Internal nightly dispatch mode; legacy sequences retain their original route
-        type: choice
-        options: [ordered, independent]
-        default: ordered
-        required: false
-  # Bootstrap before this workflow reaches dev. The private worker must allowlist
-  # this exact workflow/checkout SHA; a PR label alone never authorizes hardware.
-  pull_request:
+        required: true
+  pull_request_target:
     types: [opened, reopened, synchronize, labeled]
-
 permissions:
   contents: read
   actions: read
   pull-requests: read
-
 jobs:
   request:
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:no-glasses-android') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:mentra-call') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:captions-phone') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:notes-phone') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:livestreamer') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:connected-glasses') ||
-        contains(github.event.pull_request.labels.*.name, 'routine:account-miniapps')))
+      github.repository == 'Mentra-Community/MentraOS' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
+       (github.event_name == 'pull_request_target' && vars.DEVICE_ROUTINE_PR_DISPATCH_ENABLED == 'true' && github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: dev
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-      - name: Verify public request selection
-        run: node --test .github/scripts/harness-verification.test.mjs .github/scripts/request-e2e-routine.test.mjs .github/scripts/coordinated-routine-request.test.mjs .github/scripts/original-routine-request.test.mjs
-      - name: Resolve the selected build without running PR application code
+          node-version: '20'
+      - name: Queue selected enrolled routines through Core
+        id: queue
         uses: actions/github-script@v7
         env:
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
+          REQUEST_ROUTINE: ${{ inputs.routine }}
+          REQUEST_PLATFORM: ${{ inputs.platform }}
+          REQUEST_CHANNEL: ${{ inputs.channel }}
           REQUEST_PR: ${{ inputs.pr || github.event.pull_request.number }}
-          REQUEST_CHANNEL: ${{ inputs.channel || 'pr' }}
-          REQUEST_ROUTINE: ${{ inputs.routine || (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') && 'day1-ota' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') && 'no-glasses' || contains(github.event.pull_request.labels.*.name, 'routine:no-glasses-android') && 'no-glasses-android' || contains(github.event.pull_request.labels.*.name, 'routine:captions-phone') && 'captions-phone' || contains(github.event.pull_request.labels.*.name, 'routine:notes-phone') && 'notes-phone' || contains(github.event.pull_request.labels.*.name, 'routine:livestreamer') && 'livestreamer' || contains(github.event.pull_request.labels.*.name, 'routine:connected-glasses') && 'connected-glasses' || contains(github.event.pull_request.labels.*.name, 'routine:account-miniapps') && 'account-miniapps' || 'mentra-call') }}
-          REQUEST_ORIGIN: ${{ inputs.request_origin || 'pr-label' }}
           SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
           SOURCE_PUBLICATION_ATTEMPT: ${{ inputs.source_publication_attempt }}
-          ORIGINAL_REQUEST_RUN_ID: ${{ inputs.original_request_run_id }}
-          EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
-          NIGHTLY_RUN_ID: ${{ inputs.nightly_run_id }}
-          NIGHTLY_RUN_ATTEMPT: ${{ inputs.nightly_run_attempt }}
-          NIGHTLY_MODE: ${{ inputs.nightly_mode || 'ordered' }}
         with:
+          retries: 0
           script: |
-            const {createRoutineRequest, writeRoutineRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
-            const request = await createRoutineRequest({
-              github, context, number: Number(process.env.REQUEST_PR), channel: process.env.REQUEST_CHANNEL, routine: process.env.REQUEST_ROUTINE,
-              requestOrigin: process.env.REQUEST_ORIGIN,
-              sourceBuildRunId: process.env.SOURCE_BUILD_RUN_ID,
-              sourcePublicationAttempt: process.env.SOURCE_PUBLICATION_ATTEMPT,
-              originalRequestRunId: process.env.ORIGINAL_REQUEST_RUN_ID,
-              nightlyRunId: process.env.NIGHTLY_RUN_ID, nightlyRunAttempt: process.env.NIGHTLY_RUN_ATTEMPT, nightlyMode: process.env.NIGHTLY_MODE,
-              source: {
-                runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
-                ref: process.env.GITHUB_REF,
-                sha: process.env.GITHUB_SHA,
-                workflowSha: process.env.GITHUB_WORKFLOW_SHA,
-                workflowRef: process.env.GITHUB_WORKFLOW_REF,
-                actor: process.env.GITHUB_ACTOR,
-              },
-            });
-            await writeRoutineRequest('routine-request', request);
-            if (process.env.EXPECTED_HARNESS_SHA) {
-              const {writeHarnessVerification} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/harness-verification.mjs`);
-              await writeHarnessVerification(process.env.EXPECTED_HARNESS_SHA);
-            }
-            await core.summary.addHeading(`Device routine: ${request.status}`)
-              .addRaw(`${request.reason}\n\nNo device test ran in this workflow.\n`).write();
-      - name: Publish immutable request generation
-        uses: actions/upload-artifact@v4
+            const {createRoutineRequests} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
+            const source = context.eventName === 'workflow_dispatch' ? {
+              channel: process.env.REQUEST_CHANNEL,
+              buildRunId: Number(process.env.SOURCE_BUILD_RUN_ID),
+              publicationAttempt: Number(process.env.SOURCE_PUBLICATION_ATTEMPT),
+              ...(process.env.REQUEST_CHANNEL === 'pr' ? {prNumber: Number(process.env.REQUEST_PR)} : {}),
+            } : undefined;
+            const result = await createRoutineRequests({github, context, token: process.env.TEST_RUN_INGEST_TOKEN,
+              routine: process.env.REQUEST_ROUTINE, platform: process.env.REQUEST_PLATFORM, source, number: Number(process.env.REQUEST_PR)});
+            const {writeFile} = await import('node:fs/promises');
+            await writeFile('routine-dispatches.json', JSON.stringify({requestIds: result.requestIds, outcomes: result.outcomes}));
+            core.setOutput('persisted', 'true');
+            await core.summary.addRaw(JSON.stringify(result)).write();
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.queue.outputs.persisted == 'true'
         with:
-          name: mentra-routine-request-${{ github.run_id }}-${{ github.run_attempt }}
-          path: routine-request/request.json
+          name: routine-dispatches-${{ github.run_id }}-${{ github.run_attempt }}
+          path: routine-dispatches.json
           if-no-files-found: error
-          retention-days: 14
-
-      # Fixed step name is also authenticated by both dispatch readers. Do not rename without updating them.
-      - name: Publish harness verification constraint
-        if: inputs.expected_harness_sha != ''
-        uses: actions/upload-artifact@v4
+      - name: Report independent member admission failures
+        if: always() && steps.queue.outputs.persisted == 'true'
+        uses: actions/github-script@v7
         with:
-          name: mentra-harness-verification-${{ github.run_id }}-${{ github.run_attempt }}
-          path: harness-verification/constraint.json
-          if-no-files-found: error
-          retention-days: 14
+          retries: 0
+          script: |
+            const {assertRoutineRequestOutcomes} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/request-e2e-routine.mjs`);
+            const {readFile} = await import('node:fs/promises');
+            const {outcomes} = JSON.parse(await readFile('routine-dispatches.json', 'utf8'));
+            assertRoutineRequestOutcomes(outcomes);

@@ -4,8 +4,10 @@ import {createLogger} from "@mentra/cloud-shared";
 const logger = createLogger("core").child({component: "suite-timestamp-projection"});
 const schema = new Schema({
   suiteId: {type: String, required: true, unique: true},
-  payload: {type: Schema.Types.Mixed, required: true},
-  payloadSha256: {type: String, required: true},
+  payload: {type: Schema.Types.Mixed},
+  payloadSha256: {type: String},
+  nightlyPlan: {type: Schema.Types.Mixed, immutable: true},
+  nightlyResult: {type: Schema.Types.Mixed},
   startedAt: {type: Date},
   finalizingAt: {type: String},
   finishedAt: {type: String},

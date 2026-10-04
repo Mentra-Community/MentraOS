@@ -1,25 +1,49 @@
 name: Publish routine results
-run-name: Release routine status ${{ inputs.worker_run_id }} / attempt ${{ inputs.worker_attempt }}
+run-name: Routine result ${{ inputs.request_id || github.event.workflow_run.id }}
 on:
   workflow_dispatch:
     inputs:
-      worker_run_id:
-        description: Completed private worker run (selector only)
+      request_id:
+        description: Core accepted request ID
         type: string
         required: true
-      worker_attempt:
-        description: Exact private worker attempt
-        type: string
-        required: true
+  workflow_run:
+    workflows: [Request device routine, Dispatch requested device routine]
+    types: [completed]
 permissions:
   contents: read
   actions: read
 jobs:
-  resolve:
-    if: github.repository == 'Mentra-Community/MentraOS' && github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
-    environment: build-notifications
+  fanout:
+    if: github.repository == 'Mentra-Community/MentraOS' && github.ref == 'refs/heads/dev' && github.event_name == 'workflow_run'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      actions: write
     timeout-minutes: 10
+    concurrency:
+      group: routine-result-fanout-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Start independent publication for every authenticated request
+        uses: actions/github-script@v7
+        with:
+          retries: 0
+          script: |
+            const {resolveRoutineSelectors, launchRoutineResultNotifications} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-routine-slack.mjs`);
+            const requestIds = await resolveRoutineSelectors({github, context});
+            const launches = await launchRoutineResultNotifications({github, context, requestIds});
+            for (const launch of launches) core.notice(`${launch.requestId}: ${launch.status}`);
+  resolve:
+    if: github.repository == 'Mentra-Community/MentraOS' && github.ref == 'refs/heads/dev' && github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: build-notifications
+    timeout-minutes: 190
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has-work: ${{ steps.plan.outputs.has-work }}
@@ -33,37 +57,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Create scoped private receipt reader
-        id: reader
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ vars.TEST_RUN_GITHUB_APP_ID }}
-          private-key: ${{ secrets.TEST_RUN_GITHUB_APP_PRIVATE_KEY }}
-          owner: Mentra-Community
-          repositories: Mentra-Automated-Testing
-          permission-actions: read
       - name: Authenticate result and exact release message
         id: plan
         uses: actions/github-script@v7
         env:
-          PRIVATE_TOKEN: ${{ steps.reader.outputs.token }}
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
           SLACK_BUILDS_BOT_TOKEN: ${{ secrets.SLACK_BUILDS_BOT_TOKEN }}
           SLACK_DEV_BUILDS_CHANNEL_ID: ${{ vars.SLACK_DEV_BUILDS_CHANNEL_ID }}
           SLACK_STAGING_BUILDS_CHANNEL_ID: ${{ vars.SLACK_STAGING_BUILDS_CHANNEL_ID }}
-          WORKER_RUN_ID: ${{ inputs.worker_run_id }}
-          WORKER_ATTEMPT: ${{ inputs.worker_attempt }}
+          REQUEST_ID: ${{ inputs.request_id }}
         with:
           script: |
-            const {resolveRoutineNotifications} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-routine-slack.mjs`);
+            const {resolveRoutineSelectors, resolveRoutineResults, resolveRoutineNotifications} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-routine-slack.mjs`);
             const {resolvePrRoutineResults} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-routine-result.mjs`);
             const {slackDestination} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-slack-message.mjs`);
-            const privateGithub = new github.constructor({auth: process.env.PRIVATE_TOKEN});
-            const prPlans = await resolvePrRoutineResults({github, privateGithub, context,
-              workerRunId: Number(process.env.WORKER_RUN_ID), workerAttempt: Number(process.env.WORKER_ATTEMPT)});
+            const requestIds = await resolveRoutineSelectors({github, context, requestId: process.env.REQUEST_ID});
+            const details = await resolveRoutineResults({token: process.env.TEST_RUN_INGEST_TOKEN, requestIds});
+            const prPlans = resolvePrRoutineResults({details});
             core.setOutput('pr-matrix', JSON.stringify({include: prPlans}));
             core.setOutput('has-pr-work', String(prPlans.length > 0));
-            const plans = process.env.SLACK_BUILDS_BOT_TOKEN ? await resolveRoutineNotifications({github, privateGithub, context,
-              workerRunId: Number(process.env.WORKER_RUN_ID), workerAttempt: Number(process.env.WORKER_ATTEMPT)}) : [];
+            const plans = process.env.SLACK_BUILDS_BOT_TOKEN ? await resolveRoutineNotifications({github, context, details}) : [];
             const ready = plans.filter(plan => slackDestination({...process.env, BRANCH: plan.notification.build.channel}));
             core.setOutput('matrix', JSON.stringify({include: ready}));
             core.setOutput('has-work', String(ready.length > 0));
@@ -71,7 +84,7 @@ jobs:
   comment:
     needs: resolve
     if: needs.resolve.outputs.has-pr-work == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       pull-requests: write
@@ -79,9 +92,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.resolve.outputs.pr-matrix) }}
-    name: PR ${{ matrix.pr }} / worker ${{ matrix.privateRunId }} / attempt ${{ matrix.privateAttempt }} / ${{ matrix.routineId }}
+    name: PR ${{ matrix.pr }} / request ${{ matrix.requestId }}
     concurrency:
-      group: pr-routine-result-${{ matrix.privateRunId }}-${{ matrix.privateAttempt }}-${{ matrix.routineId }}
+      group: pr-routine-result-${{ matrix.requestId }}
       cancel-in-progress: false
       queue: max
     steps:
@@ -105,8 +118,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
-    name: Update release ${{ matrix.notification.build.runId }} / post ${{ matrix.notification.producer.runAttempt }} / ${{ matrix.row.routineId }}
-    runs-on: ubuntu-latest
+    name: Update release ${{ matrix.notification.build.runId }} / post ${{ matrix.notification.producer.runAttempt }} / ${{ matrix.row.requestId }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: build-notifications
     timeout-minutes: 10
     concurrency:
@@ -133,7 +146,7 @@ jobs:
       - name: Retain desired message before updating Slack
         uses: actions/upload-artifact@v4
         with:
-          name: release-slack-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.row.routineId }}
+          name: release-slack-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.row.requestId }}
           path: slack-update-state.json
           if-no-files-found: error
       - name: Update original Slack message

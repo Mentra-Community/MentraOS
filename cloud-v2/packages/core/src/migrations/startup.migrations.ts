@@ -15,6 +15,7 @@ import { OemModel } from "../models/oem.model";
 import {TestHostStateModel} from "../models/test-host-state.model";
 import {TestRequestModel} from "../models/test-request.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
+import {RoutinePreferenceModel} from "../models/routine-preference.model";
 import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
 import { reconcileTestRunIndexes, TestAssetModel, TestRunModel } from "../models/test-run.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
@@ -56,6 +57,7 @@ export async function runStartupMigrations(): Promise<void> {
   await TestHostStateModel.createIndexes();
   await TestRequestModel.createIndexes();
   await RoutineDefinitionModel.createIndexes();
+  await RoutinePreferenceModel.createIndexes();
   await reconcileTestRunIndexes();
   await TestRunModel.createIndexes();
   await backfillTestSuiteStartedAt();

@@ -52,3 +52,10 @@ test("missing publication fails suite completeness without rewriting a member pa
  expect(result.outcome).toBe("failed");
  expect(result.failedRoutines).toEqual(["captions-phone"]);
 });
+
+test("a frozen definition revision must match before a run satisfies its member", () => {
+  const frozen = {...plan, members: plan.members.map(member => ({...member, definitionRevision: "c".repeat(40)}))};
+  const wrong = summarizeSuite(frozen, [{...run(0), definitionRevision: "d".repeat(40)}, {...run(1), definitionRevision: "c".repeat(40)}], "2026-10-01T11:03:00Z");
+  expect(wrong.passed).toBe(1);
+  expect(wrong.members[0]!.status).toBe("not-run");
+});
