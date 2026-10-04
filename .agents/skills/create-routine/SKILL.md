@@ -57,8 +57,13 @@ Read `contracts/controller.ts` and `orchestration/controller.ts` for request sch
 request contains `requestId`, `laneId`, `purpose` and `admissionExpiresAt`. Wait for
 `granted`; keep its `reservationId` and `generation`. Author start contains those
 two fields plus a unique `operationId`, exact selected `build` and canonical `sourcePath`.
-It runs framework and routine setup, verifies entry and starts the original recorder.
-Inspect until ready; an accepted call is not completed setup.
+Default start runs framework and routine setup, verifies entry and starts the original
+recorder. The agreed granular API adds optional `setupMode: "manual"` for individual original
+setup actions. Published Harness [58098e1](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/58098e1/framework/authoring/session.ts)
+has only complete setup, test steps and complete teardown. Granular integration has
+source tests but awaits a published implementation revision; confirm installed
+schemas before using the conditional commands below.
+Inspect operation receipts; ready in manual mode is not completed setup.
 
 Example author-start and command envelopes are:
 
@@ -72,6 +77,8 @@ Use the selected build object, not the empty placeholder above. The nested
 
 ```json
 {"op":"steps"}
+{"op":"actions","phase":"setup"}
+{"op":"action","phase":"setup","actionId":"ACTION-ID"}
 {"op":"snapshot"}
 {"op":"step","stepId":"STEP-ID"}
 {"op":"step","stepId":"STEP-ID","retryReason":"Corrected the saved action after observing its prerequisite"}
@@ -79,7 +86,8 @@ Use the selected build object, not the empty placeholder above. The nested
 ```
 
 `author inspect` takes `{reservationId, generation}` and returns `operations`
-with the original operation IDs, states and receipts. `lane wait` takes
+with the original operation IDs, states and receipts. `lane inspect` and `lane cancel`
+take `{id: reservationId}`. `lane wait` takes
 `{reservationId, afterGeneration, timeoutMs}`; `lane give-back` takes
 `{reservationId, generation, requestId}`. Use the schemas above for bounds.
 
@@ -94,8 +102,16 @@ Check the installed lane adapter's authoring support and exact revision. If an
 operation is missing, implement it once through this interface, not through a
 routine-specific shell runner. Direct subsystem calls still require the current
 grant and durable controller callbacks.
-`start` runs the complete setup; `finish` runs the complete teardown. Individual
-product steps are available; independent setup/teardown action commands are not.
+When the installed granular API is available, `actions` accepts `setup`, `test` and
+`teardown`, returning the original inventory, outcomes and current eligibility.
+`action` accepts `setup` or `teardown` and an `actionId`; it executes an eligible original lifecycle action. Use the returned
+IDs rather than inventing them. Setup permits the next unmet action; product steps
+require completed setup. Completed actions cannot be repeated; a failed retry
+requires the existing settled authorization and may include `retryReason`.
+`finish` executes the remaining original teardown once, respecting recorder and
+resource dependencies. Mac/Android lifecycle snapshots can run before recording
+or after recorder cleanup when the actual UI is available. Check the installed
+Mini revision before relying on these source APIs.
 
 ## Build the replay while traversing the whole flow
 
@@ -108,11 +124,17 @@ When a step fails, inspect the actual error, fix that action and retry it from t
 smallest safe prerequisite state. Do not reinstall, redo setup or replay the
 completed prefix for an ordinary authoring mistake. Do not blindly repeat an
 uncertain submission or firmware write. Keep source edits compatible with the
-held routine identity, inputs and lifecycle; existing product-step implementations
-can reload in place for hook-free sources with the original step IDs. Sources
-with setup/teardown hooks currently freeze the whole source file; an edit is
-rejected. Fix that shared loading limitation when needed rather than disguising
-it with repeated setup. Inspect loading rules before changing step inventory.
+held routine identity, inputs and lifecycle. Existing product-step implementations
+in the owned `routine.ts` can reload under the granular source loader with the
+original step IDs/order while the original setup/teardown callbacks, metadata and
+private inputs remain in use.
+Changed lifecycle action IDs/text/callback text, requirements, fixtures, platforms,
+entry/account or glasses declarations are refused; finish before changing them or
+the step inventory. Source bytes must remain stable across loading. Shared helpers,
+platform drivers and native tools remain loaded or pinned, so changing them needs
+a fresh session and the corresponding installed source/tool revision. The older
+published hook-bearing loader freezes the complete source file; if that version is
+installed, finish and update the source rather than pretending the new boundary exists.
 
 Use the simplest supported interaction that works. Prefer stable selectors where
 useful, but do not replace verified working actions merely to adopt a different
@@ -123,7 +145,10 @@ File actual bugs through the existing incident path and continue independent
 remaining checks. Keep failed expectations failed. Flag genuinely impossible or
 human-only requirements to the user with the exact step and proposed alternative.
 An authoring action failure does not warrant framework state repair unless its
-actual machine/resource state is unusable.
+actual machine/resource state is unusable. After terminal cleanup, the old app UI
+cannot resume: separately authorized reproduction reserves fresh ownership, runs
+setup once and executes the saved prerequisites needed for the failed action.
+Within a valid held session, keep the original grant/recorder and completed prefix.
 
 ## Shared lifecycle and modified miniapps
 
