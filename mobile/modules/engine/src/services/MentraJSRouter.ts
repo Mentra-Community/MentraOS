@@ -325,6 +325,9 @@ export class MentraJSRouter {
         // `registerMiniapp` handler runs again.
         const sessionId = `${packageName}-${Date.now().toString(36)}`
         void this.crust.mentraJsDispatchToJs(packageName, {kind: "init", sessionId})
+        // A fresh session starts ui.bound=false; the mounted WebView will not
+        // refire its latched ready signal. Rebind without waiting ten seconds.
+        this.uiRouter?.notifyReopen(packageName)
         this.logger.log(`respawned ${packageName} after crash`)
       })()
     }, outcome.scheduleRespawnAfterMs)
