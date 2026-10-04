@@ -219,6 +219,7 @@ export class NightlyRoutineService {
   }
 
   private async snapshot(plan: NightlyPlan): Promise<NightlyResult> {
+    const settledUploads = new Set<string>();
     const members: NightlyResult["members"] = await Promise.all(plan.members.map(async member => {
       if (!member.input) return {...member, status: "incomplete", publicationComplete: false};
       try {
@@ -226,6 +227,7 @@ export class NightlyRoutineService {
         if (run.routineId !== member.routineId || run.platform !== member.platform || run.definitionRevision !== member.definitionRevision
           || run.hostId !== member.hostId || run.laneId !== member.input.laneId || requestInputDigest(run.build) !== requestInputDigest(member.input.build))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Result identity differs from the frozen request."};
+        if (result.uploadsComplete) settledUploads.add(member.requestId);
         return {...member, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete",
           runId: run.result.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
@@ -243,7 +245,9 @@ export class NightlyRoutineService {
         return {...member, status: "waiting", publicationComplete: false};
       }
     }));
-    const terminal = members.every(member => member.status === "incomplete" || member.status !== "waiting" && member.publicationComplete);
+    // A failed recording cannot become complete; acknowledged uploads still settle that member.
+    // Pass eligibility still requires complete evidence; terminality only requires upload settlement.
+    const terminal = members.every(member => member.status === "incomplete" || member.status !== "waiting" && settledUploads.has(member.requestId));
     const single = members.length === 1 ? members[0]! : undefined;
     let singleRequest;
     if (single?.input && !single.runId) {

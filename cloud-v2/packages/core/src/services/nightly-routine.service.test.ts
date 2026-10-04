@@ -117,6 +117,43 @@ test("result matching refuses changed artifact/source identity and terminal rece
   expect(final.resultUrl).not.toContain("testSuite=");
 });
 
+test("failed evidence settles only after captured uploads finish and freezes an honest failed suite", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  const [failed, healthy] = plan.members;
+  const failedResult = {...publishedResult(failed!, false), evidenceStatus: "failed"};
+  state.resultRows.set(failed!.requestId, failedResult);
+  state.resultRows.set(healthy!.requestId, publishedResult(healthy!, true));
+
+  state.clock = now + 2 * 60_000;
+  const pending = await state.service.complete(occurrence.occurrenceId);
+  expect(pending).toMatchObject({status: "running", passed: 1, expectedCount: 2});
+  expect(pending.finishedAt).toBeUndefined();
+  expect(pending.members[0]).toMatchObject({status: "pass", publicationComplete: false, runId: failed!.requestId});
+  expect(state.cancelled).toEqual([]);
+
+  failedResult.uploadsComplete = true;
+  state.clock = now + 3 * 60_000;
+  const finishedAt = new Date(now + 3 * 60_000).toISOString();
+  const terminal = await state.service.complete(occurrence.occurrenceId);
+  expect(terminal).toMatchObject({status: "failed", passed: 1, expectedCount: 2, finishedAt});
+  expect(terminal.members[0]).toMatchObject({status: "pass", publicationComplete: false, runId: failed!.requestId});
+  expect(terminal.members[1]).toMatchObject({status: "pass", publicationComplete: true});
+  expect(terminal.members.every(member => !("publicationSettled" in member))).toBe(true);
+
+  // Admin uses the same frozen receipt, including its failed routine and original execution verdict.
+  const stored = {payload: plan.suite, nightlyPlan: plan, nightlyResult: terminal};
+  const query = {read() {return this;}, readConcern() {return this;}, lean: async () => stored};
+  const find = spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any);
+  try {
+    expect(await new TestSuiteService().detail(plan.suiteId)).toMatchObject({outcome: "failed", passed: 1,
+      finishedAt, failedRoutines: [failed!.routineId]});
+    failedResult.evidenceStatus = "complete";
+    expect(await state.service.detail(occurrence.occurrenceId)).toEqual(terminal);
+    expect(await state.service.complete(occurrence.occurrenceId)).toEqual(terminal);
+    expect((await new TestSuiteService().detail(plan.suiteId)).outcome).toBe("failed");
+  } finally {find.mockRestore();}
+});
+
 test("concurrent freeze adopts the first durable occurrence and completion keeps the first receipt", async () => {
   const first = (await fixture().service.start(occurrence)).plan;
   const stored: any = {nightlyPlan: first};
