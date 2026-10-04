@@ -384,6 +384,14 @@ class NavigationService {
       }),
       CrustModule.addListener("onNavError", (data) => {
         console.log(`${LOG_TAG}: ← onNavError`, data?.message)
+        // Native startup errors terminate the trip. Invalidate a pending
+        // start result too, so it cannot restore the failed trip's snapshot.
+        this.sessionGeneration += 1
+        this.state = "idle"
+        this.lastRoute = null
+        this.lastManeuver = null
+        this.tripStops = []
+        this.tripMode = "driving"
         this.fanout({kind: "error", message: data.message})
       }),
       CrustModule.addListener("onNavLocation", (data) => {

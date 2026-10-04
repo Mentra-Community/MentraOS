@@ -197,6 +197,7 @@ export class NavigationHandlers {
       if (this.navListeners.get(packageName) !== sessionListener) return
       if (!result.ok) {
         this.activeNavApps.delete(packageName)
+        if (this.activeNavApps.size === 0) await navigation.stop()
       }
       this.sendResult(packageName, requestId, result.ok, result, undefined)
     } catch (err) {

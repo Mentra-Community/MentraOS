@@ -62,6 +62,35 @@ test("disconnect after a route error still releases native navigation", async ()
   expect(stop).toHaveBeenCalledTimes(1)
 })
 
+test("failed startup releases native navigation without waiting for disconnect", async () => {
+  pendingStart = Promise.resolve({ok: false})
+  await handlers.handleStart("maps", destination)
+  expect(stop).toHaveBeenCalledTimes(1)
+  expect(handlers.isTripActive("maps")).toBe(false)
+  expect(navigation.getSnapshot()).toBeNull()
+})
+
+test("native route error clears the trip snapshot", async () => {
+  await handlers.handleStart("maps", destination)
+  listeners.get("onNavError")?.({message: "route failed"})
+  expect(navigation.getState()).toBe("idle")
+  expect(navigation.getSnapshot()).toBeNull()
+})
+
+test("native error during startup cannot be overwritten by late success", async () => {
+  let resolveStart!: (result: {ok: boolean}) => void
+  pendingStart = new Promise((resolve) => {
+    resolveStart = resolve
+  })
+  const starting = handlers.handleStart("maps", destination)
+  listeners.get("onNavError")?.({message: "route failed"})
+  resolveStart({ok: true})
+  await starting
+  expect(navigation.getState()).toBe("idle")
+  expect(navigation.getSnapshot()).toBeNull()
+  expect(handlers.isTripActive("maps")).toBe(false)
+})
+
 test("disconnect during startup stops navigation and ignores late success", async () => {
   let resolveStart!: (result: {ok: boolean}) => void
   pendingStart = new Promise((resolve) => {
