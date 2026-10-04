@@ -33,6 +33,7 @@ export default function DebugSettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [landscapeEnabled, setLandscapeEnabled] = useSetting(SETTINGS.enable_landscape_web_views.key)
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [androidNotificationListenerEnabled, setAndroidNotificationListenerEnabled] = useSetting(
     SETTINGS.android_notification_listener_enabled.key,
@@ -84,6 +85,13 @@ export default function DebugSettingsScreen() {
                 subtitle="Emergency kill switch for Android notification capture"
                 value={androidNotificationListenerEnabled}
                 onValueChange={(value) => setAndroidNotificationListenerEnabled(value)}
+              />
+            )}
+            {Platform.OS === "android" && (
+              <ToggleSetting
+                label={translate("appearanceSettings:enableLandscape")}
+                onValueChange={(value) => setLandscapeEnabled(value)}
+                value={landscapeEnabled}
               />
             )}
             <IosMiniappSettings />

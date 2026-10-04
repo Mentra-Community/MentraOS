@@ -25,6 +25,7 @@ import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext
 import CoreStatusBar from "@/components/dev/CoreStatusBar"
 import {useShallow} from "zustand/shallow"
 import {useNavigationStore} from "@/stores/navigation"
+import {useAppOrientation} from "@/hooks/useAppOrientation"
 // JsStack imports commented out - were used for Android-specific navigation (currently disabled)
 // import {getAnimation, JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
 
@@ -157,15 +158,17 @@ export const AllProviders = withWrappers(
       })),
     )
     console.log("NAV: @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@", preventBack, forceGestureEnabled, animation)
+    const orientation = useAppOrientation()
     const screenOptions = useMemo(
       () => ({
         headerShown: false,
+        orientation,
         gestureEnabled: forceGestureEnabled || !preventBack,
         gestureDirection: "horizontal" as const,
         animation: convertToNativeAnimation(animation) as any,
         autoHideHomeIndicator: false,
       }),
-      [preventBack, forceGestureEnabled, animation],
+      [preventBack, forceGestureEnabled, animation, orientation],
     )
 
     return (
