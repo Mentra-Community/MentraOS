@@ -7,10 +7,11 @@ import {FrameworkResultService} from "./services/framework-result.service";
 test("Core listener streams recordings above 128 MiB while retaining the JSON limit", async () => {
   const size = 129 * 1024 * 1024;
   const token = "synthetic-listener-host-" + "x".repeat(32);
-  let uploaded = 0, hostSeen = "";
+  let uploaded = 0, hostSeen = "", assetSeen = "";
+  const assetId = "recording/" + "a".repeat(490);
   class Service extends FrameworkResultService {
     override async upload(_request: string, _asset: string, host: string, body: ReadableStream<Uint8Array> | null): Promise<any> {
-      hostSeen = host;
+      hostSeen = host; assetSeen = _asset;
       if (!body) throw new Error("Upload body missing");
       for await (const bytes of body) uploaded += bytes.byteLength;
       return {uploaded: true, size: uploaded};
@@ -27,11 +28,11 @@ test("Core listener streams recordings above 128 MiB while retaining the JSON li
       const bytes = chunk.subarray(0, Math.min(remaining, chunk.length));
       remaining -= bytes.length; controller.enqueue(bytes);
     }});
-    const response = await fetch(`http://127.0.0.1:${server.port}/api/internal/framework-results/request/assets/video`, {method: "PUT",
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/internal/framework-results/request/assets/${encodeURIComponent(assetId)}`, {method: "PUT",
       headers: {authorization: `Bearer ${token}`, "content-type": "video/mp4", "content-length": String(size)}, body});
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({uploaded: true, size});
-    expect(uploaded).toBe(size); expect(hostSeen).toBe("mini");
+    expect(uploaded).toBe(size); expect(hostSeen).toBe("mini"); expect(assetSeen).toBe(assetId);
     const jsonResponse = await fetch(`http://127.0.0.1:${server.port}/api/internal/framework-results`, {method: "POST",
       headers: {authorization: `Bearer ${token}`, "content-type": "application/json"},
       body: JSON.stringify({text: "x".repeat(1024 * 1024)})});

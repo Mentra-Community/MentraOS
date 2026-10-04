@@ -1,3 +1,4 @@
+import {frameworkAssetIdSchema} from "./types/framework-run.types";
 import {frameworkIdentitySchema} from "./types/framework-request.types";
 
 /** Only authenticated framework asset PUTs need the larger streaming ceiling. */
@@ -8,7 +9,8 @@ function isFrameworkAssetUpload(request: Request): boolean {
   if (request.method !== "PUT") return false;
   const match = new URL(request.url).pathname.match(/^\/api\/internal\/framework-results\/([^/]+)\/assets\/([^/]+)$/);
   if (!match) return false;
-  try {return match.slice(1).every(value => frameworkIdentitySchema.safeParse(decodeURIComponent(value)).success);}
+  try {return frameworkIdentitySchema.safeParse(decodeURIComponent(match[1]!)).success
+    && frameworkAssetIdSchema.safeParse(decodeURIComponent(match[2]!)).success;}
   catch {return false;}
 }
 
