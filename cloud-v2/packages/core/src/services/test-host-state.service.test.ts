@@ -61,3 +61,19 @@ test("concurrent generation replacement fences the losing snapshot and retry can
   expect(f.writes()).toBe(2);
  } finally {f.stop();}
 });
+
+test("host snapshots persist optional strict per-lane exact-definition availability without changing other lanes", async () => {
+ const f = fixture();
+ try {
+  const source = snapshot(1, 1), definitionRevision = "a".repeat(40);
+  const availability = {routineId: "arbitrary-product", definitionRevision, available: false, reason: "Selected source is unavailable on this lane."};
+  const reported = {...source, lanes: [{...source.lanes[0], routineAvailability: [availability]},
+    {...source.lanes[0], id: "other", routineAvailability: [{...availability, available: true, reason: undefined}]}]};
+  await f.service.report(reported, "mini");
+  expect((await f.service.get("mini"))!.lanes.map(lane => lane.routineAvailability?.[0]?.available)).toEqual([false, true]);
+  for (const bad of [{...availability, available: "yes"}, {...availability, definitionRevision: "bad"}, {...availability, unsupported: true}])
+    await expect(f.service.report({...source, sequence: 2, lanes: [{...source.lanes[0], routineAvailability: [bad]}]}, "mini")).rejects.toThrow();
+  await expect(f.service.report({...source, sequence: 2, lanes: [{...source.lanes[0], routineAvailability: [availability, availability]}]}, "mini")).rejects.toThrow("Duplicate lane");
+  expect(f.writes()).toBe(1);
+ } finally {f.stop();}
+});

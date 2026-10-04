@@ -6,6 +6,7 @@ import type {RoutineEnrollment} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
 import {nativeRunFilter} from "./framework-result.service";
+import {routinePreferences, type RoutinePreferenceRepository} from "./routine-preference.service";
 
 export interface CatalogRunRepository {
   latestPassing(definition: RoutineEnrollment): Promise<CatalogExample | null>;
@@ -48,12 +49,14 @@ const cursorSchema = z.object({routineId: z.string(), platform: z.string(),
 
 export class RoutineCatalogService {
   constructor(private readonly definitions: Pick<RoutineDefinitionService, "current" | "getCurrent"> = new RoutineDefinitionService(),
-    private readonly runs: CatalogRunRepository = mongoRuns) {}
+    private readonly runs: CatalogRunRepository = mongoRuns,
+    private readonly preferences: RoutinePreferenceRepository = routinePreferences) {}
   async list() {
-    const definitions = await this.definitions.current();
+    const [definitions, preferences] = await Promise.all([this.definitions.current(), this.preferences.list()]);
     const entries = await Promise.all(definitions.map(async definition => {
       const [example, history] = await Promise.all([this.runs.latestPassing(definition), this.runs.history(definition.routineId, definition.platform, null, 1)]);
-      return {...definition, example, latestAttempt: history[0] ?? null};
+      const nightlyEnabled = preferences.find(row => row.routineId === definition.routineId && row.platform === definition.platform)?.nightlyEnabled ?? true;
+      return {...definition, example, latestAttempt: history[0] ?? null, nightlyEnabled};
     }));
     // Discovered definitions without a published example remain authoring work.
     return entries.filter(entry => entry.example !== null);
@@ -71,11 +74,17 @@ export class RoutineCatalogService {
         after = {startedAt: new Date(parsed.startedAt), runId: parsed.runId};
       } catch {throw new RoutineCatalogError(400, "Invalid routine history cursor");}
     }
-    const [example, rows] = await Promise.all([this.runs.latestPassing(definition),
-      this.runs.history(routineId, platform, after, limit + 1)]);
+    const [example, rows, preference] = await Promise.all([this.runs.latestPassing(definition),
+      this.runs.history(routineId, platform, after, limit + 1), this.preferences.get(routineId, platform)]);
     const history = rows.slice(0, limit), last = history.at(-1);
     const nextCursor = rows.length > limit && last ? Buffer.from(JSON.stringify({routineId, platform,
       startedAt: last.startedAt, runId: last.runId})).toString("base64url") : null;
-    return {...definition, example, history, nextCursor};
+    return {...definition, example, history, nextCursor, nightlyEnabled: preference?.nightlyEnabled ?? true};
+  }
+  async setPreference(routineId: string, platform: string, nightlyEnabled: boolean) {
+    const detail = await this.detail(routineId, platform, undefined, 1);
+    if (!detail.example) throw new RoutineCatalogError(404, "Routine has no recorded passing example");
+    await this.preferences.set({routineId, platform, nightlyEnabled});
+    return {routineId, platform, nightlyEnabled};
   }
 }

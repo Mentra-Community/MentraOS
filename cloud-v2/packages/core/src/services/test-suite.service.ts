@@ -2,11 +2,41 @@ import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, fr
 import {z} from "zod";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
-import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun} from "../types/test-suite.types";
+import {TestRequestModel} from "../models/test-request.model";
+import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun, type SuiteRejection} from "../types/test-suite.types";
 import {TestRunError} from "./test-result-error";
-import {requestInputDigest} from "./test-request.service";
+import {hostRejectionSchema, requestInputDigest} from "./test-request.service";
+import {frameworkRequestInputSchema} from "../types/framework-request.types";
+import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
+
+/** Project the occurrence's one terminal authority; never take another evidence snapshot. */
+function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, result: NightlyResult): ReturnType<typeof summarizeSuite> {
+  if (requestInputDigest(suite) !== requestInputDigest(plan.suite) || result.suiteId !== suite.suiteId
+    || result.occurrenceId !== plan.occurrenceId || result.startedAt !== plan.startedAt || result.trigger !== plan.trigger
+    || result.expectedCount !== suite.members.length || result.members.length !== suite.members.length)
+    throw new TestRunError(503, "Nightly suite receipt differs from its frozen plan");
+  const members = suite.members.map(member => {
+    const expected = plan.members.find(expected => expected.memberId === member.memberId);
+    const receipt = result.members.find(receipt => receipt.memberId === member.memberId);
+    if (!expected || !receipt || receipt.requestId !== expected.requestId || receipt.routineId !== expected.routineId
+      || receipt.platform !== expected.platform || receipt.definitionRevision !== expected.definitionRevision
+      || receipt.definitionSha256 !== expected.definitionSha256 || receipt.hostId !== expected.hostId
+      || requestInputDigest(receipt.build ?? null) !== requestInputDigest(expected.build ?? null)
+      || requestInputDigest(receipt.input ?? null) !== requestInputDigest(expected.input ?? null))
+      throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
+    return {...member, status: receipt.status === "incomplete" ? "not-run" : receipt.status,
+      publicationComplete: receipt.publicationComplete,
+      ...(receipt.unavailableReason ? {unavailableReason: receipt.unavailableReason} : {}),
+      ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};
+  });
+  const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
+  return {...suite, ...(result.finishedAt ? {finishedAt: result.finishedAt} : {}), members, passed,
+    outcome: !result.finishedAt ? "running" : passed === members.length ? "passed" : "failed",
+    failedRoutines: [...new Set(members.filter(member => (result.finishedAt !== undefined || member.status !== "waiting")
+      && (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))]};
+}
 export class TestSuiteService {
   async create(input: unknown) {
     const parsed = testSuiteSchema.safeParse(input);
@@ -29,7 +59,7 @@ export class TestSuiteService {
     if (suite.members.some(other => other.memberId !== memberId && other.requestId === parsed.data.requestId))
       throw new TestRunError(409, "request already belongs to another member");
     if (!member.requestId) {
-      const updated = await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}, finalizingAt: {$exists: false},
+      const updated = await TestSuiteModel.updateOne({suiteId, nightlyPlan: {$exists: false}, finishedAt: {$exists: false}, finalizingAt: {$exists: false},
         "payload.members.requestId": {$ne: parsed.data.requestId},
         "payload.members": {$elemMatch: {memberId, requestId: {$exists: false}}}},
         {$set: {"payload.members.$.requestId": parsed.data.requestId}}, {writeConcern});
@@ -44,6 +74,14 @@ export class TestSuiteService {
   async complete(suiteId: string, input: unknown) {
     const parsed = testSuiteCompletionSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid suite completion");
+    const stored = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
+    if (stored?.nightlyPlan) {
+      if (!testSuiteSchema.safeParse(stored.payload).success) throw new TestRunError(404, "Occurrence has no multi-member test suite");
+      const plan = stored.nightlyPlan as NightlyPlan;
+      if (Date.parse(parsed.data.finishedAt) < Date.parse(plan.startedAt)) throw new TestRunError(400, "suite finish precedes start");
+      await new NightlyRoutineService().complete(plan.occurrenceId);
+      return this.detail(suiteId);
+    }
     const initial = await this.detail(suiteId);
     if (initial.finishedAt) return initial;
     if (Date.parse(parsed.data.finishedAt) < Date.parse(initial.startedAt)) throw new TestRunError(400, "suite finish precedes start");
@@ -68,8 +106,14 @@ export class TestSuiteService {
     if (!frameworkRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
     const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
     if (!row) throw new TestRunError(404, "test suite not found");
-    if (row.completedResult) return row.completedResult as ReturnType<typeof summarizeSuite>;
+    if (!row.nightlyPlan && row.completedResult) return row.completedResult as ReturnType<typeof summarizeSuite>;
+    if (!row.payload) throw new TestRunError(404, "Occurrence has no multi-member test suite");
     const suite = row.payload as TestSuite;
+    if (row.nightlyPlan) {
+      const plan = row.nightlyPlan as NightlyPlan;
+      const result = row.nightlyResult as NightlyResult | undefined ?? await new NightlyRoutineService().detail(plan.occurrenceId);
+      return nightlySuiteProjection(suite, plan, result);
+    }
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
       .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
@@ -77,12 +121,26 @@ export class TestSuiteService {
       const framework = frameworkRunSchema.safeParse(row.payload);
       if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
       const run = framework.data;
-      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
         channel: run.build.channel, provenance: {headSha: run.build.headSha},
         startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
         publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
     });
-    return summarizeSuite(suite, runs, row.finishedAt ?? undefined);
+    const requests = await TestRequestModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])},
+      hostRejection: {$exists: true}}).select({requestId: 1, hostId: 1, inputSha256: 1, input: 1, state: 1, terminalStatus: 1, hostRejection: 1})
+      .limit(101).read("primary").readConcern("majority").lean();
+    if (requests.length > 100) throw new TestRunError(503, "suite rejection history exceeds the query bound; no verdict available");
+    const rejections: SuiteRejection[] = requests.map(request => {
+      const rejection = hostRejectionSchema.safeParse(request.hostRejection), input = frameworkRequestInputSchema.safeParse(request.input);
+      if (!rejection.success || !input.success || request.state !== "terminal" || request.terminalStatus !== "not-run"
+        || rejection.data.requestId !== request.requestId || rejection.data.hostId !== request.hostId
+        || rejection.data.inputSha256 !== request.inputSha256 || requestInputDigest(input.data) !== request.inputSha256)
+        throw new TestRunError(503, "suite member rejection identity is invalid; no verdict available");
+      return {requestId: request.requestId, routineId: input.data.routineId, platform: input.data.platform,
+        definitionRevision: input.data.definitionRevision, channel: input.data.build.channel, headSha: input.data.build.headSha,
+        rejectedAt: rejection.data.rejectedAt, reason: `${rejection.data.code}: ${rejection.data.reason}`};
+    });
+    return summarizeSuite(suite, runs, row.finishedAt ?? undefined, rejections);
   }
   async labels(requestIds: string[]) {
     if (requestIds.length > 100 || requestIds.some(id => !frameworkRunIdSchema.safeParse(id).success))

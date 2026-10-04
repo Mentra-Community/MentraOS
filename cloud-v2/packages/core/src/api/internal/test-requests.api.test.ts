@@ -43,3 +43,46 @@ test("malformed acceptance and storage outage cannot acknowledge execution", asy
   expect((await api.request("/r1/accept", {method: "POST", headers, body: "{"})).status).toBe(400);
   expect((await api.request("/r1/accept", {method: "POST", headers, body: "[]"})).status).toBe(400);
 });
+
+test("host rejection returns the immutable receipt and refuses foreign or malformed delivery identity", async () => {
+  const rejection = {requestId: "r1", hostId: "mini", inputSha256: digest, rejectedAt: "2026-10-03T11:00:00Z",
+    code: "missing-definition", reason: "The requested revision is not installed."};
+  class Service extends TestRequestService {
+    override async reject(input: unknown, host: string) {
+      const receipt = input as typeof rejection;
+      if (receipt.hostId !== host) throw new TestRequestConflict("wrong host");
+      return {requestId: receipt.requestId, hostId: host, inputSha256: digest, input: {}, state: "terminal" as const,
+        terminalStatus: "not-run", hostRejection: receipt};
+    }
+  }
+  const api = createTestRequestsApi(new Service(), () => JSON.stringify({mini: token}));
+  const response = await api.request("/r1/reject", {method: "POST", headers, body: JSON.stringify(rejection)});
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({rejection});
+  expect((await api.request("/r2/reject", {method: "POST", headers, body: JSON.stringify(rejection)})).status).toBe(400);
+  expect((await api.request("/r1/reject", {method: "POST", headers, body: JSON.stringify({...rejection, hostId: "other"})})).status).toBe(409);
+  expect((await api.request("/r1/reject", {method: "POST", headers, body: JSON.stringify({...rejection, status: "pass"})})).status).toBe(400);
+  expect((await api.request("/r1/reject", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(rejection)})).status).toBe(401);
+});
+
+test("cancellation delivery scopes the host and acknowledges the exact cooperative intent", async () => {
+  const cancellation = {requestId: "r1", hostId: "mini", inputSha256: digest, requestedAt: "2026-10-03T14:00:00Z", reason: "Occurrence boundary"};
+  class Service extends TestRequestService {
+    override async cancellations(host: string) {
+      expect(host).toBe("mini");
+      return {requests: [{requestId: "r1", hostId: host, inputSha256: digest, input: {}, state: "terminal" as const,
+        terminalStatus: "cancelled", hostCancellation: cancellation}], nextCursor: null};
+    }
+    override async acknowledgeCancellation(input: unknown, host: string) {
+      if ((input as typeof cancellation).hostId !== host) throw new TestRequestConflict("wrong host");
+      return {requestId: "r1", hostId: host, inputSha256: digest, input: {}, state: "accepted" as const, hostCancellation: cancellation};
+    }
+  }
+  const api = createTestRequestsApi(new Service(), () => JSON.stringify({mini: token}));
+  expect((await api.request("/cancellations?hostId=other", {headers})).status).toBe(200);
+  const response = await api.request("/r1/cancel-ack", {method: "POST", headers, body: JSON.stringify(cancellation)});
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({cancellation});
+  expect((await api.request("/r2/cancel-ack", {method: "POST", headers, body: JSON.stringify(cancellation)})).status).toBe(400);
+  expect((await api.request("/r1/cancel-ack", {method: "POST", headers, body: JSON.stringify({...cancellation, hostId: "other"})})).status).toBe(409);
+});

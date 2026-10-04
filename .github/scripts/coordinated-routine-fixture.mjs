@@ -53,10 +53,7 @@ export function coordinatedFixture(channel = "dev") {
       [prefix + names.receipt, state.receipt], [prefix + plan.artifactNames.otaManifest, state.ota]]).get(url)
     return payload ? new Response(JSON.stringify(payload)) : new Response("missing", {status: 404})
   }
-  const options = {github, context: {repo: {owner: "Mentra-Community", repo: "MentraOS"}, runId: 500, eventName: "workflow_dispatch"},
-    channel, routine: "no-glasses", sourceBuildRunId: "100", sourcePublicationAttempt: "2", fetchImpl,
-    now: () => new Date("2026-09-23T01:00:00Z"), source: {runAttempt: 1, ref: "refs/heads/dev", sha: issuer, workflowSha: issuer,
-      workflowRef: `${repository}/.github/workflows/request-e2e-routine.yml@refs/heads/dev`, actor: "synthetic-operator"}}
+  const options = {github, context: {repo: {owner: "Mentra-Community", repo: "MentraOS"}}, channel, fetchImpl}
   return {state, options, pin: value => createHash("sha256").update(JSON.stringify(value)).digest("hex")}
 }
 
@@ -78,6 +75,5 @@ export function coordinatedAndroidFixture(channel = "dev") {
       return new Response(null, {headers: {"content-length": String(state.androidSize ?? 9999)}})
     return original(url, opts)
   }
-  options.routine = "no-glasses-android"
   return f
 }

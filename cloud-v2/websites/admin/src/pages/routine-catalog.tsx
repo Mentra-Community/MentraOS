@@ -1,12 +1,13 @@
 import {useEffect, useRef, useState} from "react";
-import {useInfiniteQuery, useQuery} from "@tanstack/react-query";
+import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
 import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
+import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
 
-type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null};
+type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
 const PANEL = "rounded-2xl border border-[#e0e4de] bg-white p-5";
 export function routineHref(id: string, platform: string) {
@@ -31,14 +32,31 @@ function RoutineCatalogList() {
       <p className="mt-2">Routines with a published passing example, their requirements and run history.</p></section>
     {catalog.error && <p role="alert">Routines could not refresh: {catalog.error.message}</p>}
     {!catalog.data.routines.length && <p>No routine has a published passing example on the new framework yet.</p>}
-    <div className="grid gap-5 lg:grid-cols-2">{catalog.data.routines.map(row => <RoutineCatalogCard key={`${row.routineId}/${row.platform}`} routine={row} />)}</div>
+    <div className="grid gap-5 lg:grid-cols-2">{catalog.data.routines.map(row => <EditableRoutineCatalogCard key={`${row.routineId}/${row.platform}`} routine={row} />)}</div>
   </div>;
 }
 
-export function RoutineCatalogCard({routine}: {routine: CatalogRow}) {
+function EditableRoutineCatalogCard({routine}: {routine: CatalogRow}) {
+  const client = useQueryClient();
+  const [saving, setSaving] = useState(false), [error, setError] = useState<string | null>(null);
+  const update = async (nightlyEnabled: boolean) => {
+    setSaving(true); setError(null);
+    try {
+      await api(`/api/admin/routines/${encodeURIComponent(routine.routineId)}/platforms/${encodeURIComponent(routine.platform)}/preferences`, {method: "PATCH", body: {nightlyEnabled}});
+      client.setQueryData<{routines: CatalogRow[]}>(["routine-catalog"], current => current && ({routines: current.routines.map(row => row.routineId === routine.routineId && row.platform === routine.platform ? {...row, nightlyEnabled} : row)}));
+      await client.invalidateQueries({queryKey: ["routine-catalog"]});
+    } catch (cause) {setError(cause instanceof Error ? cause.message : "Could not save nightly preference.");}
+    finally {setSaving(false);}
+  };
+  return <RoutineCatalogCard routine={routine} onNightlyChange={update} saving={saving} preferenceError={error} />;
+}
+
+export function RoutineCatalogCard({routine, onNightlyChange, saving = false, preferenceError}: {routine: CatalogRow; onNightlyChange?: (enabled: boolean) => void; saving?: boolean; preferenceError?: string | null}) {
   return <article className={PANEL}>
     <p className="text-sm text-[#68746d]">{routine.platform === "android" ? "Android" : "iOS on Mac"}</p>
-    <h3 className="mt-2 text-lg font-semibold"><a className="underline" href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
+    <div className="mt-2 flex items-center justify-between gap-4"><h3 className="text-lg font-semibold"><a className="underline" href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
+      <label className="flex shrink-0 items-center gap-2 text-sm"><input type="checkbox" role="switch" aria-label={`Run ${routine.definition.title} in nightly`} checked={routine.nightlyEnabled ?? true} disabled={saving} onChange={event => onNightlyChange?.(event.target.checked)} />Run in nightly</label></div>
+    {preferenceError && <p role="alert" className="mt-2 text-sm">{preferenceError}</p>}
     <p className="mt-2">{routine.definition.purpose}</p>
     <p className="mt-4">{routine.example ? "Complete passing example available" : "Awaiting a published passing example"}</p>
     {routine.latestAttempt && <p className="mt-2 text-sm">Latest attempt: <a className="underline" href={frameworkRunHref(routine.latestAttempt.runId)}>{routine.latestAttempt.outcome}</a> · {new Date(routine.latestAttempt.startedAt).toLocaleString()}{routine.latestAttempt.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
@@ -85,19 +103,55 @@ export function frameworkRunHref(runId: string) {
   return testRunLocation("https://admin.mentraglass.com/", {runID: runId});
 }
 
+type RunDisplay = {kind?: "run"; run: FrameworkRun; definition: RoutineEnrollment["definition"] | null;
+  outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"};
+type RequestDisplay = {kind: "request"; request: FrameworkRequestDisplay; run?: never; uploadsComplete?: never};
+const CANCELLED_REQUEST_OBSERVATION_MS = 10 * 60 * 1000;
+
+export function frameworkRunRefetchInterval(data: RunDisplay | RequestDisplay | undefined, observedAt: number, now = Date.now()): number | false {
+  if (data?.kind === "request") return data.request.state !== "terminal"
+    || (data.request.terminalStatus === "cancelled" && now - observedAt < CANCELLED_REQUEST_OBSERVATION_MS) ? 5000 : false;
+  return data?.uploadsComplete === false ? 5000 : false;
+}
+
+function RequestCard({request, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
+  const status = request.terminalStatus ?? request.state;
+  return <section className={PANEL} aria-label="Routine request">
+    <a className="underline" href="/?testRuns=1">All test runs</a>
+    <h2 className="mt-4 text-xl font-semibold">{request.routineId}: {status === "not-run" ? "Did not run" : status}</h2>
+    <p className="mt-2 text-sm">Request <code>{request.requestId}</code></p>
+    <p className="mt-2"><BuildIdentity build={request.build} label="Requested build" /></p>
+    <p className="mt-2">Computer: {request.hostId} · Lane: {request.laneId} · {request.platform}</p>
+    <p className="mt-2 text-sm">Routine revision: <code>{request.definitionRevision}</code></p>
+    {request.createdAt && <p className="mt-2 text-sm">Requested {new Date(request.createdAt).toLocaleString()}</p>}
+    {request.acceptedAt && <p className="mt-2 text-sm">Host accepted {new Date(request.acceptedAt).toLocaleString()}</p>}
+    {request.reason && <p className="mt-3">{request.reason}</p>}
+    {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
+    <p className="mt-3 text-sm text-[#68746d]">No routine result has been published.{request.state !== "terminal" && " This request refreshes automatically."}
+      {request.terminalStatus === "cancelled" && (observing ? " Checking for final host custody or a published result for ten minutes." : "Automatic observation has ended. Refresh to check for later host custody or results.")}</p>
+    <button className="mt-3 underline" disabled={refreshing} onClick={onRefresh}>Refresh request</button>
+  </section>;
+}
+
 export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
   const video = useRef<HTMLVideoElement>(null);
   const pendingOffset = useRef<number | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<string | undefined>(stepId);
   const [stepSearch, setStepSearch] = useState("");
+  const [observation, setObservation] = useState<{runId: string; startedAt: number | null}>(() => ({runId, startedAt: null}));
+  const observedAt = observation.runId === runId ? observation.startedAt ?? Date.now() : Date.now();
   const result = useQuery({queryKey: ["framework-run", runId], queryFn: () =>
-    api<{run: FrameworkRun; definition: RoutineEnrollment["definition"] | null; outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"}>(`/api/admin/routine-catalog/results/by-run/${encodeURIComponent(runId)}`),
-    refetchInterval: query => query.state.data?.uploadsComplete === false ? 5000 : false});
+    api<RunDisplay | RequestDisplay>(`/api/admin/test-runs/${encodeURIComponent(runId)}`),
+    refetchInterval: query => frameworkRunRefetchInterval(query.state.data, observedAt)});
+  useEffect(() => {
+    if (result.data?.kind === "request" && result.data.request.terminalStatus === "cancelled")
+      setObservation(current => current.runId === runId && current.startedAt !== null ? current : {runId, startedAt: Date.now()});
+  }, [runId, result.data?.kind, result.data?.kind === "request" ? result.data.request.terminalStatus : undefined]);
   useEffect(() => {
     if (!stepId) return;
     setSelectedStep(stepId);
-    const step = result.data?.run.result.steps.find(item => item.id === stepId);
+    const step = result.data?.run?.result.steps.find(item => item.id === stepId);
     if (step?.recordingLocation) {
       pendingOffset.current = step.recordingLocation.startOffsetMs / 1000;
       setSelectedAsset(step.recordingLocation.assetId);
@@ -109,7 +163,16 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   useEffect(() => {setStepSearch(""); setSelectedStep(stepId); if (!stepId) {pendingOffset.current = null; setSelectedAsset(null);}}, [runId, stepId]);
   if (result.isPending) return <p role="status">Loading run…</p>;
   if (result.error && !result.data) return <p role="alert">Could not load run: {result.error.message}</p>;
+  if (result.data.kind === "request") {
+    const request = result.data.request;
+    return <div className="space-y-5">
+      {result.error && <p role="alert">Request could not refresh: {result.error.message}</p>}
+      <RequestCard request={request} observing={frameworkRunRefetchInterval(result.data, observedAt) !== false}
+        refreshing={result.isFetching} onRefresh={() => {setObservation({runId, startedAt: request.terminalStatus === "cancelled" ? Date.now() : null}); void result.refetch();}} />
+    </div>;
+  }
   const {run, definition, outcome, uploadsComplete, evidenceStatus} = result.data;
+  const actualRunId = result.data.kind === "run" ? run.result.runId : runId;
   const recordingAsset = selectedAsset ?? run.recordingAssetId;
   const seekStep = (id: string, location: NonNullable<FrameworkRun["result"]["steps"][number]["recordingLocation"]>) => {
     setSelectedStep(id);
@@ -121,7 +184,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     }
     video.current?.scrollIntoView({block: "nearest", behavior: "smooth"});
   };
-  const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(runId)}/assets/${encodeURIComponent(id)}`;
+  const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(actualRunId)}/assets/${encodeURIComponent(id)}`;
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
   const hasRecording = Boolean(recordingAsset && uploadsComplete);
   const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
@@ -132,7 +195,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     {result.error && <p role="alert">Run could not refresh: {result.error.message}</p>}
     <section className={PANEL}><h2 className="text-xl font-semibold">{run.routineId}: {outcome}</h2>
       <p className="mt-2">Started {new Date(run.startedAt).toLocaleString()} · Finished {new Date(run.finishedAt).toLocaleString()}</p>
-      <p className="mt-2 text-sm">Run <code>{runId}</code> · Request <code>{run.requestId}</code></p>
+      <p className="mt-2 text-sm">Run <code>{actualRunId}</code> · Request <code>{run.requestId}</code></p>
       <p className="mt-2"><BuildIdentity build={run.build} /></p>
       {definition?.source && <p className="mt-2 text-sm"><a className="underline" href={definitionSourceHref(definition.source)} target="_blank" rel="noreferrer">Routine source at {definition.source.revision.slice(0, 10)}</a></p>}
       <p className="mt-2">Computer: {run.hostId} · Lane: {run.laneId} · {run.platform}</p>
@@ -278,9 +341,9 @@ function StepStatus({status}: {status: FrameworkRun["result"]["steps"][number]["
 function definitionSourceHref(source: RoutineEnrollment["definition"]["source"]) {
   return `https://github.com/${source.repository}/blob/${source.revision}/${source.path.split("/").map(encodeURIComponent).join("/")}`;
 }
-function BuildIdentity({build}: {build: {channel: string; headSha: string; repository?: string; release?: unknown; releaseIdentity?: unknown; producerUrl?: unknown}}) {
+function BuildIdentity({build, label = "Tested build"}: {build: {channel: string; headSha: string; repository?: string; release?: unknown; releaseIdentity?: unknown; producerUrl?: unknown}; label?: string}) {
   const href = build.repository && /^[\w-]+\/[\w.-]+$/.test(build.repository) && /^[a-f0-9]{40}$/.test(build.headSha) ? `https://github.com/${build.repository}/commit/${build.headSha}` : null;
   const producer = typeof build.producerUrl === "string" && /^https:\/\/github\.com\/Mentra-Community\//.test(build.producerUrl) ? build.producerUrl : null;
   const release = typeof build.releaseIdentity === "string" ? build.releaseIdentity : typeof build.release === "string" ? build.release : null;
-  return <>Tested build: {build.channel}{release && ` · ${release}`} · {href ? <a className="underline" href={href} target="_blank" rel="noreferrer"><code>{build.headSha.slice(0, 10)}</code></a> : <code>{build.headSha.slice(0, 10)}</code>}{producer && <> · <a className="underline" href={producer} target="_blank" rel="noreferrer">Build job</a></>}</>;
+  return <>{label}: {build.channel}{release && ` · ${release}`} · {href ? <a className="underline" href={href} target="_blank" rel="noreferrer"><code>{build.headSha.slice(0, 10)}</code></a> : <code>{build.headSha.slice(0, 10)}</code>}{producer && <> · <a className="underline" href={producer} target="_blank" rel="noreferrer">Build job</a></>}</>;
 }

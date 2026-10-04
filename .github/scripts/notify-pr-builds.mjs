@@ -4,7 +4,7 @@ import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
+import {routineApi, routineLabelIds, selectedCatalog} from "./routine-api.mjs"
 
 export function iosBuildRequired(files) {
   return files.some(({filename}) =>
@@ -131,8 +131,8 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
   for (const routine of routines)
     lines.push(
-      `*Requested tests:* ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n${[
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable || `Results link available with the ${deviceRoutine(routine.id).platform === "android" ? "Android" : "Mac"} build`,
+      `*Requested tests:* ${escape(routine.title ?? routine.id)}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n${[
+        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable || `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`,
         link(routine.pipelineUrl, routine.pipelineLabel),
       ].join(" · ")}\nResults appear after the device run is uploaded.`,
     )
@@ -152,13 +152,14 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
 }
 
-export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId = "day1-ota"}) {
+export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId, platform}) {
   if (
     !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
     !Number.isSafeInteger(pr) ||
     pr <= 0 ||
     !/^[a-f0-9]{40}$/.test(sha) ||
-    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !Object.hasOwn(DEVICE_ROUTINES, routineId)
+    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(routineId ?? "") ||
+    !["android", "ios-on-mac"].includes(platform)
   )
     return null
   // Results are stored centrally regardless of the app backend. This is the deployed
@@ -171,12 +172,12 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
     headSha: sha,
     archiveSha256,
     routineId,
-    platform: DEVICE_ROUTINES[routineId].platform === "android" ? "android" : "ios-mac",
+    platform,
   }).toString()
   return url.href
 }
 
-async function requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested}) {
+async function requestedRoutineLinks({context, pr, sha, ios, android, requested, fetchImpl, token}) {
   if (!requested.length) return []
   const repository = `${context.repo.owner}/${context.repo.repo}`
   const workflow = "request-e2e-routine.yml"
@@ -184,42 +185,18 @@ async function requestedRoutineLinks({github, context, pr, sha, ios, android, co
     pipelineUrl: `https://github.com/${repository}/actions/workflows/${workflow}`,
     pipelineLabel: "Request pipeline (workflow)",
   }
-  try {
-    const {data} = await github.rest.actions.listWorkflowRuns({
-      ...context.repo,
-      workflow_id: workflow,
-      head_sha: sha,
-      event: "pull_request",
-      per_page: 100,
-    })
-    // One branch/head can back several PRs with different base branches. A
-    // request belongs to a PR, so require its unambiguous Actions association.
-    const associated = data.workflow_runs.filter(
-      (run) => run.pull_requests?.length === 1 && run.pull_requests[0]?.number === pr.number,
-    )
-    const run = matchingBuildRun(associated, pr, sha)
-    if (
-      run &&
-      Number.isSafeInteger(run.id) &&
-      run.id > 0 &&
-      Number.isSafeInteger(run.run_attempt) &&
-      run.run_attempt > 0
-    ) {
-      result.pipelineUrl = `https://github.com/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}`
-      result.pipelineLabel = "Request pipeline"
-    }
-  } catch (error) {
-    // Request creation and hardware are independent of build availability. A
-    // missing/pending request or a lookup failure must not gate the build post.
-    core.warning(`Could not locate this revision's routine request; linking its workflow: ${error.message}`)
+  let definitions
+  try {definitions = selectedCatalog(await routineApi({token, operation: "catalog", fetchImpl}), requested)}
+  catch {
+    return requested.map(id => ({...result, id, title: id,
+      resultsUnavailable: "The current routine catalog could not resolve this selection. Inspect the request pipeline; no execution result is inferred."}))
   }
-  return requested.map(id => DEVICE_ROUTINES[id].pending
-    // A planned routine's label requests nothing: it has no registered automatic worker.
-    ? {...result, id, resultsUnavailable: "Planned routine: no automatic worker is registered yet, so no test was requested."}
-    : ({...result, id,
-    ...(DEVICE_ROUTINES[id].platform === "android" && android.receiptUnavailable
+  return definitions.map(definition => ({...result, id: definition.routineId, title: definition.title, platform: definition.platform,
+    definitionRevision: definition.definitionRevision,
+    ...(definition.platform === "android" && android.receiptUnavailable
       ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
-    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: DEVICE_ROUTINES[id].platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id})}))
+    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: definition.platform === "android" ? android.archiveSha256 : ios.archiveSha256,
+      routineId: definition.routineId, platform: definition.platform})}))
 }
 
 export function matchingBuildRun(runs, pr, sha) {
@@ -444,9 +421,13 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     .join(":")
   // Selected routines are part of the delivered post, so a label added to the same
   // publications posts their requested tests and result links once.
-  const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
+  const requested = routineLabelIds(pr)
+  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested, fetchImpl,
+    token: process.env.TEST_RUN_INGEST_TOKEN || process.env.TEST_RUN_INGEST_TOKEN_DEV})
+  const selectionIdentity = requested.length ? createHash("sha256").update(JSON.stringify(routines.map(row =>
+    [row.id, row.platform ?? "unavailable", row.definitionRevision ?? "", row.title]))).digest("hex") : undefined
   const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}${
-    requested.length ? `:routines-${requested.join(",")}` : ""}`
+    selectionIdentity ? `:routines-${selectionIdentity}` : ""}`
   if (android.receiptUnavailable) {
     const previous = comment?.body.split("\n").map(line =>
       new RegExp(`^<!-- ${buildIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
@@ -459,6 +440,14 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       android.receiptUnavailable = false
     }
   }
+  routines = routines.map(row => {
+    if (!row.platform) return row
+    const {resultsUrl, resultsUnavailable, ...definition} = row
+    return {...definition, ...(row.platform === "android" && android.receiptUnavailable
+      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
+    resultsUrl: routineResultsUrl({repository: `${context.repo.owner}/${context.repo.repo}`, pr: pr.number, sha,
+      archiveSha256: row.platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: row.id, platform: row.platform})}
+  })
   // A verified APK binds its immutable hash; an unverified backend is distinct so a
   // later notification can replace it once its receipt verifies.
   const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
@@ -466,12 +455,12 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     core.info("This PR revision's notification was already delivered.")
     return
   }
-  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested})
   if (!(await current())) {
     core.info("PR superseded or retargeted before notification.")
     return
   }
-  routines = routines.filter(routine => hasRoutineLabel(pr, routine.id))
+  const currentRequested = new Set(routineLabelIds(pr))
+  routines = routines.filter(routine => currentRequested.has(routine.id))
   const payload = buildPost({
     pr,
     sha,
@@ -507,7 +496,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
   for (const routine of routines)
     downloads.push(
-      `**Requested tests:** ${deviceRoutine(routine.id).name} · ${deviceRoutine(routine.id).platform === "android" ? "Android" : "iOS on Mac"}\n\n${[
+      `**Requested tests:** ${routine.title ?? routine.id}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n\n${[
         ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
         ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
         `[${routine.pipelineLabel}](${routine.pipelineUrl})`,

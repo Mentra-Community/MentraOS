@@ -44,3 +44,13 @@ test("a one-member job opens its individual run instead of claiming to be a suit
   expect(html).not.toContain("nightly test suite");
   expect(html).not.toContain("1/1 passed");
 });
+
+test("a rejected suite member displays its admission reason and keeps neighboring run links", () => {
+  const client = new QueryClient();
+  client.setQueryData(["test-suite", suite.suiteId], {...suite, members: [suite.members[0]!,
+    {...suite.members[1]!, unavailableReason: "missing-definition: Selected source is not installed."}]});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
+  expect(html).toContain("missing-definition: Selected source is not installed.");
+  expect(html).toContain('href="/?testRun=run-one"');
+  expect(html).toContain("Did not run");
+});

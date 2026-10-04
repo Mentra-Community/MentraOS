@@ -1,322 +1,97 @@
-import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, resolveCoordinatedSelection} from "./coordinated-routine-request.mjs"
-
-import {DEVICE_ROUTINES, isRegisteredRoutine} from "./device-routines.mjs"
-
+const ENDPOINT = "https://core.dev.us-west-2.mentraglass.com/api/internal/nightly-routines"
 export const NIGHTLY_WORKFLOW = ".github/workflows/nightly-device-routines.yml"
-
-/** 04:00 America/Los_Angeles is 11:00 UTC in summer and 12:00 UTC in winter. Only these triggers plan or send. */
 export const NIGHTLY_CRONS = Object.freeze(["0 11 * * *", "0 12 * * *"])
-/** Every schedule generation whose entered sends remain verifiable, each with its own UTC triggers and intended Pacific
- * hour. A cron alone never identifies the hour: 11:00 UTC is 04:00 in summer for the current generation but was 03:00 in
- * winter for the historical one. Only the current generation plans or sends; the others only authenticate earlier sends. */
-export const NIGHTLY_SCHEDULE_GENERATIONS = Object.freeze([
-  {name: "04:00 Pacific", localHour: "04", crons: NIGHTLY_CRONS, current: true},
-  {name: "historical 03:00 Pacific", localHour: "03", crons: Object.freeze(["0 10 * * *", "0 11 * * *"]), current: false},
-  {name: "historical midnight Pacific", localHour: "00", crons: Object.freeze(["0 7 * * *", "0 8 * * *"]), current: false},
-].map(Object.freeze))
-const CURRENT_GENERATION = NIGHTLY_SCHEDULE_GENERATIONS[0]
-
-export const NIGHTLY_SEND_STEP = "Send the nightly routine request"
-const LEGACY_SEND_STEP = "Send the nightly routine sequence"
-const LEGACY_ROUTINES = ["day1-ota", "mentra-call"]
-// Required coverage is separate from executable registration. Missing author-owned
-// workers stay unavailable; they must never fall back to the default walkthrough.
-export const NIGHTLY_TARGETS = Object.freeze([
-  {routine: "day1-ota", platform: "ios-on-mac"},
-  {routine: "mentra-call", platform: "ios-on-mac"},
-  {routine: "account-miniapps", platform: "ios-on-mac"},
-  {routine: "connected-glasses", platform: "android"},
-  {routine: "livestreamer", platform: "ios-on-mac"},
-  {routine: "no-glasses", platform: "ios-on-mac"},
-  {routine: "no-glasses-android", platform: "android"},
-  {routine: "captions-phone", platform: "ios-on-mac"},
-  {routine: "notes-phone", platform: "ios-on-mac"},
-].map(Object.freeze))
-export const NIGHTLY_ROUTINES = Object.freeze(NIGHTLY_TARGETS.map(target => target.routine))
-const REPOSITORY = "Mentra-Community/MentraOS"
-const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
-const SHA = /^[a-f0-9]{40}$/
 const positive = value => Number.isSafeInteger(value) && value > 0
-const requireThat = (value, message) => { if (!value) throw new Error(message) }
-export const nightlyJobName = ({date, channel, routine}) => `Nightly ${date} / ${channel} / ${routine}`
-const legacyJobName = ({date, channel}) => `Nightly ${date} / ${channel} / OTA then Call`
+const requireThat = (value, message) => {if (!value) throw new Error(message)}
 
-/** GitHub job/run history is a send fence; an incomplete response is not absence. */
-async function readHistoryPage(read, page) {
-  for (let attempt = 1; ; attempt++) {
-    try { return await read(page) }
-    catch (error) {
-      // Only retry read-only transient server errors. Dispatch writes are never retried here.
-      if (attempt === 3 || ![500, 502, 503, 504].includes(error?.status)) throw error
-      await new Promise(resolve => setTimeout(resolve, attempt * 250))
-    }
-  }
-}
-
-async function completePages(read, key) {
-  const rows = []
-  let expected
-  for (let page = 1; ; page++) {
-    const {data} = await readHistoryPage(read, page)
-    requireThat(Number.isSafeInteger(data?.total_count) && data.total_count >= 1 && data.total_count < 1000 &&
-      Array.isArray(data[key]), "Nightly history is incomplete; reconcile manually")
-    expected ??= data.total_count
-    requireThat(data.total_count === expected, "Nightly history changed; reconcile manually")
-    rows.push(...data[key])
-    if (rows.length >= expected) break
-    requireThat(data[key].length === 100, "Nightly history page is incomplete; reconcile manually")
-  }
-  requireThat(rows.length === expected && rows.every(row => positive(row?.id)) &&
-    new Set(rows.map(row => row.id)).size === expected, "Nightly history is incomplete; reconcile manually")
-  return rows
-}
-
-const jobsFor = (github, context, runId) => completePages(page => github.rest.actions.listJobsForWorkflowRun({
-  ...context.repo, run_id: runId, filter: "all", per_page: 100, page,
-}), "jobs")
-
-/** Two UTC triggers cover DST. Use the intended trigger, allowing queue delays. The generation defaults to the current
- * schedule; a historical generation is evaluated only to authenticate an earlier send, with its own intended hour. */
-export function nightlyDate(cron, createdAt, generation = CURRENT_GENERATION) {
-  requireThat(NIGHTLY_SCHEDULE_GENERATIONS.includes(generation) && generation.crons.includes(cron), "Unexpected nightly schedule")
-  const hour = Number(cron.split(" ")[1])
-  const created = new Date(createdAt)
+/** Select the intended 04:00 Pacific occurrence from GitHub's original run creation time. */
+export function scheduledOccurrence(cron, createdAt) {
+  requireThat(NIGHTLY_CRONS.includes(cron), "Unexpected nightly schedule")
+  const created = new Date(createdAt), hour = Number(cron.split(" ")[1])
   requireThat(Number.isFinite(created.getTime()), "Invalid nightly creation time")
-  const scheduled = new Date(Date.UTC(created.getUTCFullYear(), created.getUTCMonth(), created.getUTCDate(), hour))
-  requireThat(created >= scheduled && created - scheduled < 6 * 3600_000, "Nightly trigger is outside its delivery window")
+  const intended = new Date(Date.UTC(created.getUTCFullYear(), created.getUTCMonth(), created.getUTCDate(), hour))
+  requireThat(created >= intended && created - intended < 6 * 3600_000, "Nightly trigger is outside its delivery window")
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {timeZone: "America/Los_Angeles",
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"})
-    .formatToParts(scheduled).map(part => [part.type, part.value]))
-  return parts.hour === generation.localHour ? `${parts.year}-${parts.month}-${parts.day}` : null
+    .formatToParts(intended).map(part => [part.type, part.value]))
+  if (parts.hour !== "04") return null
+  return {occurrenceId: `nightly-dev-${parts.year}-${parts.month}-${parts.day}`, startedAt: intended.toISOString(), trigger: "nightly"}
 }
 
-/** The one local nightly date of an authenticated scheduled sender from any generation. Every generation and trigger
- * reading its creation time must agree; none or several dates cannot authenticate a send. */
-export function nightlySenderDate(createdAt) {
-  const dates = [...new Set(NIGHTLY_SCHEDULE_GENERATIONS.flatMap(generation => generation.crons.flatMap(cron => {
-    try { const date = nightlyDate(cron, createdAt, generation); return date ? [date] : [] } catch { return [] }
-  })))]
-  requireThat(dates.length === 1, "Nightly sequence source has no valid local nightly date")
-  return dates[0]
-}
-
-async function scheduledRun(github, context, attempt) {
-  const manual = context.eventName === "workflow_dispatch"
-  requireThat(manual || NIGHTLY_CRONS.includes(context.payload?.schedule), "Unexpected nightly schedule")
-  requireThat(`${context.repo.owner}/${context.repo.repo}` === REPOSITORY && ["schedule", "workflow_dispatch"].includes(context.eventName) &&
-    positive(context.runId) && positive(attempt) && SHA.test(context.sha ?? ""), "Nightly must run in the trusted repository")
+export async function githubOccurrence({github, context, attempt}) {
+  requireThat(positive(context.runId) && positive(attempt) &&
+    `${context.repo.owner}/${context.repo.repo}` === "Mentra-Community/MentraOS", "Invalid scheduler identity")
   const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: context.runId})
-  requireThat(run.id === context.runId && run.run_attempt === attempt && run.event === context.eventName &&
-    run.path === NIGHTLY_WORKFLOW && run.head_branch === "dev" && run.head_sha === context.sha &&
-    run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
-  "Nightly workflow identity differs from GitHub metadata")
-  return {run, date: manual ? pacificRunDate(run.created_at) : nightlyDate(context.payload.schedule, run.created_at)}
+  requireThat(run.id === context.runId && run.path === NIGHTLY_WORKFLOW && run.head_branch === "dev" &&
+    run.repository?.full_name === "Mentra-Community/MentraOS" && run.head_repository?.full_name === "Mentra-Community/MentraOS" &&
+    ["schedule", "workflow_dispatch"].includes(run.event) && run.event === context.eventName &&
+    Number.isFinite(Date.parse(run.created_at)), "Scheduler source differs from trusted dev workflow")
+  if (run.event === "schedule") return scheduledOccurrence(context.payload.schedule, run.created_at)
+  return {occurrenceId: `manual-dev-${run.id}`, startedAt: new Date(run.created_at).toISOString(), trigger: "manual"}
 }
 
-function pacificRunDate(createdAt) {
-  requireThat(Number.isFinite(Date.parse(createdAt)), "Invalid nightly creation time")
-  return new Intl.DateTimeFormat("en-CA", {timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(createdAt))
+/** Core freezes catalog preferences, definitions, builds and independent requests once for this identity. */
+export async function nightlyApi({token, occurrence, occurrenceId = occurrence?.occurrenceId, operation = "start", fetchImpl = fetch}) {
+  requireThat(token && ["start", "read", "complete"].includes(operation) &&
+    /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/.test(occurrenceId ?? ""), "Invalid nightly API capability or identity")
+  const suffix = operation === "start" ? "" : `/${encodeURIComponent(occurrenceId)}${operation === "complete" ? "/complete" : ""}`
+  let response
+  try {response = await fetchImpl(`${ENDPOINT}${suffix}`, {method: operation === "read" ? "GET" : "POST",
+    redirect: "error", signal: AbortSignal.timeout(30_000), headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
+    ...(operation === "start" ? {body: JSON.stringify(occurrence)} : {})})}
+  catch {const error = new Error(`Nightly API ${operation} response is unavailable`); error.retryable = true; throw error}
+  if (!response.ok) {
+    const error = new Error(`Nightly API ${operation} failed (${response.status})`)
+    error.retryable = response.status >= 500 || response.status === 429
+    throw error
+  }
+  const result = await response.json(), acknowledged = operation === "start" ? result.plan : result
+  requireThat(acknowledged?.occurrenceId === occurrenceId && Array.isArray(acknowledged.members), "Nightly API acknowledgement differs")
+  if (operation === "start") requireThat(acknowledged.startedAt === occurrence.startedAt && acknowledged.trigger === occurrence.trigger,
+    "Nightly API changed the original occurrence boundary")
+  return result
 }
 
-export const DEV_FOUNDATION_NIGHTLY_ROUTINES = Object.freeze(["no-glasses", "no-glasses-android", "captions-phone", "notes-phone", "ota-roundtrip-android", "connected-glasses", "open-close-miniapps"])
-
-export async function planNightlyRequests({github, context, attempt, fetchImpl = fetch, routineCatalog = DEVICE_ROUTINES, devFoundationOnly = false}) {
-  const {run, date} = await scheduledRun(github, context, attempt)
-  if (!date) return {requests: [], unavailable: [], reason: "The other UTC trigger covers 04:00 America/Los_Angeles today"}
-  requireThat(attempt === 1, "Nightly reruns require reconciliation; do not repeat physical routines automatically")
-  const requests = [], unavailable = [], history = []
-  for (const channel of devFoundationOnly ? ["dev"] : ["dev", "staging"]) {
-    const selectedTargets = devFoundationOnly ? DEV_FOUNDATION_NIGHTLY_ROUTINES.map(routine =>
-      ({routine, platform: routineCatalog[routine]?.platform})) : NIGHTLY_TARGETS
-    const targets = selectedTargets.filter(target => {
-      if (isRegisteredRoutine(target.routine, routineCatalog) && routineCatalog[target.routine].platform === target.platform) return true
-      unavailable.push({date, channel, ...target, reason: "Required routine has no compatible registered worker; authoring and qualification are pending",
-        ...(routineCatalog[target.routine]?.pending ? {pending: routineCatalog[target.routine].pending} : {})})
-      return false
-    })
-    if (!targets.length) continue
-    let candidates
-    const createdAfter = new Date(Date.parse(run.created_at) - 30 * 24 * 60 * 60 * 1000).toISOString()
-    const historyQuery = {...context.repo, workflow_id: COORDINATED_WORKFLOW,
-      branch: channel, status: "success", per_page: 20, page: 1,
-      ...(devFoundationOnly ? {created: `${createdAfter}..${run.created_at}`,
-        headers: {"cache-control": "no-cache"}} : {})}
-    let failedRead = false
+export async function reconcileNightlyOccurrence({token, occurrence, deadline, fetchImpl = fetch, now = Date.now,
+  sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)), pollMilliseconds = 30_000}) {
+  requireThat(Number.isFinite(deadline) && deadline <= now() + 3 * 3600_000 && pollMilliseconds >= 1, "Invalid reconciliation deadline")
+  let current
+  for (;;) {
+    // Repeating the same frozen occurrence retries only failed admissions with their original request identities.
     try {
-      const eligible = rows => rows.filter(item => item.path === COORDINATED_WORKFLOW &&
-        item.head_branch === channel && item.status === "completed" && item.conclusion === "success" &&
-        ["push", "workflow_dispatch"].includes(item.event) && positive(item.id) && positive(item.run_attempt) &&
-        Number.isFinite(Date.parse(item.created_at)) && (!devFoundationOnly ||
-          Date.parse(item.created_at) >= Date.parse(createdAfter) && Date.parse(item.created_at) <= Date.parse(run.created_at)))
-        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id)
-      const read = async query => {
-        try {
-          const {data} = await readHistoryPage(() => github.rest.actions.listWorkflowRuns(query), 1)
-          requireThat(Array.isArray(data?.workflow_runs), "Missing coordinated workflow history")
-          history.push({channel, query, total: data.total_count,
-            returned: data.workflow_runs.map(item => ({runId: item.id, createdAt: item.created_at}))})
-          return {eligible: eligible(data.workflow_runs), count: data.workflow_runs.length}
-        } catch (error) {
-          failedRead = true
-          history.push({channel, query, error: error instanceof Error ? error.message : "History unavailable"})
-          throw error
-        }
-      }
-      const readCompletedWitness = async () => {
-        for (let page = 1; page <= 10; page++) {
-          const result = await read({...historyQuery, status: "completed", per_page: 100, page})
-          if (result.eligible.length) return result.eligible[0]
-          if (result.count < 100) return undefined
-        }
-        throw new Error("Completed workflow history is incomplete after 1000 rows")
-      }
-      candidates = (await read(historyQuery)).eligible
-      if (devFoundationOnly) {
-        let reconciled = false
-        for (let refresh = 0; refresh < 2; refresh++) {
-          if (refresh) candidates = (await read({...historyQuery, per_page: 100})).eligible
-          const witness = await readCompletedWitness()
-          const newest = candidates[0]
-          if (newest && witness && newest.id === witness.id && newest.run_attempt === witness.run_attempt &&
-            newest.head_sha === witness.head_sha && newest.created_at === witness.created_at) {
-            reconciled = true
-            break
-          }
-        }
-        requireThat(reconciled, "Coordinated workflow history freshness could not be reconciled")
-        candidates = candidates.slice(0, 20)
-      }
-    } catch (error) {
-      if (!failedRead) history.push({channel, stage: "history-reconciliation", error: error instanceof Error ? error.message : "History unavailable"})
-      for (const target of targets) unavailable.push({date, channel, ...target, reason: "Coordinated workflow history could not be read"})
-      continue
-    }
-    let selected
-    const rejected = []
-    for (const candidate of candidates) {
-      try {
-        const publicationAttempt = await coordinatedPublicationAttempt(github, context, candidate)
-        const source = {kind: "coordinated-release", channel, buildRunId: candidate.id, publicationAttempt}
-        const platforms = new Map(), errors = new Map()
-        for (const platform of new Set(targets.map(target => target.platform))) {
-          try { platforms.set(platform, await resolveCoordinatedSelection({github, context, source, platform, fetchImpl})) }
-          catch (error) { errors.set(platform, error instanceof Error ? error.message : "Publication unavailable") }
-        }
-        requireThat(platforms.size, "No retained verified platform archive in this publication")
-        const reference = platforms.values().next().value
-        requireThat([...platforms.values()].every(selection => selection.build.sourceCommit === reference.build.sourceCommit &&
-          selection.build.releaseIdentity === reference.build.releaseIdentity && selection.releasePlan.sha256 === reference.releasePlan.sha256 &&
-          selection.otaManifest.sha256 === reference.otaManifest.sha256), "Platform selections disagree on their exact publication")
-        selected = {sourceRunId: candidate.id, publicationAttempt, headSha: reference.build.sourceCommit,
-          releaseIdentity: reference.build.releaseIdentity, platforms, errors}
-        break
-      } catch (error) {
-        rejected.push({runId: candidate.id, reason: error instanceof Error ? error.message : "Publication unavailable"})
-      }
-    }
-    for (const target of targets) {
-      if (!selected) unavailable.push({date, channel, ...target, reason: "No retained verified publication in the latest 20 successful runs", rejected})
-      else if (!selected.platforms.has(target.platform)) unavailable.push({date, channel, ...target,
-        sourceRunId: selected.sourceRunId, publicationAttempt: selected.publicationAttempt, releaseIdentity: selected.releaseIdentity,
-        reason: selected.errors.get(target.platform)})
-      else requests.push({date, channel, ...target, sourceRunId: selected.sourceRunId,
-        publicationAttempt: selected.publicationAttempt, headSha: selected.headSha, releaseIdentity: selected.releaseIdentity})
-    }
-  }
-  return {requests, unavailable, history, sourceRunId: run.id, startedAt: run.created_at,
-    reason: "One exact publication per channel; independent routine requests, not device results"}
-}
-
-/** Scheduled sends fence one date/channel/routine. Explicit manual suites have their own run identity;
- * retries of either workflow run remain refused. Device ownership serializes their execution. */
-export async function sendNightlyRequest({github, context, attempt, plan, routineCatalog = DEVICE_ROUTINES, devFoundationOnly = false}) {
-  const {run, date} = await scheduledRun(github, context, attempt)
-  requireThat(attempt === 1 && date && plan.date === date && ["dev", "staging"].includes(plan.channel) &&
-    (devFoundationOnly ? plan.channel === "dev" && DEV_FOUNDATION_NIGHTLY_ROUTINES.includes(plan.routine) &&
-      plan.platform === routineCatalog[plan.routine]?.platform
-      : NIGHTLY_TARGETS.some(target => target.routine === plan.routine && target.platform === plan.platform)) &&
-    isRegisteredRoutine(plan.routine, routineCatalog) && routineCatalog[plan.routine].platform === plan.platform &&
-    positive(plan.sourceRunId) && positive(plan.publicationAttempt), "Invalid nightly request coordinates")
-  const since = new Date(Date.parse(run.created_at) - 26 * 3600_000).toISOString()
-  const history = await completePages(page => github.rest.actions.listWorkflowRuns({...context.repo,
-    workflow_id: NIGHTLY_WORKFLOW, branch: "dev", created: `>=${since}`, per_page: 100, page,
-  }), "workflow_runs")
-  const current = history.find(item => item.id === run.id)
-  requireThat(current?.run_attempt === attempt && current.head_sha === run.head_sha && current.created_at === run.created_at,
-    "Current nightly is absent or history is incomplete")
-  const jobName = nightlyJobName(plan)
-  let currentSend = false
-  for (const item of history) {
-    requireThat(positive(item.id) && item.path === NIGHTLY_WORKFLOW && ["schedule", "workflow_dispatch"].includes(item.event) &&
-      item.head_branch === "dev" && item.repository?.full_name === REPOSITORY && item.head_repository?.full_name === REPOSITORY,
-    "Nightly history is not authenticated")
-    const jobs = await jobsFor(github, context, item.id)
-    const matchingJobs = jobs.filter(job => job.name === jobName ||
-      (LEGACY_ROUTINES.includes(plan.routine) && job.name === legacyJobName(plan)))
-    requireThat(matchingJobs.every(job => Array.isArray(job.steps)), "Nightly send step history is missing; reconcile manually")
-    const sends = matchingJobs.filter(job => job.steps.some(step =>
-      [NIGHTLY_SEND_STEP, LEGACY_SEND_STEP].includes(step.name) &&
-      ["in_progress", "completed"].includes(step.status) && step.conclusion !== "skipped" &&
-      typeof step.started_at === "string" && Number.isFinite(Date.parse(step.started_at))))
-    if (run.event === "schedule" && item.id !== run.id && sends.length) throw new Error("An earlier nightly owns this date/channel/routine; reconcile its request instead of resending")
-    if (item.id === run.id) currentSend = sends.length === 1 && sends[0].name === jobName && sends[0].run_attempt === attempt && sends[0].status === "in_progress"
-  }
-  requireThat(currentSend, "Current nightly send is absent from authenticated job history")
-  try {
-    const response = await github.rest.actions.createWorkflowDispatch({...context.repo,
-      workflow_id: REQUEST_WORKFLOW, ref: "dev", return_run_details: true, inputs: {
-        channel: plan.channel, routine: plan.routine, request_origin: "workflow-dispatch",
-        source_build_run_id: String(plan.sourceRunId), source_publication_attempt: String(plan.publicationAttempt),
-        nightly_run_id: String(run.id), nightly_run_attempt: String(attempt), nightly_mode: "independent",
-      }})
-    const sent = response.data
-    requireThat(response.status === 200 && positive(sent?.workflow_run_id) &&
-      sent.html_url === `https://github.com/${REPOSITORY}/actions/runs/${sent.workflow_run_id}` &&
-      sent.run_url === `https://api.github.com/repos/${REPOSITORY}/actions/runs/${sent.workflow_run_id}`, "Dispatch acknowledgement differs")
-    return {date, channel: plan.channel, routine: plan.routine, status: "request-dispatched",
-      runId: sent.workflow_run_id, runAttempt: 1,
-      reason: "Marked request queued through the ordinary callback; execution and results are not yet known"}
-  } catch {
-    throw new Error("Nightly send outcome is unknown; reconcile manually and do not rerun")
+      await nightlyApi({token, occurrence, fetchImpl})
+      current = await nightlyApi({token, occurrenceId: occurrence.occurrenceId, operation: "complete", fetchImpl})
+      if (current.finishedAt) return current
+    } catch (error) {if (!error.retryable) throw error}
+    requireThat(now() < deadline, "Nightly Core did not return a terminal receipt before the reconciliation deadline")
+    await sleep(Math.min(pollMilliseconds, deadline - now()))
   }
 }
 
-/** Optional schema-2 marker. A malformed marker must never degrade to standalone. */
-export function validateNightlyMarker(request) {
-  if (request.sequence === undefined) return null
-  const marker = request.sequence
-  requireThat(request.schemaVersion === 2 && request.source?.kind === "coordinated-release" &&
-    ["dev", "staging"].includes(request.source.channel) && request.routine?.authorization === "workflow-dispatch" &&
-    marker && Object.keys(marker).sort().join(",") === "kind,member,runAttempt,runId" &&
-    ["nightly-ota-call", "nightly-routine"].includes(marker.kind) && positive(marker.runId) && marker.runAttempt === 1 &&
-    (marker.kind === "nightly-ota-call" || request.trigger?.runAttempt === 1) &&
-    (marker.kind === "nightly-ota-call" ? LEGACY_ROUTINES.includes(marker.member) :
-      NIGHTLY_ROUTINES.includes(marker.member) || request.source.channel === "dev" && DEV_FOUNDATION_NIGHTLY_ROUTINES.includes(marker.member)) && marker.member === request.routine.id,
-  "Invalid nightly sequence marker")
-  return marker
+export function nightlySummary(result) {
+  requireThat(result?.finishedAt && Array.isArray(result.members) && result.expectedCount === result.members.length &&
+    new Set(result.members.map(member => member.memberId)).size === result.expectedCount &&
+    ["pass", "failed", "incomplete", "cancelled", "skipped"].includes(result.status) &&
+    (result.status !== "skipped" || result.expectedCount === 0), "Nightly result is not a complete frozen receipt")
+  const passed = result.status === "pass" && result.passed === result.expectedCount && result.members.every(member =>
+    member.status === "pass" && member.publicationComplete === true)
+  requireThat(result.status !== "pass" || passed, "Nightly aggregate contradicts its member evidence")
+  return {passed, skipped: result.status === "skipped", url: result.resultUrl,
+    text: `Dev nightly: ${result.status}; ${result.passed}/${result.expectedCount} passed`,
+    rows: result.members.map(member => [member.routineId, member.platform, member.status, member.unavailableReason ?? ""])}
 }
 
-/** The producer authenticates the scheduled sender, never caller-supplied text alone. */
-export async function authenticateNightlyMarker({github, context, request}) {
-  const marker = validateNightlyMarker(request)
-  if (!marker) return
-  const {data: run} = await github.rest.actions.getWorkflowRunAttempt({...context.repo,
-    run_id: marker.runId, attempt_number: marker.runAttempt})
-  requireThat(run.id === marker.runId && run.run_attempt === marker.runAttempt &&
-    (run.event === "schedule" || run.event === "workflow_dispatch" && marker.kind === "nightly-routine" &&
-      request.source.channel === "dev" && DEV_FOUNDATION_NIGHTLY_ROUTINES.includes(marker.member)) &&
-    run.path === NIGHTLY_WORKFLOW && run.head_branch === "dev" && SHA.test(run.head_sha ?? "") &&
-    run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
-  "Nightly sequence source is not an authenticated scheduled workflow")
-  // Historical midnight and 03:00 requests remain verifiable after the schedule moved to 04:00; every generation
-  // reads the sender's creation time with its own intended hour and all readings must name one date.
-  const date = run.event === "workflow_dispatch" ? pacificRunDate(run.created_at) : nightlySenderDate(run.created_at)
-  const jobs = await jobsFor(github, context, run.id)
-  const legacy = marker.kind === "nightly-ota-call"
-  const expected = {date, channel: request.source.channel, routine: marker.member}
-  const matches = jobs.filter(job => job.name === (legacy ? legacyJobName(expected) : nightlyJobName(expected)) &&
-    job.run_attempt === marker.runAttempt && job.steps?.some(step => step.name === (legacy ? LEGACY_SEND_STEP : NIGHTLY_SEND_STEP) &&
-      ["in_progress", "completed"].includes(step.status) && step.conclusion !== "skipped" &&
-      Number.isFinite(Date.parse(step.started_at))))
-  requireThat(matches.length === 1, "Nightly sequence sender is absent or ambiguous")
+/** One attempted send per original scheduler run. Reruns reconcile Core without replaying an uncertain webhook POST. */
+export async function publishNightlyWebhook({result, webhook, attempt, fetchImpl = fetch}) {
+  const summary = nightlySummary(result)
+  requireThat(attempt === 1 && /^https:\/\/hooks\.slack\.com\/services\//.test(webhook ?? ""), "Nightly Slack replay requires reconciliation")
+  const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+  const text = [summary.text, ...summary.rows.map(row => `${escape(row[0])} · ${row[1]} — ${row[2]}${row[3] ? ` (${escape(row[3])})` : ""}`),
+    summary.url ? `<${summary.url}|Recorded nightly results>` : "Recorded result URL is unavailable"].join("\n")
+  let response
+  try {response = await fetchImpl(webhook, {method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify({text, unfurl_links: false, unfurl_media: false})})}
+  catch {throw new Error("Nightly Slack acknowledgement is unavailable; inspect the send before retrying")}
+  requireThat(response.ok, `Nightly Slack rejected the notification (${response.status})`)
+  return {occurrenceId: result.occurrenceId, status: "acknowledged", passed: summary.passed}
 }

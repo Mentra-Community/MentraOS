@@ -4,11 +4,11 @@ on:
   pull_request:
     paths:
       - ".github/scripts/request-e2e-routine*"
-      - ".github/scripts/device-routines.mjs"
+      - ".github/scripts/routine-api*"
       - ".github/scripts/dispatch-device-routine*"
       - ".github/scripts/nightly-device-routines*"
       - ".github/scripts/coordinated-routine-*"
-      - ".github/scripts/original-routine-request*"
+      - ".github/scripts/published-build-metadata*"
       - ".github/scripts/notify-pr-builds*"
       - ".github/scripts/release-slack-message*"
       - ".github/scripts/release-routine-slack*"
@@ -28,11 +28,11 @@ on:
     branches: [dev]
     paths:
       - ".github/scripts/request-e2e-routine*"
-      - ".github/scripts/device-routines.mjs"
+      - ".github/scripts/routine-api*"
       - ".github/scripts/dispatch-device-routine*"
       - ".github/scripts/nightly-device-routines*"
       - ".github/scripts/coordinated-routine-*"
-      - ".github/scripts/original-routine-request*"
+      - ".github/scripts/published-build-metadata*"
       - ".github/scripts/notify-pr-builds*"
       - ".github/scripts/release-slack-message*"
       - ".github/scripts/release-routine-slack*"
@@ -72,7 +72,7 @@ jobs:
           .github/scripts/dispatch-device-routine.test.mjs
           .github/scripts/nightly-device-routines.test.mjs
           .github/scripts/coordinated-routine-request.test.mjs
-          .github/scripts/original-routine-request.test.mjs
+          .github/scripts/routine-api.test.mjs
           .github/scripts/notify-pr-builds.test.mjs
           .github/scripts/release-slack-message.test.mjs
           .github/scripts/release-routine-slack.test.mjs

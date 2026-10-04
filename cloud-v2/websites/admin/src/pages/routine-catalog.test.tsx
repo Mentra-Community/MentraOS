@@ -1,7 +1,7 @@
 import {expect, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
-import {FrameworkRunPage, FrameworkRunsPage, RoutineCatalogCard, frameworkRunHref, routineHref, matchesStepSearch, recordingOffset} from "./routine-catalog";
+import {FrameworkRunPage, FrameworkRunsPage, RoutineCatalogCard, frameworkRunHref, frameworkRunRefetchInterval, routineHref, matchesStepSearch, recordingOffset} from "./routine-catalog";
 import {readTestRunLink} from "../lib/test-run-links";
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types";
 import {frameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types";
@@ -17,6 +17,65 @@ test("catalog labels a historical example without claiming the current definitio
   expect(markup).toContain("aaaaaaaa");
   expect(markup).toContain("routine=notes-phone&amp;platform=ios-on-mac");
   expect(routineHref("notes-phone", "ios-on-mac")).toBe("/?routineCatalog=1&routine=notes-phone&platform=ios-on-mac");
+});
+
+test("catalog tile nightly switch defaults on, preserves the detail link and reports save failure", () => {
+  const render = (nightlyEnabled?: boolean) => renderToStaticMarkup(<RoutineCatalogCard routine={{...routine, example: null, nightlyEnabled}} preferenceError="Preference was not saved" />);
+  expect(render()).toContain('role="switch"');
+  expect(render()).toContain('checked=""');
+  expect(render(false)).not.toContain('checked=""');
+  expect(render(false)).toContain("Run in nightly");
+  expect(render(false)).toContain("Preference was not saved");
+  expect(render(false)).toContain('href="/?routineCatalog=1&amp;routine=notes-phone&amp;platform=ios-on-mac"');
+});
+
+test("the existing run view shows a queued, rejected or cancelled request without invented execution evidence", () => {
+  const request = {requestId: "stored-request", hostId: "mini", inputSha256: "d".repeat(64), routineId: "new-product",
+    platform: "android", laneId: "phone", definitionRevision: "a".repeat(40), state: "queued",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}, createdAt: "2026-10-03T11:00:00Z"};
+  const render = (fields: Record<string, unknown> = {}) => {
+    const client = new QueryClient(); client.setQueryData(["framework-run", request.requestId], {kind: "request", request: {...request, ...fields}});
+    return renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={request.requestId} /></QueryClientProvider>);
+  };
+  const queued = render();
+  expect(queued).toContain("new-product: queued");
+  expect(queued).toContain("Requested build: dev");
+  expect(queued).toContain("stored-request");
+  expect(queued).toContain("Computer: mini · Lane: phone · android");
+  expect(queued).toContain("This request refreshes automatically.");
+  const rejected = render({state: "terminal", terminalStatus: "not-run", reason: "missing-definition: Exact source is not installed."});
+  expect(rejected).toContain("Did not run");
+  expect(rejected).toContain("missing-definition: Exact source is not installed.");
+  const cancelled = render({state: "terminal", terminalStatus: "cancelled", reason: "Nightly occurrence reached its completion boundary."});
+  expect(cancelled).toContain("new-product: cancelled");
+  expect(cancelled).toContain("Nightly occurrence reached its completion boundary.");
+  expect(cancelled).toContain("Checking for final host custody or a published result for ten minutes.");
+  expect(cancelled).toContain("Refresh request");
+  const acknowledged = render({state: "terminal", terminalStatus: "cancelled", cancellationRequested: true, cancellationAcknowledged: true,
+    acceptedAt: "2026-10-03T11:01:00Z"});
+  expect(acknowledged).toContain("Host accepted");
+  expect(acknowledged).toContain("Host acknowledged; cleanup may still be running.");
+  for (const html of [queued, rejected, cancelled]) {
+    expect(html).toContain("No routine result has been published.");
+    expect(html).not.toContain("Tested build");
+    expect(html).not.toContain("<video");
+    expect(html).not.toContain("Execution steps");
+    expect(html).not.toContain("Setup details");
+  }
+});
+
+test("cancelled receipts reconcile within a bounded view window without treating host acknowledgement as a result", () => {
+  const request = {requestId: "cancelled-request", hostId: "mini", inputSha256: "d".repeat(64), routineId: "new-product", platform: "android" as const,
+    laneId: "phone", definitionRevision: "a".repeat(40), state: "terminal" as const, terminalStatus: "cancelled",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev" as const, headSha: "b".repeat(40)}, cancellationRequested: true};
+  const observedAt = Date.parse("2026-10-03T11:00:00Z");
+  const receipt = {kind: "request" as const, request};
+  expect(frameworkRunRefetchInterval(receipt, observedAt, observedAt)).toBe(5000);
+  expect(frameworkRunRefetchInterval({...receipt, request: {...request, cancellationAcknowledged: true, acceptedAt: "2026-10-03T11:01:00Z"}}, observedAt, observedAt + 599999)).toBe(5000);
+  expect(frameworkRunRefetchInterval(receipt, observedAt, observedAt + 600000)).toBe(false);
+  expect(frameworkRunRefetchInterval(receipt, observedAt + 600000, observedAt + 600000)).toBe(5000);
+  expect(frameworkRunRefetchInterval({...receipt, request: {...request, terminalStatus: "not-run"}}, observedAt, observedAt)).toBe(false);
+  expect(frameworkRunRefetchInterval({...receipt, request: {...request, state: "queued"}}, observedAt, observedAt + 600000)).toBe(5000);
 });
 
 test("run keeps steps and recording in one equal-height desktop row with evidence below", () => {

@@ -1,8 +1,15 @@
-import {afterEach, expect, spyOn, test} from "bun:test";
+import {afterEach, beforeEach, expect, spyOn, test} from "bun:test";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
+import {TestRequestModel} from "../models/test-request.model";
 import {TestSuiteService} from "./test-suite.service";
+import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
+import {testSuiteSchema} from "../types/test-suite.types";
 const mocks: {mockRestore(): void}[] = [];
+beforeEach(() => {
+  mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
+    read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
+});
 afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore();});
 test("query overflow refuses a verdict rather than truncating duplicate evidence", async () => {
   mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;}, lean: async () => ({payload: {suiteId: "nightly-1", members: [{memberId: "mac", requestId: "req"}]}})} as any));
@@ -126,4 +133,67 @@ test("persisted suite completion lists passing members with incomplete publicati
  expect(result.members[0]!.status).toBe("pass");
  expect(result.failedRoutines).toEqual(["notes"]);
  expect(row.completedResult).toEqual(result);
+});
+
+test("suite rejection projects the exact request reason without fabricating a run", async () => {
+  const input = {routineId: "another-product", platform: "android", definitionRevision: "a".repeat(40), laneId: "phone",
+    resources: [], build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const {requestInputDigest} = await import("./test-request.service"), inputSha256 = requestInputDigest(input);
+  const payload = {suiteId: "rejected-suite", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T11:00:00Z", build: {headSha: input.build.headSha},
+    members: [{memberId: "phone", requestId: "rejected-request", routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision},
+      {memberId: "other", routineId: "other-product", platform: "android"}]};
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;}, lean: async () => ({payload})} as any));
+  mocks.push(spyOn(TestRunModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
+    read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
+  const rejection = {requestId: "rejected-request", hostId: "mini", inputSha256, rejectedAt: "2026-10-03T11:01:00Z",
+    code: "missing-definition", reason: "Selected source is not installed."};
+  const row = {requestId: rejection.requestId, hostId: rejection.hostId, inputSha256, input, state: "terminal", terminalStatus: "not-run", hostRejection: rejection};
+  mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
+    read() {return this;}, readConcern() {return this;}, lean: async () => [row]} as any));
+  const result = await new TestSuiteService().detail(payload.suiteId);
+  expect(result.members[0]).toMatchObject({status: "not-run", publicationComplete: false,
+    unavailableReason: "missing-definition: Selected source is not installed.", rejectedAt: rejection.rejectedAt});
+  expect(result.members[0]!.runId).toBeUndefined();
+  expect(result.passed).toBe(0);
+  row.hostRejection.inputSha256 = "c".repeat(64);
+  await expect(new TestSuiteService().detail(payload.suiteId)).rejects.toThrow("rejection identity");
+});
+
+test("a live nightly keeps waiting members out of failed routines and its terminal receipt retains missing outcomes", async () => {
+  const payload = testSuiteSchema.parse({suiteId: "live-nightly", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T11:00:00Z",
+    build: {headSha: "a".repeat(40)}, members: [
+      {memberId: "phone", requestId: "phone-request", routineId: "phone-product", platform: "android", definitionRevision: "b".repeat(40)},
+      {memberId: "desktop", requestId: "desktop-request", routineId: "desktop-product", platform: "ios-on-mac", definitionRevision: "b".repeat(40)},
+    ]});
+  const plan: NightlyPlan = {occurrenceId: "live-occurrence", suiteId: payload.suiteId, startedAt: payload.startedAt, trigger: "nightly", suite: payload,
+    members: payload.members.map(member => ({...member, requestId: member.requestId!, definitionRevision: member.definitionRevision!, definitionSha256: "c".repeat(64)}))};
+  const result: NightlyResult = {occurrenceId: plan.occurrenceId, suiteId: plan.suiteId, startedAt: plan.startedAt, trigger: plan.trigger,
+    members: plan.members.map(member => ({...member, status: "waiting", publicationComplete: false})), expectedCount: 2, passed: 0, status: "running"};
+  const row: {payload: typeof payload; nightlyPlan: NightlyPlan; nightlyResult?: NightlyResult} = {payload, nightlyPlan: plan};
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;}, lean: async () => row} as any));
+  const liveDetail = spyOn(NightlyRoutineService.prototype, "detail").mockResolvedValue(result); mocks.push(liveDetail);
+  const service = new TestSuiteService();
+  expect(await service.detail(plan.suiteId)).toMatchObject({outcome: "running", passed: 0, failedRoutines: [], members: [
+    {status: "waiting"}, {status: "waiting"},
+  ]});
+  result.members[0]!.status = "failed"; result.members[0]!.publicationComplete = true;
+  expect((await service.detail(plan.suiteId)).failedRoutines).toEqual(["phone-product"]);
+  expect(liveDetail).toHaveBeenCalledTimes(2);
+  result.finishedAt = "2026-10-03T14:00:00Z"; result.status = "incomplete"; result.members[1]!.status = "incomplete";
+  row.nightlyResult = result;
+  expect(await service.detail(plan.suiteId)).toMatchObject({outcome: "failed", passed: 0, failedRoutines: ["phone-product", "desktop-product"],
+    members: [{status: "failed"}, {status: "not-run"}]});
+  expect(liveDetail).toHaveBeenCalledTimes(2);
+});
+
+test("suite completion refuses empty or single nightly occurrences before delegating or writing", async () => {
+  const complete = spyOn(NightlyRoutineService.prototype, "complete"); mocks.push(complete);
+  const write = spyOn(TestSuiteModel, "updateOne"); mocks.push(write);
+  for (const payload of [undefined, {members: []}, {members: [{memberId: "single"}]}]) {
+    const find = spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;},
+      lean: async () => ({payload, nightlyPlan: {occurrenceId: "not-suite", startedAt: "2026-10-03T11:00:00Z"}})} as any);
+    try {await expect(new TestSuiteService().complete("not-suite", {finishedAt: "2026-10-03T14:00:00Z"})).rejects.toThrow("no multi-member test suite");}
+    finally {find.mockRestore();}
+  }
+  expect(complete).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled();
 });
