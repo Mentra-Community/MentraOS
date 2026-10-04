@@ -3,6 +3,9 @@ import {frameworkBuildSchema, frameworkIdentitySchema} from "./framework-request
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
 
 export const frameworkRunIdSchema = frameworkIdentitySchema;
+/** Opaque manifest selectors may contain nested segments; they are never storage paths. */
+export const frameworkAssetIdSchema = z.string().min(1).max(500)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/);
 const id = frameworkRunIdSchema;
 const ms = z.number().finite().nonnegative();
 const lifecycleAction = z.object({id, instruction: z.string().min(1).max(2000), expected: z.string().min(1).max(2000),
@@ -22,8 +25,8 @@ export const frameworkRunSchema = z.object({
   schemaVersion: z.literal(1), requestId: id, hostId: id, routineId: routineIdentitySchema,
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/), platform: routinePlatformSchema,
   laneId: id, build: frameworkBuildSchema, startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
-  recordingAssetId: id.optional(),
-  assets: z.array(z.object({id, kind: z.enum(["recording", "screenshot", "diagnostic", "report"]), path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  recordingAssetId: frameworkAssetIdSchema.optional(),
+  assets: z.array(z.object({id: frameworkAssetIdSchema, kind: z.enum(["recording", "screenshot", "diagnostic", "report"]), path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),
     size: z.number().int().positive().max(2 * 1024 * 1024 * 1024),
     mimeType: z.enum(["video/mp4", "video/webm", "image/png", "image/jpeg", "application/json", "text/plain"])}).strict()).max(2000),
   result: z.object({runId: id, finishedAt: z.string().datetime({offset: true}), test: z.enum(["passed", "failed", "not-run", "cancelled"]),
@@ -31,11 +34,11 @@ export const frameworkRunSchema = z.object({
       actions: z.array(lifecycleAction).max(1000).optional()}).strict(),
     steps: z.array(z.object({id, status: z.enum(["passed", "failed", "not-run"]), durationMs: ms, causedBy: id.optional(),
       startedAt: z.string().datetime({offset: true}).optional(), finishedAt: z.string().datetime({offset: true}).optional(),
-      recordingLocation: z.object({assetId: id, startOffsetMs: ms, endOffsetMs: ms.optional()}).strict().optional()}).strict()).max(2000),
+      recordingLocation: z.object({assetId: frameworkAssetIdSchema, startOffsetMs: ms, endOffsetMs: ms.optional()}).strict().optional()}).strict()).max(2000),
     teardown: z.object({ready: z.boolean(), actions: z.array(lifecycleAction).max(1000).optional(),
       outcomes: z.array(cleanupOutcome), errors: z.array(failure),
       unavailableResources: z.array(z.object({resource: id, cause: z.string(), nextAction: z.string()}).strict())}).strict(),
-    failures: z.array(failure), evidence: z.array(id),
+    failures: z.array(failure), evidence: z.array(frameworkAssetIdSchema),
     timing: z.object({startedAt: z.string().datetime({offset: true}), setupMs: ms, testMs: ms, teardownMs: ms}).strict(),
   }).strict(),
 }).strict().superRefine((run, ctx) => {

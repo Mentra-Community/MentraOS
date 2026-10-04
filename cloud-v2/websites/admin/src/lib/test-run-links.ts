@@ -1,3 +1,4 @@
+import {frameworkAssetIdSchema} from "../../../../packages/core/src/types/framework-run.types";
 import {frameworkIdentitySchema} from "../../../../packages/core/src/types/framework-request.types";
 import {routineIdentitySchema} from "../../../../packages/core/src/types/routine-definition.types";
 export type TestRunLink = { runID: string; stepID?: string };
@@ -94,6 +95,6 @@ export function testRunLocation(current: string, selection: TestRunLink | null):
 
 /** Asset IDs are the only media selector; never load a URL supplied in an uploaded report. */
 export function testRunAssetPath(runID: string, assetID: string): string {
-  if (!frameworkIdentitySchema.safeParse(runID).success || !frameworkIdentitySchema.safeParse(assetID).success) throw new Error("Invalid test run or asset ID");
+  if (!frameworkIdentitySchema.safeParse(runID).success || !frameworkAssetIdSchema.safeParse(assetID).success) throw new Error("Invalid test run or asset ID");
   return `/api/admin/test-runs/${encodeURIComponent(runID)}/assets/${encodeURIComponent(assetID)}`;
 }

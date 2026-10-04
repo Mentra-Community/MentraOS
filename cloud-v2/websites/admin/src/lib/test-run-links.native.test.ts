@@ -40,3 +40,11 @@ test("PR and release producer links preserve exact current-platform scopes", asy
  const match = block.text.text.match(/<(https:[^|]+)\|Results for this exact build>/)!;
  expect(readTestRunListScope(new URL(match[1]).search)).toEqual({repository: "Mentra-Community/MentraOS", channel: "dev", headSha: sha, archiveSha256: digest, routineId: "coverage", platform: "ios-on-mac"});
 });
+
+
+test("Admin media links use the shared nested asset identity and encode it as one route parameter", () => {
+ const id = "setup-evidence/commands/result.json";
+ expect(testRunAssetPath("local:one", id)).toBe("/api/admin/test-runs/local%3Aone/assets/setup-evidence%2Fcommands%2Fresult.json");
+ for (const bad of ["../file", "a/../file", "a//file", "a%2Ffile", "a\\file", "a".repeat(501)])
+  expect(() => testRunAssetPath("local:one", bad)).toThrow();
+});
