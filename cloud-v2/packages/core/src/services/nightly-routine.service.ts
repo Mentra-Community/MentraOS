@@ -10,7 +10,7 @@ import {testSuiteSchema, type TestSuite} from "../types/test-suite.types";
 import {RoutineCatalogService} from "./routine-catalog.service";
 import {GithubTestBuildGateway, TestDispatchError} from "./test-builds.service";
 import {TestHostStateService, type ReceivedTestHostState} from "./test-host-state.service";
-import {TestRequestService, requestInputDigest} from "./test-request.service";
+import {TestRequestService, requestInputDigest, type StoredTestRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
 import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings} from "./routine-admission.service";
@@ -103,17 +103,25 @@ export class NightlyRoutineService {
     }
     const admissions = await Promise.all(plan.members.map(async member => {
       if (!member.input || !member.hostId) return {memberId: member.memberId, admitted: false, reason: member.unavailableReason};
+      let request: StoredTestRequest | undefined, unavailable = false;
       try {
-        try {await this.requests.submit(member.requestId, member.hostId, member.input);}
+        try {request = await this.requests.submit(member.requestId, member.hostId, member.input);}
         finally {
           // A lost insert acknowledgement is still an attempted admission, not proof that no request exists.
           if (await this.repository.completed(suiteId) || this.now() >= Date.parse(plan!.startedAt) + 3 * 3600_000)
-            await this.requests.cancelSubmission(member.requestId, member.hostId, member.input,
+            request = await this.requests.cancelSubmission(member.requestId, member.hostId, member.input,
               new Date(this.now()).toISOString(), "Nightly occurrence reached its completion boundary.");
         }
-        return {memberId: member.memberId, admitted: true};
       }
-      catch {return {memberId: member.memberId, admitted: false, reason: "Request admission unavailable; retry this occurrence."};}
+      catch {unavailable = true;}
+      if (request?.state === "terminal" && !request.runId) {
+        if (request.hostRejection) return {memberId: member.memberId, admitted: false,
+          reason: `${request.hostRejection.code}: ${request.hostRejection.reason}`.slice(0, 2000)};
+        if (request.terminalStatus === "cancelled") return {memberId: member.memberId, admitted: false,
+          reason: request.hostCancellation?.reason ?? "Request was cancelled before execution."};
+      }
+      return unavailable ? {memberId: member.memberId, admitted: false, reason: "Request admission unavailable; retry this occurrence."}
+        : {memberId: member.memberId, admitted: true};
     }));
     return {plan, admissions};
   }

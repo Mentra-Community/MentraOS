@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 import { api, ApiError } from "./lib/api";
 import {
-  readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
+  hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
 import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
@@ -181,6 +181,7 @@ function AdminPage() {
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
+  const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
@@ -223,6 +224,7 @@ function AdminPage() {
       const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
       setTestRunListScope(scope);
+      setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
       if (suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
       else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
@@ -238,6 +240,7 @@ function AdminPage() {
 
   function clearTestRunListScope() {
     setTestRunListScope(null);
+    setInvalidTestRunListScope(false);
     window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
   }
 
@@ -455,7 +458,11 @@ function AdminPage() {
             <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
             <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
           </section>}
-          <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />
+          {invalidTestRunListScope ? <section role="alert" className="rounded-2xl border border-[#e0e4de] bg-white p-5">
+            <h2 className="font-semibold">This test-results filter is unavailable</h2>
+            <p className="mt-2">The link has missing or unsupported build details. Open a current result link, or choose all test runs.</p>
+            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
+          </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
           <NativeActivityPanel /><NativeDispatchPanel />
         </>
       ) : null}

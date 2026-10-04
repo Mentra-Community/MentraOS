@@ -11,6 +11,12 @@ export type TestRunListScope = {
 const COMMON_LIST_KEYS = ["testRuns", "repository", "headSha", "archiveSha256", "routineId", "platform"] as const;
 const LIST_KEYS = [...COMMON_LIST_KEYS, "channel", "pr"] as const;
 
+export function hasInvalidTestRunListScope(search: string): boolean {
+  const query = new URLSearchParams(search);
+  return query.get("testRuns") === "1" && LIST_KEYS.some(key => key !== "testRuns" && query.has(key)) &&
+    readTestRunListScope(search) === null;
+}
+
 /** The whole scope is required: a malformed build link must not show another build's results. */
 export function readTestRunListScope(search: string): TestRunListScope | null {
   const query = new URLSearchParams(search);

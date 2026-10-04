@@ -291,7 +291,8 @@ test("deadline fences a concurrent uncertain admission before completion and acr
     expect((await makeService().start(occurrence)).admissions).toEqual([]);
     expect(await makeService().complete(occurrence.occurrenceId)).toEqual(terminal);
     release();
-    await admission;
+    expect((await admission).admissions).toEqual([{memberId: member.memberId, admitted: false,
+      reason: "Nightly occurrence reached its completion boundary."}]);
     expect(await makeService().complete(occurrence.occurrenceId)).toEqual(terminal);
     expect(rows.get(member.requestId)).toEqual(cancelled);
     expect((await new TestRequestService(requestRepository).queued("mini", undefined, 100)).requests).toEqual([]);
@@ -301,6 +302,27 @@ test("deadline fences a concurrent uncertain admission before completion and acr
     rows.set(member.requestId, unfenced);
     expect(await makeService().complete(occurrence.occurrenceId)).toEqual(terminal);
     expect(rows.get(member.requestId)).toEqual(cancelled);
+  }
+});
+
+test("admission receipts distinguish unexecuted cancellation and rejection from completed execution", async () => {
+  for (const status of ["cancelled", "not-run", "pass", "failed"]) {
+    let saved: NightlyPlan | null = null;
+    const service = new NightlyRoutineService({async list() {return [row("receipt-product", "android")];}} as any,
+      {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
+      {async get() {return host;}}, {async get() {return null;}, async cancelSubmission() {throw new Error("Must not cancel before boundary");},
+        async submit(requestId, hostId, input) {return {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "terminal", terminalStatus: status,
+          ...(status === "not-run" ? {hostRejection: {requestId, hostId, inputSha256: requestInputDigest(input), rejectedAt: startedAt,
+            code: "unavailable-definition", reason: "The enrolled definition is unavailable."}} : {}),
+          ...(status === "cancelled" ? {hostCancellation: {requestId, hostId, inputSha256: requestInputDigest(input), requestedAt: startedAt,
+            reason: "Cancelled by the occurrence boundary."}} : {}),
+          ...(["pass", "failed"].includes(status) ? {runId: requestId} : {})};}},
+      {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+      () => ({android: {hostId: "mini", laneId: "android"}}), undefined, () => now);
+    const [admission] = (await service.start(occurrence)).admissions;
+    expect(admission!.admitted).toBe(["pass", "failed"].includes(status));
+    if (status === "not-run") expect(admission!.reason).toBe("unavailable-definition: The enrolled definition is unavailable.");
+    if (status === "cancelled") expect(admission!.reason).toBe("Cancelled by the occurrence boundary.");
   }
 });
 
