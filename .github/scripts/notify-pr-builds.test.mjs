@@ -87,6 +87,25 @@ test("Slack escapes PR text and includes all three firmware targets", () => {
   assert.match(post({backend: "dev"}), /Backend: \*Dev\*/)
 })
 
+test("PR Slack bounds valid maximum routine titles and fifty selections while preserving install links", () => {
+  const routines = Array.from({length: 50}, (_, index) => ({id: `selected-${index}`, title: "<&>".repeat(666) + "xx", platform: "android",
+    resultsUrl: `https://admin.dev.mentraglass.com/?routineId=selected-${index}`, pipelineUrl: "https://github.com/o/r/actions/workflows/request-e2e-routine.yml",
+    pipelineLabel: "Request pipeline (workflow)"}))
+  const payload = buildPost({pr: {...pr, title: "<&>".repeat(2000)}, sha, routines, androidUrl: "https://example.com/a.apk",
+    manifestUrl: "https://example.com/m.json", targets: {...readOtaTargets(manifest, 123, sha), bes: "<&>".repeat(2000)},
+    androidRunUrl: run.html_url, ios: {assets: {install: "https://example.com/install", manifest: "https://example.com/manifest",
+      mac: "https://example.com/mac.zip"}, macInstallUrl: "https://example.com/mac-install", instructionsUrl: "https://example.com/instructions"}})
+  assert.ok(payload.blocks.length <= 50)
+  for (const block of payload.blocks) if (block.type === "section") assert.ok(block.text.text.length <= 3000)
+  const body = JSON.stringify(payload)
+  assert.match(body, /View all requested tests in Admin/)
+  assert.match(body, /Download APK/); assert.match(body, /Install on iPhone/); assert.match(body, /Install on Mac/)
+  assert.match(body, /OTA manifest/); assert.match(body, /View PR and checks/)
+  assert.ok(payload.text.length < 1500)
+  const failed = buildPost({pr, sha, error: "<&>".repeat(2000), ios: {error: "<&>".repeat(2000)}, androidRunUrl: run.html_url})
+  assert.ok(failed.blocks.every(block => block.type !== "section" || block.text.text.length <= 3000))
+})
+
 const iosRun = {...run, id: 3}
 const iosReceipt = {
   schemaVersion: 1,
@@ -649,7 +668,9 @@ test("selected catalog IDs link exact build results without altering post dedupl
     const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
     assert.match(text, /Requested tests:\* Second Mac definition · iOS on Mac/)
     const links = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]))
-    assert.deepEqual(links.map(url => url.searchParams.get("routineId")), labels.map(label => label.slice("routine:".length)).sort((a,b) => ["selected-mac", "selected-second"].indexOf(a) - ["selected-mac", "selected-second"].indexOf(b)))
+    const actualIds = links.map(url => url.searchParams.get("routineId")), expectedIds = labels.map(label => label.slice("routine:".length))
+    assert.equal(new Set(actualIds).size, expectedIds.length)
+    assert.deepEqual([...actualIds].sort(), [...expectedIds].sort())
     for (const url of links) {
       assert.equal(url.searchParams.get("headSha"), sha)
       assert.equal(url.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)

@@ -130,6 +130,11 @@ export async function resolveRoutineNotifications({github, context, details, rea
       const attempt = Number(artifact.name.slice(prefix.length))
       requireThat(positive(attempt) && artifact.name === receiptName(buildRun.id, attempt), "Invalid release message attempt")
       const candidate = (await read(github, context.repo, buildRun, artifact.name, ["slack-release-message.json"]))["slack-release-message.json"]
+      if (candidate.schemaVersion === 1) {
+        // Cutover: old posts are not writable by this result contract. Leave them unchanged without blocking current posts.
+        console.warn(`Release post ${artifact.name} predates the current result contract; use Admin for its results.`)
+        continue
+      }
       if (candidate.build === null) continue
       const message = assertNotification(candidate)
       requireThat(message.producer.runAttempt === attempt && message.build.runId === row.source.buildRunId &&
