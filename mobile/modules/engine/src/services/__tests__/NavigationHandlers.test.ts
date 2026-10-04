@@ -3,28 +3,20 @@
 import {beforeEach, expect, mock, test} from "bun:test"
 
 let pendingStart: Promise<{ok: boolean}> | null = null
-let state = "idle"
-const listeners = new Set<(update: {kind: string}) => void>()
-const stop = mock(async () => {
-  state = "idle"
-  return {ok: true}
-})
-const navigation = {
-  addListener: (listener: (update: {kind: string}) => void) => {
-    listeners.add(listener)
-    return () => listeners.delete(listener)
+let pendingStop: Promise<{ok: boolean}> | null = null
+const listeners = new Map<string, (update: {message?: string}) => void>()
+const stop = mock(async () => (pendingStop ? await pendingStop : {ok: true}))
+mock.module("@mentra/crust", () => ({
+  default: {
+    addListener: (event: string, listener: (update: {message?: string}) => void) => {
+      listeners.set(event, listener)
+      return {remove: () => listeners.delete(event)}
+    },
+    startNavigation: async () => (pendingStart ? await pendingStart : {ok: true}),
+    stopNavigation: stop,
   },
-  addLocationListener: () => () => {},
-  addRouteListener: () => () => {},
-  getState: () => state,
-  getSnapshot: () => null,
-  start: mock(async () => {
-    state = "navigating"
-    return pendingStart ? await pendingStart : {ok: true}
-  }),
-  stop,
-}
-mock.module("../NavigationService", () => ({default: navigation}))
+}))
+const {default: navigation} = await import("../NavigationService")
 mock.module("../CloudClientService", () => ({cloudClientService: {}}))
 mock.module("../../runtime/bootstrap", () => ({isFeatureEnabled: () => true}))
 mock.module("@mentra/miniapp", () => ({
@@ -35,11 +27,11 @@ mock.module("@mentra/miniapp", () => ({
 const {NavigationHandlers} = await import("../NavigationHandlers")
 let handlers: InstanceType<typeof NavigationHandlers>
 
-beforeEach(() => {
-  listeners.clear()
-  stop.mockClear()
+beforeEach(async () => {
   pendingStart = null
-  state = "idle"
+  pendingStop = null
+  await navigation.stop()
+  stop.mockClear()
   handlers = new NavigationHandlers(
     () => {},
     () => {},
@@ -65,7 +57,7 @@ test("unrelated miniapp disconnect does not stop navigation", async () => {
 
 test("disconnect after a route error still releases native navigation", async () => {
   await handlers.handleStart("maps", destination)
-  for (const listener of listeners) listener({kind: "error"})
+  listeners.get("onNavError")?.({message: "route failed"})
   handlers.onDisconnect("maps")
   expect(stop).toHaveBeenCalledTimes(1)
 })
@@ -104,5 +96,32 @@ test("a stopped startup cannot remove ownership from a relaunched miniapp", asyn
   resolveStart({ok: false})
   await starting
   expect(handlers.isTripActive("maps")).toBe(true)
-  expect(listeners.size).toBe(1)
+  expect(listeners.size).toBeGreaterThan(0)
+})
+
+test("late startup completion cannot resurrect a stopped trip snapshot", async () => {
+  let resolveStart!: (result: {ok: boolean}) => void
+  pendingStart = new Promise((resolve) => {
+    resolveStart = resolve
+  })
+  const starting = navigation.start({lat: 1, lng: 2})
+  await navigation.stop()
+  resolveStart({ok: true})
+  await starting
+  expect(navigation.getState()).toBe("idle")
+  expect(navigation.getSnapshot()).toBeNull()
+})
+
+test("late stop completion cannot clear a newer trip snapshot", async () => {
+  let resolveStop!: (result: {ok: boolean}) => void
+  pendingStop = new Promise((resolve) => {
+    resolveStop = resolve
+  })
+  const stopping = navigation.stop()
+  pendingStart = Promise.resolve({ok: true})
+  await navigation.start({lat: 3, lng: 4})
+  resolveStop({ok: true})
+  await stopping
+  expect(navigation.getState()).toBe("navigating")
+  expect(navigation.getSnapshot()?.stops).toEqual([{lat: 3, lng: 4}])
 })
