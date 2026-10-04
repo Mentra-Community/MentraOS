@@ -843,6 +843,7 @@ const en = {
     chooseFromLibrary: "Choose from Library",
     androidBlur: "Blur effects",
     androidInnerShadow: "Inner shadow",
+    enableLandscape: "Enable landscape",
   },
   debugSettings: {
     showMentraCallIos: "Show Mentra Call (experimental)",

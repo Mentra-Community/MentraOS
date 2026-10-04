@@ -110,6 +110,14 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Keep the persisted key so existing landscape opt-ins survive the app-wide expansion.
+  enable_landscape_web_views: {
+    key: "enable_landscape_web_views",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   android_blur: {
     key: "android_blur",
     defaultValue: () => {
