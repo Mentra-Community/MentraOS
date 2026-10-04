@@ -154,7 +154,8 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   /** Latest immutable dev publication at the occurrence boundary. Incomplete history never selects an older build. */
   async latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null> {
-    if (!Number.isFinite(Date.parse(before))) throw new TestDispatchError(400, "Invalid nightly build boundary");
+    const boundary = Date.parse(before);
+    if (!Number.isFinite(boundary)) throw new TestDispatchError(400, "Invalid nightly build boundary");
     const seen = new Set<number>();
     for (let page = 1; page <= 10; page++) {
       const data = z.object({total_count: z.number().int().nonnegative(), workflow_runs: z.array(runSchema)}).parse(
@@ -164,16 +165,18 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         seen.add(run.id);
       }
       const candidates = data.workflow_runs.filter(run => this.matches(run, "dev", platform)
-        && Date.parse(run.created_at) <= Date.parse(before)).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
+        && Date.parse(run.created_at) <= boundary).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
       for (const run of candidates) {
-        const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt);
+        // Later reruns cannot supersede the publication that existed when this occurrence began.
+        const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt
+          && job.started_at && Number.isFinite(Date.parse(job.started_at)) && Date.parse(job.started_at) <= boundary);
         const latest = Math.max(0, ...finalizers.map(job => job.run_attempt));
         const current = finalizers.filter(job => job.run_attempt === latest);
         if (current.length > 1) throw new TestDispatchError(502, "Nightly publication is ambiguous");
         if (current[0]?.status !== "completed" || current[0]?.conclusion !== "success"
           || !current[0]?.steps?.some(step => step.name === RELEASE_PUBLISH_STEP && step.status === "completed" && step.conclusion === "success")
           || !current[0]?.completed_at || !Number.isFinite(Date.parse(current[0].completed_at))
-          || Date.parse(current[0].completed_at) > Date.parse(before)) continue;
+          || Date.parse(current[0].completed_at) > boundary) continue;
         // A published but missing platform artifact remains unavailable; do not silently use an older release.
         const publicationAttempt = Math.min(latest, ...finalizers.filter(job => job.started_at && job.completed_at
           && job.started_at === current[0]!.started_at && job.completed_at === current[0]!.completed_at

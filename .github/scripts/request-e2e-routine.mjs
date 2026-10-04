@@ -97,23 +97,51 @@ export async function createRoutineRequests({github, context, token, routine, pl
   const explicit = context.eventName === "workflow_dispatch"
   ensure(explicit ? context.ref === "refs/heads/dev" : context.eventName === "pull_request_target", "Requests require trusted workflow metadata")
   const catalog = await routineApi({token, operation: "catalog", fetchImpl})
+  const requests = [], pending = [], outcomes = []
+  const dispatch = async (definition, selected) => {
+    const plan = planForDefinition(definition, selected)
+    try {
+      const request = await routineApi({token, operation: "dispatch", request: plan, fetchImpl})
+      requests.push(request)
+      outcomes.push({routineId: definition.routineId, platform: definition.platform, requestId: request.requestId, status: "accepted"})
+    } catch (error) {
+      outcomes.push({routineId: definition.routineId, platform: definition.platform, requestId: plan.requestId,
+        status: "failed", reason: error.message, retryable: error.retryable === true})
+    }
+  }
   if (explicit) {
     const selected = exactSource(source)
     if (selected.channel === "pr") await authenticatedPr(github, context, selected.prNumber)
     const definitions = selectedCatalog(catalog, [routine], platform)
     ensure(platform && definitions.length === 1, "An explicit request requires an enrolled routine and platform")
-    const plan = planForDefinition(definitions[0], selected)
-    return {requests: [await routineApi({token, operation: "dispatch", request: plan, fetchImpl})], pending: []}
+    await dispatch(definitions[0], selected)
+    return {requests, pending, outcomes}
   }
   const pr = await authenticatedPr(github, context, number)
   const ids = routineLabelIds(pr)
-  if (!ids.length) return {requests: [], pending: []}
-  const definitions = selectedCatalog(catalog, ids), requests = [], pending = [], sources = new Map()
+  if (!ids.length) return {requests, pending, outcomes}
+  const definitions = selectedCatalog(catalog, ids), sources = new Map()
   for (const definition of definitions) {
-    if (!sources.has(definition.platform)) sources.set(definition.platform, await currentPrSource(github, context, pr, definition.platform))
-    const selected = sources.get(definition.platform)
-    if (!selected) {pending.push({...definition, reason: "Current PR app publication is pending"}); continue}
-    requests.push(await routineApi({token, operation: "dispatch", request: planForDefinition(definition, selected), fetchImpl}))
+    try {
+      if (!sources.has(definition.platform)) sources.set(definition.platform, currentPrSource(github, context, pr, definition.platform))
+      const selected = await sources.get(definition.platform)
+      if (!selected) {
+        const reason = "Current PR app publication is pending"
+        pending.push({...definition, reason})
+        outcomes.push({routineId: definition.routineId, platform: definition.platform, status: "pending", reason})
+        continue
+      }
+      await dispatch(definition, selected)
+    } catch (error) {
+      outcomes.push({routineId: definition.routineId, platform: definition.platform, status: "failed", reason: error.message, retryable: error.retryable === true})
+    }
   }
-  return {requests, pending}
+  return {requests, pending, outcomes}
+}
+
+/** Call only after accepted selectors and all member outcomes have been retained. */
+export function assertRoutineRequestOutcomes(outcomes) {
+  const failures = outcomes.filter(outcome => outcome.status === "failed")
+  if (failures.length) throw new AggregateError(failures.map(outcome => new Error(`${outcome.routineId}/${outcome.platform}: ${outcome.reason}`)),
+    `Routine request admission failed for ${failures.length} member(s): ${failures.map(outcome => `${outcome.routineId}/${outcome.platform}: ${outcome.reason}`).join("; ")}`)
 }

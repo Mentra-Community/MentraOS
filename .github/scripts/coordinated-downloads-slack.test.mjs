@@ -82,6 +82,19 @@ test("one unverified platform cannot borrow another archive and repeated rows sh
   assert.match(block.text.text, /Desktop coverage · iOS on Mac — Published app download could not be verified; results link unavailable/)
   assert.equal([...block.text.text.matchAll(/\|Results for this exact build>/g)].length, 2)
 })
+
+test("catalog Slack section bounds escaped long titles and many definitions with an Admin overflow link", async () => {
+  for (const titles of [Array(30).fill("Example screen check"), Array(30).fill("<&&>".repeat(500)), ["<&&>".repeat(500)]]) {
+    const rows = titles.map((title, index) => catalogRow(`new-routine-${index}`, "android", title))
+    const [block] = await coordinatedRoutineLinks(published, catalogFetch(rows), {select: async () => ({archive: {url: published.MOBILE_APK_URL, sha256: "d".repeat(64)}})})
+    assert.ok(block.text.text.length <= 3000, block.text.text.length)
+    assert.match(block.text.text, /Request pipeline/)
+    if (rows.length > 1) assert.match(block.text.text, /routineCatalog=1\|View all available tests in Admin/)
+    assert.doesNotMatch(block.text.text, /<&&>/)
+    const links = [...block.text.text.matchAll(/<(https:[^|]+)\|[^>]+>/g)]
+    assert.ok(links.every(match => new URL(match[1]).protocol === "https:"))
+  }
+})
 test("empty or unavailable catalogs leave the release post useful without invented coverage", async () => {
   const [empty] = await coordinatedRoutineLinks(published, catalogFetch([]), {select: async () => assert.fail("No enrolled definitions")})
   assert.match(empty.text.text, /No device tests are currently enrolled/)

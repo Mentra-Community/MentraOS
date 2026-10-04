@@ -106,8 +106,15 @@ export function frameworkRunHref(runId: string) {
 type RunDisplay = {kind?: "run"; run: FrameworkRun; definition: RoutineEnrollment["definition"] | null;
   outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"};
 type RequestDisplay = {kind: "request"; request: FrameworkRequestDisplay; run?: never; uploadsComplete?: never};
+const CANCELLED_REQUEST_OBSERVATION_MS = 10 * 60 * 1000;
 
-function RequestCard({request}: {request: FrameworkRequestDisplay}) {
+export function frameworkRunRefetchInterval(data: RunDisplay | RequestDisplay | undefined, observedAt: number, now = Date.now()): number | false {
+  if (data?.kind === "request") return data.request.state !== "terminal"
+    || (data.request.terminalStatus === "cancelled" && now - observedAt < CANCELLED_REQUEST_OBSERVATION_MS) ? 5000 : false;
+  return data?.uploadsComplete === false ? 5000 : false;
+}
+
+function RequestCard({request, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
   const status = request.terminalStatus ?? request.state;
   return <section className={PANEL} aria-label="Routine request">
     <a className="underline" href="/?testRuns=1">All test runs</a>
@@ -117,9 +124,12 @@ function RequestCard({request}: {request: FrameworkRequestDisplay}) {
     <p className="mt-2">Computer: {request.hostId} · Lane: {request.laneId} · {request.platform}</p>
     <p className="mt-2 text-sm">Routine revision: <code>{request.definitionRevision}</code></p>
     {request.createdAt && <p className="mt-2 text-sm">Requested {new Date(request.createdAt).toLocaleString()}</p>}
+    {request.acceptedAt && <p className="mt-2 text-sm">Host accepted {new Date(request.acceptedAt).toLocaleString()}</p>}
     {request.reason && <p className="mt-3">{request.reason}</p>}
-    {request.cancellationRequested && request.state !== "terminal" && <p className="mt-2 text-sm">Cancellation requested · {request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
-    <p className="mt-3 text-sm text-[#68746d]">No routine result has been published.{request.state !== "terminal" && " This request refreshes automatically."}</p>
+    {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
+    <p className="mt-3 text-sm text-[#68746d]">No routine result has been published.{request.state !== "terminal" && " This request refreshes automatically."}
+      {request.terminalStatus === "cancelled" && (observing ? " Checking for final host custody or a published result for ten minutes." : "Automatic observation has ended. Refresh to check for later host custody or results.")}</p>
+    <button className="mt-3 underline" disabled={refreshing} onClick={onRefresh}>Refresh request</button>
   </section>;
 }
 
@@ -129,10 +139,15 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<string | undefined>(stepId);
   const [stepSearch, setStepSearch] = useState("");
+  const [observation, setObservation] = useState<{runId: string; startedAt: number | null}>(() => ({runId, startedAt: null}));
+  const observedAt = observation.runId === runId ? observation.startedAt ?? Date.now() : Date.now();
   const result = useQuery({queryKey: ["framework-run", runId], queryFn: () =>
     api<RunDisplay | RequestDisplay>(`/api/admin/test-runs/${encodeURIComponent(runId)}`),
-    refetchInterval: query => query.state.data?.kind === "request" ? query.state.data.request.state !== "terminal" ? 5000 : false
-      : query.state.data?.uploadsComplete === false ? 5000 : false});
+    refetchInterval: query => frameworkRunRefetchInterval(query.state.data, observedAt)});
+  useEffect(() => {
+    if (result.data?.kind === "request" && result.data.request.terminalStatus === "cancelled")
+      setObservation(current => current.runId === runId && current.startedAt !== null ? current : {runId, startedAt: Date.now()});
+  }, [runId, result.data?.kind, result.data?.kind === "request" ? result.data.request.terminalStatus : undefined]);
   useEffect(() => {
     if (!stepId) return;
     setSelectedStep(stepId);
@@ -148,10 +163,14 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   useEffect(() => {setStepSearch(""); setSelectedStep(stepId); if (!stepId) {pendingOffset.current = null; setSelectedAsset(null);}}, [runId, stepId]);
   if (result.isPending) return <p role="status">Loading run…</p>;
   if (result.error && !result.data) return <p role="alert">Could not load run: {result.error.message}</p>;
-  if (result.data.kind === "request") return <div className="space-y-5">
-    {result.error && <p role="alert">Request could not refresh: {result.error.message}</p>}
-    <RequestCard request={result.data.request} />
-  </div>;
+  if (result.data.kind === "request") {
+    const request = result.data.request;
+    return <div className="space-y-5">
+      {result.error && <p role="alert">Request could not refresh: {result.error.message}</p>}
+      <RequestCard request={request} observing={frameworkRunRefetchInterval(result.data, observedAt) !== false}
+        refreshing={result.isFetching} onRefresh={() => {setObservation({runId, startedAt: request.terminalStatus === "cancelled" ? Date.now() : null}); void result.refetch();}} />
+    </div>;
+  }
   const {run, definition, outcome, uploadsComplete, evidenceStatus} = result.data;
   const actualRunId = result.data.kind === "run" ? run.result.runId : runId;
   const recordingAsset = selectedAsset ?? run.recordingAssetId;

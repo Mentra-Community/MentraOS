@@ -95,18 +95,17 @@ test("dev inventory distinguishes a newer unpublished build from the previous im
 });
 
 
-test("nightly latest dev selection passes newer unpublished runs and pins the publication before its boundary", async () => {
+const before = "2026-09-23T11:00:00Z";
+const nightlyUrl = `${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=1`;
+const finalizer = {id: 70, name: "Finalize immutable release bill of materials", run_attempt: 1, status: "completed", conclusion: "success",
+  started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z",
+  steps: [{name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success"}]};
+const releaseRun = (extra = {}) => run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml", ...extra});
+function nightlyFixture() {
  const f = fixture();
  const identity = "3.2.1-dev.20", tag = "mentra-builds-v3.2.1";
- f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&per_page=10`, {
-  workflow_runs: [run({id: 60, head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml", status: "in_progress", conclusion: null}),
-   run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})],
- });
  f.rows.set(`${API}/actions/runs/60/jobs?filter=all&per_page=100&page=1`, {total_count: 0, jobs: []});
- f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{id: 70,
-  name: "Finalize immutable release bill of materials", run_attempt: 1, status: "completed", conclusion: "success",
-  started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z",
-  steps: [{name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success"}]}]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [finalizer]});
  f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, {artifacts: [{name: `coordinated-release-plan-mentra-${identity}`,
   expired: false, workflow_run: {id: 50, head_sha: HEAD}}]});
  f.rows.set(`${CDN}${tag}/mentra-release-plan-${identity}.json`, {releaseIdentity: identity, sourceCommit: HEAD, channel: "dev",
@@ -117,18 +116,18 @@ test("nightly latest dev selection passes newer unpublished runs and pins the pu
    otaManifestUrl: `${CDN}${tag}/mentra-live-ota-${identity}.json`, executableSha256: HASH, javascriptSha256: HASH}, artifacts: {mac: archive}});
  f.rows.set(`${CDN}${tag}/mentra-live-ota-${identity}.json`, {releaseVersion: identity});
  f.rows.set(`HEAD ${CDN}${tag}/${archive.name}`, new Response(null, {headers: {"Content-Length": "100"}}));
+ f.rows.set(nightlyUrl, {total_count: 2, workflow_runs: [releaseRun({id: 60, status: "in_progress", conclusion: null}), releaseRun()]});
+ return {...f, archive, planUrl: `${CDN}${tag}/mentra-release-plan-${identity}.json`};
+}
 
- const before = "2026-09-23T11:00:00Z";
- f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=1`, {
-  total_count: 2, workflow_runs: [run({id: 60, head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml", status: "in_progress", conclusion: null}),
-   run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})],
- });
+test("nightly latest dev selection passes newer unpublished runs and pins the publication before its boundary", async () => {
+ const f = nightlyFixture();
  const selected = await f.gateway.latestDev("ios-on-mac", before);
- expect(selected).toMatchObject({availability: "available", source: {channel: "dev", buildRunId: 50, publicationAttempt: 1}, archive});
+ expect(selected).toMatchObject({availability: "available", source: {channel: "dev", buildRunId: 50, publicationAttempt: 1}, archive: f.archive});
  expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
 });
 
-test("nightly latest dev refuses truncated history and transient publication metadata instead of selecting older releases", async () => {
+test("nightly latest dev refuses truncated history and transient GitHub job metadata instead of selecting older releases", async () => {
  const before = "2026-09-23T11:00:00Z", url = `${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=1`;
  const f = fixture();
  f.rows.set(url, {total_count: 2, workflow_runs: [run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})]});
@@ -137,4 +136,44 @@ test("nightly latest dev refuses truncated history and transient publication met
  f.rows.set(url, {total_count: 1, workflow_runs: [run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})]});
  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, new Response("unavailable", {status: 503}));
  await expect(f.gateway.latestDev("android", before)).rejects.toThrow("unavailable");
+});
+
+test("post-boundary retries cannot erase the available original nightly publication", async () => {
+ for (const retry of [
+  {status: "in_progress", conclusion: null, completed_at: null},
+  {status: "completed", conclusion: "failure", completed_at: "2026-09-23T12:10:00Z"},
+  {status: "completed", conclusion: "success", completed_at: "2026-09-23T12:10:00Z"},
+ ]) {
+  const f = nightlyFixture();
+  f.rows.set(nightlyUrl, {total_count: 1, workflow_runs: [releaseRun({run_attempt: 2})]});
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 2,
+   jobs: [finalizer, {...finalizer, id: 71, run_attempt: 2, started_at: "2026-09-23T12:00:00Z", ...retry}]});
+  expect(await f.gateway.latestDev("ios-on-mac", before)).toMatchObject({availability: "available",
+   source: {buildRunId: 50, publicationAttempt: 1}, archive: f.archive});
+ }
+});
+
+test("an execution begun by the boundary supersedes earlier attempts but must finish by the boundary to publish", async () => {
+ for (const started_at of ["2026-09-23T10:59:59Z", before]) {
+  const f = nightlyFixture();
+  f.rows.set(nightlyUrl, {total_count: 1, workflow_runs: [releaseRun({run_attempt: 2})]});
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 2,
+   jobs: [finalizer, {...finalizer, id: 71, run_attempt: 2, started_at, completed_at: "2026-09-23T11:00:01Z"}]});
+  expect(await f.gateway.latestDev("ios-on-mac", before)).toBeNull();
+ }
+ const f = nightlyFixture();
+ f.rows.set(nightlyUrl, {total_count: 1, workflow_runs: [releaseRun({run_attempt: 2})]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 2,
+  jobs: [finalizer, {...finalizer, id: 71, run_attempt: 2, started_at: "2026-09-23T10:59:59Z", completed_at: before}]});
+ expect(await f.gateway.latestDev("ios-on-mac", before)).toMatchObject({availability: "available", source: {publicationAttempt: 2}});
+});
+
+test("retained finalizer rows pin their original attempt and CDN failures do not select an older release", async () => {
+ const f = nightlyFixture();
+ f.rows.set(nightlyUrl, {total_count: 1, workflow_runs: [releaseRun({run_attempt: 2})]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 2,
+  jobs: [finalizer, {...finalizer, id: 71, run_attempt: 2}]});
+ expect(await f.gateway.latestDev("ios-on-mac", before)).toMatchObject({availability: "available", source: {publicationAttempt: 1}});
+ f.rows.set(f.planUrl, new Response("unavailable", {status: 503}));
+ await expect(f.gateway.latestDev("ios-on-mac", before)).rejects.toThrow("Build metadata unavailable (HTTP 503)");
 });

@@ -40,3 +40,11 @@ test("identical authenticated PR associations select once; distinct PR numbers r
   f.run.pull_requests.push({...f.run.pull_requests[0], number: 13})
   await assert.rejects(planDeviceDispatches(options), /ambiguous/)
 })
+
+test("same-repository non-PR app callbacks skip before inspecting publication or enrollment", async () => {
+  for (const event of ["push", "workflow_dispatch", "schedule"]) {
+    const f = fixture(); f.run.event = event
+    f.github.paginate = async () => assert.fail("Non-PR callback must not inspect publication")
+    assert.deepEqual(await planDeviceDispatches({...f, token: "fixture", fetchImpl: async () => assert.fail("Non-PR callback must not contact Core")}), [])
+  }
+})

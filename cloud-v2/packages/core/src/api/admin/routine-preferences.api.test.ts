@@ -19,4 +19,10 @@ test("protected preference route accepts only a boolean and keeps routine/platfo
   expect(result.headers.get("cache-control")).toBe("no-store");
   expect(await result.json()).toEqual({routineId: "another.new-routine", platform: "android", nightlyEnabled: false});
   expect(writes).toHaveLength(1);
+  const oversized = await app.request(path, {method: "PATCH", headers: {authorization: "admin", "content-type": "application/json"},
+    body: JSON.stringify({nightlyEnabled: false, padding: "x".repeat(1024)})});
+  expect(oversized.status).toBe(413);
+  expect(oversized.headers.get("cache-control")).toBe("no-store");
+  expect(await oversized.json()).toEqual({error: "routine_preference_body_too_large"});
+  expect(writes).toHaveLength(1);
 });

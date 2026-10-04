@@ -22,6 +22,8 @@ function notification(scope, overrides = {}) {
         FINALIZE_RESULT: "success",
         EXAMPLES_DISPATCH_RESULT: "success",
         ...overrides,
+        TEST_RUN_INGEST_TOKEN: "",
+        TEST_RUN_INGEST_TOKEN_DEV: "",
       },
     }),
   )

@@ -1,6 +1,7 @@
 import {writeFile} from "node:fs/promises"
 import {isDeepStrictEqual} from "node:util"
 import {publishedCoordinatedBuild} from "./coordinated-routine-request.mjs"
+import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
 
 export const ROUTINE_BLOCK = "mentra-release-routines"
 export const REPOSITORY = "Mentra-Community/MentraOS"
@@ -13,8 +14,6 @@ const id = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/.test(value ?? "")
 const routineId = value => /^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(value ?? "")
 const platforms = ["ios-on-mac", "android"]
 const statuses = ["passed", "failed", "setup-failed", "teardown-failed", "not-run", "cancelled", "unknown", "upload-incomplete"]
-const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-const displayTitle = title => escape(title.length > 240 ? `${title.slice(0, 239)}…` : title).replace(/[\r\n]/g, " ")
 
 export function slackDestination(env) {
   const channel = env.BRANCH === "dev" ? env.SLACK_DEV_BUILDS_CHANNEL_ID
@@ -99,10 +98,12 @@ export function applyRoutineResult(notification, row) {
     const current = rows[key], result = current.resultRunId
       ? ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(current.resultRunId)}|Recording and result>`
       : ` · <https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(current.requestId)}|Request receipt>`
-    return `${displayTitle(current.title)} · ${current.platform === "android" ? "Android" : "iOS on Mac"} — *${labels[current.status]}*${result}${current.reason ? ` (${displayTitle(current.reason)})` : ""}`
+    return `${slackRoutineText(current.title)} · ${current.platform === "android" ? "Android" : "iOS on Mac"} — *${labels[current.status]}*${result}${current.reason ? ` (${slackRoutineText(current.reason)})` : ""}`
   })
   return {...notification, rows, payload: {...notification.payload, blocks: notification.payload.blocks.map(block => block.block_id === ROUTINE_BLOCK
-    ? {...block, text: {type: "mrkdwn", text: `*Device test results*\n${lines.join("\n")}\nLatest completed request per routine and platform; build success is independent of these results.`}} : block)}}
+    ? {...block, text: {type: "mrkdwn", text: slackRoutineSection({heading: "*Device test results*", lines,
+      footer: "Latest completed request per routine and platform; build success is independent of these results.",
+      overflowUrl: "https://admin.dev.mentraglass.com/?testRuns=1", overflowLabel: "View all test results in Admin"})}} : block)}}
 }
 export async function updateReleaseMessage(notification, env, fetchImpl = fetch) {
   assertNotification(notification)

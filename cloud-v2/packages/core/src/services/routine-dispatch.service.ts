@@ -1,11 +1,11 @@
 import {z} from "zod";
-import {frameworkIdentitySchema} from "../types/framework-request.types";
+import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineIdentitySchema, routinePlatformSchema} from "../types/routine-definition.types";
-import {testBuildSourceSchema, type TestBuildSource} from "../types/test-build.types";
+import {testBuildSourceSchema} from "../types/test-build.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
 import {GithubTestBuildGateway, type TestBuildGateway} from "./test-builds.service";
 import {TestHostStateService} from "./test-host-state.service";
-import {TestRequestService, requestInputDigest} from "./test-request.service";
+import {TestRequestService, requestInputDigest, type StoredTestRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings} from "./routine-admission.service";
 import {TestRunError} from "./test-result-error";
@@ -21,22 +21,34 @@ export class RoutineDispatchService {
     private readonly results: Pick<FrameworkResultService, "detail"> = new FrameworkResultService(),
     private readonly bindings: () => RoutineLaneBindings = configuredRoutineLanes) {}
   async catalog() {return {routines: (await this.definitions.current()).filter(row => row.definition.execution)};}
+  private originalRequest(selected: z.infer<typeof routineDispatchSchema>, request: StoredTestRequest) {
+    const input = frameworkRequestInputSchema.safeParse(request.input);
+    const source = input.success ? testBuildSourceSchema.safeParse(input.data.build.source) : null;
+    if (!input.success || !source?.success || request.requestId !== selected.requestId || requestInputDigest(input.data) !== request.inputSha256)
+      throw new TestRunError(503, "Stored request identity is unavailable");
+    if (input.data.routineId !== selected.routineId || input.data.platform !== selected.platform
+      || requestInputDigest(source.data) !== requestInputDigest(selected.source))
+      throw new TestRunError(409, "Request retry changed its original routine/platform or exact build source");
+    return request;
+  }
   async submit(input: unknown) {
     const parsed = routineDispatchSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "Invalid exact-source routine request");
     const selected = parsed.data, existing = await this.requests.get(selected.requestId);
-    if (existing) {
-      const prior = existing.input as {routineId: string; platform: string; build: {source: TestBuildSource}};
-      if (prior.routineId !== selected.routineId || prior.platform !== selected.platform || requestInputDigest(prior.build.source) !== requestInputDigest(selected.source))
-        throw new TestRunError(409, "Request retry changed its original routine/platform or exact build source");
-      return existing;
+    if (existing) return this.originalRequest(selected, existing);
+    try {
+      const definition = await this.definitions.getCurrent(selected.routineId, selected.platform);
+      if (!definition) throw new TestRunError(409, "Routine is not enrolled for this platform");
+      const binding = this.bindings()[selected.platform];
+      if (!binding) throw new TestRunError(409, `No configured host/lane binding for ${selected.platform}.`);
+      const [build, host] = await Promise.all([this.builds.resolve(selected.source, selected.platform), this.hosts.get(binding.hostId)]);
+      return await this.requests.submit(selected.requestId, binding.hostId, routineAdmissionInput(definition, build, binding, host));
+    } catch (error) {
+      // A concurrent caller may have frozen the original request while this caller resolved newer configuration.
+      const winner = await this.requests.get(selected.requestId);
+      if (winner) return this.originalRequest(selected, winner);
+      throw error;
     }
-    const definition = await this.definitions.getCurrent(selected.routineId, selected.platform);
-    if (!definition) throw new TestRunError(409, "Routine is not enrolled for this platform");
-    const binding = this.bindings()[selected.platform];
-    if (!binding) throw new TestRunError(409, `No configured host/lane binding for ${selected.platform}.`);
-    const [build, host] = await Promise.all([this.builds.resolve(selected.source, selected.platform), this.hosts.get(binding.hostId)]);
-    return this.requests.submit(selected.requestId, binding.hostId, routineAdmissionInput(definition, build, binding, host));
   }
   async detail(requestId: string) {
     if (!frameworkIdentitySchema.safeParse(requestId).success) throw new TestRunError(400, "Invalid request identity");

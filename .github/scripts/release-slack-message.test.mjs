@@ -74,6 +74,19 @@ test("arbitrary definitions render their titles and separate results by platform
   assert.match(result.payload.blocks[1].text.text, /Other routine · iOS on Mac — \*Teardown failed\*/)
   assert.equal(notification().payload.blocks[1].text.text, "Available tests")
 })
+
+test("result Slack section stays bounded while retaining all rows and an Admin overflow link", () => {
+  let result = notification()
+  for (let index = 0; index < 30; index++) result = applyRoutineResult(result, row({routineId: `new-routine-${index}`, title: "<&&>".repeat(500),
+    requestId: `request-${index}`, resultRunId: `request-${index}`}))
+  const block = result.payload.blocks.find(block => block.block_id === ROUTINE_BLOCK)
+  assert.equal(Object.keys(result.rows).length, 30)
+  assert.ok(block.text.text.length <= 3000, block.text.text.length)
+  assert.match(block.text.text, /testRuns=1\|View all test results in Admin/)
+  assert.match(block.text.text, /&lt;&amp;&amp;&gt;/)
+  assert.doesNotMatch(block.text.text, /<&&>/)
+  assert.deepEqual(result.payload.blocks[0], payload.blocks[0])
+})
 test("completed-request ordering prevents late retries regressing rows and uses request ID only for tied timestamps", () => {
   const first = applyRoutineResult(notification(), row())
   const latest = applyRoutineResult(first, row({requestId: "request-600", status: "failed", finishedAt: "2026-10-03T02:00:00Z"}))

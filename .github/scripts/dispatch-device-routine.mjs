@@ -13,6 +13,7 @@ export async function planDeviceDispatches({github, context, token, fetchImpl = 
     "Completed producer differs from its callback")
   // Coordinated publication itself requests no coverage. Explicit exact-source requests and enabled nightlies use Core.
   if (run.path === COORDINATED_WORKFLOW) return []
+  if (run.event !== "pull_request") return []
   const platform = ["android", "ios-on-mac"].find(value => run.path === platformProducer(value))
   ensure(platform, "Callback is not an app publication workflow")
   const publication = await publicationForPlatform(github, context, run, platform)

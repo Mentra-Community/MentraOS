@@ -4,6 +4,7 @@ import {fileURLToPath} from "node:url"
 import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
 import {publishedCoordinatedBuild} from "./coordinated-routine-request.mjs"
 import {routineApi, selectedCatalog} from "./routine-api.mjs"
+import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
 
 const text = (value) => ({type: "text", text: value})
 const link = (url, label) => ({type: "link", url, text: label})
@@ -136,14 +137,13 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch, {select = 
           archives.set(platform, selection.archive.sha256)
         } catch { /* A missing platform must not borrow another platform's results. */ }
       }
-      const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
       lines = definitions.map(row => {
         const digest = archives.get(row.platform), platform = row.platform === "android" ? "Android" : "iOS on Mac"
-        if (!digest) return `${escape(row.title)} · ${platform} — Published app download could not be verified; results link unavailable.`
+        if (!digest) return `${slackRoutineText(row.title)} · ${platform} — Published app download could not be verified; results link unavailable.`
         const url = new URL("https://admin.dev.mentraglass.com/")
         url.search = new URLSearchParams({testRuns: "1", channel: env.BRANCH, repository: env.REPOSITORY, headSha: env.SHA,
           archiveSha256: digest, routineId: row.routineId, platform: row.platform}).toString()
-        return `${escape(row.title)} · ${platform} — <${url.href}|Results for this exact build>`
+        return `${slackRoutineText(row.title)} · ${platform} — <${url.href}|Results for this exact build>`
       })
       detail = definitions.length ? "Tests require an explicit request; publishing this build does not request coverage."
         : "No device tests are currently enrolled."
@@ -154,7 +154,8 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch, {select = 
     ? env.SLACK_DEV_BUILDS_CHANNEL_ID ?? "" : env.SLACK_STAGING_BUILDS_CHANNEL_ID ?? "")
   const updates = botConfigured ? "" : "\nSlack result updates are not configured; use the results link when available."
   return [{type: "section", block_id: "mentra-release-routines", text: {type: "mrkdwn", text:
-    `*Available device tests*\n${detail}${lines.length ? `\n${lines.join("\n")}` : ""}\n<${pipeline.href}|Request pipeline>${updates}`}}]
+    slackRoutineSection({heading: "*Available device tests*", detail, lines, footer: `<${pipeline.href}|Request pipeline>${updates}`,
+      overflowUrl: "https://admin.dev.mentraglass.com/?routineCatalog=1", overflowLabel: "View all available tests in Admin"})}}]
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
