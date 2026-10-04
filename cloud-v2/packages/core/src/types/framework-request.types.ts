@@ -1,5 +1,6 @@
 import {z} from "zod";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
+import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./test-build.types";
 
 export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
 export const frameworkBuildSchema = z.object({
@@ -7,6 +8,8 @@ export const frameworkBuildSchema = z.object({
   headSha: z.string().regex(/^[a-f0-9]{40}$/),
   channel: z.enum(["dev", "staging", "pr", "local"]),
   prNumber: z.number().int().positive().optional(),
+  manifest: firmwareManifestSchema.optional(),
+  manifestSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).passthrough().superRefine((build, ctx) => {
   if (build.channel === "pr" && !build.prNumber) ctx.addIssue({code: "custom", message: "PR build requires its PR number"});
 });
@@ -18,7 +21,21 @@ export const frameworkRequestInputSchema = z.object({
   build: frameworkBuildSchema,
   resources: z.array(z.object({id: frameworkIdentitySchema, kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]), laneId: frameworkIdentitySchema.optional()}).strict()),
   policy: z.record(z.unknown()).optional(),
-}).passthrough();
+  glassesStart: glassesSoftwareRefSchema.optional(),
+  glassesReturn: glassesSoftwareRefSchema.optional(),
+}).passthrough().superRefine((input, ctx) => {
+  const glasses = input.resources.some(resource => resource.kind === "glasses");
+  if (glasses !== (input.glassesStart !== undefined && input.glassesReturn !== undefined) ||
+    (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
+    ctx.addIssue({code: "custom", message: "Selected glasses resource requires frozen start and return software references"});
+  if (input.glassesStart && input.glassesReturn) {
+    if (JSON.stringify(input.glassesStart) !== JSON.stringify(input.glassesReturn))
+      ctx.addIssue({code: "custom", message: "Alternate glasses software profiles are unsupported; normal return must equal requested start"});
+    if (!input.build.manifest || input.build.manifestSha256 !== input.build.manifest.sha256 ||
+      JSON.stringify(input.glassesStart.manifest) !== JSON.stringify(input.build.manifest))
+      ctx.addIssue({code: "custom", message: "Requested glasses software must match the selected build manifest identity"});
+  }
+});
 
 /** Admin delivery projection; it describes a request without claiming execution evidence. */
 export interface FrameworkRequestDisplay {

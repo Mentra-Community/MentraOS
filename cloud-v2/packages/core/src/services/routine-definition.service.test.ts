@@ -14,6 +14,20 @@ function enrollment(): RoutineEnrollment {
     definitionSha256: requestInputDigest(definition), definition};
 }
 
+test("optional model requirements retain capability IDs without changing phone-only definitions", async () => {
+  const repository: RoutineDefinitionRepository = {async enroll() {}, async current() {return [];}, async getCurrent() {return null;}};
+  const service = new RoutineDefinitionService(repository), original = enrollment();
+  expect((await service.enroll(original)).definition).not.toHaveProperty("glasses");
+  const definition = {...original.definition, glasses: {models: ["mentra-live"]}, requires: ["camera"], execution: {resourceKinds: ["app", "glasses", "recorder"]}};
+  expect((await service.enroll({...original, definition, definitionSha256: requestInputDigest(definition)})).definition.glasses)
+    .toEqual({models: ["mentra-live"]});
+  for (const glasses of [{models: []}, {models: ["mentra-live", "mentra-live"]}, {models: ["Mentra Live"]},
+    {models: ["mentra-live"], capabilities: ["camera"]}]) {
+    const changed = {...definition, glasses};
+    await expect(service.enroll({...original, definition: changed, definitionSha256: requestInputDigest(changed)})).rejects.toThrow("Invalid routine definition");
+  }
+});
+
 test("definition enrollment refuses changed identity or digest before storage", async () => {
   let writes = 0;
   const repository: RoutineDefinitionRepository = {async enroll() {writes++;}, async current() {return [];}, async getCurrent() {return null;}};

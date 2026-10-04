@@ -1,5 +1,6 @@
 import {expect, test} from "bun:test";
 import {GithubTestBuildGateway} from "./test-builds.service";
+import {createHash} from "node:crypto";
 const REPO = "Mentra-Community/MentraOS";
 const API = `https://api.github.com/repos/${REPO}`;
 const CDN = `https://artifactscdn.mentraglass.com/${REPO}/releases/`;
@@ -40,7 +41,27 @@ test("published PR archive retains identity and read-only discovery", async () =
  const selected = await f.gateway.resolve({channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}, "ios-on-mac");
  expect(selected.availability).toBe("available"); expect(selected.archive?.sha256).toBe(HASH);
  expect(selected.archive?.url).toBe(`${CDN}pr-builds/${f.receipt.artifacts.mac.name}`);
+ const bytes = JSON.stringify({releaseVersion: `pr-12-${HEAD}`});
+ expect(selected.manifest).toEqual({url: `${CDN}pr-builds/ota-pr-12-${HEAD}.json`,
+  sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)});
+ expect(selected.manifestSha256).toBe(selected.manifest!.sha256);
  expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
+});
+
+test("Android PR publication retains the exact manifest beside its APK and original digest", async () => {
+ const f = fixture(), name = `mentra-android-pr-12-${HEAD}-50-1`;
+ f.rows.set(`${API}/actions/runs/50/attempts/1`, run({path: ".github/workflows/mentra-app-android-build.yml"}));
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{...jobs[0]!,
+  steps: [{name: "Upload APK to the public artifact CDN", status: "completed", conclusion: "success"}]}]});
+ f.rows.set(`${CDN}pr-builds/${name}.json`, {schemaVersion: 1, pr: 12, headSha: HEAD, baseSha: BASE, buildSha: MERGE, runId: 50, runAttempt: 1,
+  app: {packageId: "com.mentra.mentra", version: "3.2.1", build: "20", headSha: HEAD, buildSha: MERGE, backend: "dev",
+   otaManifestUrl: `${CDN}pr-builds/ota-pr-12-${HEAD}.json`}, artifacts: {android: {name: `${name}.apk`, sha256: HASH, size: 100}}});
+ f.rows.set(`HEAD ${CDN}pr-builds/${name}.apk`, new Response(null, {headers: {"Content-Length": "100"}}));
+ const selected = await f.gateway.resolve({channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}, "android");
+ const bytes = JSON.stringify({releaseVersion: `pr-12-${HEAD}`});
+ expect(selected).toMatchObject({availability: "available", archive: {name: `${name}.apk`},
+  manifest: {url: `${CDN}pr-builds/ota-pr-12-${HEAD}.json`, sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)}});
+ expect(selected.manifestSha256).toBe(selected.manifest!.sha256);
 });
 test("wrong archive size and moved PR base cannot become selectable", async () => {
  for (const kind of ["size", "base"]) {
@@ -119,6 +140,23 @@ function nightlyFixture() {
  f.rows.set(nightlyUrl, {total_count: 2, workflow_runs: [releaseRun({id: 60, status: "in_progress", conclusion: null}), releaseRun()]});
  return {...f, archive, planUrl: `${CDN}${tag}/mentra-release-plan-${identity}.json`};
 }
+
+test("coordinated Android publication retains source-bound manifest URL, size and digest", async () => {
+ const f = nightlyFixture(), identity = "3.2.1-dev.20", tag = "mentra-builds-v3.2.1";
+ const plan = f.rows.get(f.planUrl) as {native: {buildNumber: number; marketingVersion: string}; artifactNames: Record<string, string>};
+ plan.artifactNames.androidApp = `mentraos-${identity}-android.apk`;
+ plan.artifactNames.releaseManifest = `mentra-release-${identity}.json`;
+ f.rows.set(`${API}/actions/runs/50/attempts/1`, releaseRun());
+ f.rows.set(`${CDN}${tag}/${plan.artifactNames.releaseManifest}`, {schemaVersion: 1, releaseIdentity: identity, releaseSetId: `mentra-${identity}`,
+  sourceCommit: HEAD, releasePlanSha256: createHash("sha256").update(JSON.stringify(plan)).digest("hex"), channel: "dev", native: plan.native,
+  artifacts: [{coordinate: plan.artifactNames.androidApp, url: `${CDN}${tag}/${plan.artifactNames.androidApp}`, sha256: HASH, size: 100, status: "published"}]});
+ f.rows.set(`HEAD ${CDN}${tag}/${plan.artifactNames.androidApp}`, new Response(null, {headers: {"Content-Length": "100"}}));
+ const selected = await f.gateway.resolve({channel: "dev", buildRunId: 50, publicationAttempt: 1}, "android");
+ const bytes = JSON.stringify({releaseVersion: identity});
+ expect(selected).toMatchObject({availability: "available", release: identity, manifest: {url: `${CDN}${tag}/mentra-live-ota-${identity}.json`,
+  sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)}});
+ expect(selected.manifestSha256).toBe(selected.manifest!.sha256);
+});
 
 test("nightly latest dev selection passes newer unpublished runs and pins the publication before its boundary", async () => {
  const f = nightlyFixture();

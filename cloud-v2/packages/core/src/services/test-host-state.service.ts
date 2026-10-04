@@ -2,9 +2,12 @@ import {z} from "zod";
 import {TestHostStateModel} from "../models/test-host-state.model";
 import {testWriteConcern} from "../models/test-write-concern";
 import {frameworkIdentitySchema} from "../types/framework-request.types";
-import {routineIdentitySchema, routinePlatformSchema} from "../types/routine-definition.types";
+import {glassesModelSchema, routineIdentitySchema, routinePlatformSchema} from "../types/routine-definition.types";
 import {TestRunError} from "./test-result-error";
 const resource = z.object({id: frameworkIdentitySchema, kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]), laneId: frameworkIdentitySchema.optional()}).strict();
+export const glassesInventorySchema = z.object({resourceId: frameworkIdentitySchema, deviceId: frameworkIdentitySchema,
+  model: glassesModelSchema, capabilities: z.array(routineIdentitySchema).max(30)}).strict()
+  .refine(value => new Set(value.capabilities).size === value.capabilities.length, "Offered glasses capabilities must be unique");
 const routineAvailability = z.object({routineId: routineIdentitySchema,
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/), available: z.boolean(), reason: z.string().min(1).max(2000).optional()}).strict();
 export const hostStateSchema = z.object({hostId: frameworkIdentitySchema, incarnation: frameworkIdentitySchema,
@@ -12,11 +15,35 @@ export const hostStateSchema = z.object({hostId: frameworkIdentitySchema, incarn
   lanes: z.array(z.object({id: frameworkIdentitySchema, platform: routinePlatformSchema,
     dispatchMode: z.enum(["automatic", "authoring", "paused"]),
     state: z.enum(["idle", "running", "reserved", "in-repair", "out-of-service", "offline"]),
-    resources: z.array(resource), routineAvailability: z.array(routineAvailability).max(1000).optional()}).strict()
+    resources: z.array(resource), glasses: z.array(glassesInventorySchema).max(30).optional(),
+    routineAvailability: z.array(routineAvailability).max(1000).optional()}).strict()
     .superRefine((lane, ctx) => {
       const keys = lane.routineAvailability?.map(row => `${row.routineId}:${row.definitionRevision}`) ?? [];
       if (new Set(keys).size !== keys.length) ctx.addIssue({code: "custom", message: "Duplicate lane routine availability identity"});
-    })).max(100)}).strict();
+      const ids = lane.resources.map(ref => ref.id);
+      if (new Set(ids).size !== ids.length) ctx.addIssue({code: "custom", message: "Duplicate lane resource identity"});
+      if (lane.glasses === undefined && lane.resources.some(ref => ref.kind === "glasses"))
+        ctx.addIssue({code: "custom", message: "Declared glasses resources require physical inventory"});
+      if (lane.glasses !== undefined) {
+        const offered = lane.glasses.map(value => value.resourceId);
+        if (new Set(offered).size !== offered.length || new Set(lane.glasses.map(value => value.deviceId)).size !== offered.length)
+          ctx.addIssue({code: "custom", message: "Duplicate lane glasses identity"});
+        if (lane.resources.filter(ref => ref.kind === "glasses").some(ref => !offered.includes(ref.id)) ||
+          lane.glasses.some(value => !lane.resources.some(ref => ref.id === value.resourceId && ref.kind === "glasses")))
+          ctx.addIssue({code: "custom", message: "Glasses inventory must exactly identify declared glasses resources"});
+      }
+    })).max(100)}).strict().superRefine((snapshot, ctx) => {
+      if (new Set(snapshot.lanes.map(lane => lane.id)).size !== snapshot.lanes.length)
+        ctx.addIssue({code: "custom", message: "Duplicate host lane identity"});
+      const byResource = new Map<string, string>(), byDevice = new Map<string, string>();
+      for (const lane of snapshot.lanes) for (const glasses of lane.glasses ?? []) {
+        const identity = JSON.stringify({deviceId: glasses.deviceId, model: glasses.model});
+        if (byResource.has(glasses.resourceId) && byResource.get(glasses.resourceId) !== identity ||
+          byDevice.has(glasses.deviceId) && byDevice.get(glasses.deviceId) !== glasses.resourceId)
+          ctx.addIssue({code: "custom", message: "Shared physical glasses must retain one resource, device and model identity across lanes"});
+        byResource.set(glasses.resourceId, identity); byDevice.set(glasses.deviceId, glasses.resourceId);
+      }
+    });
 export type TestHostState = z.infer<typeof hostStateSchema>;
 export type ReceivedTestHostState = TestHostState & {receivedAt: string};
 export class TestHostStateService {
