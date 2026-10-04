@@ -3,6 +3,9 @@ import {z} from "zod";
 const text = z.string().min(1).max(2000);
 export const routineIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
 const id = routineIdentitySchema;
+export const glassesModelSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,119}$/);
+export const routineGlassesRequirementSchema = z.object({models: z.array(glassesModelSchema).min(1).max(30)}).strict()
+  .refine(value => new Set(value.models).size === value.models.length, "Acceptable glasses models must be unique");
 const action = z.object({id, instruction: text, expected: text}).strict();
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 /** Serialized source definition; executable functions remain in the harness repository. */
@@ -14,6 +17,7 @@ export const publishedRoutineDefinitionSchema = z.object({
   entry: z.enum(["home", "sign-in"]),
   account: z.enum(["lane", "none"]),
   requires: z.array(id).max(30),
+  glasses: routineGlassesRequirementSchema.optional(),
   requirements: z.array(text).max(30),
   fixtures: z.array(z.object({provider: id, description: text}).strict()).max(30),
   setup: z.array(action).max(500).optional(),
@@ -31,6 +35,8 @@ export const publishedRoutineDefinitionSchema = z.object({
     ctx.addIssue({code: "custom", message: "Platforms must be unique"});
   if (definition.entry === "home" && definition.account !== "lane")
     ctx.addIssue({code: "custom", message: "Home entry requires the lane account"});
+  if (definition.execution && Boolean(definition.glasses) !== definition.execution.resourceKinds.includes("glasses"))
+    ctx.addIssue({code: "custom", message: "Glasses execution metadata must match the routine model declaration"});
 });
 export const routineEnrollmentSchema = z.object({
   routineId: id, platform: routinePlatformSchema, definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),

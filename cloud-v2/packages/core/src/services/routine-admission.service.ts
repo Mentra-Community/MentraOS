@@ -1,7 +1,7 @@
 import {z} from "zod";
 import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
-import {selectedBuildInput, type TestBuild} from "../types/test-build.types";
+import {firmwareManifestSchema, selectedBuildInput, type GlassesSoftwareRef, type TestBuild} from "../types/test-build.types";
 import type {ReceivedTestHostState} from "./test-host-state.service";
 import {TestRunError} from "./test-result-error";
 
@@ -16,7 +16,8 @@ export function configuredRoutineLanes(): RoutineLaneBindings {
 }
 /** Shared by catalog nightlies and exact-source callers. Platform bindings never depend on routine names. */
 export function routineAdmissionInput(definition: RoutineEnrollment, build: TestBuild | null | undefined,
-  binding: RoutineLaneBindings[RoutineEnrollment["platform"]], host: ReceivedTestHostState | null | undefined, now = Date.now()) {
+  binding: RoutineLaneBindings[RoutineEnrollment["platform"]], host: ReceivedTestHostState | null | undefined, now = Date.now(),
+  options: {requireAutomatic?: boolean} = {}) {
   if (!build || build.availability !== "available" || !build.archive || !build.receipt)
     throw new TestRunError(409, build?.reason ?? "No immutable artifact is available for this platform.");
   if (build.platform && build.platform !== definition.platform) throw new TestRunError(409, "Artifact platform differs from the routine definition.");
@@ -25,7 +26,7 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
   if (!host || host.hostId !== binding.hostId || !Number.isFinite(Date.parse(host.receivedAt)) || now - Date.parse(host.receivedAt) > 120_000)
     throw new TestRunError(409, `Configured ${definition.platform} host has no current observation.`);
   // The assigned host controller waits for lane repair/readiness; selection must retain this occurrence's request.
-  if (!lane || lane.dispatchMode !== "automatic")
+  if (!lane || options.requireAutomatic !== false && lane.dispatchMode !== "automatic")
     throw new TestRunError(409, `Configured ${definition.platform} automatic lane is unavailable.`);
   if (lane.routineAvailability !== undefined) {
     const availability = lane.routineAvailability.find(row => row.routineId === definition.routineId && row.definitionRevision === definition.definitionRevision);
@@ -34,12 +35,33 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
   }
   const execution = definition.definition.execution;
   if (!execution) throw new TestRunError(409, "The current definition has no execution resource metadata.");
+  const glassesRequirement = definition.definition.glasses;
+  let software: GlassesSoftwareRef | undefined;
+  let glassesResourceId: string | undefined;
+  if (glassesRequirement) {
+    if (execution.resourceKinds.filter(kind => kind === "glasses").length !== 1)
+      throw new TestRunError(409, "Glasses routine must declare its single glasses execution resource.");
+    const offered = lane.glasses?.filter(value => glassesRequirement.models.includes(value.model)
+      && definition.definition.requires.every(capability => value.capabilities.includes(capability))) ?? [];
+    if (offered.length !== 1) throw new TestRunError(409, "Configured lane has no unique compatible glasses model and provider capabilities.");
+    glassesResourceId = offered[0]!.resourceId;
+    if (offered[0]!.model !== "mentra-live") throw new TestRunError(409, "Selected glasses model has no supported software selection contract.");
+    const manifest = firmwareManifestSchema.safeParse(build.manifest);
+    if (!manifest.success || build.manifestSha256 !== manifest.data.sha256)
+      throw new TestRunError(409, "Selected build has no matching immutable glasses manifest reference.");
+    software = {model: "mentra-live", manifest: manifest.data};
+  } else if (execution.resourceKinds.includes("glasses"))
+    throw new TestRunError(409, "Glasses execution requires an explicit routine model declaration.");
   const resources = execution.resourceKinds.map(kind => {
     const matches = lane.resources.filter(resource => resource.kind === kind);
     if (matches.length !== 1) throw new TestRunError(409, `Configured lane must bind exactly one ${kind} resource.`);
+    if (kind === "glasses" && matches[0]!.id !== glassesResourceId)
+      throw new TestRunError(409, "Compatible glasses inventory differs from its declared allocation resource.");
     return matches[0]!;
   });
   return frameworkRequestInputSchema.parse(JSON.parse(JSON.stringify({routineId: definition.routineId,
     definitionRevision: definition.definitionRevision, platform: definition.platform, laneId: lane.id, resources,
-    ...(execution.policy ? {policy: execution.policy} : {}), build: selectedBuildInput(build, definition.platform)})));
+    ...(execution.policy ? {policy: execution.policy} : {}), build: {...selectedBuildInput(build, definition.platform),
+      ...(software ? {manifest: software.manifest, manifestSha256: software.manifest.sha256} : {})},
+    ...(software ? {glassesStart: software, glassesReturn: software} : {})})));
 }

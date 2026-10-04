@@ -252,7 +252,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
     return { attempt: attempts.publish, tag: "pr-builds", archive: data.artifacts.mac,
-      result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256 } };
+      result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
   }
   private async androidPrArtifacts(run: GithubRun, pr: PrIdentity, baseSha: string) {
     const jobs = await this.jobs(run.id);
@@ -285,7 +285,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
     return { attempt, tag: "pr-builds", archive: data.artifacts.android,
-      result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256 } };
+      result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
   }
   private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform) {
     // Downstream failures and notification-only retries do not erase a publication.
@@ -338,7 +338,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       const archive = assetSchema.parse({ name: assets[0]!.coordinate, sha256: assets[0]!.sha256, size: assets[0]!.size });
       const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
       requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
-      return { attempt, tag, archive, result: { release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256 } };
+      return { attempt, tag, archive, result: { release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
     }
     const receipt = await this.metadata(tag, `mentraos-${identity}-apple-downloads.json`);
     const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), sourceCommit: sha,
@@ -352,7 +352,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
     return { attempt, tag, archive: data.artifacts.mac,
-      result: { release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256,
+      result: { release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size},
         app: { executableSha256: data.app.executableSha256, javascriptSha256: data.app.javascriptSha256 } } };
   }
 }

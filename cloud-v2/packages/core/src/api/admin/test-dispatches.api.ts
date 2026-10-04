@@ -9,7 +9,8 @@ import {RoutineDefinitionService} from "../../services/routine-definition.servic
 import {GithubTestBuildGateway, TestDispatchError, type TestBuildGateway} from "../../services/test-builds.service";
 import {TestHostStateService} from "../../services/test-host-state.service";
 import {requestInputDigest} from "../../services/test-request.service";
-import {selectedBuildInput, testBuildQuerySchema, testBuildSourceSchema} from "../../types/test-build.types";
+import {testBuildQuerySchema, testBuildSourceSchema} from "../../types/test-build.types";
+import {routineAdmissionInput} from "../../services/routine-admission.service";
 const pickerSubmission = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema, routineId: z.string(), platform: z.enum(["ios-on-mac", "android"]), source: testBuildSourceSchema, archiveSha256: z.string().regex(/^[a-f0-9]{64}$/)}).strict();
 const submission = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, input: frameworkRequestInputSchema}).strict();
 export const HOST_STATE_FRESHNESS_MS = 120_000;
@@ -53,14 +54,8 @@ export function createTestDispatchAdminApi(service = new TestRequestService(), d
     const execution = definition.definition.execution;
     if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > HOST_STATE_FRESHNESS_MS || !lane || !execution)
       return c.json({error: "host_unavailable", message: "Selected host has no current matching execution capability."}, 409);
-    const resources = execution.resourceKinds.map(kind => {
-      const candidates = lane.resources.filter(resource => resource.kind === kind);
-      if (candidates.length !== 1) throw new TestRunError(409, `Host lane must bind exactly one ${kind} resource`);
-      return candidates[0];
-    });
-    const input = {routineId: selected.routineId, definitionRevision: definition.definitionRevision,
-      platform: selected.platform, laneId: selected.laneId, resources, ...(execution.policy ? {policy: execution.policy} : {}),
-      build: selectedBuildInput(build, selected.platform)};
+    const input = routineAdmissionInput(definition, build, {hostId: selected.hostId, laneId: selected.laneId}, snapshot,
+      Date.now(), {requireAutomatic: false});
     // Keep finite JSON: optional publisher fields are omitted rather than hashed as undefined.
     return c.json(await service.submit(selected.requestId, selected.hostId, JSON.parse(JSON.stringify(input))), 202);
   });
@@ -81,18 +76,17 @@ export function createTestDispatchAdminApi(service = new TestRequestService(), d
     const source = testBuildSourceSchema.safeParse(selected.source);
     if (!source.success) return c.json({error: "published_build_required"}, 400);
     const resolved = await builds.resolve(source.data, input.platform);
-    if (resolved.availability !== "available" || requestInputDigest(selectedBuildInput(resolved, input.platform)) !== requestInputDigest(input.build))
+    if (resolved.availability !== "available")
       return c.json({error: "selected_build_changed"}, 409);
     const snapshot = await hosts.get(hostId), lane = snapshot?.lanes.find(lane => lane.id === input.laneId && lane.platform === input.platform);
     const execution = definition.definition.execution;
     if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > HOST_STATE_FRESHNESS_MS || !lane || !execution)
       return c.json({error: "host_unavailable"}, 409);
-    const resources = execution.resourceKinds.map(kind => {
-      const matches = lane.resources.filter(resource => resource.kind === kind);
-      if (matches.length !== 1) throw new TestRunError(409, `Host lane must bind exactly one ${kind} resource`);
-      return matches[0];
-    });
-    if (requestInputDigest(resources) !== requestInputDigest(input.resources) || requestInputDigest(execution.policy ?? null) !== requestInputDigest(input.policy ?? null))
+    const expected = routineAdmissionInput(definition, resolved, {hostId, laneId: input.laneId}, snapshot,
+      Date.now(), {requireAutomatic: false});
+    if (requestInputDigest(expected.build) !== requestInputDigest(input.build))
+      return c.json({error: "selected_build_changed"}, 409);
+    if (requestInputDigest(expected) !== requestInputDigest(input))
       return c.json({error: "host_input_changed"}, 409);
     return c.json(await service.submit(requestId, hostId, input), 202);
   });

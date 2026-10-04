@@ -77,3 +77,16 @@ test("host snapshots persist optional strict per-lane exact-definition availabil
   expect(f.writes()).toBe(1);
  } finally {f.stop();}
 });
+
+test("authenticated host snapshots persist physical model inventory and reject conflicting updates", async () => {
+ const f = fixture();
+ try {
+  const source = snapshot(1, 1), glasses = {resourceId: "live-resource", deviceId: "live-cid", model: "mentra-live", capabilities: ["camera"]};
+  const lane = {...source.lanes[0], resources: [{id: "live-resource", kind: "glasses"}], glasses: [glasses]};
+  await f.service.report({...source, lanes: [lane]}, "mini");
+  expect((await f.service.get("mini"))!.lanes[0]!.glasses).toEqual([glasses]);
+  await expect(f.service.report({...source, sequence: 2, lanes: [{...lane, glasses: [{...glasses, resourceId: "foreign"}]}]}, "mini"))
+    .rejects.toThrow("declared glasses resources");
+  expect(f.writes()).toBe(1);
+ } finally {f.stop();}
+});
