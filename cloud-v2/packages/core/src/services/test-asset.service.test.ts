@@ -8,7 +8,7 @@ import {StorageService} from "./storage/storage.service";
 import {LocalStorageProvider} from "./storage/providers/local-storage.provider";
 
 const bytes = Buffer.from("declared diagnostics");
-const asset = {assetId: "diagnostic..part", kind: "log", contentType: "text/plain", filename: "log.txt",
+const asset = {assetId: "setup-evidence/diagnostic..part", kind: "log", contentType: "text/plain", filename: "log.txt",
   sizeBytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex")};
 const body = () => new ReadableStream<Uint8Array>({start(controller) {controller.enqueue(bytes); controller.close();}});
 test("streamed assets encode IDs, release the reader, acknowledge duplicate custody, and support byte ranges", async () => {
@@ -24,6 +24,8 @@ test("streamed assets encode IDs, release the reader, acknowledge duplicate cust
       .toEqual({assetId: asset.assetId, uploaded: true, created: true});
     expect(source.locked).toBe(false);
     expect(rows[0]!.storageKey).not.toContain("..");
+    expect(rows[0]!.storageKey.split("/")).toHaveLength(4);
+    expect(rows[0]!.storageKey.split("/")[2]).toBe(Buffer.from(asset.assetId).toString("base64url"));
     expect(await service.uploadDeclaredAsset("run..one", asset, body(), headers, async () => {acknowledgements++;}))
       .toEqual({assetId: asset.assetId, uploaded: true, created: false});
     expect(acknowledgements).toBe(2);

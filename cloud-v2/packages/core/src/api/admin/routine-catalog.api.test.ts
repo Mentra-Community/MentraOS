@@ -55,3 +55,18 @@ test("run and request result routes stay explicit and media responses keep their
   expect(await media.text()).toBe("xy");
   expect(calls).toEqual([{runId: "run-1"}, {requestId: "request-1"}, {runId: "run-1", asset: "video", method: "GET", range: "bytes=0-1"}]);
 });
+
+
+test("encoded nested asset IDs remain one exact media selector", async () => {
+  const assetId = "setup-evidence/commands/result.json", calls: unknown[] = [];
+  class Results extends FrameworkResultService {
+    override async mediaByRun(runId: string, asset: string, request: Request): Promise<Response> {
+      calls.push({runId, asset, method: request.method}); return new Response(null, {headers: {"content-length": "20"}});
+    }
+  }
+  const app = createRoutineCatalogApi(new RoutineCatalogService(), new Results());
+  const response = await app.request(`/results/by-run/run-1/assets/${encodeURIComponent(assetId)}`, {method: "HEAD"});
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-length")).toBe("20");
+  expect(calls).toEqual([{runId: "run-1", asset: assetId, method: "HEAD"}]);
+});

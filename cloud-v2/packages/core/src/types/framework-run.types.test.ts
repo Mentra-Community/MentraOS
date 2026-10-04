@@ -1,5 +1,5 @@
 import {expect, test} from "bun:test";
-import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
+import {frameworkAssetIdSchema, frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
 
 function run() {
   return {schemaVersion: 1, hostId: "mini", requestId: "run-1", routineId: "no-glasses", definitionRevision: "a".repeat(40),
@@ -216,4 +216,38 @@ test("ready shared cleanup failures are allowed only for flattened evidence diag
     expect(frameworkRunSchema.safeParse({...changed, result: {...changed.result,
       teardown: {...changed.result.teardown, ready: false}}}).success).toBe(true);
   }
+});
+
+
+test("Android frozen exports preserve 373 asset identities including nested diagnostic journals", () => {
+  const base = run();
+  const rootIds = ["recording", "recording.json", "recorder-process.json", "framework-result.json", "recorder-readiness.json"];
+  const ids = [...rootIds, ...Array.from({length: 368}, (_, index) =>
+    `setup-evidence/mentra-live-command-result-${index}.json`)];
+  const frozen = {...base, platform: "android", recordingAssetId: "recording", assets: ids.map(id => ({id,
+    kind: id === "recording" ? "recording" : "report", path: id === "recording" ? "routine.mp4" : id,
+    sha256: "c".repeat(64), size: 20, mimeType: id === "recording" ? "video/mp4" : "application/json"})),
+    result: {...base.result, evidence: ids, steps: ["home", "settings", "return-home"].map((id, index) =>
+      ({id, status: "passed", durationMs: 1000, recordingLocation: {assetId: "recording", startOffsetMs: index * 1000, endOffsetMs: (index + 1) * 1000}}))}};
+  const parsed = frameworkRunSchema.parse(frozen);
+  expect(parsed.assets).toHaveLength(373);
+  expect(parsed.assets.map(asset => asset.id)).toEqual(ids);
+  expect(parsed.result.evidence).toEqual(ids);
+  expect(frameworkRunSchema.safeParse({...frozen, requestId: "run/nested"}).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...frozen, assets: frozen.assets.map((asset, index) =>
+    index === 5 ? {...asset, path: "../outside.json"} : asset)}).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...frozen, result: {...frozen.result, evidence: [...ids, "missing/asset"]}}).success).toBe(false);
+});
+
+test("asset identities allow bounded safe segments without entity or path grammar changes", () => {
+  for (const id of ["recording", "asset:" + "a".repeat(64), "setup-evidence/commands/0.json", "a".repeat(500)])
+    expect(frameworkAssetIdSchema.safeParse(id).success).toBe(true);
+  for (const id of ["", ".", "..", "/root", "root/", "root//file", "root/./file", "root/../file",
+    "root\\file", "root%2Ffile", "root?file", "root#file", "root\nfile", "a".repeat(501)])
+    expect(frameworkAssetIdSchema.safeParse(id).success).toBe(false);
+  const base = run(), assetId = "capture/video.mp4";
+  expect(frameworkRunSchema.safeParse({...base, recordingAssetId: assetId, assets: [{id: assetId, kind: "recording",
+    path: "video.mp4", size: 20, sha256: "c".repeat(64), mimeType: "video/mp4"}], result: {...base.result,
+      evidence: [assetId], steps: [{id: "settings", status: "passed", durationMs: 1,
+        recordingLocation: {assetId, startOffsetMs: 0, endOffsetMs: 1}}]}}).success).toBe(true);
 });

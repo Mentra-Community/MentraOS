@@ -24,5 +24,8 @@ test("result routes derive host identity and refuse incomplete final acknowledge
   expect(calls.at(-1)).toEqual({requestId: "r1", host: "mini"});
   expect((await api.request("/r1/assets/video", {method: "PUT", headers, body: "bytes"})).status).toBe(200);
   expect(calls.at(-1)).toEqual({requestId: "r1", assetId: "video", hostId: "mini"});
+  const nested = "setup-evidence/commands/result.json";
+  expect((await api.request(`/r1/assets/${encodeURIComponent(nested)}`, {method: "PUT", headers, body: "bytes"})).status).toBe(200);
+  expect(calls.at(-1)).toEqual({requestId: "r1", assetId: nested, hostId: "mini"});
   expect((await api.request("/", {method: "POST", headers, body: "{"})).status).toBe(400);
 });
