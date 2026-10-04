@@ -389,6 +389,12 @@ public class AsgConstants {
     /** Debug BES intent extra carrying a stable identifier for durable state. */
     public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
 
+    /** Optional debug BES intent extra for a hash-addressed owned local staging file. */
+    public static final String DEBUG_BES_OTA_FILE_PATH_EXTRA = "file_path";
+
+    /** Allowed parent prefix for owned shared-provider BES staging directories. */
+    public static final String DEBUG_BES_OTA_STAGING_PREFIX = "/data/local/tmp/mentra-live-";
+
     /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
     public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =
             "reboot_bes_for_mtk_flash";

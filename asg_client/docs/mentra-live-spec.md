@@ -376,6 +376,13 @@ from Android's monotonic elapsed realtime before reading OTA state. Phone clock
 synchronization does not change these freshness signals. Neither field starts an
 update or changes stream state; clients omitting the request ID retain existing behavior.
 
+`request_version` may opt into `fresh_bes: true` to request one fresh `cs_syvr`
+snapshot through the same guarded UART coordinator. It does not reset the phone
+handshake, wait/retry, or interrupt file/OTA/baud ownership. Immediate correlated
+version chunks still contain cached BES values; fresh evidence requires an actual
+current-session BES reply, whose existing diagnostic records its receive elapsed
+time. A refused or unanswered probe remains unknown to a bounded observer.
+
 Mentra Live's canonical product serial is provisioned by the Android firmware in
 `ro.serialno`. `asg_client` reads that property directly and forwards a valid
 value to the phone as `serial_number` in `version_info_3`. It must not substitute
