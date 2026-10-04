@@ -106,7 +106,7 @@ export async function createRoutineRequests({github, context, token, routine, pl
       outcomes.push({routineId: definition.routineId, platform: definition.platform, requestId: request.requestId, status: "accepted"})
     } catch (error) {
       outcomes.push({routineId: definition.routineId, platform: definition.platform, requestId: plan.requestId,
-        status: "failed", reason: error.message, retryable: error.retryable === true})
+        status: "failed", reason: String(error.message ?? "Routine API admission failed").replace(/[\r\n]/g, " ").slice(0, 600), retryable: error.retryable === true})
     }
   }
   if (explicit) {
@@ -133,7 +133,8 @@ export async function createRoutineRequests({github, context, token, routine, pl
       }
       await dispatch(definition, selected)
     } catch (error) {
-      outcomes.push({routineId: definition.routineId, platform: definition.platform, status: "failed", reason: error.message, retryable: error.retryable === true})
+      outcomes.push({routineId: definition.routineId, platform: definition.platform, status: "failed",
+        reason: "Current PR app publication could not be authenticated", retryable: error.retryable === true})
     }
   }
   return {requests, pending, outcomes}

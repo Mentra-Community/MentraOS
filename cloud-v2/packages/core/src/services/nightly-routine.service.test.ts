@@ -28,21 +28,23 @@ const host: ReceivedTestHostState = {hostId: "mini", incarnation: "one", incarna
     resources: [{id: `app:${platform}`, kind: "app"}]}))};
 function fixture(initial = [row("a-new-routine", "android"), row("different.routine", "ios-on-mac"), row("disabled-routine", "android", false)], repository?: NightlyPlanRepository) {
   let catalog = initial, plan: NightlyPlan | null = null, finished: NightlyResult | null = null, reads = 0;
-  let failId: string | undefined, clock = now;
+  let failId: string | undefined, cancelFailId: string | undefined, clock = now;
   const admitted: {requestId: string; hostId: string; input: any}[] = [];
   const cancelled: string[] = [], buildReads: string[] = [];
+  const completionEvents: string[] = [];
   const resultRows = new Map<string, any>();
   const requestRows = new Map<string, any>();
+  const requestErrors = new Map<string, Error>();
   const service = new NightlyRoutineService({async list() {reads++; return catalog;}} as Pick<RoutineCatalogService, "list">,
     {async latestDev(platform, before) {buildReads.push("latest:" + platform); expect(before).toBe(startedAt); return build(platform);},
       async resolve(source, platform) {buildReads.push("resolve:" + platform); expect(source).toEqual(build(platform).source); return build(platform);}},
     {async get(id) {expect(id).toBe("mini"); return host;}},
-    {async cancel(id) {cancelled.push(id); return null;}, async get(id) {return requestRows.get(id) ?? null;}, async submit(requestId, hostId, input) {if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input}); requestRows.set(requestId, {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}); return {} as any;}},
+    {async cancel(id) {completionEvents.push("cancel:" + id); cancelled.push(id); if (id === cancelFailId) throw new TestRunError(503, "Cancellation storage unavailable."); return null;}, async get(id) {if (requestErrors.has(id)) throw requestErrors.get(id)!; return requestRows.get(id) ?? null;}, async submit(requestId, hostId, input) {if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input}); requestRows.set(requestId, {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}); return {} as any;}},
     repository ?? {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
     () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
-    {async detail(id) {const result = resultRows.get(id); if (!result) throw new TestRunError(404, "missing"); return result;}},
+    {async detail(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
     () => clock);
-  return {service, admitted, cancelled, buildReads, resultRows, requestRows, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}};
+  return {service, admitted, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
 test("nightly freezes the entire enabled catalog, arbitrary IDs and exact current definitions/artifacts", async () => {
   const state = fixture(), result = await state.service.start(occurrence);
@@ -160,6 +162,54 @@ test("deadline cancellation uses the original requests and prevents retrying pen
   expect(state.admitted).toHaveLength(2);
 });
 
+test("deadline cancellation reconciles every request despite a member evidence 503 and freezes each truthful outcome", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence), [unreadable, healthy] = plan.members;
+  state.resultRows.set(unreadable!.requestId, new TestRunError(503, "Result storage temporarily unavailable."));
+  state.resultRows.set(healthy!.requestId, publishedResult(healthy!, true));
+  const live = await state.service.complete(occurrence.occurrenceId);
+  expect(live).toMatchObject({status: "running", expectedCount: 2, passed: 1});
+  expect(live.members[0]).toMatchObject({status: "waiting", publicationComplete: false,
+    unavailableReason: "Result evidence is unavailable (HTTP 503): Result storage temporarily unavailable."});
+  expect(state.cancelled).toEqual([]);
+  state.clock = now + 3 * 3600_000;
+  state.completionEvents.length = 0;
+  const receipt = await state.service.complete(occurrence.occurrenceId);
+  expect(state.cancelled).toEqual(plan.members.map(member => member.requestId));
+  expect(state.completionEvents).toEqual([...plan.members.map(member => "cancel:" + member.requestId), ...plan.members.map(member => "evidence:" + member.requestId)]);
+  expect(receipt).toMatchObject({status: "incomplete", expectedCount: 2, passed: 1, finishedAt: "2026-10-03T14:00:00.000Z"});
+  expect(receipt.members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
+    unavailableReason: "Result evidence is unavailable (HTTP 503): Result storage temporarily unavailable."});
+  expect(receipt.members[0]!.runId).toBeUndefined();
+  expect(receipt.members[1]).toMatchObject({status: "pass", publicationComplete: true, runId: healthy!.requestId});
+  state.resultRows.set(unreadable!.requestId, publishedResult(unreadable!, true));
+  expect(await state.service.complete(occurrence.occurrenceId)).toEqual(receipt);
+  expect(state.cancelled).toHaveLength(2);
+});
+
+test("a request receipt read failure remains an incomplete member without suppressing cancellation or its neighbor", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence), [unreadable, healthy] = plan.members;
+  state.requestErrors.set(unreadable!.requestId, new TestRunError(503, "Request storage temporarily unavailable."));
+  state.resultRows.set(healthy!.requestId, publishedResult(healthy!, true));
+  state.clock = now + 3 * 3600_000;
+  const receipt = await state.service.complete(occurrence.occurrenceId);
+  expect(state.cancelled).toEqual(plan.members.map(member => member.requestId));
+  expect(receipt).toMatchObject({status: "incomplete", passed: 1, expectedCount: 2});
+  expect(receipt.members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
+    unavailableReason: "Request evidence is unavailable (HTTP 503): Request storage temporarily unavailable."});
+  expect(receipt.members[1]).toMatchObject({status: "pass", publicationComplete: true});
+});
+
+test("one failed cancellation write still reconciles neighboring requests and must retry before terminal freezing", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  state.clock = now + 3 * 3600_000; state.cancelFailId = plan.members[0]!.requestId;
+  await expect(state.service.complete(occurrence.occurrenceId)).rejects.toThrow("deadline cancellation is unavailable");
+  expect(state.cancelled).toEqual(plan.members.map(member => member.requestId));
+  expect((await state.service.detail(occurrence.occurrenceId)).finishedAt).toBeUndefined();
+  state.cancelFailId = undefined;
+  expect(await state.service.complete(occurrence.occurrenceId)).toMatchObject({status: "incomplete", expectedCount: 2});
+  expect(state.cancelled).toEqual([...plan.members, ...plan.members].map(member => member.requestId));
+});
+
 test("an admission completing across the deadline is cancelled through the ordinary request path", async () => {
   let clock = now, saved: NightlyPlan | null = null;
   const cancelled: string[] = [];
@@ -174,11 +224,15 @@ test("an admission completing across the deadline is cancelled through the ordin
 });
 
 test("a mismatched platform publication remains expected and missing anchor platform does not suppress its neighbor", async () => {
-  for (const mismatch of [true, false]) {
+  for (const variant of ["head", "source", "platform", "release", "missing"] as const) {
+    const mismatch = variant !== "missing";
     let saved: NightlyPlan | null = null;
     const service = new NightlyRoutineService({async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
-      {async latestDev(platform) {return mismatch ? build(platform) : {...build(platform), availability: "unavailable", archive: undefined, receipt: undefined, reason: "APK missing"};},
-        async resolve(source, platform) {return {...build(platform), source, ...(mismatch ? {headSha: "9".repeat(40)} : {})};}},
+      {async latestDev(platform) {return mismatch ? {...build(platform), ...(variant === "release" ? {release: "dev.20"} : {})}
+          : {...build(platform), availability: "unavailable", archive: undefined, receipt: undefined, reason: "APK missing"};},
+        async resolve(source, platform) {return {...build(platform), source,
+          ...(variant === "head" ? {headSha: "9".repeat(40)} : variant === "source" ? {source: {...source, publicationAttempt: 3}}
+            : variant === "platform" ? {platform: "android" as const} : variant === "release" ? {release: "dev.21"} : {})};}},
       {async get() {return host;}}, {async cancel() {return null;}, async get() {return null;}, async submit() {return {} as any;}},
       {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
       () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}), undefined, () => now);
@@ -187,6 +241,12 @@ test("a mismatched platform publication remains expected and missing anchor plat
     expect(plan.members[mismatch ? 1 : 0]!.input).toBeUndefined();
     expect(plan.members[mismatch ? 0 : 1]!.input).toBeDefined();
     expect(plan.members[mismatch ? 1 : 0]!.unavailableReason).toBeDefined();
+    if (mismatch) {
+      expect(plan.members[1]!.build).toBeUndefined();
+      expect(plan.suite!.members[1]!.headSha).toBeUndefined();
+      expect(plan.suite!.build.headSha).toBe(build("android").headSha);
+      expect(plan.publication!.headSha).toBe(build("android").headSha);
+    }
   }
 });
 

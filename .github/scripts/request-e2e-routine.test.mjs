@@ -67,3 +67,18 @@ test("request workflow retains accepted selectors before reporting member failur
   assert.ok(workflow.indexOf("actions/upload-artifact@v4") < workflow.indexOf("Report independent member admission failures"))
   assert.ok(workflow.indexOf("core.setOutput('persisted', 'true')") < workflow.indexOf("core.summary"))
 })
+
+test("stored admission outcomes bound API reasons and do not copy raw source-provider failures", async () => {
+  const f = routineFixture({channel: "dev"}), options = {context, token: "fixture", routine: f.definition.id, platform: "ios-on-mac", source: f.source}
+  const result = await createRoutineRequests({...options, fetchImpl: async (url, init) => url.endsWith("/routine-catalog")
+    ? f.fetchImpl(url, init) : Response.json({message: `Recorder unavailable\n${"x".repeat(2000)}`}, {status: 409})})
+  assert.equal(result.outcomes[0].status, "failed")
+  assert.ok(result.outcomes[0].reason.length <= 600); assert.doesNotMatch(result.outcomes[0].reason, /[\r\n]/)
+  const pr = {number: 12, state: "open", base: {ref: "dev"}, head: {sha: "a".repeat(40), ref: "example", repo: {full_name: "Mentra-Community/MentraOS"}},
+    labels: [`routine:${f.definition.id}`]}
+  const failedSource = await createRoutineRequests({github: {rest: {pulls: {get: async () => ({data: pr})}, actions: {listWorkflowRuns: "runs"}},
+    paginate: async () => {throw new Error("raw provider credential details")}}, context: {...context, eventName: "pull_request_target"},
+    token: "fixture", number: 12, fetchImpl: f.fetchImpl})
+  assert.equal(failedSource.outcomes[0].reason, "Current PR app publication could not be authenticated")
+  assert.doesNotMatch(JSON.stringify(failedSource), /raw provider credential/)
+})

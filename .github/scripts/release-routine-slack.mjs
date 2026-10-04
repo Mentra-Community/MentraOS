@@ -81,8 +81,6 @@ export async function resolveRoutineResults({token, requestIds, fetchImpl = fetc
   return Promise.all(requestIds.map(requestId => wait({token, requestId, fetchImpl})))
 }
 
-export const notificationIdentity = (producer, requestId) => `notify-${createHash("sha256").update(JSON.stringify([producer.id, producer.run_attempt, requestId])).digest("hex")}`
-
 /** Fan out selectors without waiting for any device. Retried child publications reconcile the same request. */
 export async function launchRoutineResultNotifications({github, context, requestIds}) {
   requireThat(context.eventName === "workflow_run" && context.ref === "refs/heads/dev" &&
@@ -96,27 +94,16 @@ export async function launchRoutineResultNotifications({github, context, request
     producer.status === "completed" && [".github/workflows/request-e2e-routine.yml", ".github/workflows/dispatch-device-routine.yml"].includes(producer.path) &&
     ["workflow_dispatch", "pull_request_target", "workflow_run"].includes(producer.event) && producer.repository?.full_name === REPOSITORY &&
     producer.head_repository?.full_name === REPOSITORY, "Result fanout producer differs from its authenticated source")
-  const history = await github.paginate(github.rest.actions.listWorkflowRuns, {...context.repo, workflow_id: WORKFLOW,
-    branch: "dev", event: "workflow_dispatch", created: `>=${producer.created_at}`, per_page: 100})
-  requireThat(history.length < 1000 && new Set(history.map(run => run.id)).size === history.length, "Result fanout history is incomplete")
   const {data: current} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: context.runId})
   assertRun(current, context.repo, [WORKFLOW], "dev", false)
   requireThat(current.id === context.runId && current.event === "workflow_run", "Result fanout run differs")
   const settled = await Promise.allSettled(requestIds.map(async requestId => {
-    const identity = notificationIdentity(producer, requestId), title = `Routine result ${identity}`
-    const existing = history.filter(run => run.display_title === title)
-    for (const run of existing) {
-      assertRun(run, context.repo, [WORKFLOW], "dev", false)
-      requireThat(run.event === "workflow_dispatch", "Result retry belongs to another event")
-    }
-    const reusable = existing.filter(run => ["queued", "in_progress"].includes(run.status) || run.status === "completed" && run.conclusion === "success")
-    if (reusable.length) return {requestId, notificationId: identity, status: "existing", runId: Math.min(...reusable.map(run => run.id))}
     // An uncertain GitHub dispatch can be retried: duplicate notification runs
     // reconcile the same request through PR/Slack locks and durable post receipts.
     // This path never submits another Core request or starts another device run.
     await github.rest.actions.createWorkflowDispatch({...context.repo, workflow_id: WORKFLOW, ref: "dev",
-      inputs: {request_id: requestId, notification_id: identity}})
-    return {requestId, notificationId: identity, status: "launched"}
+      inputs: {request_id: requestId}})
+    return {requestId, status: "launched"}
   }))
   const errors = settled.flatMap((result, index) => result.status === "rejected" ? [new Error(`${requestIds[index]}: ${result.reason.message}`, {cause: result.reason})] : [])
   if (errors.length) throw new AggregateError(errors, `Routine result fanout failed: ${errors.map(error => error.message).join("; ")}`)

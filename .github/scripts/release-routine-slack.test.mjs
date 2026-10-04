@@ -3,7 +3,7 @@ import {createHash} from "node:crypto"
 import test from "node:test"
 import {applyRoutineResult, ROUTINE_BLOCK} from "./release-slack-message.mjs"
 import {jobName, prepareRoutineUpdate, readActionsJson, resolveRoutineNotifications, resolveRoutineSelectors, resolveRoutineResults,
-  launchRoutineResultNotifications, notificationIdentity, stateName, WORKFLOW} from "./release-routine-slack.mjs"
+  launchRoutineResultNotifications, stateName, WORKFLOW} from "./release-routine-slack.mjs"
 import {boundRoutineResult} from "./routine-api.mjs"
 import {routineFixture, terminalRoutineFixture} from "./routine-api-fixture.mjs"
 import {renderPrRoutineResult, publishPrRoutineResult} from "./pr-routine-result.mjs"
@@ -100,13 +100,13 @@ test("release receipt updates retain a published pass alongside an immediately r
 
 function fanoutFixture() {
   const producer = run(10, {path: ".github/workflows/request-e2e-routine.yml"}), current = run(701, {status: "in_progress", event: "workflow_run"})
-  const history = [], launches = [], github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: producer}),
-    getWorkflowRun: async () => ({data: current}), listWorkflowRuns: "history",
-    createWorkflowDispatch: async input => {launches.push(input)}}}, paginate: async () => history}
-  return {producer, history, launches, github, context: {...context, eventName: "workflow_run", payload: {workflow_run: producer}}}
+  const launches = [], github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: producer}),
+    getWorkflowRun: async () => ({data: current}),
+    createWorkflowDispatch: async input => {launches.push(input)}}}, paginate: async () => assert.fail("Fanout must not inspect notification titles")}
+  return {producer, launches, github, context: {...context, eventName: "workflow_run", payload: {workflow_run: producer}}}
 }
 
-test("automatic fanout launches every neighbor despite failure, and retry reuses original event identity", async () => {
+test("automatic fanout launches every neighbor despite failure and retries the same accepted request", async () => {
   const f = fanoutFixture(), requestIds = ["failed-neighbor", "published-pass", "rejected-request"]
   f.github.rest.actions.createWorkflowDispatch = async input => {
     f.launches.push(input)
@@ -116,11 +116,10 @@ test("automatic fanout launches every neighbor despite failure, and retry reuses
   assert.equal(f.launches.length, 3)
   for (const launch of f.launches) {
     assert.equal(launch.ref, "dev"); assert.equal(launch.workflow_id, WORKFLOW)
-    assert.equal(launch.inputs.notification_id, notificationIdentity(f.producer, launch.inputs.request_id))
+    assert.deepEqual(Object.keys(launch.inputs), ["request_id"])
   }
-  f.history.push(run(800, {display_title: `Routine result ${notificationIdentity(f.producer, "published-pass")}`}))
-  assert.equal((await launchRoutineResultNotifications({...f, requestIds: ["published-pass"]}))[0].status, "existing")
-  assert.equal(f.launches.length, 3)
+  assert.equal((await launchRoutineResultNotifications({...f, requestIds: ["published-pass"]}))[0].status, "launched")
+  assert.equal(f.launches.length, 4)
   await assert.rejects(launchRoutineResultNotifications({...f, context: {...f.context, eventName: "workflow_dispatch"}, requestIds}), /trusted unique/)
 })
 
@@ -132,27 +131,39 @@ test("failed or uncertain fanout dispatch can retry the same publication identit
   assert.equal((await launchRoutineResultNotifications({...f, requestIds: ["uncertain-request"]}))[0].status, "launched")
   assert.equal(f.launches.length, 2)
   assert.deepEqual(f.launches[0], f.launches[1])
-  const identity = notificationIdentity(f.producer, "uncertain-request")
-  f.history.push(run(800, {display_title: `Routine result ${identity}`}), run(801, {display_title: `Routine result ${identity}`}))
-  assert.equal((await launchRoutineResultNotifications({...f, requestIds: ["uncertain-request"]}))[0].runId, 800)
-  assert.equal(f.launches.length, 2)
 })
 
-test("failed and cancelled notification children retry under their original identity", async () => {
-  for (const conclusion of ["failure", "cancelled"]) {
-    const f = fanoutFixture(), requestId = "retry-notification", identity = notificationIdentity(f.producer, requestId)
-    f.history.push(run(800, {display_title: `Routine result ${identity}`, conclusion}))
-    const [result] = await launchRoutineResultNotifications({...f, requestIds: [requestId]})
-    assert.equal(result.status, "launched"); assert.equal(f.launches.length, 1)
-    assert.deepEqual(f.launches[0].inputs, {request_id: requestId, notification_id: identity})
-  }
+test("manually forged matching notification titles cannot suppress another accepted request", async () => {
+  const f = fanoutFixture(), requestId = "real-request"
+  const history = [run(800, {display_title: "Routine result real-request", conclusion: "success"})]
+  f.github.rest.actions.listWorkflowRuns = async () => ({data: {workflow_runs: history}})
+  f.github.paginate = async () => assert.fail("Display title history cannot authorize publication suppression")
+  const [result] = await launchRoutineResultNotifications({...f, requestIds: [requestId]})
+  assert.equal(result.status, "launched"); assert.equal(f.launches.length, 1)
+  assert.deepEqual(f.launches[0].inputs, {request_id: requestId})
 })
 
-test("only active and successfully completed notification children are reused", async () => {
-  for (const fields of [{status: "queued", conclusion: null}, {status: "in_progress", conclusion: null}, {status: "completed", conclusion: "success"}]) {
-    const f = fanoutFixture(), requestId = "reuse-notification", identity = notificationIdentity(f.producer, requestId)
-    f.history.push(run(799, {display_title: `Routine result ${identity}`, conclusion: "failure"}), run(800, {display_title: `Routine result ${identity}`, ...fields}))
-    const [result] = await launchRoutineResultNotifications({...f, requestIds: [requestId]})
-    assert.equal(result.status, "existing"); assert.equal(result.runId, 800); assert.equal(f.launches.length, 0)
+test("failed request producer's authenticated artifact still publishes accepted neighbors and ignores extra outcomes", async () => {
+  const f = fanoutFixture(); f.producer.conclusion = "failure"
+  const selector = {requestIds: ["accepted-first", "accepted-third"], outcomes: [
+    {requestId: "accepted-first", routineId: "first", status: "accepted"},
+    {requestId: "rejected-second", routineId: "second", status: "failed", reason: "Recorder unavailable"},
+    {requestId: "accepted-third", routineId: "third", status: "accepted"},
+  ]}
+  const bytes = Buffer.from("authenticated selector zip"), artifact = {id: 1, name: "routine-dispatches-10-1", expired: false,
+    size_in_bytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    workflow_run: {id: 10, head_sha: f.producer.head_sha}}
+  f.github.rest.actions.listWorkflowRunArtifacts = "artifacts"
+  f.github.rest.actions.downloadArtifact = async () => ({data: bytes})
+  f.github.paginate = async (method, input) => {
+    assert.equal(method, "artifacts"); assert.equal(input.run_id, f.producer.id)
+    return [artifact, {...artifact, id: 2, name: "routine-dispatches-10-2"}]
   }
+  const requestIds = await resolveRoutineSelectors({...f, read: (...args) => readActionsJson(...args, {
+    readZip: async () => ({"routine-dispatches.json": selector}),
+  })})
+  assert.deepEqual(requestIds, selector.requestIds)
+  await launchRoutineResultNotifications({...f, requestIds})
+  assert.deepEqual(f.launches.map(launch => launch.inputs.request_id), selector.requestIds)
+  assert.ok(f.launches.every(launch => launch.inputs.request_id !== "rejected-second"))
 })

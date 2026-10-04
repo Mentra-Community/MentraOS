@@ -34,7 +34,8 @@ function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, result: Nig
   const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
   return {...suite, ...(result.finishedAt ? {finishedAt: result.finishedAt} : {}), members, passed,
     outcome: !result.finishedAt ? "running" : passed === members.length ? "passed" : "failed",
-    failedRoutines: [...new Set(members.filter(member => member.status !== "pass" || !member.publicationComplete).map(member => member.routineId))]};
+    failedRoutines: [...new Set(members.filter(member => (result.finishedAt !== undefined || member.status !== "waiting")
+      && (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))]};
 }
 export class TestSuiteService {
   async create(input: unknown) {
@@ -75,6 +76,7 @@ export class TestSuiteService {
     if (!parsed.success) throw new TestRunError(400, "invalid suite completion");
     const stored = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
     if (stored?.nightlyPlan) {
+      if (!testSuiteSchema.safeParse(stored.payload).success) throw new TestRunError(404, "Occurrence has no multi-member test suite");
       const plan = stored.nightlyPlan as NightlyPlan;
       if (Date.parse(parsed.data.finishedAt) < Date.parse(plan.startedAt)) throw new TestRunError(400, "suite finish precedes start");
       await new NightlyRoutineService().complete(plan.occurrenceId);

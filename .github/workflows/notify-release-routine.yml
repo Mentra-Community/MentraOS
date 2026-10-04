@@ -1,5 +1,5 @@
 name: Publish routine results
-run-name: Routine result ${{ inputs.notification_id || inputs.request_id || github.event.workflow_run.id }}
+run-name: Routine result ${{ inputs.request_id || github.event.workflow_run.id }}
 on:
   workflow_dispatch:
     inputs:
@@ -7,10 +7,6 @@ on:
         description: Core accepted request ID
         type: string
         required: true
-      notification_id:
-        description: Original producer and request identity for automatic publication retries
-        type: string
-        required: false
   workflow_run:
     workflows: [Request device routine, Dispatch requested device routine]
     types: [completed]
@@ -70,13 +66,11 @@ jobs:
           SLACK_DEV_BUILDS_CHANNEL_ID: ${{ vars.SLACK_DEV_BUILDS_CHANNEL_ID }}
           SLACK_STAGING_BUILDS_CHANNEL_ID: ${{ vars.SLACK_STAGING_BUILDS_CHANNEL_ID }}
           REQUEST_ID: ${{ inputs.request_id }}
-          NOTIFICATION_ID: ${{ inputs.notification_id }}
         with:
           script: |
             const {resolveRoutineSelectors, resolveRoutineResults, resolveRoutineNotifications} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-routine-slack.mjs`);
             const {resolvePrRoutineResults} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-routine-result.mjs`);
             const {slackDestination} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-slack-message.mjs`);
-            if (process.env.NOTIFICATION_ID && !/^notify-[a-f0-9]{64}$/.test(process.env.NOTIFICATION_ID)) throw new Error('Invalid publication retry identity');
             const requestIds = await resolveRoutineSelectors({github, context, requestId: process.env.REQUEST_ID});
             const details = await resolveRoutineResults({token: process.env.TEST_RUN_INGEST_TOKEN, requestIds});
             const prPlans = resolvePrRoutineResults({details});

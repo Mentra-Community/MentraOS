@@ -131,11 +131,12 @@ export class NightlyRoutineService {
         binding ? this.hosts.get(binding.hostId) : Promise.resolve(null),
       ]);
       if (artifact.status === "fulfilled") {
-        if (artifact.value) selection.build = artifact.value;
-        const build = selection.build;
+        const build = artifact.value;
         if (anchor && build && (requestInputDigest(build.source) !== requestInputDigest(anchor.source)
-          || build.headSha !== anchor.headSha || anchor.release !== undefined && build.release !== undefined && build.release !== anchor.release))
+          || build.headSha !== anchor.headSha || build.platform !== undefined && build.platform !== platform
+          || anchor.release !== undefined && build.release !== undefined && build.release !== anchor.release))
           selection.errors.push({stage: "build", status: 409, message: "Platform artifact differs from the occurrence's frozen dev publication."});
+        else if (build) selection.build = build;
       } else selection.errors.push(this.selectionError(artifact.reason, "build", occurrence.occurrenceId, platform));
       if (observation.status === "fulfilled") selection.host = observation.value;
       else selection.errors.push(this.selectionError(observation.reason, "host", occurrence.occurrenceId, platform));
@@ -168,12 +169,29 @@ export class NightlyRoutineService {
       selectionErrors: [{stage: "admission", status: error.status, message: error.message}]}; throw error;}
   }
 
-  async detail(occurrenceId: string): Promise<NightlyResult> {
+  private async plan(occurrenceId: string) {
     if (!frameworkIdentitySchema.safeParse(occurrenceId).success) throw new TestRunError(400, "Invalid occurrence identity");
     const plan = await this.repository.get(nightlySuiteId(occurrenceId));
     if (!plan) throw new TestRunError(404, "Nightly occurrence was not found");
+    return plan;
+  }
+
+  private unavailableEvidence(member: NightlyMember, error: unknown, source: "Result" | "Request"): NightlyResult["members"][number] {
+    logger.error({err: error, requestId: member.requestId}, "Nightly member evidence read failed");
+    return {...member, status: "waiting", publicationComplete: false,
+      unavailableReason: error instanceof TestRunError
+        ? `${source} evidence is unavailable (HTTP ${error.status}): ${error.message}`.slice(0, 2000)
+        : `${source} evidence is unavailable.`};
+  }
+
+  async detail(occurrenceId: string): Promise<NightlyResult> {
+    const plan = await this.plan(occurrenceId);
     const completed = await this.repository.completed(plan.suiteId);
     if (completed) return completed;
+    return this.snapshot(plan);
+  }
+
+  private async snapshot(plan: NightlyPlan): Promise<NightlyResult> {
     const members: NightlyResult["members"] = await Promise.all(plan.members.map(async member => {
       if (!member.input) return {...member, status: "incomplete", publicationComplete: false};
       try {
@@ -184,8 +202,10 @@ export class NightlyRoutineService {
         return {...member, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete",
           runId: run.result.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
-        if (!(error instanceof TestRunError) || error.status !== 404) throw error;
-        const request = await this.requests.get(member.requestId);
+        if (!(error instanceof TestRunError) || error.status !== 404) return this.unavailableEvidence(member, error, "Result");
+        let request;
+        try {request = await this.requests.get(member.requestId);}
+        catch (error) {return this.unavailableEvidence(member, error, "Request");}
         if (request?.hostRejection) {
           if (request.hostId !== member.hostId || request.inputSha256 !== requestInputDigest(member.input)
             || request.hostRejection.inputSha256 !== request.inputSha256 || request.hostRejection.hostId !== request.hostId)
@@ -198,7 +218,11 @@ export class NightlyRoutineService {
     }));
     const terminal = members.every(member => member.status === "incomplete" || member.status !== "waiting" && member.publicationComplete);
     const single = members.length === 1 ? members[0]! : undefined;
-    const singleRequest = single?.input && !single.runId ? await this.requests.get(single.requestId) : null;
+    let singleRequest;
+    if (single?.input && !single.runId) {
+      try {singleRequest = await this.requests.get(single.requestId);}
+      catch (error) {logger.error({err: error, requestId: single.requestId}, "Nightly request link is unavailable");}
+    }
     const singleResultId = single?.runId ?? (singleRequest && singleRequest.hostId === single?.hostId
       && singleRequest.inputSha256 === requestInputDigest(single!.input) ? single!.requestId : undefined);
     return {occurrenceId: plan.occurrenceId, suiteId: plan.suiteId, startedAt: plan.startedAt, trigger: plan.trigger,
@@ -210,16 +234,28 @@ export class NightlyRoutineService {
   }
 
   async complete(occurrenceId: string) {
-    const detail = await this.detail(occurrenceId), plan = (await this.repository.get(detail.suiteId))!;
-    if (detail.finishedAt) return detail;
-    if (detail.status === "running" && this.now() < Date.parse(plan.startedAt) + 3 * 3600_000) return detail;
+    const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId);
+    if (completed) return completed;
+    const completionAt = this.now(), cancellationAt = new Date(completionAt).toISOString();
+    const deadlineReached = completionAt >= Date.parse(plan.startedAt) + 3 * 3600_000;
+    if (deadlineReached) {
+      // Cancellation custody cannot depend on a result service being available.
+      const eligible = plan.members.filter(member => member.input);
+      const cancellations = await Promise.allSettled(eligible.map(member =>
+        this.requests.cancel(member.requestId, cancellationAt, "Nightly occurrence reached its completion boundary.")));
+      cancellations.forEach((result, index) => {
+        if (result.status === "rejected") logger.error({err: result.reason, requestId: eligible[index]!.requestId}, "Nightly deadline cancellation failed");
+      });
+      if (cancellations.some(result => result.status === "rejected"))
+        throw new TestRunError(503, "Nightly deadline cancellation is unavailable; retry this occurrence completion.");
+    }
+    const detail = await this.snapshot(plan);
+    if (detail.status === "running" && !deadlineReached) return detail;
     const finishedAt = new Date(this.now()).toISOString();
-    if (this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000)
-      await Promise.all(plan.members.filter(member => member.input).map(member =>
-        this.requests.cancel(member.requestId, finishedAt, "Nightly occurrence reached its completion boundary.")));
     // The occurrence receipt is the only frozen verdict. Admin derives its suite projection from it.
     return this.repository.finish(plan.suiteId, finite({...detail, finishedAt,
       status: detail.status === "running" ? "incomplete" : detail.status,
-      members: detail.members.map(member => member.status === "waiting" ? {...member, status: "incomplete", unavailableReason: "No complete result was published before the occurrence deadline."} : member)}));
+      members: detail.members.map(member => member.status === "waiting" ? {...member, status: "incomplete",
+        unavailableReason: member.unavailableReason ?? "No complete result was published before the occurrence deadline."} : member)}));
   }
 }

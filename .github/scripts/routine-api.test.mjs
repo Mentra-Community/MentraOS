@@ -66,7 +66,7 @@ test("active callers contain no routine registry and preserve enable gates and t
   assert.match(results, /fanout:[\s\S]*github\.event_name == 'workflow_run'/)
   assert.match(results, /resolve:[\s\S]*github\.event_name == 'workflow_dispatch'/)
   assert.match(results, /launchRoutineResultNotifications/)
-  assert.doesNotMatch(results, /runs-on: ubuntu-latest|routine-result-fanout\.json|Retain authenticated dispatch intent/)
+  assert.doesNotMatch(results, /runs-on: ubuntu-latest|routine-result-fanout\.json|Retain authenticated dispatch intent|notification_id|NOTIFICATION_ID/)
   assert.equal((results.match(/runs-on: blacksmith-4vcpu-ubuntu-2404/g) ?? []).length, 4)
   assert.doesNotMatch(request + dispatch + results, /worker_run_id|privateGithub|TEST_RUN_GITHUB_APP_PRIVATE_KEY|nightlyOnly/)
   for (const name of await readdir(new URL("./", import.meta.url))) if (name.endsWith(".mjs") && !name.endsWith(".test.mjs") && !name.endsWith("-fixture.mjs")) {
