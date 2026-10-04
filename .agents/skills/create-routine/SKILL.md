@@ -60,7 +60,7 @@ two fields plus a unique `operationId`, exact selected `build` and canonical `so
 It runs framework and routine setup, verifies entry and starts the original recorder.
 Inspect until ready; an accepted call is not completed setup.
 
-The exact envelopes are:
+Example author-start and command envelopes are:
 
 ```json
 {"reservationId":"...","generation":1,"operationId":"...","build":{},"sourcePath":"/absolute/routines/example/routine.ts"}
@@ -77,6 +77,11 @@ Use the selected build object, not the empty placeholder above. The nested
 {"op":"step","stepId":"STEP-ID","retryReason":"Corrected the saved action after observing its prerequisite"}
 {"op":"finish"}
 ```
+
+`author inspect` takes `{reservationId, generation}` and returns `operations`
+with the original operation IDs, states and receipts. `lane wait` takes
+`{reservationId, afterGeneration, timeoutMs}`; `lane give-back` takes
+`{reservationId, generation, requestId}`. Use the schemas above for bounds.
 
 Inspect each operation's receipt for its outcome. A settled receipt may contain
 a failed assertion. `finish` performs routine and shared teardown; give the lane

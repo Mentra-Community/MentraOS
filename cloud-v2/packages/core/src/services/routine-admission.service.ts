@@ -16,7 +16,8 @@ export function configuredRoutineLanes(): RoutineLaneBindings {
 }
 /** Shared by catalog nightlies and exact-source callers. Platform bindings never depend on routine names. */
 export function routineAdmissionInput(definition: RoutineEnrollment, build: TestBuild | null | undefined,
-  binding: RoutineLaneBindings[RoutineEnrollment["platform"]], host: ReceivedTestHostState | null | undefined, now = Date.now()) {
+  binding: RoutineLaneBindings[RoutineEnrollment["platform"]], host: ReceivedTestHostState | null | undefined, now = Date.now(),
+  options: {requireAutomatic?: boolean} = {}) {
   if (!build || build.availability !== "available" || !build.archive || !build.receipt)
     throw new TestRunError(409, build?.reason ?? "No immutable artifact is available for this platform.");
   if (build.platform && build.platform !== definition.platform) throw new TestRunError(409, "Artifact platform differs from the routine definition.");
@@ -25,7 +26,7 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
   if (!host || host.hostId !== binding.hostId || !Number.isFinite(Date.parse(host.receivedAt)) || now - Date.parse(host.receivedAt) > 120_000)
     throw new TestRunError(409, `Configured ${definition.platform} host has no current observation.`);
   // The assigned host controller waits for lane repair/readiness; selection must retain this occurrence's request.
-  if (!lane || lane.dispatchMode !== "automatic")
+  if (!lane || options.requireAutomatic !== false && lane.dispatchMode !== "automatic")
     throw new TestRunError(409, `Configured ${definition.platform} automatic lane is unavailable.`);
   if (lane.routineAvailability !== undefined) {
     const availability = lane.routineAvailability.find(row => row.routineId === definition.routineId && row.definitionRevision === definition.definitionRevision);

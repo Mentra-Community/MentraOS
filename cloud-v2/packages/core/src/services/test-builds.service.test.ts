@@ -162,6 +162,10 @@ test("nightly latest dev selection passes newer unpublished runs and pins the pu
  const f = nightlyFixture();
  const selected = await f.gateway.latestDev("ios-on-mac", before);
  expect(selected).toMatchObject({availability: "available", source: {channel: "dev", buildRunId: 50, publicationAttempt: 1}, archive: f.archive});
+ const bytes = JSON.stringify({releaseVersion: "3.2.1-dev.20"});
+ expect(selected!.manifest).toEqual({url: `${CDN}mentra-builds-v3.2.1/mentra-live-ota-3.2.1-dev.20.json`,
+  sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)});
+ expect(selected!.manifestSha256).toBe(selected!.manifest!.sha256);
  expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
 });
 

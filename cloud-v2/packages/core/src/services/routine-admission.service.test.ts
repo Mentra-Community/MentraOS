@@ -55,7 +55,7 @@ test("phone-only request retains its previous shape and rejects injected softwar
 });
 
 test("manifest validation refuses malformed or unbound references as validation errors", () => {
-  for (const url of ["not-a-url", "https://user:password@example.invalid/manifest.json", "https://example.invalid/manifest.json#newest", "http://example.invalid/manifest.json"])
+  for (const url of ["not-a-url", "https://user:password@example.invalid/manifest.json", "https://example.invalid/manifest.json#newest", "https://example.invalid/manifest.json#", "http://example.invalid/manifest.json"])
     expect(firmwareManifestSchema.safeParse({...manifest, url}).success).toBe(false);
   const input = select();
   for (const changed of [{...input, glassesReturn: undefined}, {...input, build: {...input.build, manifestSha256: "c".repeat(64)}}])

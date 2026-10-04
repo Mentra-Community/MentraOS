@@ -1,6 +1,6 @@
 import {expect, test} from "bun:test";
 import {createTestDispatchAdminApi, HOST_STATE_FRESHNESS_MS} from "./test-dispatches.api";
-import {TestRequestService, type StoredTestRequest} from "../../services/test-request.service";
+import {requestInputDigest, TestRequestService, type StoredTestRequest} from "../../services/test-request.service";
 import type {RoutineDefinitionService} from "../../services/routine-definition.service";
 import type {TestBuildGateway} from "../../services/test-builds.service";
 import type {TestHostStateService} from "../../services/test-host-state.service";
@@ -10,11 +10,12 @@ const resources = [{id: "mac-app", kind: "app"}, {id: "mac-recorder", kind: "rec
 function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0) {
  let admitted: StoredTestRequest | undefined, revision = "a".repeat(40), resolves = 0;
  const service = {get: async () => admitted ?? null, submit: async (requestId: string, hostId: string, input: unknown) => {
-   admitted = {requestId,hostId,input,inputSha256:"test",state:"queued"}; return admitted;}} as unknown as TestRequestService;
- const definitions = {getCurrent: async () => ({definitionRevision: revision, definition: {execution: {resourceKinds: ["app", "recorder"], policy: {estimatedOutputBytes: 100}}}})} as unknown as RoutineDefinitionService;
+   admitted = {requestId,hostId,input,inputSha256:requestInputDigest(input),state:"queued"}; return admitted;}} as unknown as TestRequestService;
+ const definitions = {getCurrent: async () => ({routineId: selection.routineId, platform: selection.platform, definitionRevision: revision,
+  definition: {execution: {resourceKinds: ["app", "recorder"], policy: {estimatedOutputBytes: 100}}}})} as unknown as RoutineDefinitionService;
  const builds = {resolve: async (source: unknown, platform: unknown) => {expect(source).toEqual(selection.source); expect(platform).toBe("ios-on-mac"); resolves++;
    return {source: selection.source, headSha: "b".repeat(40), availability: "available", release:"3.3.0-dev.5",receipt: {url: "https://artifactscdn.mentraglass.com/receipt.json", sha256: "e".repeat(64), size: 1773}, archive: {name: "app.zip", url: "https://artifactscdn.mentraglass.com/app.zip", size: 100, sha256: (changed ? "d" : "c").repeat(64)}};}} as unknown as TestBuildGateway;
- const hosts = {get: async () => offline ? null : {observedAt:new Date(Date.now()+clockSkew).toISOString(),receivedAt:new Date(Date.now()-receiptAge).toISOString(),lanes:[{id:"mac",platform:"ios-on-mac",resources}]}} as unknown as TestHostStateService;
+ const hosts = {get: async () => offline ? null : {hostId: "mini", observedAt:new Date(Date.now()+clockSkew).toISOString(),receivedAt:new Date(Date.now()-receiptAge).toISOString(),lanes:[{id:"mac",platform:"ios-on-mac",dispatchMode:"paused",resources}]}} as unknown as TestHostStateService;
  return {app: createTestDispatchAdminApi(service, definitions, builds, hosts), admitted: () => admitted, reEnroll:()=>revision="d".repeat(40), resolves:()=>resolves};
 }
 const post = (app: ReturnType<typeof createTestDispatchAdminApi>, body: unknown, path="/test-dispatches/picker") => app.request(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
@@ -41,4 +42,52 @@ test("dispatch freshness uses Core receipt time rather than a skewed controller 
   const live=fixture(false,false,skew);expect((await post(live.app,selection)).status).toBe(202);
   const stale=fixture(false,false,skew,HOST_STATE_FRESHNESS_MS+1);expect((await post(stale.app,selection)).status).toBe(409);expect(stale.admitted()).toBeUndefined();
  }
+});
+
+function glassesFixture(capabilities = ["glasses-ble"]) {
+ const revision = "a".repeat(40), manifest = {url: "https://artifactscdn.mentraglass.com/exact/manifest.json", sha256: "f".repeat(64), size: 100};
+ const selected = {...selection, routineId: "paired-controls"};
+ const admitted = new Map<string, StoredTestRequest>();
+ const service = {get: async (id: string) => admitted.get(id) ?? null, submit: async (requestId: string, hostId: string, input: unknown) => {
+  const row: StoredTestRequest = {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}; admitted.set(requestId, row); return row;}} as unknown as TestRequestService;
+ const definitions = {getCurrent: async () => ({routineId: selected.routineId, platform: selected.platform, definitionRevision: revision,
+  definition: {requires: ["glasses-ble"], glasses: {models: ["mentra-live"]}, execution: {resourceKinds: ["app", "recorder", "glasses"]}}})} as unknown as RoutineDefinitionService;
+ const build = {source: selected.source, platform: "ios-on-mac", headSha: "b".repeat(40), availability: "available", manifest, manifestSha256: manifest.sha256,
+  receipt: {url: "https://artifactscdn.mentraglass.com/receipt.json", sha256: "e".repeat(64), size: 100},
+  archive: {name: "app.zip", url: "https://artifactscdn.mentraglass.com/app.zip", size: 100, sha256: selected.archiveSha256}};
+ const builds = {resolve: async () => build} as unknown as TestBuildGateway;
+ const hosts = {get: async () => ({hostId: "mini", receivedAt: new Date().toISOString(), lanes: [{id: "mac", platform: "ios-on-mac", dispatchMode: "paused",
+  resources: [...resources, {id: "physical-live", kind: "glasses"}],
+  glasses: [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities}]}]})} as unknown as TestHostStateService;
+ return {app: createTestDispatchAdminApi(service, definitions, builds, hosts), admitted, selected, manifest};
+}
+
+test("Admin picker and direct admission share the frozen glasses manifest on a manually paused lane", async () => {
+ const f = glassesFixture();
+ expect((await post(f.app, f.selected)).status).toBe(202);
+ const input = f.admitted.get(f.selected.requestId)!.input as Record<string, any>;
+ expect(input.glassesStart).toEqual({model: "mentra-live", manifest: f.manifest});
+ expect(input.glassesReturn).toEqual(input.glassesStart);
+ expect(input.build.manifestSha256).toBe(f.manifest.sha256);
+ expect((await post(f.app, {requestId: "direct", hostId: "mini", input}, "/test-dispatches")).status).toBe(202);
+ expect(f.admitted.get("direct")!.input).toEqual(input);
+ expect((await post(f.app, {requestId: "direct", hostId: "mini", input}, "/test-dispatches")).status).toBe(202);
+});
+
+test("both Admin paths refuse incompatible provider capability before storing a glasses request", async () => {
+ const valid = glassesFixture(); await post(valid.app, valid.selected);
+ const input = valid.admitted.get(valid.selected.requestId)!.input;
+ const missing = glassesFixture([]);
+ expect((await post(missing.app, missing.selected)).status).toBe(409);
+ expect((await post(missing.app, {requestId: "direct", hostId: "mini", input}, "/test-dispatches")).status).toBe(409);
+ expect(missing.admitted.size).toBe(0);
+});
+
+test("direct Admin admission refuses a coherent alternate manifest that does not match the resolved build", async () => {
+ const f = glassesFixture(); await post(f.app, f.selected);
+ const original = f.admitted.get(f.selected.requestId)!.input as Record<string, any>;
+ const manifest = {...f.manifest, sha256: "d".repeat(64)}, software = {model: "mentra-live", manifest};
+ const input = {...original, build: {...original.build, manifest, manifestSha256: manifest.sha256}, glassesStart: software, glassesReturn: software};
+ expect((await post(f.app, {requestId: "changed", hostId: "mini", input}, "/test-dispatches")).status).toBe(409);
+ expect(f.admitted.has("changed")).toBe(false);
 });
