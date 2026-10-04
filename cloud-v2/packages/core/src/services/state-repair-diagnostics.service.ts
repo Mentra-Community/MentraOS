@@ -52,15 +52,21 @@ export class StateRepairDiagnosticsService {
     if (!frameworkIdentitySchema.safeParse(hostId).success || !frameworkIdentitySchema.safeParse(interruptionId).success)
       throw new TestRunError(400, "Invalid repair identity");
     const parsed = stateRepairDiagnosticSchema.safeParse(input);
-    if (!parsed.success) throw new TestRunError(400, "Invalid repair diagnostics");
+    if (!parsed.success || !Object.hasOwn(input as object, "originalFailure"))
+      throw new TestRunError(400, "Invalid repair diagnostics");
     // Hash the original finite JSON envelope. Schema normalization must not silently discard submitted data.
     const {payloadSha256, ...payload} = input as z.infer<typeof stateRepairDiagnosticSchema>;
-    if (requestInputDigest(payload) !== payloadSha256) throw new TestRunError(409, "Repair diagnostic digest differs");
-    const bytes = Buffer.from(JSON.stringify({entries: payload.entries}), "utf8");
+    let digest: string;
+    try {digest = requestInputDigest(payload);} catch {throw new TestRunError(400, "Repair diagnostics must be finite JSON");}
+    if (digest !== payloadSha256) throw new TestRunError(409, "Repair diagnostic digest differs");
+    // SQLite and JSON callers can reorder keys. Use the report log format for the byte receipt.
+    const entries = payload.entries.map(({timestamp, level, message, source}) =>
+      ({timestamp, level, message, ...(source === undefined ? {} : {source})}));
+    const bytes = Buffer.from(JSON.stringify({entries}), "utf8");
     if (bytes.byteLength > STATE_REPAIR_DIAGNOSTIC_BYTES) throw new TestRunError(413, "Repair diagnostic attachment exceeds its bound");
     const report = await this.dependencies.ensure(hostId, interruptionId, payload.originalFailure);
     const key = requestInputDigest({ownerId: payload.ownerId, generation: payload.generation, key: payload.key});
-    const result = await this.dependencies.attach({...report, source: payload.source, entries: payload.entries}, {key});
+    const result = await this.dependencies.attach({...report, source: payload.source, entries}, {key});
     const expectedSha256 = createHash("sha256").update(bytes).digest("hex");
     if (!result?.receipt || result.stored !== 1 || result.receipt.sha256 !== expectedSha256 || result.receipt.sizeBytes !== bytes.byteLength)
       throw new ReportArtifactError(503, "Repair diagnostic storage acknowledgement differs");

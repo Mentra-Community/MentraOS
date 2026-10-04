@@ -26,6 +26,8 @@ test("repair attachment custody is exact, retryable and independent of the origi
   expect(first).toMatchObject({hostId: "mini", interruptionId: "repair:mini-mac:1", ownerId: payload.ownerId,
     generation: 3, reportId: "rep_TEST", payloadSha256: requestInputDigest(payload)});
   expect(bodies.size).toBe(1);
+  const reordered = {...payload, entries: [{message: payload.entries[0]!.message, source: "harness-state-repair", level: "info", timestamp: 0}]};
+  expect(await service.publish("mini", "repair:mini-mac:1", envelope(reordered))).toEqual(first);
   await expect(service.publish("mini", "repair:mini-mac:1", envelope({...payload, entries: [{...payload.entries[0]!, message: "changed"}]})))
     .rejects.toThrow("reservation differs");
 });
@@ -38,6 +40,9 @@ test("invalid identity, changed digest and oversized diagnostics fail before inc
   });
   await expect(service.publish("mini", "../foreign", envelope())).rejects.toThrow("identity");
   await expect(service.publish("mini", "repair:1", {...envelope(), payloadSha256: "0".repeat(64)})).rejects.toThrow("digest");
+  const {originalFailure: _, ...missingFailure} = envelope();
+  await expect(service.publish("mini", "repair:1", missingFailure)).rejects.toThrow("Invalid repair diagnostics");
+  await expect(service.publish("mini", "repair:1", {...envelope(), originalFailure: undefined})).rejects.toThrow("finite JSON");
   const oversized = {...payload, entries: [{timestamp: 0, level: "info", source: "harness-state-repair", message: "x".repeat(STATE_REPAIR_DIAGNOSTIC_BYTES)}]};
   await expect(service.publish("mini", "repair:1", envelope(oversized))).rejects.toThrow("bound");
   expect(called).toBe(false);
