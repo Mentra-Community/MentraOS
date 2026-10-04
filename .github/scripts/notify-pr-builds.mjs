@@ -60,7 +60,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   backend, unverifiedBackend = []}) {
   const ready = !error && !ios?.error
   const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
-  const overflowUrl = `https://admin.dev.mentraglass.com/?${new URLSearchParams({testRuns: "1", pr: String(pr.number), headSha: sha})}`
+  const overflowUrl = pr.html_url
   const lines = [
     `*${title}*`,
     link(pr.html_url, `#${pr.number} — ${pr.title}`),
@@ -136,7 +136,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
         routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable ? slackRoutineText(routine.resultsUnavailable, 200) : `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`,
         link(routine.pipelineUrl, routine.pipelineLabel),
       ].join(" · ")}`),
-    footer: "Results appear after the device run is uploaded.", overflowUrl, overflowLabel: "View all requested tests in Admin",
+    footer: "Results appear after the device run is uploaded.", overflowUrl, overflowLabel: "View all requested tests on the PR",
   }))
   lines.push(
     `${link(pr.html_url, "View PR and checks")} · ${link(androidRunUrl, "Android build logs")}${
@@ -144,8 +144,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     }${asgRunUrl ? ` · ${link(asgRunUrl, "ASG build logs")}` : ""}`,
   )
   if (ready) lines.push("Downloads may be cleaned up after 7 days.")
-  const blocks = lines.map(text => ({type: "section", text: {type: "mrkdwn", text: slackRoutineSection({lines: [text],
-    overflowUrl, overflowLabel: "View full build and test details in Admin"})}}))
+  const blocks = lines.map(text => ({type: "section", text: {type: "mrkdwn", text}}))
   blocks.splice(3, 0, platforms)
   return {
     text: `${title}: #${pr.number} ${slackRoutineText(pr.title, 200)} (${sha.slice(0, 7)})`,
@@ -170,6 +169,7 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
   const url = new URL("https://admin.dev.mentraglass.com/")
   url.search = new URLSearchParams({
     testRuns: "1",
+    channel: "pr",
     repository,
     pr: String(pr),
     headSha: sha,

@@ -182,6 +182,44 @@ test("cancellation removes cloud-queued work atomically and preserves accepted w
   expect((await service.cancellations("mini", undefined, 100)).requests.map(row => row.requestId)).toEqual([queued.requestId]);
 });
 
+test("frozen cancellation fences absent admission and survives restart without changing its original receipt", async () => {
+  const repository = store(), service = new TestRequestService(repository), input = inputFor("new-product");
+  const cancelled = await service.cancelSubmission("not-yet-inserted", "mini", input, "2026-10-03T14:00:00Z", "Occurrence boundary");
+  expect(cancelled).toMatchObject({input, state: "terminal", terminalStatus: "cancelled", hostCancellation: {requestedAt: "2026-10-03T14:00:00.000Z"}});
+  const restarted = new TestRequestService(repository);
+  expect(await restarted.submit(cancelled.requestId, "mini", input)).toEqual(cancelled);
+  expect(await restarted.cancelSubmission(cancelled.requestId, "mini", input, "2026-10-03T15:00:00Z", "Retry boundary")).toEqual(cancelled);
+  expect((await restarted.queued("mini", undefined, 100)).requests).toEqual([]);
+  await expect(restarted.cancelSubmission(cancelled.requestId, "other", input, "2026-10-03T15:00:00Z", "Wrong host")).rejects.toThrow("original inputs or host");
+  await expect(restarted.cancelSubmission(cancelled.requestId, "mini", inputFor("changed"), "2026-10-03T15:00:00Z", "Wrong input")).rejects.toThrow("original inputs or host");
+});
+
+test("cancellation acknowledgement loss must retry the durable fence and cannot become queued admission", async () => {
+  const repository = store(), insert = repository.insert;
+  let loseResponse = true;
+  repository.insert = async row => {
+    await insert(row);
+    if (loseResponse) {loseResponse = false; throw new Error("committed cancellation response lost");}
+  };
+  const input = inputFor("different-product"), service = new TestRequestService(repository);
+  await expect(service.cancelSubmission("lost-cancellation", "mini", input, "2026-10-03T14:00:00Z", "Occurrence boundary")).rejects.toThrow("response lost");
+  const restarted = new TestRequestService(repository);
+  expect(await restarted.cancelSubmission("lost-cancellation", "mini", input, "2026-10-03T15:00:00Z", "Retry boundary"))
+    .toMatchObject({state: "terminal", hostCancellation: {requestedAt: "2026-10-03T14:00:00.000Z", reason: "Occurrence boundary"}});
+  expect(await restarted.submit("lost-cancellation", "mini", input)).toMatchObject({state: "terminal", terminalStatus: "cancelled"});
+});
+
+test("frozen cancellation preserves accepted host custody and refuses malformed input before insertion", async () => {
+  const repository = store(), service = new TestRequestService(repository), input = inputFor("active-product");
+  const queued = await service.submit("already-accepted", "mini", input);
+  const receipt = {requestId: queued.requestId, hostId: queued.hostId, inputSha256: queued.inputSha256, acceptedAt: "2026-10-03T13:59:00Z"};
+  await service.accept(receipt, "mini");
+  expect(await service.cancelSubmission(queued.requestId, "mini", input, "2026-10-03T14:00:00Z", "Occurrence boundary"))
+    .toMatchObject({state: "accepted", hostReceipt: receipt, hostCancellation: {reason: "Occurrence boundary"}});
+  await expect(service.cancelSubmission("invalid-fence", "mini", {}, "2026-10-03T14:00:00Z", "Occurrence boundary")).rejects.toMatchObject({status: 400});
+  expect(await service.get("invalid-fence")).toBeNull();
+});
+
 test("acceptance racing cancellation retains the cancellation for local host reconciliation", async () => {
   for (const acceptFirst of [true, false]) {
     const service = new TestRequestService(store()), row = await service.submit("racing-request", "mini", inputFor());

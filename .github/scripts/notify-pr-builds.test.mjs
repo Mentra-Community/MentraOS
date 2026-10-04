@@ -98,12 +98,26 @@ test("PR Slack bounds valid maximum routine titles and fifty selections while pr
   assert.ok(payload.blocks.length <= 50)
   for (const block of payload.blocks) if (block.type === "section") assert.ok(block.text.text.length <= 3000)
   const body = JSON.stringify(payload)
-  assert.match(body, /View all requested tests in Admin/)
+  assert.match(body, /View all requested tests on the PR/)
   assert.match(body, /Download APK/); assert.match(body, /Install on iPhone/); assert.match(body, /Install on Mac/)
   assert.match(body, /OTA manifest/); assert.match(body, /View PR and checks/)
   assert.ok(payload.text.length < 1500)
   const failed = buildPost({pr, sha, error: "<&>".repeat(2000), ios: {error: "<&>".repeat(2000)}, androidRunUrl: run.html_url})
   assert.ok(failed.blocks.every(block => block.type !== "section" || block.text.text.length <= 3000))
+})
+
+test("a requested-test section at exactly Slack's limit retains its rows without a second bounding pass", () => {
+  const routine = {id: "exact-limit", title: "Exact limit", platform: "android", resultsUrl: "https://admin.dev.mentraglass.com/?testRun=exact-limit",
+    pipelineUrl: "https://github.com/o/r/actions/workflows/request-e2e-routine.yml?padding=", pipelineLabel: "Request pipeline"}
+  const input = {pr, sha, error: "Android unavailable", androidRunUrl: run.html_url, routines: [routine]}
+  const section = payload => payload.blocks.find(block => block.text?.text.includes("*Requested tests:*"))?.text.text
+  const padding = 3000 - section(buildPost(input)).length
+  routine.pipelineUrl += "x".repeat(padding)
+  const rendered = section(buildPost(input))
+  assert.equal(rendered.length, 3000)
+  assert.match(rendered, /Requested tests:\* Exact limit/)
+  assert.ok(rendered.includes(`<${routine.resultsUrl}|View results>`))
+  assert.ok(rendered.includes(`<${routine.pipelineUrl}|Request pipeline>`))
 })
 
 const iosRun = {...run, id: 3}
@@ -630,7 +644,7 @@ test("requested tests link the exact Mac archive and generic request workflow wi
   assert.match(text, /actions\/workflows\/request-e2e-routine.yml\|Request pipeline \(workflow\)/)
   assert.doesNotMatch(text, /Tests passed|Test running|Ready to run|localhost|127\.0\.0\.1/)
   const results = new URL(text.match(/<(https:[^|]+)\|View results>/)[1])
-  assert.deepEqual(Object.fromEntries(results.searchParams), {testRuns: "1", repository: "o/r", pr: "123", headSha: sha,
+  assert.deepEqual(Object.fromEntries(results.searchParams), {testRuns: "1", channel: "pr", repository: "o/r", pr: "123", headSha: sha,
     archiveSha256: iosReceipt.artifacts.mac.sha256, routineId: "selected-mac", platform: "ios-on-mac"})
   assert.match(h.written[0].body, /\[View results\]\(https:\/\/admin\.dev\.mentraglass\.com/)
   await notifyPrBuilds(h.args)

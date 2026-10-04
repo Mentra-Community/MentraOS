@@ -148,20 +148,44 @@ export class TestRequestService {
     return Buffer.from(JSON.stringify({hostId, requestId, [field]: timestamp})).toString("base64url");
   }
 
-  async submit(requestId: string, hostId: string, input: unknown): Promise<StoredTestRequest> {
+  private submission(requestId: string, hostId: string, input: unknown): StoredTestRequest {
     if (!frameworkIdentitySchema.safeParse(requestId).success || !frameworkIdentitySchema.safeParse(hostId).success) throw new TestRequestConflict("Request and assigned host identities are required");
     if (!frameworkRequestInputSchema.safeParse(input).success) throw new TestRunError(400, "Invalid framework request input");
     const inputSha256 = requestInputDigest(input);
-    const request: StoredTestRequest = {requestId, hostId, input, inputSha256, state: "queued"};
+    return {requestId, hostId, input, inputSha256, state: "queued"};
+  }
+
+  async submit(requestId: string, hostId: string, input: unknown): Promise<StoredTestRequest> {
+    const request = this.submission(requestId, hostId, input);
     try {await this.repository.insert(request); return request;}
     catch (error) {
       // Only duplicate identity is recoverable; outages must not become acceptance.
       if ((error as {code?: number}).code !== 11000) throw error;
       const existing = await this.repository.get(requestId);
-      if (!existing || existing.inputSha256 !== inputSha256 || existing.hostId !== hostId)
+      if (!existing || existing.inputSha256 !== request.inputSha256 || existing.hostId !== hostId)
         throw new TestRequestConflict("Request identity already belongs to different inputs or host");
       return existing;
     }
+  }
+
+  /** Fence a frozen submission even when its concurrent insert has not become visible yet. */
+  async cancelSubmission(requestId: string, hostId: string, input: unknown, requestedAt: string, reason: string): Promise<StoredTestRequest> {
+    const request = this.submission(requestId, hostId, input);
+    const parsed = hostCancellationSchema.parse({requestId, hostId, inputSha256: request.inputSha256, requestedAt, reason});
+    const hostCancellation = {...parsed, requestedAt: new Date(parsed.requestedAt).toISOString()};
+    const cancelled: StoredTestRequest = {...request, state: "terminal", terminalStatus: "cancelled", hostCancellation};
+    // The unique request ID arbitrates admission and cancellation in the same durable store.
+    // A later queued insert cannot replace this terminal record, including after a process restart.
+    try {await this.repository.insert(cancelled); return cancelled;}
+    catch (error) {if ((error as {code?: number}).code !== 11000) throw error;}
+    const existing = await this.repository.get(requestId);
+    if (!existing || existing.hostId !== hostId || existing.inputSha256 !== request.inputSha256
+      || requestInputDigest(existing.input) !== request.inputSha256)
+      throw new TestRequestConflict("Cancellation submission differs from the original inputs or host");
+    const saved = await this.cancel(requestId, hostCancellation.requestedAt, reason);
+    if (!saved || saved.state !== "terminal" && !saved.hostCancellation)
+      throw new TestRunError(503, "Cancellation submission was not retained");
+    return saved;
   }
 
   /** Publish a host's already committed local admission; this never dispatches work. */

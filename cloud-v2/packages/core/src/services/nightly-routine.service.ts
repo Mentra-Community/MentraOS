@@ -73,7 +73,7 @@ export class NightlyRoutineService {
     private readonly builds: {latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null>;
       resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>} = new GithubTestBuildGateway(),
     private readonly hosts: Pick<TestHostStateService, "get"> = new TestHostStateService(),
-    private readonly requests: Pick<TestRequestService, "cancel" | "get" | "submit"> = new TestRequestService(),
+    private readonly requests: Pick<TestRequestService, "cancelSubmission" | "get" | "submit"> = new TestRequestService(),
     private readonly repository: NightlyPlanRepository = nightlyPlanRepository,
     private readonly bindings: () => RoutineLaneBindings = configuredRoutineLanes,
     private readonly results: Pick<FrameworkResultService, "detail"> = new FrameworkResultService(),
@@ -97,14 +97,20 @@ export class NightlyRoutineService {
     if (requestInputDigest({occurrenceId: plan.occurrenceId, startedAt: plan.startedAt, trigger: plan.trigger}) !== requestInputDigest(occurrence))
       throw new TestRunError(409, "Occurrence retry changed its original trigger or boundary");
     // Each member is independent. A failed queue write is retried with its original immutable request ID/input.
-    if (await this.repository.completed(suiteId) || this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000)
+    if (await this.repository.completed(suiteId) || this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000) {
+      await this.cancelAdmissions(plan);
       return {plan, admissions: []};
+    }
     const admissions = await Promise.all(plan.members.map(async member => {
       if (!member.input || !member.hostId) return {memberId: member.memberId, admitted: false, reason: member.unavailableReason};
       try {
-        await this.requests.submit(member.requestId, member.hostId, member.input);
-        if (await this.repository.completed(suiteId) || this.now() >= Date.parse(plan!.startedAt) + 3 * 3600_000)
-          await this.requests.cancel(member.requestId, new Date(this.now()).toISOString(), "Nightly occurrence reached its completion boundary.");
+        try {await this.requests.submit(member.requestId, member.hostId, member.input);}
+        finally {
+          // A lost insert acknowledgement is still an attempted admission, not proof that no request exists.
+          if (await this.repository.completed(suiteId) || this.now() >= Date.parse(plan!.startedAt) + 3 * 3600_000)
+            await this.requests.cancelSubmission(member.requestId, member.hostId, member.input,
+              new Date(this.now()).toISOString(), "Nightly occurrence reached its completion boundary.");
+        }
         return {memberId: member.memberId, admitted: true};
       }
       catch {return {memberId: member.memberId, admitted: false, reason: "Request admission unavailable; retry this occurrence."};}
@@ -176,6 +182,19 @@ export class NightlyRoutineService {
     return plan;
   }
 
+  private async cancelAdmissions(plan: NightlyPlan) {
+    // Retain a cancellation record for absent and uncertain admissions before freezing the occurrence.
+    const cancellationAt = new Date(this.now()).toISOString(), eligible = plan.members.filter(member => member.input);
+    const cancellations = await Promise.allSettled(eligible.map(member =>
+      this.requests.cancelSubmission(member.requestId, member.hostId!, member.input, cancellationAt,
+        "Nightly occurrence reached its completion boundary.")));
+    cancellations.forEach((result, index) => {
+      if (result.status === "rejected") logger.error({err: result.reason, requestId: eligible[index]!.requestId}, "Nightly deadline cancellation failed");
+    });
+    if (cancellations.some(result => result.status === "rejected"))
+      throw new TestRunError(503, "Nightly deadline cancellation is unavailable; retry this occurrence completion.");
+  }
+
   private unavailableEvidence(member: NightlyMember, error: unknown, source: "Result" | "Request"): NightlyResult["members"][number] {
     logger.error({err: error, requestId: member.requestId}, "Nightly member evidence read failed");
     return {...member, status: "waiting", publicationComplete: false,
@@ -235,29 +254,18 @@ export class NightlyRoutineService {
 
   async complete(occurrenceId: string) {
     const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId);
-    if (completed) return completed;
+    if (completed) {await this.cancelAdmissions(plan); return completed;}
     const deadline = Date.parse(plan.startedAt) + 3 * 3600_000;
     let deadlineReached = this.now() >= deadline;
-    const cancelAtDeadline = async () => {
-      // Cancellation custody cannot depend on a result service being available.
-      const cancellationAt = new Date(this.now()).toISOString();
-      const eligible = plan.members.filter(member => member.input);
-      const cancellations = await Promise.allSettled(eligible.map(member =>
-        this.requests.cancel(member.requestId, cancellationAt, "Nightly occurrence reached its completion boundary.")));
-      cancellations.forEach((result, index) => {
-        if (result.status === "rejected") logger.error({err: result.reason, requestId: eligible[index]!.requestId}, "Nightly deadline cancellation failed");
-      });
-      if (cancellations.some(result => result.status === "rejected"))
-        throw new TestRunError(503, "Nightly deadline cancellation is unavailable; retry this occurrence completion.");
-    };
-    if (deadlineReached) await cancelAtDeadline();
+    if (deadlineReached) await this.cancelAdmissions(plan);
     const detail = await this.snapshot(plan);
     // Reads may cross the deadline. Finish cancellation custody before returning or freezing their snapshot.
     if (!deadlineReached && this.now() >= deadline) {
       deadlineReached = true;
-      await cancelAtDeadline();
+      await this.cancelAdmissions(plan);
     }
     if (detail.status === "running" && !deadlineReached) return detail;
+    if (!deadlineReached) await this.cancelAdmissions(plan);
     const finishedAt = new Date(this.now()).toISOString();
     // The occurrence receipt is the only frozen verdict. Admin derives its suite projection from it.
     return this.repository.finish(plan.suiteId, finite({...detail, finishedAt,

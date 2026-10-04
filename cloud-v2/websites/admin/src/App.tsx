@@ -455,7 +455,7 @@ function AdminPage() {
             <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
             <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
           </section>}
-          <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key === "platform" && value === "ios-mac" ? "platform" : key, key === "platform" && value === "ios-mac" ? "ios-on-mac" : value])) : undefined} />
+          <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />
           <NativeActivityPanel /><NativeDispatchPanel />
         </>
       ) : null}

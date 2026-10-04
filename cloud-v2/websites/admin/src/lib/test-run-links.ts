@@ -6,7 +6,7 @@ export type TestRunListScope = {
   headSha: string;
   archiveSha256: string;
   routineId: string;
-  platform: "ios-mac" | "ios" | "android";
+  platform: "ios-on-mac" | "android";
 } & ({ channel: "pr"; pr: string } | { channel: "dev" | "staging"; pr?: never });
 const COMMON_LIST_KEYS = ["testRuns", "repository", "headSha", "archiveSha256", "routineId", "platform"] as const;
 const LIST_KEYS = [...COMMON_LIST_KEYS, "channel", "pr"] as const;
@@ -18,8 +18,7 @@ export function readTestRunListScope(search: string): TestRunListScope | null {
     COMMON_LIST_KEYS.some((key) => query.getAll(key).length !== 1) || query.get("testRuns") !== "1" ||
     query.getAll("channel").length > 1 || query.getAll("pr").length > 1
   ) return null;
-  // Existing PR notification URLs predate the explicit channel discriminator.
-  const channel = query.get("channel") ?? "pr";
+  const channel = query.get("channel");
   const repository = query.get("repository")!;
   const pr = query.get("pr");
   const headSha = query.get("headSha")!;
@@ -32,7 +31,7 @@ export function readTestRunListScope(search: string): TestRunListScope | null {
     !/^[a-f0-9]{40}$/.test(headSha) ||
     !/^[a-f0-9]{64}$/.test(archiveSha256) ||
     !routineIdentitySchema.safeParse(routineId).success ||
-    !["ios-mac", "ios", "android"].includes(platform)
+    !["ios-on-mac", "android"].includes(platform)
   )
     return null;
   const common = { repository, headSha, archiveSha256, routineId, platform: platform as TestRunListScope["platform"] };
