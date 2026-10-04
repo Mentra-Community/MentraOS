@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import {beforeEach, expect, mock, test} from "bun:test"
+import {afterEach, beforeEach, expect, mock, test} from "bun:test"
 
 let pendingStart: Promise<{ok: boolean}> | null = null
 let pendingStop: Promise<{ok: boolean}> | null = null
@@ -35,6 +35,13 @@ beforeEach(async () => {
   stop.mockClear()
   sendResult.mockClear()
   handlers = new NavigationHandlers(() => {}, sendResult)
+})
+
+afterEach(async () => {
+  pendingStart = null
+  pendingStop = null
+  await handlers.handleStop("maps")
+  await handlers.handleStop("other")
 })
 
 const destination = {lat: 1, lng: 2}
