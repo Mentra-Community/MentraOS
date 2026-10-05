@@ -275,7 +275,7 @@ describe("background replacement", () => {
     expect(crust.dispatchCalls).toHaveLength(before)
     expect(hostCalls).toHaveLength(2)
     expect(injected[1]).toContain("BACKGROUND_RESTARTED")
-    router.backgroundConnected("com.foo")
+    router.backgroundReady("com.foo")
     const resumed = crust.dispatchCalls
       .slice(before)
       .map((call) => JSON.parse(call.envelope.raw as string).payload.data)
@@ -283,7 +283,7 @@ describe("background replacement", () => {
       {type: "UI_OPEN"},
       {type: "UI_MESSAGE", channel: "draft", payload: "typed during restart"},
     ])
-    router.backgroundConnected("com.foo")
+    router.backgroundReady("com.foo")
     expect(crust.dispatchCalls).toHaveLength(before + 2)
   })
 })
@@ -301,13 +301,84 @@ test("terminal background teardown clears unsent input and bounded queue cannot 
   } finally {
     console.warn = warn
   }
-  router.backgroundConnected("com.foo")
+  router.backgroundReady("com.foo")
   expect(crust.dispatchCalls).toHaveLength(129)
   crust.dispatchCalls.length = 0
   router.backgroundRestarting("com.foo")
   router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "retired"}))
   router.backgroundStopped("com.foo")
   router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "no future owner"}))
-  router.backgroundConnected("com.foo")
+  router.backgroundReady("com.foo")
   expect(crust.dispatchCalls).toHaveLength(1)
+})
+
+describe("background start gate", () => {
+  const delivered = (crust: ReturnType<typeof buildMockCrust>) =>
+    crust.dispatchCalls.map((call) => JSON.parse(call.envelope.raw as string).payload.data)
+
+  test("holds UI_OPEN and every WebView frame until the background is ready, then delivers in order", () => {
+    const crust = buildMockCrust()
+    const router = new MentraUIRouter(crust.binding)
+    const ready: string[] = []
+    router.onBackgroundReady((pkg) => ready.push(pkg))
+    router.backgroundStarting("com.foo")
+    bindCapture(router, "com.foo")
+    expect(router.isBackgroundReady("com.foo")).toBe(false)
+
+    router.routeFromWebView("com.foo", JSON.stringify({type: "ready"}))
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "history:get", requestId: "r1"}))
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "typed"}))
+    router.notifyReopen("com.foo")
+    expect(crust.dispatchCalls).toHaveLength(0)
+
+    router.backgroundReady("com.foo")
+    expect(delivered(crust)).toEqual([
+      {type: "UI_OPEN"},
+      {type: "UI_MESSAGE", channel: "history:get", payload: undefined, seq: undefined, requestId: "r1"},
+      {type: "UI_MESSAGE", channel: "draft", payload: "typed", seq: undefined},
+    ])
+    expect(ready).toEqual(["com.foo"])
+    expect(router.isBackgroundReady("com.foo")).toBe(true)
+
+    // Once ready, traffic flows directly and a repeat ready is a no-op.
+    router.backgroundReady("com.foo")
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "live"}))
+    expect(crust.dispatchCalls).toHaveLength(4)
+    expect(ready).toEqual(["com.foo"])
+  })
+
+  test("a background that stops before it is ready rejects held requests", () => {
+    const crust = buildMockCrust()
+    const router = new MentraUIRouter(crust.binding)
+    router.backgroundStarting("com.foo")
+    const injected = bindCapture(router, "com.foo")
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "history:get", requestId: "r1"}))
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "typed"}))
+    router.backgroundStopped("com.foo")
+    expect(injected.some((js) => js.includes("BACKGROUND_STOPPED") && js.includes("r1"))).toBe(true)
+    expect(crust.dispatchCalls).toHaveLength(0)
+  })
+
+  test("cancelling a held request drops it before delivery", () => {
+    const crust = buildMockCrust()
+    const router = new MentraUIRouter(crust.binding)
+    router.backgroundStarting("com.foo")
+    bindCapture(router, "com.foo")
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "history:get", requestId: "r1"}))
+    router.routeFromWebView("com.foo", JSON.stringify({type: "cancel", requestId: "r1"}))
+    router.backgroundReady("com.foo")
+    expect(delivered(crust)).toEqual([])
+  })
+
+  test("a respawn after a crash keeps restart semantics", () => {
+    const crust = buildMockCrust()
+    const router = new MentraUIRouter(crust.binding)
+    const injected = bindCapture(router, "com.foo")
+    router.backgroundRestarting("com.foo")
+    router.backgroundStarting("com.foo")
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "save", requestId: "during"}))
+    expect(injected.some((js) => js.includes("BACKGROUND_RESTARTED"))).toBe(true)
+    router.backgroundReady("com.foo")
+    expect(delivered(crust)).toEqual([{type: "UI_OPEN"}])
+  })
 })

@@ -16,6 +16,13 @@ export enum MiniappRequestType {
   /** Handshake: miniapp announces itself and asks phone to bind the session. */
   CONNECT = "miniapp_connect",
 
+  /**
+   * One-shot: the background's `registerMiniapp` handler has settled, so its
+   * `session.ui.handle` handlers exist. Sent only to hosts advertising
+   * `hostFeatures.initReady`; the host keeps the UI closed until it arrives.
+   */
+  READY = "miniapp_ready",
+
   /** Request a fresh miniapp-scoped backend auth token. */
   AUTH_REFRESH = "miniapp_auth_refresh",
 

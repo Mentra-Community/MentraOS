@@ -1522,6 +1522,10 @@ class LocalMiniappRuntime {
         this.handleTranscriptionConfig(packageName, payload, requestId)
         break
 
+      case MiniappRequestType.READY:
+        // MentraJSRouter observes READY to open the UI; nothing to do here.
+        break
+
       default:
         // NACK instead of silent drop (issue 021 S3): an SDK that sends a
         // request this runtime doesn't implement must get a rejected promise,
@@ -1591,7 +1595,7 @@ class LocalMiniappRuntime {
         permissions: declaredPermissions,
         visibility: this.currentVisiblePackage() === packageName ? "foreground" : "background",
         configuration: getMiniappConfiguration(packageName),
-        hostFeatures: {captureAudio: true},
+        hostFeatures: {captureAudio: true, initReady: true},
       },
       requestId,
     )
