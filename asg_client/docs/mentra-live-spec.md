@@ -194,7 +194,8 @@ admission refuses mutation. Every accepted active start increases the retained r
 even when public IDs are reused. The correlated `stop_ack` is followed by a fresh terminal
 query to prove settlement. Pending admission must settle normally or retain custody; no
 public-ID-only cancellation is used. Query snapshots report pending admission and active
-controller identity. Normal user stop retains its intentional current-stream behavior.
+controller identity and the existing start revision. The caller binds that start revision
+to reject a later same-ID incarnation, then compares the latest revision atomically. Normal user stop retains its intentional current-stream behavior.
 
 The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
 cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device

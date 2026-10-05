@@ -450,7 +450,8 @@ that snapshot, before it enters the outbound BLE queue. For example,
 snapshot with `"request_id":"status-123"`. Omitted or invalid IDs retain the
 uncorrelated response. Fresh queries include `pendingStart`; a pending admission also
 includes `pendingStreamId`/`pendingControllerId`, and an active owner includes
-`controllerId`. This prevents a stopped snapshot from concealing a queued admission.
+`controllerId` plus its existing `startRevision` captured at admission. Lifecycle events
+advance `revision` while `startRevision` stays fixed until replacement. This prevents a stopped snapshot from concealing a queued admission.
 The ID is not retained on later snapshots or stream events;
 `timestamp` remains display time and can change when the phone synchronizes the clock.
 

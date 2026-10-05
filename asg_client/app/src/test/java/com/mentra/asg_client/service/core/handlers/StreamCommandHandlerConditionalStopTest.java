@@ -74,6 +74,7 @@ public class StreamCommandHandlerConditionalStopTest {
         state.begin(stream);
         field("mOwnedStreamId", stream);
         field("mOwnedControllerId", controller);
+        field("mOwnedStartRevision", state.snapshot().getLong("revision"));
     }
 
     @Test public void staleQueuedStopRefusesReplacementBeforeAnyMutation() throws Exception {
@@ -203,6 +204,7 @@ public class StreamCommandHandlerConditionalStopTest {
         shadowOf(Looper.getMainLooper()).idle();
         assertThat(responses.get(1).getBoolean("pendingStart")).isFalse();
         assertThat(responses.get(1).getString("controllerId")).isEqualTo("controller");
+        assertThat(responses.get(1).getLong("startRevision")).isEqualTo(1);
         assertThat(state.snapshot().has("pendingStart")).isFalse();
     }
 }

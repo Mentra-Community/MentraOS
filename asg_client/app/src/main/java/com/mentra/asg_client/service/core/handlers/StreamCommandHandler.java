@@ -582,7 +582,10 @@ public class StreamCommandHandler implements ICommandHandler {
             snapshot.put("pendingStreamId", mPendingStart.optString("streamId", ""));
             snapshot.put("pendingControllerId", mPendingStart.optString("controllerId", ""));
         }
-        if (mOwnedControllerId != null) snapshot.put("controllerId", mOwnedControllerId);
+        if (mOwnedControllerId != null) {
+            snapshot.put("controllerId", mOwnedControllerId);
+            snapshot.put("startRevision", mOwnedStartRevision);
+        }
         return snapshot;
     }
 
