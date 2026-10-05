@@ -6,5 +6,5 @@
     "rootDir": "./src"
   },
   "include": ["src/**/*"],
-  "references": [{ "path": "../shared" }, { "path": "../developer-auth" }]
+  "references": [{ "path": "../shared" }, { "path": "../developer-auth" }, { "path": "../workspace-contract" }]
 }

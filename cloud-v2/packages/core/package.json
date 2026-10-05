@@ -11,6 +11,7 @@
   "dependencies": {
     "@mentra/cloud-shared": "workspace:*",
     "@mentra/developer-auth": "workspace:*",
+    "@mentra/workspace-contract": "workspace:*",
     "@workos-inc/node": "^10.3.0",
     "fflate": "0.8.2",
     "hono": "^4.11.1",

@@ -4,14 +4,33 @@
 # cluster. Ports are bound to 127.0.0.1 ONLY (never expose Mongo to your
 # network; automated ransomware scanners hit open instances within hours).
 #
+# Mongo runs as a single-node replica set (rs0) because multi-document
+# transactions, used by workspace administration, require one. The healthcheck
+# initiates the set on first boot and reports healthy once the node is primary.
+# Clients connect with `directConnection=true`.
+#
 # Used by `bun run setup --test` and `bun run test:ci`.
 
 services:
   mongo:
     image: mongo:7
     container_name: cloud-v2-mongo-test
+    # `--bind_ip_all` binds inside the container only; the published port
+    # below stays loopback-only on the host.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "127.0.0.1:27017:27017"
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "try { rs.status() } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: '127.0.0.1:27017'}]}) } quit(db.hello().isWritablePrimary ? 0 : 1)"
+      interval: 2s
+      timeout: 10s
+      retries: 30
+      start_period: 5s
     restart: unless-stopped
 
   redis:
