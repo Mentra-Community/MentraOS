@@ -13,7 +13,8 @@ permissions:
 
 jobs:
   reconcile:
-    runs-on: ubuntu-latest
+    # Blacksmith, like the Android, iOS and ASG builds that call this workflow.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     # All producer workflows and their retries share one writer per PR. The job
     # does not poll: whichever build finishes last reconciles the final state.
