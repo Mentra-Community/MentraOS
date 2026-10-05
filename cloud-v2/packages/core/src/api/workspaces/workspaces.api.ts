@@ -34,7 +34,7 @@ import {
 } from "@mentra/workspace-contract"
 import {Hono} from "hono"
 import type {WorkspaceAuditEventRow} from "../../models/workspace-audit-event.model"
-import {listWorkspaceAudit} from "../../services/workspaces/audit.service"
+import {listWorkspaceAudit, redactSecrets} from "../../services/workspaces/audit.service"
 import {
   createWorkspaceCredential,
   findCredentialOwner,
@@ -102,9 +102,11 @@ app.post("/", async (c) => {
 })
 
 // --- Invitation links (before `/:workspaceId`) -----------------------------
+// The token travels in the body, never the path: request logs record the path.
 
-app.get("/invitations/:token", async (c) => {
-  const invitation = await peekInvitation(c.req.param("token"))
+app.post("/invitations/peek", async (c) => {
+  const body = await readJsonObject(c)
+  const invitation = await peekInvitation(requiredString(body, "token"))
   if (!invitation) fail("invitation_not_found", "invitation not found")
   c.header("cache-control", "no-store")
   return c.json(invitation)
@@ -295,6 +297,11 @@ function invitationView(row: InvitationRow): InvitationView {
   }
 }
 
+/** An audit snapshot for display, with anything credential-looking stripped even if a writer ever put it there. */
+function snapshot(value: unknown): Record<string, unknown> | null {
+  return value ? (redactSecrets(value) as Record<string, unknown>) : null
+}
+
 function auditEventView(row: WorkspaceAuditEventRow): AuditEventView {
   return {
     eventId: row.eventId,
@@ -305,9 +312,9 @@ function auditEventView(row: WorkspaceAuditEventRow): AuditEventView {
       credentialId: row.actor.credentialId ?? null,
       service: row.actor.service ?? null,
     },
-    target: (row.target as Record<string, unknown> | null | undefined) ?? null,
-    before: (row.before as Record<string, unknown> | null | undefined) ?? null,
-    after: (row.after as Record<string, unknown> | null | undefined) ?? null,
+    target: snapshot(row.target),
+    before: snapshot(row.before),
+    after: snapshot(row.after),
     occurredAt: row.occurredAt.toISOString(),
   }
 }

@@ -29,6 +29,7 @@ function user(overrides: Partial<Extract<CorePrincipal, {kind: "user"}>> = {}): 
     mentraUserId: "mu_1",
     email: "dev@example.test",
     emailVerified: true,
+    name: "Dev User",
     workosUserId: "workos_1",
     isOrganizationAdmin: false,
     ...overrides,
@@ -150,7 +151,7 @@ describe("requireUserPrincipal", () => {
         mentraUserId: "mu_1",
         email: "dev@example.test",
         emailVerified: true,
-        name: null,
+        name: "Dev User",
         isOrganizationAdmin: true,
       },
     })

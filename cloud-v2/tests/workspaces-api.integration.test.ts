@@ -342,9 +342,14 @@ describe("owner journey", () => {
     const token = (invited.json.inviteUrl as string).slice(INVITE_PREFIX.length)
 
     // The invitee can see what the link is for before accepting it.
-    const peeked = await call("GET", `/api/workspaces/invitations/${token}`, {as: developer})
+    // The token goes in the body, not the path, so request logs never record it.
+    const peeked = await call("POST", "/api/workspaces/invitations/peek", {as: developer, body: {token}})
     expect(peeked.status).toBe(200)
+    expect(peeked.headers.get("cache-control")).toBe("no-store")
     expect(peeked.json).toEqual({workspaceName: "Acme", email: developer.email, role: "developer"})
+    const inPath = await call("GET", `/api/workspaces/invitations/${token}`, {as: developer})
+    expect(inPath.status).toBe(404)
+    expect(inPath.text).not.toContain("Acme")
 
     // The invitation shows in the pending list until it is accepted, without any token material.
     const pending = await call("GET", `/api/workspaces/${workspaceId}/invitations`, {as: owner})
@@ -428,7 +433,7 @@ describe("authentication", () => {
       ["GET", `/api/workspaces/${workspaceId}`],
       ["GET", `/api/workspaces/${workspaceId}/members`],
       ["GET", `/api/workspaces/${workspaceId}/audit`],
-      ["GET", "/api/workspaces/invitations/some-token"],
+      ["POST", "/api/workspaces/invitations/peek"],
       ["POST", "/api/workspaces/invitations/accept"],
       ["GET", "/api/organization"],
       ["GET", "/api/organization/workspaces"],
@@ -699,9 +704,31 @@ describe("workspaces", () => {
       expect(storeRequests).toEqual([])
     })
 
-    test("a Store URL without the shared secret (or the reverse) also counts as not configured", async () => {
+    test("a Store URL without the shared secret fails closed: 503, nothing deleted, no request sent", async () => {
       const ws = await newWorkspace()
       process.env.MENTRA_STORE_INTERNAL_URL = store.url.origin
+
+      for (const secret of [undefined, "", "   "]) {
+        if (secret === undefined) delete process.env.CLOUD_CORE_STORE_SERVICE_SECRET
+        else process.env.CLOUD_CORE_STORE_SERVICE_SECRET = secret
+        const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
+          as: ws.owner,
+          body: {confirmName: "Acme"},
+        })
+        expect({secret, status: reply.status, error: reply.json.error}).toEqual({
+          secret,
+          status: 503,
+          error: "store_unavailable",
+        })
+      }
+
+      expect(storeRequests).toEqual([])
+      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(200)
+    })
+
+    test("a shared secret without a Store URL is still no Store: count 0, deleted", async () => {
+      const ws = await newWorkspace()
+      process.env.CLOUD_CORE_STORE_SERVICE_SECRET = STORE_SECRET
 
       const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
         as: ws.owner,
@@ -801,6 +828,11 @@ describe("members", () => {
       pending: false,
     })
     expect(byId.get(ws.developerMembershipId)).toMatchObject({role: "developer", pending: false})
+    // Names come from the identity provider: the creator's at creation, an invitee's on acceptance.
+    expect(byId.get(ws.ownerMembershipId)!.name).toBe("Test User")
+    for (const joined of [ws.adminMembershipId, ws.developerMembershipId, ws.memberMembershipId]) {
+      expect(byId.get(joined)!.name).toBe("Test User")
+    }
     expect(byId.get("wm_pending")).toEqual({
       membershipId: "wm_pending",
       mentraUserId: null,
@@ -906,6 +938,41 @@ describe("members", () => {
     expect(unknown.json.error).toBe("not_found")
   })
 
+  test("a membership of another workspace is 404 through this workspace's URL, even for someone who owns both", async () => {
+    const ws = await newWorkspace()
+    const other = await createWorkspace(ws.owner, "Other")
+    const stranded = await person("other-member")
+    const strandedMembershipId = await join(other.workspaceId, ws.owner, stranded, "member")
+    const revisionHere = await revisionOf(ws.workspaceId, ws.owner)
+    const revisionThere = await revisionOf(other.workspaceId, ws.owner)
+    const here = `/api/workspaces/${ws.workspaceId}/members/${strandedMembershipId}`
+
+    const promoted = await call("PATCH", here, {
+      as: ws.owner,
+      body: {role: "developer", expectedRevision: revisionHere},
+    })
+    expect(promoted.status).toBe(404)
+    expect(promoted.json.error).toBe("not_found")
+    const removed = await call("DELETE", here, {as: ws.owner, body: {expectedRevision: revisionHere}})
+    expect(removed.status).toBe(404)
+    expect(removed.json.error).toBe("not_found")
+
+    // Nothing moved: not the member's role or status, nor either workspace's revision.
+    const members = await call("GET", `/api/workspaces/${other.workspaceId}/members`, {as: ws.owner})
+    expect(members.json.items.find((item: any) => item.membershipId === strandedMembershipId)).toMatchObject({
+      role: "member",
+      mentraUserId: stranded.mentraUserId,
+    })
+    expect(await revisionOf(ws.workspaceId, ws.owner)).toBe(revisionHere)
+    expect(await revisionOf(other.workspaceId, ws.owner)).toBe(revisionThere)
+    // Through its own workspace the same call works, so the 404 above was the scoping.
+    const own = await call("PATCH", `/api/workspaces/${other.workspaceId}/members/${strandedMembershipId}`, {
+      as: ws.owner,
+      body: {role: "developer", expectedRevision: revisionThere},
+    })
+    expect(own.status).toBe(200)
+  })
+
   test("a member leaves; the last owner cannot; a non-member is 403", async () => {
     const ws = await newWorkspace()
 
@@ -951,6 +1018,31 @@ describe("invitations", () => {
     expect(again.json.error).toBe("invitation_not_found")
   })
 
+  test("an invitation of another workspace is 404 through this workspace's URL, and stays pending", async () => {
+    const ws = await newWorkspace()
+    const other = await createWorkspace(ws.owner, "Other")
+    const invited = await call("POST", `/api/workspaces/${other.workspaceId}/invitations`, {
+      as: ws.owner,
+      body: {email: "hire@example.test", role: "member"},
+    })
+    expect(invited.status).toBe(201)
+
+    const wrongWorkspace = await call(
+      "DELETE",
+      `/api/workspaces/${ws.workspaceId}/invitations/${invited.json.invitationId}`,
+      {as: ws.owner},
+    )
+
+    expect(wrongWorkspace.status).toBe(404)
+    expect(wrongWorkspace.json.error).toBe("invitation_not_found")
+    const pending = await call("GET", `/api/workspaces/${other.workspaceId}/invitations`, {as: ws.owner})
+    expect(pending.json.items.map((item: any) => item.invitationId)).toEqual([invited.json.invitationId])
+    const own = await call("DELETE", `/api/workspaces/${other.workspaceId}/invitations/${invited.json.invitationId}`, {
+      as: ws.owner,
+    })
+    expect(own.status).toBe(204)
+  })
+
   test("the body is validated, and the service enforces who may invite which role", async () => {
     const ws = await newWorkspace()
     const base = `/api/workspaces/${ws.workspaceId}/invitations`
@@ -977,9 +1069,15 @@ describe("invitations", () => {
     const ws = await newWorkspace()
     const outsider = await person("outsider")
 
-    const unknown = await call("GET", "/api/workspaces/invitations/not-a-real-token", {as: outsider})
+    const unknown = await call("POST", "/api/workspaces/invitations/peek", {
+      as: outsider,
+      body: {token: "not-a-real-token"},
+    })
     expect(unknown.status).toBe(404)
     expect(unknown.json.error).toBe("invitation_not_found")
+    expect((await call("POST", "/api/workspaces/invitations/peek", {as: outsider, body: {}})).status).toBe(400)
+    expect((await call("POST", "/api/workspaces/invitations/peek", {as: outsider, body: {token: 5}})).status).toBe(400)
+    expect((await call("POST", "/api/workspaces/invitations/peek", {as: outsider, raw: "{nope"})).status).toBe(400)
 
     const invited = await call("POST", `/api/workspaces/${ws.workspaceId}/invitations`, {
       as: ws.owner,
@@ -1026,6 +1124,10 @@ describe("workspace credentials", () => {
       {name: "ci", packageNames: [1]},
       {name: "ci", packageNames: ["not a package"]},
       {name: "ci", expiresAt: "yesterday"},
+      {name: "ci", expiresAt: "12345"},
+      {name: "ci", expiresAt: "March 1 2030"},
+      {name: "ci", expiresAt: "2030-03-01"},
+      {name: "ci", expiresAt: "2030-03-01T00:00:00Zjunk"},
       {name: "ci", expiresAt: 12345},
       {name: "ci", expiresAt: new Date(Date.now() - 1000).toISOString()},
     ]) {
@@ -1043,6 +1145,11 @@ describe("workspace credentials", () => {
     expect(ok.status).toBe(201)
     expect(ok.json.credential.packageNames).toEqual(["com.acme.one"])
     expect(ok.json.credential.expiresAt).toBe(soon)
+
+    // An offset and a missing seconds field are still ISO 8601 date-times.
+    const offset = await createKey(ws, ws.developer, {name: "ci-2", expiresAt: "2099-01-01T00:00+02:00"})
+    expect(offset.status).toBe(201)
+    expect(offset.json.credential.expiresAt).toBe("2098-12-31T22:00:00.000Z")
   })
 
   test("a credential can be revoked by its creator, not by another developer", async () => {
@@ -1129,6 +1236,33 @@ describe("audit", () => {
     }
     expect(seen).toEqual(all.json.items.map((item: any) => item.eventId))
     expect(new Set(seen).size).toBe(total)
+  })
+
+  test("credential-looking keys are stripped from target, before and after at any depth", async () => {
+    const ws = await newWorkspace()
+    await WorkspaceAuditEventModel.create({
+      eventId: "01ZZZZZZZZZZZZZZZZZZZZZZZZ",
+      organizationId: "local",
+      seq: 1_000_000,
+      workspaceId: ws.workspaceId,
+      action: "credential.created",
+      actor: {kind: "user", email: ws.owner.email},
+      target: {credentialId: "cred_1", tokenHash: "deadbeef", nested: {secret: "s3cret", keep: 1}},
+      before: {password: "hunter2", role: "member"},
+      after: {token: "msk_local_leak", list: [{apiSecret: "x", ok: true}], expiresAt: new Date("2030-01-02T03:04:05Z")},
+      occurredAt: new Date(),
+    })
+
+    const reply = await call("GET", `/api/workspaces/${ws.workspaceId}/audit?limit=200`, {as: ws.owner})
+
+    expect(reply.status).toBe(200)
+    const event = reply.json.items.find((item: any) => item.eventId === "01ZZZZZZZZZZZZZZZZZZZZZZZZ")
+    expect(event.target).toEqual({credentialId: "cred_1", nested: {keep: 1}})
+    expect(event.before).toEqual({role: "member"})
+    expect(event.after).toEqual({list: [{ok: true}], expiresAt: "2030-01-02T03:04:05.000Z"})
+    for (const leaked of ["deadbeef", "s3cret", "hunter2", "msk_local_leak", "apiSecret"]) {
+      expect(reply.text).not.toContain(leaked)
+    }
   })
 
   test("a bad limit is 400 and an oversized one is clamped", async () => {
@@ -1313,6 +1447,8 @@ describe("operator keys", () => {
       {name: "ops", scopes: ["nonsense"]},
       {name: "", scopes: ["organization.incidents.read"]},
       {name: "ops", scopes: ["organization.incidents.read"], expiresAt: "soon"},
+      {name: "ops", scopes: ["organization.incidents.read"], expiresAt: "12345"},
+      {name: "ops", scopes: ["organization.incidents.read"], expiresAt: "March 1 2030"},
     ]) {
       const reply = await call("POST", "/api/organization/credentials", {as: admin, body})
       expect({body, status: reply.status}).toEqual({body, status: 400})

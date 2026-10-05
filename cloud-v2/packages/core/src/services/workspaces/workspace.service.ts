@@ -178,6 +178,7 @@ export async function createWorkspace(actor: Actor & {kind: "user"}, input: {nam
           workspaceId,
           mentraUserId: actor.mentraUserId,
           email: actor.email,
+          name: displayName(actor.name),
           role: "owner",
           status: "active",
           startedAt: now,
@@ -462,6 +463,11 @@ function toSummary(
 
 export function isId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0
+}
+
+/** A person's display name for a membership row: trimmed, or null when blank or not a string. Display only, never authorization. */
+export function displayName(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
 export function isWorkspaceRole(value: unknown): value is WorkspaceRole {

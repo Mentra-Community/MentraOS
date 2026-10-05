@@ -135,7 +135,7 @@ export function userActor(c: AppContext): Actor & {kind: "user"} {
     mentraUserId: principal.mentraUserId,
     email: principal.email,
     emailVerified: principal.emailVerified,
-    name: null,
+    name: principal.name,
     isOrganizationAdmin: principal.isOrganizationAdmin,
   }
 }

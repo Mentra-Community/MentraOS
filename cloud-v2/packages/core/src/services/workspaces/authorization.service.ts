@@ -74,7 +74,11 @@ async function userPrincipal(auth: DeveloperAuthResult): Promise<CorePrincipal |
   // A token with no email comes back with a placeholder; it is not an address and must never be stored.
   const email = user.email && user.email !== UNKNOWN_EMAIL ? user.email : null
   const emailVerified = email !== null && user.emailVerified
-  const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || null
+  const name =
+    [user.firstName, user.lastName]
+      .map(part => part?.trim())
+      .filter(Boolean)
+      .join(" ") || null
   const {mentraUserId} = await resolveWorkosUser({
     workosUserId: user.id,
     email,
@@ -88,6 +92,7 @@ async function userPrincipal(auth: DeveloperAuthResult): Promise<CorePrincipal |
     mentraUserId,
     email,
     emailVerified,
+    name,
     workosUserId: user.id,
     isOrganizationAdmin: isOrganizationAdminEmail(email, emailVerified),
   }

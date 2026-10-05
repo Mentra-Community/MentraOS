@@ -9,7 +9,7 @@
 
 import {SERVICE_HEADERS, verifyServiceRequest} from "@mentra/workspace-contract/server"
 import {afterAll, afterEach, beforeEach, describe, expect, spyOn, test} from "bun:test"
-import {countStorePackages} from "./store-package-count"
+import {countStorePackages, logger} from "./store-package-count"
 import {WorkspaceError} from "./workspace-error"
 
 const SECRET = "test-store-service-secret"
@@ -101,20 +101,37 @@ describe("countStorePackages", () => {
     expect(seen[0]!.signed).toBe(true)
   })
 
-  test("no Store URL, or no shared secret, means no packages and no request", async () => {
+  test("no Store URL means no packages and no request, whatever the secret", async () => {
     delete process.env.MENTRA_STORE_INTERNAL_URL
     expect(await countStorePackages("ws_1")).toBe(0)
 
-    process.env.MENTRA_STORE_INTERNAL_URL = store.url.origin
+    process.env.MENTRA_STORE_INTERNAL_URL = "   "
+    expect(await countStorePackages("ws_1")).toBe(0)
+
     delete process.env.CLOUD_CORE_STORE_SERVICE_SECRET
     expect(await countStorePackages("ws_1")).toBe(0)
 
-    process.env.CLOUD_CORE_STORE_SERVICE_SECRET = "   "
-    expect(await countStorePackages("ws_1")).toBe(0)
-    process.env.MENTRA_STORE_INTERNAL_URL = "  "
-    process.env.CLOUD_CORE_STORE_SERVICE_SECRET = SECRET
-    expect(await countStorePackages("ws_1")).toBe(0)
+    expect(seen).toEqual([])
+  })
 
+  test("a Store URL without the shared secret fails closed and names the missing variable, never a secret", async () => {
+    const error = spyOn(logger, "error")
+    try {
+      for (const secret of [undefined, "", "   "]) {
+        if (secret === undefined) delete process.env.CLOUD_CORE_STORE_SERVICE_SECRET
+        else process.env.CLOUD_CORE_STORE_SERVICE_SECRET = secret
+        const err = await storeUnavailable()
+        expect({secret, code: err.code, http: err.status}).toEqual({secret, code: "store_unavailable", http: 503})
+      }
+      expect(error).toHaveBeenCalledTimes(3)
+      for (const [fields, message] of error.mock.calls as unknown as Array<[Record<string, unknown>, string]>) {
+        expect(message).toContain("CLOUD_CORE_STORE_SERVICE_SECRET")
+        expect(JSON.stringify(fields)).not.toContain(SECRET)
+      }
+    } finally {
+      error.mockRestore()
+    }
+    // Nothing was sent to a Store that Core could not authenticate to.
     expect(seen).toEqual([])
   })
 

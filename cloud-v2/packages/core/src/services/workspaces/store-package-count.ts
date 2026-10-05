@@ -7,17 +7,19 @@
  * signed with the contract's service signature (service `core`, secret
  * `CLOUD_CORE_STORE_SERVICE_SECRET`), and the Store answers `{count: number}`.
  *
- * A deployment with no Store (either setting missing) has no packages, so the
- * count is 0. A Store that is configured but cannot be asked, or answers
- * anything but a whole count, is `store_unavailable`: deleting on a guess could
- * strand packages.
+ * A deployment with no Store (`MENTRA_STORE_INTERNAL_URL` unset) has no
+ * packages, so the count is 0. A Store that is configured but cannot be asked
+ * (its shared secret missing, unreachable, an error status, or anything but a
+ * whole count) is `store_unavailable`: deleting on a guess could strand
+ * packages, and a half-configured deployment must not read as "no Store".
  */
 
 import {createLogger} from "@mentra/cloud-shared"
 import {SERVICE_HEADERS, signServiceRequest} from "@mentra/workspace-contract/server"
 import {fail} from "./workspace-error"
 
-const logger = createLogger("core").child({service: "store-package-count"})
+/** Exported so tests can observe what is logged (the deployment problem named in the error log is part of the behavior). */
+export const logger = createLogger("core").child({service: "store-package-count"})
 
 /** How long the Store has to answer. */
 const STORE_TIMEOUT_MS = 5_000
@@ -25,11 +27,21 @@ const STORE_TIMEOUT_MS = 5_000
 /** The service name Core identifies itself as to the Store. */
 const SERVICE_NAME = "core"
 
-/** The number of packages the Store holds for `workspaceId`; 0 when no Store is configured. */
+/**
+ * The number of packages the Store holds for `workspaceId`; 0 when no Store URL is configured. A Store
+ * URL without the shared secret cannot be asked, so it fails closed rather than counting 0.
+ */
 export async function countStorePackages(workspaceId: string): Promise<number> {
   const storeUrl = process.env.MENTRA_STORE_INTERNAL_URL?.trim().replace(/\/+$/, "")
+  if (!storeUrl) return 0
   const secret = process.env.CLOUD_CORE_STORE_SERVICE_SECRET?.trim()
-  if (!storeUrl || !secret) return 0
+  if (!secret) {
+    logger.error(
+      {workspaceId},
+      "MENTRA_STORE_INTERNAL_URL is set but CLOUD_CORE_STORE_SERVICE_SECRET is missing; refusing to treat the workspace as having no packages",
+    )
+    fail("store_unavailable", "the Store is configured but Core has no service secret to ask it with")
+  }
 
   const url = new URL(`${storeUrl}/api/internal/workspaces/${encodeURIComponent(workspaceId)}/package-count`)
   const timestampMs = Date.now()

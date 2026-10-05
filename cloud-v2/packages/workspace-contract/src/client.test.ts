@@ -67,6 +67,7 @@ const userPrincipal = (organizationId = ORG) =>
     mentraUserId: "user_1",
     email: "a@example.com",
     emailVerified: true,
+    name: null,
     workosUserId: null,
     isOrganizationAdmin: false,
   } as const)

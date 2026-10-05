@@ -140,7 +140,8 @@ export function clampPageSize(limit: number): number {
   return Math.min(whole, MAX_PAGE_SIZE)
 }
 
-function redactSecrets(value: unknown): unknown {
+/** `value` with every credential-looking key (`token`, `secret`, `hash`, `password`) removed at any depth. */
+export function redactSecrets(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactSecrets)
   if (value && typeof value === "object" && !(value instanceof Date)) {
     return Object.fromEntries(

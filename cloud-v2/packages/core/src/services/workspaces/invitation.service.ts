@@ -38,6 +38,7 @@ import {recordWorkspaceEvent} from "./audit.service"
 import {
   auditActor,
   bumpRevision,
+  displayName,
   isId,
   isWorkspaceRole,
   loadActiveWorkspace,
@@ -290,7 +291,7 @@ export async function acceptInvitation(
           workspaceId: invitation.workspaceId,
           mentraUserId: actor.mentraUserId,
           email: actor.email?.trim() || null,
-          name: typeof actor.name === "string" && actor.name.trim() ? actor.name.trim() : null,
+          name: displayName(actor.name),
           role,
           status: "active",
           startedAt: new Date(),

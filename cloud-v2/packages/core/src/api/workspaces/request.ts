@@ -66,12 +66,19 @@ function stringArray(value: unknown, field: string): string[] {
   return value as string[]
 }
 
-/** An ISO 8601 date string as a Date, or null when the field is absent or null. Whether it is in the future is for the service. */
+/** An ISO 8601 date-time: `YYYY-MM-DDTHH:MM` with optional seconds, fraction and `Z` or `±hh:mm` offset. */
+const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/
+
+/**
+ * An ISO 8601 date-time string as a Date, or null when the field is absent or null. Free-form dates
+ * ("12345", "March 1 2030") are refused rather than guessed at by the JavaScript parser. Whether the
+ * date is in the future is for the service.
+ */
 export function optionalDate(body: JsonObject, field: string): Date | null {
   const value = body[field]
   if (value === undefined || value === null) return null
-  const date = typeof value === "string" ? new Date(value) : null
-  if (!date || Number.isNaN(date.getTime())) throw new InvalidRequest(`${field} must be an ISO 8601 date string`)
+  const date = typeof value === "string" && ISO_DATE_TIME.test(value) ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) throw new InvalidRequest(`${field} must be an ISO 8601 date-time string`)
   return date
 }
 

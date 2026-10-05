@@ -8,6 +8,8 @@ export type CorePrincipal =
       mentraUserId: string
       email: string | null
       emailVerified: boolean
+      /** Display name from the identity provider (first and last name, trimmed), or null when it has none. */
+      name: string | null
       workosUserId: string | null
       isOrganizationAdmin: boolean
     }

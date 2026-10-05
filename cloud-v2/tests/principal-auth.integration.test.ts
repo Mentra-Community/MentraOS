@@ -92,6 +92,9 @@ interface Identity {
   id: string
   email: string
   emailVerified: boolean
+  /** Defaults to "Test" / "User"; pass `null` or blanks to model a profile with no name. */
+  firstName?: string | null
+  lastName?: string | null
   /** The WorkOS profile lookup failed, so `emailVerified` is unknown rather than false. */
   profileUnavailable?: boolean
 }
@@ -110,8 +113,8 @@ function authResult(value: string | undefined): developerAuth.DeveloperAuthResul
       id: identity.id,
       email: identity.email,
       emailVerified: identity.emailVerified,
-      firstName: "Test",
-      lastName: "User",
+      firstName: identity.firstName === undefined ? "Test" : identity.firstName,
+      lastName: identity.lastName === undefined ? "User" : identity.lastName,
     },
     organizationId: null,
     accessToken: value!,
@@ -325,10 +328,30 @@ describe("principalAuth", () => {
         mentraUserId: owner.mentraUserId,
         email: owner.email,
         emailVerified: true,
+        name: "Test User",
         workosUserId: owner.workosUserId,
         isOrganizationAdmin: false,
       },
     })
+  })
+
+  test("the principal's name is the identity provider's first and last name, trimmed, or null when it has none", async () => {
+    const cases: Array<[string | null | undefined, string | null | undefined, string | null]> = [
+      ["  Ada ", " Lovelace  ", "Ada Lovelace"],
+      ["Ada", null, "Ada"],
+      [null, "Lovelace", "Lovelace"],
+      ["   ", "", null],
+      [null, null, null],
+    ]
+    for (const [index, [firstName, lastName, expected]] of cases.entries()) {
+      const key = `named-${index}`
+      await person(key)
+      identities.set(`tok-${key}`, {...identities.get(`tok-${key}`)!, firstName, lastName})
+
+      const response = await get("/me", bearer(`tok-${key}`))
+
+      expect({index, name: ((await response.json()) as any).principal.name}).toEqual({index, name: expected})
+    }
   })
 
   test("a WorkOS session cookie resolves the same way", async () => {
