@@ -24,6 +24,7 @@
  */
 
 import {Redis} from "ioredis"
+import type {TranscriptionToken} from "@mentra/cloud-protocol"
 import {createLogger} from "@mentra/cloud-shared"
 import {AUDIO_STREAM_GROUP, audioStreamKey} from "../../session/stream"
 import {CONTROL_STREAM_GROUP, controlStreamKey} from "../../session/control-stream"
@@ -108,6 +109,7 @@ export interface TranscriptStubMessage {
  * Same shape for both so clients can route via a single handler.
  */
 export interface TranscriptMessage {
+  tokens?: TranscriptionToken[]
   type: "TRANSCRIPT"
   kind: "transcription" | "translation"
   mentraUserId: string
@@ -157,11 +159,7 @@ export interface UdpLivenessAckMessage {
   receivedAt: number
 }
 
-export type WorkerOutMessage =
-  | TranscriptStubMessage
-  | TranscriptMessage
-  | UdpLivenessAckMessage
-  | WorkerReadyMessage
+export type WorkerOutMessage = TranscriptStubMessage | TranscriptMessage | UdpLivenessAckMessage | WorkerReadyMessage
 
 // === Worker state ===
 
@@ -424,6 +422,7 @@ async function createProvider(mentraUserId: string, sub: AudioSubscription): Pro
       originalText: event.originalText,
       startMs: event.startMs,
       endMs: event.endMs,
+      tokens: event.tokens,
       source: PROVIDER_KIND,
       subscription: sub,
     }
@@ -802,7 +801,14 @@ async function processBatch(
         if (providers) {
           for (const provider of providers.values()) {
             try {
-              provider.writeAudio(pcm)
+              const offsetMs = map.offsetMs === "" || map.offsetMs == null ? NaN : Number(map.offsetMs)
+              const sessionTag = Number(map.sessionTag)
+              provider.writeAudio(
+                pcm,
+                Number.isFinite(offsetMs) && offsetMs >= 0 && Number.isInteger(sessionTag)
+                  ? {sessionTag, offsetMs}
+                  : undefined,
+              )
             } catch (err) {
               logger.error({err}, "provider.writeAudio failed")
             }

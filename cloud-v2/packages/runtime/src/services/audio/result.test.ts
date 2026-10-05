@@ -27,10 +27,29 @@ function transcriptMessage(overrides: Partial<TranscriptMessage>): TranscriptMes
 }
 
 describe("transcriptToStreamMessage resolvedLanguage", () => {
+  test("preserves token timing and phone position for internal runtime projection", () => {
+    const tokens = [
+      {
+        text: "word",
+        startMs: 2,
+        endMs: 3,
+        confidence: 1,
+        isFinal: true,
+        audioPosition: { sessionTag: 9, offsetMs: 100 },
+      },
+    ];
+    const msg = transcriptToStreamMessage(transcriptMessage({ tokens }));
+    if (msg.type !== "stream.transcript")
+      throw new Error("expected transcript");
+    expect(msg.payload.tokens).toEqual(tokens);
+  });
   test("specific subscription echoes its own code even when the provider detected a different tag", () => {
     const msg = transcriptToStreamMessage(
       transcriptMessage({
-        subscription: { kind: "transcription", language: { mode: "specific", code: "en-US" } },
+        subscription: {
+          kind: "transcription",
+          language: { mode: "specific", code: "en-US" },
+        },
         language: "en", // Soniox detected code (bare ISO 639-1)
       }),
     );

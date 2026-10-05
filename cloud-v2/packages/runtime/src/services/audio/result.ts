@@ -96,7 +96,7 @@ export function transcriptToStreamMessage(t: TranscriptMessage): StreamMessage {
     endMs: t.endMs ?? 0,
     resolvedLanguage: lang.language,
     languageDetected: lang.detected,
-    tokens: [],
+    tokens: t.tokens ?? [],
     provider: t.source,
     timestamp,
   };
