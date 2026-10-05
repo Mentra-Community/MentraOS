@@ -209,4 +209,8 @@ test('authoring workflow retains its independent enable gate and never evaluates
   assert.match(notification, /routineWorkApi/)
   assert.match(notification, /cancel-in-progress: false/)
   assert.match(notification, /queue: max/)
+  const instructions = await readFile(new URL('routine-work.md', import.meta.url), 'utf8')
+  const example = /````markdown\n([\s\S]+?)\n````/.exec(instructions)?.[1]
+  assert.ok(example)
+  assert.equal(parseRoutineWorkBrief(example, 'edit').routineId, 'email-sign-in-out')
 })

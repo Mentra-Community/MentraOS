@@ -55,6 +55,34 @@ test('reports exact work/build and real state without private machine details or
   assert.match(held.body, /ordinary passing routine result/)
   assert.match(held.body, /attempts\/2/)
   assert.ok(!held.body.includes('PRIVATE'))
+  const publicDetails = {
+    ...status.details,
+    details: {
+      questionId: 'question-one',
+      question: 'Choose the expected destination',
+      prUrl: 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/527',
+      resultUrl: 'https://admin.dev.mentraglass.com/?testRun=run-one',
+    },
+  }
+  const requested = renderPrRoutineWork({...row, acceptance, status: {...status, details: publicDetails}})
+  assert.match(requested.body, /Choose the expected destination/)
+  assert.match(requested.body, /pull\/527/)
+  assert.match(requested.body, /testRun=run-one/)
+  assert.throws(
+    () =>
+      renderPrRoutineWork({
+        ...row,
+        acceptance,
+        status: {
+          ...status,
+          details: {
+            ...publicDetails,
+            details: {...publicDetails.details, resultUrl: 'https://other.example/?testRun=run-one'},
+          },
+        },
+      }),
+    /result URL/,
+  )
   assert.throws(
     () => renderPrRoutineWork({...row, acceptance, status: {...status, hostId: 'foreign'}}),
     /contradictory/,

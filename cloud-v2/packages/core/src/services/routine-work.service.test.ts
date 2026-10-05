@@ -174,6 +174,15 @@ test('host acceptance is immutable and status sequences cannot replace newer tru
   })
   expect(await f.service.status(first, 'mini')).toMatchObject({sequence: 1, state: 'authoring'})
   expect(await f.service.status(first, 'mini')).toMatchObject({eventId: 'event:one'})
+  await expect(
+    f.service.status({...first, details: {...first.details, details: {workspace: '/private/location'}}}, 'mini'),
+  ).rejects.toMatchObject({status: 400})
+  await expect(
+    f.service.status(
+      {...first, details: {...first.details, details: {prUrl: 'https://foreign.example/pull/1'}}},
+      'mini',
+    ),
+  ).rejects.toMatchObject({status: 400})
   const next = {
     ...first,
     eventId: 'event:two',

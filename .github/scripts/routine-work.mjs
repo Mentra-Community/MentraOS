@@ -26,7 +26,7 @@ export function parseRoutineWorkBrief(body, kind) {
     typeof body === 'string' && Buffer.byteLength(body) <= 32_768 && body.startsWith(briefMarker + '\n'),
     'Invalid authoring request comment',
   )
-  const match = /^```json\n([\s\S]+)\n```\s*$/.exec(body.slice(briefMarker.length + 1))
+  const match = /^\s*```json\n([\s\S]+)\n```\s*$/.exec(body.slice(briefMarker.length + 1))
   ensure(match, 'Authoring request requires one JSON brief')
   let value
   try {
