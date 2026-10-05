@@ -53,6 +53,10 @@ Read harness `orchestration/README.md`, `orchestration/controller.ts` and
 `framework/authoring/session.ts` for current schemas and held-session behavior;
 `contracts/controller.ts` defines admission. Run the CLI from the harness checkout,
 not MentraOS. Do not invent IDs or use an old standalone author CLI.
+Use `ControllerClient`/these service endpoints for controller mutations, including
+diagnostic attachments. Never open `ControllerStore` against the live database to
+register evidence, change ownership or manufacture cleanup receipts. Read-only SQL
+can help inspect state; a missing public operation is framework work to assign.
 Reservation request supplies `requestId`, `laneId`, `purpose`, `admissionExpiresAt`.
 Wait with `{reservationId, afterGeneration, timeoutMs}` until granted. Start supplies
 the granted `reservationId`, `generation`, a stable `operationId`, selected `build`
@@ -82,6 +86,9 @@ If returning to a prerequisite needs an already passed product action, inspect
 `{op: "actions", phase: "test"}` for eligibility and repeat that same saved action
 with an explicit `retryReason` describing the observed prerequisite. The controller
 must confirm its previous input settled; a source reload alone permits no repeat.
+For a completed navigation tap, wait for its observable destination before the
+next input. A delivered-but-rejected tap keeps its intent: reconcile the resulting
+page without tapping again. Keep those checks in the same saved action for replay.
 The held loader preserves `createRoutine(state)` state and original lifecycle while
 reloading existing product steps. Changing step IDs/order, lifecycle callbacks or
 metadata requires finishing the session first. Shared helper/native changes require
@@ -90,6 +97,12 @@ than accumulating alternate input or focus algorithms.
 Prepare and compile changed shared source off hardware while other work uses the
 lanes. Once affected owners release, activate one frozen candidate; local iteration
 may use reviewed source before merge while retaining the PR's review/CI merge gates.
+Check the installed recorder's duration, byte limit and output allowance before a
+long flow; step deadlines do not extend capture. A Mac fixture with a recorded
+browser window declares `external-window` with `fixture-data` and uses the shared
+admitted policy for both recordings. A product update can continue after a recorder
+or client deadline; inspect that original operation and settle it normally rather
+than issuing another update or restarting the passing prefix.
 Request authoring reservations before waiting for the current run to finish, so
 the next queued job does not repeatedly displace ready authoring work.
 Before ordinary dispatch, confirm the installed executor source and enrolled
