@@ -137,6 +137,9 @@ function LocalMiniappView({
     useMiniappPresentationStore.getState().setRevealedPackageName(packageName)
   }, [packageName])
   const connectedRef = useRef(false)
+  // The splash also waits while the UI router holds this UI for its background:
+  // until the background's init settles, its session.ui handlers may not exist.
+  const [uiReleased, setUiReleased] = useState(false)
   const [loadAttempts, setLoadAttempts] = useState(0)
   const attemptsRef = useRef(0)
   const readyTimerRef = useRef<number | null>(null)
@@ -314,6 +317,7 @@ function LocalMiniappView({
     // Fresh attempt budget per (re)launch — a re-foreground / new package
     // restarts the ready handshake and reload-retry loop from scratch.
     resetLoadState()
+    setUiReleased(false)
     previewBoundInstanceRef.current = null
 
     const ac = new AbortController()
@@ -342,6 +346,7 @@ function LocalMiniappView({
       // (handled by the effect's return).
       checkpoint()
 
+      setUiReleased(!getMentraJS()?.uiRouter.isUiHeld(packageName))
       setLabel(undefined)
       // Already-registered packages never throw from ensureRunning — a dropped
       // dev server with no on-disk snapshot returns {uiUri: null}. Route those
@@ -396,6 +401,13 @@ function LocalMiniappView({
       getStreamPreviewCoordinator().viewDestroyed(packageName, "miniapp-unmounted")
     }
   }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
+
+  useEffect(() => {
+    if (!packageName) return
+    return getMentraJS()?.uiRouter.onUiReleased((releasedPackage) => {
+      if (releasedPackage === packageName) setUiReleased(true)
+    })
+  }, [packageName])
 
   // ----- WebView bindings ----------------------------------------------------
 
@@ -695,7 +707,7 @@ function LocalMiniappView({
         name={appName}
         iconUrl={iconUrl}
         bgColor={theme.colors.background}
-        isLoaded={connected && openingComplete}
+        isLoaded={connected && uiReleased && openingComplete}
         error={errorMessage}
         label={uiUri ? connectingLabel : label}
         devApp={isDevApp}

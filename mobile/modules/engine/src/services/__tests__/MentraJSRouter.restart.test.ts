@@ -124,7 +124,11 @@ async function fixture() {
     const {payload} = JSON.parse(raw)
     if (payload.type === "miniapp_connect") {
       events.push("CONNECT")
-      send(JSON.stringify({payload: {type: "miniapp_connect_ack", packageName: PKG, userId: ""}}))
+      send(
+        JSON.stringify({
+          payload: {type: "miniapp_connect_ack", packageName: PKG, userId: "", hostFeatures: {initReady: true}},
+        }),
+      )
       send(
         JSON.stringify({
           payload: {
@@ -179,7 +183,8 @@ async function fixture() {
       if (stalled) return
       const target = background
       queueMicrotask(() => {
-        if (envelope.kind === "init") vm.runInContext('__mentraInitCallback("fixture")', target)
+        if (envelope.kind === "init")
+          vm.runInContext(`__mentraInitCallback(${JSON.stringify(envelope.sessionId)})`, target)
         else if (envelope.kind === "bridge" && target.__mentraDeliverBridgeRaw)
           target.__mentraDeliverBridgeRaw(envelope.raw as string)
       })

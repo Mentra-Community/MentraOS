@@ -5,6 +5,7 @@ import {InteractionManager} from "react-native"
 
 import Compositor from "./Compositor"
 import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
+import {captureScreenshotForLater} from "@/effects/CapsuleMenu"
 
 let mockForegroundApp: ClientApp | null = null
 const mockStop = jest.fn()
@@ -26,9 +27,15 @@ jest.mock("@mentra/engine", () => ({
 jest.mock("@/components/miniapp/LocalMiniappView", () => {
   const {Pressable} = require("react-native")
   const {useEffect} = require("react")
-  return ({onClose}: {onClose: () => void}) => {
+  return ({onClose, onMinimize, onExit}: {onClose: () => void; onMinimize: () => void; onExit: () => void}) => {
     useEffect(() => {mockMount()}, [])
-    return <Pressable testID="close-miniapp" onPress={onClose} />
+    return (
+      <>
+        <Pressable testID="close-miniapp" onPress={onClose} />
+        <Pressable testID="minimize-miniapp" onPress={onMinimize} />
+        <Pressable testID="back-miniapp" onPress={() => onExit()} />
+      </>
+    )
   }
 })
 jest.mock("@/components/miniapp/OfflineAppHost", () => () => null)
@@ -62,6 +69,7 @@ beforeEach(() => {
   mockMount.mockClear()
   mockForegroundApp = {packageName: "one", name: "One", foregrounded: true, running: true} as ClientApp
   mockStop.mockReset()
+  jest.mocked(captureScreenshotForLater).mockReset()
 })
 
 afterEach(() => {
@@ -121,3 +129,33 @@ test("repacking the same version remounts its WebView; ordinary store refresh do
   view.rerender(<Compositor />)
   expect(mockMount).toHaveBeenCalledTimes(2)
 })
+
+test.each(["back-miniapp", "minimize-miniapp"])(
+  "%s keeps the surface mounted until pixel capture completes",
+  async (control) => {
+    jest.replaceProperty(require("react-native").Platform, "OS", "android")
+    let finishCapture!: (persist: () => Promise<void>) => void
+    const persist = jest.fn().mockResolvedValue(undefined)
+    jest.mocked(captureScreenshotForLater).mockReturnValue(
+      new Promise((resolve) => {
+        finishCapture = resolve
+      }),
+    )
+    const view = render(<Compositor />)
+
+    fireEvent.press(view.getByTestId(control))
+    await act(async () => {
+      jest.advanceTimersByTime(100)
+    })
+    expect(captureScreenshotForLater).toHaveBeenCalledTimes(1)
+    expect(mockForegroundApp?.packageName).toBe("one")
+    expect(persist).not.toHaveBeenCalled()
+
+    await act(async () => {
+      finishCapture(persist)
+    })
+    expect(mockForegroundApp).toBeNull()
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(mockStop).not.toHaveBeenCalled()
+  },
+)

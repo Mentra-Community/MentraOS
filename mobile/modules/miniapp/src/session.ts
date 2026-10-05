@@ -126,6 +126,8 @@ export interface ConnectAckPayload {
 export interface HostFeatures {
   /** Host honors `startStream({captureAudio})` for the lifetime of a WHIP session. */
   captureAudio?: boolean
+  /** Host keeps the UI closed until a background session that announced it sends READY. */
+  initReady?: boolean
 }
 
 export interface MiniappAuthState {
@@ -317,6 +319,12 @@ export class MiniappSession<TChannels extends object = any> {
   private readonly pendingRequests = new Map<string, PendingRequest>()
   private connectPromise: Promise<void> | null = null
   private disposed = false
+  /**
+   * Set by `registerMiniapp` to the host's id for this spawn: CONNECT tells the
+   * host to wait for READY, and both carry the id so the host can ignore
+   * frames from a previous context.
+   */
+  private initSessionId: string | null = null
 
   /** Manifest-declared permission cache. Updated on CONNECT_ACK / PERMISSIONS_UPDATE. */
   private _permissions: PermissionRecord = {
@@ -486,6 +494,7 @@ export class MiniappSession<TChannels extends object = any> {
       const connectPayload = {
         type: MiniappRequestType.CONNECT,
         packageName: this.packageName,
+        ...(this.initSessionId !== null ? {initReady: true, sessionId: this.initSessionId} : {}),
       }
       this.transport.send(serializeEnvelope({payload: connectPayload, requestId}))
 
@@ -493,6 +502,21 @@ export class MiniappSession<TChannels extends object = any> {
     })()
 
     return this.connectPromise
+  }
+
+  /**
+   * @internal — called by `registerMiniapp` before `connect()`. The host then
+   * keeps the UI closed until {@link reportInitReady}, so UI requests cannot
+   * reach the background before its `session.ui.handle` handlers exist.
+   */
+  announceInitReady(sessionId: string): void {
+    this.initSessionId = sessionId
+  }
+
+  /** @internal — the `registerMiniapp` handler settled; let the host open the UI. */
+  reportInitReady(): void {
+    if (this.initSessionId === null || this.disposed || !this.hostFeatures?.initReady) return
+    this.sendOneShot({type: MiniappRequestType.READY, sessionId: this.initSessionId})
   }
 
   /** Resolves when `ready` becomes true, or rejects if connect failed. */

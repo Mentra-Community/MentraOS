@@ -7,6 +7,7 @@ import com.mentra.crust.services.NotificationProcessBridge
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.functions.Queues
+import expo.modules.kotlin.functions.Coroutine
 import java.net.URL
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineName
@@ -17,6 +18,7 @@ import kotlinx.coroutines.cancel
 
 import com.mentra.crust.navigation.NavigationManager
 import com.mentra.crust.heading.HeadingManager
+import com.mentra.crust.preview.PixelCopyPreview
 import com.mentra.crust.jsc.JSCRuntime
 import com.mentra.crust.jsc.InstalledMiniappManifest
 import com.mentra.crust.jsc.JSCPolyfillBridge
@@ -177,6 +179,11 @@ class CrustModule : Module() {
 
     AsyncFunction("setValueAsync") { value: String ->
       sendEvent("onChange", mapOf("value" to value))
+    }
+
+    AsyncFunction("captureMiniappPreview") Coroutine { viewTag: Int ->
+      val activity = appContext.currentActivity ?: error("No activity available for screenshot")
+      PixelCopyPreview.capture(activity, viewTag)
     }
 
     AsyncFunction("nativeHttpRequest") {
@@ -822,7 +829,7 @@ class CrustModule : Module() {
           sendEvent("onNavArrived", emptyMap<String, Any?>())
         }
         override fun onError(message: String) {
-          sendEvent("onNavError", mapOf("message" to message))
+          sendEvent("onNavError", mapOf("message" to message, "terminal" to true))
         }
         override fun onLocation(payload: NavigationManager.LocationPayload) {
           sendEvent(
@@ -882,7 +889,10 @@ class CrustModule : Module() {
           )
           sendEvent(
             "onNavError",
-            mapOf("message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again"),
+            mapOf(
+              "message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again",
+              "terminal" to true,
+            ),
           )
           return@runOnUiThread
         }

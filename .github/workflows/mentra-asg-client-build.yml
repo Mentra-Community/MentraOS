@@ -72,7 +72,9 @@ env:
 jobs:
   select:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    # Blacksmith like the build itself: a GitHub-hosted gate stalls every ASG
+    # PR build whenever GitHub-hosted runners are unavailable.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       mode: ${{ steps.select.outputs.mode }}

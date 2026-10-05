@@ -8,6 +8,8 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   PI: number
   hello(): string
   setValueAsync(value: string): Promise<void>
+  /** Android: copy the displayed view's window pixels to a temporary JPEG URI. */
+  captureMiniappPreview(viewTag: number): Promise<string>
   nativeHttpRequest(
     method: string,
     url: string,
