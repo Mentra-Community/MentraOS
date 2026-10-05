@@ -822,7 +822,7 @@ class CrustModule : Module() {
           sendEvent("onNavArrived", emptyMap<String, Any?>())
         }
         override fun onError(message: String) {
-          sendEvent("onNavError", mapOf("message" to message))
+          sendEvent("onNavError", mapOf("message" to message, "terminal" to true))
         }
         override fun onLocation(payload: NavigationManager.LocationPayload) {
           sendEvent(
@@ -882,7 +882,10 @@ class CrustModule : Module() {
           )
           sendEvent(
             "onNavError",
-            mapOf("message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again"),
+            mapOf(
+              "message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again",
+              "terminal" to true,
+            ),
           )
           return@runOnUiThread
         }

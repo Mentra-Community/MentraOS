@@ -45,7 +45,7 @@ export type NavOffRoute = {
 
 export type NavRerouting = {kind: "rerouting"}
 export type NavArrived = {kind: "arrived"}
-export type NavError = {kind: "error"; message: string}
+export type NavError = {kind: "error"; message: string; terminal?: boolean}
 
 export type NavUpdate = NavManeuver | NavOffRoute | NavRerouting | NavArrived | NavError
 
@@ -100,6 +100,7 @@ class NavigationService {
   private routeListeners = new Set<NavRouteListener>()
   private subs: Array<{remove: () => void}> = []
   private state: NavState = "idle"
+  private sessionGeneration = 0
   /** Last emitted route — replayed to late subscribers so they get the
    *  current geometry immediately. */
   private lastRoute: NavRoute | null = null
@@ -192,6 +193,7 @@ class NavigationService {
       missedTurnRerouteMeters?: number
     },
   ): Promise<{ok: boolean; error?: string}> {
+    const generation = ++this.sessionGeneration
     console.log(
       `${LOG_TAG}: start ${coords.lat},${coords.lng} sim=${options?.simulate ?? false} speed=${options?.speedMultiplier ?? 5}`,
     )
@@ -208,6 +210,7 @@ class NavigationService {
       avoid: options?.avoid,
       missedTurnRerouteMeters: options?.missedTurnRerouteMeters,
     })
+    if (generation !== this.sessionGeneration) return result
     if (!result.ok) {
       console.warn(`${LOG_TAG}: start failed — ${result.error}`)
       this.state = "idle"
@@ -246,8 +249,10 @@ class NavigationService {
   }
 
   public async stop(): Promise<{ok: boolean; error?: string}> {
+    const generation = ++this.sessionGeneration
     console.log(`${LOG_TAG}: stop`)
     const result = await CrustModule.stopNavigation()
+    if (generation !== this.sessionGeneration) return result
     this.state = "idle"
     this.lastRoute = null
     this.lastManeuver = null
@@ -379,7 +384,18 @@ class NavigationService {
       }),
       CrustModule.addListener("onNavError", (data) => {
         console.log(`${LOG_TAG}: ← onNavError`, data?.message)
-        this.fanout({kind: "error", message: data.message})
+        // Only terminal errors end a trip. iOS also reports recoverable
+        // reroute errors while native guidance continues on its existing route.
+        const terminal = data.terminal === true
+        if (terminal) {
+          this.sessionGeneration += 1
+          this.state = "idle"
+          this.lastRoute = null
+          this.lastManeuver = null
+          this.tripStops = []
+          this.tripMode = "driving"
+        }
+        this.fanout({kind: "error", message: data.message, terminal})
       }),
       CrustModule.addListener("onNavLocation", (data) => {
         const loc: NavLocation = {

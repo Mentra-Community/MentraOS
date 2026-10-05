@@ -45,6 +45,9 @@ import {getStreamPreviewCoordinator, STREAM_PREVIEW_BIND_TIMEOUT_MS} from "@/ser
 const READY_TIMEOUT_MS = 5000
 const MAX_LOAD_ATTEMPTS = 10
 const UI_RESYNC_INTERVAL_MS = 10_000
+// The router opens the UI once the background reports ready, or after its own
+// 10s READY timeout. This only covers a background that never connects.
+const BACKGROUND_READY_REVEAL_TIMEOUT_MS = 15_000
 
 interface LocalMiniappViewProps {
   packageName: string
@@ -137,6 +140,9 @@ function LocalMiniappView({
     useMiniappPresentationStore.getState().setRevealedPackageName(packageName)
   }, [packageName])
   const connectedRef = useRef(false)
+  // The splash also waits for the background: until its init settles, UI
+  // requests are held and its session.ui handlers may not exist yet.
+  const [backgroundReady, setBackgroundReady] = useState(false)
   const [loadAttempts, setLoadAttempts] = useState(0)
   const attemptsRef = useRef(0)
   const readyTimerRef = useRef<number | null>(null)
@@ -314,6 +320,7 @@ function LocalMiniappView({
     // Fresh attempt budget per (re)launch — a re-foreground / new package
     // restarts the ready handshake and reload-retry loop from scratch.
     resetLoadState()
+    setBackgroundReady(false)
     previewBoundInstanceRef.current = null
 
     const ac = new AbortController()
@@ -342,6 +349,7 @@ function LocalMiniappView({
       // (handled by the effect's return).
       checkpoint()
 
+      setBackgroundReady(getMentraJS()?.uiRouter.isBackgroundReady(packageName) ?? true)
       setLabel(undefined)
       // Already-registered packages never throw from ensureRunning — a dropped
       // dev server with no on-disk snapshot returns {uiUri: null}. Route those
@@ -396,6 +404,22 @@ function LocalMiniappView({
       getStreamPreviewCoordinator().viewDestroyed(packageName, "miniapp-unmounted")
     }
   }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
+
+  useEffect(() => {
+    if (!packageName) return
+    return getMentraJS()?.uiRouter.onBackgroundReady((readyPackage) => {
+      if (readyPackage === packageName) setBackgroundReady(true)
+    })
+  }, [packageName])
+
+  useEffect(() => {
+    if (!connected || backgroundReady) return
+    const timer = BgTimer.setTimeout(() => {
+      console.warn(`LocalMiniappView: ${packageName} background not ready; revealing UI anyway`)
+      setBackgroundReady(true)
+    }, BACKGROUND_READY_REVEAL_TIMEOUT_MS)
+    return () => BgTimer.clearTimeout(timer)
+  }, [connected, backgroundReady, packageName])
 
   // ----- WebView bindings ----------------------------------------------------
 
@@ -695,7 +719,7 @@ function LocalMiniappView({
         name={appName}
         iconUrl={iconUrl}
         bgColor={theme.colors.background}
-        isLoaded={connected && openingComplete}
+        isLoaded={connected && backgroundReady && openingComplete}
         error={errorMessage}
         label={uiUri ? connectingLabel : label}
         devApp={isDevApp}

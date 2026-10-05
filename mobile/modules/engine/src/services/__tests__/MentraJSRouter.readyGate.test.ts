@@ -1,0 +1,210 @@
+/// <reference types="bun-types" />
+
+import {expect, test} from "bun:test"
+import {mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
+import {tmpdir} from "node:os"
+import {join} from "node:path"
+import {spawnSync} from "node:child_process"
+import vm from "node:vm"
+
+import type localMiniappRuntime from "../LocalMiniappRuntime"
+import {BACKGROUND_READY_TIMEOUT_MS, MentraJSRouter, type MentraJSCrustBinding} from "../MentraJSRouter"
+import {MentraUIRouter} from "../MentraUIRouter"
+import {buildMentraUiShim} from "../mentraUiShim"
+
+const PKG = "com.mentra.ai"
+
+// Mirrors Mentra AI: its UI handlers are registered only after awaits (storage,
+// then a network fetch). The page asks for history the moment it mounts.
+const fixtureSource = `
+import {registerMiniapp} from ${JSON.stringify(
+  new URL("../../../../miniapp/src/background/register.ts", import.meta.url).pathname,
+)};
+registerMiniapp(async (session) => {
+  globalThis.session = session;
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  session.ui.onOpen(() => session.ui.send('history', ['pushed on open']));
+  session.ui.handle('history:get', () => ['hello']);
+}, {packageName: '${PKG}'});
+`
+
+function bundleFixture(): string {
+  const dir = mkdtempSync(join(tmpdir(), "ready-gate-fixture-"))
+  const entry = join(dir, "index.ts")
+  writeFileSync(entry, fixtureSource)
+  const result = spawnSync(
+    process.execPath,
+    ["build", entry, "--target=browser", "--format=iife", "--outfile", join(dir, "bundle.js")],
+    {encoding: "utf8"},
+  )
+  try {
+    if (result.status !== 0) throw new Error(result.stderr)
+    return readFileSync(join(dir, "bundle.js"), "utf8")
+  } finally {
+    rmSync(dir, {recursive: true})
+  }
+}
+
+type Page = vm.Context & {
+  window: unknown
+  mentra: {
+    ready(): void
+    request(channel: string, payload?: unknown): Promise<unknown>
+    on(channel: string, cb: (value: unknown) => void): void
+  }
+}
+
+function makeRouters(hostFeatures: Record<string, boolean>) {
+  let listener: ((payload: Record<string, unknown>) => void) | undefined
+  let background: vm.Context | undefined
+  let send: (raw: string) => void = () => {}
+  const fromBackground: string[] = []
+  const host = {
+    onLivenessTimeout: null,
+    registerApp(_pkg: string, fn: (raw: string) => void) {
+      send = fn
+    },
+    unregisterApp() {},
+    resetHandshake() {},
+    handleRawMessage(_pkg: string, raw: string) {
+      const {payload} = JSON.parse(raw)
+      fromBackground.push(payload.type)
+      if (payload.type === "miniapp_connect") {
+        send(JSON.stringify({payload: {type: "miniapp_connect_ack", packageName: PKG, userId: "", hostFeatures}}))
+      }
+    },
+  }
+  const crust: MentraJSCrustBinding = {
+    addListener(_event, fn) {
+      listener = fn
+      return {
+        remove() {
+          listener = undefined
+        },
+      }
+    },
+    mentraJsSetManifest() {},
+    mentraJsLoadPolyfillBundle: () => "fixture native bridge",
+    mentraJsSpawn(_pkg, _polyfill, miniappJs) {
+      background = vm.createContext({
+        console,
+        setTimeout,
+        clearTimeout,
+        setInterval,
+        clearInterval,
+        AbortController,
+        __dispatch(iface: string, method: string, argsJson: string) {
+          listener?.({packageName: PKG, iface, method, argsJson})
+          return null
+        },
+      })
+      vm.runInContext(miniappJs, background)
+      return true
+    },
+    mentraJsDispatchToJs(_pkg, envelope) {
+      const target = background
+      if (!target) return
+      queueMicrotask(() => {
+        if (envelope.kind === "init") vm.runInContext('__mentraInitCallback("fixture")', target)
+        else if (envelope.kind === "bridge") target.__mentraDeliverBridgeRaw?.(envelope.raw as string)
+      })
+    },
+  }
+  const router = new MentraJSRouter(host as unknown as typeof localMiniappRuntime, crust)
+  const ui = new MentraUIRouter(crust)
+  router.uiRouter = ui
+  router.start()
+  return {
+    router,
+    ui,
+    fromBackground,
+    emitBridge(payload: Record<string, unknown>) {
+      listener?.({
+        packageName: PKG,
+        iface: "__bridge",
+        method: "send",
+        argsJson: JSON.stringify([JSON.stringify({payload})]),
+      })
+    },
+  }
+}
+
+function mountPage(ui: MentraUIRouter): Page {
+  const page = vm.createContext({
+    console,
+    setTimeout,
+    clearTimeout,
+    ReactNativeWebView: {
+      postMessage(raw: string) {
+        ui.routeFromWebView(PKG, raw)
+      },
+    },
+  }) as Page
+  page.window = page
+  vm.runInContext(buildMentraUiShim({packageName: PKG}), page)
+  ui.bindWebView(PKG, (js) => vm.runInContext(js, page))
+  return page
+}
+
+const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test("UI requests sent before the init handler settles are answered, not rejected", async () => {
+  const {router, ui, fromBackground} = makeRouters({initReady: true})
+  await router.spawnAndRegister(PKG, bundleFixture())
+  const page = mountPage(ui)
+  const pushed: unknown[] = []
+  page.mentra.on("history", (value) => pushed.push(value))
+  page.mentra.ready()
+  const history = page.mentra.request("history:get")
+  expect(ui.isBackgroundReady(PKG)).toBe(false)
+
+  expect(await history).toEqual(["hello"])
+  expect(ui.isBackgroundReady(PKG)).toBe(true)
+  // UI_OPEN is delivered after READY, so the late onOpen handler still runs.
+  await settle(10)
+  expect(pushed).toEqual([["pushed on open"]])
+  expect(fromBackground.indexOf("miniapp_ready")).toBeGreaterThan(fromBackground.indexOf("miniapp_connect"))
+  router.stop()
+})
+
+test("a background that predates READY is opened at CONNECT", async () => {
+  const {router, ui, emitBridge} = makeRouters({initReady: true})
+  router.registerApp(PKG)
+  const opened: string[] = []
+  ui.onBackgroundReady((pkg) => opened.push(pkg))
+  expect(ui.isBackgroundReady(PKG)).toBe(false)
+  emitBridge({type: "miniapp_connect", packageName: PKG})
+  expect(opened).toEqual([PKG])
+  expect(ui.isBackgroundReady(PKG)).toBe(true)
+  router.stop()
+})
+
+test("a background that never reports READY is opened after the timeout", () => {
+  const {router, ui, emitBridge} = makeRouters({initReady: true})
+  const realSetTimeout = globalThis.setTimeout
+  const pending: Array<() => void> = []
+  globalThis.setTimeout = ((cb: () => void, ms?: number) => {
+    if (ms === BACKGROUND_READY_TIMEOUT_MS) {
+      pending.push(cb)
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    }
+    return realSetTimeout(cb, ms)
+  }) as typeof setTimeout
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    router.registerApp(PKG)
+    emitBridge({type: "miniapp_connect", packageName: PKG, initReady: true})
+    expect(ui.isBackgroundReady(PKG)).toBe(false)
+    expect(pending).toHaveLength(1)
+    pending[0]!()
+    expect(ui.isBackgroundReady(PKG)).toBe(true)
+    // A late READY after the timeout has nothing left to open.
+    emitBridge({type: "miniapp_ready"})
+    expect(ui.isBackgroundReady(PKG)).toBe(true)
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+    console.warn = warn
+    router.stop()
+  }
+})
