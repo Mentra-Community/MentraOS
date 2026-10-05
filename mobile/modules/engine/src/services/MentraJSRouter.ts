@@ -464,17 +464,17 @@ export class MentraJSRouter {
         this.uiRouter.routeFromBackground(packageName, innerPayload)
         return
       }
+      // A context killed for a restart can still have CONNECT or READY queued.
+      // SDKs that echo the host's session id let us drop them before the
+      // runtime handshakes with them; older ones send none and are trusted.
+      if (typeof innerPayload?.sessionId === "string" && innerPayload.sessionId !== this.sessions.get(packageName)) {
+        this.logger.warn(`dropping ${String(innerPayload.type)} from a previous ${packageName} context`)
+        return
+      }
       this.runtime.handleRawMessage(packageName, raw)
       // CONNECT_ACK is sent synchronously by handleConnect, so UI_OPEN lands
       // after the fresh SDK transport exists.
-      // A context killed for a restart can still have CONNECT or READY queued.
-      // SDKs that echo the host's session id let the gate ignore them; older
-      // ones send none and are trusted as before.
-      const staleSession =
-        typeof innerPayload?.sessionId === "string" && innerPayload.sessionId !== this.sessions.get(packageName)
-      if (staleSession) {
-        this.logger.warn(`ignoring ${String(innerPayload?.type)} from a previous ${packageName} context`)
-      } else if (innerPayload?.type === "miniapp_connect") {
+      if (innerPayload?.type === "miniapp_connect") {
         this.logger.log(`CONNECT received for ${packageName}`, {uiBound: this.uiRouter?.isBound(packageName) ?? false})
         if (this.replacementConnects.delete(packageName)) {
           if (!this.readyTimers.has(packageName)) {

@@ -291,7 +291,7 @@ test("a READY that arrives before the current session's CONNECT is ignored", () 
 })
 
 test("handshake frames from a previous context are ignored by session id", async () => {
-  const {router, ui, inits, emitBridge} = makeRouters({initReady: true})
+  const {router, ui, inits, fromBackground, emitBridge} = makeRouters({initReady: true})
   router.timer = {setTimeout: () => 1, clearTimeout() {}}
   const warn = console.warn
   console.warn = () => {}
@@ -301,6 +301,8 @@ test("handshake frames from a previous context are ignored by session id", async
     emitBridge({type: "miniapp_connect", packageName: PKG, initReady: true, sessionId: "killed-context"})
     emitBridge({type: "miniapp_ready", sessionId: "killed-context"})
     expect(ui.isUiHeld(PKG)).toBe(true)
+    // Dropped before the runtime, so no CONNECT_ACK reaches the replacement.
+    expect(fromBackground).toEqual([])
     emitBridge({type: "miniapp_connect", packageName: PKG, initReady: true, sessionId: current})
     expect(ui.isUiHeld(PKG)).toBe(true)
     emitBridge({type: "miniapp_ready", sessionId: "killed-context"})
