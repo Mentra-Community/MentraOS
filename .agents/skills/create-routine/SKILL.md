@@ -92,6 +92,13 @@ lanes. Once affected owners release, activate one frozen candidate; local iterat
 may use reviewed source before merge while retaining the PR's review/CI merge gates.
 Request authoring reservations before waiting for the current run to finish, so
 the next queued job does not repeatedly displace ready authoring work.
+Before ordinary dispatch, confirm the installed executor source and enrolled
+definition revision agree; frozen requests do not change during a service upgrade.
+Enroll the intended source before submitting new work. A stale local request that
+never launched can be cancelled normally with a reason, then replaced with the
+same saved actions on the intended source. Preserve launched/nightly requests.
+Publish startup failures through normal evidence delivery without replay; inspect
+the exact export error when publication stalls rather than repeating the test.
 For UI transitions, verify the departing overlay disappears as well as the
 new page appears. Home controls can remain visible behind a miniapp. Use bounded
 postcondition observation; an acknowledged click is not a completed transition.
