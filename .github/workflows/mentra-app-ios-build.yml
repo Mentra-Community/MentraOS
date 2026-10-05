@@ -462,6 +462,10 @@ jobs:
         if: steps.select-ipa.outputs.reused != 'true'
         run: mobile/scripts/test-gallery-download-progress.sh
 
+      - name: Test native hotspot error facts
+        if: steps.select-ipa.outputs.reused != 'true'
+        run: mobile/scripts/test-hotspot-error-facts.sh
+
       - name: Validate CocoaPods post-install project integrity
         if: steps.select-ipa.outputs.reused != 'true'
         working-directory: ./mobile
