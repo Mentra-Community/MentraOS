@@ -189,6 +189,18 @@ test("sealed-session path returns the refreshed access token after the old one e
   expect(response.headers.getSetCookie().some(value => value.startsWith(`${cookieName}=`))).toBe(true)
 })
 
+test("refresh path takes the user from the fresh session, not the sealed snapshot", async () => {
+  // The sealed cookie holds a verified user; WorkOS now reports the email as unverified.
+  const cookie = await sealedSession(await token("-1m"))
+  emailVerified = false
+  const refreshed = await token("10m")
+  nextGrantToken = refreshed
+
+  const {result} = await authenticate({cookie: `${cookieName}=${cookie}`})
+
+  expect(result).toMatchObject({authenticated: true, accessToken: refreshed, user: {id: userId, emailVerified: false}})
+})
+
 test("no credentials is unauthenticated", async () => {
   const {result} = await authenticate({})
   expect(result).toEqual({authenticated: false, reason: "no_session_cookie_provided"})

@@ -13,17 +13,22 @@
  *  2. otherwise a user in the `workos` tenant keyed by the WorkOS user id
  *     (`linkedVia: workos_tenant`).
  *
- * The link and the claim of migrated memberships commit in one transaction.
+ * Memberships migrated under a WorkOS user id (`pendingWorkosUserId`) are
+ * claimed for the linked user on first sight (in the same transaction as the
+ * link) and again on any later sign-in that still finds one, so a migration that
+ * lands after the person has already signed in is not stranded.
  */
 
 import {createLogger} from "@mentra/cloud-shared"
+import {roleAtLeast, type WorkspaceRole} from "@mentra/workspace-contract"
 import {ulid} from "ulid"
 import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
 import {IdentityLinkModel, type IdentityLinkMethod} from "../../models/identity-link.model"
 import {WorkspaceAuditEventModel} from "../../models/workspace-audit-event.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
-import {findUserByEmail} from "../account/gotrue.client"
+import {WorkspaceModel} from "../../models/workspace.model"
+import {findUserByEmail, isGotrueAdminConfigured} from "../account/gotrue.client"
 import {findOrCreateUser} from "../user.service"
 
 const logger = createLogger("core").child({service: "identity-link.service"})
@@ -51,6 +56,7 @@ export async function resolveWorkosUser(identity: WorkosIdentity): Promise<{ment
   const existing = await IdentityLinkModel.findOne({provider: PROVIDER, subject}).lean()
   if (existing) {
     await refreshDisplayEmail(existing._id, existing.email ?? null, email)
+    await claimPendingIfAny(subject, existing.mentraUserId)
     return {mentraUserId: existing.mentraUserId}
   }
 
@@ -62,10 +68,13 @@ export async function resolveWorkosUser(identity: WorkosIdentity): Promise<{ment
     })
   } catch (err) {
     // A concurrent first login linked this WorkOS user first. Its transaction
-    // owns the link and the claim; ours rolled back, so return the winner.
+    // owns the link; ours rolled back, so resolve to the winner. The winner's
+    // claim has normally run already, but this resolution must not depend on
+    // that, so claim for the winner's user too (a no-op once nothing is pending).
     if (!isDuplicateKeyError(err)) throw err
     const winner = await IdentityLinkModel.findOne({provider: PROVIDER, subject}).lean()
     if (!winner) throw err
+    await claimPendingIfAny(subject, winner.mentraUserId)
     return {mentraUserId: winner.mentraUserId}
   }
   logger.info({mentraUserId, linkedVia}, "linked WorkOS identity to Mentra user")
@@ -78,10 +87,12 @@ async function chooseMentraUser(
   emailVerified: boolean,
 ): Promise<{mentraUserId: string; linkedVia: IdentityLinkMethod}> {
   // Only a verified email may claim an existing account. An unverified address
-  // proves nothing, so it never reaches GoTrue. The link is permanent, so a
-  // directory outage must fail this sign-in (strict) rather than read as "no
-  // Mentra account" and link the person to a separate workos-tenant user.
-  if (emailVerified && email) {
+  // proves nothing, so it never reaches GoTrue. A deployment with no GoTrue
+  // admin credentials has no Mentra accounts to match, so it skips the lookup.
+  // The link is permanent, so a configured directory that is erroring must fail
+  // this sign-in (strict) rather than read as "no Mentra account" and link the
+  // person to a separate workos-tenant user.
+  if (emailVerified && email && isGotrueAdminConfigured()) {
     const account = await findUserByEmail(email, {strict: true})
     if (account?.emailVerified) {
       const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: account.id})
@@ -103,10 +114,24 @@ async function refreshDisplayEmail(linkId: unknown, stored: string | null, curre
 }
 
 /**
- * Hand memberships migrated under `pendingWorkosUserId` to the newly linked
- * user. A pending row in a workspace where the user already has an active
- * membership would break the one-active-membership rule, so it is ended
- * (`removed`) and audited instead; the membership the user already held stays.
+ * Claim in its own transaction when this WorkOS user still has pending migrated
+ * memberships. One indexed read gates it, so the common sign-in (nothing
+ * pending) does not open a transaction. The claim re-reads inside the
+ * transaction, so concurrent callers claim each row exactly once.
+ */
+async function claimPendingIfAny(workosUserId: string, mentraUserId: string): Promise<void> {
+  const pending = await WorkspaceMembershipModel.exists({pendingWorkosUserId: workosUserId, status: "active"})
+  if (!pending) return
+  await withTransaction(session => claimPendingMemberships(session, workosUserId, mentraUserId))
+}
+
+/**
+ * Hand memberships migrated under `pendingWorkosUserId` to the linked user.
+ * A pending row in a workspace where the user already has an active membership
+ * would break the one-active-membership rule, so it is ended (`removed`) and
+ * audited instead and the membership the user already held survives. If the
+ * pending row carried the higher role, the surviving row is raised to it, so
+ * merging never takes access away (and a workspace never loses its owner).
  */
 async function claimPendingMemberships(
   session: ClientSession,
@@ -131,6 +156,23 @@ async function claimPendingMemberships(
   for (const duplicate of pending) {
     const kept = heldByWorkspace.get(duplicate.workspaceId)
     if (!kept) continue
+    const pendingRole = duplicate.role as WorkspaceRole
+    const keptRole = kept.role as WorkspaceRole
+    const raised = pendingRole !== keptRole && roleAtLeast(pendingRole, keptRole)
+    const resultingRole = raised ? pendingRole : keptRole
+    if (raised) {
+      await WorkspaceMembershipModel.updateOne(
+        {membershipId: kept.membershipId, status: "active"},
+        {$set: {role: pendingRole}},
+        {session},
+      )
+      // A role change can alter what the member may do, so it invalidates cached authorization.
+      await WorkspaceModel.updateOne(
+        {workspaceId: duplicate.workspaceId},
+        {$inc: {authorizationRevision: 1}},
+        {session},
+      )
+    }
     await WorkspaceMembershipModel.updateOne(
       {membershipId: duplicate.membershipId, status: "active"},
       {$set: {status: "ended", endedAt: now, endedReason: "removed"}},
@@ -147,16 +189,18 @@ async function claimPendingMemberships(
           target: {membershipId: duplicate.membershipId, mentraUserId},
           before: {
             membershipId: duplicate.membershipId,
-            role: duplicate.role,
+            role: pendingRole,
             status: "active",
             pendingWorkosUserId: workosUserId,
+            keptMembershipId: kept.membershipId,
+            keptRole,
           },
           after: {
             membershipId: duplicate.membershipId,
             status: "ended",
             endedReason: "removed",
             keptMembershipId: kept.membershipId,
-            keptRole: kept.role,
+            resultingRole,
           },
           occurredAt: now,
         },

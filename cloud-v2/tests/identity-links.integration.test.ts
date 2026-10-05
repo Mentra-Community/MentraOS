@@ -24,10 +24,11 @@ import {IdentityLinkModel} from "../packages/core/src/models/identity-link.model
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
+import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {resolveWorkosUser, type WorkosIdentity} from "../packages/core/src/services/workspaces/identity-link.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 
-const MODELS = [IdentityLinkModel, UserModel, WorkspaceAuditEventModel, WorkspaceMembershipModel]
+const MODELS = [IdentityLinkModel, UserModel, WorkspaceAuditEventModel, WorkspaceMembershipModel, WorkspaceModel]
 
 interface DirectoryUser {
   id: string
@@ -38,6 +39,8 @@ interface DirectoryUser {
 let directoryUsers: DirectoryUser[] = []
 let directoryRequests = 0
 let directoryStatus = 200
+// "ok" answers from directoryUsers; the others model a directory that cannot give a definite answer.
+let directoryMode: "ok" | "malformed" | "neverEnds" | "hang" = "ok"
 // Like older GoTrue deployments, this directory ignores `filter`; the service
 // under test must exact-match the email itself (findUserByEmail does).
 const directory = Bun.serve({
@@ -48,8 +51,20 @@ const directory = Bun.serve({
     const url = new URL(req.url)
     if (url.pathname !== "/auth/v1/admin/users") return new Response(null, {status: 404})
     if (directoryStatus !== 200) return new Response(null, {status: directoryStatus})
+    if (directoryMode === "hang") return new Promise<Response>(() => {})
+    if (directoryMode === "malformed") return Response.json({users: "not a list"})
     const page = Number(url.searchParams.get("page"))
     const perPage = Number(url.searchParams.get("per_page"))
+    if (directoryMode === "neverEnds") {
+      // Every page is full of other people, forever.
+      return Response.json({
+        users: Array.from({length: perPage}, (_, i) => ({
+          id: `other-${page}-${i}`,
+          email: `other-${page}-${i}@example.test`,
+          email_confirmed_at: "2026-01-01T00:00:00Z",
+        })),
+      })
+    }
     const users = directoryUsers.slice((page - 1) * perPage, page * perPage).map(user => ({
       id: user.id,
       email: user.email,
@@ -126,6 +141,7 @@ beforeEach(async () => {
   directoryUsers = []
   directoryRequests = 0
   directoryStatus = 200
+  directoryMode = "ok"
 })
 
 afterEach(() => {
@@ -194,6 +210,67 @@ describe("resolveWorkosUser: choosing the Mentra user", () => {
       mentraUserId,
     )
     expect((await IdentityLinkModel.findOne({subject: "user_workos_1"}).lean())?.linkedVia).toBe("verified_email")
+  })
+
+  test("a directory answer that is not a user list fails the first sign-in", async () => {
+    directoryMode = "malformed"
+
+    await expect(resolveWorkosUser(identity({email: "hana@example.test"}))).rejects.toThrow(/directory lookup failed/)
+    expect(await IdentityLinkModel.countDocuments({})).toBe(0)
+    expect(await UserModel.countDocuments({})).toBe(0)
+  })
+
+  test("a directory too large to scan fails the first sign-in instead of reading as no account", async () => {
+    directoryMode = "neverEnds"
+
+    await expect(resolveWorkosUser(identity({email: "ivan@example.test"}))).rejects.toThrow(/directory lookup failed/)
+    expect(directoryRequests).toBe(20)
+    expect(await IdentityLinkModel.countDocuments({})).toBe(0)
+    expect(await UserModel.countDocuments({})).toBe(0)
+  })
+
+  test("a hung directory fails the first sign-in at the timeout instead of hanging", async () => {
+    directoryMode = "hang"
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal)
+    const timeout = spyOn(AbortSignal, "timeout").mockImplementation(() => realTimeout(100))
+    try {
+      await expect(resolveWorkosUser(identity({email: "jo@example.test"}))).rejects.toThrow(/timed out/)
+    } finally {
+      timeout.mockRestore()
+    }
+    expect(await IdentityLinkModel.countDocuments({})).toBe(0)
+    expect(await UserModel.countDocuments({})).toBe(0)
+  })
+
+  test("without GoTrue admin credentials the lookup is skipped and the user links to the workos tenant", async () => {
+    directoryUsers = [{id: "gotrue-kim", email: "kim@example.test", confirmed: true}]
+    const configured = {url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY}
+    try {
+      const cases: Array<[string, () => void]> = [
+        ["no URL", () => delete process.env.SUPABASE_URL],
+        ["no service-role key", () => delete process.env.SUPABASE_SERVICE_ROLE_KEY],
+        ["blank key", () => (process.env.SUPABASE_SERVICE_ROLE_KEY = "   ")],
+        ["neither", () => (delete process.env.SUPABASE_URL, delete process.env.SUPABASE_SERVICE_ROLE_KEY)],
+      ]
+      for (const [index, [label, unconfigure]] of cases.entries()) {
+        process.env.SUPABASE_URL = configured.url
+        process.env.SUPABASE_SERVICE_ROLE_KEY = configured.key
+        unconfigure()
+        const subject = `user_workos_unconfigured_${index}`
+
+        const {mentraUserId} = await resolveWorkosUser(identity({workosUserId: subject, email: "kim@example.test"}))
+
+        expect({label, requests: directoryRequests}).toEqual({label, requests: 0})
+        expect((await UserModel.findOne({tenantId: "workos", tenantUserId: subject}).lean())?.mentraUserId).toBe(
+          mentraUserId,
+        )
+        expect((await IdentityLinkModel.findOne({subject}).lean())?.linkedVia).toBe("workos_tenant")
+      }
+      expect(await UserModel.countDocuments({tenantId: "mentra"})).toBe(0)
+    } finally {
+      process.env.SUPABASE_URL = configured.url
+      process.env.SUPABASE_SERVICE_ROLE_KEY = configured.key
+    }
   })
 
   test("(b) signing in again keeps the same id even after GoTrue gains an account for the email", async () => {
@@ -292,7 +369,7 @@ describe("resolveWorkosUser: concurrent first logins", () => {
     expect(await UserModel.countDocuments({})).toBe(1)
   })
 
-  test("a duplicate-key loss re-reads and returns the winner, claiming nothing itself", async () => {
+  test("a duplicate-key loss re-reads, returns the winner, and still claims for the winner's user", async () => {
     const winner = await UserModel.create({mentraUserId: "mu_winner", tenantId: "workos", tenantUserId: "someone-else"})
     await IdentityLinkModel.create({
       provider: "workos",
@@ -314,9 +391,16 @@ describe("resolveWorkosUser: concurrent first logins", () => {
     }
 
     expect(await IdentityLinkModel.countDocuments({subject: "user_workos_1"})).toBe(1)
-    // The loser's transaction rolled back, so its claim did not run.
-    const row = await WorkspaceMembershipModel.findOne({membershipId: pending.membershipId}).lean()
-    expect(row).toMatchObject({mentraUserId: null, pendingWorkosUserId: "user_workos_1", status: "active"})
+    // The loser's own link transaction rolled back, and it never links to the user it computed.
+    expect(await IdentityLinkModel.findOne({subject: "user_workos_1"}).lean()).toMatchObject({
+      mentraUserId: "mu_winner",
+    })
+    // The pending row still ends up with the linked (winner's) user.
+    expect(await WorkspaceMembershipModel.findOne({membershipId: pending.membershipId}).lean()).toMatchObject({
+      mentraUserId: "mu_winner",
+      pendingWorkosUserId: null,
+      status: "active",
+    })
   })
 })
 
@@ -362,11 +446,12 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
   test("a duplicate of an active membership the user already holds is ended and audited", async () => {
     directoryUsers = [{id: "gotrue-frank", email: "frank@example.test", confirmed: true}]
     const frank = await UserModel.create({mentraUserId: "mu_frank", tenantId: "mentra", tenantUserId: "gotrue-frank"})
+    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
     const held = await seedMembership({workspaceId: "ws_1", mentraUserId: frank.mentraUserId, role: "admin"})
     const duplicate = await seedMembership({
       workspaceId: "ws_1",
       pendingWorkosUserId: "user_workos_1",
-      role: "owner",
+      role: "developer",
       organizationId: "acme",
     })
     const fresh = await seedMembership({workspaceId: "ws_2", pendingWorkosUserId: "user_workos_1", role: "member"})
@@ -374,12 +459,13 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
     const {mentraUserId} = await resolveWorkosUser(identity({email: "frank@example.test"}))
     expect(mentraUserId).toBe("mu_frank")
 
-    // The membership Frank already had is untouched.
+    // The membership Frank already had is untouched: the pending row's role is lower.
     expect(await WorkspaceMembershipModel.findOne({membershipId: held.membershipId}).lean()).toMatchObject({
       mentraUserId: "mu_frank",
       status: "active",
       role: "admin",
     })
+    expect((await WorkspaceModel.findOne({workspaceId: "ws_1"}).lean())?.authorizationRevision).toBe(0)
     // The pending duplicate is ended, not promoted.
     const ended = await WorkspaceMembershipModel.findOne({membershipId: duplicate.membershipId}).lean()
     expect(ended).toMatchObject({status: "ended", endedReason: "removed", mentraUserId: null})
@@ -403,10 +489,47 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
       action: "membership.merged_duplicate",
       actor: {kind: "system"},
       target: {membershipId: duplicate.membershipId, mentraUserId: "mu_frank"},
-      after: {status: "ended", endedReason: "removed", keptMembershipId: held.membershipId},
+      before: {role: "developer", keptRole: "admin", keptMembershipId: held.membershipId},
+      after: {status: "ended", endedReason: "removed", keptMembershipId: held.membershipId, resultingRole: "admin"},
     })
     expect(events[0]!.eventId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/)
     expect(events[0]!.occurredAt).toBeInstanceOf(Date)
+  })
+
+  test("a duplicate never drops a higher role: pending owner over a held member leaves an owner", async () => {
+    directoryUsers = [{id: "gotrue-lena", email: "lena@example.test", confirmed: true}]
+    await UserModel.create({mentraUserId: "mu_lena", tenantId: "mentra", tenantUserId: "gotrue-lena"})
+    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One", authorizationRevision: 4})
+    const held = await seedMembership({workspaceId: "ws_1", mentraUserId: "mu_lena", role: "member"})
+    const duplicate = await seedMembership({
+      workspaceId: "ws_1",
+      pendingWorkosUserId: "user_workos_1",
+      role: "owner",
+      organizationId: "acme",
+    })
+
+    await resolveWorkosUser(identity({email: "lena@example.test"}))
+
+    expect(await WorkspaceMembershipModel.findOne({membershipId: held.membershipId}).lean()).toMatchObject({
+      mentraUserId: "mu_lena",
+      status: "active",
+      role: "owner",
+    })
+    expect(await WorkspaceMembershipModel.findOne({membershipId: duplicate.membershipId}).lean()).toMatchObject({
+      status: "ended",
+      endedReason: "removed",
+    })
+    // The workspace still has exactly one active owner, and authorization caches are invalidated.
+    const activeOwners = {workspaceId: "ws_1", role: "owner", status: "active"}
+    expect(await WorkspaceMembershipModel.countDocuments(activeOwners)).toBe(1)
+    expect((await WorkspaceModel.findOne({workspaceId: "ws_1"}).lean())?.authorizationRevision).toBe(5)
+    const events = await WorkspaceAuditEventModel.find({}).lean()
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      action: "membership.merged_duplicate",
+      before: {role: "owner", keptRole: "member"},
+      after: {resultingRole: "owner", keptMembershipId: held.membershipId},
+    })
   })
 
   test("the link and the claim commit together: a failed claim leaves no link behind", async () => {
@@ -430,5 +553,112 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
       mentraUserId,
       pendingWorkosUserId: null,
     })
+  })
+})
+
+describe("resolveWorkosUser: claiming on every sign-in", () => {
+  test("a pending membership that appears after the link is claimed by the next sign-in", async () => {
+    const first = await resolveWorkosUser(identity())
+    // A migration lands after the person has already signed in.
+    const late = await seedMembership({workspaceId: "ws_late", pendingWorkosUserId: "user_workos_1", role: "admin"})
+
+    const again = await resolveWorkosUser(identity())
+
+    expect(again.mentraUserId).toBe(first.mentraUserId)
+    expect(await WorkspaceMembershipModel.findOne({membershipId: late.membershipId}).lean()).toMatchObject({
+      mentraUserId: first.mentraUserId,
+      pendingWorkosUserId: null,
+      status: "active",
+      role: "admin",
+    })
+    expect(await IdentityLinkModel.countDocuments({subject: "user_workos_1"})).toBe(1)
+    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(0)
+  })
+
+  test("a duplicate of a held membership is merged on the existing-link path too", async () => {
+    const first = await resolveWorkosUser(identity())
+    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    const held = await seedMembership({workspaceId: "ws_1", mentraUserId: first.mentraUserId, role: "member"})
+    const duplicate = await seedMembership({
+      workspaceId: "ws_1",
+      pendingWorkosUserId: "user_workos_1",
+      role: "admin",
+      organizationId: "acme",
+    })
+    const fresh = await seedMembership({workspaceId: "ws_2", pendingWorkosUserId: "user_workos_1", role: "member"})
+
+    await resolveWorkosUser(identity())
+
+    expect(await WorkspaceMembershipModel.findOne({membershipId: held.membershipId}).lean()).toMatchObject({
+      status: "active",
+      role: "admin",
+    })
+    expect(await WorkspaceMembershipModel.findOne({membershipId: duplicate.membershipId}).lean()).toMatchObject({
+      status: "ended",
+      endedReason: "removed",
+    })
+    expect(await WorkspaceMembershipModel.findOne({membershipId: fresh.membershipId}).lean()).toMatchObject({
+      mentraUserId: first.mentraUserId,
+      pendingWorkosUserId: null,
+    })
+    const events = await WorkspaceAuditEventModel.find({}).lean()
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      action: "membership.merged_duplicate",
+      workspaceId: "ws_1",
+      after: {resultingRole: "admin", keptMembershipId: held.membershipId},
+    })
+  })
+
+  test("concurrent sign-ins on an existing link claim each pending row exactly once", async () => {
+    const first = await resolveWorkosUser(identity())
+    const held = await seedMembership({workspaceId: "ws_1", mentraUserId: first.mentraUserId, role: "member"})
+    const duplicate = await seedMembership({
+      workspaceId: "ws_1",
+      pendingWorkosUserId: "user_workos_1",
+      role: "developer",
+      organizationId: "acme",
+    })
+    const fresh = await seedMembership({workspaceId: "ws_2", pendingWorkosUserId: "user_workos_1", role: "member"})
+
+    const results = await Promise.all(Array.from({length: 8}, () => resolveWorkosUser(identity())))
+
+    expect(new Set(results.map(result => result.mentraUserId))).toEqual(new Set([first.mentraUserId]))
+    // A double claim would write the audit event twice.
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "membership.merged_duplicate"})).toBe(1)
+    expect(await WorkspaceMembershipModel.findOne({membershipId: held.membershipId}).lean()).toMatchObject({
+      status: "active",
+      role: "developer",
+    })
+    expect(await WorkspaceMembershipModel.findOne({membershipId: duplicate.membershipId}).lean()).toMatchObject({
+      status: "ended",
+      endedReason: "removed",
+    })
+    expect(await WorkspaceMembershipModel.findOne({membershipId: fresh.membershipId}).lean()).toMatchObject({
+      mentraUserId: first.mentraUserId,
+      pendingWorkosUserId: null,
+    })
+    const heldInWs1 = {workspaceId: "ws_1", mentraUserId: first.mentraUserId, status: "active"}
+    expect(await WorkspaceMembershipModel.countDocuments(heldInWs1)).toBe(1)
+  })
+
+  test("a sign-in with nothing pending stays cheap: no transaction is opened", async () => {
+    await resolveWorkosUser(identity())
+    // Rows that must not trigger a claim: other people's, and this person's ended one.
+    await seedMembership({workspaceId: "ws_1", pendingWorkosUserId: "user_workos_other"})
+    await seedMembership({
+      workspaceId: "ws_2",
+      pendingWorkosUserId: "user_workos_1",
+      status: "ended",
+      endedAt: new Date("2026-02-01T00:00:00Z"),
+      endedReason: "removed",
+    })
+    const startSession = spyOn(IdentityLinkModel.db, "startSession")
+    try {
+      await resolveWorkosUser(identity())
+      expect(startSession).not.toHaveBeenCalled()
+    } finally {
+      startSession.mockRestore()
+    }
   })
 })
