@@ -64,7 +64,14 @@ let verified = false
 type UserActor = Actor & {kind: "user"}
 
 function user(id: string, overrides: Partial<UserActor> = {}): UserActor {
-  return {kind: "user", mentraUserId: id, email: `${id}@example.test`, isOrganizationAdmin: false, ...overrides}
+  return {
+    kind: "user",
+    mentraUserId: id,
+    email: `${id}@example.test`,
+    emailVerified: true,
+    isOrganizationAdmin: false,
+    ...overrides,
+  }
 }
 
 const orgAdmin = user("mu_org_admin", {isOrganizationAdmin: true})

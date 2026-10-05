@@ -48,8 +48,20 @@ const logger = createLogger("core").child({service: "workspace.service"})
 
 const NAME_MAX_LENGTH = 80
 
+/**
+ * Who is acting. For a user, `emailVerified` says whether the identity provider
+ * verified `email`; anything that matches on the address (accepting an
+ * invitation) requires it. `name` is display-only.
+ */
 export type Actor =
-  | {kind: "user"; mentraUserId: string; email: string | null; isOrganizationAdmin: boolean}
+  | {
+      kind: "user"
+      mentraUserId: string
+      email: string | null
+      emailVerified: boolean
+      name?: string | null
+      isOrganizationAdmin: boolean
+    }
   | {kind: "system"}
   | {kind: "service"; service: string; email: string | null}
 
@@ -432,6 +444,9 @@ export async function recoverOwnership(
 }
 
 // --- Helpers ---------------------------------------------------------------
+// The exported ones (`isId`, `isWorkspaceRole`, `loadActiveWorkspace`,
+// `requireMembershipManager`, `bumpRevision`, `auditActor`) are shared with
+// `invitation.service`, which follows the same mutation shape.
 
 function toSummary(
   row: Pick<WorkspaceRow, "organizationId" | "workspaceId" | "name" | "status" | "authorizationRevision">,
@@ -445,11 +460,11 @@ function toSummary(
   }
 }
 
-function isId(value: unknown): value is string {
+export function isId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0
 }
 
-function isWorkspaceRole(value: unknown): value is WorkspaceRole {
+export function isWorkspaceRole(value: unknown): value is WorkspaceRole {
   return typeof value === "string" && (WORKSPACE_ROLES as readonly string[]).includes(value)
 }
 
@@ -468,7 +483,7 @@ function creationPolicy(): "open" | "organization-admins" {
   throw new Error('CLOUD_CORE_WORKSPACE_CREATION must be "open" or "organization-admins"')
 }
 
-async function loadActiveWorkspace(session: ClientSession | null, workspaceId: string): Promise<WorkspaceRow> {
+export async function loadActiveWorkspace(session: ClientSession | null, workspaceId: string): Promise<WorkspaceRow> {
   const workspace = await WorkspaceModel.findOne({workspaceId}).session(session).lean<WorkspaceRow>()
   if (!workspace) fail("not_found", "workspace not found")
   if (workspace.status !== "active") fail("workspace_deleted", "workspace has been deleted")
@@ -518,7 +533,7 @@ async function actingRole(
 }
 
 /** Membership changes need at least the admin role, whoever is asking. */
-async function requireMembershipManager(
+export async function requireMembershipManager(
   session: ClientSession,
   actor: Actor,
   workspaceId: string,
@@ -539,7 +554,7 @@ async function assertNotLastOwner(session: ClientSession, workspaceId: string): 
  * still be `expectedRevision` when one is given. Every mutation calls this
  * before its other writes; it is what serializes concurrent mutations.
  */
-async function bumpRevision(
+export async function bumpRevision(
   session: ClientSession,
   workspaceId: string,
   expectedRevision: number | undefined,
@@ -603,7 +618,7 @@ async function endMembership(
   return toSummary(workspace)
 }
 
-function auditActor(actor: Actor): WorkspaceAuditEventInput["actor"] {
+export function auditActor(actor: Actor): WorkspaceAuditEventInput["actor"] {
   switch (actor.kind) {
     case "user":
       return {kind: "user", mentraUserId: actor.mentraUserId, ...(actor.email ? {email: actor.email} : {})}
