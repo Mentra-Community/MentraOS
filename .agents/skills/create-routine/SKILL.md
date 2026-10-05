@@ -111,7 +111,11 @@ a receipt write or screenshot failed. Retain an answered-input flag before later
 assertions so a settled held retry continues observation rather than toggling again.
 
 Keep a failing native command's bounded original error/cause in diagnostics before
-iterating. A missing positive log reply is an observation gap, not proof the product
+iterating. If original diagnostics would be disposed when an authoring reservation
+returns, preserve their bounded safe failure summary in the existing operation
+receipt first. Distinguish an empty successful trace from a malformed/failed read;
+do not repeat setup merely to guess the missing cause. Compare a failed HTTP probe
+with the app's actual request contract before calling it a server outage. A missing positive log reply is an observation gap, not proof the product
 action failed. Use the assigned phone's current-process trace for BLE replies when
 camera logs flood the glasses' short tail. Reconcile the original request instead
 of resending it. For cleanup-only corrections, select the reviewed provider source
@@ -126,8 +130,9 @@ give back with `{reservationId, generation, requestId}` for ordinary boundary cl
 
 Shared providers install the selected Mentra App, establish requested account/entry,
 prepare applicable glasses/fixtures, record, settle resources and uninstall the owned
-app. Routine setup/teardown own only product-specific effects. Backend fixtures need
-their own exact owned-ID cleanup; uninstall does not delete cloud data. Cleanup must
+app. Routine setup/teardown own only product-specific effects. Inspect the current miniapp's persistence before porting old teardown: app-local
+SimpleStorage is removed with shared app data, while backend fixtures need their
+own exact owned-ID cleanup. Uninstall does not delete cloud data. Cleanup must
 not wait for a product effect that failed to be created.
 Use the supplied account context (`account` on Mac, `credentials()` on Android)
 and optional `audio` or `fixtures` when the installed platform supports them.
@@ -159,7 +164,10 @@ source under active owners. Ordinary replay stops at its first failed product
 step, preserves remaining steps as `not-run` and still tears down; other runs stay
 independent. Preserve the original error if cleanup/publication also fails.
 Completion needs passing assertions, teardown, acknowledged evidence and working
-recording/step seeking. The coordinator owns deployed Admin/playback verification.
+recording/step seeking. A composite fixture must preserve evidence errors returned
+by its shared providers even when their physical cleanup succeeded. Bound the
+whole recorded observation to its declared timeout; polling must not consume a
+bounded event journal by writing a marker on every read. The coordinator owns deployed Admin/playback verification.
 Report exact source/build/platform, result URL, recording and timings. Do not add
 repeated qualification runs without changed code or unresolved failures.
 `run retry-publication` retries delivery without hardware replay. Dispose owned local
