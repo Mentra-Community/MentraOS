@@ -2,6 +2,7 @@ import {expect, test} from "bun:test";
 import {createElement} from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 import type {LaneRestorationAttempt, LaneRestorationHost} from "../../../../packages/core/src/types/lane-restoration.types";
+import {restorationHostIsFresh} from "../../../../packages/core/src/types/lane-restoration.types";
 import {restorationElapsed, restorationOutcome, RestorationHost} from "./lane-restoration";
 const at = "2026-10-05T01:00:00Z";
 const attempt: LaneRestorationAttempt = {executionId: "fixer:first", interruptionId: "repair:mac:1", laneId: "mac", generation: 1,
@@ -35,4 +36,20 @@ test("missing records, stale host and unfinished durations remain honest", () =>
   expect(render(host, false)).toContain("last reported in repair");
   expect(restorationElapsed({...attempt, startedAt: null, assignedAt: null}, at)).toBe("Duration unknown");
   expect(restorationElapsed({...attempt, finishedAt: null}, "2026-10-05T01:03:00Z")).toBe("3m 0s at last observation");
+  expect(restorationElapsed({...attempt, current: false, finishedAt: null}, "2026-10-05T01:03:00Z")).toBe("Duration unknown");
+  expect(restorationElapsed({...attempt, startedAt: "invalid"}, at)).toBe("Duration unknown");
+  expect(render({...host, restoration: {...host.restoration!, attempts: [{...attempt, actionsTruncated: true}]}})).toContain("additional operations omitted");
+});
+test("restoration freshness requires both recent observation and receipt with bounded clock skew", () => {
+  const now = Date.parse(at), window = 120_000;
+  expect(restorationHostIsFresh(host, now, window)).toBe(true);
+  expect(restorationHostIsFresh(host, now + window, window)).toBe(true);
+  expect(restorationHostIsFresh(host, now + window + 1, window)).toBe(false);
+  expect(restorationHostIsFresh({...host, observedAt: "2026-10-04T01:00:00Z"}, now, window)).toBe(false);
+  expect(restorationHostIsFresh({...host, receivedAt: "2026-10-04T01:00:00Z"}, now, window)).toBe(false);
+  expect(restorationHostIsFresh({...host, observedAt: new Date(now + 5_000).toISOString()}, now, window)).toBe(true);
+  for (const key of ["observedAt", "receivedAt"] as const) {
+    expect(restorationHostIsFresh({...host, [key]: new Date(now + 5_001).toISOString()}, now, window)).toBe(false);
+    expect(restorationHostIsFresh({...host, [key]: "invalid"}, now, window)).toBe(false);
+  }
 });

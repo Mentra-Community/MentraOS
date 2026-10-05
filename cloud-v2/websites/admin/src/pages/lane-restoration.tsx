@@ -1,6 +1,7 @@
 import {useQuery} from "@tanstack/react-query";
 import {useEffect, useState} from "react";
 import type {LaneRestorationAttempt, LaneRestorationHost, LaneRestorationList} from "../../../../packages/core/src/types/lane-restoration.types";
+import {restorationHostIsFresh} from "../../../../packages/core/src/types/lane-restoration.types";
 import {api} from "../lib/api";
 
 const labels: Record<LaneRestorationAttempt["state"], string> = {
@@ -11,7 +12,7 @@ const time = (value: string | null) => value ? new Date(value).toLocaleString() 
 export function restorationElapsed(attempt: LaneRestorationAttempt, observedAt: string) {
   const start = attempt.startedAt;
   const finish = attempt.finishedAt ?? observedAt;
-  if (!start || Date.parse(finish) < Date.parse(start)) return "Duration unknown";
+  if (!start || !attempt.current && !attempt.finishedAt || !Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(finish)) || Date.parse(finish) < Date.parse(start)) return "Duration unknown";
   const seconds = Math.floor((Date.parse(finish) - Date.parse(start)) / 1000);
   const duration = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   return attempt.finishedAt ? duration : `${duration} at last observation`;
@@ -36,7 +37,7 @@ function Attempt({attempt, observedAt}: {attempt: LaneRestorationAttempt; observ
         : <>Resume call and acceptance: unknown. No controller receipt was recorded.</>}
       {attempt.report?.decision === "resume" && attempt.resume.status !== "accepted" ? <p className="mt-1">The agent reported an intention to resume; this does not establish scheduling resumption.</p> : null}
     </div>
-    {attempt.actions.length ? <p className="mt-3 text-xs text-[#68746d]">Recorded cleanup operations: {attempt.actions.map(action => `${action.resourceId ?? "unknown resource"}: ${action.state}`).join(" · ")}{attempt.actionsTruncated ? " · additional operations omitted" : ""}</p> : null}
+    {attempt.actions.length || attempt.actionsTruncated ? <p className="mt-3 text-xs text-[#68746d]">Recorded cleanup operations: {attempt.actions.map(action => `${action.resourceId ?? "unknown resource"}: ${action.state}`).join(" · ")}{attempt.actionsTruncated ? " · additional operations omitted" : ""}</p> : null}
     <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-[#087d50]">
       {attempt.runId ? <a className="underline" href={`/?testRun=${encodeURIComponent(attempt.runId)}`}>Open run</a>
         : attempt.requestId ? <a className="underline" href={`/?testRun=${encodeURIComponent(attempt.requestId)}`}>Open request</a> : <span className="font-normal text-[#68746d]">Run link unknown</span>}
@@ -70,7 +71,7 @@ export function LaneRestorationPage() {
     <a href="/?systemHealth=1" className="mt-2 inline-block text-sm font-medium text-[#087d50] underline">Back to System health</a></div>
     <button className="text-sm font-medium text-[#087d50] underline" onClick={() => void query.refetch()}>Refresh</button></div>
     {query.isError ? <p className="text-sm text-[#a64235]">Restoration records could not refresh. Current status is unknown; any displayed history is the last received observation.</p> : null}
-    {query.data?.hosts.map(host => <RestorationHost key={host.hostId} host={host} fresh={!query.isError && now - Date.parse(host.receivedAt) <= query.data!.freshForMs} />)}
+    {query.data?.hosts.map(host => <RestorationHost key={host.hostId} host={host} fresh={!query.isError && restorationHostIsFresh(host, now, query.data!.freshForMs)} />)}
     {!query.data?.hosts.length ? <p className="text-sm text-[#68746d]">{query.isPending ? "Loading restoration records…" : "No controller lane observation is available. Restoration status is unknown."}</p> : null}
     {query.data?.truncated ? <p className="text-xs text-[#a64235]">Only the first 32 reporting controllers are shown.</p> : null}
     <p className="text-xs text-[#68746d]">Agent elapsed time starts at the recorded invocation. The lane handoff time and its ten-minute alert are separate. Missing start, end or receipt data stays unknown. This page does not start agents, answer questions or resume a lane.</p>

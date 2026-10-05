@@ -170,6 +170,7 @@ const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
+const initialRestoration = new URLSearchParams(window.location.search).get("restoration") === "1";
 const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 
 function AdminPage() {
@@ -179,6 +180,7 @@ function AdminPage() {
     initialSystemHealth ? "system-health" : initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
+  const [restoration, setRestoration] = useState(initialRestoration);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
@@ -217,7 +219,9 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
-      if (new URLSearchParams(window.location.search).get("systemHealth") === "1") { setPage("system-health"); return; }
+      const search = new URLSearchParams(window.location.search);
+      setRestoration(search.get("restoration") === "1");
+      if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
       const suite = readSuiteId(window.location.search);
       setSuiteId(suite);
       const selection = readTestRunLink(window.location.search);
@@ -378,8 +382,9 @@ function AdminPage() {
       activeKey={page}
       onSelect={key => {
         setPage(key as AdminPageKey);
+        setRestoration(false);
         const location = new URL(window.location.href);
-        for (const param of ["systemHealth", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
+        for (const param of ["systemHealth", "restoration", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -448,7 +453,7 @@ function AdminPage() {
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       {page === "test-runs" ? <SystemHealthSummary /> : null}
-      {page === "system-health" ? <SystemHealthPage /> : null}
+      {page === "system-health" ? <SystemHealthPage restoration={restoration} /> : null}
       {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (

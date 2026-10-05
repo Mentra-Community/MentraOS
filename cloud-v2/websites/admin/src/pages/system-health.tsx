@@ -117,9 +117,8 @@ export function CleanupEvents({ events }: { events: CleanupHealthEvent[] }) {
   </details>;
 }
 
-export function SystemHealthPage() {
-  return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("restoration") === "1"
-    ? <LaneRestorationPage /> : <SystemHealthDashboard />;
+export function SystemHealthPage({restoration = false}: {restoration?: boolean}) {
+  return restoration ? <LaneRestorationPage /> : <SystemHealthDashboard />;
 }
 function SystemHealthDashboard() {
   const query = useHostHealth(), now = useClock(), [hostId, setHostId] = useState<string | null>(null), [days, setDays] = useState<1 | 7>(1);

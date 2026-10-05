@@ -51,3 +51,9 @@ export type LaneRestorationHost = {
   restoration: LaneRestorationProjection | null;
 };
 export type LaneRestorationList = {generatedAt: string; freshForMs: number; hosts: LaneRestorationHost[]; truncated: boolean};
+
+export function restorationHostIsFresh(host: Pick<LaneRestorationHost, "observedAt" | "receivedAt">, now: number, freshForMs: number) {
+  const observed = Date.parse(host.observedAt), received = Date.parse(host.receivedAt);
+  return Number.isFinite(now) && Number.isFinite(freshForMs) && freshForMs > 0 && Number.isFinite(observed) && Number.isFinite(received)
+    && observed <= now + 5_000 && received <= now + 5_000 && now - observed <= freshForMs && now - received <= freshForMs;
+}
