@@ -63,14 +63,21 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number): 
   return {runs, suites, after, limit};
 }
 
-async function readStandaloneRuns(queries: HistorySourceQueries) {
+const HISTORY_QUERY_BUDGET_MS = 10_000;
+function remainingQueryTime(deadline: number) {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new TestRunError(503, "Test history query timed out. Try again.");
+  return remaining;
+}
+
+async function readStandaloneRuns(queries: HistorySourceQueries, deadline: number) {
   const eligible: StoredHistoryRow[] = [];
   let after = queries.after;
   // A batch is bounded, but there is no total raw-run cap: scan past any number of suite members.
   while (eligible.length < queries.limit + 1) {
     const pipeline = testHistoryQueries(after, queries.limit).runs;
     const batch = await TestRunModel.aggregate<StoredHistoryRow>(pipeline).collation({locale: "simple"})
-      .read("primary").readConcern("majority").exec();
+      .read("primary").readConcern("majority").option({maxTimeMS: remainingQueryTime(deadline)}).exec();
     eligible.push(...batch.filter(row => !row.historySuppressed));
     const last = batch.at(-1);
     if (batch.length < queries.limit + 1 || !last) break;
@@ -82,10 +89,11 @@ async function readStandaloneRuns(queries: HistorySourceQueries) {
 export class TestHistoryService {
   constructor(private readonly suites: Pick<TestSuiteService, "detail"> = new TestSuiteService(),
     private readonly read: (queries: HistorySourceQueries) => Promise<StoredHistoryRow[][]> = async queries => {
-      await backfillTestSuiteStartedAt();
+      const deadline = Date.now() + HISTORY_QUERY_BUDGET_MS;
+      await backfillTestSuiteStartedAt(TestSuiteModel.collection, {maxTimeMS: remainingQueryTime(deadline)});
       // Older writers racing this repair become eligible on the next refresh, with their real date.
-      const [runs, suites] = await Promise.all([readStandaloneRuns(queries), TestSuiteModel.aggregate<StoredHistoryRow>(queries.suites)
-        .collation({locale: "simple"}).read("primary").readConcern("majority").exec()]);
+      const [runs, suites] = await Promise.all([readStandaloneRuns(queries, deadline), TestSuiteModel.aggregate<StoredHistoryRow>(queries.suites)
+        .collation({locale: "simple"}).read("primary").readConcern("majority").option({maxTimeMS: remainingQueryTime(deadline)}).exec()]);
       return [runs, suites];
     }) {}
 
@@ -97,7 +105,12 @@ export class TestHistoryService {
       try {after = cursorSchema.parse(JSON.parse(Buffer.from(query.data.cursor, "base64url").toString("utf8")));}
       catch {throw new TestRunError(400, "invalid test history cursor");}
     }
-    const sources = await this.read(testHistoryQueries(after, query.data.limit));
+    let sources: StoredHistoryRow[][];
+    try {sources = await this.read(testHistoryQueries(after, query.data.limit));}
+    catch (error) {
+      if ((error as {code?: number}).code === 50) throw new TestRunError(503, "Test history query timed out. Try again.");
+      throw error;
+    }
     const rows = sources.flat().sort((a, b) => b.historyStartedAt.getTime() - a.historyStartedAt.getTime()
       || (a.historyKind < b.historyKind ? 1 : a.historyKind > b.historyKind ? -1 : 0)
       || (a.historyId < b.historyId ? 1 : a.historyId > b.historyId ? -1 : 0));

@@ -15,6 +15,10 @@ schema.index({requestId: 1}, {unique: true, name: "test_runs_terminal_request",
   partialFilterExpression: {"payload.schemaVersion": 1}});
 schema.index({routineId: 1, platform: 1, definitionRevision: 1, outcome: 1, uploadsComplete: 1, startedAt: -1, runId: -1});
 schema.index({startedAt: -1, runId: -1});
+// Native readers must be able to exhaust a short page without fetching retained legacy payloads.
+export const TEST_RUN_NATIVE_HISTORY_INDEX = "test_runs_native_history";
+schema.index({startedAt: -1, runId: -1}, {name: TEST_RUN_NATIVE_HISTORY_INDEX,
+  partialFilterExpression: {"payload.schemaVersion": 1}});
 schema.index({hostId: 1, laneId: 1, startedAt: -1, runId: -1});
 export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
 schema.index({completedAt: -1, runId: -1}, {name: TEST_RUN_COMPLETION_INDEX});

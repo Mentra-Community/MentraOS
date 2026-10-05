@@ -284,10 +284,12 @@ export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
 }
 function TestHistoryList() {
   const history = useInfiniteQuery({queryKey: ["test-history"], initialPageParam: undefined as string | undefined,
-    queryFn: ({pageParam}) => api<TestHistoryPage>(`/api/admin/test-runs/history/list?limit=25${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`),
-    getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
+    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(`/api/admin/test-runs/history/list?limit=25${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, {signal, timeoutMs: 30000}),
+    getNextPageParam: page => page.nextCursor ?? undefined, retry: false, retryOnMount: false,
+    refetchInterval: query => query.state.error ? false : 15000});
   if (history.isPending) return <p role="status">Loading test history…</p>;
-  if (history.error && !history.data) return <p role="alert">Could not load test history: {history.error.message}</p>;
+  if (history.error && !history.data) return <section className={PANEL} role="alert"><p>Could not load test history: {history.error.message}</p>
+    <button className="mt-3 underline" onClick={() => history.refetch()}>Retry</button></section>;
   const entries = history.data.pages.flatMap(page => page.entries);
   return <section className={PANEL}><h2 className="text-xl font-semibold">Test history</h2>
     <p className="mt-2 text-sm text-[#68746d]">Dispatched test suites and standalone routine runs, newest first.</p>

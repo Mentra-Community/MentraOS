@@ -231,6 +231,16 @@ test("history distinguishes empty data and cached refresh failures while keeping
   expect(scoped).toContain("dev.577");
 });
 
+test("initial history failure offers retry instead of claiming empty history", () => {
+  const client = new QueryClient();
+  client.getQueryCache().build(client, {queryKey: ["test-history"]}).setState({error: new Error("Request timed out. Please try again."), status: "error", fetchStatus: "idle"});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage/></QueryClientProvider>);
+  expect(html).toContain("Could not load test history: Request timed out. Please try again.");
+  expect(html).toContain(">Retry</button>");
+  expect(html).not.toContain("Loading test history");
+  expect(html).not.toContain("No test suites or routine runs yet");
+});
+
 test("unavailable history details retain their links without hiding neighboring results", () => {
   const client = new QueryClient();
   client.setQueryData(["test-history"], {pages: [{entries: [historyRun,
