@@ -359,6 +359,135 @@ describe("SonioxProvider session configuration", () => {
 });
 
 describe("SonioxProvider utterance lifecycle", () => {
+  test("endpoint character overlap keeps token timing without losing interim/final text", async () => {
+    const {session, provider, events} = await makeProvider();
+    try {
+      provider.writeAudio(new Int16Array(480), {sessionTag: 1, offsetMs: 0});
+      session.result([{text: "Hello wonderful world", confidence: 1, is_final: false, start_ms: 0, end_ms: 10}]);
+      session.endpoint();
+      session.result([{text: "wonderful world again", confidence: 1, is_final: false, start_ms: 10, end_ms: 20}]);
+      const interim = events.at(-1)!;
+      expect(interim.text).toBe("Hello wonderful world again");
+      expect(interim.tokens?.map((t) => t.text).join("")).toBe(interim.text);
+      expect(interim.tokens?.at(-1)?.audioPosition).toEqual({sessionTag: 1, offsetMs: 10});
+      session.emit("finalized");
+      expect(events.at(-1)?.tokens?.map((t) => t.text).join("")).toBe("Hello wonderful world again");
+    } finally {await provider.close()}
+  });
+  test("timing survives repeated/compacted windows, endpoint merge and mapping pruning", async () => {
+    const {session, events, provider} = await makeProvider();
+    const word = (text: string, start_ms: number): FakeToken => ({
+      text, start_ms, end_ms: start_ms + 10, confidence: 1, is_final: true,
+    });
+    try {
+      provider.writeAudio(new Int16Array(320), {sessionTag: 1, offsetMs: 100});
+      provider.writeAudio(new Int16Array(320), {sessionTag: 1, offsetMs: 120});
+      const before = word("BEFORE ", 0), after = word("AFTER", 10), more = word(" MORE", 20);
+      session.emit("result", {tokens: [before, after], final_audio_proc_ms: 20});
+      session.endpoint();
+      session.result([before, after, more]);
+      session.result([more]);
+      session.emit("finalized");
+      const final = events.at(-1)!;
+      expect(final.text).toBe("BEFORE AFTER MORE");
+      expect(final.tokens?.map((t) => t.text)).toEqual(["BEFORE ", "AFTER", " MORE"]);
+      expect(final.tokens?.map((t) => t.audioPosition)).toEqual([
+        {sessionTag: 1, offsetMs: 100}, {sessionTag: 1, offsetMs: 110}, {sessionTag: 1, offsetMs: 120},
+      ]);
+      expect(events.filter((event) => event.isFinal)).toHaveLength(1);
+    } finally {await provider.close()}
+  });
+
+  test("provider replacement restarts its sample clock without reusing old frame positions", async () => {
+    const {client, sessions} = multiSessionClient();
+    const events: TranscriptEvent[] = [];
+    const provider = await createSonioxProvider({scope: "timed-heal", language: "auto", client: client as never, onTranscript: (event) => events.push(event)});
+    const timed = (text: string): FakeToken => ({text, confidence: 1, is_final: true, start_ms: 0, end_ms: 10});
+    try {
+      provider.writeAudio(new Int16Array(160), {sessionTag: 1, offsetMs: 10});
+      sessions[0]!.result([timed("BEFORE ")]);
+      sessions[0]!.disconnect();
+      await wait(50);
+      provider.writeAudio(new Int16Array(160), {sessionTag: 1, offsetMs: 100});
+      sessions[1]!.result([timed("AFTER")]);
+      expect(events.at(-1)?.text).toBe("BEFORE AFTER");
+      expect(events.at(-1)?.tokens?.map((t) => t.audioPosition?.offsetMs)).toEqual([10, 100]);
+    } finally {await provider.close()}
+  });
+
+  test("retains timed confirmed tokens and replaces interims through the final", async () => {
+    const session = new FakeSession();
+    const events: TranscriptEvent[] = [];
+    const provider = await createSonioxProvider({
+      scope: "timing",
+      language: "auto",
+      client: fakeClient(session),
+      onTranscript: (event) => events.push(event),
+    });
+    try {
+      provider.writeAudio(new Int16Array(160), { sessionTag: 1, offsetMs: 0 });
+      provider.writeAudio(new Int16Array(320), { sessionTag: 1, offsetMs: 20 });
+      const before = {
+        text: "BEFORE ",
+        is_final: true,
+        confidence: 1,
+        start_ms: 0,
+        end_ms: 10,
+      };
+      session.result([
+        before,
+        {
+          text: "guess",
+          is_final: false,
+          confidence: 1,
+          start_ms: 10,
+          end_ms: 20,
+        },
+      ]);
+      session.result([
+        {
+          text: "AFTER",
+          is_final: true,
+          confidence: 1,
+          start_ms: 10,
+          end_ms: 20,
+        },
+      ]);
+      expect(events.at(-1)?.text).toBe("BEFORE AFTER");
+      expect(
+        events.at(-1)?.tokens?.map((token) => token.audioPosition),
+      ).toEqual([
+        { sessionTag: 1, offsetMs: 0 },
+        { sessionTag: 1, offsetMs: 20 },
+      ]);
+      session.emit("finalized");
+      expect(events.at(-1)?.isFinal).toBe(true);
+      expect(events.at(-1)?.tokens?.map((token) => token.text)).toEqual([
+        "BEFORE ",
+        "AFTER",
+      ]);
+      expect(events.at(-1)?.tokens?.every((token) => token.isFinal)).toBe(true);
+      expect(events.at(-1)?.frameTimelineVersion).toBe(1);
+    } finally {
+      await provider.close();
+    }
+  });
+  test("missing token timing retains the negotiated occurrence capability through its final", async () => {
+    const {session, provider, events} = await makeProvider();
+    try {
+      provider.writeAudio(new Int16Array(160), {sessionTag: 1, offsetMs: 0});
+      session.result([{text: "unknown", confidence: 1, is_final: false}]);
+      expect(events.at(-1)?.frameTimelineVersion).toBe(1);
+      expect(events.at(-1)?.tokens).toEqual([]);
+      session.endpoint();
+      // A legacy frame arriving while the prior final is pending does not
+      // change that positioned occurrence's missing-timing policy.
+      provider.writeAudio(new Int16Array(160));
+      session.emit("finalized");
+      expect(events.at(-1)?.frameTimelineVersion).toBe(1);
+      expect(events.at(-1)?.tokens).toEqual([]);
+    } finally {await provider.close()}
+  });
   test("does not churn finals/utteranceIds when the rolling window's speaker flips mid-utterance", async () => {
     const { session, events, provider } = await makeProvider();
 
@@ -587,7 +716,7 @@ describe("SonioxProvider audio-gap pause/resume", () => {
     await withFastGapConfig(async () => {
       const { session, provider } = await makeProvider();
 
-      await wait(80);
+    await wait(80);
 
       expect(session.pauseCount).toBe(1);
 
@@ -727,6 +856,6 @@ describe("SonioxProvider self-heal reconnect", () => {
     expect(first.sendAudioCount).toBe(beforeSends);
 
     await wait(50);
-    await provider.close();
+      await provider.close();
+    });
   });
-});

@@ -124,6 +124,8 @@ export interface ConnectAckPayload {
 }
 
 export interface HostFeatures {
+  /** @internal Runtime projects transcription independently for each listener. */
+  transcriptionListeners?: boolean
   /** Host honors `startStream({captureAudio})` for the lifetime of a WHIP session. */
   captureAudio?: boolean
   /** Host keeps the UI closed until a background session that announced it sends READY. */
@@ -808,6 +810,7 @@ export class MiniappSession<TChannels extends object = any> {
           streamType,
           payload.data,
           payload.transcriptionRoute as TranscriptionEventRoute | undefined,
+          payload.listenerId as string | undefined,
         )
         return
       }

@@ -17,9 +17,9 @@
  * modules are the canonical surface.
  *
  * Internally, EventManager owns:
- *   1. The ref-count map. Outbound SUBSCRIBE is only sent when a stream's
- *      ref count transitions 0↔1, so multiple components listening for the
- *      same stream issue one wire-level subscribe.
+ *   1. The ref-count map deduplicates upstream stream demand. Transcription
+ *      updates also carry private listener identities, so the runtime can
+ *      preserve a separate content boundary for each handler.
  *   2. Inbound event fan-out via `_forwardEvent(streamType, data)`, called
  *      by MiniappSession.handleIncoming when an EVENT envelope arrives.
  *
@@ -30,6 +30,7 @@
 
 import {EventEmitter} from "eventemitter3"
 
+import {makeRequestId} from "../envelope"
 import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 
@@ -168,6 +169,13 @@ export interface AudioChunkData {
 // ---------------------------------------------------------------------------
 
 export class EventManager {
+  private readonly listenerScope = makeRequestId()
+  private listenerSeq = 0
+  private transcriptionListeners = new Map<
+    string,
+    {stream: string; forceLocal: boolean; invoke: (data: unknown, route?: TranscriptionEventRoute) => void}
+  >()
+  private retireListeners = new Set<() => void>()
   private readonly emitter = new EventEmitter()
   /** Stream -> ref count. Outbound SUBSCRIBE tracks active streams and routing changes. */
   private readonly refCounts = new Map<string, number>()
@@ -191,7 +199,11 @@ export class EventManager {
   subscribe(stream: string, handler: (data: unknown) => void, options: {forceLocal?: boolean} = {}): UnsubscribeFn {
     const isInternal = stream.startsWith("_")
     const forceLocal = options.forceLocal === true && stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)
+    const isTranscription = stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)
+    const listenerId = isTranscription ? `${this.listenerScope}:${++this.listenerSeq}` : undefined
+    let active = true
     const listener = (data: unknown, route?: TranscriptionEventRoute) => {
+      if (!active) return
       if (stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)) {
         // Hosts that predate routed transcription events omit `route`. Treat
         // those events as the default/cloud path so a forceLocal listener can
@@ -201,17 +213,31 @@ export class EventManager {
       handler(data)
     }
     this.emitter.on(stream, listener)
+    const retire = () => {
+      active = false
+    }
+    this.retireListeners.add(retire)
+    if (listenerId) this.transcriptionListeners.set(listenerId, {stream, forceLocal, invoke: listener})
     if (!isInternal) {
       const before = this.refCounts.get(stream) ?? 0
       this.refCounts.set(stream, before + 1)
       const forceLocalBefore = this.forceLocalRefCounts.get(stream) ?? 0
       const defaultBefore = before - forceLocalBefore
       if (forceLocal) this.forceLocalRefCounts.set(stream, forceLocalBefore + 1)
-      if (before === 0 || (forceLocal && forceLocalBefore === 0) || (!forceLocal && defaultBefore === 0)) {
+      if (
+        isTranscription ||
+        before === 0 ||
+        (forceLocal && forceLocalBefore === 0) ||
+        (!forceLocal && defaultBefore === 0)
+      ) {
         this.sendSubscriptionUpdate()
       }
     }
     return () => {
+      if (!active) return
+      retire()
+      this.retireListeners.delete(retire)
+      if (listenerId) this.transcriptionListeners.delete(listenerId)
       this.emitter.off(stream, listener)
       if (isInternal) return
       const current = this.refCounts.get(stream) ?? 0
@@ -232,12 +258,15 @@ export class EventManager {
       } else if (current - forceLocalCurrent <= 1) {
         subscriptionChanged = true
       }
-      if (subscriptionChanged) this.sendSubscriptionUpdate()
+      if (isTranscription || subscriptionChanged) this.sendSubscriptionUpdate()
     }
   }
 
   /** Unsubscribe every handler on every stream this EventManager owns. */
   unsubscribeAll(): void {
+    for (const retire of this.retireListeners) retire()
+    this.retireListeners.clear()
+    this.transcriptionListeners.clear()
     this.emitter.removeAllListeners()
     this.refCounts.clear()
     this.forceLocalRefCounts.clear()
@@ -249,7 +278,18 @@ export class EventManager {
   // -------------------------------------------------------------------------
 
   /** @internal */
-  _forwardEvent(stream: string, data: unknown, transcriptionRoute?: TranscriptionEventRoute): void {
+  _forwardEvent(
+    stream: string,
+    data: unknown,
+    transcriptionRoute?: TranscriptionEventRoute,
+    listenerId?: string,
+  ): void {
+    if (listenerId !== undefined) {
+      const listener = this.transcriptionListeners.get(listenerId)
+      if (listener && (listener.stream === stream || listener.stream === "transcription:auto"))
+        listener.invoke(data, transcriptionRoute)
+      return
+    }
     this.emitter.emit(stream, data, transcriptionRoute)
 
     // Wildcard fan-out: handlers register under wildcard patterns
@@ -294,6 +334,11 @@ export class EventManager {
     this.session.sendOneShot({
       type: MiniappRequestType.SUBSCRIBE,
       subscriptions,
+      transcriptionListeners: [...this.transcriptionListeners].map(([id, {stream, forceLocal}]) => ({
+        id,
+        stream,
+        forceLocal,
+      })),
     })
   }
 }

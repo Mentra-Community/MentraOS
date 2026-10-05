@@ -56,6 +56,13 @@ export type UdpLivenessAckPayload = z.infer<typeof udpLivenessAckPayloadSchema>;
 
 // --- Result types -----------------------------------------------------------
 
+/** Position on the phone's submitted audio stream, independent of provider latency. */
+export const audioPositionSchema = z.object({
+  sessionTag: z.number().int().nonnegative(),
+  offsetMs: z.number().nonnegative(),
+});
+export type AudioPosition = z.infer<typeof audioPositionSchema>;
+
 export const transcriptionTokenSchema = z.object({
   text: z.string(),
   startMs: z.number(),
@@ -65,6 +72,7 @@ export const transcriptionTokenSchema = z.object({
   speaker: z.string().optional(),
   // per-token; mid-sentence language switches are possible
   detectedLanguage: z.string().optional(),
+  audioPosition: audioPositionSchema.optional(),
 });
 export type TranscriptionToken = z.infer<typeof transcriptionTokenSchema>;
 
@@ -88,6 +96,9 @@ export const transcriptionDataSchema = z.object({
 
   // Per-token detail for consumers that need it
   tokens: z.array(transcriptionTokenSchema),
+  // Internal result capability: missing timing on a positioned session must
+  // be withheld, while an older/unnegotiated session keeps legacy delivery.
+  frameTimelineVersion: z.literal(1).optional(),
 
   provider: z.string(),
   timestamp: z.number(),
