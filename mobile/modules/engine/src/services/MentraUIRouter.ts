@@ -92,7 +92,7 @@ export class MentraUIRouter {
   private readonly crust: MentraUICrustBinding
   private readonly hostChannels: Map<string, MentraUIHostChannelHandler> = new Map()
   private readonly readyListeners = new Set<(packageName: string) => void>()
-  private readonly backgroundReadyListeners = new Set<(packageName: string) => void>()
+  private readonly uiReleasedListeners = new Set<(packageName: string) => void>()
 
   constructor(crust: MentraUICrustBinding) {
     this.crust = crust
@@ -114,16 +114,24 @@ export class MentraUIRouter {
     return () => this.readyListeners.delete(listener)
   }
 
-  /** Observe a background becoming ready for its UI; see {@link backgroundReady}. */
-  onBackgroundReady(listener: (packageName: string) => void): () => void {
-    this.backgroundReadyListeners.add(listener)
+  /**
+   * Observe the router releasing a UI it was holding: the background became
+   * ready, the host stopped waiting for it, or it stopped. The host splash
+   * stays up until then.
+   */
+  onUiReleased(listener: (packageName: string) => void): () => void {
+    this.uiReleasedListeners.add(listener)
     return () => {
-      this.backgroundReadyListeners.delete(listener)
+      this.uiReleasedListeners.delete(listener)
     }
   }
 
-  /** False while a spawned or restarting background has not reported ready, or after it stopped. */
-  isBackgroundReady(packageName: string): boolean {
+  /** True while a spawned or restarting background has not become ready. */
+  isUiHeld(packageName: string): boolean {
+    return this.notReady.has(packageName)
+  }
+
+  private isBackgroundReady(packageName: string): boolean {
     return !this.notReady.has(packageName) && !this.stopped.has(packageName)
   }
 
@@ -223,6 +231,8 @@ export class MentraUIRouter {
       }
     }
     this.pendingInput.delete(packageName)
+    // Nothing will become ready: show the UI so the user can see the failure and leave.
+    this.notifyUiReleased(packageName)
   }
 
   /**
@@ -240,11 +250,15 @@ export class MentraUIRouter {
     console.log(
       `MentraUIRouter: ${packageName} background ready; UI bound=${this.isBound(packageName)} held=${pending.length}`,
     )
-    for (const listener of [...this.backgroundReadyListeners]) {
+    this.notifyUiReleased(packageName)
+  }
+
+  private notifyUiReleased(packageName: string): void {
+    for (const listener of [...this.uiReleasedListeners]) {
       try {
         listener(packageName)
       } catch (error) {
-        console.warn("MentraUIRouter: background ready listener threw", error)
+        console.warn("MentraUIRouter: UI released listener threw", error)
       }
     }
   }

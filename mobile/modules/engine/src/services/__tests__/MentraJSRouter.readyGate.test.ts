@@ -156,10 +156,10 @@ test("UI requests sent before the init handler settles are answered, not rejecte
   page.mentra.on("history", (value) => pushed.push(value))
   page.mentra.ready()
   const history = page.mentra.request("history:get")
-  expect(ui.isBackgroundReady(PKG)).toBe(false)
+  expect(ui.isUiHeld(PKG)).toBe(true)
 
   expect(await history).toEqual(["hello"])
-  expect(ui.isBackgroundReady(PKG)).toBe(true)
+  expect(ui.isUiHeld(PKG)).toBe(false)
   // UI_OPEN is delivered after READY, so the late onOpen handler still runs.
   await settle(10)
   expect(pushed).toEqual([["pushed on open"]])
@@ -171,15 +171,15 @@ test("a background that predates READY is opened at CONNECT", async () => {
   const {router, ui, emitBridge} = makeRouters({initReady: true})
   router.registerApp(PKG)
   const opened: string[] = []
-  ui.onBackgroundReady((pkg) => opened.push(pkg))
-  expect(ui.isBackgroundReady(PKG)).toBe(false)
+  ui.onUiReleased((pkg) => opened.push(pkg))
+  expect(ui.isUiHeld(PKG)).toBe(true)
   emitBridge({type: "miniapp_connect", packageName: PKG})
   expect(opened).toEqual([PKG])
-  expect(ui.isBackgroundReady(PKG)).toBe(true)
+  expect(ui.isUiHeld(PKG)).toBe(false)
   router.stop()
 })
 
-test("a background that never reports READY is opened after the timeout", () => {
+test("a background that never reports READY is opened after the spawn deadline", () => {
   const {router, ui, emitBridge} = makeRouters({initReady: true})
   const realSetTimeout = globalThis.setTimeout
   const pending: Array<() => void> = []
@@ -195,13 +195,42 @@ test("a background that never reports READY is opened after the timeout", () => 
   try {
     router.registerApp(PKG)
     emitBridge({type: "miniapp_connect", packageName: PKG, initReady: true})
-    expect(ui.isBackgroundReady(PKG)).toBe(false)
+    expect(ui.isUiHeld(PKG)).toBe(true)
     expect(pending).toHaveLength(1)
     pending[0]!()
-    expect(ui.isBackgroundReady(PKG)).toBe(true)
+    expect(ui.isUiHeld(PKG)).toBe(false)
     // A late READY after the timeout has nothing left to open.
     emitBridge({type: "miniapp_ready"})
-    expect(ui.isBackgroundReady(PKG)).toBe(true)
+    expect(ui.isUiHeld(PKG)).toBe(false)
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+    console.warn = warn
+    router.stop()
+  }
+})
+
+test("a background that never connects is opened after the same spawn deadline", () => {
+  const {router, ui} = makeRouters({initReady: true})
+  const realSetTimeout = globalThis.setTimeout
+  const pending: Array<() => void> = []
+  globalThis.setTimeout = ((cb: () => void, ms?: number) => {
+    if (ms === BACKGROUND_READY_TIMEOUT_MS) {
+      pending.push(cb)
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    }
+    return realSetTimeout(cb, ms)
+  }) as typeof setTimeout
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    const released: string[] = []
+    ui.onUiReleased((pkg) => released.push(pkg))
+    router.registerApp(PKG)
+    expect(ui.isUiHeld(PKG)).toBe(true)
+    expect(pending).toHaveLength(1)
+    pending[0]!()
+    expect(ui.isUiHeld(PKG)).toBe(false)
+    expect(released).toEqual([PKG])
   } finally {
     globalThis.setTimeout = realSetTimeout
     console.warn = warn

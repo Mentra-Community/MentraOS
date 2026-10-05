@@ -92,8 +92,8 @@ const defaultLogger: RouterLogger = {
 }
 
 /**
- * How long a background that announced READY may take to settle its init
- * before the host opens its UI anyway. A hung handler must not brick the UI.
+ * How long a spawned background may take to connect and settle its init before
+ * the host opens its UI anyway. A hung or broken background must not brick it.
  */
 export const BACKGROUND_READY_TIMEOUT_MS = 10_000
 
@@ -107,7 +107,7 @@ export class MentraJSRouter {
   private subscription: EventSubscription | null = null
   private readonly registered: Set<string> = new Set()
   private readonly replacementConnects = new Set<string>()
-  /** Backgrounds that announced READY on CONNECT and have not sent it yet. */
+  /** Spawned backgrounds whose UI is still held, with their ready deadline. */
   private readonly readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Cached spawn arguments so the crash controller can respawn after a backoff. */
   private readonly spawnCache: Map<string, SpawnCache> = new Map()
@@ -210,8 +210,8 @@ export class MentraJSRouter {
     )
     this.registered.add(packageName)
     this.replacementConnects.add(packageName)
-    this.clearReadyTimer(packageName)
     this.uiRouter?.backgroundStarting(packageName)
+    this.armReadyDeadline(packageName)
     // JSContext is the source-of-truth for "miniapp running". The
     // home tile / tray reads this registry to project the `running`
     // flag — UI WebView open/close is separate.
@@ -448,8 +448,10 @@ export class MentraJSRouter {
       // after the fresh SDK transport exists.
       if (innerPayload?.type === "miniapp_connect") {
         this.logger.log(`CONNECT received for ${packageName}`, {uiBound: this.uiRouter?.isBound(packageName) ?? false})
-        if (this.replacementConnects.delete(packageName)) {
-          this.awaitBackgroundReady(packageName, innerPayload.initReady === true)
+        // SDKs that announce READY keep the UI held until their init settles;
+        // older ones are ready once connected.
+        if (this.replacementConnects.delete(packageName) && innerPayload.initReady !== true) {
+          this.markBackgroundReady(packageName, "connect")
         }
       } else if (innerPayload?.type === "miniapp_ready") {
         this.markBackgroundReady(packageName, "ready")
@@ -549,29 +551,22 @@ export class MentraJSRouter {
    * payload's `type` field. Used by the UI_SEND interception path.
    * Returns null if the envelope isn't a valid bridge frame.
    */
-  /**
-   * SDKs that announce READY on CONNECT keep their UI closed until their init
-   * handler settles; older ones are ready once connected.
-   */
-  private awaitBackgroundReady(packageName: string, announcesReady: boolean): void {
-    if (!announcesReady) {
-      this.markBackgroundReady(packageName, "connect")
-      return
-    }
+  /** One deadline per spawn covers a background that never connects and an init that never settles. */
+  private armReadyDeadline(packageName: string): void {
     this.clearReadyTimer(packageName)
     this.readyTimers.set(
       packageName,
       setTimeout(() => {
         this.readyTimers.delete(packageName)
-        this.logger.warn(`${packageName} did not report READY within ${BACKGROUND_READY_TIMEOUT_MS}ms; opening UI`)
+        this.logger.warn(`${packageName} not ready ${BACKGROUND_READY_TIMEOUT_MS}ms after spawn; opening UI`)
         this.uiRouter?.backgroundReady(packageName)
       }, BACKGROUND_READY_TIMEOUT_MS),
     )
   }
 
   private markBackgroundReady(packageName: string, cause: "connect" | "ready"): void {
-    // A READY after the timeout fired (or a duplicate) has nothing left to open.
-    if (cause === "ready" && !this.readyTimers.has(packageName)) return
+    // After the deadline fired (or a duplicate READY) there is nothing left to open.
+    if (!this.readyTimers.has(packageName)) return
     this.clearReadyTimer(packageName)
     this.logger.log(`background ready for ${packageName}`, {cause})
     this.uiRouter?.backgroundReady(packageName)
