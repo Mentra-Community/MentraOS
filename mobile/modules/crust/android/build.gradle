@@ -1,5 +1,24 @@
 apply plugin: 'com.android.library'
 
+// Resolve alpha13 only as a build input. Embed its Kotlin classes as a local
+// JAR so its obsolete JNI libraries never reach a consuming app transitively.
+configurations {
+  quickJsKotlinAar {
+    canBeConsumed = false
+    canBeResolved = true
+    transitive = false
+    attributes.attribute(org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE,
+      objects.named(org.gradle.api.attributes.Usage, org.gradle.api.attributes.Usage.JAVA_RUNTIME))
+  }
+}
+def extractQuickJsClasses = tasks.register('extractQuickJsClasses', Sync) {
+  from({ zipTree(configurations.quickJsKotlinAar.singleFile) }) {
+    include 'classes.jar'
+    rename 'classes.jar', 'quickjs-alpha13.jar'
+  }
+  into layout.buildDirectory.dir('quickjs-kotlin')
+}
+
 group = 'com.mentra.crust'
 version = '0.1.0'
 
@@ -50,6 +69,17 @@ android {
     versionCode 1
     versionName "0.1.0"
     multiDexEnabled true
+    // Preserve alpha13's JNI class names when consuming apps enable R8.
+    consumerProguardFiles 'quickjs-consumer-rules.pro'
+    externalNativeBuild {
+      cmake { arguments '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON' }
+    }
+  }
+  externalNativeBuild {
+    cmake {
+      path 'src/main/cpp/quickjs/CMakeLists.txt'
+      version '3.22.1'
+    }
   }
   // Pull the MentraJS polyfill bundle from the sibling @mentra/jspolyfill
   // module's `assets/` directory — single committed source of truth. The
@@ -131,7 +161,8 @@ dependencies {
   // the last release compiled with Kotlin 2.0 (metadata 2.0.0) — its API
   // (`QuickJs.create`, `evaluate`, `function` extension) matches 1.0.5 1:1.
   // Bump only when the host Kotlin compiler clears 2.3.0 metadata.
-  implementation 'io.github.dokar3:quickjs-kt-android:1.0.0-alpha13'
+  quickJsKotlinAar 'io.github.dokar3:quickjs-kt-android:1.0.0-alpha13'
+  implementation files(layout.buildDirectory.file('quickjs-kotlin/quickjs-alpha13.jar')).builtBy(extractQuickJsClasses)
 
   // OkHttp for fetch / WebSocket — already used elsewhere in MentraOS;
   // pinned here so the gradle plugin doesn't downgrade us.

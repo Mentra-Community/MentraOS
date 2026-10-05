@@ -4,6 +4,7 @@ import {afterEach, beforeEach, describe, expect, test, jest} from "bun:test"
 
 import type localMiniappRuntime from "../LocalMiniappRuntime"
 import {MentraJSRouter, type MentraJSCrustBinding} from "../MentraJSRouter"
+import {MentraUIRouter} from "../MentraUIRouter"
 
 type LocalMiniappRuntime = typeof localMiniappRuntime
 
@@ -467,6 +468,36 @@ describe("MentraJSRouter", () => {
       packageName: "com.foo",
       envelope: {kind: "init"},
     })
+  })
+
+  test("recovery immediately reopens mounted UI after init", async () => {
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    router.crashController = new MentraJSCrashController({backoffMs: [1], maxRetries: 3})
+    router.uiRouter = new MentraUIRouter(crust.binding)
+    router.uiRouter.bindWebView("com.foo", () => {})
+    router.start()
+    await router.spawnAndRegister("com.foo", "/* miniapp */")
+    crust.dispatchCalls.length = 0
+    ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (p: string) => void}).onLivenessTimeout("com.foo")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(crust.dispatchCalls[0]?.envelope.kind).toBe("init")
+    const reopen = crust.dispatchCalls.filter((call) => call.envelope.kind === "bridge")
+    expect(reopen).toHaveLength(1)
+    expect(JSON.parse(reopen[0]!.envelope.raw as string)).toMatchObject({
+      payload: {streamType: "_ui", data: {type: "UI_OPEN"}},
+    })
+  })
+
+  test("recovery does not announce an unmounted UI", async () => {
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    router.crashController = new MentraJSCrashController({backoffMs: [1], maxRetries: 3})
+    router.uiRouter = new MentraUIRouter(crust.binding)
+    router.start()
+    await router.spawnAndRegister("com.foo", "/* miniapp */")
+    crust.dispatchCalls.length = 0
+    ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (p: string) => void}).onLivenessTimeout("com.foo")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(crust.dispatchCalls.map((call) => call.envelope.kind)).toEqual(["init"])
   })
 
   test("listener throwing does not poison subsequent events", () => {
