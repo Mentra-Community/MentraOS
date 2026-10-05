@@ -23,6 +23,7 @@ export const publishedRoutineDefinitionSchema = z.object({
   setup: z.array(action).max(500).optional(),
   steps: z.array(action).min(1).max(500),
   teardown: z.array(action).max(500).optional(),
+  privateEvidenceIntervals: z.array(z.object({startStepId: id, endStepId: id, reason: text}).strict()).max(30).optional(),
   execution: z.object({resourceKinds: z.array(z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"])).min(1),
     policy: z.record(z.unknown()).optional()}).strict().optional(),
   source: z.object({repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
@@ -31,6 +32,14 @@ export const publishedRoutineDefinitionSchema = z.object({
   const actions = [...(definition.setup ?? []), ...definition.steps, ...(definition.teardown ?? [])];
   if (new Set(actions.map(action => action.id)).size !== actions.length)
     ctx.addIssue({code: "custom", message: "Setup, test and teardown action identities must be unique"});
+  let previousEnd = -1;
+  for (const interval of definition.privateEvidenceIntervals ?? []) {
+    const start = definition.steps.findIndex(step => step.id === interval.startStepId);
+    const end = definition.steps.findIndex(step => step.id === interval.endStepId);
+    if (start < 0 || end < start || start <= previousEnd)
+      ctx.addIssue({code: "custom", message: "Private evidence intervals require ordered, nonoverlapping product-step boundaries"});
+    previousEnd = end;
+  }
   if (new Set(definition.platforms).size !== definition.platforms.length)
     ctx.addIssue({code: "custom", message: "Platforms must be unique"});
   if (definition.entry === "home" && definition.account !== "lane")
