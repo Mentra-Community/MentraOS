@@ -23,6 +23,7 @@ import {createLogger} from "@mentra/cloud-shared"
 import {roleAtLeast, type WorkspaceRole} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
+import {AccessCredentialModel} from "../../models/access-credential.model"
 import {IdentityLinkModel, type IdentityLinkMethod} from "../../models/identity-link.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
@@ -131,6 +132,10 @@ async function claimPendingIfAny(workosUserId: string, mentraUserId: string): Pr
  * audited instead and the membership the user already held survives. If the
  * pending row carried the higher role, the surviving row is raised to it, so
  * merging never takes access away (and a workspace never loses its owner).
+ * Credentials the ended row created are repointed to the surviving row in the
+ * same transaction: a credential is only valid while its creator's membership is
+ * active, so without this a migrated key would die the moment its creator signed
+ * in with a second membership already in hand.
  */
 async function claimPendingMemberships(
   session: ClientSession,
@@ -176,6 +181,7 @@ async function claimPendingMemberships(
       {$set: {status: "ended", endedAt: now, endedReason: "removed"}},
       {session},
     )
+    const repointedCredentialIds = await repointCredentials(session, duplicate, kept.membershipId)
     await recordWorkspaceEvent(session, {
       organizationId: duplicate.organizationId,
       workspaceId: duplicate.workspaceId,
@@ -196,6 +202,7 @@ async function claimPendingMemberships(
         endedReason: "removed",
         keptMembershipId: kept.membershipId,
         resultingRole,
+        repointedCredentialIds,
       },
     })
   }
@@ -206,6 +213,34 @@ async function claimPendingMemberships(
     {$set: {mentraUserId, pendingWorkosUserId: null}},
     {session},
   )
+}
+
+/**
+ * Move the live credentials created by an ended duplicate to the membership that
+ * survived the merge, returning their ids. Revoked ones stay as history.
+ */
+async function repointCredentials(
+  session: ClientSession,
+  duplicate: {membershipId: string; workspaceId: string},
+  keptMembershipId: string,
+): Promise<string[]> {
+  const credentials = await AccessCredentialModel.find({
+    workspaceId: duplicate.workspaceId,
+    createdByMembershipId: duplicate.membershipId,
+    revokedAt: null,
+  })
+    .select({_id: 0, credentialId: 1})
+    .session(session)
+    .lean()
+  const credentialIds = credentials.map(credential => credential.credentialId)
+  if (credentialIds.length > 0) {
+    await AccessCredentialModel.updateMany(
+      {credentialId: {$in: credentialIds}},
+      {$set: {createdByMembershipId: keptMembershipId}},
+      {session},
+    )
+  }
+  return credentialIds
 }
 
 function isDuplicateKeyError(err: unknown): boolean {

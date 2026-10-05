@@ -444,9 +444,9 @@ export async function recoverOwnership(
 }
 
 // --- Helpers ---------------------------------------------------------------
-// The exported ones (`isId`, `isWorkspaceRole`, `loadActiveWorkspace`,
-// `requireMembershipManager`, `bumpRevision`, `auditActor`) are shared with
-// `invitation.service`, which follows the same mutation shape.
+// The exported ones (`isId`, `isWorkspaceRole`, `validateName`, `loadActiveWorkspace`, `actingRole`,
+// `requireMembershipManager`, `bumpRevision`, `auditActor`) are shared with `invitation.service` and
+// `credential.service`, which follow the same mutation shape.
 
 function toSummary(
   row: Pick<WorkspaceRow, "organizationId" | "workspaceId" | "name" | "status" | "authorizationRevision">,
@@ -468,7 +468,7 @@ export function isWorkspaceRole(value: unknown): value is WorkspaceRole {
   return typeof value === "string" && (WORKSPACE_ROLES as readonly string[]).includes(value)
 }
 
-function validateName(name: unknown): string {
+export function validateName(name: unknown): string {
   const trimmed = typeof name === "string" ? name.trim() : ""
   if (trimmed.length < 1 || trimmed.length > NAME_MAX_LENGTH) {
     fail("invalid_request", `name must be 1-${NAME_MAX_LENGTH} characters`)
@@ -513,7 +513,7 @@ function assertRevision(workspace: WorkspaceRow, expectedRevision: number): void
  * system act as `owner` anywhere; a user otherwise has their membership's role;
  * service actors and non-members have none.
  */
-async function actingRole(
+export async function actingRole(
   session: ClientSession | null,
   actor: Actor,
   workspaceId: string,

@@ -17,19 +17,24 @@
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27031 bun test tests/identity-links.integration.test.ts`
  */
 
+import {createHash, randomBytes} from "node:crypto"
+
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test} from "bun:test"
 
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
+import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {IdentityLinkModel} from "../packages/core/src/models/identity-link.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
+import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
 import {resolveWorkosUser, type WorkosIdentity} from "../packages/core/src/services/workspaces/identity-link.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 
 const MODELS = [
+  AccessCredentialModel,
   IdentityLinkModel,
   UserModel,
   WorkspaceAuditCounterModel,
@@ -116,6 +121,29 @@ async function seedMembership(fields: Record<string, unknown>) {
     startedAt: new Date("2026-01-01T00:00:00Z"),
     ...fields,
   })
+}
+
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+/** A credential id in ULID form (26 Crockford base32 characters). */
+const ulid = () => Array.from(randomBytes(26), byte => CROCKFORD[byte % 32]).join("")
+
+/** A migrated workspace key created by `membershipId`, returned with its bearer token. */
+async function seedCredential(fields: {workspaceId: string; createdByMembershipId: string; revokedAt?: Date | null}) {
+  const credentialId = ulid()
+  const secret = "S".repeat(43)
+  await AccessCredentialModel.create({
+    credentialId,
+    prefix: "msk",
+    credentialKind: "workspace",
+    organizationId: "local",
+    name: "migrated key",
+    env: "local",
+    hash: createHash("sha256").update(secret).digest("hex"),
+    last4: secret.slice(-4),
+    scopes: ["miniapps.publish"],
+    ...fields,
+  })
+  return {credentialId, token: `msk_local_${credentialId}.${secret}`}
 }
 
 beforeAll(async () => {
@@ -503,6 +531,104 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
     })
     expect(events[0]!.eventId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/)
     expect(events[0]!.occurredAt).toBeInstanceOf(Date)
+  })
+
+  test("a duplicate's keys are repointed to the surviving membership, so migrated keys stay valid", async () => {
+    directoryUsers = [{id: "gotrue-gina", email: "gina@example.test", confirmed: true}]
+    await UserModel.create({mentraUserId: "mu_gina", tenantId: "mentra", tenantUserId: "gotrue-gina"})
+    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    const held = await seedMembership({workspaceId: "ws_1", mentraUserId: "mu_gina", role: "developer"})
+    const duplicate = await seedMembership({
+      workspaceId: "ws_1",
+      pendingWorkosUserId: "user_workos_1",
+      role: "developer",
+      organizationId: "acme",
+    })
+    const other = await seedMembership({
+      workspaceId: "ws_1",
+      pendingWorkosUserId: "user_workos_other",
+      role: "developer",
+    })
+    const migrated = await seedCredential({workspaceId: "ws_1", createdByMembershipId: duplicate.membershipId})
+    const alsoMigrated = await seedCredential({workspaceId: "ws_1", createdByMembershipId: duplicate.membershipId})
+    const revoked = await seedCredential({
+      workspaceId: "ws_1",
+      createdByMembershipId: duplicate.membershipId,
+      revokedAt: new Date("2026-02-01T00:00:00Z"),
+    })
+    const someoneElses = await seedCredential({workspaceId: "ws_1", createdByMembershipId: other.membershipId})
+    // Valid while the creator is still a pending membership.
+    expect(await validateCredentialToken(migrated.token)).not.toBeNull()
+
+    await resolveWorkosUser(identity({email: "gina@example.test"}))
+
+    // The pending row ended, yet the keys still validate: they now point at the surviving row.
+    expect(await WorkspaceMembershipModel.findOne({membershipId: duplicate.membershipId}).lean()).toMatchObject({
+      status: "ended",
+    })
+    for (const key of [migrated, alsoMigrated]) {
+      expect(await AccessCredentialModel.findOne({credentialId: key.credentialId}).lean()).toMatchObject({
+        createdByMembershipId: held.membershipId,
+        revokedAt: null,
+      })
+      expect(await validateCredentialToken(key.token)).toMatchObject({
+        credentialId: key.credentialId,
+        workspaceId: "ws_1",
+        scopes: ["miniapps.publish"],
+      })
+    }
+    // Revoked keys stay as they were, and other people's keys are untouched.
+    expect(await AccessCredentialModel.findOne({credentialId: revoked.credentialId}).lean()).toMatchObject({
+      createdByMembershipId: duplicate.membershipId,
+    })
+    expect(await AccessCredentialModel.findOne({credentialId: someoneElses.credentialId}).lean()).toMatchObject({
+      createdByMembershipId: other.membershipId,
+    })
+    expect(await validateCredentialToken(someoneElses.token)).not.toBeNull()
+
+    const [event] = await WorkspaceAuditEventModel.find({action: "membership.merged_duplicate"}).lean()
+    expect(event!.after.keptMembershipId).toBe(held.membershipId)
+    expect([...event!.after.repointedCredentialIds].sort()).toEqual(
+      [migrated.credentialId, alsoMigrated.credentialId].sort(),
+    )
+  })
+
+  test("a key created by a pending membership that is simply claimed keeps validating", async () => {
+    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    const pending = await seedMembership({workspaceId: "ws_1", pendingWorkosUserId: "user_workos_1", role: "developer"})
+    const key = await seedCredential({workspaceId: "ws_1", createdByMembershipId: pending.membershipId})
+    expect(await validateCredentialToken(key.token)).not.toBeNull()
+
+    const {mentraUserId} = await resolveWorkosUser(identity())
+
+    // No duplicate: the row is claimed in place, so the key's membership id is unchanged and still active.
+    expect(await WorkspaceMembershipModel.findOne({membershipId: pending.membershipId}).lean()).toMatchObject({
+      mentraUserId,
+      status: "active",
+    })
+    expect(await AccessCredentialModel.findOne({credentialId: key.credentialId}).lean()).toMatchObject({
+      createdByMembershipId: pending.membershipId,
+    })
+    expect(await validateCredentialToken(key.token)).not.toBeNull()
+  })
+
+  test("a repointed key follows the surviving membership's role", async () => {
+    const first = await resolveWorkosUser(identity())
+    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    // The held row is only a member, but the pending row (and its key) belonged to a developer.
+    await seedMembership({workspaceId: "ws_1", mentraUserId: first.mentraUserId, role: "member"})
+    const duplicate = await seedMembership({
+      workspaceId: "ws_1",
+      pendingWorkosUserId: "user_workos_1",
+      role: "developer",
+      organizationId: "acme",
+    })
+    const key = await seedCredential({workspaceId: "ws_1", createdByMembershipId: duplicate.membershipId})
+
+    await resolveWorkosUser(identity())
+
+    // The merge raised the surviving row to developer, so the key keeps publishing.
+    expect(await validateCredentialToken(key.token)).toMatchObject({scopes: ["miniapps.publish"]})
   })
 
   test("a duplicate never drops a higher role: pending owner over a held member leaves an owner", async () => {
