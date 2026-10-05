@@ -5,6 +5,15 @@ import {frameworkIdentitySchema} from "./types/framework-request.types";
 export const CORE_REQUEST_BODY_BYTES = 2 * 1024 * 1024 * 1024;
 export const CORE_ORDINARY_BODY_BYTES = 128 * 1024 * 1024;
 
+/** Keep dependencies alive until admitted HTTP requests finish, even on repeated signals. */
+export function createCoreStop(server: {stop(): Promise<void>}, disconnect: () => Promise<void>): () => Promise<void> {
+  let stopping: Promise<void> | undefined;
+  return () => stopping ??= (async () => {
+    await server.stop();
+    await disconnect();
+  })();
+}
+
 function isFrameworkAssetUpload(request: Request): boolean {
   if (request.method !== "PUT") return false;
   const match = new URL(request.url).pathname.match(/^\/api\/internal\/framework-results\/([^/]+)\/assets\/([^/]+)$/);

@@ -20,7 +20,7 @@ import {createLogger} from "@mentra/cloud-shared"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
-import {serveCore} from "./http-server"
+import {createCoreStop, serveCore} from "./http-server"
 
 const logger = createLogger("core")
 
@@ -63,10 +63,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   return {
     port: boundPort,
     url: `http://localhost:${boundPort}`,
-    async stop() {
-      server.stop()
-      await disconnectMongo()
-    },
+    stop: createCoreStop(server, disconnectMongo),
   }
 }
 

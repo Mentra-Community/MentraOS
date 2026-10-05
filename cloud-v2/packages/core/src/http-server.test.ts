@@ -1,8 +1,33 @@
 import {expect, test} from "bun:test";
 import {Hono} from "hono";
-import {CORE_ORDINARY_BODY_BYTES, serveCore} from "./http-server";
+import {CORE_ORDINARY_BODY_BYTES, createCoreStop, serveCore} from "./http-server";
 import {createFrameworkResultsApi} from "./api/internal/framework-results.api";
 import {FrameworkResultService} from "./services/framework-result.service";
+
+test("Core shutdown drains an admitted publication before disconnecting Mongo, once across repeated signals", async () => {
+  let enter!: () => void, finish!: () => void, disconnected = false, disconnects = 0;
+  const entered = new Promise<void>(resolve => enter = resolve);
+  const finished = new Promise<void>(resolve => finish = resolve);
+  const server = serveCore(async () => {
+    enter();
+    await finished;
+    expect(disconnected).toBe(false);
+    return new Response("published");
+  }, 0);
+  const stop = createCoreStop(server, async () => {disconnected = true; disconnects++;});
+  const publication = fetch(`http://127.0.0.1:${server.port}/publication`);
+  await entered;
+  const first = stop(), second = stop();
+  try {
+    expect(first).toBe(second);
+    await Bun.sleep(20);
+    expect(disconnected).toBe(false);
+    finish();
+    expect(await (await publication).text()).toBe("published");
+    await first;
+    expect(disconnects).toBe(1);
+  } finally {finish(); await server.stop(true);}
+});
 
 test("Core listener streams recordings above 128 MiB while retaining the JSON limit", async () => {
   const size = 129 * 1024 * 1024;
