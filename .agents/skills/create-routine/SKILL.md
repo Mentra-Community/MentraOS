@@ -87,6 +87,11 @@ reloading existing product steps. Changing step IDs/order, lifecycle callbacks o
 metadata requires finishing the session first. Shared helper/native changes require
 the updated installed revision and a fresh session. Fix a broken app control rather
 than accumulating alternate input or focus algorithms.
+Prepare and compile changed shared source off hardware while other work uses the
+lanes. Once affected owners release, activate one frozen candidate; local iteration
+may use reviewed source before merge while retaining the PR's review/CI merge gates.
+Request authoring reservations before waiting for the current run to finish, so
+the next queued job does not repeatedly displace ready authoring work.
 For UI transitions, verify the departing overlay disappears as well as the
 new page appears. Home controls can remain visible behind a miniapp. Use bounded
 postcondition observation; an acknowledged click is not a completed transition.
@@ -167,7 +172,15 @@ Completion needs passing assertions, teardown, acknowledged evidence and working
 recording/step seeking. A composite fixture must preserve evidence errors returned
 by its shared providers even when their physical cleanup succeeded. Bound the
 whole recorded observation to its declared timeout; polling must not consume a
-bounded event journal by writing a marker on every read. The coordinator owns deployed Admin/playback verification.
+bounded event journal by writing a marker on every read. Do lengthy external fixture
+preparation before entering the browser observation deadline, retaining its declared
+app/resource operation budget. A preparation refusal before input can use the
+existing original-owner settlement API only when it proves zero dispatch and
+unchanged idle state; unknown or answered inputs remain retained.
+Settle active media before changing its route. After media is settled, attempt
+independent cleanup of browser evidence, clipboard, receiver and network resources
+even if one fails; preserve the first error and subsequent failures. The coordinator
+owns deployed Admin/playback verification.
 Report exact source/build/platform, result URL, recording and timings. Do not add
 repeated qualification runs without changed code or unresolved failures.
 `run retry-publication` retries delivery without hardware replay. Dispose owned local
