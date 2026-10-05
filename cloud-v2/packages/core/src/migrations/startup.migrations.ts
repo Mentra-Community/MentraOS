@@ -18,7 +18,6 @@ import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {RoutinePreferenceModel} from "../models/routine-preference.model";
 import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
 import { reconcileTestRunIndexes, TestAssetModel, TestRunModel } from "../models/test-run.model";
-import {backfillFrameworkRunSummaries} from "../services/framework-run-summary.service";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
@@ -61,7 +60,6 @@ export async function runStartupMigrations(): Promise<void> {
   await RoutinePreferenceModel.createIndexes();
   await reconcileTestRunIndexes();
   await TestRunModel.createIndexes();
-  await backfillFrameworkRunSummaries();
   await backfillTestSuiteStartedAt();
   await TestSuiteModel.createIndexes();
   await TestAssetModel.createIndexes();

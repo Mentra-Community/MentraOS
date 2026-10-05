@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import {TestRunModel} from "../models/test-run.model";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunSchema} from "../types/framework-run.types";
-import {backfillFrameworkRunSummaries, createFrameworkRunSummaryProjection, readFrameworkRunSummary, summarizeFrameworkRun} from "./framework-run-summary.service";
+import {backfillFrameworkRunSummaries, createFrameworkRunSummaryProjection, readFrameworkRunSummary, startFrameworkRunSummaryBackfill, summarizeFrameworkRun} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
 import {TestHistoryService, testHistoryQueries} from "./test-history.service";
 import {FrameworkResultService} from "./framework-result.service";
@@ -41,6 +41,37 @@ test("altered or foreign compact summaries fail closed without silently reloadin
   } finally {find.mockRestore();}
 });
 
+test("optional backfill leaves HTTP serving during slow reads, cancels on stop, and contains failed writes", async () => {
+  const run = fixture(), row = {runId: run.requestId, payloadSha256: requestInputDigest(run), payload: run};
+  let closed = 0, slow = true, suppliedSignal: AbortSignal | undefined;
+  const find = spyOn(TestRunModel.collection, "find").mockImplementation(((...args: unknown[]) => {
+    suppliedSignal = (args[1] as {signal: AbortSignal}).signal;
+    return {
+      async *[Symbol.asyncIterator]() {
+        if (slow) await new Promise((_resolve, reject) => suppliedSignal!.addEventListener("abort", () => reject(suppliedSignal!.reason), {once: true}));
+        else yield row;
+      },
+      async close() {closed++;},
+    } as unknown as ReturnType<typeof TestRunModel.collection.find>;
+  }) as typeof TestRunModel.collection.find);
+  const update = spyOn(TestRunModel.collection, "updateOne").mockRejectedValue(new Error("write unavailable"));
+  const server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: () => new Response("ready")});
+  try {
+    const stop = startFrameworkRunSummaryBackfill();
+    expect((await fetch(`http://127.0.0.1:${server.port}/healthz`)).status).toBe(200);
+    expect(closed).toBe(0);
+    await stop();
+    expect(suppliedSignal!.aborted).toBe(true); expect(closed).toBe(1);
+    expect(update).not.toHaveBeenCalled();
+    slow = false;
+    const failed = startFrameworkRunSummaryBackfill();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await failed();
+    expect(update).toHaveBeenCalledTimes(1); expect(closed).toBe(2);
+    expect((await fetch(`http://127.0.0.1:${server.port}/healthz`)).status).toBe(200);
+  } finally {find.mockRestore(); update.mockRestore(); await server.stop(true);}
+});
+
 const uri = process.env.TEST_HISTORY_MONGO_URI;
 describe.skipIf(!uri)("Mongo frozen summary projection", () => {
   beforeAll(async () => {
@@ -66,6 +97,8 @@ describe.skipIf(!uri)("Mongo frozen summary projection", () => {
       routineId: run.routineId, platform: run.platform, startedAt: new Date(run.startedAt), uploadsComplete: false, outcome: "teardown-failed"});
     const before = await TestRunModel.findOne({runId: run.requestId}).lean();
     expect(await readFrameworkRunSummary(before!)).toEqual(summarizeFrameworkRun(run, false));
+    expect((await TestRunModel.findOne({runId: run.requestId}).lean())!.summaryProjection).toBeDefined();
+    await TestRunModel.updateOne({runId: run.requestId}, {$unset: {summaryProjection: 1}});
     await backfillFrameworkRunSummaries(); await backfillFrameworkRunSummaries();
     const stored = await TestRunModel.findOne({runId: run.requestId}).lean();
     expect(stored!.payload).toEqual(run); expect(stored!.payloadSha256).toBe(payloadSha256);

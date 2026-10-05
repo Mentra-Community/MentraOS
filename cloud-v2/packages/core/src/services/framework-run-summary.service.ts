@@ -52,9 +52,14 @@ export async function readFrameworkRunSummaryProjection(row: StoredSummaryRow): 
   let projection = row.summaryProjection;
   if (projection === undefined) {
     const stored = await TestRunModel.findOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256})
-      .select({payload: 1, payloadSha256: 1}).read("primary").readConcern("majority").lean();
+      .select({payload: 1, payloadSha256: 1}).read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
     if (!stored) throw new TestRunError(503, "Frozen result summary is unavailable");
     projection = createFrameworkRunSummaryProjection(stored.payload, stored.payloadSha256);
+    // A rolling old writer must not make every refresh transfer this evidence again.
+    await TestRunModel.updateOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256, summaryProjection: {$exists: false}},
+      {$set: {summaryProjection: projection}}, {writeConcern: testWriteConcern, timeoutMS: 10_000}).catch(() => {
+      logger.warn({runId: row.runId}, "Frozen result summary publication will retry on a later read");
+    });
   }
   return verifiedFrameworkRunSummaryProjection({...row, summaryProjection: projection});
 }
@@ -64,16 +69,38 @@ export async function readFrameworkRunSummary(row: StoredSummaryRow): Promise<Fr
   return {...projection.summary, uploadsComplete: row.uploadsComplete === true};
 }
 
-/** Fill native rows once, using the unchanged full validator and a compare-and-set against the frozen digest. */
-export async function backfillFrameworkRunSummaries() {
-  const cursor = TestRunModel.find({...nativeRunFilter, summaryProjection: {$exists: false}})
-    .select({runId: 1, payloadSha256: 1, payload: 1}).limit(1000).read("primary").readConcern("majority").maxTimeMS(10_000)
-    .lean().cursor({batchSize: 10});
-  for await (const row of cursor) {
-    let projection;
-    try {projection = createFrameworkRunSummaryProjection(row.payload, row.payloadSha256);}
-    catch {logger.warn({runId: row.runId}, "Frozen result cannot be projected for history"); continue;}
-    await TestRunModel.updateOne({runId: row.runId, payloadSha256: row.payloadSha256, summaryProjection: {$exists: false}},
-      {$set: {summaryProjection: projection}}, {writeConcern: testWriteConcern, maxTimeMS: 10_000});
+const BACKFILL_BUDGET_MS = 30_000;
+/** Optional read acceleration: cap wall time and rows, and compare-and-set only the frozen digest. */
+export async function backfillFrameworkRunSummaries(signal: AbortSignal = AbortSignal.timeout(BACKFILL_BUDGET_MS)) {
+  const deadline = Date.now() + BACKFILL_BUDGET_MS;
+  const cursor = TestRunModel.collection.find({...nativeRunFilter, summaryProjection: {$exists: false}},
+    {projection: {runId: 1, payloadSha256: 1, payload: 1}, limit: 1000, batchSize: 10,
+      readPreference: "primary", readConcern: {level: "majority"}, signal,
+      timeoutMS: BACKFILL_BUDGET_MS, timeoutMode: "cursorLifetime"});
+  try {
+    for await (const row of cursor) {
+      signal.throwIfAborted();
+      const timeoutMS = deadline - Date.now();
+      if (timeoutMS <= 0) break;
+      let projection;
+      try {projection = createFrameworkRunSummaryProjection(row.payload, row.payloadSha256);}
+      catch {logger.warn({runId: row.runId}, "Frozen result cannot be projected for history"); continue;}
+      await TestRunModel.collection.updateOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256, summaryProjection: {$exists: false}},
+        {$set: {summaryProjection: projection}}, {writeConcern: testWriteConcern, timeoutMS});
+    }
+  } finally {await cursor.close({timeoutMS: 1000}).catch(() => {});}
+}
+
+/** Start after HTTP is serving; failure never changes readiness, and shutdown cancels the cursor and drains bounded writes. */
+export function startFrameworkRunSummaryBackfill() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BACKFILL_BUDGET_MS);
+  timer.unref();
+  const complete = backfillFrameworkRunSummaries(controller.signal).catch(() => {
+    logger.warn("Frozen result summary backfill stopped; missing rows remain readable and retryable");
+  }).finally(() => clearTimeout(timer));
+  return async () => {
+    controller.abort();
+    await complete;
   }
 }
