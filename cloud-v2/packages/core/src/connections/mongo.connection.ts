@@ -56,19 +56,26 @@ export const mongoReadinessCheck: ReadinessCheck = {
 };
 
 /**
- * Server errors that mean "this deployment cannot run transactions", as opposed
- * to a failure inside the transaction itself. A standalone `mongod` answers the
- * first write of a transaction with `IllegalOperation` (code 20) and the
- * "Transaction numbers..." message; drivers raise the "does not support" forms
- * before sending anything when the topology rules sessions out.
+ * True only for the two known "this deployment cannot run transactions"
+ * failures, as opposed to a failure of the work inside the transaction:
+ *
+ * - a standalone `mongod` answers the first transactional write with
+ *   `IllegalOperation` (code 20) and a message starting "Transaction numbers
+ *   are only allowed on a replica set member or mongos";
+ * - the driver raises `MongoCompatibilityError` ("Current topology does not
+ *   support sessions") before sending anything when the topology rules
+ *   sessions out.
+ *
+ * The first one surfaces from the callback's own write, so errors cannot be
+ * told apart by where they were thrown. Matching the error name or code plus
+ * the exact message prefix keeps unrelated errors from being reclassified.
  */
 function isTransactionsUnsupportedError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : "";
-  return (
-    /Transaction numbers are only allowed on a replica set member or mongos/i.test(message) ||
-    /topology does not support (sessions|transactions)/i.test(message) ||
-    /does not support transactions/i.test(message)
-  );
+  if (!(err instanceof Error)) return false;
+  if ((err as { code?: unknown }).code === 20) {
+    return /^Transaction numbers are only allowed on a replica set member or mongos/.test(err.message);
+  }
+  return err.name === "MongoCompatibilityError" && /^Current topology does not support sessions/.test(err.message);
 }
 
 /**

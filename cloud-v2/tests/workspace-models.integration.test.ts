@@ -26,7 +26,7 @@ import { WorkspaceAuditEventModel } from "../packages/core/src/models/workspace-
 import { WorkspaceInvitationModel } from "../packages/core/src/models/workspace-invitation.model";
 import { WorkspaceMembershipModel } from "../packages/core/src/models/workspace-membership.model";
 import { WorkspaceModel } from "../packages/core/src/models/workspace.model";
-import { localTestMongoUrl } from "./support/local-mongo";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 
 const MODELS = [
   WorkspaceModel,
@@ -127,6 +127,22 @@ describe("localTestMongoUrl guard", () => {
   });
 });
 
+describe("assertConnectedTo guard", () => {
+  const url = "mongodb://127.0.0.1:27031/workspace-models-0123456789ab?directConnection=true";
+
+  test("passes only for the database named in the URL", () => {
+    expect(() => assertConnectedTo(url, "workspace-models-0123456789ab")).not.toThrow();
+    expect(() => assertConnectedTo(url, "mentra-cloud-v2-test")).toThrow(/refusing destructive test calls/);
+    expect(() => assertConnectedTo(url, "")).toThrow();
+    expect(() => assertConnectedTo(url, "workspace-models-0123456789ac")).toThrow();
+  });
+
+  test("refuses a URL that names no database", () => {
+    expect(() => assertConnectedTo("mongodb://127.0.0.1:27031/", "")).toThrow();
+    expect(() => assertConnectedTo("mongodb://127.0.0.1:27031", "test")).toThrow();
+  });
+});
+
 describe("withTransaction (error mapping, no Mongo)", () => {
   test("maps a server without transaction support to an error naming the replica-set requirement", async () => {
     let ended = false;
@@ -152,6 +168,47 @@ describe("withTransaction (error mapping, no Mongo)", () => {
     }
   });
 
+  test("maps the driver's topology-compatibility error", async () => {
+    const compat = Object.assign(new Error("Current topology does not support sessions"), {
+      name: "MongoCompatibilityError",
+    });
+    const spy = spyOn(WorkspaceModel.db, "startSession").mockResolvedValue({
+      withTransaction: async () => {
+        throw compat;
+      },
+      endSession: async () => {},
+    } as any);
+    try {
+      const err = await thrown(() => withTransaction(async () => 1));
+      expect(err.message).toMatch(/replica set/i);
+      expect(err.cause).toBe(compat);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("does not reclassify errors that only resemble the unsupported-transactions failure", async () => {
+    const lookalikes = [
+      new Error("this feature does not support transactions"),
+      Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), { code: 11000 }),
+      Object.assign(new Error("some other illegal operation"), { code: 20 }),
+      Object.assign(new Error("Current topology does not support sessions"), { name: "SomeOtherError" }),
+    ];
+    for (const lookalike of lookalikes) {
+      const spy = spyOn(WorkspaceModel.db, "startSession").mockResolvedValue({
+        withTransaction: async () => {
+          throw lookalike;
+        },
+        endSession: async () => {},
+      } as any);
+      try {
+        expect(await thrown(() => withTransaction(async () => 1))).toBe(lookalike);
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
   test("rethrows unrelated errors unchanged and still ends the session", async () => {
     let ended = false;
     const boom = new Error("boom");
@@ -174,19 +231,30 @@ describe("withTransaction (error mapping, no Mongo)", () => {
 
 describe("workspace models (local replica set)", () => {
   let databaseUrl: string;
+  // Set only once the live connection is confirmed to be on our random database;
+  // every destructive call below is gated on it.
+  let verified = false;
 
   beforeAll(async () => {
     databaseUrl = localTestMongoUrl("workspace-models");
     await connectMongo(databaseUrl);
+    // `connectMongo` ignores a second connect, so a connection leaked by another
+    // test file would silently win. Fail before touching any data in that case.
+    assertConnectedTo(databaseUrl, WorkspaceModel.db.name);
+    verified = true;
     await Promise.all(MODELS.map(model => model.init()));
   });
 
   afterAll(async () => {
-    if (WorkspaceModel.db.readyState === 1) await WorkspaceModel.db.dropDatabase();
+    if (verified && WorkspaceModel.db.readyState === 1) {
+      assertConnectedTo(databaseUrl, WorkspaceModel.db.name);
+      await WorkspaceModel.db.dropDatabase();
+    }
     await disconnectMongo();
   });
 
   beforeEach(async () => {
+    assertConnectedTo(databaseUrl, WorkspaceModel.db.name);
     await Promise.all(MODELS.map(model => model.deleteMany({})));
   });
 
@@ -252,6 +320,20 @@ describe("workspace models (local replica set)", () => {
       expect((await thrown(() => WorkspaceMembershipModel.create(pending("wm_b")))).code).toBe(11000);
       await WorkspaceMembershipModel.create(pending("wm_c", { pendingWorkosUserId: "user_02" }));
       await WorkspaceMembershipModel.create(pending("wm_d", { workspaceId: "ws_2" }));
+    });
+
+    test("frees the pending slot once the pending membership has ended", async () => {
+      const pending = (id: string) =>
+        membership({ membershipId: id, mentraUserId: null, pendingWorkosUserId: "user_01" });
+      await WorkspaceMembershipModel.create(pending("wm_a"));
+      expect((await thrown(() => WorkspaceMembershipModel.create(pending("wm_b")))).code).toBe(11000);
+      await WorkspaceMembershipModel.updateOne(
+        { membershipId: "wm_a" },
+        { $set: { status: "ended", endedAt: new Date(), endedReason: "removed" } },
+      );
+      const next = await WorkspaceMembershipModel.create(pending("wm_b"));
+      expect(next.status).toBe("active");
+      expect(await WorkspaceMembershipModel.countDocuments({ workspaceId: "ws_1", pendingWorkosUserId: "user_01" })).toBe(2);
     });
 
     test("does not collide rows that have no mentraUserId or no pendingWorkosUserId", async () => {

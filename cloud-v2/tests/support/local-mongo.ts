@@ -56,3 +56,24 @@ export function localTestMongoUrl(prefix: string): string {
   const database = `${prefix}-${randomBytes(6).toString("hex")}`;
   return `mongodb://${url.host}/${database}?directConnection=true`;
 }
+
+/**
+ * Safety check for tests that run destructive calls (`deleteMany`,
+ * `dropDatabase`): confirm the live connection is on the database that
+ * `localTestMongoUrl` produced for this test, not one left connected by
+ * another test file in the same process (`connectMongo` ignores a second
+ * connect while one is open). Call it right after connecting, before any
+ * destructive call, and again before each destructive hook.
+ *
+ * @param databaseUrl The URL returned by `localTestMongoUrl`.
+ * @param connectedDatabaseName The name of the connected database, e.g. `Model.db.name`.
+ * @throws If the connection is on any other database.
+ */
+export function assertConnectedTo(databaseUrl: string, connectedDatabaseName: string): void {
+  const expected = new URL(databaseUrl).pathname.slice(1);
+  if (!expected || connectedDatabaseName !== expected) {
+    throw new Error(
+      `refusing destructive test calls: connected to database "${connectedDatabaseName}", expected "${expected}"`,
+    );
+  }
+}

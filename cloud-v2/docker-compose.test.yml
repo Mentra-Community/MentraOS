@@ -7,7 +7,8 @@
 # Mongo runs as a single-node replica set (rs0) because multi-document
 # transactions, used by workspace administration, require one. The healthcheck
 # initiates the set on first boot and reports healthy once the node is primary.
-# Clients connect with `directConnection=true`.
+# The member advertises 127.0.0.1:27017, so host clients work with or without
+# `directConnection=true`.
 #
 # Used by `bun run setup --test` and `bun run test:ci`.
 
