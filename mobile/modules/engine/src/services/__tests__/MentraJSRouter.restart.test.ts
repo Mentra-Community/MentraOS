@@ -124,7 +124,11 @@ async function fixture() {
     const {payload} = JSON.parse(raw)
     if (payload.type === "miniapp_connect") {
       events.push("CONNECT")
-      send(JSON.stringify({payload: {type: "miniapp_connect_ack", packageName: PKG, userId: ""}}))
+      send(
+        JSON.stringify({
+          payload: {type: "miniapp_connect_ack", packageName: PKG, userId: "", hostFeatures: {initReady: true}},
+        }),
+      )
       send(
         JSON.stringify({
           payload: {
