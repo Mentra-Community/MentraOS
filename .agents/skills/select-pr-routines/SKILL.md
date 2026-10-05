@@ -24,20 +24,38 @@ A request is not a passing test result. Docs-only changes need no device coverag
    gh pr diff PR --repo Mentra-Community/MentraOS
    ```
 
-2. Discover current executable definitions through Core's authenticated
-   `GET /api/internal/routine-catalog`, using the existing configured capability
-   and caller client without printing credentials. It returns enrolled
-   routine/platform pairs, including new definitions that have never passed.
-   Admin's routine catalog shows latest recorded passing examples; use it to
-   inspect evidence, not to exclude never-passed executable coverage.
+2. Read the private
+   [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing)
+   through `gh`. Resolve its latest default-branch commit once, then list routines
+   and read candidates at that SHA. This needs GitHub access to the repository,
+   not Core/Admin credentials, and does not depend on a local checkout's branch
+   or modify it with `git pull`:
 
-   Read each selected definition's purpose, requirements, fixtures, platforms and
-   named steps, then its `source.repository`, `source.revision` and `source.path`.
-   The source is `routines/<id>/routine.ts` exporting `createRoutine(state)` in
-   the private harness. Use a checkout at that exact revision or GitHub's contents
-   API; do not substitute another local revision. The harness discovers `routines/`
-   without a static registry. If API/private access is unavailable, report the
-   specific coverage you could inspect and the missing enrollment/source evidence.
+   ```bash
+   harness_repository=Mentra-Community/Mentra-Automated-Testing
+   harness_branch=$(gh api "repos/$harness_repository" --jq .default_branch)
+   harness_sha=$(gh api "repos/$harness_repository/commits" --method GET \
+     -f sha="$harness_branch" -f per_page=1 --jq '.[0].sha')
+   gh api "repos/$harness_repository/git/trees/$harness_sha?recursive=1" \
+     --jq 'if .truncated then error("Incomplete routine tree; inspect directories individually") else .tree[] | select(.type == "blob" and (.path | test("^routines/[^/]+/routine\\.ts$"))) | .path end'
+   ```
+
+   The harness discovers `routines/<id>/routine.ts` without a static registry.
+   Set `routine_path` to a discovered path and read its source:
+
+   ```bash
+   gh api "repos/$harness_repository/contents/$routine_path" --method GET \
+     -f ref="$harness_sha" -H 'Accept: application/vnd.github.raw+json'
+   ```
+
+   Fetch imported helper paths with the same command and SHA too. The PR author
+   inspects coverage and submits the brief; the assigned machine-side authoring
+   agent makes routine edits.
+   Read purpose, platforms, prerequisites, fixtures and ordered step IDs. Follow
+   each candidate's actions into helpers to identify pages, clicked controls and
+   assertions; the English description alone does not prove coverage. Report
+   missing private repository access explicitly. Core/Admin credentials are not
+   needed for this source inspection.
 
 3. Select the smallest set whose actual steps exercise the changed behavior.
    Do not select every routine for shared SDK files. Trace the actual affected
@@ -47,12 +65,21 @@ A request is not a passing test result. Docs-only changes need no device coverag
    If the PR intentionally changes an expected outcome, identify the conflicting
    step and request an edit rather than running known-invalid old assertions.
    Prefer extending a coherent existing flow over creating duplicate coverage.
+   Explain which stable step IDs cover the PR; for an edit, name the insertion
+   before/after an existing step and its expected outcome. A matching recorded
+   example can corroborate behavior, but it may use an older source revision.
 
 ## Request existing coverage
 
-Build each label as `routine:<id>` from a selected enrolled definition. When
-creating the PR, include its `--label` in the existing `gh pr create` command.
-For an existing PR, set `selected_label` to that exact discovered label:
+Build each label as `routine:<id>` from the selected routine's declared ID. Source
+inspection establishes intended coverage; the trusted request workflow checks
+enrollment and supported platforms using its own configured Core credential.
+A source file is not proof that its latest revision is installed. If the workflow
+reports an unknown or unavailable definition, resolve enrollment with its owner;
+if it selects an earlier revision, compare that source before claiming coverage.
+Do not claim the request ran or substitute another routine. When creating the PR,
+include its `--label` in the existing `gh pr create` command. For an existing PR,
+set `selected_label` to that exact discovered label:
 
 ```bash
 gh pr edit PR --repo Mentra-Community/MentraOS --add-label "$selected_label"
@@ -86,10 +113,10 @@ hardware or implement another authoring workflow.
    the rest of the flow. The machine verifies the complete saved flow, not just
    the new step.
 2. Choose an enrolled host/lane offering the required platform, glasses models
-   and capabilities. The executable catalog supplies source definitions, not
-   target IDs. Use the existing authenticated Admin
+   and capabilities. Use an already configured target or ask its owner for the
+   host/lane IDs and prerequisites. If Admin access is already available, its
    `GET /api/admin/test-runs/restoration/list` projection for host/lane IDs and
-   platform, together with the configured lane's capabilities. Authoring uses
+   platform can help, together with the configured lane's capabilities. Authoring uses
    `mac` or `android`; ordinary catalog/replay uses `ios-on-mac` or `android`.
    Current machine-side intake rejects nonempty `requirements.environment`.
    Use `[]` when no generic environment provider is needed; otherwise report
@@ -146,8 +173,9 @@ hardware or implement another authoring workflow.
    Review corrections should continue the existing machine job rather than
    redispatching by editing the brief. After source review and
    installation, require the linked ordinary passing run and recording before
-   reporting coverage as verified. Enroll the resulting definition before adding
-   its `routine:<id>` label; a request or held traversal is not that enrollment.
+   reporting coverage as verified. The machine owner installs and enrolls the
+   resulting definition; request its replay through the ordinary label/workflow
+   and report pending enrollment explicitly.
 
 ## Keep request status honest
 
