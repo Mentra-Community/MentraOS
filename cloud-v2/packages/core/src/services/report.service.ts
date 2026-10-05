@@ -16,7 +16,7 @@ import { notifyReportSlack } from "./report-slack.service";
 import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
 import { UserModel } from "../models/user.model";
 import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
-import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
+import { configuredAdminAllowlist, isConfiguredOrganizationAdminEmail } from "./workspaces/organization";
 import { createStorageService } from "./storage/storage.service";
 
 const logger = createLogger("core").child({ service: "report.service" });
@@ -449,11 +449,13 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
  * All kinds, Automatic, Testing, and detail remain available without a directory lookup.
  */
 async function internalReporterIds(): Promise<string[]> {
-  const allowlist = getAdminEmailAllowlist();
+  const allowlist = configuredAdminAllowlist();
   const filters = [...allowlist.emails, ...allowlist.domains.map(domain => `@${domain}`)];
   if (filters.length === 0) return [];
   const identities = await findUsersByEmailFilters(filters);
-  const adminIds = identities.filter(identity => isAdminEmail(identity.email, allowlist)).map(identity => identity.id);
+  const adminIds = identities
+    .filter(identity => isConfiguredOrganizationAdminEmail(identity.email, allowlist))
+    .map(identity => identity.id);
   if (adminIds.length === 0) return [];
   // OEM subject IDs are a different identity namespace, even if the strings collide.
   const users = await UserModel.find({ tenantId: "mentra", tenantUserId: { $in: adminIds } }, { mentraUserId: 1 }).lean();

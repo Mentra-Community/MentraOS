@@ -3,11 +3,22 @@ import {getCookie, setCookie, deleteCookie} from "hono/cookie"
 import {createRemoteJWKSet, jwtVerify} from "jose"
 import type {Context} from "hono"
 
+export type DeveloperAuthUser = {
+  id: string
+  email: string
+  /** Whether WorkOS has verified `email`. Authorization must not trust an unverified address. */
+  emailVerified: boolean
+  firstName?: string | null
+  lastName?: string | null
+}
+
 export type DeveloperAuthResult =
   | {
       authenticated: true
-      user: {id: string; email: string; firstName?: string | null; lastName?: string | null}
+      user: DeveloperAuthUser
       organizationId?: string | null
+      /** The WorkOS access token behind this request: the bearer value, or the sealed session's access token. */
+      accessToken: string
     }
   | {authenticated: false; reason: string}
 
@@ -32,10 +43,10 @@ export async function authenticateWorkosRequest(
   const workos = new WorkOS(options.apiKey, {clientId: options.clientId})
   const session = workos.userManagement.loadSealedSession({sessionData, cookiePassword: options.cookiePassword})
   const result = await session.authenticate()
-  let authenticated: {
-    user: {id: string; email: string; firstName?: string | null; lastName?: string | null}
-    organizationId?: string | null
-  } | null = result.authenticated ? result : null
+  let authenticated: {user: DeveloperAuthUser; organizationId?: string | null; accessToken: string} | null =
+    result.authenticated
+      ? {user: result.user, organizationId: result.organizationId, accessToken: result.accessToken}
+      : null
   if (!result.authenticated && result.reason === "invalid_jwt") {
     const refreshed = await session.refresh()
     if (!refreshed.authenticated) {
@@ -50,7 +61,14 @@ export async function authenticateWorkosRequest(
         secure: options.secureCookies ?? true,
         maxAge: 30 * 24 * 60 * 60,
       })
-    authenticated = refreshed
+    // The refresh response carries the new access token (and the fresh user) under `session`.
+    const refreshedSession = refreshed.session
+    if (!refreshedSession) return {authenticated: false, reason: "missing_access_token"}
+    authenticated = {
+      user: refreshedSession.user,
+      organizationId: refreshed.organizationId,
+      accessToken: refreshedSession.accessToken,
+    }
   }
   if (!authenticated) return {authenticated: false, reason: result.authenticated ? "unknown" : result.reason}
   return {
@@ -58,10 +76,12 @@ export async function authenticateWorkosRequest(
     user: {
       id: authenticated.user.id,
       email: authenticated.user.email,
+      emailVerified: authenticated.user.emailVerified === true,
       firstName: authenticated.user.firstName,
       lastName: authenticated.user.lastName,
     },
     organizationId: authenticated.organizationId ?? null,
+    accessToken: authenticated.accessToken,
   }
 }
 
@@ -76,18 +96,23 @@ async function authenticateBearer(token: string, options: DeveloperAuthOptions):
     let email = typeof verified.payload.email === "string" ? verified.payload.email : ""
     let firstName = typeof verified.payload.first_name === "string" ? verified.payload.first_name : null
     let lastName = typeof verified.payload.last_name === "string" ? verified.payload.last_name : null
+    // Access-token claims do not say whether the email is verified, so only the profile lookup can.
+    let emailVerified = false
     try {
       const user = await new WorkOS(options.apiKey, {clientId: options.clientId}).userManagement.getUser(id)
       email = user.email || email
+      emailVerified = Boolean(user.email) && user.emailVerified === true
       firstName = user.firstName ?? firstName
       lastName = user.lastName ?? lastName
     } catch {
-      // Verified claims remain sufficient if profile enrichment is unavailable.
+      // Verified claims remain sufficient to authenticate if profile enrichment is
+      // unavailable, but the email then stays unverified.
     }
     return {
       authenticated: true,
-      user: {id, email: email || "unknown", firstName, lastName},
+      user: {id, email: email || "unknown", emailVerified, firstName, lastName},
       organizationId: typeof verified.payload.org_id === "string" ? verified.payload.org_id : null,
+      accessToken: token,
     }
   } catch {
     return {authenticated: false, reason: "invalid_bearer_token"}

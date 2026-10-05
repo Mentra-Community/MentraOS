@@ -1,4 +1,4 @@
-import { isAdminEmail } from "./admin-email-policy";
+import { isConfiguredOrganizationAdminEmail } from "./workspaces/organization";
 
 /** Shared with the admin report query; Testing takes precedence over stored kind. */
 export const REPORT_TESTING_SOURCE = "mentra_automated_testing";
@@ -13,6 +13,6 @@ export function reportCategory(report: {
 }): ReportCategory {
   if (report.trigger?.source === REPORT_TESTING_SOURCE) return "testing";
   if (report.kind === "automatic") return "automatic";
-  if (report.userEmail && isAdminEmail(report.userEmail)) return "internal";
+  if (report.userEmail && isConfiguredOrganizationAdminEmail(report.userEmail)) return "internal";
   return report.kind;
 }

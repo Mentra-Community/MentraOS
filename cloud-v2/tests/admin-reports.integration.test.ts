@@ -91,6 +91,8 @@ let userAccessToken: string;
 const adminEmail = "admin@example.com";
 const adminBearer = "test-workos-admin-token";
 const nonAdminBearer = "test-workos-developer-token";
+// Same allowlisted address as the admin, but WorkOS has not verified the email.
+const unverifiedAdminBearer = "test-workos-unverified-admin-token";
 let authSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
@@ -106,10 +108,20 @@ beforeAll(async () => {
   coreApp = createApp({ readinessChecks: [mongoReadinessCheck] });
   authSpy = spyOn(developerAuth, "authenticateWorkosRequest").mockImplementation(async c => {
     const token = c.req.header("authorization");
-    if (token !== `Bearer ${adminBearer}` && token !== `Bearer ${nonAdminBearer}`) {
+    const bearers = [adminBearer, nonAdminBearer, unverifiedAdminBearer].map(bearer => `Bearer ${bearer}`);
+    if (!token || !bearers.includes(token)) {
       return {authenticated: false, reason: "invalid_token"};
     }
-    return {authenticated: true, user: {id: "test-admin", email: token === `Bearer ${adminBearer}` ? "admin@example.com" : "developer@example.com"}, organizationId: null};
+    return {
+      authenticated: true,
+      user: {
+        id: "test-admin",
+        email: token === `Bearer ${nonAdminBearer}` ? "developer@example.com" : "admin@example.com",
+        emailVerified: token !== `Bearer ${unverifiedAdminBearer}`,
+      },
+      organizationId: null,
+      accessToken: token.slice("Bearer ".length),
+    };
   });
 
   const exchanged = await exchange(mintSupabaseJwt("admin-reports-user-1"));
@@ -156,6 +168,12 @@ describe("admin reports auth gate", () => {
       new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
     );
     expect(forbidden.status).toBe(403);
+
+    // An allowlisted address only counts once the identity provider verified it.
+    const unverified = await coreApp.fetch(
+      new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${unverifiedAdminBearer}` } }),
+    );
+    expect(unverified.status).toBe(403);
   });
 });
 

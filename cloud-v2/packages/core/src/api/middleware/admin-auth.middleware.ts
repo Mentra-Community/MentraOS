@@ -1,6 +1,6 @@
-import {isAdminEmail} from "../../services/admin-email-policy"
 import {createMiddleware} from "hono/factory"
 import {authenticateDeveloperRequest} from "../../services/developer-auth.service"
+import {isOrganizationAdminEmail} from "../../services/workspaces/organization"
 import type {AppEnv} from "../../types/hono.types"
 
 /**
@@ -20,7 +20,7 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
   if (!auth.authenticated) {
     return c.json({error: "unauthorized", error_description: "Mentra login required"}, 401)
   }
-  if (!isAdminEmail(auth.user.email)) {
+  if (!isOrganizationAdminEmail(auth.user.email, auth.user.emailVerified)) {
     return c.json({error: "forbidden", error_description: "admin access required"}, 403)
   }
 

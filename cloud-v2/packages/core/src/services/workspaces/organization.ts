@@ -1,0 +1,93 @@
+/**
+ * @fileoverview Organization identity for this Core deployment.
+ *
+ * An organization is one Core deployment (a cloud instance and its database).
+ * Everything here is read from the environment at use time, so a changed
+ * allowlist or label takes effect on the next call and tests can set it freely.
+ */
+
+const ORGANIZATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/
+
+/**
+ * The id of this organization, stamped on workspaces, memberships and audit
+ * events. `CLOUD_CORE_ORGANIZATION_ID` is required when `NODE_ENV=production`
+ * (this throws at first use, not at import); elsewhere it defaults to `local`.
+ */
+export function organizationId(): string {
+  const configured = process.env.CLOUD_CORE_ORGANIZATION_ID?.trim()
+  if (!configured) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CLOUD_CORE_ORGANIZATION_ID is required when NODE_ENV=production")
+    }
+    return "local"
+  }
+  if (!ORGANIZATION_ID_PATTERN.test(configured)) {
+    throw new Error(`CLOUD_CORE_ORGANIZATION_ID must match ${ORGANIZATION_ID_PATTERN}`)
+  }
+  return configured
+}
+
+export interface OrganizationAdminAllowlist {
+  emails: string[]
+  domains: string[]
+}
+
+/** The configured Organization Admin allowlist (`CLOUD_CORE_ADMIN_EMAILS`, `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`). */
+export function configuredAdminAllowlist(): OrganizationAdminAllowlist {
+  return {
+    emails: parseList(process.env.CLOUD_CORE_ADMIN_EMAILS),
+    domains: parseList(process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS).map(domain => domain.replace(/^@/, "")),
+  }
+}
+
+/**
+ * Whether `email` is on the configured allowlist: an exact address, or exactly
+ * one of the listed domains (no subdomains). This is the bare list match and
+ * does not know whether the address was verified, so use it only for display
+ * and classification. Authorization goes through {@link isOrganizationAdminEmail}.
+ * Pass `allowlist` to match many addresses against one read of the config.
+ */
+export function isConfiguredOrganizationAdminEmail(
+  email: string | null | undefined,
+  allowlist: OrganizationAdminAllowlist = configuredAdminAllowlist(),
+): boolean {
+  const normalized = email?.trim().toLowerCase()
+  if (!normalized) return false
+  return (
+    allowlist.emails.includes(normalized) || allowlist.domains.some(domain => normalized.endsWith(`@${domain}`))
+  )
+}
+
+/**
+ * Whether an identity is an Organization Admin. Only an email the identity
+ * provider has verified counts, so claiming an allowlisted address is not enough.
+ */
+export function isOrganizationAdminEmail(email: string | null, emailVerified: boolean): boolean {
+  return emailVerified && isConfiguredOrganizationAdminEmail(email)
+}
+
+/**
+ * The environment labels credentials of this organization may carry in
+ * `msk_<env>_...` / `mak_<env>_...`. `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` (a
+ * comma list) wins, then `CLOUD_CORE_ENVIRONMENT`, then `local`. Labels are
+ * lowercased with everything outside `[a-z0-9]` stripped; a value that is blank
+ * once normalized counts as unset.
+ */
+export function credentialEnvironmentLabels(): string[] {
+  const listed = normalizeLabels(process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS?.split(","))
+  if (listed.length > 0) return listed
+  const single = normalizeLabels([process.env.CLOUD_CORE_ENVIRONMENT])
+  return single.length > 0 ? single : ["local"]
+}
+
+function normalizeLabels(values: Array<string | undefined> | undefined): string[] {
+  const labels = (values ?? []).map(value => (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean)
+  return [...new Set(labels)]
+}
+
+function parseList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map(part => part.trim().toLowerCase())
+    .filter(Boolean)
+}

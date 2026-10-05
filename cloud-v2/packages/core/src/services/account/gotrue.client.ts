@@ -131,8 +131,16 @@ export async function resendVerification(email: string): Promise<void> {
  * `per_page: 1` could silently return the wrong (or no) user. We page through
  * results (bounded) and exact-match the email ourselves, so a missing user is
  * a real miss, not a pagination artifact.
+ *
+ * A failed directory request returns null, indistinguishable from "no such
+ * user", which is right for reset/change/delete (they answer uniformly). A
+ * caller that records the answer permanently passes `strict` so an outage
+ * throws instead of reading as a miss.
  */
-export async function findUserByEmail(email: string): Promise<GotrueIdentity | null> {
+export async function findUserByEmail(
+  email: string,
+  options: { strict?: boolean } = {},
+): Promise<GotrueIdentity | null> {
   const wanted = email.toLowerCase();
   const PER_PAGE = 200;
   const MAX_PAGES = 20; // safety cap: 4000 users scanned worst case
@@ -142,7 +150,10 @@ export async function findUserByEmail(email: string): Promise<GotrueIdentity | n
       admin: true,
       query: { filter: email, page: String(page), per_page: String(PER_PAGE) },
     });
-    if (status !== 200) return null;
+    if (status !== 200) {
+      if (options.strict) throw new AccountError("server_error", "account directory lookup failed", 502);
+      return null;
+    }
     const users: any[] = body?.users ?? [];
     const match = users.find((u) => u.email?.toLowerCase() === wanted);
     if (match) return identityFrom(match);
