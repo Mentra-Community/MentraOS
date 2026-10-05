@@ -105,6 +105,12 @@ postcondition observation; an acknowledged click is not a completed transition.
 Inspect current controls rather than copying old labels blindly: Android's radio
 icon can toggle while its label opens details, and an empty miniapp switcher opener
 can remain present on idle Home. Require the actual state before sending input.
+Before hardware, compare the old saved selector with the selected build's current
+component. Several URL editors can coexist: preserve OTA's specific manifest
+placeholder instead of selecting any editable field. After an uncertain typing
+response, observe the exact requested value before clearing or typing again;
+the empty placeholder disappears when input succeeded. Keep that observation
+in the same saved action, not a separate replay technique.
 Static headings may appear twice on a platform: require readable content, and use
 exact IDs/counts for the actionable controls that must be unique.
 On Android, use the supplied `ui.scroll(anchor, direction)` for a bounded gesture
