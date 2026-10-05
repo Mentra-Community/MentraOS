@@ -1,6 +1,7 @@
 package com.mentra.crust.jsc
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.dokar.quickjs.QuickJs
 import com.dokar.quickjs.binding.function
@@ -11,6 +12,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
@@ -133,6 +135,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
     val dispatcher: JSCDispatcher = JSCDispatcher(appContext)
 
     private val contexts = ConcurrentHashMap<String, ContextRecord>()
+    private val nextContextId = AtomicLong()
     private val polyfillBundle: String by lazy { loadPolyfillBundle() }
 
     // Schedule pool for timers; per-context the executor is the same as the
@@ -146,6 +149,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val packageName: String,
         val qjs: QuickJs,
         val executor: ExecutorService,
+        val contextId: Long,
         val pendingTimers: MutableMap<Int, ScheduledFuture<*>> = ConcurrentHashMap(),
         @Volatile var readyAcked: Boolean = false,
         @Volatile var readyNackTimer: ScheduledFuture<*>? = null,
@@ -273,6 +277,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
             packageName = packageName,
             qjs = qjs,
             executor = executor,
+            contextId = nextContextId.incrementAndGet(),
         )
         contexts[packageName] = record
 
@@ -457,10 +462,23 @@ class JSCRuntime private constructor(private val appContext: Context) {
      * Push a `{kind: "event"|"response", …}` envelope into the named
      * context's globalThis.__deliver. Hops onto the per-context executor.
      */
-    fun dispatchToJs(packageName: String, envelopeJson: String) {
-        val record = contexts[packageName] ?: return
+    fun dispatchToJs(packageName: String, envelopeJson: String, deliveryId: Long? = null) {
+        val record = contexts[packageName]
+        // Only host-generated PINGs carry this ID. Ordinary media/event deliveries stay quiet.
+        val diagnostic = deliveryId?.let {
+            JSDeliveryDiagnostics(it, record?.contextId, SystemClock::elapsedRealtime) { metadata ->
+                reportDeliveryDiagnostic(packageName, metadata)
+            }
+        }
+        diagnostic?.entry()
+        if (record == null) {
+            diagnostic?.dropped("context-missing")
+            return
+        }
+        diagnostic?.queued()
         try {
             record.executor.submit {
+                diagnostic?.started()
                 // Arm only once evaluate is about to run. Queue wait during a
                 // long previous turn (WHIP start, etc.) must not count — that
                 // was firing ready_nack while the context was merely busy.
@@ -489,14 +507,26 @@ class JSCRuntime private constructor(private val appContext: Context) {
                     kill(packageName)
                 }, WATCHDOG_KILL_MS, TimeUnit.MILLISECONDS)
                 record.watchdogTimer = killTimer
+                var failure: Throwable? = null
                 try {
                     val source = "globalThis.__deliver(${jsStringLiteral(envelopeJson)});"
                     runBlocking {
                         record.qjs.evaluate<Any?>(source, filename = "mentrajs:deliver.js")
                     }
                 } catch (e: Throwable) {
+                    failure = e
                     Log.w(TAG, "dispatchToJs threw in $packageName: ${e.message}", e)
+                    if (diagnostic == null) {
+                        reportDeliveryDiagnostic(packageName, mapOf(
+                            "event" to "native-delivery-failed",
+                            "contextId" to record.contextId,
+                            "phase" to "evaluate-failed",
+                            "errorClass" to e.javaClass.simpleName,
+                            "causeClass" to e.cause?.javaClass?.simpleName,
+                        ))
+                    }
                 } finally {
+                    diagnostic?.finished(failure)
                     // Success or throw: the host observed the turn end.
                     record.readyNackTimer?.cancel(false)
                     record.readyNackTimer = null
@@ -505,8 +535,26 @@ class JSCRuntime private constructor(private val appContext: Context) {
                     if (record.watchdogTimer === killTimer) record.watchdogTimer = null
                 }
             }
-        } catch (_: java.util.concurrent.RejectedExecutionException) {
-            // Context killed mid-flight — drop. dispatchToJs is best-effort.
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            diagnostic?.dropped("executor-rejected", e)
+            Log.w(TAG, "dispatchToJs rejected for $packageName", e)
+        }
+    }
+
+    private fun reportDeliveryDiagnostic(packageName: String, metadata: Map<String, Any?>) {
+        val line = org.json.JSONObject(metadata as Map<*, *>).toString()
+        Log.i(TAG, line)
+        // Use the existing miniapp log route so console interception includes this in reports.
+        try {
+            deliverOrDrop(OutboundMessage(packageName, mapOf(
+                "packageName" to packageName,
+                "iface" to "__log",
+                "method" to if (metadata["errorClass"] == null) "log" else "warn",
+                "argsJson" to org.json.JSONArray().put(org.json.JSONObject(metadata as Map<*, *>)).toString(),
+            )))
+        } catch (e: Throwable) {
+            // Observability cannot change delivery or hide its original failure.
+            Log.w(TAG, "delivery diagnostic forwarding failed: ${e.javaClass.simpleName}")
         }
     }
 

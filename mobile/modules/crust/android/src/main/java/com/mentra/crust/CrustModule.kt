@@ -308,7 +308,8 @@ class CrustModule : Module() {
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("MentraJS: no context")
       val json = org.json.JSONObject(envelope as Map<*, *>).toString()
-      JSCRuntime.shared(ctx).dispatchToJs(packageName, json)
+      val deliveryId = (envelope["deliveryId"] as? Number)?.toLong()?.takeIf { it > 0 }
+      JSCRuntime.shared(ctx).dispatchToJs(packageName, json, deliveryId)
     }.runOnQueue(mentraJsQueue)
 
     AsyncFunction("mentraJsSetManifest") { packageName: String, permissions: List<String> ->

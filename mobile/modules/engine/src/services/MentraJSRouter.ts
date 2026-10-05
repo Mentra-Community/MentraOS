@@ -101,6 +101,7 @@ export class MentraJSRouter {
   private subscription: EventSubscription | null = null
   private readonly registered: Set<string> = new Set()
   private readonly replacementConnects = new Set<string>()
+  private nextDeliveryId = 0
   /** Cached spawn arguments so the crash controller can respawn after a backoff. */
   private readonly spawnCache: Map<string, SpawnCache> = new Map()
   /** Active respawn timers (so unregister() can cancel a pending respawn). */
@@ -580,6 +581,22 @@ export class MentraJSRouter {
    * {@link registerApp} to deliver runtime responses and events locally.
    */
   private dispatchBridgeRaw(packageName: string, raw: string): void {
-    void this.crust.mentraJsDispatchToJs(packageName, {kind: "bridge", raw})
+    const deliveryId = this.peekBridgePayloadType(raw)?.type === "miniapp_ping" ? ++this.nextDeliveryId : undefined
+    const envelope = deliveryId === undefined ? {kind: "bridge", raw} : {kind: "bridge", raw, deliveryId}
+    if (deliveryId !== undefined) this.logger.log(`PING submitted for ${packageName}`, {deliveryId})
+    const failed = (error: unknown) => {
+      // Keep content-bearing exception text and raw bridge payloads out of report diagnostics.
+      this.logger.warn(`Native delivery rejected for ${packageName}`, {
+        deliveryId,
+        errorClass: error instanceof Error ? error.constructor.name : typeof error,
+      })
+    }
+    try {
+      const result = this.crust.mentraJsDispatchToJs(packageName, envelope)
+      if (result) void result.catch(failed)
+    } catch (error) {
+      failed(error)
+      throw error
+    }
   }
 }
