@@ -60,7 +60,7 @@ jobs:
        (contains(github.event.pull_request.labels.*.name, 'routine:day1-ota') ||
         contains(github.event.pull_request.labels.*.name, 'routine:no-glasses') ||
         contains(github.event.pull_request.labels.*.name, 'routine:mentra-call')))
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

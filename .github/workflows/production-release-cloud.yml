@@ -39,7 +39,7 @@ jobs:
   preflight:
     name: Validate production Cloud configuration contract
     if: inputs.phase == 'preflight'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     environment:
       name: production-cloud-status
@@ -164,7 +164,7 @@ jobs:
   load-deployment:
     name: Load exact production deployment inputs
     if: inputs.phase == 'deploy'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       plan_artifact: ${{ steps.plan.outputs.artifact }}
@@ -238,7 +238,7 @@ jobs:
     name: Record protected approval and observed deployment
     if: inputs.phase == 'deploy'
     needs: [load-deployment, deploy]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

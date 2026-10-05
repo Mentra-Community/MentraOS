@@ -31,7 +31,7 @@ env:
 jobs:
   record:
     name: Record protected rollout decision
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     environment:
       name: production-store-release

@@ -60,7 +60,7 @@ env:
 jobs:
   resolve-context:
     name: Resolve PR context
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       pr_number: ${{ steps.ctx.outputs.pr_number }}
       head_sha: ${{ steps.ctx.outputs.head_sha }}
@@ -183,7 +183,7 @@ jobs:
     name: Plan agent cycle
     needs: resolve-context
     if: needs.resolve-context.outputs.pr_number != ''
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       should_skip: ${{ steps.plan.outputs.should_skip }}
       skip_reason: ${{ steps.plan.outputs.skip_reason }}
@@ -239,7 +239,7 @@ jobs:
     name: Review (standards)
     needs: [resolve-context, plan]
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_standards == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:
@@ -285,7 +285,7 @@ jobs:
     name: Review (depth)
     needs: [resolve-context, plan]
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_depth == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:
@@ -331,7 +331,7 @@ jobs:
     name: Review (Codex)
     needs: [resolve-context, plan]
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_codex == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:
@@ -380,7 +380,7 @@ jobs:
     name: Review (Bugbot)
     needs: [resolve-context, plan]
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_bugbot == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       bugbot_completed: ${{ steps.poll.outputs.bugbot_completed }}
       bugbot_success: ${{ steps.poll.outputs.bugbot_success }}
@@ -426,7 +426,7 @@ jobs:
       needs.plan.result == 'success' &&
       needs.plan.outputs.should_skip != 'true' &&
       needs.plan.outputs.recheck_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       should_fix: ${{ steps.agg.outputs.should_fix }}
       should_handoff: ${{ steps.agg.outputs.should_handoff }}
@@ -481,7 +481,7 @@ jobs:
       needs.aggregate.outputs.should_fix == 'true' &&
       needs.resolve-context.outputs.pr_is_fork != 'true' &&
       needs.plan.outputs.is_dry_run != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -523,7 +523,7 @@ jobs:
       needs.plan.outputs.should_skip != 'true' &&
       (needs.fix.result == 'success' || needs.fix.result == 'skipped') &&
       needs.aggregate.outputs.should_handoff != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       ci_green: ${{ steps.wait.outputs.ci_green }}
     steps:
@@ -557,7 +557,7 @@ jobs:
           needs.aggregate.outputs.should_handoff != 'true' &&
           (needs.wait-ci.result == 'success' || needs.wait-ci.result == 'skipped') &&
           needs.wait-ci.outputs.ci_green == 'true'))
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       should_handoff: ${{ steps.recheck.outputs.should_handoff }}
       handoff_reason: ${{ steps.recheck.outputs.handoff_reason }}
@@ -592,7 +592,7 @@ jobs:
         (needs.aggregate.result == 'success' && needs.aggregate.outputs.should_handoff == 'true') ||
         (needs.recheck-handoff.result == 'success' && needs.recheck-handoff.outputs.should_handoff == 'true')
       )
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:
@@ -634,7 +634,7 @@ jobs:
       needs.finalize.result == 'skipped' &&
       (needs.aggregate.outputs.needs_continuation == 'true' ||
         needs.recheck-handoff.outputs.needs_continuation == 'true')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:
@@ -669,7 +669,7 @@ jobs:
       - finalize
       - continue-loop
     if: always() && needs.resolve-context.outputs.pr_number != ''
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Remove agent-in-progress
         uses: actions/github-script@v7
@@ -692,7 +692,7 @@ jobs:
     name: Notify on failure
     needs: [resolve-context, plan, aggregate, fix, recheck-handoff, finalize]
     if: failure() && needs.resolve-context.outputs.pr_number != '' && needs.plan.outputs.should_skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Post failure comment
         uses: actions/github-script@v7

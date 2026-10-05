@@ -53,7 +53,7 @@ permissions:
 jobs:
   detect:
     name: Detect version changes
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       matrix: ${{ steps.info.outputs.matrix }}
       has_publishes: ${{ steps.info.outputs.has_publishes }}
@@ -76,7 +76,7 @@ jobs:
     name: Publish ${{ matrix.pkg.name }}@${{ matrix.pkg.version }}
     needs: detect
     if: needs.detect.outputs.has_publishes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       # Sequential + dependency-ordered: the scaffolder's template pins
       # @mentra/miniapp-cli, so it publishes first.

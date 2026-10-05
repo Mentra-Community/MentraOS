@@ -40,6 +40,9 @@ permissions:
 jobs:
   publish:
     name: Publish exact npm family closure
+    # The one job that stays GitHub-hosted: npm accepts `npm publish
+    # --provenance` only from cloud-hosted runners, and Blacksmith runners
+    # register as self-hosted.
     runs-on: ubuntu-latest
     # Every npm member reads its published metadata back before the next one
     # publishes, and publish-release-npm.mjs waits at least 30 minutes (2

@@ -14,7 +14,7 @@ permissions:
 jobs:
   resolve:
     if: github.repository == 'Mentra-Community/MentraOS'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -51,7 +51,7 @@ jobs:
       matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
     # This name binds the retained send step to one routine/build/publication.
     name: ${{ matrix.mode == 'request' && (matrix.channel && format('Request coordinated source {0} / routine {1}', matrix.sourceRunId, matrix.routine) || format('Request publication {0} / attempt {1} / routine {2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine)) || 'Dispatch trusted request' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     concurrency:
       group: ${{ matrix.mode == 'request' && (matrix.channel && format('device-coordinated-{0}-{1}', matrix.sourceRunId, matrix.routine) || format('device-publication-{0}-{1}-{2}', matrix.sourceRunId, matrix.publicationAttempt, matrix.routine)) || format('device-request-callback-{0}-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt) }}

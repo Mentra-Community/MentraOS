@@ -49,7 +49,7 @@ permissions:
 jobs:
   bun-build:
     name: Bun build (${{ inputs.working_directory }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       build_status: ${{ steps.build.outputs.status }}
       build_failed: ${{ steps.build.outputs.failed }}
