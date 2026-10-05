@@ -59,6 +59,7 @@ function makeRouters(hostFeatures: Record<string, boolean>) {
   let background: vm.Context | undefined
   let send: (raw: string) => void = () => {}
   const fromBackground: string[] = []
+  const uiFrames: string[] = []
   const host = {
     onLivenessTimeout: null,
     registerApp(_pkg: string, fn: (raw: string) => void) {
@@ -102,6 +103,10 @@ function makeRouters(hostFeatures: Record<string, boolean>) {
       return true
     },
     mentraJsDispatchToJs(_pkg, envelope) {
+      if (envelope.kind === "bridge") {
+        const data = JSON.parse(envelope.raw as string).payload?.data
+        if (data?.type) uiFrames.push(data.type)
+      }
       const target = background
       if (!target) return
       queueMicrotask(() => {
@@ -118,6 +123,7 @@ function makeRouters(hostFeatures: Record<string, boolean>) {
     router,
     ui,
     fromBackground,
+    uiFrames,
     emitBridge(payload: Record<string, unknown>) {
       listener?.({
         packageName: PKG,
@@ -209,30 +215,58 @@ test("a background that never reports READY is opened after the spawn deadline",
   }
 })
 
-test("a background that never connects is opened after the same spawn deadline", () => {
+test("the UI-hold deadline runs on the injected timer", () => {
   const {router, ui} = makeRouters({initReady: true})
-  const realSetTimeout = globalThis.setTimeout
-  const pending: Array<() => void> = []
-  globalThis.setTimeout = ((cb: () => void, ms?: number) => {
-    if (ms === BACKGROUND_READY_TIMEOUT_MS) {
-      pending.push(cb)
-      return 0 as unknown as ReturnType<typeof setTimeout>
-    }
-    return realSetTimeout(cb, ms)
-  }) as typeof setTimeout
+  const armed: number[] = []
+  const fired: Array<() => void> = []
+  router.timer = {
+    setTimeout(callback, ms) {
+      armed.push(ms)
+      fired.push(callback)
+      return armed.length
+    },
+    clearTimeout() {},
+  }
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    router.registerApp(PKG)
+    expect(armed).toEqual([BACKGROUND_READY_TIMEOUT_MS])
+    fired[0]!()
+    expect(ui.isUiHeld(PKG)).toBe(false)
+  } finally {
+    console.warn = warn
+    router.stop()
+  }
+})
+
+test("a background that has not connected by the deadline shows its UI but keeps frames for the late session", () => {
+  const {router, ui, uiFrames, emitBridge} = makeRouters({initReady: true})
+  const fired: Array<() => void> = []
+  router.timer = {
+    setTimeout(callback) {
+      fired.push(callback)
+      return fired.length
+    },
+    clearTimeout() {},
+  }
   const warn = console.warn
   console.warn = () => {}
   try {
     const released: string[] = []
     ui.onUiReleased((pkg) => released.push(pkg))
     router.registerApp(PKG)
-    expect(ui.isUiHeld(PKG)).toBe(true)
-    expect(pending).toHaveLength(1)
-    pending[0]!()
-    expect(ui.isUiHeld(PKG)).toBe(false)
+    ui.bindWebView(PKG, () => {})
+    ui.routeFromWebView(PKG, JSON.stringify({type: "ready"}))
+    ui.routeFromWebView(PKG, JSON.stringify({type: "msg", channel: "history:get", requestId: "r1"}))
+    fired[0]!()
+    // The splash lifts, but nothing is sent to a context with no session.
     expect(released).toEqual([PKG])
+    expect(ui.isUiHeld(PKG)).toBe(false)
+    expect(uiFrames).toEqual([])
+    emitBridge({type: "miniapp_connect", packageName: PKG, initReady: true})
+    expect(uiFrames).toEqual(["UI_OPEN", "UI_MESSAGE"])
   } finally {
-    globalThis.setTimeout = realSetTimeout
     console.warn = warn
     router.stop()
   }

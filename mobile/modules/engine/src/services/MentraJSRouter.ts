@@ -97,6 +97,12 @@ const defaultLogger: RouterLogger = {
  */
 export const BACKGROUND_READY_TIMEOUT_MS = 10_000
 
+/** Timer used for the UI-hold deadline. The engine injects BgTimer. */
+export interface RouterTimer {
+  setTimeout(callback: () => void, ms: number): number
+  clearTimeout(id: number): void
+}
+
 interface SpawnCache {
   miniappJs: string
   permissions: string[]
@@ -108,7 +114,7 @@ export class MentraJSRouter {
   private readonly registered: Set<string> = new Set()
   private readonly replacementConnects = new Set<string>()
   /** Spawned backgrounds whose UI is still held, with their ready deadline. */
-  private readonly readyTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly readyTimers = new Map<string, number>()
   /** Cached spawn arguments so the crash controller can respawn after a backoff. */
   private readonly spawnCache: Map<string, SpawnCache> = new Map()
   /** Active respawn timers (so unregister() can cancel a pending respawn). */
@@ -121,6 +127,16 @@ export class MentraJSRouter {
    * miniapp's last-known JS source after the backoff delay.
    */
   crashController: MentraJSCrashController | null = null
+
+  /**
+   * Timer for the UI-hold deadline. MiniappEngine injects BgTimer because plain
+   * JS timers pause while the Android app is backgrounded; tests keep the
+   * global timers.
+   */
+  timer: RouterTimer = {
+    setTimeout: (callback, ms) => setTimeout(callback, ms) as unknown as number,
+    clearTimeout: (id) => clearTimeout(id as unknown as ReturnType<typeof setTimeout>),
+  }
 
   /** Hook called when a package transitions to CRASHLOOP_DISABLED. */
   onCrashloop: ((packageName: string, reason: string) => void) | null = null
@@ -448,10 +464,16 @@ export class MentraJSRouter {
       // after the fresh SDK transport exists.
       if (innerPayload?.type === "miniapp_connect") {
         this.logger.log(`CONNECT received for ${packageName}`, {uiBound: this.uiRouter?.isBound(packageName) ?? false})
-        // SDKs that announce READY keep the UI held until their init settles;
-        // older ones are ready once connected.
-        if (this.replacementConnects.delete(packageName) && innerPayload.initReady !== true) {
-          this.markBackgroundReady(packageName, "connect")
+        if (this.replacementConnects.delete(packageName)) {
+          if (!this.readyTimers.has(packageName)) {
+            // The deadline passed before CONNECT: the UI is showing and its
+            // frames were held for this session. Release them now.
+            this.uiRouter?.backgroundReady(packageName)
+          } else if (innerPayload.initReady !== true) {
+            // SDKs that announce READY keep the UI held until their init
+            // settles; older ones are ready once connected.
+            this.markBackgroundReady(packageName, "connect")
+          }
         }
       } else if (innerPayload?.type === "miniapp_ready") {
         this.markBackgroundReady(packageName, "ready")
@@ -556,8 +578,14 @@ export class MentraJSRouter {
     this.clearReadyTimer(packageName)
     this.readyTimers.set(
       packageName,
-      setTimeout(() => {
+      this.timer.setTimeout(() => {
         this.readyTimers.delete(packageName)
+        if (this.replacementConnects.has(packageName)) {
+          // No session yet to deliver to: show the UI, keep its frames held.
+          this.logger.warn(`${packageName} not connected ${BACKGROUND_READY_TIMEOUT_MS}ms after spawn; showing UI`)
+          this.uiRouter?.revealHeldUi(packageName)
+          return
+        }
         this.logger.warn(`${packageName} not ready ${BACKGROUND_READY_TIMEOUT_MS}ms after spawn; opening UI`)
         this.uiRouter?.backgroundReady(packageName)
       }, BACKGROUND_READY_TIMEOUT_MS),
@@ -575,7 +603,7 @@ export class MentraJSRouter {
   private clearReadyTimer(packageName: string): void {
     const timer = this.readyTimers.get(packageName)
     if (timer === undefined) return
-    clearTimeout(timer)
+    this.timer.clearTimeout(timer)
     this.readyTimers.delete(packageName)
   }
 
