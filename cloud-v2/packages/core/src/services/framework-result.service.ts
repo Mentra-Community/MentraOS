@@ -18,21 +18,8 @@ export interface FrameworkResultRepository {
   getByRun(runId: string): Promise<StoredFrameworkRun | null>;
 }
 export interface StoredFrameworkRun {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean}
-export function summarizeFrameworkRun(run: FrameworkRun, uploadsComplete: boolean): FrameworkRunSummary {
-  const release = typeof run.build.releaseIdentity === "string" ? run.build.releaseIdentity
-    : typeof run.build.release === "string" ? run.build.release : undefined;
-  const source = run.build.source as {buildRunId?: unknown} | undefined;
-  const producerUrl = typeof run.build.producerUrl === "string" ? run.build.producerUrl
-    : Number.isSafeInteger(source?.buildRunId) && Number(source?.buildRunId) > 0
-      ? `https://github.com/${run.build.repository}/actions/runs/${source!.buildRunId}` : undefined;
-  return {runId: run.result.runId, requestId: run.requestId, hostId: run.hostId, routineId: run.routineId,
-    platform: run.platform, laneId: run.laneId, startedAt: run.startedAt, finishedAt: run.finishedAt,
-    outcome: frameworkRunOutcome(run), uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed",
-    build: {repository: run.build.repository, channel: run.build.channel, headSha: run.build.headSha,
-      ...(run.build.prNumber !== undefined ? {prNumber: run.build.prNumber} : {}),
-      ...(release ? {release} : {}), ...(producerUrl ? {producerUrl} : {})}};
-}
-export const nativeRunFilter = {"payload.schemaVersion": 1};
+export {nativeRunFilter, summarizeFrameworkRun} from "./framework-run-summary.service";
+import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary} from "./framework-run-summary.service";
 export interface ResultRequestBinding {hostId: string; input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown}}
 const requestBinding = async (requestId: string): Promise<ResultRequestBinding | null> => {
   const row = await TestRequestModel.findOne({requestId, hostReceipt: {$exists: true}}).read("primary").readConcern("majority").lean();
@@ -52,7 +39,7 @@ const mongoRepository: FrameworkResultRepository = {
     await TestRunModel.create([{runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
       definitionRevision: run.definitionRevision, hostId: run.hostId, platform: run.platform, laneId: run.laneId,
       startedAt: new Date(run.startedAt), completedAt: new Date(run.finishedAt),
-      outcome: frameworkRunOutcome(run), payloadSha256, payload: run, uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
+      outcome: frameworkRunOutcome(run), payloadSha256, payload: run, summaryProjection: createFrameworkRunSummaryProjection(run, payloadSha256), uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
   },
   async getByRequest(requestId) {
     const row = await TestRunModel.findOne({...nativeRunFilter, requestId}).read("primary").readConcern("majority").lean();
@@ -147,11 +134,9 @@ export class FrameworkResultService {
     for (const field of ["repository", "headSha", "channel", "prNumber"])
       if (scope[field]) filter[`payload.build.${field}`] = field === "prNumber" ? Number(scope[field]) : scope[field];
     const rows = await TestRunModel.find(filter)
-      .sort({startedAt: -1, runId: -1}).limit(100).read("primary").readConcern("majority").lean();
-    return {runs: rows.map(row => {
-      const run = frameworkRunSchema.parse(row.payload);
-      return summarizeFrameworkRun(run, row.uploadsComplete);
-    })};
+      .sort({startedAt: -1, runId: -1}).limit(100).select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1})
+      .read("primary").readConcern("majority").lean();
+    return {runs: await Promise.all(rows.map(row => readFrameworkRunSummary(row)))};
   }
 
   async detail(requestId: string) {

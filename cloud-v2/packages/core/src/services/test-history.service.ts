@@ -3,9 +3,9 @@ import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestRunModel} from "../models/test-run.model";
 import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
-import {frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
+import {frameworkRunIdSchema} from "../types/framework-run.types";
 import type {TestHistoryEntry, TestHistoryPage} from "../types/test-history.types";
-import {nativeRunFilter, summarizeFrameworkRun} from "./framework-result.service";
+import {nativeRunFilter, readFrameworkRunSummary, type StoredSummaryRow} from "./framework-run-summary.service";
 import {TestRunError} from "./test-result-error";
 import {TestSuiteService} from "./test-suite.service";
 const logger = createLogger("core").child({component: "test-history"});
@@ -17,7 +17,7 @@ const querySchema = z.object({cursor: z.string().min(1).max(2000).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25)}).strict();
 export interface StoredHistoryRow {
   historyKind: "run" | "suite"; historyId: string; historyStartedAt: Date;
-  payload?: unknown; uploadsComplete?: boolean;
+  requestId?: string; payloadSha256?: string; summaryProjection?: unknown; uploadsComplete?: boolean;
   historySuppressed?: boolean;
 }
 export interface HistorySourceQueries {runs: PipelineStage[]; suites: PipelineStage[]; after: HistoryCursor | null; limit: number}
@@ -50,7 +50,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number): 
             in: {$and: [{$eq: ["$$member.requestId", "$$requestId"]}, {$eq: ["$$member.runId", "$$runId"]}]}}}]}]},
       ]}}}, {$limit: 1}], as: "historySuites"}},
     {$project: {_id: 0, historyKind: {$literal: "run"}, historyId: "$runId",
-      historyStartedAt: "$startedAt", payload: 1, uploadsComplete: 1,
+      historyStartedAt: "$startedAt", runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1,
       historySuppressed: {$gt: [{$size: "$historySuites"}, 0]}}},
   ];
   const suites: PipelineStage[] = [
@@ -118,9 +118,7 @@ export class TestHistoryService {
     const entries = await Promise.all(page.map(async (row): Promise<TestHistoryEntry> => {
       try {
         if (row.historyKind === "run") {
-          const parsed = frameworkRunSchema.safeParse(row.payload);
-          if (!parsed.success) throw new TestRunError(503, "History run is not a valid framework result");
-          return {kind: "run", ...summarizeFrameworkRun(parsed.data, row.uploadsComplete === true)};
+          return {kind: "run", ...await readFrameworkRunSummary({...row, runId: row.historyId} as StoredSummaryRow)};
         }
         // The existing reader preserves frozen completions and computes current waiting members.
         const suite = await this.suites.detail(row.historyId);

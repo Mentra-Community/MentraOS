@@ -1,11 +1,11 @@
 import {z} from "zod";
-import {frameworkEvidenceComplete, frameworkRunSchema} from "../types/framework-run.types";
+import {frameworkRunSchema} from "../types/framework-run.types";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
 import {TestRunModel} from "../models/test-run.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
-import {nativeRunFilter} from "./framework-result.service";
+import {nativeRunFilter, readFrameworkRunSummary, verifiedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {routinePreferences, type RoutinePreferenceRepository} from "./routine-preference.service";
 
 export interface CatalogRunRepository {
@@ -23,25 +23,34 @@ const mongoRuns: CatalogRunRepository = {
       outcome: "pass", uploadsComplete: true, "payload.result.setup.status": "passed",
       "payload.result.test": "passed", "payload.result.failures.phase": {$ne: "evidence"}, "payload.result.teardown.ready": true,
       "payload.recordingAssetId": {$type: "string"},
-    }).sort({startedAt: -1, runId: -1}).read("primary").readConcern("majority").lean();
+    }).sort({startedAt: -1, runId: -1}).select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.recordingAssetId": 1, "payload.build": 1})
+      .read("primary").readConcern("majority").lean();
     if (!row) return null;
-    const run = frameworkRunSchema.parse(row.payload);
-    return {runId: run.result.runId, startedAt: run.startedAt, finishedAt: run.finishedAt,
-      recordingAssetId: run.recordingAssetId!, definitionRevision: run.definitionRevision, build: run.build};
+    if (row.summaryProjection === undefined) {
+      const stored = await TestRunModel.findOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256})
+        .select({payload: 1}).read("primary").readConcern("majority").lean();
+      const run = frameworkRunSchema.parse(stored?.payload);
+      return {runId: run.result.runId, startedAt: run.startedAt, finishedAt: run.finishedAt,
+        recordingAssetId: run.recordingAssetId!, definitionRevision: run.definitionRevision, build: run.build};
+    }
+    const projection = verifiedFrameworkRunSummaryProjection(row), summary = projection.summary;
+    return {runId: summary.runId, startedAt: summary.startedAt, finishedAt: summary.finishedAt,
+      recordingAssetId: projection.recordingAssetId!,
+      definitionRevision: projection.definitionRevision, build: (row.payload as {build: CatalogExample["build"]}).build};
   },
   async history(routineId, platform, after, limit) {
     const filter = {...nativeRunFilter, routineId, platform, ...(after ? {$or: [
       {startedAt: {$lt: after.startedAt}}, {startedAt: after.startedAt, runId: {$lt: after.runId}},
     ]} : {})};
     const rows = await TestRunModel.find(filter).sort({startedAt: -1, runId: -1}).limit(limit)
-      .select({runId: 1, startedAt: 1, outcome: 1, uploadsComplete: 1, definitionRevision: 1, payload: 1})
+      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, definitionRevision: 1})
       .read("primary").readConcern("majority").lean();
-    return rows.map(row => {
-      const run = frameworkRunSchema.parse(row.payload);
-      return {runId: row.runId, startedAt: run.startedAt, outcome: row.outcome,
-        uploadsComplete: row.uploadsComplete, definitionRevision: run.definitionRevision,
-        evidenceStatus: frameworkEvidenceComplete(run) ? "complete" as const : "failed" as const};
-    });
+    return await Promise.all(rows.map(async row => {
+      const summary = await readFrameworkRunSummary(row);
+      return {runId: summary.runId, startedAt: summary.startedAt, outcome: summary.outcome,
+        uploadsComplete: summary.uploadsComplete, definitionRevision: row.definitionRevision,
+        evidenceStatus: summary.evidenceStatus};
+    }));
   },
 };
 const cursorSchema = z.object({routineId: z.string(), platform: z.string(),
