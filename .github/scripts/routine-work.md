@@ -45,3 +45,8 @@ the job, lane reservation and held authoring lifecycle. Status updates trigger
 same work. A queued receipt or completed held traversal does not imply an ordinary
 passing result. Source review, installation and final verification remain machine
 job states.
+
+Direct machine `routine-work.submit` also accepts a frozen dev/staging package
+without a PR origin. Those local jobs use `routine-work.inspect` for progress;
+they do not create a Core delivery or PR comment. The manual GitHub workflow
+described above is a PR intake entry point and still requires its brief and label.
