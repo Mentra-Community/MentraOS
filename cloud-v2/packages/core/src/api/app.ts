@@ -9,6 +9,9 @@
  *                                 miniapp-token
  *   /api/client/reports/*       — device-filed reports
  *   /api/agent/reports/*        — read-only private dev-agent access
+ *   /api/workspaces/*           — workspaces: members, invitations, credentials, audit
+ *   /api/organization/*         — organization capabilities, workspace administration,
+ *                                 operator keys
  *
  * Caller convention (auth/spec.md): /api/client/* is device-called and
  * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
@@ -16,8 +19,8 @@
  * /api/oem/*.
  *
  * The global error handler translates `OauthError` subtypes to the RFC 8693
- * error body shape `{ error, error_description }`. Anything else becomes a
- * generic 500.
+ * error body shape `{ error, error_description }`, and `WorkspaceError` to the
+ * same shape with its own code and status. Anything else becomes a generic 500.
  */
 
 import { Hono } from "hono";
@@ -25,6 +28,7 @@ import { createHealthApp, createLogger, type ReadinessCheck } from "@mentra/clou
 import type { AppEnv } from "../types/hono.types";
 import { OauthError } from "../types/oauth.types";
 import { AccountError } from "../services/account/account-error";
+import { WorkspaceError } from "../services/workspaces/workspace-error";
 import { requestContext } from "./middleware/context.middleware";
 import adminApi from "./admin/admin.api";
 import browserAuth from "./admin/browser-auth.api";
@@ -41,6 +45,8 @@ import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import internalIdentity from "./internal/identity.api";
 import portalEnterprise from "./portal/enterprise.api";
+import organizationApi from "./organization/organization.api";
+import workspacesApi from "./workspaces/workspaces.api";
 import wellKnown from "./well-known.api";
 
 const logger = createLogger("core").child({ service: "app" });
@@ -97,6 +103,8 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/account/oauth", accountOauth);
   app.route("/api/internal/identity", internalIdentity);
   app.route("/api/portal", portalEnterprise);
+  app.route("/api/workspaces", workspacesApi);
+  app.route("/api/organization", organizationApi);
   app.route("/api/admin", adminApi);
   app.route("/api/console/auth", browserAuth);
 
@@ -109,6 +117,10 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
         // future error subclasses (4xx/5xx) compile without a switch.
         err.httpStatus as 400,
       );
+    }
+
+    if (err instanceof WorkspaceError) {
+      return c.json({ error: err.code, error_description: err.message }, err.status as 400);
     }
 
     // Unexpected. Log with the per-request logger if available so the line

@@ -17,7 +17,9 @@ import {
   principalAuth,
   principalLabel,
   requireOrganizationCapability,
+  requireUserPrincipal,
   requireWorkspaceCapability,
+  userActor,
 } from "./principal.middleware"
 
 function user(overrides: Partial<Extract<CorePrincipal, {kind: "user"}>> = {}): CorePrincipal {
@@ -71,6 +73,7 @@ function appFor(principal: CorePrincipal | null) {
     await next()
   })
   app.get("/me", principalAuth, c => c.json({principal: c.get("principal")}))
+  app.get("/people-only", requireUserPrincipal, c => c.json({actor: userActor(c)}))
   app.get("/incidents", requireOrganizationCapability("organization.incidents.read"), c => c.json({ok: true}))
   app.get("/testing", requireOrganizationCapability("organization.testing.manage"), c => c.json({ok: true}))
   app.get("/no-param", requireWorkspaceCapability("workspace.read"), c => c.json({ok: true}))
@@ -133,6 +136,42 @@ describe("principalAuth", () => {
       expect(response.status).toBe(401)
       expect(await response.json()).toEqual({error: "unauthorized"})
     }
+  })
+})
+
+describe("requireUserPrincipal", () => {
+  test("passes a signed-in person, and userActor describes them for the services", async () => {
+    const response = await get(user({isOrganizationAdmin: true}), "/people-only")
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      actor: {
+        kind: "user",
+        mentraUserId: "mu_1",
+        email: "dev@example.test",
+        emailVerified: true,
+        name: null,
+        isOrganizationAdmin: true,
+      },
+    })
+  })
+
+  test("a workspace key and an operator key are 403, whatever scopes they carry", async () => {
+    for (const principal of [
+      credential(),
+      credential({credentialKind: "organization", workspaceId: null, scopes: ["organization.incidents.read"]}),
+    ]) {
+      const response = await get(principal, "/people-only")
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({error: "forbidden"})
+    }
+  })
+
+  test("no principal is 401, not 403", async () => {
+    const response = await get(null, "/people-only")
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({error: "unauthorized"})
   })
 })
 

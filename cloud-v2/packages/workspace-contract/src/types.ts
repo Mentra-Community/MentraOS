@@ -1,5 +1,5 @@
 /** Wire types for Core's internal workspace service API. */
-import type {WorkspaceCapability, WorkspaceRole} from "./capabilities"
+import type {OrganizationCapability, WorkspaceCapability, WorkspaceRole} from "./capabilities"
 
 export type CorePrincipal =
   | {
@@ -107,3 +107,75 @@ export interface WorkspaceChangeEvent {
  */
 export const INVALID_TOKEN_ERROR = "invalid_token"
 export const SERVICE_UNAUTHORIZED_ERROR = "service_unauthorized"
+
+// --- Public workspace API --------------------------------------------------
+// The response bodies of Core's `/api/workspaces` and `/api/organization` routes. Every date is an ISO
+// 8601 string, so the same types serve the admin dashboard, the Store's console proxy and the CLI.
+
+/** `GET /api/workspaces/:workspaceId`: the workspace, the caller's membership in it (null for an organization admin who is not a member) and what the caller may do there. */
+export interface WorkspaceDetail extends WorkspaceSummary {
+  membership: MembershipSummary | null
+  capabilities: WorkspaceCapability[]
+}
+
+/**
+ * One row of `GET /api/workspaces/:workspaceId/members`. `pending` marks a migrated member who has not
+ * signed in yet (so `mentraUserId` is still null); they hold their role from the moment they do.
+ */
+export interface MemberView {
+  membershipId: string
+  mentraUserId: string | null
+  email: string | null
+  name: string | null
+  role: WorkspaceRole
+  startedAt: string
+  pending: boolean
+}
+
+/** A pending invitation as listed to administrators. It never carries the token or its hash. */
+export interface InvitationView {
+  invitationId: string
+  email: string
+  role: WorkspaceRole
+  expiresAt: string
+  invitedByMembershipId: string | null
+}
+
+/** A credential as shown to people (a workspace `msk_` key or an organization `mak_` operator key). It never includes the token or its hash. */
+export interface CredentialView {
+  credentialId: string
+  prefix: "msk" | "mak"
+  name: string
+  /** `<prefix>_<env>_…<last4>`, e.g. `msk_prod_…abcd`. */
+  display: string
+  workspaceId: string | null
+  scopes: string[]
+  packageNames: string[]
+  createdByEmail: string | null
+  issuedByService: string | null
+  expiresAt: string | null
+  lastUsedAt: string | null
+  createdAt: string
+}
+
+/** One entry of `GET /api/workspaces/:workspaceId/audit`, newest first. `target`, `before` and `after` are snapshots whose shape depends on `action`. */
+export interface AuditEventView {
+  eventId: string
+  action: string
+  actor: {
+    kind: "user" | "credential" | "service" | "system"
+    email: string | null
+    credentialId: string | null
+    service: string | null
+  }
+  target: Record<string, unknown> | null
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  occurredAt: string
+}
+
+/** `GET /api/organization`: this deployment and what the caller may do to it. */
+export interface OrganizationView {
+  organizationId: string
+  capabilities: OrganizationCapability[]
+}

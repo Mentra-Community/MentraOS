@@ -30,6 +30,7 @@ import {
   principalFromBearerOrSession,
 } from "../../services/workspaces/authorization.service"
 import {IdentityUnavailableError} from "../../services/workspaces/identity-link.service"
+import type {Actor} from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
 /** The request's principal, resolving it on first use. */
@@ -60,6 +61,17 @@ async function requirePrincipal(c: AppContext): Promise<{principal: CorePrincipa
 export const principalAuth: MiddlewareHandler<AppEnv> = createMiddleware<AppEnv>(async (c, next) => {
   const resolved = await requirePrincipal(c)
   if ("response" in resolved) return resolved.response
+  return next()
+})
+
+/**
+ * Requires a signed-in person: a Core credential (`msk_` / `mak_`) is refused with 403
+ * `{error: "forbidden"}`, since workspace administration is done by people. Use `userActor` in the handler.
+ */
+export const requireUserPrincipal: MiddlewareHandler<AppEnv> = createMiddleware<AppEnv>(async (c, next) => {
+  const resolved = await requirePrincipal(c)
+  if ("response" in resolved) return resolved.response
+  if (resolved.principal.kind !== "user") return c.json({error: "forbidden"}, 403)
   return next()
 })
 
@@ -108,6 +120,23 @@ function denied(c: AppContext, decision: AuthorizeResponse) {
       return c.json({error: "workspace_not_found"}, 404)
     default:
       return c.json({error: "forbidden", reason: decision.reason}, 403)
+  }
+}
+
+/**
+ * The actor a service acts for: the signed-in person behind this request. Call it only behind
+ * `requireUserPrincipal`; a request with no user principal is refused here too rather than acted on.
+ */
+export function userActor(c: AppContext): Actor & {kind: "user"} {
+  const principal = c.get("principal")
+  if (principal?.kind !== "user") throw new Error("userActor requires a user principal; mount requireUserPrincipal")
+  return {
+    kind: "user",
+    mentraUserId: principal.mentraUserId,
+    email: principal.email,
+    emailVerified: principal.emailVerified,
+    name: null,
+    isOrganizationAdmin: principal.isOrganizationAdmin,
   }
 }
 

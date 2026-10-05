@@ -34,6 +34,7 @@ import {
   capabilitiesForRole,
   OPERATOR_KEY_SCOPES,
   type CorePrincipal,
+  type CredentialView,
   type OrganizationCapability,
   type WorkspaceRole,
 } from "@mentra/workspace-contract"
@@ -69,23 +70,6 @@ const PACKAGE_NAMES_MAX = 50
 /** `lastUsedAt` is refreshed at most this often per credential. */
 const LAST_USED_THROTTLE_MS = 60_000
 const PUBLISH_SCOPE = "miniapps.publish"
-
-/** A credential as shown to people. It never includes the token or its hash. */
-export interface CredentialView {
-  credentialId: string
-  prefix: "msk" | "mak"
-  name: string
-  /** `<prefix>_<env>_…<last4>`, e.g. `msk_prod_…abcd`. */
-  display: string
-  workspaceId: string | null
-  scopes: string[]
-  packageNames: string[]
-  createdByEmail: string | null
-  issuedByService: string | null
-  expiresAt: string | null
-  lastUsedAt: string | null
-  createdAt: string
-}
 
 export type ValidatedCredential = Extract<CorePrincipal, {kind: "credential"}>
 
@@ -244,6 +228,22 @@ export async function listWorkspaceCredentials(workspaceId: string): Promise<Cre
     .sort({_id: -1})
     .lean<CredentialRow[]>()
   return rows.map(toView)
+}
+
+/**
+ * Which workspace a credential belongs to (`null` for an operator key), or null when there is no such
+ * credential. A credential never moves, so a caller can check it against the route it arrived on
+ * before handing it to `revokeCredential`, which decides by the credential's own workspace.
+ */
+export async function findCredentialOwner(
+  credentialId: string,
+): Promise<{credentialKind: "workspace" | "organization"; workspaceId: string | null} | null> {
+  if (!isId(credentialId)) return null
+  const row = await AccessCredentialModel.findOne({credentialId})
+    .select({_id: 0, credentialKind: 1, workspaceId: 1})
+    .lean<Pick<CredentialRow, "credentialKind" | "workspaceId">>()
+  if (!row) return null
+  return {credentialKind: row.credentialKind as "workspace" | "organization", workspaceId: row.workspaceId ?? null}
 }
 
 /** This organization's live (not revoked) operator keys, newest first. */
