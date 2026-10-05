@@ -331,10 +331,10 @@ describe("background start gate", () => {
     const crust = buildMockCrust()
     const router = new MentraUIRouter(crust.binding)
     const ready: string[] = []
-    router.onBackgroundReady((pkg) => ready.push(pkg))
+    router.onUiReleased((pkg) => ready.push(pkg))
     router.backgroundStarting("com.foo")
     bindCapture(router, "com.foo")
-    expect(router.isBackgroundReady("com.foo")).toBe(false)
+    expect(router.isUiHeld("com.foo")).toBe(true)
 
     router.routeFromWebView("com.foo", JSON.stringify({type: "ready"}))
     router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "history:get", requestId: "r1"}))
@@ -349,7 +349,7 @@ describe("background start gate", () => {
       {type: "UI_MESSAGE", channel: "draft", payload: "typed", seq: undefined},
     ])
     expect(ready).toEqual(["com.foo"])
-    expect(router.isBackgroundReady("com.foo")).toBe(true)
+    expect(router.isUiHeld("com.foo")).toBe(false)
 
     // Once ready, traffic flows directly and a repeat ready is a no-op.
     router.backgroundReady("com.foo")
@@ -368,6 +368,19 @@ describe("background start gate", () => {
     router.backgroundStopped("com.foo")
     expect(injected.some((js) => js.includes("BACKGROUND_STOPPED") && js.includes("r1"))).toBe(true)
     expect(crust.dispatchCalls).toHaveLength(0)
+  })
+
+  test("a stop releases a held UI so it never waits on a background that will not answer", () => {
+    const crust = buildMockCrust()
+    const router = new MentraUIRouter(crust.binding)
+    const released: string[] = []
+    router.onUiReleased((pkg) => released.push(pkg))
+    router.backgroundStarting("com.foo")
+    bindCapture(router, "com.foo")
+    expect(router.isUiHeld("com.foo")).toBe(true)
+    router.backgroundStopped("com.foo")
+    expect(router.isUiHeld("com.foo")).toBe(false)
+    expect(released).toEqual(["com.foo"])
   })
 
   test("cancelling a held request drops it before delivery", () => {
