@@ -26,7 +26,7 @@ import {permissions, PermissionFeatures} from "../../facades/permissions"
 import {asgCameraApi} from "./asgCameraApi"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
-import {localNetworkTransport} from "./localNetworkTransport"
+import {localNetworkErrorDetails, localNetworkTransport} from "./localNetworkTransport"
 import {localStorageService} from "./localStorageService"
 import {mediaProcessingQueue} from "./mediaProcessingQueue"
 import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
@@ -1309,7 +1309,7 @@ class GallerySyncService {
           if (appBackgrounded && appBackgroundTime) {
             console.error(`[GallerySyncService] ❌ Time in background: ${Date.now() - appBackgroundTime}ms`)
           }
-          console.error(`[GallerySyncService] ❌ Full error object:`, JSON.stringify(error, null, 2))
+          console.error(`[GallerySyncService] ❌ Native connection error:`, JSON.stringify(localNetworkErrorDetails(error)))
 
           // If user explicitly denied, don't retry
           if (error?.code === "userDenied" || error?.message?.includes("cancel")) {
