@@ -56,6 +56,7 @@ import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
 import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
+import {TranscriptionSubscriptions, type TranscriptionListenerRegistration} from "./TranscriptionSubscriptions"
 import {prepareTtsSentences} from "./TtsTextSanitizer"
 import {handleWifiAdbRequest} from "./WifiAdbRequest"
 import {cloudClientService} from "./CloudClientService"
@@ -145,6 +146,7 @@ export interface InstalledMiniappManifest {
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
 
 interface ConnectedMiniapp {
+  transcriptionListeners?: TranscriptionSubscriptions
   subscriptions: Set<string>
   /** Transcription streams this app explicitly requires to stay on-device. */
   forceLocalTranscriptionStreams: Set<string>
@@ -1595,7 +1597,7 @@ class LocalMiniappRuntime {
         permissions: declaredPermissions,
         visibility: this.currentVisiblePackage() === packageName ? "foreground" : "background",
         configuration: getMiniappConfiguration(packageName),
-        hostFeatures: {captureAudio: true, initReady: true},
+        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true},
       },
       requestId,
     )
@@ -1918,6 +1920,36 @@ class LocalMiniappRuntime {
       [...cloudTranscriptionStreams].filter((stream) => app.subscriptions.has(stream)),
     )
     this.replaceStreamSubscribers(packageName, previousSubscriptions, app.subscriptions)
+
+    if (Array.isArray(payload.transcriptionListeners)) {
+      const registrations = payload.transcriptionListeners
+        .filter((value): value is TranscriptionListenerRegistration => {
+          if (typeof value !== "object" || value === null) return false
+          const r = value as Partial<TranscriptionListenerRegistration>
+          return (
+            typeof r.id === "string" &&
+            typeof r.stream === "string" &&
+            r.stream.startsWith("transcription:") &&
+            app.subscriptions.has(r.stream) &&
+            (r.forceLocal === undefined || typeof r.forceLocal === "boolean")
+          )
+        })
+        .map(({id, stream, forceLocal}) => ({id, stream, forceLocal}))
+      app.transcriptionListeners ??= new TranscriptionSubscriptions()
+      app.transcriptionListeners.replace(registrations, cloudClientService.getAudioPosition())
+    } else {
+      // Older bundles expose one registration per stream. The runtime can still
+      // trim app joins/resubscriptions without sending them new payload fields.
+      app.transcriptionListeners ??= new TranscriptionSubscriptions()
+      app.transcriptionListeners.replace(
+        [...app.cloudTranscriptionStreams].map((stream) => ({
+          id: `legacy:${stream}`,
+          stream,
+          legacy: true,
+        })),
+        cloudClientService.getAudioPosition(),
+      )
+    }
 
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
@@ -5480,6 +5512,10 @@ class LocalMiniappRuntime {
     app.subscriptions = new Set(streams)
     app.forceLocalTranscriptionStreams.clear()
     app.cloudTranscriptionStreams = new Set(streams.filter((stream) => stream.startsWith("transcription:")))
+    app.transcriptionListeners ??= new TranscriptionSubscriptions()
+    app.transcriptionListeners.replace([...app.cloudTranscriptionStreams].map((stream) => ({
+      id: `legacy:${stream}`, stream, legacy: true,
+    })), cloudClientService.getAudioPosition())
     this.replaceStreamSubscribers(packageName, previousSubscriptions, app.subscriptions)
 
     this.recomputeMicRequirements()
@@ -5678,6 +5714,8 @@ class LocalMiniappRuntime {
           __hostReceivedAt: receivedAt,
         },
         "cloud",
+        d.provider === "soniox" && (d.frameTimelineVersion === 1 || d.tokens.some((token) => token.audioPosition))
+          ? d.tokens : undefined,
       )
     })
 
@@ -5707,6 +5745,9 @@ class LocalMiniappRuntime {
 
     cloudClientService.onStatusChanged((status) => {
       if (status.status === "connected") {
+        for (const app of this.connectedApps.values()) {
+          app.transcriptionListeners?.observe(cloudClientService.getAudioPosition())
+        }
         this.updateCloudSubscriptions()
         // A miniapp that connected before the cloud client was ready never got
         // its auth token; now that we're connected, mint it without waiting for
@@ -5761,7 +5802,12 @@ class LocalMiniappRuntime {
    * - Incoming "head_up" → miniapp protocol uses "head_position" (HEAD_POSITION)
    * - Incoming "VAD" (uppercase) → miniapp protocol uses "vad" (lowercase)
    */
-  public forwardEvent(streamType: string, data: unknown, transcriptionSource?: TranscriptionEventSource): void {
+  public forwardEvent(
+    streamType: string,
+    data: unknown,
+    transcriptionSource?: TranscriptionEventSource,
+    tokens?: TranscriptionData["tokens"],
+  ): void {
     // Normalize incoming event names to miniapp protocol stream types
     const normalizedStream = this.normalizeStreamType(streamType)
 
@@ -5864,6 +5910,25 @@ class LocalMiniappRuntime {
       // streams don't interleave and cause the position to jump back to the
       // real-phone location during simulation.
       if (normalizedStream === MiniappStreamType.LOCATION_UPDATE && this.navigationHandlers.isTripActive(packageName)) {
+        continue
+      }
+      const listenerRegistry = this.connectedApps.get(packageName)?.transcriptionListeners
+      const audioPosition = cloudClientService.getAudioPosition()
+      if (listenerRegistry && transcriptionSource === "cloud" && tokens !== undefined) {
+        for (const projected of listenerRegistry.project(
+          normalizedStream,
+          tokens ?? [],
+          audioPosition,
+          transcriptionRoute ?? "default",
+        )) {
+          this.sendToMiniapp(packageName, {
+            type: MiniappResponseType.EVENT,
+            streamType: normalizedStream,
+            data: {...(outboundData as object), text: projected.text},
+            transcriptionRoute,
+            ...(projected.listenerId ? {listenerId: projected.listenerId} : {}),
+          })
+        }
         continue
       }
       this.sendToMiniapp(packageName, {
