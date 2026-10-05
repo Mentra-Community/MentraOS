@@ -21,15 +21,14 @@
 
 import {createLogger} from "@mentra/cloud-shared"
 import {roleAtLeast, type WorkspaceRole} from "@mentra/workspace-contract"
-import {ulid} from "ulid"
 import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
 import {IdentityLinkModel, type IdentityLinkMethod} from "../../models/identity-link.model"
-import {WorkspaceAuditEventModel} from "../../models/workspace-audit-event.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
 import {findUserByEmail, isGotrueAdminConfigured} from "../account/gotrue.client"
 import {findOrCreateUser} from "../user.service"
+import {recordWorkspaceEvent} from "./audit.service"
 
 const logger = createLogger("core").child({service: "identity-link.service"})
 
@@ -178,35 +177,28 @@ async function claimPendingMemberships(
       {$set: {status: "ended", endedAt: now, endedReason: "removed"}},
       {session},
     )
-    await WorkspaceAuditEventModel.create(
-      [
-        {
-          eventId: ulid(),
-          organizationId: duplicate.organizationId,
-          workspaceId: duplicate.workspaceId,
-          action: "membership.merged_duplicate",
-          actor: {kind: "system"},
-          target: {membershipId: duplicate.membershipId, mentraUserId},
-          before: {
-            membershipId: duplicate.membershipId,
-            role: pendingRole,
-            status: "active",
-            pendingWorkosUserId: workosUserId,
-            keptMembershipId: kept.membershipId,
-            keptRole,
-          },
-          after: {
-            membershipId: duplicate.membershipId,
-            status: "ended",
-            endedReason: "removed",
-            keptMembershipId: kept.membershipId,
-            resultingRole,
-          },
-          occurredAt: now,
-        },
-      ],
-      {session},
-    )
+    await recordWorkspaceEvent(session, {
+      organizationId: duplicate.organizationId,
+      workspaceId: duplicate.workspaceId,
+      action: "membership.merged_duplicate",
+      actor: {kind: "system"},
+      target: {membershipId: duplicate.membershipId, mentraUserId},
+      before: {
+        membershipId: duplicate.membershipId,
+        role: pendingRole,
+        status: "active",
+        pendingWorkosUserId: workosUserId,
+        keptMembershipId: kept.membershipId,
+        keptRole,
+      },
+      after: {
+        membershipId: duplicate.membershipId,
+        status: "ended",
+        endedReason: "removed",
+        keptMembershipId: kept.membershipId,
+        resultingRole,
+      },
+    })
   }
 
   // Everything still pending belongs to this user now.
