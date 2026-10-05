@@ -94,6 +94,23 @@ than assuming a click changed them; public text replacement uses `clearText` bef
 `type`. Use `hideKeyboard` for the actual IME. The optional `systemUi` retains the
 same ownership and permits only the enrolled system-dialog namespaces; normal `ui`
 remains scoped to the Mentra App.
+Reuse observations, not assumptions. Android can repeat a radio label on its
+parent and text child; count actual checkable controls. A tall option group can
+span viewports: accumulate all known checked/unchecked states under the same
+foreground group, reject contradictions and scroll toward an unobserved option.
+Validate visible preconditions again in the driver's final input-planning snapshot.
+After one acknowledged tap, observe its resulting state; don't repeat input because
+a receipt write or screenshot failed. Retain an answered-input flag before later
+assertions so a settled held retry continues observation rather than toggling again.
+
+Keep a failing native command's bounded original error/cause in diagnostics before
+iterating. A missing positive log reply is an observation gap, not proof the product
+action failed. Use the assigned phone's current-process trace for BLE replies when
+camera logs flood the glasses' short tail. Reconcile the original request instead
+of resending it. For cleanup-only corrections, select the reviewed provider source
+through the public repair API while retaining the original resource/fixture inputs;
+a new checkout alone does not change the implementation used by repair.
+
 Flag actual bugs and impossible/human-only requirements with the exact failed step.
 Routine code does not repair the harness. Finish runs the original teardown; then
 give back with `{reservationId, generation, requestId}` for ordinary boundary cleanup.
