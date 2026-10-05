@@ -3,8 +3,9 @@ import {mkdir, writeFile} from "node:fs/promises"
 import {join} from "node:path"
 import {matchingBuildRun, readOtaTargets} from "./notify-pr-builds.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
+import {ANDROID_WORKFLOW, ANDROID_PUBLICATION_STEP, androidReceiptName, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
+import {deviceRoutine, hasRoutineLabel, registeredRoutine} from "./device-routines.mjs"
 
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
 export const REQUEST_LABEL = "routine:day1-ota"
@@ -13,6 +14,19 @@ const SHA = /^[a-f0-9]{40}$/
 const HASH = /^[a-f0-9]{64}$/
 const positive = (value) => Number.isSafeInteger(value) && value > 0
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex")
+
+/** PR destinations with exact PR-head artifacts. Each is built against its own backend. */
+export const PR_ROUTINE_BASES = Object.freeze(["dev", "staging"])
+export const admittedPrBase = (ref) => PR_ROUTINE_BASES.includes(ref)
+
+/** The actual tip of an admitted PR base. pulls.get().base.sha may lag it. */
+export async function currentBaseSha(github, context, baseRef) {
+  if (!admittedPrBase(baseRef)) throw new Error("PR base is not an admitted routine destination")
+  const {data} = await github.rest.git.getRef({...context.repo, ref: `heads/${baseRef}`})
+  if (data.ref !== `refs/heads/${baseRef}` || data.object?.type !== "commit" || !SHA.test(data.object.sha ?? ""))
+    throw new Error(`GitHub returned an invalid ${baseRef} branch ref`)
+  return data.object.sha
+}
 
 export function sourcePublication(runId, publicationAttempt) {
   const absent = (value) => value === undefined || value === ""
@@ -63,6 +77,21 @@ export function successfulMacPublication(run, all) {
   return {buildAttempt: firstExecution(all, build), publicationAttempt: firstExecution(all, publish)}
 }
 
+/** Android builds and publishes its signed APK in one job. Retained jobs keep their original receipt. */
+export function successfulAndroidPublication(run, all) {
+  const build = all.filter(job => job.name === "build" && positive(job.run_attempt) && job.run_attempt <= run.run_attempt)
+    .sort((a, b) => b.run_attempt - a.run_attempt || b.id - a.id)[0]
+  if (!positive(run.run_attempt) || !build || build.status !== "completed" || build.conclusion !== "success" ||
+    !build.steps?.some(step => step.name === ANDROID_PUBLICATION_STEP && step.status === "completed" && step.conclusion === "success") ||
+    (run.status !== "completed" && build.run_attempt < run.run_attempt)) return null
+  const attempt = firstExecution(all, build)
+  return {buildAttempt: attempt, publicationAttempt: attempt}
+}
+
+export const routineProducer = routine => deviceRoutine(routine).platform === "android" ? ANDROID_WORKFLOW : PRODUCER
+export const successfulRoutinePublication = (routine, run, jobs) => deviceRoutine(routine).platform === "android"
+  ? successfulAndroidPublication(run, jobs) : successfulMacPublication(run, jobs)
+
 export async function jsonArtifact(url, fetchImpl) {
   const response = await fetchImpl(url, {redirect: "error", signal: AbortSignal.timeout(30_000)})
   if (!response.ok) throw new Error(`Published metadata unavailable (HTTP ${response.status})`)
@@ -99,18 +128,19 @@ function prIdentity(pr, baseSha) {
 }
 
 function verifiedApp(receipt, pr, attempts, otaManifestUrl) {
+  // `pr` is the fixed identity {number, headSha} the build must belong to.
   const app = receipt.app
   if (
     !app ||
     app.pr !== pr.number ||
-    app.headSha !== pr.head.sha ||
+    app.headSha !== pr.headSha ||
     app.buildSha !== receipt.buildSha ||
     app.runId !== receipt.runId ||
     app.runAttempt !== attempts.buildAttempt ||
     (receipt.buildAttempt ?? receipt.runAttempt) !== attempts.buildAttempt ||
     app.bundleId !== "com.mentra.mentra" ||
     app.teamId !== "T5XXXL6N36" ||
-    app.backend !== "dev" ||
+    !admittedPrBase(app.backend) ||
     app.otaManifestUrl !== otaManifestUrl ||
     !HASH.test(app.executableSha256 ?? "") ||
     !HASH.test(app.javascriptSha256 ?? "") ||
@@ -148,6 +178,77 @@ function verifiedApp(receipt, pr, attempts, otaManifestUrl) {
   )
 }
 
+/**
+ * Verify one exact published PR build for a fixed PR identity {number, headSha, baseSha, baseRef}:
+ * producer run, publication attempt, receipt, backend, merge commit, archive availability and OTA pin.
+ * The caller chooses the identity: the current PR for ordinary requests, or an authenticated
+ * original request for an exact replay. Returns {selection} or {skip: reason}; throws on mismatch.
+ */
+export async function verifyPublishedPrBuild({github, context, routine, pr, run, fetchImpl, publicationAttempt}) {
+  const repository = `${context.repo.owner}/${context.repo.repo}`
+  const registered = deviceRoutine(routine)
+  const android = registered.platform === "android"
+  const producer = routineProducer(routine)
+  const platformName = android ? "Android" : "Mac"
+  const {number, headSha, baseSha, baseRef} = pr
+  if (run.path !== `.github/workflows/${producer}` || !positive(run.id))
+    throw new Error(`Unexpected ${platformName} producer identity`)
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo,
+    run_id: run.id,
+    filter: "all",
+    per_page: 100,
+  })
+  const attempts = successfulRoutinePublication(routine, run, jobs)
+  if (!attempts) return {skip: "Build/publication has not completed successfully"}
+  if (publicationAttempt && attempts.publicationAttempt !== publicationAttempt)
+    return {skip: "Selected attempt retained another publication; no substitute was selected"}
+  const receiptUrl = artifactUrl(
+    repository,
+    "pr-builds",
+    (android ? androidReceiptName : iosReceiptName)(number, headSha, run.id, attempts.publicationAttempt),
+  )
+  const receipt = await jsonArtifact(receiptUrl, fetchImpl)
+  const assets = (android ? validateAndroidReceipt : validateIosReceipt)(receipt.value, {
+    pr: number,
+    sha: headSha,
+    runId: run.id,
+    attempt: attempts.publicationAttempt,
+  })
+  const otaUrl = artifactUrl(repository, "pr-builds", `ota-pr-${number}-${headSha}.json`)
+  const app = android ? receipt.value.app : verifiedApp(receipt.value, {number, headSha}, attempts, otaUrl)
+  if (app.backend !== baseRef) throw new Error(`${platformName} app backend differs from its PR base`)
+  if (android && receipt.value.baseSha !== baseSha) throw new Error("Android receipt base is no longer current")
+  const commit = (await github.rest.repos.getCommit({...context.repo, ref: receipt.value.buildSha})).data
+  if (
+    commit.sha !== receipt.value.buildSha ||
+    commit.parents?.length !== 2 ||
+    commit.parents[0].sha !== baseSha ||
+    commit.parents[1].sha !== headSha
+  )
+    throw new Error(`${platformName} build is not the current PR head merged with its current base`)
+  const asset = android ? assets.android : assets.mac
+  const archive = {url: artifactUrl(repository, "pr-builds", asset.name), ...asset}
+  const available = await fetchImpl(archive.url, {
+    method: "HEAD",
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!available.ok || Number(available.headers.get("content-length")) !== archive.size)
+    throw new Error(`Published ${platformName} archive is missing or its size differs from the receipt`)
+  const ota = await jsonArtifact(otaUrl, fetchImpl)
+  readOtaTargets(ota.value, number, headSha)
+  return {selection: {
+    platform: registered.platform,
+    producer: {workflow: `.github/workflows/${producer}`, runId: run.id, ...attempts, url: run.html_url},
+    receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size},
+    app,
+    archive,
+    otaManifest: {url: ota.url, sha256: ota.sha256, size: ota.size},
+    build: {headSha, baseSha, buildSha: receipt.value.buildSha},
+  }}
+}
+
 /** Resolve only. This never downloads/executes a PR archive, sends a comment, or controls hardware. */
 export async function createRoutineRequest({
   github,
@@ -156,22 +257,32 @@ export async function createRoutineRequest({
   channel = "pr",
   routine = "day1-ota",
   requestOrigin,
-  nightlyRunId, nightlyRunAttempt,
+  nightlyRunId, nightlyRunAttempt, nightlyMode,
   source,
   sourceBuildRunId,
   sourcePublicationAttempt,
+  originalRequestRunId,
   fetchImpl = fetch,
   now = () => new Date(),
+  readZip,
+  routineCatalog,
 }) {
   if (channel !== "pr") {
+    // Coordinated originals are already selected by their exact historical source run and attempt.
+    if (originalRequestRunId !== undefined && originalRequestRunId !== "")
+      throw new Error("Original request replay applies to PR requests; select a coordinated original by its exact source")
     const {createCoordinatedRoutineRequest} = await import("./coordinated-routine-request.mjs")
     return createCoordinatedRoutineRequest({github, context, number, channel, routine, requestOrigin, source,
-      sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, fetchImpl, now})
+      sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode, fetchImpl, now, routineCatalog})
   }
   const repository = `${context.repo.owner}/${context.repo.repo}`
-  if (sourcePublication(nightlyRunId, nightlyRunAttempt)) throw new Error("Nightly sequences require a coordinated channel")
+  if (sourcePublication(nightlyRunId, nightlyRunAttempt) || (nightlyMode && nightlyMode !== "ordered")) throw new Error("Nightly sequences require a coordinated channel")
   const selectedSource = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
-  const registered = deviceRoutine(routine)
+  // A planned routine without a registered automatic worker refuses before any request is created.
+  const registered = registeredRoutine(routine, routineCatalog)
+  const android = registered.platform === "android"
+  const producer = routineProducer(routine)
+  const platformName = android ? "Android" : "Mac"
   if (!positive(number)) throw new Error("Expected a positive PR number")
   const authorization = requestOrigin ?? (context.eventName === "pull_request" ? "pr-label" : "workflow-dispatch")
   if (!["pr-label", "workflow-dispatch"].includes(authorization) ||
@@ -192,28 +303,31 @@ export async function createRoutineRequest({
     throw new Error("Stable manual requests must use the trusted dev workflow")
   if (selectedSource && context.eventName !== "workflow_dispatch")
     throw new Error("Source publication selectors require the trusted dev workflow dispatch")
+  const {originalRequestRun, createOriginalReplayRequest} = await import("./original-routine-request.mjs")
+  const originalRun = originalRequestRun(originalRequestRunId)
+  if (originalRun) {
+    // An exact original replay: only an explicit trusted dev dispatch, never a label or bootstrap event.
+    if (context.eventName !== "workflow_dispatch" || authorization !== "workflow-dispatch" || selectedSource)
+      throw new Error("An original replay requires an explicit trusted dev workflow_dispatch without a build selector")
+    return createOriginalReplayRequest({github, context, number, routine, source, requestRunId: originalRun, fetchImpl, now, readZip})
+  }
   if (
     context.eventName === "pull_request" &&
     (source.ref !== `refs/pull/${number}/merge` || context.payload.pull_request?.number !== number)
   )
     throw new Error("Bootstrap request does not match its PR merge checkout")
   const getPr = async () => (await github.rest.pulls.get({...context.repo, pull_number: number})).data
-  // pulls.get().base.sha may lag the branch tip even when GitHub has rebuilt the merge ref.
-  const getBaseSha = async () => {
-    const {data} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})
-    if (data.ref !== "refs/heads/dev" || data.object?.type !== "commit" || !SHA.test(data.object.sha ?? ""))
-      throw new Error("GitHub returned an invalid dev branch ref")
-    return data.object.sha
-  }
   const pr = await getPr()
-  const baseSha = await getBaseSha()
+  // The issuer stays on trusted dev; only the authenticated PR's admitted base
+  // selects which branch tip its merge must contain.
+  const baseSha = admittedPrBase(pr.base?.ref) ? await currentBaseSha(github, context, pr.base.ref) : pr.base?.sha
   const request = {
     schemaVersion: 1,
     kind: "mentra-routine-request",
     requestId: `routine-${context.runId}-${source.runAttempt}-${number}-${routine}`,
     createdAt: now().toISOString(),
     status: "no-artifact",
-    reason: "No eligible published Mac artifact for the current PR revision",
+    reason: `No eligible published ${platformName} artifact for the current PR revision`,
     trigger: {kind: context.eventName, repository, workflow: REQUEST_WORKFLOW, runId: context.runId, ...source},
     pullRequest: prIdentity(pr, baseSha),
     routine: {
@@ -228,8 +342,8 @@ export async function createRoutineRequest({
     selection: null,
     attempts: [],
   }
-  if (pr.state !== "open" || pr.head.repo?.full_name !== repository || pr.base.ref !== "dev") {
-    request.reason = "Only open same-repository PRs targeting dev are eligible"
+  if (pr.state !== "open" || pr.head.repo?.full_name !== repository || !admittedPrBase(pr.base.ref)) {
+    request.reason = "Only open same-repository PRs targeting dev or staging are eligible"
     return request
   }
   if (
@@ -249,7 +363,7 @@ export async function createRoutineRequest({
   if (selectedSource) {
     // A delayed callback must resolve its original publication, never whichever
     // newer run/attempt happens to exist when this request starts.
-    request.reason = "Selected Mac publication is unavailable or does not match the current PR revision"
+    request.reason = `Selected ${platformName} publication is unavailable or does not match the current PR revision`
     let run
     try {
       run = (await github.rest.actions.getWorkflowRunAttempt({
@@ -266,7 +380,7 @@ export async function createRoutineRequest({
   } else {
     const {data} = await github.rest.actions.listWorkflowRuns({
       ...context.repo,
-      workflow_id: PRODUCER,
+      workflow_id: producer,
       head_sha: pr.head.sha,
       event: "pull_request",
       per_page: 100,
@@ -280,82 +394,34 @@ export async function createRoutineRequest({
     const candidate = {runId: run.id, reason: "Build/publication has not completed successfully"}
     request.attempts.push(candidate)
     try {
-      if (run.path !== `.github/workflows/${PRODUCER}` || !positive(run.id))
-        throw new Error("Unexpected Mac producer identity")
-      const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-        ...context.repo,
-        run_id: run.id,
-        filter: "all",
-        per_page: 100,
-      })
-      const attempts = successfulMacPublication(run, jobs)
-      if (!attempts) continue
-      if (selectedSource && attempts.publicationAttempt !== selectedSource.publicationAttempt) {
-        candidate.reason = "Selected attempt retained another publication; no substitute was selected"
+      const verified = await verifyPublishedPrBuild({github, context, routine, run, fetchImpl,
+        pr: {number, headSha: pr.head.sha, baseSha, baseRef: pr.base.ref}, publicationAttempt: selectedSource?.publicationAttempt})
+      if (verified.skip) {
+        candidate.reason = verified.skip
         continue
       }
-      const receiptUrl = artifactUrl(
-        repository,
-        "pr-builds",
-        iosReceiptName(number, pr.head.sha, run.id, attempts.publicationAttempt),
-      )
-      const receipt = await jsonArtifact(receiptUrl, fetchImpl)
-      const assets = validateIosReceipt(receipt.value, {
-        pr: number,
-        sha: pr.head.sha,
-        runId: run.id,
-        attempt: attempts.publicationAttempt,
-      })
-      const otaUrl = artifactUrl(repository, "pr-builds", `ota-pr-${number}-${pr.head.sha}.json`)
-      const app = verifiedApp(receipt.value, pr, attempts, otaUrl)
-      const commit = (await github.rest.repos.getCommit({...context.repo, ref: receipt.value.buildSha})).data
-      if (
-        commit.sha !== receipt.value.buildSha ||
-        commit.parents?.length !== 2 ||
-        commit.parents[0].sha !== baseSha ||
-        commit.parents[1].sha !== pr.head.sha
-      )
-        throw new Error("Mac build is not the current PR head merged with its current base")
-      const archive = {url: artifactUrl(repository, "pr-builds", assets.mac.name), ...assets.mac}
-      const available = await fetchImpl(archive.url, {
-        method: "HEAD",
-        redirect: "error",
-        signal: AbortSignal.timeout(30_000),
-      })
-      if (!available.ok || Number(available.headers.get("content-length")) !== archive.size)
-        throw new Error("Published Mac archive is missing or its size differs from the receipt")
-      const ota = await jsonArtifact(otaUrl, fetchImpl)
-      readOtaTargets(ota.value, number, pr.head.sha)
-      request.selection = {
-        platform: "ios-on-mac",
-        producer: {workflow: `.github/workflows/${PRODUCER}`, runId: run.id, ...attempts, url: run.html_url},
-        receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size},
-        app,
-        archive,
-        otaManifest: {url: ota.url, sha256: ota.sha256, size: ota.size},
-        build: {headSha: pr.head.sha, baseSha, buildSha: receipt.value.buildSha},
-      }
-      candidate.reason = "Verified published Mac receipt, archive availability, OTA pin and merge provenance"
+      request.selection = verified.selection
+      candidate.reason = `Verified published ${platformName} receipt, archive availability, OTA pin and merge provenance`
       break
     } catch (error) {
       candidate.reason = error instanceof Error ? error.message : String(error)
     }
   }
   const current = await getPr()
-  const currentBaseSha = await getBaseSha()
+  const baseAfter = await currentBaseSha(github, context, pr.base.ref)
   if (
     current.state !== "open" ||
     current.head.sha !== pr.head.sha ||
     current.head.repo?.full_name !== repository ||
-    current.base.ref !== "dev" ||
-    currentBaseSha !== baseSha ||
+    current.base.ref !== pr.base.ref ||
+    baseAfter !== baseSha ||
     (labelRequired && !hasRoutineLabel(current, routine))
   ) {
     request.selection = null
     request.reason = "PR head/base or opt-in changed while resolving; no candidate was queued"
   } else if (request.selection) {
     request.status = "ready"
-    request.reason = "Exact current PR Mac build selected; hardware qualification has not run"
+    request.reason = `Exact current PR ${platformName} build selected; hardware qualification has not run`
   } else if (request.attempts.length) request.reason = request.attempts[0].reason
   return request
 }

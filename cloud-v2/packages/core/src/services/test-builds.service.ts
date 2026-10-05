@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { unzipSync } from "fflate";
 import { z } from "zod";
-import { TEST_ROUTINES, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
+import { TEST_ROUTINES, recordedAppPublicationSchema, testRoutinePlatform, type RecordedAppPublication, type TestBuildPlatform, type TestRoutineId, type TestBuild, type TestBuildQuery, type TestBuildSource, type TestDispatchInput } from "../types/test-dispatch.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPOSITORY = "Mentra-Community/MentraOS";
 const PRIVATE_REPOSITORY = "Mentra-Community/Mentra-Automated-Testing";
 const REQUEST_WORKFLOW = "request-e2e-routine.yml";
-const PR_WORKFLOW = "mentra-app-ios-build.yml";
+const prWorkflow = (platform: TestBuildPlatform) => platform === "android" ? "mentra-app-android-build.yml" : "mentra-app-ios-build.yml";
 const RELEASE_WORKFLOW = "coordinated-release.yml";
 const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
 const RELEASE_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets";
 const CDN = `https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/`;
+// Google Play's largest accepted version code.
+const ANDROID_MAX_VERSION_CODE = 2_100_000_000;
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const positive = z.number().int().positive().safe();
@@ -28,14 +31,50 @@ const jobSchema = z.object({ id: positive, name: z.string(), run_attempt: positi
   conclusion: z.string().nullable(), started_at: z.string().nullable(), completed_at: z.string().nullable(),
   steps: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })).optional() });
 type Job = z.infer<typeof jobSchema>;
+// PR destinations whose exact PR-head artifacts are built against their own backend.
+const PR_BASES = ["dev", "staging"] as const;
+type PrBase = typeof PR_BASES[number];
 const prSchema = z.object({ number: positive, state: z.string(), title: z.string(),
   head: z.object({ sha, ref: z.string(), repo: repositorySchema }), base: z.object({ ref: z.string() }) });
 type PullRequest = z.infer<typeof prSchema>;
+/** The PR a build must belong to: the current PR, or an authenticated original request's recorded PR. */
+type PrIdentity = { number: number; title: string; head: { sha: string }; base: { ref: string } };
 const artifactSchema = z.object({ id: positive, name: z.string(), expired: z.boolean(), size_in_bytes: positive,
   digest: z.string().regex(/^sha256:[a-f0-9]{64}$/), workflow_run: z.object({ id: positive, head_sha: sha }) });
+const requestFields = z.object({ kind: z.literal("mentra-routine-request"),
+  requestId: z.string(), status: z.enum(["ready", "no-artifact"]), reason: z.string(),
+  routine: z.object({ id: z.string(), authorization: z.enum(["workflow-dispatch", "pr-label", "successful-build"]) }),
+  trigger: z.object({ repository: z.literal(REPOSITORY), kind: z.literal("workflow_dispatch"), runId: positive, runAttempt: positive,
+    sha, workflowSha: sha, ref: z.literal("refs/heads/dev"), workflow: z.literal(`.github/workflows/${REQUEST_WORKFLOW}`) }),
+  selection: z.object({ platform: z.enum(["ios-on-mac", "android"]), archive: assetSchema, producer: z.object({ runId: positive, publicationAttempt: positive }) }).passthrough().nullable(),
+  pullRequest: z.object({ number: positive, headSha: sha, baseSha: sha, baseRef: z.enum(PR_BASES) }).passthrough().optional(),
+  // Present only on an exact replay of an earlier original request.
+  original: z.object({ requestId: z.string(), runId: positive, runAttempt: positive, artifactDigest: digest }).strict().optional(),
+});
+const publishedRequestSchema = z.discriminatedUnion("schemaVersion", [
+  requestFields.extend({ schemaVersion: z.literal(1) }),
+  requestFields.extend({ schemaVersion: z.literal(2), source: z.object({ kind: z.literal("coordinated-release"),
+    channel: z.enum(["dev", "staging"]), buildRunId: positive, publicationAttempt: positive }) }),
+]);
+/** The exact build an original request selected, read from the issuer's immutable request artifact. */
+export interface OriginalSelection {
+  source: TestBuildSource; archiveSha256: string; headSha: string;
+  /** A replay failure keeps its occurrence, but the next issuer must name the authenticated initial request. */
+  initialRequestRunId?: number;
+  /** For a PR original: its recorded PR identity, which a replay keeps after the PR moves, closes or merges. */
+  pullRequest?: { number: number; headSha: string; baseSha: string; baseRef: PrBase };
+}
 
 export class TestDispatchError extends Error {
-  constructor(readonly status: 400 | 404 | 409 | 502 | 503, message: string) { super(message); }
+  constructor(readonly status: 400 | 404 | 409 | 501 | 502 | 503, message: string) { super(message); }
+}
+/**
+ * An authenticated source whose exact original build has no immutable published artifact or
+ * dispatch path (for example a local run). A capability limit, not an invalid or untrusted source:
+ * investigation, fix PRs and candidate CI verification remain available.
+ */
+export class UnsupportedReplayError extends TestDispatchError {
+  constructor(message: string) { super(501, message); }
 }
 function requireThat(value: unknown, message: string): asserts value {
   if (!value) throw new TestDispatchError(409, message);
@@ -95,11 +134,14 @@ export interface RequestProgress {
 }
 export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
-  resolve(source: TestBuildSource): Promise<TestBuild>;
-  dispatch(input: TestDispatchInput): Promise<{ requestRunId: number; requestUrl: string }>;
+  /** With `originalRequestRunId`, a PR build is resolved for that original request's recorded PR identity. */
+  resolve(source: TestBuildSource, routineId?: TestRoutineId, originalRequestRunId?: number): Promise<TestBuild>;
+  resolveRecordedApp?(publication: RecordedAppPublication & { channel: "dev" | "staging"; headSha: string }, routineId: TestRoutineId): Promise<TestBuild>;
+  dispatch(input: TestDispatchInput, expectedHarnessSha?: string): Promise<{ requestRunId: number; requestUrl: string }>;
   progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress>;
+  findExisting?(input: TestDispatchInput, since: string, excludeRequestRunIds?: number[]): Promise<{ requestRunId: number; requestUrl: string } | null>;
+  originalSelection?(requestRunId: number, routineId: TestRoutineId): Promise<OriginalSelection>;
 }
-
 export class GithubTestBuildGateway implements TestBuildGateway {
   constructor(private readonly options: {
     token?: string; privateReadToken?: string; appAuth?: TestRunGithubApp; fetch?: typeof fetch; channels?: string[]; routines?: string[];
@@ -142,68 +184,112 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   private async pr(number: number) {
     const pr = prSchema.parse(await this.api(`${REPOSITORY}/pulls/${number}`));
-    requireThat(pr.number === number && pr.state === "open" && pr.base.ref === "dev" && pr.head.repo.full_name === REPOSITORY,
-      "Choose an open same-repository PR targeting dev");
+    requireThat(pr.number === number && pr.state === "open" && (PR_BASES as readonly string[]).includes(pr.base.ref)
+      && pr.head.repo.full_name === REPOSITORY, "Choose an open same-repository PR targeting dev or staging");
     return pr;
   }
-  private async baseSha() {
-    const ref = z.object({ ref: z.literal("refs/heads/dev"), object: z.object({ type: z.literal("commit"), sha }) })
-      .parse(await this.api(`${REPOSITORY}/git/ref/heads/dev`));
+  /** The actual tip of the PR's admitted base; the PR API's base SHA can lag it. */
+  private async baseSha(pr: PullRequest) {
+    const base = pr.base.ref as PrBase;
+    const ref = z.object({ ref: z.literal(`refs/heads/${base}`), object: z.object({ type: z.literal("commit"), sha }) })
+      .parse(await this.api(`${REPOSITORY}/git/ref/heads/${base}`));
     return ref.object.sha;
   }
-  private routines(channel: TestBuildSource["channel"], available: boolean) {
+  private routines(channel: TestBuildSource["channel"], available: boolean, platform: TestBuildPlatform) {
     const channels = this.options.channels ?? (process.env.TEST_RUN_DISPATCH_CHANNELS ?? "pr").split(",");
     const enabledRoutines = this.options.routines ?? (process.env.TEST_RUN_DISPATCH_ROUTINES ?? "no-glasses").split(",");
     return TEST_ROUTINES.map(routine => {
-      const compatible = enabledRoutines.includes(routine.id);
-      return { id: routine.id, available: available && channels.includes(channel) && compatible,
-        ...(!available ? { reason: "A verified published Mac build is required" }
+      const compatible = testRoutinePlatform(routine.id) === platform;
+      const enabled = enabledRoutines.includes(routine.id);
+      // A planned routine has no registered automatic worker; enabling it in a deployment cannot make it requestable.
+      const planned = "planned" in routine ? routine.planned : undefined;
+      return { id: routine.id, available: available && channels.includes(channel) && compatible && enabled && !planned,
+        ...(!compatible ? { reason: `This routine requires a ${testRoutinePlatform(routine.id) === "android" ? "published Android APK" : "published Mac build"}` }
+          : planned ? { reason: planned }
+          : !available ? { reason: "A verified published app build is required" }
           : !channels.includes(channel) ? { reason: "Dispatch for this channel is not enabled on the trusted issuer yet" }
-          : !compatible ? { reason: "This routine is not enabled on the test workers yet" } : {}) };
+          : !enabled ? { reason: "This routine is not enabled on the test workers yet" } : {}) };
     });
   }
   async inventory(query: TestBuildQuery): Promise<TestBuild[]> {
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
-    const workflow = pr ? PR_WORKFLOW : RELEASE_WORKFLOW;
+    const platform = testRoutinePlatform(query.routineId);
+    const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
     const filter = pr ? `event=pull_request&head_sha=${pr.head.sha}` : `branch=${query.channel}`;
     const data = z.object({ workflow_runs: z.array(runSchema) }).parse(
       await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=10`));
-    const base = pr ? await this.baseSha() : undefined;
-    return Promise.all(data.workflow_runs.filter(run => this.matches(run, query.channel, pr)).map(run =>
-      this.describe(run, query.channel, pr, base)));
+    const base = pr ? await this.baseSha(pr) : undefined;
+    return Promise.all(data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr)).map(run =>
+      this.describe(run, query.channel, platform, pr, base)));
   }
-  private matches(run: GithubRun, channel: TestBuildSource["channel"], pr?: PullRequest) {
+  private matches(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PullRequest) {
     return run.repository.full_name === REPOSITORY && run.head_repository.full_name === REPOSITORY
-      && run.path === `.github/workflows/${pr ? PR_WORKFLOW : RELEASE_WORKFLOW}`
+      && run.path === `.github/workflows/${pr ? prWorkflow(platform) : RELEASE_WORKFLOW}`
       && (pr ? run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref
         : ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === channel);
   }
-  async resolve(source: TestBuildSource): Promise<TestBuild> {
+  async resolve(source: TestBuildSource, routineId: TestRoutineId = "no-glasses", originalRequestRunId?: number): Promise<TestBuild> {
+    const platform = testRoutinePlatform(routineId);
+    if (originalRequestRunId !== undefined) {
+      // The exact build the original request selected, for that request's recorded PR head/base:
+      // never the current PR, which may have moved, closed or merged.
+      const original = await this.originalSelection(originalRequestRunId, routineId);
+      requireThat(source.channel === "pr" && original.pullRequest && isDeepStrictEqual(original.source, source),
+        "Build is not the original request's selection");
+      const pr = original.pullRequest;
+      const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
+      requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && run.repository.full_name === REPOSITORY
+        && run.head_repository.full_name === REPOSITORY && run.path === `.github/workflows/${prWorkflow(platform)}`
+        && run.event === "pull_request" && run.head_sha === pr.headSha, "Build does not match the original request's producer");
+      const identity: PrIdentity = { number: pr.number, title: `Original PR #${pr.number}`, head: { sha: pr.headSha }, base: { ref: pr.baseRef } };
+      const result = await this.describe(run, "pr", platform, identity, pr.baseSha, true);
+      requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
+      return result;
+    }
     const pr = source.channel === "pr" ? await this.pr(source.prNumber) : undefined;
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
-    requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, pr),
+    requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, platform, pr),
       "Build does not match the selected source and publication attempt");
-    const result = await this.describe(run, source.channel, pr, pr ? await this.baseSha() : undefined, true);
+    const result = await this.describe(run, source.channel, platform, pr, pr ? await this.baseSha(pr) : undefined, true);
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
   }
-  private async describe(run: GithubRun, channel: TestBuildSource["channel"], pr?: PullRequest, baseSha?: string, exact = false): Promise<TestBuild> {
+  /** A local test may have used a published app without consuming a CI request.
+   * Resolve only its named producer, then prove the installed bytes against the
+   * ordinary immutable release receipt. No recent-build search or branch tip. */
+  async resolveRecordedApp(input: RecordedAppPublication & { channel: "dev" | "staging"; headSha: string }, routineId: TestRoutineId): Promise<TestBuild> {
+    const publication = recordedAppPublicationSchema.extend({ channel: z.enum(["dev", "staging"]), headSha: sha }).parse(input);
+    requireThat(testRoutinePlatform(routineId) === "ios-on-mac", "Local app publication verification supports recorded Mac app bytes only");
+    const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${publication.producerRunId}`
+      + (publication.publicationAttempt ? `/attempts/${publication.publicationAttempt}` : "")));
+    requireThat(run.id === publication.producerRunId && run.head_sha === publication.headSha
+      && (!publication.publicationAttempt || run.run_attempt === publication.publicationAttempt)
+      && this.matches(run, publication.channel, "ios-on-mac"), "Recorded app producer does not match the local source and channel");
+    const build = await this.describe(run, publication.channel, "ios-on-mac", undefined, undefined, true);
+    requireThat(!publication.publicationAttempt || build.source.publicationAttempt === publication.publicationAttempt,
+      "Recorded app attempt retained a different publication");
+    if (build.availability === "available") requireThat(build.app?.executableSha256 === publication.executableSha256
+      && build.app?.javascriptSha256 === publication.javascriptSha256, "Published app bytes differ from the local test's recorded app");
+    return build;
+  }
+  private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PrIdentity, baseSha?: string, exact = false): Promise<TestBuild> {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
       : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
-    const build: TestBuild = { source, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
+    const build: TestBuild = { source, platform, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
       headSha: run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
-      availability: "unavailable", routines: this.routines(channel, false) };
+      availability: "unavailable", routines: this.routines(channel, false, platform) };
     try {
       requireThat(run.status === "completed", "Build is still running");
-      const artifacts = pr ? await this.prArtifacts(run, pr, baseSha!) : await this.releaseArtifacts(run, channel);
+      const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha!) : this.prArtifacts(run, pr, baseSha!))
+        : await this.releaseArtifacts(run, channel, platform);
       build.source.publicationAttempt = artifacts.attempt;
       const archive = artifacts.archive;
       const response = await this.fetcher(`${CDN}${artifacts.tag}/${archive.name}`, { method: "HEAD" });
       if (!response.ok && response.status !== 404)
-        throw new TestDispatchError(502, `Published Mac archive is temporarily unavailable (HTTP ${response.status})`);
+        throw new TestDispatchError(502, `Published app archive is temporarily unavailable (HTTP ${response.status})`);
       requireThat(response.ok && Number(response.headers.get("content-length")) === archive.size,
-        "Published Mac archive is missing or its size differs from the receipt");
-      return { ...build, ...artifacts.result, archive, availability: "available", routines: this.routines(channel, true) };
+        "Published app archive is missing or its size differs from the receipt");
+      return { ...build, ...artifacts.result, archive, availability: "available", routines: this.routines(channel, true, platform) };
     } catch (error) {
       // Inventory can describe an unavailable row, but dispatch must not make a
       // permanent rejection from a transient provider or network failure.
@@ -211,33 +297,66 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       return { ...build, reason: error instanceof TestDispatchError ? error.message : "Published metadata does not match this build" };
     }
   }
-  private async prArtifacts(run: GithubRun, pr: PullRequest, baseSha: string) {
+  private async prArtifacts(run: GithubRun, pr: PrIdentity, baseSha: string) {
     const attempts = publication(run, await this.jobs(run.id));
     requireThat(attempts, "Build or Mac publication has not succeeded");
     const suffix = `pr-${pr.number}-${pr.head.sha}-${run.id}-${attempts.publish}`;
     const receipt = await this.metadata("pr-builds", `mentra-ios-${suffix}.json`);
     const data = z.object({ schemaVersion: z.union([z.literal(1), z.literal(2)]), pr: positive, headSha: sha,
       runId: positive, runAttempt: positive, buildAttempt: positive.optional(), buildSha: sha,
-      app: z.object({ bundleId: z.literal("com.mentra.mentra"), teamId: z.literal("T5XXXL6N36"), backend: z.literal("dev"),
+      app: z.object({ bundleId: z.literal("com.mentra.mentra"), teamId: z.literal("T5XXXL6N36"), backend: z.enum(PR_BASES),
         headSha: sha, buildSha: sha, runId: positive, runAttempt: positive, otaManifestUrl: z.string(),
         executableSha256: digest, javascriptSha256: digest }), artifacts: z.object({ mac: assetSchema }) }).parse(receipt.value);
     const otaName = `ota-pr-${pr.number}-${pr.head.sha}.json`;
     requireThat(data.pr === pr.number && data.headSha === pr.head.sha && data.runId === run.id && data.runAttempt === attempts.publish
       && (data.buildAttempt ?? data.runAttempt) === attempts.build && data.app.headSha === data.headSha
       && data.app.buildSha === data.buildSha && data.app.runId === run.id && data.app.runAttempt === attempts.build
-      && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
+      && data.app.backend === pr.base.ref && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
       && data.artifacts.mac.name === `mentra-ios-mac-pr-${pr.number}-${pr.head.sha}-${run.id}-${attempts.build}.zip`,
       "Mac receipt belongs to a different PR build");
     const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
     requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === baseSha
-      && commit.parents[1]!.sha === pr.head.sha, "Mac build does not contain the current PR head and dev base");
+      && commit.parents[1]!.sha === pr.head.sha, "Mac build does not contain the current PR head and base");
     const ota = await this.metadata("pr-builds", otaName);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
     return { attempt: attempts.publish, tag: "pr-builds", archive: data.artifacts.mac,
       result: { receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
   }
-  private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"]) {
+  private async androidPrArtifacts(run: GithubRun, pr: PrIdentity, baseSha: string) {
+    const jobs = await this.jobs(run.id);
+    const builds = jobs.filter(job => job.name === "build" && job.run_attempt <= run.run_attempt);
+    const latest = Math.max(0, ...builds.map(job => job.run_attempt));
+    const candidates = builds.filter(job => job.run_attempt === latest);
+    requireThat(candidates.length === 1 && candidates[0]!.status === "completed" && candidates[0]!.conclusion === "success"
+      && candidates[0]!.steps?.some(step => step.name === "Upload APK to the public artifact CDN"
+        && step.status === "completed" && step.conclusion === "success"), "Android APK publication has not succeeded");
+    const build = candidates[0]!;
+    const attempt = Math.min(latest, ...builds.filter(job => build.started_at && build.completed_at
+      && job.started_at === build.started_at && job.completed_at === build.completed_at && job.conclusion === build.conclusion)
+      .map(job => job.run_attempt));
+    const name = `mentra-android-pr-${pr.number}-${pr.head.sha}-${run.id}-${attempt}`;
+    const receipt = await this.metadata("pr-builds", `${name}.json`);
+    const data = z.object({ schemaVersion: z.literal(1), pr: positive, headSha: sha, baseSha: sha, buildSha: sha,
+      runId: positive, runAttempt: positive,
+      app: z.object({ packageId: z.literal("com.mentra.mentra"), version: z.string().min(1), build: z.string().regex(/^[1-9]\d*$/),
+        headSha: sha, buildSha: sha, backend: z.enum(PR_BASES), otaManifestUrl: z.string() }),
+      artifacts: z.object({ android: assetSchema }) }).parse(receipt.value);
+    const otaName = `ota-pr-${pr.number}-${pr.head.sha}.json`;
+    requireThat(data.pr === pr.number && data.headSha === pr.head.sha && data.baseSha === baseSha
+      && data.runId === run.id && data.runAttempt === attempt && data.app.headSha === data.headSha
+      && data.app.buildSha === data.buildSha && data.app.backend === pr.base.ref && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
+      && data.artifacts.android.name === `${name}.apk`, "Android receipt belongs to a different PR build");
+    const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
+    requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === baseSha
+      && commit.parents[1]!.sha === pr.head.sha, "Android build does not contain the current PR head and base");
+    const ota = await this.metadata("pr-builds", otaName);
+    requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
+      "OTA manifest belongs to another PR revision");
+    return { attempt, tag: "pr-builds", archive: data.artifacts.android,
+      result: { receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+  }
+  private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform) {
     // Downstream failures and notification-only retries do not erase a publication.
     // A newer finalizer execution must qualify itself; never fall back past it.
     const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt);
@@ -260,12 +379,36 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const match = /^(\d+\.\d+\.\d+)-(dev|beta)\.[1-9]\d*$/.exec(identity);
     requireThat(match && match[2] === (channel === "dev" ? "dev" : "beta"), "Release identity does not match the selected channel");
     const tag = `mentra-builds-v${match[1]}`;
+    const planMetadata = await this.metadata(tag, `mentra-release-plan-${identity}.json`);
     const plan = z.object({ releaseIdentity: z.string(), sourceCommit: sha, channel: z.string(), artifactContainerTag: z.string(),
-      native: z.object({ buildNumber: positive, marketingVersion: z.string() }), artifactNames: z.object({ otaManifest: z.string() }) })
-      .parse((await this.metadata(tag, `mentra-release-plan-${identity}.json`)).value);
+      native: z.object({ buildNumber: positive, marketingVersion: z.string() }), artifactNames: z.object({ otaManifest: z.string(), androidApp: z.string().optional(), releaseManifest: z.string().optional() }) })
+      .parse(planMetadata.value);
     requireThat(plan.releaseIdentity === identity && plan.sourceCommit === run.head_sha && plan.channel === match[2]
       && plan.artifactContainerTag === tag && plan.artifactNames.otaManifest === `mentra-live-ota-${identity}.json`,
       "Published plan does not match the producing run");
+    if (platform === "android") {
+      requireThat(plan.artifactNames.androidApp === `mentraos-${identity}-android.apk`
+        && plan.artifactNames.releaseManifest === `mentra-release-${identity}.json`, "Release plan has no matching Android APK");
+      const receipt = await this.metadata(tag, plan.artifactNames.releaseManifest);
+      const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), releaseSetId: z.string(), sourceCommit: sha,
+        releasePlanSha256: digest, channel: z.string(),
+        native: z.record(z.string(), z.unknown()),
+        artifacts: z.array(z.object({ coordinate: z.string() }).passthrough()) }).parse(receipt.value);
+      const assets = data.artifacts.filter(asset => asset.coordinate === plan.artifactNames.androidApp);
+      // The manifest copies the plan's native identity and may add only the Android version code it built.
+      const { androidBuildNumber: versionCode = plan.native.buildNumber, ...planNative } = data.native;
+      requireThat(data.releaseIdentity === identity && data.releaseSetId === `mentra-${identity}`
+        && data.sourceCommit === run.head_sha && data.channel === match[2] && data.releasePlanSha256 === planMetadata.sha256
+        && isDeepStrictEqual(planNative, (planMetadata.value as { native?: unknown }).native)
+        && typeof versionCode === "number" && Number.isSafeInteger(versionCode)
+        && versionCode >= plan.native.buildNumber && versionCode <= ANDROID_MAX_VERSION_CODE
+        && assets.length === 1 && assets[0]!.url === `${CDN}${tag}/${plan.artifactNames.androidApp}`
+        && ["built", "published", "reused"].includes(String(assets[0]!.status)), "Android receipt does not match the selected coordinated release");
+      const archive = assetSchema.parse({ name: assets[0]!.coordinate, sha256: assets[0]!.sha256, size: assets[0]!.size });
+      const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
+      requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
+      return { attempt, tag, archive, result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+    }
     const receipt = await this.metadata(tag, `mentraos-${identity}-apple-downloads.json`);
     const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), sourceCommit: sha,
       app: z.object({ bundleId: z.literal("com.mentra.mentra"), headSha: sha, backend: z.string(), build: z.string(),
@@ -278,12 +421,43 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
     return { attempt, tag, archive: data.artifacts.mac,
-      result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256 } };
+      result: { release: identity, receiptSha256: receipt.sha256, manifestSha256: ota.sha256,
+        app: { executableSha256: data.app.executableSha256, javascriptSha256: data.app.javascriptSha256 } } };
   }
-  async dispatch(input: TestDispatchInput) {
+  async findExisting(input: TestDispatchInput, since: string, excludeRequestRunIds: number[] = []) {
+    requireThat(Number.isFinite(Date.parse(since)), "Invalid candidate publication time");
+    const data = z.object({ total_count: z.number().int().nonnegative(), workflow_runs: z.array(runSchema) }).parse(await this.api(
+      `${REPOSITORY}/actions/workflows/${REQUEST_WORKFLOW}/runs?event=workflow_dispatch&branch=dev&created=${encodeURIComponent(">=" + since)}&per_page=100`));
+    requireThat(data.total_count === data.workflow_runs.length, "Request history is incomplete; reconcile before sending");
+    const found: { requestRunId: number; requestUrl: string }[] = [];
+    for (const run of data.workflow_runs) {
+      if (excludeRequestRunIds.includes(run.id)) continue;
+      if (run.status !== "completed" || run.run_attempt !== 1)
+        throw new TestDispatchError(503, "An unresolved request may own this build; reconcile before sending");
+      if (run.conclusion !== "success") continue;
+      try {
+        const progress = await this.progress(run.id, input);
+        if (progress.requestId && progress.state !== "unavailable") found.push({ requestRunId: run.id, requestUrl: runUrl(REPOSITORY, run.id) });
+      } catch (error) {
+        // Only an authenticated different selection is a miss. Missing, expired
+        // or invalid metadata cannot authorize another device execution.
+        if (!(error instanceof TestDispatchError) || !["Published request source differs", "Published request identity differs",
+          "Request selected a different app publication"].includes(error.message)) throw error;
+      }
+    }
+    requireThat(found.length <= 1, "Multiple requests already selected this build; reconcile before sending");
+    return found[0] ?? null;
+  }
+  /** Read-only source-scope App reads with validated identities; no caller URL or ref text. */
+  async dispatch(input: TestDispatchInput, expectedHarnessSha?: string) {
+    if (expectedHarnessSha !== undefined) sha.parse(expectedHarnessSha);
     const source = input.source;
+    // An original replay names only its original request; the trusted issuer re-reads that request's selection.
+    requireThat(input.originalRequestRunId === undefined || source.channel === "pr", "Only a PR original is replayed by its request");
     const inputs = { routine: input.routineId, request_origin: "workflow-dispatch",
-      source_build_run_id: String(source.buildRunId), source_publication_attempt: String(source.publicationAttempt),
+      ...(expectedHarnessSha ? { expected_harness_sha: expectedHarnessSha } : {}),
+      ...(input.originalRequestRunId !== undefined ? { original_request_run_id: String(input.originalRequestRunId) }
+        : { source_build_run_id: String(source.buildRunId), source_publication_attempt: String(source.publicationAttempt) }),
       ...(source.channel === "pr" ? { pr: String(source.prNumber) } : { channel: source.channel }) };
     const data = z.object({ workflow_run_id: positive, html_url: z.string(), run_url: z.string() }).parse(await this.api(
       `${REPOSITORY}/actions/workflows/${REQUEST_WORKFLOW}/dispatches`, { method: "POST",
@@ -292,13 +466,59 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && data.run_url === `https://api.github.com/repos/${REPOSITORY}/actions/runs/${data.workflow_run_id}`, "Dispatch acknowledgement differs");
     return { requestRunId: data.workflow_run_id, requestUrl: data.html_url };
   }
-  async progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress> {
+  /**
+   * The trusted issuer's own immutable selection for an original occurrence's request:
+   * its exact producer run, publication attempt, archive and source head. Nothing here
+   * comes from the caller; the build is then admitted only by that exact source.
+   */
+  async originalSelection(requestRunId: number, routineId: TestRoutineId): Promise<OriginalSelection> {
+    const { request } = await this.publishedRequest(requestRunId);
+    requireThat(request, "The original request did not complete successfully");
+    if (request.original) {
+      const marker = request.original;
+      requireThat(request.schemaVersion === 1 && request.status === "ready" && request.routine.id === routineId
+        && request.routine.authorization === "workflow-dispatch" && marker.runAttempt === 1 && marker.runId !== requestRunId
+        && request.requestId === `routine-${requestRunId}-1-${request.pullRequest?.number}-${routineId}`,
+      "Invalid original replay request");
+      // One direct marker, never an unbounded chain: the issuer always points to the initial request.
+      const initial = await this.publishedRequest(marker.runId);
+      requireThat(initial.request && initial.request.schemaVersion === 1 && initial.request.original === undefined
+        && marker.requestId === initial.request.requestId && marker.artifactDigest === initial.artifactDigest
+        && isDeepStrictEqual(request.pullRequest, initial.request.pullRequest)
+        && isDeepStrictEqual(request.selection, initial.request.selection), "Replay differs from its original request");
+      return { ...this.selectedOriginal(initial.request, marker.runId, routineId), initialRequestRunId: marker.runId };
+    }
+    return this.selectedOriginal(request, requestRunId, routineId);
+  }
+  private selectedOriginal(request: z.infer<typeof publishedRequestSchema>, requestRunId: number, routineId: TestRoutineId): OriginalSelection {
+    const suffix = request.schemaVersion === 1 ? /^routine-[1-9]\d*-1-([1-9]\d*)-/.exec(request.requestId)?.[1] : request.source.channel;
+    requireThat(request.status === "ready" && request.selection && request.routine.id === routineId && request.original === undefined
+      && request.selection.platform === testRoutinePlatform(routineId)
+      && request.requestId === `routine-${requestRunId}-1-${suffix}-${routineId}`, "The original request did not select a published build for this routine");
+    const selection = request.selection, producer = selection.producer;
+    const recorded = z.object({ headSha: sha.optional(), baseSha: sha.optional(), sourceCommit: sha.optional() }).passthrough().safeParse(selection.build ?? {});
+    requireThat(recorded.success, "The original request did not record its selected source");
+    const build = recorded.data, headSha = request.schemaVersion === 1 ? build.headSha : build.sourceCommit;
+    requireThat(headSha, "The original request did not record its selected source");
+    if (request.schemaVersion === 2) requireThat(request.source.buildRunId === producer.runId
+      && request.source.publicationAttempt === producer.publicationAttempt, "The original request source differs from its producer");
+    const source: TestBuildSource = request.schemaVersion === 1
+      ? { channel: "pr", prNumber: Number(suffix), buildRunId: producer.runId, publicationAttempt: producer.publicationAttempt }
+      : { channel: request.source.channel, buildRunId: producer.runId, publicationAttempt: producer.publicationAttempt };
+    if (request.schemaVersion === 2) return { source, archiveSha256: selection.archive.sha256, headSha };
+    const pr = request.pullRequest;
+    requireThat(pr && pr.number === Number(suffix) && pr.headSha === headSha && build.baseSha !== undefined && pr.baseSha === build.baseSha,
+      "The original request's PR identity differs from its selected build");
+    return { source, archiveSha256: selection.archive.sha256, headSha,
+      pullRequest: { number: pr.number, headSha: pr.headSha, baseSha: pr.baseSha, baseRef: pr.baseRef } };
+  }
+  /** One authenticated immutable request generation; `request` is null until its workflow succeeded. */
+  private async publishedRequest(requestRunId: number) {
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${requestRunId}/attempts/1`));
     requireThat(run.id === requestRunId && run.run_attempt === 1 && run.repository.full_name === REPOSITORY
       && run.head_repository.full_name === REPOSITORY && run.path === `.github/workflows/${REQUEST_WORKFLOW}`
       && run.event === "workflow_dispatch" && run.head_branch === "dev", "Unexpected request workflow identity");
-    if (run.status !== "completed") return { state: "requesting", message: "GitHub is resolving the selected build." };
-    if (run.conclusion !== "success") return { state: "failed", message: "The request workflow did not complete successfully; no passing test is implied." };
+    if (run.status !== "completed" || run.conclusion !== "success") return { run, request: null };
     const listed = z.object({ artifacts: z.array(artifactSchema) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
     const matches = listed.artifacts.filter(item => item.name === `mentra-routine-request-${run.id}-1`);
     requireThat(matches.length === 1 && !matches[0]!.expired && matches[0]!.size_in_bytes <= 2 * 1024 * 1024
@@ -316,29 +536,25 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     // Never forward the GitHub token to the signed artifact URL.
     const bytes = await readTestMetadata(await this.fetcher(location.href), 2 * 1024 * 1024);
     requireThat(`sha256:${hash(bytes)}` === artifact.digest, "Request artifact digest changed");
-    const requestFields = z.object({ kind: z.literal("mentra-routine-request"),
-      requestId: z.string(), status: z.enum(["ready", "no-artifact"]), reason: z.string(),
-      routine: z.object({ id: z.string(), authorization: z.literal("workflow-dispatch") }),
-      trigger: z.object({ repository: z.literal(REPOSITORY), kind: z.literal("workflow_dispatch"), runId: positive, runAttempt: positive,
-        sha, workflowSha: sha, ref: z.literal("refs/heads/dev"), workflow: z.literal(`.github/workflows/${REQUEST_WORKFLOW}`) }),
-      selection: z.object({ archive: assetSchema, producer: z.object({ runId: positive, publicationAttempt: positive }) }).passthrough().nullable(),
-    });
-    const request = z.discriminatedUnion("schemaVersion", [
-      requestFields.extend({ schemaVersion: z.literal(1) }),
-      requestFields.extend({ schemaVersion: z.literal(2), source: z.object({ kind: z.literal("coordinated-release"),
-        channel: z.enum(["dev", "staging"]), buildRunId: positive, publicationAttempt: positive }) }),
-    ]).parse(readRequestZip(bytes));
+    const request = publishedRequestSchema.parse(readRequestZip(bytes));
+    requireThat(request.trigger.runId === run.id && request.trigger.runAttempt === 1 && request.trigger.sha === run.head_sha
+      && request.trigger.workflowSha === run.head_sha, "Published request identity differs");
+    return { run, request, artifactDigest: artifact.digest.slice("sha256:".length) };
+  }
+  async progress(requestRunId: number, input: TestDispatchInput): Promise<RequestProgress> {
+    const { run, request } = await this.publishedRequest(requestRunId);
+    if (run.status !== "completed") return { state: "requesting", message: "GitHub is resolving the selected build." };
+    if (!request) return { state: "failed", message: "The request workflow did not complete successfully; no passing test is implied." };
     requireThat(input.source.channel === "pr" ? request.schemaVersion === 1
       : request.schemaVersion === 2 && request.source.channel === input.source.channel
         && request.source.buildRunId === input.source.buildRunId
         && request.source.publicationAttempt === input.source.publicationAttempt, "Published request source differs");
     const suffix = input.source.channel === "pr" ? input.source.prNumber : input.source.channel;
     requireThat(request.requestId === `routine-${requestRunId}-1-${suffix}-${input.routineId}` && request.routine.id === input.routineId
-      && request.trigger.runId === run.id && request.trigger.runAttempt === 1 && request.trigger.sha === run.head_sha
-      && request.trigger.workflowSha === run.head_sha, "Published request identity differs");
+      && request.original?.runId === input.originalRequestRunId, "Published request identity differs");
     if (request.status === "no-artifact") return { state: "unavailable", requestId: request.requestId, message: request.reason };
-    requireThat(request.selection?.archive.sha256 === input.archiveSha256 && request.selection.producer.runId === input.source.buildRunId
-      && request.selection.producer.publicationAttempt === input.source.publicationAttempt, "Request selected a different Mac publication");
+    requireThat(request.selection?.platform === testRoutinePlatform(input.routineId) && request.selection.archive.sha256 === input.archiveSha256 && request.selection.producer.runId === input.source.buildRunId
+      && request.selection.producer.publicationAttempt === input.source.publicationAttempt, "Request selected a different app publication");
     if (!this.options.privateReadToken && !this.appAuth.configured) return { state: "requesting", requestId: request.requestId,
       message: "Request published. Private queue visibility is not configured; awaiting a recorded result." };
     const privateToken = await this.token("private");

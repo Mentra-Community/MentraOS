@@ -259,6 +259,13 @@ describe("authenticated result navigation", () => {
     );
     expect(testRunLocation(returned.href, null)).toBe("/#evidence");
   });
+  test("a catalog result leaves the catalog route and returns to the run list", () => {
+    const catalog = "https://admin.dev.mentraglass.com/?routineCatalog=1";
+    const detail = new URL(testRunLocation(catalog, { runID: "catalog-run" }), catalog);
+    expect(detail.search).toBe("?testRun=catalog-run");
+    expect(readTestRunLink(detail.search)).toEqual({ runID: "catalog-run" });
+    expect(testRunLocation(detail.href, null)).toBe("/");
+  });
   test("ambiguous IDs and path traversal cannot become authenticated media paths", () => {
     expect(readTestRunLink("?testRun=one&testRun=two")).toBeNull();
     expect(readTestRunLink("?testRun=..%2Fother")).toBeNull();
