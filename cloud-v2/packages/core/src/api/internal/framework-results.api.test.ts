@@ -35,7 +35,7 @@ test("result routes derive host identity and refuse incomplete final acknowledge
 });
 
 test("a 2437-asset frozen result publishes unchanged through the authenticated route and retains its failed verdict", async () => {
-  const assets = Array.from({length: 2437}, (_, index) => ({id: index ? `setup-${String(index).padStart(64, "a")}` : "recording",
+  const assets: FrameworkRun["assets"] = Array.from({length: 2437}, (_, index) => ({id: index ? `setup-${String(index).padStart(64, "a")}` : "recording",
     kind: index ? "report" as const : "recording" as const, path: index ? `setup-evidence/commands/${String(index).padStart(64, "b")}.json` : "routine.mp4",
     sha256: "c".repeat(64), size: index ? 100 : 46859392, mimeType: index ? "application/json" : "video/mp4"}));
   const run = {schemaVersion: 1, requestId: "original-ota", hostId: "mini", routineId: "ota-roundtrip-android",
@@ -63,8 +63,8 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
   const post = () => api.request("/", {method: "POST", headers, body});
   const first = await post();
   expect(first.status).toBe(200);
-  const receipt = await first.json();
-  expect(receipt).toEqual({entityId: run.requestId, payloadSha256: requestInputDigest(run), created: true});
+  const receipt = {entityId: run.requestId, payloadSha256: requestInputDigest(run), created: true};
+  expect(await first.json()).toEqual(receipt);
   expect(stored!.payload.assets).toEqual(assets);
   expect(stored!.payload.result.evidence).toEqual(run.result.evidence);
   expect((await service.detail(run.requestId)).outcome).toBe("failed");
