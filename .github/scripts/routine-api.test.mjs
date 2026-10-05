@@ -101,6 +101,20 @@ test("result polling retries transient outages and waits for uploads without new
   assert.equal(calls, 2)
 })
 
+test("request and publication callback jobs select the environment providing their Core capability", async () => {
+  const {readFile} = await import("node:fs/promises")
+  for (const [name, jobIds] of [["request-e2e-routine", ["request"]], ["dispatch-device-routine", ["resolve", "dispatch"]]]) {
+    const workflow = await readFile(new URL(`../workflows/${name}.yml`, import.meta.url), "utf8")
+    const jobs = workflow.slice(workflow.indexOf("\njobs:\n")).split(/(?=^  [a-z-]+:\n)/m)
+    for (const jobId of jobIds) {
+      const job = jobs.find(section => section.startsWith(`  ${jobId}:\n`))
+      assert.ok(job, `${name} must contain ${jobId}`)
+      assert.match(job, /^    environment: routine-nightly-dev$/m, `${name}.${jobId} must load the environment secret`)
+      assert.match(job, /TEST_RUN_INGEST_TOKEN: \$\{\{ secrets\.TEST_RUN_INGEST_TOKEN_DEV \}\}/)
+    }
+  }
+})
+
 test("active callers contain no routine registry and preserve enable gates and trusted source checkout", async () => {
   const {readFile, readdir} = await import("node:fs/promises")
   const workflows = new URL("../workflows/", import.meta.url)

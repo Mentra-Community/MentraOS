@@ -9,6 +9,7 @@ permissions:
   pull-requests: read
 jobs:
   resolve:
+    environment: routine-nightly-dev
     if: github.repository == 'Mentra-Community/MentraOS' && vars.DEVICE_ROUTINE_PR_DISPATCH_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -36,6 +37,7 @@ jobs:
             core.setOutput('matrix', JSON.stringify({include: plans}));
             core.setOutput('has-work', String(plans.length > 0));
   dispatch:
+    environment: routine-nightly-dev
     needs: resolve
     if: needs.resolve.outputs.has-work == 'true'
     strategy:
