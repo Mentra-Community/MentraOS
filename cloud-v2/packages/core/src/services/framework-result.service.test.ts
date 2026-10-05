@@ -3,7 +3,7 @@ import {expect, test, spyOn} from "bun:test";
 import {FrameworkResultConflict, FrameworkResultService, type FrameworkResultRepository} from "./framework-result.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
-import {TestRunModel} from "../models/test-run.model";
+import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
 
 test("lost result acknowledgement returns same receipt and refuses rewritten terminal result", async () => {
@@ -14,7 +14,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
       stored = {payload, payloadSha256, uploadsComplete: true};
     },
     async getByRequest() {return stored;},
-    async getByRun() {return stored;},
+    async getByRun() {return stored;}, async getAsset() {return null;},
   };
   const run = {schemaVersion: 1, hostId: "mini", requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
     platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
@@ -76,7 +76,7 @@ test("a completed test can publish a teardown failure without becoming a catalog
       steps: [{id: "required", status: "passed", durationMs: 10}],
       teardown: {ready: false, outcomes: [{state: "failed", resourceId: "app", failure}], errors: [failure], unavailableResources: []},
       failures: [failure], evidence: [], timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
-  const service = new FrameworkResultService({async insert(payload) {stored = payload;}, async getByRequest() {return null;}, async getByRun() {return null;}},
+  const service = new FrameworkResultService({async insert(payload) {stored = payload;}, async getByRequest() {return null;}, async getByRun() {return null;}, async getAsset() {return null;}},
     async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
       platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
     async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment));
@@ -167,7 +167,7 @@ test("result ingestion binds every routine lifecycle action to the complete orde
   let writes = 0, stored: FrameworkRun | undefined;
   const source = {...definition};
   const service = new FrameworkResultService({async insert(payload) {writes++; stored = payload;},
-    async getByRequest() {return null;}, async getByRun() {return null;}},
+    async getByRequest() {return null;}, async getByRun() {return null;}, async getAsset() {return null;}},
     async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
       platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
     async () => ({routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
@@ -232,12 +232,71 @@ test("old saved lifecycle omissions remain readable without invented action repo
       timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
   const service = new FrameworkResultService({async insert() {},
     async getByRequest() {return {payload: old, payloadSha256: "f".repeat(64), uploadsComplete: true};},
-    async getByRun() {return null;}}, async () => null, async () => {}, async () => null);
+    async getByRun() {return null;}, async getAsset() {return null;}}, async () => null, async () => {}, async () => null);
   const detail = await service.detail("old-run");
   expect(detail.run).toEqual(old);
   expect(detail.outcome).toBe("pass");
   expect(detail.run.result.setup).not.toHaveProperty("actions");
   expect(detail.run.result.teardown).not.toHaveProperty("actions");
+});
+
+test("asset reads project one immutable declaration and preserve missing and unauthorized outcomes", async () => {
+  const {TestAssetService} = await import("./test-asset.service");
+  const declaration = {id: "report:final", kind: "report" as const, path: "setup-evidence/final.json",
+    sha256: "c".repeat(64), size: 100, mimeType: "application/json" as const};
+  const calls: Array<{filter: unknown; options: any}> = [];
+  const find = spyOn(TestRunModel.collection, "findOne").mockImplementation((async (filter: {requestId?: string; runId?: string}, options: any) => {
+    calls.push({filter, options});
+    return (filter.requestId ?? filter.runId) === "missing-run" ? null
+      : {payload: {result: {runId: "frozen-run"}, assets:
+        options.projection["payload.assets"].$filter.cond.$eq[1].$literal === declaration.id ? [declaration] : []}};
+  }) as any);
+  let acknowledged = false;
+  const custody = spyOn(TestAssetModel, "findOne").mockImplementation(() => ({read() {return this;}, readConcern() {return this;},
+    async lean() {return acknowledged ? {runId: "frozen-run", assetId: declaration.id} : null;}}) as any);
+  const upload = spyOn(TestAssetService.prototype, "uploadDeclaredAsset").mockImplementation(async (runId, asset) => {
+    expect(runId).toBe("frozen-run");
+    expect(asset).toEqual({assetId: declaration.id, kind: "metadata", contentType: declaration.mimeType,
+      filename: "final.json", sizeBytes: declaration.size, sha256: declaration.sha256});
+    return {assetId: declaration.id, uploaded: true, created: true};
+  });
+  const media = spyOn(TestAssetService.prototype, "mediaDeclaredAsset").mockImplementation(async (asset, _stored, request) => {
+    expect(asset).toEqual({assetId: declaration.id, kind: "metadata", contentType: declaration.mimeType,
+      filename: "final.json", sizeBytes: declaration.size, sha256: declaration.sha256});
+    expect(request.method).toBe("HEAD");
+    return new Response(null, {status: 206, headers: {"content-range": "bytes 0-1/100", "content-length": "2"}});
+  });
+  let owner = "mini";
+  const service = new FrameworkResultService(undefined, async () => ({hostId: owner, input: {} as any}));
+  const headers = new Headers({"content-type": declaration.mimeType});
+  const mediaRequest = new Request("http://localhost/asset", {method: "HEAD"});
+  try {
+    expect(await service.upload("request", declaration.id, "mini", null, headers)).toMatchObject({uploaded: true, sha256: declaration.sha256, size: declaration.size});
+    owner = "other";
+    await expect(service.upload("request", declaration.id, "mini", null, headers)).rejects.toThrow("not owned");
+    owner = "mini";
+    await expect(service.upload("missing-run", declaration.id, "mini", null, headers)).rejects.toThrow("not owned");
+    await expect(service.upload("request", "undeclared", "mini", null, headers)).rejects.toThrow("not declared");
+    expect(upload).toHaveBeenCalledTimes(1);
+    await expect(service.media("request", declaration.id, mediaRequest)).rejects.toThrow("not acknowledged");
+    await expect(service.mediaByRun("frozen-run", "undeclared", mediaRequest)).rejects.toThrow("not declared");
+    await expect(service.mediaByRun("missing-run", declaration.id, mediaRequest)).rejects.toThrow("not declared");
+    expect(custody).toHaveBeenCalledTimes(1);
+    expect(custody.mock.calls[0]).toEqual([{runId: "frozen-run", assetId: declaration.id}]);
+    for (const [index, call] of calls.entries()) {
+      expect(call.filter).toMatchObject({"payload.schemaVersion": 1});
+      expect(call.options.projection).toEqual({"payload.result.runId": 1,
+        "payload.assets": {$filter: {input: "$payload.assets", as: "asset",
+          cond: {$eq: ["$$asset.id", {$literal: [3, 5].includes(index) ? "undeclared" : declaration.id}]}}}, _id: 0});
+      expect(call.options.readPreference.mode).toBe("primary"); expect(call.options.readConcern).toEqual({level: "majority"});
+    }
+    expect(calls[0].filter).toEqual({"payload.schemaVersion": 1, requestId: "request"});
+    expect(calls[5].filter).toEqual({"payload.schemaVersion": 1, runId: "frozen-run"});
+    acknowledged = true;
+    const response = await service.mediaByRun("frozen-run", declaration.id, mediaRequest);
+    expect(response.status).toBe(206); expect(response.headers.get("content-length")).toBe("2");
+    expect(media).toHaveBeenCalledTimes(1);
+  } finally {find.mockRestore(); custody.mockRestore(); upload.mockRestore(); media.mockRestore();}
 });
 
 
@@ -278,7 +337,7 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
     }
     rows.set(row.assetId, row); return row;
   }}, () => storage);
-  const service = new FrameworkResultService({async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}},
+  const service = new FrameworkResultService({async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {return {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null};}},
     async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
       platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
     async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment), assets, {

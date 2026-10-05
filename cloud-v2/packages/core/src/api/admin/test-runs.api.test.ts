@@ -112,7 +112,7 @@ test("a cancelled request read reconciles late host custody and then its real re
       steps: [{id: "check", instruction: "Check", expected: "Checked"}], source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: input.definitionRevision, path: "routines/new-product/routine.ts"}}});
   const results = new FrameworkResultService({
     async insert(payload, payloadSha256) {storedRun = {payload, payloadSha256, uploadsComplete: true};},
-    async getByRequest() {return structuredClone(storedRun);}, async getByRun() {return structuredClone(storedRun);},
+    async getByRequest() {return structuredClone(storedRun);}, async getByRun() {return structuredClone(storedRun);}, async getAsset() {return null;},
   }, async () => row?.hostReceipt ? {hostId: row.hostId, input} : null, async run => {
     row = {...row!, state: "terminal", terminalStatus: "cancelled", runId: run.result.runId};
   }, async () => definition);

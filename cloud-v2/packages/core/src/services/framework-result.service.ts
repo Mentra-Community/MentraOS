@@ -16,8 +16,10 @@ export interface FrameworkResultRepository {
   insert(run: FrameworkRun, payloadSha256: string): Promise<void>;
   getByRequest(requestId: string): Promise<StoredFrameworkRun | null>;
   getByRun(runId: string): Promise<StoredFrameworkRun | null>;
+  getAsset(identity: {requestId: string} | {runId: string}, assetId: string): Promise<StoredFrameworkAsset | null>;
 }
 export interface StoredFrameworkRun {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean}
+export interface StoredFrameworkAsset {runId: string; asset: FrameworkRun["assets"][number] | null}
 export interface FrameworkUploadAcknowledgements {
   list(runId: string): Promise<Array<{assetId: string; sha256: string; sizeBytes: number}>>;
   complete(stored: StoredFrameworkRun): Promise<void>;
@@ -52,6 +54,15 @@ const mongoRepository: FrameworkResultRepository = {
   async getByRun(runId) {
     const row = await TestRunModel.findOne({...nativeRunFilter, runId}).read("primary").readConcern("majority").lean();
     return row ? {payload: row.payload as FrameworkRun, payloadSha256: row.payloadSha256, uploadsComplete: row.uploadsComplete} : null;
+  },
+  async getAsset(identity, assetId) {
+    // Read the declaration from the frozen payload without transferring the
+    // entire manifest and execution evidence for every upload or media request.
+    const row = await TestRunModel.findOne({...nativeRunFilter, ...identity})
+      .select({"payload.result.runId": 1, "payload.assets": {$filter: {input: "$payload.assets", as: "asset",
+        cond: {$eq: ["$$asset.id", {$literal: assetId}]}}}, _id: 0})
+      .read("primary").readConcern("majority").lean();
+    return row ? {runId: row.payload.result.runId, asset: row.payload.assets?.[0] ?? null} : null;
   },
 };
 
@@ -118,13 +129,13 @@ export class FrameworkResultService {
   }
 
   async upload(requestId: string, assetId: string, hostId: string, body: ReadableStream<Uint8Array> | null, headers: Headers) {
-    const stored = await this.repository.getByRequest(requestId), binding = await this.request(requestId);
+    const stored = await this.repository.getAsset({requestId}, assetId), binding = await this.request(requestId);
     if (!stored || binding?.hostId !== hostId) throw new FrameworkResultConflict("Result is not owned by this host");
-    const asset = stored.payload.assets.find(item => item.id === assetId);
+    const asset = stored.asset;
     if (!asset) throw new FrameworkResultConflict("Asset is not declared in the frozen result");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";
-    const receipt = await this.assets.uploadDeclaredAsset(stored.payload.result.runId,
+    const receipt = await this.assets.uploadDeclaredAsset(stored.runId,
       {assetId, kind, contentType: asset.mimeType, filename: asset.path.split("/").at(-1)!, sizeBytes: asset.size, sha256: asset.sha256},
       body, headers, async () => {});
     return {...receipt, entityId: requestId, assetId, sha256: asset.sha256, size: asset.size};
@@ -175,17 +186,17 @@ export class FrameworkResultService {
   }
 
   async media(requestId: string, assetId: string, request: Request) {
-    return this.storedMedia(await this.repository.getByRequest(requestId), assetId, request);
+    return this.storedMedia(await this.repository.getAsset({requestId}, assetId), assetId, request);
   }
 
   async mediaByRun(runId: string, assetId: string, request: Request) {
-    return this.storedMedia(await this.repository.getByRun(runId), assetId, request);
+    return this.storedMedia(await this.repository.getAsset({runId}, assetId), assetId, request);
   }
 
-  private async storedMedia(stored: StoredFrameworkRun | null, assetId: string, request: Request) {
-    const asset = stored?.payload.assets.find(item => item.id === assetId);
+  private async storedMedia(stored: StoredFrameworkAsset | null, assetId: string, request: Request) {
+    const asset = stored?.asset;
     if (!stored || !asset) throw new TestRunError(404, "Asset is not declared in this result");
-    const uploaded = await TestAssetModel.findOne({runId: stored.payload.result.runId, assetId}).read("primary").readConcern("majority").lean();
+    const uploaded = await TestAssetModel.findOne({runId: stored.runId, assetId}).read("primary").readConcern("majority").lean();
     if (!uploaded) throw new TestRunError(404, "Asset upload is not acknowledged");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";
