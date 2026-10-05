@@ -70,6 +70,7 @@ export type MentraUIHostReply = {ok: true; result?: unknown} | {ok: false; error
 export class MentraUIRouter {
   private readonly bindings: Map<string, BoundWebView> = new Map()
   private readonly restarting = new Set<string>()
+  private readonly stopped = new Set<string>()
   private readonly pendingInput = new Map<string, string[]>()
   private readonly backgroundRequests = new Map<string, Set<string>>()
   private readonly crust: MentraUICrustBinding
@@ -159,8 +160,16 @@ export class MentraUIRouter {
     console.warn(`MentraUIRouter: ${packageName} background restarting; UI bound=${!!binding}`)
   }
 
+  /** Terminal recovery/explicit teardown retires input that has no future owner. */
+  backgroundStopped(packageName: string): void {
+    this.backgroundRestarting(packageName)
+    this.stopped.add(packageName)
+    this.pendingInput.delete(packageName)
+  }
+
   /** Restore UI_OPEN only after the new SDK session has installed its transport. */
   backgroundConnected(packageName: string): void {
+    this.stopped.delete(packageName)
     if (!this.restarting.delete(packageName)) return
     this.notifyReopen(packageName)
     const pending = this.pendingInput.get(packageName) ?? []
@@ -237,14 +246,16 @@ export class MentraUIRouter {
             ok: false,
             error: {code: "BACKGROUND_RESTARTED", message: "Miniapp background restarting; request was not replayed"},
           })
-        } else {
+        } else if (!this.stopped.has(packageName)) {
           // This input has never been delivered; retain it until CONNECT.
           let pending = this.pendingInput.get(packageName)
           if (!pending) {
             pending = []
             this.pendingInput.set(packageName, pending)
           }
-          pending.push(rawJson)
+          // Bound the short backoff queue even if CONNECT never arrives.
+          if (pending.length < 128) pending.push(rawJson)
+          else console.warn(`MentraUIRouter: ${packageName} restart input queue full; draft remains in UI`)
         }
         return
       }

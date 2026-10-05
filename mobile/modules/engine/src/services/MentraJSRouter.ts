@@ -288,15 +288,20 @@ export class MentraJSRouter {
     this.uiRouter?.backgroundRestarting(packageName)
     this.runtime.resetHandshake(packageName)
     const controller = this.crashController
-    if (!controller) return
+    if (!controller) {
+      this.uiRouter?.backgroundStopped(packageName)
+      return
+    }
     const cached = this.spawnCache.get(packageName)
     if (!cached) {
       this.logger.warn(`crash for ${packageName} but no cached spawn args — cannot respawn`)
       controller.onCrash(packageName, reason)
+      this.uiRouter?.backgroundStopped(packageName)
       return
     }
     const outcome = controller.onCrash(packageName, reason)
     if (outcome.surfaceCrashloopBanner) {
+      this.uiRouter?.backgroundStopped(packageName)
       this.onCrashloop?.(packageName, reason)
       islandNotifications.emit({kind: "miniapp_crashloop", packageName, reason, timestamp: Date.now()})
       return
@@ -304,7 +309,10 @@ export class MentraJSRouter {
     if (outcome.showRestartToast) {
       this.onRestartToast?.(packageName, reason)
     }
-    if (outcome.scheduleRespawnAfterMs == null) return
+    if (outcome.scheduleRespawnAfterMs == null) {
+      this.uiRouter?.backgroundStopped(packageName)
+      return
+    }
     // Cancel any prior pending respawn before scheduling a new one.
     const existing = this.respawnTimers.get(packageName)
     if (existing) clearTimeout(existing)
@@ -323,6 +331,7 @@ export class MentraJSRouter {
         )
         if (!ok) {
           this.logger.error(`crash respawn failed for ${packageName}`)
+          this.uiRouter?.backgroundStopped(packageName)
           return
         }
         if (cached.permissions.length > 0) {
@@ -362,7 +371,7 @@ export class MentraJSRouter {
       this.respawnTimers.delete(packageName)
     }
     this.replacementConnects.delete(packageName)
-    this.uiRouter?.backgroundRestarting(packageName)
+    this.uiRouter?.backgroundStopped(packageName)
     this.spawnCache.delete(packageName)
     this.crashController?.onKill(packageName)
     this.runtime.unregisterApp(packageName)

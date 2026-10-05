@@ -287,3 +287,27 @@ describe("background replacement", () => {
     expect(crust.dispatchCalls).toHaveLength(before + 2)
   })
 })
+
+test("terminal background teardown clears unsent input and bounded queue cannot grow forever", () => {
+  const crust = buildMockCrust()
+  const router = new MentraUIRouter(crust.binding)
+  bindCapture(router, "com.foo")
+  router.backgroundRestarting("com.foo")
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    for (let i = 0; i < 10000; i++)
+      router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: i}))
+  } finally {
+    console.warn = warn
+  }
+  router.backgroundConnected("com.foo")
+  expect(crust.dispatchCalls).toHaveLength(129)
+  crust.dispatchCalls.length = 0
+  router.backgroundRestarting("com.foo")
+  router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "retired"}))
+  router.backgroundStopped("com.foo")
+  router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "no future owner"}))
+  router.backgroundConnected("com.foo")
+  expect(crust.dispatchCalls).toHaveLength(1)
+})
