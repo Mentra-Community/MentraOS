@@ -416,6 +416,17 @@ While a stream is active, supported firmware also emits this status periodically
 Stops the current or pending stream. The operation is idempotent: an already stopped stream
 returns a stopped snapshot. Cleanup releases capture and cancels phone-loss/resource work.
 
+Automated cleanup can send `request_id`, `streamId`, and `controllerId` together. All three
+must match `[A-Za-z0-9][A-Za-z0-9_-]{0,119}`. The lifecycle dispatcher checks the active
+controller and any pending start before stopping services or cancelling admission. A
+foreign owner, foreign pending start, or incomplete identity is refused without mutation.
+The correlated `stream_status` response has `kind: "stop_ack"`, `stopAccepted`,
+`stopReason`, `requestedStreamId`, and `requestedControllerId`. Its current snapshot and
+`request_id` do not become retained stream state. An accepted stop acknowledges the
+request; the caller must separately observe a fresh terminal snapshot before releasing
+resources. An already terminal matching stream acknowledges without stopping services.
+An exact pending-only start is cancelled without touching an unrelated publisher.
+
 #### `get_stream_status`
 
 ```json
@@ -432,7 +443,10 @@ An optional `request_id` matching `[A-Za-z0-9][A-Za-z0-9_-]{0,119}` is echoed on
 that snapshot, before it enters the outbound BLE queue. For example,
 `{"type":"get_stream_status","request_id":"status-123"}` returns the existing
 snapshot with `"request_id":"status-123"`. Omitted or invalid IDs retain the
-uncorrelated response. The ID is not retained on later snapshots or stream events;
+uncorrelated response. Fresh queries include `pendingStart`; a pending admission also
+includes `pendingStreamId`/`pendingControllerId`, and an active owner includes
+`controllerId`. This prevents a stopped snapshot from concealing a queued admission.
+The ID is not retained on later snapshots or stream events;
 `timestamp` remains display time and can change when the phone synchronizes the clock.
 
 #### `keep_stream_alive`
