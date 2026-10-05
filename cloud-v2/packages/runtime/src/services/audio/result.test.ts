@@ -38,10 +38,11 @@ describe("transcriptToStreamMessage resolvedLanguage", () => {
         audioPosition: { sessionTag: 9, offsetMs: 100 },
       },
     ];
-    const msg = transcriptToStreamMessage(transcriptMessage({ tokens }));
+    const msg = transcriptToStreamMessage(transcriptMessage({ tokens, frameTimelineVersion: 1 }));
     if (msg.type !== "stream.transcript")
       throw new Error("expected transcript");
     expect(msg.payload.tokens).toEqual(tokens);
+    expect(msg.payload.frameTimelineVersion).toBe(1);
   });
   test("specific subscription echoes its own code even when the provider detected a different tag", () => {
     const msg = transcriptToStreamMessage(

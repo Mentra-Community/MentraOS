@@ -70,6 +70,7 @@ import type {
 } from "@mentra/cloud-protocol/errors";
 import { PROTOCOL_ERROR_CODES } from "@mentra/cloud-protocol/errors";
 import type { ConnectionInit } from "@mentra/cloud-protocol/handshake";
+import { negotiatedFrameTimeline } from "../services/session/frame-timeline";
 
 const logger = createLogger("audio").child({ service: "session.service" });
 
@@ -714,11 +715,14 @@ async function handleConnectionInit(
   ws: ServerWebSocket<WsData>,
   init: ConnectionInit,
 ): Promise<void> {
-  if (init.audio?.frameTimelineVersion === 1) {
-    await enableSessionFrameTimeline(
-      ws.data.sessionTag,
-      ws.data.audioSessionId,
-    );
+  if (negotiatedFrameTimeline(init.audio?.frameTimelineVersion) === 1) {
+    try {
+      await enableSessionFrameTimeline(ws.data.sessionTag, ws.data.audioSessionId);
+    } catch (err) {
+      logger.error({err, sessionTag: ws.data.sessionTag}, "failed to negotiate audio frame timeline");
+      ws.close(1011, "audio init failed");
+      return;
+    }
     ws.data.frameTimelineVersion = 1;
   }
   // Tell the worker this session's codec before any audio is processed, so it

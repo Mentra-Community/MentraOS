@@ -19,6 +19,7 @@
 import type { AudioPosition, TranscriptionToken } from "@mentra/cloud-protocol";
 
 export interface TranscriptEvent {
+  frameTimelineVersion?: 1;
   /** Transcribed text. May be a partial token or a complete word/phrase. */
   text: string;
   /** Whether the provider considers this finalized (vs. interim/in-progress). */

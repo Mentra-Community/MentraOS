@@ -2,6 +2,7 @@ import {expect, test} from "bun:test"
 import {readFileSync} from "node:fs"
 import {TranscriptionSubscriptions} from "../TranscriptionSubscriptions"
 import {transcriptionDeliveryRoute} from "../TranscriptionRouting"
+import {UdpAudio} from "../../../../../../cloud-v2/packages/cloud-client/src/modules/runtime/audio-udp"
 
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
 const start = source.indexOf("  public forwardEvent(")
@@ -61,4 +62,45 @@ test("old SDK bundles get trimmed stream events and missing timing is withheld",
   expect(sent[0].listenerId).toBeUndefined()
   host.forwardEvent("transcription:en", {text: "UNMAPPED"}, "cloud", [])
   expect(sent).toHaveLength(1)
+})
+
+test("new to legacy to new server reconnect keeps fallback and delayed positioned finals", () => {
+  const audio = new UdpAudio({udp: () => ({send() {}, close() {}, onMessage() {}})})
+  const config = {sessionTag: 1, udp: {host: "test", port: 1}, encryption: {key: Buffer.alloc(32).toString("base64"), algorithm: "xsalsa20-poly1305" as const}}
+  const host = new Host(), registry = new TranscriptionSubscriptions()
+  audio.configure({...config, frameTimelineVersion: 1})
+  cloud.getAudioPosition = () => audio.audioPosition
+  registry.replace([{id: "one", stream: "transcription:auto"}], audio.audioPosition)
+  host.streamSubscribers = new Map([["transcription:auto", new Set(["notes"])]])
+  host.connectedApps = new Map([["notes", {transcriptionListeners: registry}]])
+  host.normalizeStreamType = (stream: string) => stream
+  host.appTranscriptionRoutesForEvent = () => ({cloud: true, forceLocal: false})
+  const sent: any[] = []
+  host.sendToMiniapp = (_owner: string, event: any) => sent.push(event)
+  // Exercise the actual cloud result adapter as well as the host fanout.
+  const wiring = source.slice(source.indexOf("  private ensureCloudResultsWired():"), source.indexOf("  private ensureCloudStatusWired():"))
+  const wireCode = new Bun.Transpiler({loader: "ts"}).transformSync(`class Wiring {${wiring}}`)
+  let receive = (_data: any) => {}
+  const Wiring = new Function("cloudClientService", "TRANSCRIPT_TIMING_TELEMETRY", `${wireCode}; return Wiring`)(
+    {onTranscript: (fn: typeof receive) => {receive = fn}, onTranslation() {}}, false,
+  )
+  const wiringHost = new Wiring()
+  wiringHost.forwardEvent = host.forwardEvent.bind(host)
+  wiringHost.ensureCloudResultsWired()
+  const token = {text: "positioned", startMs: 0, endMs: 10, confidence: 1, isFinal: true, audioPosition: {sessionTag: 1, offsetMs: 0}}
+  const result = {provider: "soniox", text: "positioned", resolvedLanguage: "en", tokens: [token], frameTimelineVersion: 1}
+  try {
+    receive(result)
+    audio.configure({...config, sessionTag: 2})
+    receive({...result, text: "legacy", tokens: [], frameTimelineVersion: undefined})
+    receive({...result, isFinal: true})
+    // A malformed result from a negotiated occurrence cannot use legacy fallback.
+    receive({...result, text: "missing", tokens: []})
+    audio.configure({...config, sessionTag: 3, frameTimelineVersion: 1})
+    registry.observe(audio.audioPosition)
+    receive({...result, tokens: [{...token, audioPosition: {sessionTag: 3, offsetMs: 0}}]})
+    expect(sent.map((e) => [e.data.text, e.listenerId])).toEqual([
+      ["positioned", "one"], ["legacy", undefined], ["positioned", "one"], ["positioned", "one"],
+    ])
+  } finally {audio.close(); cloud.getAudioPosition = () => null}
 })

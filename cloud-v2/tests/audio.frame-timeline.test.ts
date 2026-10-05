@@ -2,6 +2,7 @@ import {expect, spyOn, test} from "bun:test";
 import * as redisClient from "../packages/runtime/src/clients/redis.client";
 import {UdpAudio} from "../packages/cloud-client/src/modules/runtime/audio-udp";
 import {enableSessionFrameTimeline, ingestAudioPacket, parseAudioPacket} from "../packages/runtime/src/services/session/stream";
+import {negotiatedFrameTimeline} from "../packages/runtime/src/services/session/frame-timeline";
 
 test("negotiated positions survive encrypted UDP, remote Redis ingress and WS fallback", async () => {
   const key = Buffer.alloc(32, 7).toString("base64");
@@ -56,4 +57,24 @@ test("legacy audio ingress keeps payload bytes and does not invent a position", 
     expect(writes[0]?.at(-3)).toBe("");
     expect(Buffer.from(writes[0]!.at(-1)!, "base64")).toEqual(Buffer.from(payload));
   } finally {mock.mockRestore()}
+});
+
+test("mixed-version rollout keeps old ingress and workers on legacy PCM until activation", async () => {
+  const previous = process.env.AUDIO_FRAME_TIMELINE_ENABLED;
+  delete process.env.AUDIO_FRAME_TIMELINE_ENABLED;
+  const sent: Uint8Array[] = [];
+  const audio = new UdpAudio({udp: () => ({send: (packet) => {sent.push(packet)}, close() {}, onMessage() {}})});
+  try {
+    audio.configure({sessionTag: 1, frameTimelineVersion: negotiatedFrameTimeline(1), udp: {host: "test", port: 1},
+      encryption: {key: Buffer.alloc(32).toString("base64"), algorithm: "xsalsa20-poly1305"}});
+    const pcm = new Uint8Array(320).fill(2);
+    const packet = audio.buildPlainFrame(pcm)!;
+    // The prior reader treats everything after the six-byte header as audio.
+    expect(parseAudioPacket(packet)?.payload).toEqual(pcm);
+    expect(audio.audioPosition).toBeNull();
+  } finally {
+    audio.close();
+    if (previous === undefined) delete process.env.AUDIO_FRAME_TIMELINE_ENABLED;
+    else process.env.AUDIO_FRAME_TIMELINE_ENABLED = previous;
+  }
 });

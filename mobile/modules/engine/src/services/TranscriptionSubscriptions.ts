@@ -15,11 +15,9 @@ interface Listener extends TranscriptionListenerRegistration {
 /** Runtime-owned text projection. Token detail never crosses the miniapp bridge. */
 export class TranscriptionSubscriptions {
   private listeners = new Map<string, Listener>()
-  usesTimeline = false
 
   observe(current: AudioPosition | null): void {
     if (!current) return
-    this.usesTimeline = true
     for (const listener of this.listeners.values()) listener.sessions.add(current.sessionTag)
   }
 

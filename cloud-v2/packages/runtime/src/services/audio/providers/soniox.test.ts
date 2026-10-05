@@ -239,9 +239,9 @@ describe("SonioxProvider translation same-language passthrough", () => {
     expect(finals[0]!.originalText).toBe("Hello world");
     expect(finals[0]!.sourceLanguage).toBe("en");
 
-      await provider.close();
-    });
+    await provider.close();
   });
+});
 
 describe("sonioxLanguageHints", () => {
   test("a specific language becomes its own bare-code hint (region stripped)", () => {
@@ -354,9 +354,9 @@ describe("SonioxProvider session configuration", () => {
       },
     });
 
-      await provider.close();
-    });
+    await provider.close();
   });
+});
 
 describe("SonioxProvider utterance lifecycle", () => {
   test("timing survives repeated/compacted windows, endpoint merge and mapping pruning", async () => {
@@ -452,9 +452,26 @@ describe("SonioxProvider utterance lifecycle", () => {
         "AFTER",
       ]);
       expect(events.at(-1)?.tokens?.every((token) => token.isFinal)).toBe(true);
+      expect(events.at(-1)?.frameTimelineVersion).toBe(1);
     } finally {
       await provider.close();
     }
+  });
+  test("missing token timing retains the negotiated occurrence capability through its final", async () => {
+    const {session, provider, events} = await makeProvider();
+    try {
+      provider.writeAudio(new Int16Array(160), {sessionTag: 1, offsetMs: 0});
+      session.result([{text: "unknown", confidence: 1, is_final: false}]);
+      expect(events.at(-1)?.frameTimelineVersion).toBe(1);
+      expect(events.at(-1)?.tokens).toEqual([]);
+      session.endpoint();
+      // A legacy frame arriving while the prior final is pending does not
+      // change that positioned occurrence's missing-timing policy.
+      provider.writeAudio(new Int16Array(160));
+      session.emit("finalized");
+      expect(events.at(-1)?.frameTimelineVersion).toBe(1);
+      expect(events.at(-1)?.tokens).toEqual([]);
+    } finally {await provider.close()}
   });
   test("does not churn finals/utteranceIds when the rolling window's speaker flips mid-utterance", async () => {
     const { session, events, provider } = await makeProvider();

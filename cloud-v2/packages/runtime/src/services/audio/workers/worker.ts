@@ -109,6 +109,7 @@ export interface TranscriptStubMessage {
  * Same shape for both so clients can route via a single handler.
  */
 export interface TranscriptMessage {
+  frameTimelineVersion?: 1
   tokens?: TranscriptionToken[]
   type: "TRANSCRIPT"
   kind: "transcription" | "translation"
@@ -423,6 +424,7 @@ async function createProvider(mentraUserId: string, sub: AudioSubscription): Pro
       startMs: event.startMs,
       endMs: event.endMs,
       tokens: event.tokens,
+      frameTimelineVersion: event.frameTimelineVersion,
       source: PROVIDER_KIND,
       subscription: sub,
     }

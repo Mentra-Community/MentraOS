@@ -97,6 +97,7 @@ export function transcriptToStreamMessage(t: TranscriptMessage): StreamMessage {
     resolvedLanguage: lang.language,
     languageDetected: lang.detected,
     tokens: t.tokens ?? [],
+    frameTimelineVersion: t.frameTimelineVersion,
     provider: t.source,
     timestamp,
   };

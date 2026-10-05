@@ -5714,7 +5714,8 @@ class LocalMiniappRuntime {
           __hostReceivedAt: receivedAt,
         },
         "cloud",
-        d.provider === "soniox" ? d.tokens : undefined,
+        d.provider === "soniox" && (d.frameTimelineVersion === 1 || d.tokens.some((token) => token.audioPosition))
+          ? d.tokens : undefined,
       )
     })
 
@@ -5913,10 +5914,7 @@ class LocalMiniappRuntime {
       }
       const listenerRegistry = this.connectedApps.get(packageName)?.transcriptionListeners
       const audioPosition = cloudClientService.getAudioPosition()
-      if (
-        listenerRegistry && transcriptionSource === "cloud" && tokens !== undefined &&
-        (listenerRegistry.usesTimeline || audioPosition || tokens.some((token) => token.audioPosition))
-      ) {
+      if (listenerRegistry && transcriptionSource === "cloud" && tokens !== undefined) {
         for (const projected of listenerRegistry.project(
           normalizedStream,
           tokens ?? [],

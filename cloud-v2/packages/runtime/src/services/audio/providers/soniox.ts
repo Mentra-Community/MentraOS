@@ -265,6 +265,16 @@ export async function createSonioxProvider(
   let pendingTokens: TranscriptionToken[] = [];
   let pendingTokenGeneration = 0;
   let lastEmittedTokens: TranscriptionToken[] = [];
+  let frameTimelineVersion: 1 | undefined;
+  let activeFrameTimelineVersion: 1 | undefined;
+  let pendingFrameTimelineVersion: 1 | undefined;
+  const emitTranscript = (event: TranscriptEvent): void => {
+    opts.onTranscript({
+      ...event,
+      frameTimelineVersion: event.frameTimelineVersion ??
+        (event.tokens?.some((token) => token.audioPosition) ? 1 : undefined),
+    });
+  };
   let prevFinalLen = 0;
   // Last interim string we emitted for this utterance. Doubles as the text we
   // commit when an utterance closes (endpoint / speaker change), and as a
@@ -313,6 +323,7 @@ export async function createSonioxProvider(
   };
 
   const startNewUtterance = (speakerId?: string, language?: string): void => {
+    activeFrameTimelineVersion = frameTimelineVersion;
     currentUtteranceId = mintUtteranceId();
     confirmedTokens = new Map();
     lastTokens = [];
@@ -329,6 +340,7 @@ export async function createSonioxProvider(
   };
 
   const resetActiveUtterance = (): void => {
+    activeFrameTimelineVersion = undefined;
     confirmedTokens = new Map();
     lastTokens = [];
     lastEmittedTokens = [];
@@ -354,8 +366,9 @@ export async function createSonioxProvider(
     startMs?: number;
     endMs?: number;
     tokens?: TranscriptionToken[];
+    frameTimelineVersion?: 1;
   }): void => {
-    opts.onTranscript({
+    emitTranscript({
       text: event.text,
       isFinal: true,
       utteranceId: event.utteranceId,
@@ -366,6 +379,7 @@ export async function createSonioxProvider(
       startMs: event.startMs,
       endMs: event.endMs,
       tokens: event.tokens?.map((token) => ({ ...token, isFinal: true })),
+      frameTimelineVersion: event.frameTimelineVersion,
     });
   };
 
@@ -376,6 +390,7 @@ export async function createSonioxProvider(
     }
     pendingFinalText = "";
     pendingTokens = [];
+    pendingFrameTimelineVersion = undefined;
     pendingFinalUtteranceId = null;
     pendingFinalSpeakerId = undefined;
     pendingFinalLanguage = undefined;
@@ -444,6 +459,7 @@ export async function createSonioxProvider(
       startMs: pendingFinalStartMs,
       endMs: pendingFinalEndMs,
       tokens: pendingTokens,
+      frameTimelineVersion: pendingFrameTimelineVersion,
     });
     if (
       committedUtteranceId &&
@@ -466,6 +482,7 @@ export async function createSonioxProvider(
     pendingFinalText = text;
     pendingTokens = lastEmittedTokens;
     pendingTokenGeneration = providerGeneration;
+    pendingFrameTimelineVersion = activeFrameTimelineVersion;
     pendingFinalUtteranceId = currentUtteranceId;
     pendingFinalSpeakerId = currentSpeakerId;
     pendingFinalLanguage = currentLanguage;
@@ -498,6 +515,7 @@ export async function createSonioxProvider(
       startMs,
       endMs,
       tokens: lastEmittedTokens,
+      frameTimelineVersion: activeFrameTimelineVersion,
     });
     // Reset for the next utterance. A fresh id is minted lazily when the next
     // token arrives (see handleResult).
@@ -703,10 +721,11 @@ export async function createSonioxProvider(
         pendingTokens = mergeTimedTokens(merged, pendingTokens, lastTokens);
         lastTokens = pendingTokens;
         lastEmittedTokens = pendingTokens;
+        if (activeFrameTimelineVersion === 1) pendingFrameTimelineVersion = 1;
         lastSentInterim = merged;
 
         if (merged !== pendingBefore) {
-          opts.onTranscript({
+          emitTranscript({
             text: merged,
             isFinal: false,
             utteranceId: currentUtteranceId ?? undefined,
@@ -717,6 +736,7 @@ export async function createSonioxProvider(
             startMs,
             endMs,
             tokens: pendingTokens,
+            frameTimelineVersion: pendingFrameTimelineVersion,
           });
           schedulePendingFinalCommit();
         }
@@ -735,7 +755,7 @@ export async function createSonioxProvider(
     }
 
     if (compositeText !== lastSentInterim) {
-      opts.onTranscript({
+      emitTranscript({
         text: compositeText,
         isFinal: false,
         utteranceId: currentUtteranceId ?? undefined,
@@ -746,6 +766,7 @@ export async function createSonioxProvider(
         startMs,
         endMs,
         tokens: lastTokens,
+        frameTimelineVersion: activeFrameTimelineVersion,
       });
       lastSentInterim = compositeText;
       lastEmittedTokens = lastTokens;
@@ -991,6 +1012,8 @@ export async function createSonioxProvider(
         }
       }
       try {
+        frameTimelineVersion = position ? 1 : undefined;
+        if (position && currentUtteranceId) activeFrameTimelineVersion = 1;
         audioTimeline.add(pcm.length, position);
         session.sendAudio(bytes);
       } catch (err) {

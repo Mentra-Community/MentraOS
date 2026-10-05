@@ -96,6 +96,9 @@ export const transcriptionDataSchema = z.object({
 
   // Per-token detail for consumers that need it
   tokens: z.array(transcriptionTokenSchema),
+  // Internal result capability: missing timing on a positioned session must
+  // be withheld, while an older/unnegotiated session keeps legacy delivery.
+  frameTimelineVersion: z.literal(1).optional(),
 
   provider: z.string(),
   timestamp: z.number(),
