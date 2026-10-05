@@ -66,7 +66,8 @@ public class StreamCommandHandlerConditionalStopTest {
 
     private JSONObject stop(String stream, String controller) throws Exception {
         return new JSONObject().put("request_id", "cleanup-1")
-                .put("streamId", stream).put("controllerId", controller);
+                .put("streamId", stream).put("controllerId", controller)
+                .put("expectedSid", "1234abcd").put("expectedRevision", state.snapshot().getLong("revision"));
     }
 
     private void owned(String stream, String controller) throws Exception {
@@ -126,26 +127,10 @@ public class StreamCommandHandlerConditionalStopTest {
         verifyNoInteractions(callback);
     }
 
-    @Test public void exactPendingOnlyCancelsWithoutTouchingServices() throws Exception {
-        field("mPendingStart", new JSONObject().put("streamId", "one").put("controllerId", "controller"));
-        try (MockedStatic<RtmpStreamingService> rtmp = mockStatic(RtmpStreamingService.class);
-                MockedStatic<SrtStreamingService> srt = mockStatic(SrtStreamingService.class);
-                MockedStatic<WhipStreamingService> whip = mockStatic(WhipStreamingService.class)) {
-            handler.handleCommand("stop_stream", stop("one", "controller"));
-            shadowOf(Looper.getMainLooper()).idle();
-            rtmp.verifyNoInteractions(); srt.verifyNoInteractions(); whip.verifyNoInteractions();
-        }
-        JSONObject ack = responses.get(responses.size() - 1);
-        assertThat(ack.getBoolean("stopAccepted")).isTrue();
-        assertThat(ack.getString("stopReason")).isEqualTo("pending_cancelled");
-        assertThat(ack.getBoolean("pendingStart")).isFalse();
-        assertThat(field("mPendingStart")).isNull();
-        verifyNoInteractions(callback);
-    }
-
-    @Test public void matchingPendingCancelsWithoutStoppingAnotherLiveOwner() throws Exception {
+    @Test public void pendingAdmissionAlwaysRefusesWithoutCancellingOrStopping() throws Exception {
         owned("other", "other-controller");
-        field("mPendingStart", new JSONObject().put("streamId", "pending").put("controllerId", "controller"));
+        JSONObject pending = new JSONObject().put("streamId", "pending").put("controllerId", "controller");
+        field("mPendingStart", pending);
         try (MockedStatic<RtmpStreamingService> rtmp = mockStatic(RtmpStreamingService.class);
                 MockedStatic<SrtStreamingService> srt = mockStatic(SrtStreamingService.class);
                 MockedStatic<WhipStreamingService> whip = mockStatic(WhipStreamingService.class)) {
@@ -154,12 +139,32 @@ public class StreamCommandHandlerConditionalStopTest {
             rtmp.verifyNoInteractions(); srt.verifyNoInteractions(); whip.verifyNoInteractions();
         }
         JSONObject ack = responses.get(responses.size() - 1);
-        assertThat(ack.getBoolean("stopAccepted")).isTrue();
-        assertThat(ack.getString("stopReason")).isEqualTo("pending_cancelled");
-        assertThat(ack.getString("streamId")).isEqualTo("other");
-        assertThat(ack.getBoolean("terminal")).isFalse();
+        assertThat(ack.getBoolean("stopAccepted")).isFalse();
+        assertThat(ack.getString("stopReason")).isEqualTo("pending_admission");
+        assertThat(field("mPendingStart")).isSameAs(pending);
         assertThat(field("mOwnedStreamId")).isEqualTo("other");
-        assertThat(field("mPendingStart")).isNull();
+        verifyNoInteractions(callback);
+    }
+
+    @Test public void sameIdsReplacementChangesRevisionAndRefusesStaleStop() throws Exception {
+        owned("one", "controller");
+        JSONObject stale = stop("one", "controller");
+        owned("one", "controller");
+        handler.handleCommand("stop_stream", stale);
+        shadowOf(Looper.getMainLooper()).idle();
+        assertThat(responses.get(0).getBoolean("stopAccepted")).isFalse();
+        assertThat(responses.get(0).getString("stopReason")).isEqualTo("snapshot_changed");
+        assertThat(state.snapshot().getBoolean("terminal")).isFalse();
+        verifyNoInteractions(callback);
+    }
+
+    @Test public void wrongProcessSidOrRevisionNeverStopsCurrentOwner() throws Exception {
+        owned("one", "controller");
+        handler.handleCommand("stop_stream", stop("one", "controller").put("expectedSid", "9999ffff"));
+        handler.handleCommand("stop_stream", stop("one", "controller").put("expectedRevision", -1));
+        shadowOf(Looper.getMainLooper()).idle();
+        assertThat(responses).hasSize(2);
+        for (JSONObject response : responses) assertThat(response.getBoolean("stopAccepted")).isFalse();
         verifyNoInteractions(callback);
     }
 

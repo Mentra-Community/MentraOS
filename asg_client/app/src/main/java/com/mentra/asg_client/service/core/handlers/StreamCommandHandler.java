@@ -532,30 +532,25 @@ public class StreamCommandHandler implements ICommandHandler {
         String requestId = commandIdentity(data.opt("request_id"));
         String streamId = commandIdentity(data.opt("streamId"));
         String controllerId = commandIdentity(data.opt("controllerId"));
+        Object expectedRevision = data.opt("expectedRevision");
+        String expectedSid = data.opt("expectedSid") instanceof String ? data.optString("expectedSid") : null;
         boolean accepted = false;
         String reason = "invalid_identity";
-        if (requestId != null && streamId != null && controllerId != null) {
-            boolean pendingMatches = mPendingStart != null
-                    && streamId.equals(mPendingStart.opt("streamId"))
-                    && controllerId.equals(mPendingStart.opt("controllerId"));
-            boolean ownerMatches = streamId.equals(mOwnedStreamId)
-                    && controllerId.equals(mOwnedControllerId);
+        if (requestId != null && streamId != null && controllerId != null
+                && expectedSid != null && expectedSid.matches("[a-fA-F0-9]{8}")
+                && (expectedRevision instanceof Integer || expectedRevision instanceof Long)
+                && ((Number) expectedRevision).longValue() >= 0) {
             JSONObject snapshot = streamingManager.getStreamSnapshot();
-            if (pendingMatches && !ownerMatches) {
-                // Cancel only this admission even when an unrelated publisher is still active.
-                cancelPendingStart("Stream start cancelled by its controller");
-                accepted = true;
-                reason = "pending_cancelled";
-            } else if ((mPendingStart != null && !pendingMatches)
-                    || (mOwnedStreamId != null && !ownerMatches)) {
-                reason = "owner_mismatch";
-            } else if (ownerMatches) {
-                // Neither cancellation nor the global service stop runs before both owners match.
+            if (mPendingStart != null) {
+                reason = "pending_admission";
+            } else if (!expectedSid.equals(snapshot.opt("sid"))
+                    || ((Number) expectedRevision).longValue() != snapshot.optLong("revision", -1)) {
+                reason = "snapshot_changed";
+            } else if (streamId.equals(mOwnedStreamId) && controllerId.equals(mOwnedControllerId)) {
                 accepted = handleStopCommand();
                 reason = "stop_requested";
-            } else if (streamId.equals(snapshot.opt("streamId"))
+            } else if (mOwnedStreamId == null && streamId.equals(snapshot.opt("streamId"))
                     && snapshot.optBoolean("terminal", false)) {
-                // An already terminal original stream needs no destructive operation.
                 accepted = true;
                 reason = "already_terminal";
             } else {
@@ -569,6 +564,8 @@ public class StreamCommandHandler implements ICommandHandler {
         if (requestId != null) response.put("request_id", requestId);
         if (streamId != null) response.put("requestedStreamId", streamId);
         if (controllerId != null) response.put("requestedControllerId", controllerId);
+        if (expectedSid != null) response.put("expectedSid", expectedSid);
+        if (expectedRevision instanceof Integer || expectedRevision instanceof Long) response.put("expectedRevision", expectedRevision);
         streamingManager.sendStreamStatusResponse(accepted, response);
         return accepted;
     }

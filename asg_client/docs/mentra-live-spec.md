@@ -187,14 +187,14 @@ Camera-device loss after opening is a terminal device failure, not a network rec
 Its callback reaches the stream owner off the Camera2 callback thread, and callbacks from a
 closed or replaced camera session cannot terminate the current publisher.
 
-Conditional cleanup supplies the original `streamId`, `controllerId`, and a fresh
-`request_id` to `stop_stream`. Identity checking and the stop/cancellation happen together
-on the stream lifecycle dispatcher. Foreign active or pending owners are never stopped. A matching queued admission can
-be cancelled independently while a different publisher remains active.
-The correlated `stop_ack` reports acceptance or refusal; a fresh terminal query remains
-required to prove settlement. Query snapshots explicitly report pending admission and
-current controller identity rather than implying that an idle publisher means no start
-is queued. The normal user stop action retains its intentional current-stream behavior.
+Conditional cleanup supplies the original `streamId`, `controllerId`, current `sid` and
+`revision`, and a fresh `request_id` to `stop_stream`. Comparison and stop happen together
+on the existing lifecycle dispatcher. A changed snapshot, foreign owner, or any pending
+admission refuses mutation. Every accepted active start increases the retained revision,
+even when public IDs are reused. The correlated `stop_ack` is followed by a fresh terminal
+query to prove settlement. Pending admission must settle normally or retain custody; no
+public-ID-only cancellation is used. Query snapshots report pending admission and active
+controller identity. Normal user stop retains its intentional current-stream behavior.
 
 The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
 cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device

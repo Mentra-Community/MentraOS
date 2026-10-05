@@ -416,17 +416,21 @@ While a stream is active, supported firmware also emits this status periodically
 Stops the current or pending stream. The operation is idempotent: an already stopped stream
 returns a stopped snapshot. Cleanup releases capture and cancels phone-loss/resource work.
 
-Automated cleanup can send `request_id`, `streamId`, and `controllerId` together. All three
-must match `[A-Za-z0-9][A-Za-z0-9_-]{0,119}`. The lifecycle dispatcher checks the active
-controller and any pending start before stopping services or cancelling admission. A
-foreign publisher is never stopped. A foreign pending start or incomplete identity is
-refused; an exact pending admission can be cancelled while another publisher stays active.
-The correlated `stream_status` response has `kind: "stop_ack"`, `stopAccepted`,
-`stopReason`, `requestedStreamId`, and `requestedControllerId`. Its current snapshot and
-`request_id` do not become retained stream state. An accepted stop acknowledges the
-request; the caller must separately observe a fresh terminal snapshot before releasing
-resources. An already terminal matching stream acknowledges without stopping services.
-An exact pending-only start is cancelled without touching an unrelated publisher.
+Automated cleanup sends `request_id`, `streamId`, `controllerId`, `expectedSid`, and
+`expectedRevision` together. The first three are bounded identity strings; SID is eight
+hexadecimal characters and revision is a nonnegative integer. The lifecycle dispatcher
+refuses all mutation while an admission is pending. Otherwise the current snapshot SID
+and revision must still match before it stops the matching active controller. A changed
+snapshot or foreign owner is refused without mutation. Even a replacement reusing both
+public IDs changes the native revision. A terminal matching snapshot acknowledges without
+stopping services. The caller may freshly observe a refused snapshot and decide its next
+action; refusal never causes an automatic retry or global stop.
+
+The correlated `stream_status` has `kind: "stop_ack"`, `stopAccepted`, `stopReason`, the
+requested stream/controller IDs and expected SID/revision. These fields do not become
+retained state. Acceptance acknowledges the operation; a fresh terminal query is still
+required before releasing resources. A queued admission must settle normally or remain
+explicitly unresolved; cleanup does not cancel it based only on reused public IDs.
 
 #### `get_stream_status`
 
