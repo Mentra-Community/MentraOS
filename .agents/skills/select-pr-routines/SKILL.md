@@ -1,12 +1,19 @@
 ---
 name: select-pr-routines
-description: Select relevant existing Mentra device routines and add their routine:* labels when opening or updating a MentraOS PR. Map changed behavior to recorded coverage, report gaps, and preserve hardware limits. This is PR test selection, not permission to start or reconfigure hardware.
+description: Select device-test coverage when opening or updating a MentraOS PR. Request existing routine runs with routine:* labels, or request an edit or new routine through the PR authoring system when coverage needs to change. Use create-routine for machine-side authoring.
 ---
 
-# Select device routines for a PR
+# Select or request routine coverage for a PR
 
-**Add the matching `routine:<id>` labels to the PR.** A label requests a test of
-its CI artifact; it does not mean the test passed or authorize new hardware access.
+Match coverage to the PR's behavior, then make the appropriate request:
+
+| Coverage needed | Request |
+| --- | --- |
+| Existing steps already test the behavior | Add `routine:<id>` for ordinary replay of the PR build |
+| An existing flow needs changed expectations or additional steps | Request `routine-work:edit` with an authoring brief |
+| No suitable flow exists | Request `routine-work:create` with an authoring brief |
+
+A request is not a passing test result. Docs-only changes need no device coverage.
 
 ## Find coverage
 
@@ -38,10 +45,10 @@ its CI artifact; it does not mean the test passed or authorize new hardware acce
    A visibility change may need different coverage from a real meeting;
    report the gap instead of inventing a dispatch ID.
    If the PR intentionally changes an expected outcome, identify the conflicting
-   step and propose a reviewed routine update. Selecting a relevant routine does
-   not make its old assertions valid for a new behavior.
+   step and request an edit rather than running known-invalid old assertions.
+   Prefer extending a coherent existing flow over creating duplicate coverage.
 
-## Apply the labels and explain why
+## Request existing coverage
 
 Build each label as `routine:<id>` from a selected enrolled definition. When
 creating the PR, include its `--label` in the existing `gh pr create` command.
@@ -63,8 +70,84 @@ Add only missing selected labels. Preserve unrelated and previously requested
 labels; flag a stale routine label for the author rather than silently removing it.
 In the PR's validation section, name each label and its covered behavior, separate
 pending routine results from completed local tests, and list uncovered changes.
-Skill/catalog-only edits need no device routine unless they also change covered
-product behavior.
+
+## Request an edit or new routine
+
+Use the existing [PR authoring contract](../../../.github/scripts/routine-work.md)
+and its JSON template. This dispatches machine-side work using
+[create-routine](../create-routine/SKILL.md); the PR author does not need to reserve
+hardware or implement another authoring workflow.
+
+1. Choose `edit` for an existing `routines/<id>/routine.ts` at the selected harness
+   commit, or `create` with a new stable ID absent at that commit. Pin
+   `source.revision` to the exact reviewed **harness** SHA, not the MentraOS PR SHA
+   or a moving branch. Describe the goal, changed or added English steps and
+   observable expected results. For edits, name the affected step IDs and preserve
+   the rest of the flow. The machine verifies the complete saved flow, not just
+   the new step.
+2. Choose an enrolled host/lane offering the required platform, glasses models
+   and capabilities. The executable catalog supplies source definitions, not
+   target IDs. Use the existing authenticated Admin
+   `GET /api/admin/test-runs/restoration/list` projection for host/lane IDs and
+   platform, together with the configured lane's capabilities. Authoring uses
+   `mac` or `android`; ordinary catalog/replay uses `ios-on-mac` or `android`.
+   Current machine-side intake rejects nonempty `requirements.environment`.
+   Use `[]` when no generic environment provider is needed; otherwise report
+   the unsupported prerequisite. Preserve the routine's actual fixture needs.
+   If access or a prerequisite is missing, explain exactly what is needed and
+   ask the owner; do not invent IDs or erase requirements to admit the job.
+3. Save the contract's comment to a file, replacing its example values. It must
+   start with `<!-- mentra-routine-work:v1 -->` and contain exactly one JSON block
+   with no surrounding prose. Keep credentials and private device/account data
+   out of the public brief. The workflow supplies the current PR build and origin;
+   do not put artifact URLs, tokens or build metadata into the comment.
+
+   Validate the draft from the MentraOS checkout without dispatching:
+
+   ```bash
+   node --input-type=module - /private/tmp/routine-work-comment.md edit <<'JS'
+   import {readFile} from 'node:fs/promises';
+   import {parseRoutineWorkBrief} from './.github/scripts/routine-work.mjs';
+   const [path, kind] = process.argv.slice(2);
+   parseRoutineWorkBrief(await readFile(path, 'utf8'), kind);
+   console.log('Valid routine-work brief');
+   JS
+   ```
+
+   Use `create` as the last argument for a creation request. Validation checks the
+   brief's schema; it does not prove host capabilities or source review.
+4. On the open same-repository PR targeting `dev` or `staging`, first inspect its
+   comments and labels. There must be **one marked brief and one authoring-kind
+   label**. If no brief exists, post the file and add the missing matching label
+   (`routine-work:edit` in this example):
+
+   ```bash
+   gh pr comment PR --repo Mentra-Community/MentraOS --body-file /private/tmp/routine-work-comment.md
+   gh pr edit PR --repo Mentra-Community/MentraOS --add-label routine-work:edit
+   ```
+
+   GitHub must identify the comment author as a human account with `OWNER`,
+   `MEMBER` or `COLLABORATOR` association; an AI using that account's `gh` login
+   works, a bot-authored brief does not. For an existing request, edit its comment
+   by ID instead of posting a second brief. Read back the comment and labels.
+   Ordinary `routine:<id>` labels can coexist for other relevant coverage.
+5. Follow the request workflow and its updating status comment. Automatic intake
+   uses `ROUTINE_WORK_PR_DISPATCH_ENABLED`, independently of ordinary replay's
+   gate. When an authorized manual submission is needed, use the same intake:
+
+   ```bash
+   gh workflow run request-routine-work.yml --repo Mentra-Community/MentraOS --ref dev -f pr=PR
+   ```
+
+   Intake requires the current PR's published platform artifact. A
+   `waiting-for-build` notice means nothing was submitted: the enabled automatic
+   build callback, or the same manual intake after publication, submits the work.
+   Changing the brief, source, target or build creates a new work occurrence.
+   Review corrections should continue the existing machine job rather than
+   redispatching by editing the brief. After source review and
+   installation, require the linked ordinary passing run and recording before
+   reporting coverage as verified. Enroll the resulting definition before adding
+   its `routine:<id>` label; a request or held traversal is not that enrollment.
 
 ## Keep request status honest
 
@@ -85,11 +168,10 @@ product behavior.
   Core and the host controller; an
   authorized queued request need not wait for an idle device, and an unavailable
   fixture must be reported as pending/not-run rather than passed.
-- No matching routine: state the gap. When asked to add coverage, use
-  [create-routine](../create-routine/SKILL.md) to extend the closest readable flow
-  on the shared setup/test/teardown foundation, or add independently selectable
-  coverage. Enroll its supported platform definition before its label becomes a
-  valid request; a recorded pass is required for the passing-example catalog,
-  not for requesting the new executable definition on a PR.
+- In the PR's validation section, explain the selected replay/edit/create request,
+  the behavior it covers and any missing prerequisite. A recorded pass is required
+  for the passing-example catalog, not for requesting an enrolled executable
+  definition. Queued authoring, source ready for review and installed source are
+  progress states; they are not an ordinary test pass.
 - Public PRs contain coverage/status and approved result links, not credentials,
   account details, private logs, firmware assets or raw recordings.

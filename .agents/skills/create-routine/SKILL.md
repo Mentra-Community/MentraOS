@@ -1,6 +1,6 @@
 ---
 name: create-routine
-description: Create, edit or port a Mentra automated testing routine with English requirements, saved actions verified during authoring, and deterministic replay through the shared framework. To request existing coverage on a PR, use select-pr-routines instead.
+description: Create, edit or port a Mentra automated testing routine with English requirements, saved actions verified during authoring, and deterministic replay through the shared framework. To request routine runs or authoring from a PR, use select-pr-routines instead.
 ---
 
 # Create, edit or port a routine
