@@ -78,6 +78,8 @@ save each action and assertion, then execute that saved action through the same
 driver/helper replay will use. Traverse the **whole English flow** this way: a manual
 click does not prove a different script written afterward. Prefer the simplest
 supported interaction that works; verify outcomes rather than successful clicks.
+Complete every saved product step and normal teardown before ordinary replay.
+A partially successful held traversal or expired recording is not that boundary.
 On a settled step failure, inspect the actual error, edit that existing action and
 retry with a concrete `retryReason` from its current safe prerequisite state. Keep
 the same owner, recorder and passing prefix; do not reinstall or restart setup for
@@ -98,7 +100,8 @@ Prepare and compile changed shared source off hardware while other work uses the
 lanes. Once affected owners release, activate one frozen candidate; local iteration
 may use reviewed source before merge while retaining the PR's review/CI merge gates.
 Check the installed recorder's duration, byte limit and output allowance before a
-long flow; step deadlines do not extend capture. A Mac fixture with a recorded
+long flow, including held editing and accepted operation settlement; step deadlines
+do not extend capture. A Mac fixture with a recorded
 browser window declares `external-window` with `fixture-data` and uses the shared
 admitted policy for both recordings. A product update can continue after a recorder
 or client deadline; inspect that original operation and settle it normally rather
@@ -142,7 +145,10 @@ a receipt write or screenshot failed. Retain an answered-input flag before later
 assertions so a settled held retry continues observation rather than toggling again.
 
 Keep a failing native command's bounded original error/cause in diagnostics before
-iterating. If original diagnostics would be disposed when an authoring reservation
+iterating. Compare its failed expectation with the original AX/XML and recording:
+an observed offer with a different label is a selector mismatch, not proof the
+offer needs more time. Correct the saved observation in the held state first.
+If original diagnostics would be disposed when an authoring reservation
 returns, preserve their bounded safe failure summary in the existing operation
 receipt first. Distinguish an empty successful trace from a malformed/failed read;
 do not repeat setup merely to guess the missing cause. Compare a failed HTTP probe
@@ -152,6 +158,13 @@ camera logs flood the glasses' short tail. Reconcile the original request instea
 of resending it. For cleanup-only corrections, select the reviewed provider source
 through the public repair API while retaining the original resource/fixture inputs;
 a new checkout alone does not change the implementation used by repair.
+When a framework callback times out, retain its original operation/call identity,
+deadline and bounded queue/start/finish/send facts through existing diagnostics.
+A successful earlier snapshot does not prove callback settlement. Fill a diagnostic
+gap before another expensive reproduction; exclude callback inputs and credentials.
+For an apparent hosted recording fault, compare the same run's exact asset hash
+and decoded frame at the saved timestamp with its screenshot before changing
+native capture. The coordinator owns browser playback/seek diagnosis.
 
 For audio coverage, read the harness `framework/audio/witness.md` and current
 browser service reference before adding helpers. The optional native witness uses
@@ -221,5 +234,10 @@ Report exact source/build/platform, result URL, recording and timings. Do not ad
 repeated qualification runs without changed code or unresolved failures.
 `run retry-publication` retries delivery without hardware replay. Dispose owned local
 payloads after acknowledgement; preserve shared tools and native Codex/Claude history.
+Keep frozen execution evidence immutable; late boundary/repair observations use
+their own existing operation diagnostics. Check new exports against the installed
+publisher's asset-count and envelope-size bounds before freezing. A rejected old
+export stays unchanged for normal delivery retry after its owning contract is fixed;
+do not filter attachments or fabricate acknowledgements to obtain a pass.
 Use focused checks and [codex-pr-review](../codex-pr-review/SKILL.md) for the PR;
 [select-pr-routines](../select-pr-routines/SKILL.md) selects relevant coverage labels.
