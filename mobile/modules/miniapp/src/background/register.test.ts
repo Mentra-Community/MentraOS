@@ -43,12 +43,14 @@ test("CONNECT announces READY, which is sent once the handler's promise settles"
   registerMiniapp(() => new Promise<void>((resolve) => (finishInit = resolve)), {packageName: "com.test"})
   g.__mentraInitCallback?.("s1")
   await settle()
-  expect(received[0]).toMatchObject({type: "miniapp_connect", initReady: true})
+  expect(received[0]).toMatchObject({type: "miniapp_connect", initReady: true, sessionId: "s1"})
   expect(types(received)).not.toContain("miniapp_ready")
 
   finishInit()
   await settle()
-  expect(types(received).filter((type) => type === "miniapp_ready")).toHaveLength(1)
+  expect(received.filter((payload) => payload.type === "miniapp_ready")).toEqual([
+    {type: "miniapp_ready", sessionId: "s1"},
+  ])
 })
 
 test("a rejected handler still reports READY", async () => {

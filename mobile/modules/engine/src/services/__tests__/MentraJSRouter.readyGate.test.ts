@@ -60,6 +60,7 @@ function makeRouters(hostFeatures: Record<string, boolean>) {
   let send: (raw: string) => void = () => {}
   const fromBackground: string[] = []
   const uiFrames: string[] = []
+  const inits: string[] = []
   const host = {
     onLivenessTimeout: null,
     registerApp(_pkg: string, fn: (raw: string) => void) {
@@ -103,6 +104,7 @@ function makeRouters(hostFeatures: Record<string, boolean>) {
       return true
     },
     mentraJsDispatchToJs(_pkg, envelope) {
+      if (envelope.kind === "init") inits.push(envelope.sessionId as string)
       if (envelope.kind === "bridge") {
         const data = JSON.parse(envelope.raw as string).payload?.data
         if (data?.type) uiFrames.push(data.type)
@@ -110,7 +112,8 @@ function makeRouters(hostFeatures: Record<string, boolean>) {
       const target = background
       if (!target) return
       queueMicrotask(() => {
-        if (envelope.kind === "init") vm.runInContext('__mentraInitCallback("fixture")', target)
+        if (envelope.kind === "init")
+          vm.runInContext(`__mentraInitCallback(${JSON.stringify(envelope.sessionId)})`, target)
         else if (envelope.kind === "bridge") target.__mentraDeliverBridgeRaw?.(envelope.raw as string)
       })
     },
@@ -124,6 +127,7 @@ function makeRouters(hostFeatures: Record<string, boolean>) {
     ui,
     fromBackground,
     uiFrames,
+    inits,
     emitBridge(payload: Record<string, unknown>) {
       listener?.({
         packageName: PKG,
@@ -284,4 +288,27 @@ test("a READY that arrives before the current session's CONNECT is ignored", () 
   emitBridge({type: "miniapp_ready"})
   expect(ui.isUiHeld(PKG)).toBe(false)
   router.stop()
+})
+
+test("handshake frames from a previous context are ignored by session id", async () => {
+  const {router, ui, inits, emitBridge} = makeRouters({initReady: true})
+  router.timer = {setTimeout: () => 1, clearTimeout() {}}
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    await router.spawnAndRegister(PKG, "globalThis.__mentraInitCallback = function () {}")
+    const current = inits[0]!
+    emitBridge({type: "miniapp_connect", packageName: PKG, initReady: true, sessionId: "killed-context"})
+    emitBridge({type: "miniapp_ready", sessionId: "killed-context"})
+    expect(ui.isUiHeld(PKG)).toBe(true)
+    emitBridge({type: "miniapp_connect", packageName: PKG, initReady: true, sessionId: current})
+    expect(ui.isUiHeld(PKG)).toBe(true)
+    emitBridge({type: "miniapp_ready", sessionId: "killed-context"})
+    expect(ui.isUiHeld(PKG)).toBe(true)
+    emitBridge({type: "miniapp_ready", sessionId: current})
+    expect(ui.isUiHeld(PKG)).toBe(false)
+  } finally {
+    console.warn = warn
+    router.stop()
+  }
 })

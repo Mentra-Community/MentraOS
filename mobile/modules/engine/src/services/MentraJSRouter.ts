@@ -113,6 +113,9 @@ export class MentraJSRouter {
   private subscription: EventSubscription | null = null
   private readonly registered: Set<string> = new Set()
   private readonly replacementConnects = new Set<string>()
+  /** The host's id for each package's current context, sent to it in `init`. */
+  private readonly sessions = new Map<string, string>()
+  private sessionSeq = 0
   /** Spawned backgrounds whose UI is still held, with their ready deadline. */
   private readonly readyTimers = new Map<string, number>()
   /** Cached spawn arguments so the crash controller can respawn after a backoff. */
@@ -289,7 +292,7 @@ export class MentraJSRouter {
     // MiniappSession and call the user's handler. Without this
     // dispatch the user's code never runs — `registerMiniapp` just
     // assigns to a global and waits.
-    const sessionId = `${packageName}-${Date.now().toString(36)}`
+    const sessionId = this.nextSessionId(packageName)
     this.logger.log(`initializing background for ${packageName}`, {sessionId})
     void this.crust.mentraJsDispatchToJs(packageName, {kind: "init", sessionId})
 
@@ -311,6 +314,7 @@ export class MentraJSRouter {
       uiBound: this.uiRouter?.isBound(packageName) ?? false,
     })
     this.replacementConnects.delete(packageName)
+    this.sessions.delete(packageName)
     this.clearReadyTimer(packageName)
     this.uiRouter?.backgroundRestarting(packageName)
     this.runtime.resetHandshake(packageName)
@@ -368,7 +372,7 @@ export class MentraJSRouter {
         controller.onSpawn(packageName)
         // Re-fire the init envelope so the respawned context's
         // `registerMiniapp` handler runs again.
-        const sessionId = `${packageName}-${Date.now().toString(36)}`
+        const sessionId = this.nextSessionId(packageName)
         void this.crust.mentraJsDispatchToJs(packageName, {kind: "init", sessionId})
         this.logger.log(`respawned ${packageName} after crash`, {sessionId})
       })()
@@ -398,6 +402,7 @@ export class MentraJSRouter {
       this.respawnTimers.delete(packageName)
     }
     this.replacementConnects.delete(packageName)
+    this.sessions.delete(packageName)
     this.clearReadyTimer(packageName)
     this.uiRouter?.backgroundStopped(packageName)
     this.spawnCache.delete(packageName)
@@ -462,7 +467,14 @@ export class MentraJSRouter {
       this.runtime.handleRawMessage(packageName, raw)
       // CONNECT_ACK is sent synchronously by handleConnect, so UI_OPEN lands
       // after the fresh SDK transport exists.
-      if (innerPayload?.type === "miniapp_connect") {
+      // A context killed for a restart can still have CONNECT or READY queued.
+      // SDKs that echo the host's session id let the gate ignore them; older
+      // ones send none and are trusted as before.
+      const staleSession =
+        typeof innerPayload?.sessionId === "string" && innerPayload.sessionId !== this.sessions.get(packageName)
+      if (staleSession) {
+        this.logger.warn(`ignoring ${String(innerPayload?.type)} from a previous ${packageName} context`)
+      } else if (innerPayload?.type === "miniapp_connect") {
         this.logger.log(`CONNECT received for ${packageName}`, {uiBound: this.uiRouter?.isBound(packageName) ?? false})
         if (this.replacementConnects.delete(packageName)) {
           if (!this.readyTimers.has(packageName)) {
@@ -577,6 +589,12 @@ export class MentraJSRouter {
    * Returns null if the envelope isn't a valid bridge frame.
    */
   /** One deadline per spawn covers a background that never connects and an init that never settles. */
+  private nextSessionId(packageName: string): string {
+    const sessionId = `${packageName}-${Date.now().toString(36)}-${(this.sessionSeq++).toString(36)}`
+    this.sessions.set(packageName, sessionId)
+    return sessionId
+  }
+
   private armReadyDeadline(packageName: string): void {
     this.clearReadyTimer(packageName)
     this.readyTimers.set(
