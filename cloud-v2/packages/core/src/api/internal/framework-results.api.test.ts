@@ -1,6 +1,10 @@
 import {expect, test} from "bun:test";
 import {createFrameworkResultsApi} from "./framework-results.api";
 import {FrameworkResultConflict, FrameworkResultService} from "../../services/framework-result.service";
+import type {FrameworkRun} from "../../types/framework-run.types";
+import type {RoutineEnrollment} from "../../types/routine-definition.types";
+import {requestInputDigest} from "../../services/test-request.service";
+import {FRAMEWORK_JSON_BYTES} from "./framework-json";
 
 test("result routes derive host identity and refuse incomplete final acknowledgement", async () => {
   const calls: unknown[] = [];
@@ -28,4 +32,48 @@ test("result routes derive host identity and refuse incomplete final acknowledge
   expect((await api.request(`/r1/assets/${encodeURIComponent(nested)}`, {method: "PUT", headers, body: "bytes"})).status).toBe(200);
   expect(calls.at(-1)).toEqual({requestId: "r1", assetId: nested, hostId: "mini"});
   expect((await api.request("/", {method: "POST", headers, body: "{"})).status).toBe(400);
+});
+
+test("a 2437-asset frozen result publishes unchanged through the authenticated route and retains its failed verdict", async () => {
+  const assets = Array.from({length: 2437}, (_, index) => ({id: index ? `setup-${String(index).padStart(64, "a")}` : "recording",
+    kind: index ? "report" as const : "recording" as const, path: index ? `setup-evidence/commands/${String(index).padStart(64, "b")}.json` : "routine.mp4",
+    sha256: "c".repeat(64), size: index ? 100 : 46859392, mimeType: index ? "application/json" : "video/mp4"}));
+  const run = {schemaVersion: 1, requestId: "original-ota", hostId: "mini", routineId: "ota-roundtrip-android",
+    definitionRevision: "a".repeat(40), platform: "android", laneId: "mini-android",
+    build: {repository: "Mentra-Community/MentraOS", headSha: "b".repeat(40), channel: "dev"},
+    startedAt: "2026-10-05T15:12:49.686Z", finishedAt: "2026-10-05T15:38:30.929Z", recordingAssetId: "recording", assets,
+    result: {runId: "original-ota", finishedAt: "2026-10-05T15:38:30.929Z", setup: {status: "passed"}, test: "failed",
+      steps: [{id: "OTA-04-requested", status: "failed", durationMs: 347211}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: "test", actionId: "OTA-04-requested", message: "offer did not arrive within 90000 ms; no update was repeated"}],
+      evidence: assets.map(asset => asset.id), timing: {startedAt: "2026-10-05T15:12:49.686Z", setupMs: 0, testMs: 347211, teardownMs: 1000}}};
+  let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
+  const service = new FrameworkResultService({async insert(payload, payloadSha256) {
+    if (stored) throw Object.assign(new Error("duplicate"), {code: 11000});
+    stored = {payload, payloadSha256, uploadsComplete: false};
+  }, async getByRequest() {return stored;}, async getByRun() {return stored;}},
+  async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
+    platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
+  async () => ({definition: {steps: [{id: "OTA-04-requested"}]}} as unknown as RoutineEnrollment));
+  const token = "synthetic-controller-credential-" + "x".repeat(32);
+  const api = createFrameworkResultsApi(service, () => JSON.stringify({mini: token}));
+  const headers = {authorization: `Bearer ${token}`, "content-type": "application/json"};
+  const body = JSON.stringify(run);
+  expect(Buffer.byteLength(body)).toBeLessThan(FRAMEWORK_JSON_BYTES);
+  const post = () => api.request("/", {method: "POST", headers, body});
+  const first = await post();
+  expect(first.status).toBe(200);
+  const receipt = await first.json();
+  expect(receipt).toEqual({entityId: run.requestId, payloadSha256: requestInputDigest(run), created: true});
+  expect(stored!.payload.assets).toEqual(assets);
+  expect(stored!.payload.result.evidence).toEqual(run.result.evidence);
+  expect((await service.detail(run.requestId)).outcome).toBe("failed");
+  expect(await (await post()).json()).toEqual({...receipt, created: false});
+  expect((await api.request(`/${run.requestId}/complete`, {method: "POST", headers})).status).toBe(409);
+  stored!.uploadsComplete = true; // Simulate acknowledged immutable asset uploads, never a result rewrite.
+  expect(await (await api.request(`/${run.requestId}/complete`, {method: "POST", headers})).json()).toEqual({entityId: run.requestId,
+    payloadSha256: receipt.payloadSha256, manifestSha256: requestInputDigest(assets)});
+  expect((await api.request("/", {method: "POST", headers, body: JSON.stringify({...run,
+    assets: [...assets.slice(0, -1), {...assets.at(-1)!, sha256: "d".repeat(64)}]})})).status).toBe(409);
+  expect((await api.request("/", {method: "POST", headers, body: body.slice(0, -1) + `,"notes":"${"x".repeat(FRAMEWORK_JSON_BYTES)}"}`})).status).toBe(413);
 });

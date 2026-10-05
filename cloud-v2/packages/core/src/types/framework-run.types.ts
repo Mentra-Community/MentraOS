@@ -3,6 +3,8 @@ import {frameworkBuildSchema, frameworkIdentitySchema} from "./framework-request
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
 
 export const frameworkRunIdSchema = frameworkIdentitySchema;
+/** Bounded manifest cardinality; the publication route separately retains its 1 MiB JSON body limit. */
+export const FRAMEWORK_RUN_ASSET_LIMIT = 4096;
 /** Opaque manifest selectors may contain nested segments; they are never storage paths. */
 export const frameworkAssetIdSchema = z.string().min(1).max(500)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/);
@@ -28,7 +30,7 @@ export const frameworkRunSchema = z.object({
   recordingAssetId: frameworkAssetIdSchema.optional(),
   assets: z.array(z.object({id: frameworkAssetIdSchema, kind: z.enum(["recording", "screenshot", "diagnostic", "report"]), path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),
     size: z.number().int().positive().max(2 * 1024 * 1024 * 1024),
-    mimeType: z.enum(["video/mp4", "video/webm", "image/png", "image/jpeg", "application/json", "text/plain"])}).strict()).max(2000),
+    mimeType: z.enum(["video/mp4", "video/webm", "image/png", "image/jpeg", "application/json", "text/plain"])}).strict()).max(FRAMEWORK_RUN_ASSET_LIMIT),
   result: z.object({runId: id, finishedAt: z.string().datetime({offset: true}), test: z.enum(["passed", "failed", "not-run", "cancelled"]),
     setup: z.object({status: z.enum(["passed", "failed", "cancelled"]), actionId: id.optional(),
       actions: z.array(lifecycleAction).max(1000).optional()}).strict(),
@@ -38,7 +40,7 @@ export const frameworkRunSchema = z.object({
     teardown: z.object({ready: z.boolean(), actions: z.array(lifecycleAction).max(1000).optional(),
       outcomes: z.array(cleanupOutcome), errors: z.array(failure),
       unavailableResources: z.array(z.object({resource: id, cause: z.string(), nextAction: z.string()}).strict())}).strict(),
-    failures: z.array(failure), evidence: z.array(frameworkAssetIdSchema),
+    failures: z.array(failure), evidence: z.array(frameworkAssetIdSchema).max(FRAMEWORK_RUN_ASSET_LIMIT),
     timing: z.object({startedAt: z.string().datetime({offset: true}), setupMs: ms, testMs: ms, teardownMs: ms}).strict(),
   }).strict(),
 }).strict().superRefine((run, ctx) => {

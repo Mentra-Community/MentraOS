@@ -1,5 +1,5 @@
 import {expect, test} from "bun:test";
-import {frameworkAssetIdSchema, frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
+import {FRAMEWORK_RUN_ASSET_LIMIT, frameworkAssetIdSchema, frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
 
 function run() {
   return {schemaVersion: 1, hostId: "mini", requestId: "run-1", routineId: "no-glasses", definitionRevision: "a".repeat(40),
@@ -10,6 +10,19 @@ function run() {
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [],
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 1000, testMs: 1000, teardownMs: 1000}}};
 }
+
+test("large manifests preserve all evidence and retain a bounded cardinality", () => {
+  const good = run();
+  const assets = Array.from({length: FRAMEWORK_RUN_ASSET_LIMIT}, (_, index) => ({id: `report:${index}`, kind: "report",
+    path: `setup-evidence/report-${index}.json`, sha256: "a".repeat(64), size: 10, mimeType: "application/json"}));
+  const full = {...good, assets, result: {...good.result, evidence: assets.map(asset => asset.id)}};
+  expect(frameworkRunSchema.parse(full).assets).toHaveLength(FRAMEWORK_RUN_ASSET_LIMIT);
+  const overflow = {...full, assets: [...assets, {...assets[0]!, id: "extra", path: "extra.json"}]};
+  expect(frameworkRunSchema.safeParse(overflow).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...full, result: {...full.result, evidence: [...full.result.evidence, assets[0]!.id]}}).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...full, assets: [{...assets[0]!, size: 128 * 1024 * 1024 + 1}, ...assets.slice(1)]}).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...full, assets: [{...assets[0]!, sha256: "not-a-digest"}, ...assets.slice(1)]}).success).toBe(false);
+});
 
 test("framework outcomes preserve first failure independently of teardown", () => {
   const good = frameworkRunSchema.parse(run());
