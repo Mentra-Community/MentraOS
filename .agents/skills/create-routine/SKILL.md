@@ -29,6 +29,10 @@ stable ordered step IDs, `glasses.models` and required capability IDs in `requir
 Keep device identities, secrets and tool paths in private lane configuration.
 Confirm the installed lane offers those capabilities. Add a reusable provider once
 for missing shared functionality; do not hide host setup in product steps.
+Preflight the complete fixture contract before reserving hardware. Check tool roles,
+not just executable hashes: the Mac UI driver and app launcher are distinct pins.
+When a capability is missing, assign its shared provider work separately and use
+the other lane or already installed routines while it is built.
 No routine-name branches in workers, dispatch or catalog, and no hardcoded videos:
 source enrollment discovers definitions; published passing runs supply examples.
 
@@ -86,6 +90,9 @@ than accumulating alternate input or focus algorithms.
 For UI transitions, verify the departing overlay disappears as well as the
 new page appears. Home controls can remain visible behind a miniapp. Use bounded
 postcondition observation; an acknowledged click is not a completed transition.
+Inspect current controls rather than copying old labels blindly: Android's radio
+icon can toggle while its label opens details, and an empty miniapp switcher opener
+can remain present on idle Home. Require the actual state before sending input.
 Static headings may appear twice on a platform: require readable content, and use
 exact IDs/counts for the actionable controls that must be unique.
 On Android, use the supplied `ui.scroll(anchor, direction)` for a bounded gesture
