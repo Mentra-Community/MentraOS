@@ -48,9 +48,9 @@ A request is not a passing test result. Docs-only changes need no device coverag
      -f ref="$harness_sha" -H 'Accept: application/vnd.github.raw+json'
    ```
 
-   Fetch imported helper paths with the same command and SHA too. Repositories
-   are normally cloned as siblings if local edits are needed; clone a missing
-   repository beside the existing ones, then use a suitable branch/worktree.
+   Fetch imported helper paths with the same command and SHA too. The PR author
+   inspects coverage and submits the brief; the assigned machine-side authoring
+   agent makes routine edits.
    Read purpose, platforms, prerequisites, fixtures and ordered step IDs. Follow
    each candidate's actions into helpers to identify pages, clicked controls and
    assertions; the English description alone does not prove coverage. Report
