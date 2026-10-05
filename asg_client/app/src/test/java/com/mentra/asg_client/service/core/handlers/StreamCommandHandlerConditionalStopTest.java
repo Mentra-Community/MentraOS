@@ -143,6 +143,26 @@ public class StreamCommandHandlerConditionalStopTest {
         verifyNoInteractions(callback);
     }
 
+    @Test public void matchingPendingCancelsWithoutStoppingAnotherLiveOwner() throws Exception {
+        owned("other", "other-controller");
+        field("mPendingStart", new JSONObject().put("streamId", "pending").put("controllerId", "controller"));
+        try (MockedStatic<RtmpStreamingService> rtmp = mockStatic(RtmpStreamingService.class);
+                MockedStatic<SrtStreamingService> srt = mockStatic(SrtStreamingService.class);
+                MockedStatic<WhipStreamingService> whip = mockStatic(WhipStreamingService.class)) {
+            handler.handleCommand("stop_stream", stop("pending", "controller"));
+            shadowOf(Looper.getMainLooper()).idle();
+            rtmp.verifyNoInteractions(); srt.verifyNoInteractions(); whip.verifyNoInteractions();
+        }
+        JSONObject ack = responses.get(responses.size() - 1);
+        assertThat(ack.getBoolean("stopAccepted")).isTrue();
+        assertThat(ack.getString("stopReason")).isEqualTo("pending_cancelled");
+        assertThat(ack.getString("streamId")).isEqualTo("other");
+        assertThat(ack.getBoolean("terminal")).isFalse();
+        assertThat(field("mOwnedStreamId")).isEqualTo("other");
+        assertThat(field("mPendingStart")).isNull();
+        verifyNoInteractions(callback);
+    }
+
     @Test public void wrongControllerAndIncompleteIdentityNeverBecomeGlobalStop() throws Exception {
         owned("one", "controller");
         handler.handleCommand("stop_stream", stop("one", "foreign"));

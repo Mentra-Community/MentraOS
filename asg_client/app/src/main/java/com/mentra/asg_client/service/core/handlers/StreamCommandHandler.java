@@ -541,17 +541,18 @@ public class StreamCommandHandler implements ICommandHandler {
             boolean ownerMatches = streamId.equals(mOwnedStreamId)
                     && controllerId.equals(mOwnedControllerId);
             JSONObject snapshot = streamingManager.getStreamSnapshot();
-            if ((mPendingStart != null && !pendingMatches)
+            if (pendingMatches && !ownerMatches) {
+                // Cancel only this admission even when an unrelated publisher is still active.
+                cancelPendingStart("Stream start cancelled by its controller");
+                accepted = true;
+                reason = "pending_cancelled";
+            } else if ((mPendingStart != null && !pendingMatches)
                     || (mOwnedStreamId != null && !ownerMatches)) {
                 reason = "owner_mismatch";
             } else if (ownerMatches) {
                 // Neither cancellation nor the global service stop runs before both owners match.
                 accepted = handleStopCommand();
                 reason = "stop_requested";
-            } else if (pendingMatches) {
-                cancelPendingStart("Stream start cancelled by its controller");
-                accepted = true;
-                reason = "pending_cancelled";
             } else if (streamId.equals(snapshot.opt("streamId"))
                     && snapshot.optBoolean("terminal", false)) {
                 // An already terminal original stream needs no destructive operation.

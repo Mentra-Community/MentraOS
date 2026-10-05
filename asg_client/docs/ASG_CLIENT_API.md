@@ -419,7 +419,8 @@ returns a stopped snapshot. Cleanup releases capture and cancels phone-loss/reso
 Automated cleanup can send `request_id`, `streamId`, and `controllerId` together. All three
 must match `[A-Za-z0-9][A-Za-z0-9_-]{0,119}`. The lifecycle dispatcher checks the active
 controller and any pending start before stopping services or cancelling admission. A
-foreign owner, foreign pending start, or incomplete identity is refused without mutation.
+foreign publisher is never stopped. A foreign pending start or incomplete identity is
+refused; an exact pending admission can be cancelled while another publisher stays active.
 The correlated `stream_status` response has `kind: "stop_ack"`, `stopAccepted`,
 `stopReason`, `requestedStreamId`, and `requestedControllerId`. Its current snapshot and
 `request_id` do not become retained stream state. An accepted stop acknowledges the
