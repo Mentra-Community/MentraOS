@@ -183,7 +183,8 @@ async function fixture() {
       if (stalled) return
       const target = background
       queueMicrotask(() => {
-        if (envelope.kind === "init") vm.runInContext('__mentraInitCallback("fixture")', target)
+        if (envelope.kind === "init")
+          vm.runInContext(`__mentraInitCallback(${JSON.stringify(envelope.sessionId)})`, target)
         else if (envelope.kind === "bridge" && target.__mentraDeliverBridgeRaw)
           target.__mentraDeliverBridgeRaw(envelope.raw as string)
       })

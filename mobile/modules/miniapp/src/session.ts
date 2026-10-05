@@ -319,8 +319,12 @@ export class MiniappSession<TChannels extends object = any> {
   private readonly pendingRequests = new Map<string, PendingRequest>()
   private connectPromise: Promise<void> | null = null
   private disposed = false
-  /** Set by `registerMiniapp`: CONNECT tells the host to wait for READY. */
-  private announcesInitReady = false
+  /**
+   * Set by `registerMiniapp` to the host's id for this spawn: CONNECT tells the
+   * host to wait for READY, and both carry the id so the host can ignore
+   * frames from a previous context.
+   */
+  private initSessionId: string | null = null
 
   /** Manifest-declared permission cache. Updated on CONNECT_ACK / PERMISSIONS_UPDATE. */
   private _permissions: PermissionRecord = {
@@ -490,7 +494,7 @@ export class MiniappSession<TChannels extends object = any> {
       const connectPayload = {
         type: MiniappRequestType.CONNECT,
         packageName: this.packageName,
-        ...(this.announcesInitReady ? {initReady: true} : {}),
+        ...(this.initSessionId !== null ? {initReady: true, sessionId: this.initSessionId} : {}),
       }
       this.transport.send(serializeEnvelope({payload: connectPayload, requestId}))
 
@@ -505,14 +509,14 @@ export class MiniappSession<TChannels extends object = any> {
    * keeps the UI closed until {@link reportInitReady}, so UI requests cannot
    * reach the background before its `session.ui.handle` handlers exist.
    */
-  announceInitReady(): void {
-    this.announcesInitReady = true
+  announceInitReady(sessionId: string): void {
+    this.initSessionId = sessionId
   }
 
   /** @internal — the `registerMiniapp` handler settled; let the host open the UI. */
   reportInitReady(): void {
-    if (!this.announcesInitReady || this.disposed || !this.hostFeatures?.initReady) return
-    this.sendOneShot({type: MiniappRequestType.READY})
+    if (this.initSessionId === null || this.disposed || !this.hostFeatures?.initReady) return
+    this.sendOneShot({type: MiniappRequestType.READY, sessionId: this.initSessionId})
   }
 
   /** Resolves when `ready` becomes true, or rejects if connect failed. */

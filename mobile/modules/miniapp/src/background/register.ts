@@ -62,12 +62,12 @@ export function registerMiniapp<TChannels extends object = Record<string, unknow
   options: MiniappSessionOptions = {},
 ): void {
   const g = globalThis as unknown as InitGlobals
-  g.__mentraInitCallback = (_sessionId: string) => {
+  g.__mentraInitCallback = (sessionId: string) => {
     const session = new MiniappSession<TChannels>(options)
     // The handler's returned promise defines readiness: the host keeps the UI
     // closed until it settles, so handlers registered after an await still
     // exist before the first UI request arrives.
-    session.announceInitReady()
+    session.announceInitReady(sessionId)
     let initSettled: Promise<void> = Promise.resolve()
     // Fire the user handler first so any session.* subscriptions get
     // registered before the CONNECT_ACK fan-out lands.
