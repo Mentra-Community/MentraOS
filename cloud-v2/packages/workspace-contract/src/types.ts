@@ -58,7 +58,7 @@ export interface AuthorizeResponse {
   reason?: DenyReason
   organizationId: string
   principal: CorePrincipal | null
-  workspace?: WorkspaceSummary
+  workspace?: WorkspaceSummary | null
   membership?: MembershipSummary | null
   capabilities: WorkspaceCapability[]
 }
@@ -66,6 +66,24 @@ export interface AuthorizeResponse {
 export interface PrincipalResponse {
   principal: CorePrincipal
   workspaces: Array<WorkspaceSummary & {membership: MembershipSummary; capabilities: WorkspaceCapability[]}>
+}
+
+export interface MembershipCheckEntry {
+  role: WorkspaceRole
+  capabilities: WorkspaceCapability[]
+}
+
+/** Response of `POST /memberships/check`: one entry per requested workspace, null for a non-member. */
+export interface MembershipCheckResponse {
+  organizationId: string
+  memberships: Record<string, MembershipCheckEntry | null>
+}
+
+/** Response of `POST /credentials`. The token is shown once. */
+export interface ServiceCredentialResponse {
+  organizationId: string
+  credentialId: string
+  token: string
 }
 
 export interface WorkspaceChangeEvent {
@@ -76,3 +94,10 @@ export interface WorkspaceChangeEvent {
   occurredAt: string
   target: Record<string, unknown>
 }
+
+/**
+ * `error` values on 401 responses from the internal service API. The client treats only `invalid_token`
+ * from `/principal` as "this bearer token is not valid"; anything else is a service-level failure.
+ */
+export const INVALID_TOKEN_ERROR = "invalid_token"
+export const SERVICE_UNAUTHORIZED_ERROR = "service_unauthorized"

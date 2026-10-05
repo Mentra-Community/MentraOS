@@ -1,6 +1,7 @@
 import {describe, expect, test} from "bun:test"
 import {CoreWorkspaceClientError, createCoreWorkspaceClient} from "./client"
 import {SERVICE_HEADERS, verifyServiceRequest} from "./service-signature"
+import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR} from "./types"
 import type {AuthorizeResponse, PrincipalResponse, WorkspaceChangeEvent, WorkspaceSummary} from "./types"
 
 const ORG = "org_1"
@@ -176,6 +177,25 @@ describe("operations", () => {
     expect(response.capabilities).toContain("miniapps.publish")
   })
 
+  test("authorize accepts null workspace and membership when Core has none to report", async () => {
+    const {client} = clientFor(() =>
+      json({
+        allowed: false,
+        reason: "workspace_not_found",
+        organizationId: ORG,
+        principal: null,
+        workspace: null,
+        membership: null,
+        capabilities: [],
+      }),
+    )
+    const response = await client.authorize({credential: {type: "bearer", token: "t"}, workspaceId: "ws_missing"})
+    expect(response.allowed).toBe(false)
+    expect(response.workspace).toBeNull()
+    expect(response.membership).toBeNull()
+    expect(response.principal).toBeNull()
+  })
+
   test("authorize returns a denial with its reason", async () => {
     const denied: AuthorizeResponse = {
       allowed: false,
@@ -190,7 +210,7 @@ describe("operations", () => {
     expect(response.reason).toBe("not_a_member")
   })
 
-  test("resolvePrincipal posts the token and maps 401 to null", async () => {
+  test("resolvePrincipal posts the token and maps an invalid_token 401 to null", async () => {
     const principal: PrincipalResponse = {
       principal: userPrincipal(),
       workspaces: [
@@ -198,7 +218,7 @@ describe("operations", () => {
       ],
     }
     const {client, calls} = clientFor((request) =>
-      JSON.parse(request.body).token === "good" ? json(principal) : json({error: "unauthenticated"}, 401),
+      JSON.parse(request.body).token === "good" ? json(principal) : json({error: "invalid_token"}, 401),
     )
     expect(await client.resolvePrincipal("good")).toEqual(principal)
     expect(await client.resolvePrincipal("bad")).toBeNull()
@@ -208,9 +228,9 @@ describe("operations", () => {
   })
 
   test("checkMemberships posts the user and workspaces and returns the map", async () => {
-    const map = {ws_1: {role: "admin", capabilities: ["workspace.read"]}, ws_2: null}
-    const {client, calls} = clientFor(() => json(map))
-    expect(await client.checkMemberships("user_1", ["ws_1", "ws_2"])).toEqual(map as never)
+    const memberships = {ws_1: {role: "admin", capabilities: ["workspace.read"]}, ws_2: null}
+    const {client, calls} = clientFor(() => json({organizationId: ORG, memberships}))
+    expect(await client.checkMemberships("user_1", ["ws_1", "ws_2"])).toEqual(memberships as never)
     expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/memberships/check`)
     expect(JSON.parse(calls[0].body)).toEqual({mentraUserId: "user_1", workspaceIds: ["ws_1", "ws_2"]})
   })
@@ -247,7 +267,7 @@ describe("operations", () => {
   })
 
   test("mintServiceCredential posts the request and returns the credential once", async () => {
-    const {client, calls} = clientFor(() => json({credentialId: "cred_1", token: "msk_dev_x.y"}))
+    const {client, calls} = clientFor(() => json({organizationId: ORG, credentialId: "cred_1", token: "msk_dev_x.y"}))
     const input = {
       workspaceId: "ws_1",
       name: "CI",
@@ -304,6 +324,40 @@ describe("organization binding", () => {
     await expectClientError(client.listChanges(null), "organization_mismatch")
   })
 
+  test("rejects a membership check or a minted credential from another organization", async () => {
+    const memberships = clientFor(() => json({organizationId: "org_other", memberships: {ws_1: null}}))
+    await expectClientError(memberships.client.checkMemberships("user_1", ["ws_1"]), "organization_mismatch")
+    const credential = clientFor(() =>
+      json({organizationId: "org_other", credentialId: "cred_1", token: "msk_dev_x.y"}),
+    )
+    await expectClientError(
+      credential.client.mintServiceCredential({
+        workspaceId: "ws_1",
+        name: "CI",
+        packageNames: [],
+        issuedBy: {service: "store", actorEmail: "a@example.com"},
+      }),
+      "organization_mismatch",
+    )
+  })
+
+  test("fails closed when a membership check or minted credential omits the organization", async () => {
+    const memberships = clientFor(() => json({memberships: {ws_1: null}}))
+    await expectClientError(memberships.client.checkMemberships("user_1", ["ws_1"]), "bad_response")
+    const bareMap = clientFor(() => json({ws_1: null}))
+    await expectClientError(bareMap.client.checkMemberships("user_1", ["ws_1"]), "bad_response")
+    const credential = clientFor(() => json({credentialId: "cred_1", token: "msk_dev_x.y"}))
+    await expectClientError(
+      credential.client.mintServiceCredential({
+        workspaceId: "ws_1",
+        name: "CI",
+        packageNames: [],
+        issuedBy: {service: "store", actorEmail: "a@example.com"},
+      }),
+      "bad_response",
+    )
+  })
+
   test("treats a client configured for a different organization as a mismatch", async () => {
     const {client} = clientFor(() => json(allowed()), {expectedOrganizationId: "org_2"})
     await expectClientError(
@@ -349,7 +403,33 @@ describe("failures", () => {
     expect(error.status).toBe(503)
   })
 
-  test("maps 401 to unauthorized and 403 to forbidden outside principal lookup", async () => {
+  test("maps a service_unauthorized 401 to service_unauthorized on every operation", async () => {
+    const {client} = clientFor(() => json({error: SERVICE_UNAUTHORIZED_ERROR}, 401))
+    const error = await expectClientError(client.listChanges(null), "service_unauthorized")
+    expect(error.status).toBe(401)
+    await expectClientError(client.getWorkspace("ws_1"), "service_unauthorized")
+    await expectClientError(client.checkMemberships("user_1", []), "service_unauthorized")
+    await expectClientError(client.authorize({credential: {type: "bearer", token: "t"}}), "service_unauthorized")
+  })
+
+  test("resolvePrincipal throws instead of returning null for a service_unauthorized or unrecognised 401", async () => {
+    const service = clientFor(() => json({error: SERVICE_UNAUTHORIZED_ERROR}, 401))
+    const serviceError = await expectClientError(service.client.resolvePrincipal("t"), "service_unauthorized")
+    expect(serviceError.status).toBe(401)
+    const other = clientFor(() => json({error: "something_else"}, 401))
+    await expectClientError(other.client.resolvePrincipal("t"), "unauthorized")
+    const bare = clientFor(() => new Response("", {status: 401}))
+    await expectClientError(bare.client.resolvePrincipal("t"), "unauthorized")
+    const invalid = clientFor(() => json({error: INVALID_TOKEN_ERROR}, 401))
+    expect(await invalid.client.resolvePrincipal("t")).toBeNull()
+  })
+
+  test("an invalid_token 401 on another operation is an unauthorized error, not a null", async () => {
+    const {client} = clientFor(() => json({error: INVALID_TOKEN_ERROR}, 401))
+    await expectClientError(client.listChanges(null), "unauthorized")
+  })
+
+  test("maps other 401s to unauthorized and 403 to forbidden", async () => {
     const unauthorized = clientFor(() => json({error: "bad_signature"}, 401))
     const error = await expectClientError(unauthorized.client.listChanges(null), "unauthorized")
     expect(error.status).toBe(401)
@@ -377,5 +457,21 @@ describe("failures", () => {
     await expectClientError(notJson.client.listChanges(null), "bad_response")
     const wrongShape = clientFor(() => json({events: "nope"}))
     await expectClientError(wrongShape.client.listChanges(null), "bad_response")
+  })
+})
+
+describe("construction", () => {
+  test("throws on an empty or whitespace-only secret instead of signing forgeable requests", () => {
+    for (const secret of ["", "   "]) {
+      expect(() =>
+        createCoreWorkspaceClient({
+          baseUrl: BASE,
+          service: "store",
+          secret,
+          expectedOrganizationId: ORG,
+          fetch: mockFetch(() => json({})).fetch,
+        }),
+      ).toThrow()
+    }
   })
 })

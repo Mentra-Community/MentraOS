@@ -1,9 +1,10 @@
 /** Signed client for Core's internal workspace service API (`/api/internal/workspaces/*`). */
-import type {WorkspaceCapability, WorkspaceRole} from "./capabilities"
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
+import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR} from "./types"
 import type {
   AuthorizeRequest,
   AuthorizeResponse,
+  MembershipCheckEntry,
   PrincipalResponse,
   WorkspaceChangeEvent,
   WorkspaceSummary,
@@ -17,7 +18,9 @@ export type CoreWorkspaceClientErrorCode =
   | "organization_mismatch"
   /** Core could not be reached, timed out, or answered with a 5xx. */
   | "core_unavailable"
-  /** Core rejected the service signature (HTTP 401). */
+  /** Core rejected this service's signature or secret (HTTP 401 `service_unauthorized`). */
+  | "service_unauthorized"
+  /** Core answered 401 for another reason. */
   | "unauthorized"
   /** This service is not allowed to call the endpoint (HTTP 403). */
   | "forbidden"
@@ -40,12 +43,9 @@ export class CoreWorkspaceClientError extends Error {
 
 export interface CoreWorkspaceClient {
   authorize(req: AuthorizeRequest): Promise<AuthorizeResponse>
-  /** Null when Core does not accept the token (HTTP 401). */
+  /** Null only when Core says the token is invalid (HTTP 401 `invalid_token`); other 401s throw. */
   resolvePrincipal(bearerToken: string): Promise<PrincipalResponse | null>
-  checkMemberships(
-    mentraUserId: string,
-    workspaceIds: string[],
-  ): Promise<Record<string, {role: WorkspaceRole; capabilities: WorkspaceCapability[]} | null>>
+  checkMemberships(mentraUserId: string, workspaceIds: string[]): Promise<Record<string, MembershipCheckEntry | null>>
   /** Null when the workspace does not exist (HTTP 404). */
   getWorkspace(workspaceId: string): Promise<WorkspaceSummary | null>
   listChanges(after: string | null, limit?: number): Promise<{events: WorkspaceChangeEvent[]; next: string | null}>
@@ -74,6 +74,7 @@ type Json = Record<string, unknown>
 const isRecord = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value)
 
 export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): CoreWorkspaceClient {
+  if (opts.secret.trim().length === 0) throw new Error("A Core workspace client needs a non-empty service secret")
   const baseUrl = opts.baseUrl.replace(/\/+$/, "")
   const doFetch = opts.fetch ?? fetch
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -97,12 +98,12 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     return value
   }
 
-  /** Sends one signed request. Resolves to the parsed JSON body, or null when `nullOn` matches the status. */
+  /** Sends one signed request. Resolves to the parsed JSON body, or null when `nullOn` accepts the failure. */
   async function call(
     method: "GET" | "POST",
     pathWithQuery: string,
     payload?: unknown,
-    nullOn?: number,
+    nullOn?: (status: number, error: string | undefined) => boolean,
   ): Promise<unknown> {
     const body = payload === undefined ? "" : JSON.stringify(payload)
     const timestampMs = Date.now()
@@ -137,8 +138,10 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       throw new CoreWorkspaceClientError("core_unavailable", `Core ${pathWithQuery} is unreachable: ${reason}`)
     }
 
-    if (nullOn !== undefined && status === nullOn) return null
-    if (status < 200 || status >= 300) throw httpError(pathWithQuery, status, text)
+    if (status < 200 || status >= 300) {
+      if (nullOn?.(status, errorCode(text))) return null
+      throw httpError(pathWithQuery, status, text)
+    }
     try {
       return JSON.parse(text)
     } catch {
@@ -146,17 +149,25 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     }
   }
 
-  function httpError(path: string, status: number, text: string) {
-    let detail = ""
+  /** The `error` string of a JSON error body, if there is one. */
+  function errorCode(text: string): string | undefined {
     try {
       const parsed: unknown = JSON.parse(text)
-      if (isRecord(parsed) && typeof parsed.error === "string") detail = `: ${parsed.error}`
+      if (isRecord(parsed) && typeof parsed.error === "string") return parsed.error
     } catch {
-      // Not JSON; the status alone is the detail.
+      // Not JSON; the status alone describes the failure.
     }
-    const message = `Core ${path} failed with HTTP ${status}${detail}`
+    return undefined
+  }
+
+  function httpError(path: string, status: number, text: string) {
+    const error = errorCode(text)
+    const message = `Core ${path} failed with HTTP ${status}${error ? `: ${error}` : ""}`
     if (status >= 500) return new CoreWorkspaceClientError("core_unavailable", message, status)
-    if (status === 401) return new CoreWorkspaceClientError("unauthorized", message, status)
+    if (status === 401) {
+      const code = error === SERVICE_UNAUTHORIZED_ERROR ? "service_unauthorized" : "unauthorized"
+      return new CoreWorkspaceClientError(code, message, status)
+    }
     if (status === 403) return new CoreWorkspaceClientError("forbidden", message, status)
     return new CoreWorkspaceClientError("bad_request", message, status)
   }
@@ -169,13 +180,18 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         throw badResponse(path, "missing allowed or capabilities")
       }
       if (body.principal !== null && body.principal !== undefined) checkOwned(path, body.principal, "the principal")
-      if (body.workspace !== undefined) checkOwned(path, body.workspace, "the workspace")
+      if (body.workspace !== null && body.workspace !== undefined) checkOwned(path, body.workspace, "the workspace")
       return body as unknown as AuthorizeResponse
     },
 
     async resolvePrincipal(bearerToken) {
       const path = `${API_PREFIX}/principal`
-      const raw = await call("POST", path, {token: bearerToken}, 401)
+      const raw = await call(
+        "POST",
+        path,
+        {token: bearerToken},
+        (status, error) => status === 401 && error === INVALID_TOKEN_ERROR,
+      )
       if (raw === null) return null
       if (!isRecord(raw) || !Array.isArray(raw.workspaces)) throw badResponse(path, "missing principal or workspaces")
       checkOwned(path, raw.principal, "the principal")
@@ -185,14 +201,14 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
 
     async checkMemberships(mentraUserId, workspaceIds) {
       const path = `${API_PREFIX}/memberships/check`
-      const raw = await call("POST", path, {mentraUserId, workspaceIds})
-      if (!isRecord(raw)) throw badResponse(path, "the memberships are not an object")
-      return raw as Awaited<ReturnType<CoreWorkspaceClient["checkMemberships"]>>
+      const raw = checkOwned(path, await call("POST", path, {mentraUserId, workspaceIds}), "the membership check")
+      if (!isRecord(raw.memberships)) throw badResponse(path, "the memberships are not an object")
+      return raw.memberships as Record<string, MembershipCheckEntry | null>
     },
 
     async getWorkspace(workspaceId) {
       const path = `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}`
-      const raw = await call("GET", path, undefined, 404)
+      const raw = await call("GET", path, undefined, (status) => status === 404)
       if (raw === null) return null
       return checkOwned(path, raw, "the workspace") as unknown as WorkspaceSummary
     },
@@ -212,8 +228,8 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
 
     async mintServiceCredential(input) {
       const path = `${API_PREFIX}/credentials`
-      const raw = await call("POST", path, input)
-      if (!isRecord(raw) || typeof raw.credentialId !== "string" || typeof raw.token !== "string") {
+      const raw = checkOwned(path, await call("POST", path, input), "the credential")
+      if (typeof raw.credentialId !== "string" || typeof raw.token !== "string") {
         throw badResponse(path, "missing credentialId or token")
       }
       return {credentialId: raw.credentialId, token: raw.token}

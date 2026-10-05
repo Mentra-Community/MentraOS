@@ -1,4 +1,5 @@
 import {describe, expect, test} from "bun:test"
+import type {WorkspaceCapability, WorkspaceRole} from "./capabilities"
 import {
   OPERATOR_KEY_SCOPES,
   ORGANIZATION_CAPABILITIES,
@@ -29,8 +30,25 @@ describe("capabilitiesForRole", () => {
     }
   })
 
-  test("a member can only read the workspace and use its miniapps", () => {
-    expect([...capabilitiesForRole("member")].sort()).toEqual(["miniapps.access", "workspace.read"])
+  test("each role holds exactly the documented capability set", () => {
+    const member: WorkspaceCapability[] = ["workspace.read", "miniapps.access"]
+    const developer: WorkspaceCapability[] = [...member, "miniapps.publish", "miniapps.credentials.create"]
+    const admin: WorkspaceCapability[] = [
+      ...developer,
+      "workspace.members.read",
+      "workspace.members.manage",
+      "workspace.settings.manage",
+      "workspace.audit.read",
+      "workspace.credentials.revoke",
+      "fleet.read",
+      "fleet.devices.manage",
+      "miniapps.assign",
+    ]
+    const owner: WorkspaceCapability[] = [...admin, "workspace.roles.managePrivileged", "workspace.delete"]
+    const expected: Record<WorkspaceRole, WorkspaceCapability[]> = {member, developer, admin, owner}
+    for (const role of WORKSPACE_ROLES) {
+      expect([...capabilitiesForRole(role)].sort()).toEqual([...expected[role]].sort())
+    }
   })
 })
 
