@@ -38,8 +38,24 @@ const PROVIDER = "workos"
 export interface WorkosIdentity {
   workosUserId: string
   email: string | null
-  emailVerified: boolean
+  /**
+   * Whether WorkOS verified `email`; `null` when that could not be determined (the profile lookup
+   * failed), which is not the same as unverified. A first sign-in with `null` is refused, because the
+   * link it would create is permanent (see {@link IdentityUnavailableError}).
+   */
+  emailVerified: boolean | null
   name: string | null
+}
+
+/**
+ * The identity provider could not say enough to link a first sign-in safely. Nothing was written, and
+ * signing in again once WorkOS answers works. Callers map it to a retryable failure (HTTP 503).
+ */
+export class IdentityUnavailableError extends Error {
+  constructor(message = "the identity provider could not verify this sign-in; try again shortly") {
+    super(message)
+    this.name = "IdentityUnavailableError"
+  }
 }
 
 /**
@@ -84,15 +100,19 @@ export async function resolveWorkosUser(identity: WorkosIdentity): Promise<{ment
 async function chooseMentraUser(
   subject: string,
   email: string | null,
-  emailVerified: boolean,
+  emailVerified: boolean | null,
 ): Promise<{mentraUserId: string; linkedVia: IdentityLinkMethod}> {
+  // Unknown verification is not "unverified". Where a directory could match this person, linking to the
+  // workos tenant on a guess would separate them from their Mentra account for good, so ask them to
+  // retry. Without a directory there is nothing to match, and the answer would not change.
+  if (emailVerified === null && isGotrueAdminConfigured()) throw new IdentityUnavailableError()
   // Only a verified email may claim an existing account. An unverified address
   // proves nothing, so it never reaches GoTrue. A deployment with no GoTrue
   // admin credentials has no Mentra accounts to match, so it skips the lookup.
   // The link is permanent, so a configured directory that is erroring must fail
   // this sign-in (strict) rather than read as "no Mentra account" and link the
   // person to a separate workos-tenant user.
-  if (emailVerified && email && isGotrueAdminConfigured()) {
+  if (emailVerified === true && email && isGotrueAdminConfigured()) {
     const account = await findUserByEmail(email, {strict: true})
     if (account?.emailVerified) {
       const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: account.id})

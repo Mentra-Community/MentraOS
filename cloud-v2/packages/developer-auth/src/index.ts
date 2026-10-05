@@ -19,8 +19,21 @@ export type DeveloperAuthResult =
       organizationId?: string | null
       /** The WorkOS access token behind this request: the bearer value, or the sealed session's access token. */
       accessToken: string
+      /**
+       * Set only on the bearer path, when the profile lookup failed. `user.emailVerified` is then `false`
+       * because the answer is unknown, not because WorkOS said the email is unverified; a caller that
+       * makes a lasting decision from it (linking an account) must not treat the two alike.
+       */
+      profileUnavailable?: boolean
     }
   | {authenticated: false; reason: string}
+
+/**
+ * The `user.email` of a bearer-authenticated user when neither the token nor the
+ * profile has an email. It is a placeholder, not an address: callers that store
+ * or match on emails must treat it as no email.
+ */
+export const UNKNOWN_EMAIL = "unknown"
 
 export interface DeveloperAuthOptions {
   apiKey: string
@@ -86,6 +99,22 @@ export async function authenticateWorkosRequest(
 }
 
 /**
+ * One remote key set per WorkOS client id. A remote key set caches the keys it
+ * fetches (and rate-limits refetching on an unknown `kid`), so building one per
+ * call would download the JWKS on every request.
+ */
+const jwksByClientId = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
+
+function jwksFor(clientId: string): ReturnType<typeof createRemoteJWKSet> {
+  let jwks = jwksByClientId.get(clientId)
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(`https://api.workos.com/sso/jwks/${clientId}`))
+    jwksByClientId.set(clientId, jwks)
+  }
+  return jwks
+}
+
+/**
  * Authenticate a bare WorkOS access token, for callers that hold a token but no
  * browser request (the internal service API). This is the same verification as
  * the `Authorization: Bearer` path of {@link authenticateWorkosRequest}: signature
@@ -96,10 +125,7 @@ export async function authenticateWorkosAccessToken(
   options: DeveloperAuthOptions,
 ): Promise<DeveloperAuthResult> {
   try {
-    const verified = await jwtVerify(
-      token,
-      createRemoteJWKSet(new URL(`https://api.workos.com/sso/jwks/${options.clientId}`)),
-    )
+    const verified = await jwtVerify(token, jwksFor(options.clientId))
     const id = typeof verified.payload.sub === "string" ? verified.payload.sub : ""
     if (!id) return {authenticated: false, reason: "missing_sub"}
     let email = typeof verified.payload.email === "string" ? verified.payload.email : ""
@@ -107,6 +133,7 @@ export async function authenticateWorkosAccessToken(
     let lastName = typeof verified.payload.last_name === "string" ? verified.payload.last_name : null
     // Access-token claims do not say whether the email is verified, so only the profile lookup can.
     let emailVerified = false
+    let profileUnavailable = false
     try {
       const user = await new WorkOS(options.apiKey, {clientId: options.clientId}).userManagement.getUser(id)
       email = user.email || email
@@ -115,13 +142,16 @@ export async function authenticateWorkosAccessToken(
       lastName = user.lastName ?? lastName
     } catch {
       // Verified claims remain sufficient to authenticate if profile enrichment is
-      // unavailable, but the email then stays unverified.
+      // unavailable, but the email then stays unverified, and the result says that
+      // is because the lookup failed.
+      profileUnavailable = true
     }
     return {
       authenticated: true,
-      user: {id, email: email || "unknown", emailVerified, firstName, lastName},
+      user: {id, email: email || UNKNOWN_EMAIL, emailVerified, firstName, lastName},
       organizationId: typeof verified.payload.org_id === "string" ? verified.payload.org_id : null,
       accessToken: token,
+      ...(profileUnavailable ? {profileUnavailable: true} : {}),
     }
   } catch {
     return {authenticated: false, reason: "invalid_bearer_token"}

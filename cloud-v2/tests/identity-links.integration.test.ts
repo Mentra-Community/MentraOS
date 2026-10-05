@@ -30,7 +30,11 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
-import {resolveWorkosUser, type WorkosIdentity} from "../packages/core/src/services/workspaces/identity-link.service"
+import {
+  IdentityUnavailableError,
+  resolveWorkosUser,
+  type WorkosIdentity,
+} from "../packages/core/src/services/workspaces/identity-link.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 
 const MODELS = [
@@ -359,6 +363,76 @@ describe("resolveWorkosUser: choosing the Mentra user", () => {
     await expect(resolveWorkosUser(identity({workosUserId: ""}))).rejects.toThrow(/workosUserId/)
     await expect(resolveWorkosUser(identity({workosUserId: "   "}))).rejects.toThrow(/workosUserId/)
     expect(await IdentityLinkModel.countDocuments({})).toBe(0)
+  })
+})
+
+describe("resolveWorkosUser: email verification unknown", () => {
+  // `emailVerified: null` means WorkOS could not be asked (the profile lookup failed), which is not the
+  // same as WorkOS saying the email is unverified: the first link is permanent, so it must not be
+  // made on a guess.
+  test("a first sign-in is refused, with nothing written, instead of linking to the workos tenant for good", async () => {
+    directoryUsers = [{id: "gotrue-una", email: "una@example.test", confirmed: true}]
+
+    const err = await resolveWorkosUser(identity({email: "una@example.test", emailVerified: null})).catch(e => e)
+
+    expect(err).toBeInstanceOf(IdentityUnavailableError)
+    expect(await IdentityLinkModel.countDocuments({})).toBe(0)
+    expect(await UserModel.countDocuments({})).toBe(0)
+    expect(directoryRequests).toBe(0)
+
+    // Once WorkOS answers, the person links to their Mentra account as they would have.
+    const {mentraUserId} = await resolveWorkosUser(identity({email: "una@example.test", emailVerified: true}))
+    expect((await UserModel.findOne({tenantId: "mentra", tenantUserId: "gotrue-una"}).lean())?.mentraUserId).toBe(
+      mentraUserId,
+    )
+    expect((await IdentityLinkModel.findOne({subject: "user_workos_1"}).lean())?.linkedVia).toBe("verified_email")
+  })
+
+  test("a first sign-in with no email at all is refused too, since the profile may yet supply one", async () => {
+    await expect(resolveWorkosUser(identity({email: null, emailVerified: null}))).rejects.toBeInstanceOf(
+      IdentityUnavailableError,
+    )
+    expect(await IdentityLinkModel.countDocuments({})).toBe(0)
+  })
+
+  test("an existing link signs in normally, without asking GoTrue", async () => {
+    const first = await resolveWorkosUser(identity({email: "vic@example.test"}))
+    directoryRequests = 0
+
+    const again = await resolveWorkosUser(identity({email: "vic@example.test", emailVerified: null}))
+
+    expect(again.mentraUserId).toBe(first.mentraUserId)
+    expect(directoryRequests).toBe(0)
+    expect(await IdentityLinkModel.countDocuments({})).toBe(1)
+  })
+
+  test("an existing link still claims a migrated membership", async () => {
+    const first = await resolveWorkosUser(identity({email: "wes@example.test"}))
+    await seedMembership({pendingWorkosUserId: "user_workos_1"})
+
+    await resolveWorkosUser(identity({email: "wes@example.test", emailVerified: null}))
+
+    expect(await WorkspaceMembershipModel.findOne({workspaceId: "ws_1"}).lean()).toMatchObject({
+      mentraUserId: first.mentraUserId,
+      pendingWorkosUserId: null,
+    })
+  })
+
+  test("with no GoTrue directory to match against, nothing is at stake: the user links to the workos tenant", async () => {
+    const configured = {url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY}
+    delete process.env.SUPABASE_URL
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    try {
+      const {mentraUserId} = await resolveWorkosUser(identity({email: "xan@example.test", emailVerified: null}))
+
+      expect((await UserModel.findOne({tenantId: "workos", tenantUserId: "user_workos_1"}).lean())?.mentraUserId).toBe(
+        mentraUserId,
+      )
+      expect((await IdentityLinkModel.findOne({subject: "user_workos_1"}).lean())?.linkedVia).toBe("workos_tenant")
+    } finally {
+      process.env.SUPABASE_URL = configured.url
+      process.env.SUPABASE_SERVICE_ROLE_KEY = configured.key
+    }
   })
 })
 

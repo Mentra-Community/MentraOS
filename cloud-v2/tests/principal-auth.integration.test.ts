@@ -18,10 +18,10 @@
 import {createHash, randomBytes} from "node:crypto"
 
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test} from "bun:test"
-// `hono` is a dependency of packages/core, not of this directory, so it is resolved from there.
-import {Hono} from "../packages/core/node_modules/hono"
+import {Hono} from "hono"
 import {
   principalAuth,
+  principalLabel,
   requireOrganizationCapability,
   requireWorkspaceCapability,
 } from "../packages/core/src/api/middleware/principal.middleware"
@@ -92,6 +92,8 @@ interface Identity {
   id: string
   email: string
   emailVerified: boolean
+  /** The WorkOS profile lookup failed, so `emailVerified` is unknown rather than false. */
+  profileUnavailable?: boolean
 }
 
 /** WorkOS access token or session cookie value -> the identity it stands for. */
@@ -113,6 +115,7 @@ function authResult(value: string | undefined): developerAuth.DeveloperAuthResul
     },
     organizationId: null,
     accessToken: value!,
+    ...(identity.profileUnavailable ? {profileUnavailable: true} : {}),
   }
 }
 
@@ -399,6 +402,108 @@ describe("principalAuth", () => {
     expect(requestAuth).not.toHaveBeenCalled()
   })
 
+  test("an invalid msk_ bearer is 401 even when a valid session cookie rides along", async () => {
+    const owner = await person("owner")
+    identities.set("sealed-session", identities.get(owner.bearer)!)
+
+    const response = await get("/me", {
+      authorization: `Bearer msk_local_${ulid()}.${"A".repeat(43)}`,
+      cookie: "mentra_console_session=sealed-session",
+    })
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({error: "unauthorized"})
+    expect(requestAuth).not.toHaveBeenCalled()
+  })
+
+  describe("when WorkOS cannot be asked about the profile", () => {
+    const configureGotrue = () => {
+      // Never reached: the first sign-in is refused before any directory lookup.
+      process.env.SUPABASE_URL = "http://127.0.0.1:9"
+      process.env.SUPABASE_SERVICE_ROLE_KEY = "unused-test-key"
+    }
+    const unknownProfile = (key: string, email = `${key}@example.test`): Identity => ({
+      id: `workos_${key}`,
+      email,
+      emailVerified: false,
+      profileUnavailable: true,
+    })
+
+    test("a first sign-in is 503 identity_unavailable at every gate, and creates no link or user", async () => {
+      const {workspaceId} = await newWorkspace()
+      configureGotrue()
+      identities.set("tok-newcomer", unknownProfile("newcomer"))
+      const usersBefore = await UserModel.countDocuments({})
+      const linksBefore = await IdentityLinkModel.countDocuments({})
+
+      for (const path of ["/me", "/org/incidents", `/workspaces/${workspaceId}/publish`]) {
+        const response = await get(path, bearer("tok-newcomer"))
+        expect({path, status: response.status, body: await response.json()}).toEqual({
+          path,
+          status: 503,
+          body: {error: "identity_unavailable"},
+        })
+      }
+
+      expect(await UserModel.countDocuments({})).toBe(usersBefore)
+      expect(await IdentityLinkModel.countDocuments({})).toBe(linksBefore)
+      expect(await IdentityLinkModel.countDocuments({subject: "workos_newcomer"})).toBe(0)
+    })
+
+    test("a person who is already linked still signs in, with the email unverified", async () => {
+      const owner = await person("owner")
+      configureGotrue()
+      identities.set(owner.bearer, unknownProfile("owner"))
+
+      const response = await get("/me", bearer(owner.bearer))
+
+      expect(response.status).toBe(200)
+      expect(((await response.json()) as any).principal).toMatchObject({
+        mentraUserId: owner.mentraUserId,
+        emailVerified: false,
+        isOrganizationAdmin: false,
+      })
+    })
+
+    test("an organization admin loses organization capabilities while their email cannot be verified", async () => {
+      const admin = await person("org-admin", {email: ADMIN_EMAIL})
+      configureGotrue()
+      identities.set(admin.bearer, unknownProfile("org-admin", ADMIN_EMAIL))
+
+      const response = await get("/org/incidents", bearer(admin.bearer))
+
+      expect(response.status).toBe(403)
+    })
+
+    test("with no GoTrue directory a first sign-in has nothing to be wrong about and links normally", async () => {
+      identities.set("tok-newcomer", unknownProfile("newcomer"))
+
+      const response = await get("/me", bearer("tok-newcomer"))
+
+      expect(response.status).toBe(200)
+      const link = await IdentityLinkModel.findOne({provider: "workos", subject: "workos_newcomer"}).lean()
+      expect(link).toMatchObject({linkedVia: "workos_tenant"})
+    })
+  })
+
+  test("a missing email is null, never the placeholder: not on the principal, the link or the label", async () => {
+    for (const [key, email] of [
+      ["placeholder", developerAuth.UNKNOWN_EMAIL],
+      ["blank", ""],
+    ] as const) {
+      identities.set(`tok-${key}`, {id: `workos_${key}`, email, emailVerified: false})
+
+      const response = await get("/me", bearer(`tok-${key}`))
+
+      expect(response.status).toBe(200)
+      const principal = ((await response.json()) as any).principal
+      expect(principal).toMatchObject({kind: "user", email: null, emailVerified: false, isOrganizationAdmin: false})
+      expect(principalLabel(principal)).toBe(`user:${principal.mentraUserId}`)
+      const link = await IdentityLinkModel.findOne({subject: `workos_${key}`}).lean()
+      expect(link).toMatchObject({mentraUserId: principal.mentraUserId, email: null})
+    }
+  })
+
   test("resolves the principal once per request however many gates read it", async () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
     const {workspaceId} = await newWorkspace()
@@ -682,6 +787,19 @@ describe("authorize", () => {
 
       expect(result).toMatchObject({allowed: true, membership: {role: "member"}})
       expect(new Set(result.capabilities)).toEqual(new Set(capabilitiesForRole("owner")))
+    })
+
+    test("a user whose email WorkOS has not verified still has the capabilities of their membership", async () => {
+      const {workspaceId} = await newWorkspace()
+      const unverified = await person("unverified-dev", {emailVerified: false})
+      await addMember(workspaceId, unverified, "developer")
+      const principal = (await principalFromToken(unverified.bearer))!
+
+      const result = await authorize(principal, {workspaceId, capability: "miniapps.publish"})
+
+      expect(principal).toMatchObject({emailVerified: false})
+      expect(result).toMatchObject({allowed: true, membership: {role: "developer"}})
+      expect(new Set(result.capabilities)).toEqual(new Set(capabilitiesForRole("developer")))
     })
 
     test("an allowlisted address WorkOS has not verified gets no owner access", async () => {

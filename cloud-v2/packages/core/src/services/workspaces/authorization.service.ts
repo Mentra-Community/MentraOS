@@ -9,7 +9,9 @@
  *  - anything else is a WorkOS identity (access token or session cookie). The
  *    WorkOS user is linked to a Mentra user (claiming any migrated memberships)
  *    and is an Organization Admin only when the identity provider verified an
- *    email that is on the allowlist.
+ *    email that is on the allowlist. When WorkOS could not be asked about the
+ *    profile, a first sign-in is refused (`IdentityUnavailableError`) rather than
+ *    linked on a guess; an existing link signs in, with the email unverified.
  *
  * Authorization has two separate scopes:
  *  - organization capabilities (`organizationCapabilities`): what the caller may
@@ -26,7 +28,7 @@
  * denial: the reason says why. Only a database failure throws.
  */
 
-import type {DeveloperAuthResult} from "@mentra/developer-auth"
+import {UNKNOWN_EMAIL, type DeveloperAuthResult} from "@mentra/developer-auth"
 import {
   capabilitiesForRole,
   OPERATOR_KEY_SCOPES,
@@ -41,13 +43,10 @@ import {
 } from "@mentra/workspace-contract"
 import type {AppContext} from "../../types/hono.types"
 import {authenticateDeveloperAccessToken, authenticateDeveloperRequest} from "../developer-auth.service"
-import {validateCredentialToken} from "./credential.service"
+import {isCredentialToken, validateCredentialToken} from "./credential.service"
 import {resolveWorkosUser} from "./identity-link.service"
 import {isOrganizationAdminEmail, organizationId} from "./organization"
 import {getActiveMembership, getWorkspace, isWorkspaceRole} from "./workspace.service"
-
-/** Core credentials: `msk_` workspace credentials and `mak_` operator keys. WorkOS access tokens are JWTs and never start like this. */
-const CREDENTIAL_TOKEN_PREFIX = /^(msk|mak)_/
 
 // --- Principals ------------------------------------------------------------
 
@@ -57,7 +56,7 @@ const CREDENTIAL_TOKEN_PREFIX = /^(msk|mak)_/
  */
 export async function principalFromBearerOrSession(c: AppContext): Promise<CorePrincipal | null> {
   const token = bearerToken(c.req.header("authorization"))
-  if (token && CREDENTIAL_TOKEN_PREFIX.test(token)) return validateCredentialToken(token)
+  if (token && isCredentialToken(token)) return validateCredentialToken(token)
   return userPrincipal(await authenticateDeveloperRequest(c))
 }
 
@@ -65,19 +64,22 @@ export async function principalFromBearerOrSession(c: AppContext): Promise<CoreP
 export async function principalFromToken(token: string): Promise<CorePrincipal | null> {
   const trimmed = typeof token === "string" ? token.trim() : ""
   if (!trimmed) return null
-  if (CREDENTIAL_TOKEN_PREFIX.test(trimmed)) return validateCredentialToken(trimmed)
+  if (isCredentialToken(trimmed)) return validateCredentialToken(trimmed)
   return userPrincipal(await authenticateDeveloperAccessToken(trimmed))
 }
 
 async function userPrincipal(auth: DeveloperAuthResult): Promise<CorePrincipal | null> {
   if (!auth.authenticated) return null
   const {user} = auth
-  const email = user.email || null
+  // A token with no email comes back with a placeholder; it is not an address and must never be stored.
+  const email = user.email && user.email !== UNKNOWN_EMAIL ? user.email : null
+  const emailVerified = email !== null && user.emailVerified
   const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || null
   const {mentraUserId} = await resolveWorkosUser({
     workosUserId: user.id,
     email,
-    emailVerified: user.emailVerified,
+    // A failed profile lookup says nothing about the email, which is different from "unverified".
+    emailVerified: auth.profileUnavailable ? null : emailVerified,
     name,
   })
   return {
@@ -85,9 +87,9 @@ async function userPrincipal(auth: DeveloperAuthResult): Promise<CorePrincipal |
     organizationId: organizationId(),
     mentraUserId,
     email,
-    emailVerified: user.emailVerified,
+    emailVerified,
     workosUserId: user.id,
-    isOrganizationAdmin: isOrganizationAdminEmail(email, user.emailVerified),
+    isOrganizationAdmin: isOrganizationAdminEmail(email, emailVerified),
   }
 }
 

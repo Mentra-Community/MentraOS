@@ -57,8 +57,12 @@ import {
 
 const logger = createLogger("core").child({service: "credential.service"})
 
+/** The prefixes of Core credentials: workspace credentials and organization operator keys. */
+const TOKEN_PREFIXES = ["msk", "mak"] as const
 /** `<prefix>_<env>_<ulid>.<secret>`. */
-const TOKEN_PATTERN = /^(msk|mak)_([a-z0-9]+)_([0-9A-HJKMNP-TV-Z]{26})\.([A-Za-z0-9_-]{43})$/
+const TOKEN_PATTERN = new RegExp(
+  `^(${TOKEN_PREFIXES.join("|")})_([a-z0-9]+)_([0-9A-HJKMNP-TV-Z]{26})\\.([A-Za-z0-9_-]{43})$`,
+)
 const PACKAGE_NAME_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/
 const PACKAGE_NAME_MAX_LENGTH = 128
 const PACKAGE_NAMES_MAX = 50
@@ -324,6 +328,15 @@ async function markRevoked(
 }
 
 // --- Validating ------------------------------------------------------------
+
+/**
+ * Whether a bearer token claims to be a Core credential (it starts `msk_` or `mak_`), valid or not. Such
+ * a token is only ever checked as a credential, never offered to another identity provider; WorkOS
+ * access tokens are JWTs and never start this way.
+ */
+export function isCredentialToken(token: unknown): token is string {
+  return typeof token === "string" && TOKEN_PREFIXES.some(prefix => token.startsWith(`${prefix}_`))
+}
 
 /**
  * Resolve a bearer token to the credential principal it currently stands for,

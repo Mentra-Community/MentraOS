@@ -7,6 +7,7 @@ import {
   authenticateWorkosRequest,
   type DeveloperAuthOptions,
   type DeveloperAuthResult,
+  UNKNOWN_EMAIL,
 } from "./index"
 
 const clientId = "client_developer_auth_test"
@@ -24,6 +25,8 @@ let network: ReturnType<typeof spyOn>
 let emailVerified = true
 let profileFails = false
 let nextGrantToken = ""
+/** JWKS requests the network stub has served, by path. */
+let jwksFetches = new Map<string, number>()
 
 function userPayload() {
   return {
@@ -57,10 +60,14 @@ beforeEach(() => {
   emailVerified = true
   profileFails = false
   nextGrantToken = ""
+  jwksFetches = new Map()
   network = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
     const url = new URL(input instanceof Request ? input.url : String(input))
     if (url.origin !== "https://api.workos.com") throw new Error(`Unexpected network request: ${url}`)
-    if (url.pathname === `/sso/jwks/${clientId}`) return Response.json(jwks)
+    if (url.pathname.startsWith("/sso/jwks/")) {
+      jwksFetches.set(url.pathname, (jwksFetches.get(url.pathname) ?? 0) + 1)
+      return Response.json(jwks)
+    }
     if (url.pathname === `/user_management/users/${userId}`) {
       if (profileFails) return Response.json({message: "unavailable"}, {status: 503})
       return Response.json(userPayload())
@@ -249,4 +256,59 @@ test("a raw access token the identity provider did not sign is rejected", async 
     authenticated: false,
     reason: "invalid_bearer_token",
   })
+})
+
+test("a raw access token reports an unavailable profile lookup, so unknown is not mistaken for unverified", async () => {
+  profileFails = true
+  const bearer = await token("10m", {email: "claim@example.test"})
+
+  const result = await authenticateWorkosAccessToken(bearer, options)
+
+  expect(result).toMatchObject({authenticated: true, profileUnavailable: true, user: {emailVerified: false}})
+})
+
+test("a successful profile lookup does not flag the profile unavailable", async () => {
+  const bearer = await token("10m")
+
+  const viaToken = await authenticateWorkosAccessToken(bearer, options)
+  const {result: viaRequest} = await authenticate({authorization: `Bearer ${bearer}`})
+  emailVerified = false
+  const unverified = await authenticateWorkosAccessToken(bearer, options)
+
+  for (const result of [viaToken, viaRequest, unverified]) {
+    expect(result).toMatchObject({authenticated: true})
+    expect((result as {profileUnavailable?: boolean}).profileUnavailable).toBeUndefined()
+  }
+})
+
+test("an unavailable profile lookup is reported on the bearer path of a request too", async () => {
+  profileFails = true
+  const bearer = await token("10m")
+
+  const {result} = await authenticate({authorization: `Bearer ${bearer}`})
+
+  expect(result).toMatchObject({authenticated: true, profileUnavailable: true})
+})
+
+test("a token with no email claim and no profile email reports the UNKNOWN_EMAIL placeholder", async () => {
+  profileFails = true
+  const bearer = await token("10m")
+
+  const result = await authenticateWorkosAccessToken(bearer, options)
+
+  expect(result).toMatchObject({authenticated: true, user: {email: UNKNOWN_EMAIL}})
+})
+
+test("the JWKS is fetched once per client id and reused across verifications", async () => {
+  const a: DeveloperAuthOptions = {...options, clientId: "client_jwks_reuse_a"}
+  const b: DeveloperAuthOptions = {...options, clientId: "client_jwks_reuse_b"}
+
+  expect(await authenticateWorkosAccessToken(await token("10m"), a)).toMatchObject({authenticated: true})
+  expect(await authenticateWorkosAccessToken(await token("10m"), a)).toMatchObject({authenticated: true})
+  expect(jwksFetches.get("/sso/jwks/client_jwks_reuse_a")).toBe(1)
+
+  // Another client id is another key set, with its own fetcher.
+  expect(await authenticateWorkosAccessToken(await token("10m"), b)).toMatchObject({authenticated: true})
+  expect(jwksFetches.get("/sso/jwks/client_jwks_reuse_b")).toBe(1)
+  expect(jwksFetches.get("/sso/jwks/client_jwks_reuse_a")).toBe(1)
 })

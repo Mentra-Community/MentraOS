@@ -30,6 +30,7 @@ import {listWorkspaceAudit} from "../packages/core/src/services/workspaces/audit
 import {
   createOperatorKey,
   createWorkspaceCredential,
+  isCredentialToken,
   listOperatorKeys,
   listWorkspaceCredentials,
   mintServiceCredential,
@@ -1176,5 +1177,18 @@ describe("listing", () => {
     const serialized = JSON.stringify(listed)
     expect(serialized).not.toContain(parse(keep.token).secret)
     expect(serialized).not.toContain("hash")
+  })
+})
+
+describe("isCredentialToken", () => {
+  test("claims every msk_ and mak_ bearer, valid or not, and nothing else", () => {
+    const valid = `msk_local_${ulid()}.${"A".repeat(43)}`
+    for (const token of [valid, valid.replace("msk_", "mak_"), "msk_garbage", "mak_", "msk_local_x.y"]) {
+      expect({token, claimed: isCredentialToken(token)}).toEqual({token, claimed: true})
+    }
+    for (const token of ["", "eyJhbGciOi.payload.signature", "Bearer msk_x", "xmsk_x", "msk", "MSK_x", "mskx_y"]) {
+      expect({token, claimed: isCredentialToken(token)}).toEqual({token, claimed: false})
+    }
+    for (const notAString of [undefined, null, 42, {}]) expect(isCredentialToken(notAString)).toBe(false)
   })
 })
