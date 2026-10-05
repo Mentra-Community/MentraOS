@@ -61,6 +61,9 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
 
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: Checkout
         uses: actions/checkout@v4
         with:

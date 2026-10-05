@@ -197,6 +197,9 @@ jobs:
       handoff_reason: ${{ steps.plan.outputs.handoff_reason }}
       recheck_only: ${{ steps.plan.outputs.recheck_only }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.tool_ref }}
@@ -241,6 +244,9 @@ jobs:
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_standards == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.head_sha }}
@@ -287,6 +293,9 @@ jobs:
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_depth == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.head_sha }}
@@ -333,6 +342,9 @@ jobs:
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_codex == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.head_sha }}
@@ -386,6 +398,9 @@ jobs:
       bugbot_success: ${{ steps.poll.outputs.bugbot_success }}
       bugbot_started: ${{ steps.poll.outputs.bugbot_started }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.tool_ref }}
@@ -434,6 +449,9 @@ jobs:
       ci_failed: ${{ steps.agg.outputs.ci_failed }}
       needs_continuation: ${{ steps.agg.outputs.needs_continuation }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.tool_ref }}
@@ -484,6 +502,9 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.head_ref }}
@@ -527,6 +548,9 @@ jobs:
     outputs:
       ci_green: ${{ steps.wait.outputs.ci_green }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.tool_ref }}
@@ -563,6 +587,9 @@ jobs:
       handoff_reason: ${{ steps.recheck.outputs.handoff_reason }}
       needs_continuation: ${{ steps.recheck.outputs.needs_continuation }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.tool_ref }}
@@ -594,6 +621,9 @@ jobs:
       )
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.tool_ref }}
@@ -636,6 +666,9 @@ jobs:
         needs.recheck-handoff.outputs.needs_continuation == 'true')
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-context.outputs.tool_ref }}

@@ -104,6 +104,9 @@ jobs:
     # production run then waits up to 30 minutes for Sonatype validation.
     timeout-minutes: 60
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
@@ -625,6 +628,9 @@ jobs:
     outputs:
       result_artifact: ${{ steps.name.outputs.value }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}

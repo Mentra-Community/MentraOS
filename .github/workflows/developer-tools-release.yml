@@ -60,6 +60,9 @@ jobs:
       dry_run: ${{ steps.info.outputs.dry_run }}
       force_release: ${{ steps.info.outputs.force_release }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: Checkout source
         uses: actions/checkout@v4
         # Depth 1 is fine: the decision reads the working tree + the npm

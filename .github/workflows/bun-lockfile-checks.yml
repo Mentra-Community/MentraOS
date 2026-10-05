@@ -42,6 +42,9 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: Checkout source
         uses: actions/checkout@v4
 
