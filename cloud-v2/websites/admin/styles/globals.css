@@ -42,6 +42,7 @@
 }
 
 :root {
+  --recording-height: min(30rem, 60dvh);
   --radius: 0.5rem;
   --background: oklch(0.975 0.011 142);
   --foreground: oklch(0.188 0.025 158);

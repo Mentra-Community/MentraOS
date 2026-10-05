@@ -12,6 +12,7 @@ import {
 } from "./lib/test-run-links";
 import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
+import { RecordingVideo } from "./components/recording-video";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
@@ -1177,12 +1178,9 @@ export function ReportArtifactView({ reportId, artifact }: { reportId: string; a
     return (
       <div className="rounded-[14px] bg-[#f5f7f4] p-3">
         {header}
-        <video
+        <RecordingVideo
           src={url}
-          controls
-          playsInline
-          preload="metadata"
-          className="mt-2 max-h-96 w-full rounded-[10px] border border-[#e0e4de] bg-black"
+          className="mt-2 border border-[#e0e4de]"
         />
         <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-[#087d50]" href={url} download>
           <FileText className="size-4" /> Download payload
