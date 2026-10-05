@@ -1,6 +1,6 @@
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {expect, test, spyOn} from "bun:test";
-import {FrameworkResultService, type FrameworkResultRepository} from "./framework-result.service";
+import {FrameworkResultConflict, FrameworkResultService, type FrameworkResultRepository} from "./framework-result.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
 import {TestRunModel} from "../models/test-run.model";
@@ -25,7 +25,8 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   let projectionAttempts = 0;
   const source = async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment);
   const service = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
-    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}), async () => {projectionAttempts++;}, source);
+    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}), async () => {projectionAttempts++;}, source, undefined,
+    {async list() {return [];}, async complete() {throw new FrameworkResultConflict('not acknowledged');}});
   const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
   expect(projectionAttempts).toBe(2);
   expect(first.created).toBe(true);
@@ -237,4 +238,90 @@ test("old saved lifecycle omissions remain readable without invented action repo
   expect(detail.outcome).toBe("pass");
   expect(detail.run.result.setup).not.toHaveProperty("actions");
   expect(detail.run.result.teardown).not.toHaveProperty("actions");
+});
+
+
+test("4096 streamed assets acknowledge once at complete with immutable metadata and concurrent retry custody", async () => {
+  const {createHash} = await import("node:crypto");
+  const {mkdtemp, rm} = await import("node:fs/promises");
+  const {tmpdir} = await import("node:os");
+  const {join} = await import("node:path");
+  const {TestAssetService} = await import("./test-asset.service");
+  const {StorageService} = await import("./storage/storage.service");
+  const {LocalStorageProvider} = await import("./storage/providers/local-storage.provider");
+  const {FRAMEWORK_RUN_ASSET_LIMIT, frameworkRunSchema} = await import("../types/framework-run.types");
+  const directory = await mkdtemp(join(tmpdir(), "framework-large-ack-"));
+  const bytes = Buffer.from("{}");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const declared = Array.from({length: FRAMEWORK_RUN_ASSET_LIMIT}, (_, index) => ({id: `report:${index}`, kind: "report",
+    path: `report-${index}.json`, size: bytes.length, sha256, mimeType: "application/json"}));
+  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "large", routineId: "notes",
+    definitionRevision: "a".repeat(40), platform: "android", laneId: "android",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-05T15:00:00Z", finishedAt: "2026-10-05T15:01:00Z", assets: declared,
+    result: {runId: "large", finishedAt: "2026-10-05T15:01:00Z", setup: {status: "passed"}, test: "failed",
+      steps: [{id: "required", status: "failed", durationMs: 10}], failures: [{phase: "test", actionId: "required", message: "Original failure"}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, evidence: declared.map(asset => asset.id),
+      timing: {startedAt: "2026-10-05T15:00:00Z", setupMs: 0, testMs: 10, teardownMs: 0}}});
+  const stored = {payload: run, payloadSha256: requestInputDigest(run), uploadsComplete: false};
+  const rows = new Map<string, import("./test-asset.service").StoredTestAsset>();
+  let inventoryReads = 0, duplicateLookups = 0, completionWrites = 0;
+  let corrupt: "digest" | "size" | "duplicate" | undefined;
+  const storage = new StorageService(new LocalStorageProvider({rootDir: directory}));
+  const assets = new TestAssetService({async findAsset(runId, assetId) {
+    duplicateLookups++; expect(runId).toBe(run.result.runId); return rows.get(assetId) ?? null;
+  }, async insertAsset(row) {
+    const winner = rows.get(row.assetId);
+    if (winner) {
+      if (winner.sha256 !== row.sha256 || winner.sizeBytes !== row.sizeBytes) throw Error("Conflicting immutable upload");
+      return winner;
+    }
+    rows.set(row.assetId, row); return row;
+  }}, () => storage);
+  const service = new FrameworkResultService({async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}},
+    async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
+      platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
+    async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment), assets, {
+      async list() {
+        inventoryReads++; const all = [...rows.values()];
+        if (corrupt === "duplicate") all[1] = {...all[0]!};
+        if (corrupt === "digest") all[0] = {...all[0]!, sha256: "d".repeat(64)};
+        if (corrupt === "size") all[0] = {...all[0]!, sizeBytes: bytes.length + 1};
+        return all;
+      }, async complete(value) {expect(value.payloadSha256).toBe(stored.payloadSha256); completionWrites++; stored.uploadsComplete = true;},
+    });
+  const headers = new Headers({"content-type": "application/json", "content-length": String(bytes.length)});
+  const body = () => new ReadableStream<Uint8Array>({start(controller) {controller.enqueue(bytes); controller.close();}});
+  const upload = (assetId: string) => service.upload(run.requestId, assetId, "mini", body(), headers);
+  try {
+    let next = 0;
+    await Promise.all(Array.from({length: 4}, async () => {
+      while (next < declared.length - 1) await upload(declared[next++]!.id);
+    }));
+    expect(rows.size).toBe(FRAMEWORK_RUN_ASSET_LIMIT - 1);
+    expect(inventoryReads).toBe(0); // No full collection scan in any PUT.
+    await expect(service.complete(run.requestId, "mini")).rejects.toThrow("not acknowledged");
+    expect(stored.uploadsComplete).toBe(false);
+    const final = declared.at(-1)!;
+    const retries = await Promise.all([upload(final.id), upload(final.id)]);
+    expect(retries.every(receipt => receipt.uploaded && receipt.sha256 === final.sha256 && receipt.size === final.size)).toBe(true);
+    expect(rows.size).toBe(FRAMEWORK_RUN_ASSET_LIMIT);
+    for (const fault of ["digest", "size", "duplicate"] as const) {
+      corrupt = fault;
+      await expect(service.complete(run.requestId, "mini")).rejects.toThrow("not acknowledged");
+      expect(stored.uploadsComplete).toBe(false);
+    }
+    corrupt = undefined;
+    const receipt = await service.complete(run.requestId, "mini");
+    expect(receipt).toEqual({entityId: run.result.runId, payloadSha256: stored.payloadSha256, manifestSha256: requestInputDigest(run.assets)});
+    expect(completionWrites).toBe(1); expect(inventoryReads).toBe(5);
+    expect(duplicateLookups).toBe(FRAMEWORK_RUN_ASSET_LIMIT + 1);
+    expect(await service.complete(run.requestId, "mini")).toEqual(receipt);
+    expect(inventoryReads).toBe(5);
+    expect((await upload(final.id)).created).toBe(false);
+    expect(await service.complete(run.requestId, "mini")).toEqual(receipt);
+    const bad = new ReadableStream<Uint8Array>({start(controller) {controller.enqueue(Buffer.from("[]")); controller.close();}});
+    await expect(service.upload(run.requestId, final.id, "mini", bad, headers)).rejects.toThrow("SHA256");
+    expect((await service.detail(run.requestId)).outcome).toBe("failed");
+  } finally {await rm(directory, {recursive: true, force: true});}
 });

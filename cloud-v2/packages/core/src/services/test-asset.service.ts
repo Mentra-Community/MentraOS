@@ -30,7 +30,9 @@ function mediaSignatureMatches(type: string, bytes: Buffer): boolean {
 }
 
 const assets = {
-  async assets(runId: string): Promise<StoredTestAsset[]> {return await TestAssetModel.find({runId}).read("primary").readConcern("majority").lean();},
+  async findAsset(runId: string, assetId: string): Promise<StoredTestAsset | null> {
+    return await TestAssetModel.findOne({runId, assetId}).read("primary").readConcern("majority").lean();
+  },
   async insertAsset(asset: StoredTestAsset): Promise<StoredTestAsset> {
     try {await TestAssetModel.create([asset], {writeConcern: testWriteConcern}); return asset;}
     catch (error) {
@@ -77,7 +79,7 @@ export class TestAssetService {
       }
       if (size !== asset.sizeBytes || hash.digest("hex") !== asset.sha256) throw new TestRunError(400, "asset size/SHA256 does not match immutable metadata");
       if (!mediaSignatureMatches(asset.contentType, prefix)) throw new TestRunError(400, "asset bytes do not match media type");
-      const existing = (await this.repository.assets(runId)).find(item => item.assetId === assetId);
+      const existing = await this.repository.findAsset(runId, assetId);
       if (existing) {
         if (existing.sizeBytes !== asset.sizeBytes || existing.sha256 !== asset.sha256)
           throw new TestRunError(409, "Stored asset differs from declared asset");
