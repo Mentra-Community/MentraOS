@@ -11,7 +11,9 @@ cache = Path(os.environ.get("GRADLE_USER_HOME", str(Path.home() / ".gradle"))) /
 
 
 def artifact(group, name, version, extension="jar"):
-    matches = list((cache / group / name / version).glob(f"*/*.{extension}"))
+    # Classifier artifacts such as -sources.jar share the version directory.
+    matches = [path for path in (cache / group / name / version).glob(f"*/*.{extension}")
+               if not path.stem.endswith(("-sources", "-javadoc"))]
     if not matches:
         raise SystemExit(f"Missing cached {group}:{name}:{version}; resolve Android dependencies first.")
     return matches[0]
