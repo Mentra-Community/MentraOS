@@ -12,6 +12,7 @@ permissions:
   issues: read
 jobs:
   comment:
+    environment: routine-nightly-dev
     if: github.repository == 'Mentra-Community/MentraOS' && github.ref == 'refs/heads/dev'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5

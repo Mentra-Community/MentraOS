@@ -202,6 +202,11 @@ test('authoring workflow retains its independent enable gate and never evaluates
   const root = new URL('../workflows/', import.meta.url)
   const intake = await readFile(new URL('request-routine-work.yml', root), 'utf8'),
     notification = await readFile(new URL('notify-routine-work.yml', root), 'utf8')
+  for (const workflow of [intake, notification]) {
+    assert.match(workflow, /    environment: routine-nightly-dev\n/)
+    assert.match(workflow, /TEST_RUN_INGEST_TOKEN: \$\{\{ secrets\.TEST_RUN_INGEST_TOKEN_DEV \}\}/)
+    assert.match(workflow, /github\.repository == 'Mentra-Community\/MentraOS' && github\.ref == 'refs\/heads\/dev'/)
+  }
   assert.match(intake, /ROUTINE_WORK_PR_DISPATCH_ENABLED == 'true'/)
   assert.match(intake, /ref: \$\{\{ github\.workflow_sha \}\}/)
   assert.match(intake, /pull-requests: read/)

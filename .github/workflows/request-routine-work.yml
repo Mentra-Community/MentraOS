@@ -20,6 +20,7 @@ permissions:
   issues: read
 jobs:
   request:
+    environment: routine-nightly-dev
     if: >-
       github.repository == 'Mentra-Community/MentraOS' && github.ref == 'refs/heads/dev' &&
       (github.event_name == 'workflow_dispatch' || vars.ROUTINE_WORK_PR_DISPATCH_ENABLED == 'true') &&
