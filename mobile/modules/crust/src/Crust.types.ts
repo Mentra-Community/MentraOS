@@ -114,6 +114,8 @@ export type NavManeuverPayload = {
 
 export type NavErrorPayload = {
   message: string
+  /** True only when native navigation has ended; absent for recoverable reroute errors. */
+  terminal?: boolean
 }
 
 export type InstalledApp = {
