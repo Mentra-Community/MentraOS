@@ -75,6 +75,11 @@ reloading existing product steps. Changing step IDs/order, lifecycle callbacks o
 metadata requires finishing the session first. Shared helper/native changes require
 the updated installed revision and a fresh session. Fix a broken app control rather
 than accumulating alternate input or focus algorithms.
+For UI transitions, verify the departing overlay disappears as well as the
+new page appears. Home controls can remain visible behind a miniapp. Use bounded
+postcondition observation; an acknowledged click is not a completed transition.
+Static headings may appear twice on a platform: require readable content, and use
+exact IDs/counts for the actionable controls that must be unique.
 Flag actual bugs and impossible/human-only requirements with the exact failed step.
 Routine code does not repair the harness. Finish runs the original teardown; then
 give back with `{reservationId, generation, requestId}` for ordinary boundary cleanup.
