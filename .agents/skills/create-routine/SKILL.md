@@ -45,8 +45,10 @@ bun run mentra-test author inspect @scope.json
 bun run mentra-test lane give-back @give-back.json
 ```
 
-Read harness `contracts/controller.ts` and `orchestration/controller.ts` for exact
-schemas and admission helpers; do not invent IDs or use an old standalone author CLI.
+Read harness `orchestration/README.md`, `orchestration/controller.ts` and
+`framework/authoring/session.ts` for current schemas and held-session behavior;
+`contracts/controller.ts` defines admission. Run the CLI from the harness checkout,
+not MentraOS. Do not invent IDs or use an old standalone author CLI.
 Reservation request supplies `requestId`, `laneId`, `purpose`, `admissionExpiresAt`.
 Wait with `{reservationId, afterGeneration, timeoutMs}` until granted. Start supplies
 the granted `reservationId`, `generation`, a stable `operationId`, selected `build`
@@ -54,12 +56,14 @@ and canonical editable `sourcePath`. Default start performs setup and starts the
 original recorder; optional `setupMode: "manual"` exposes individual lifecycle actions.
 
 Each author command carries `{reservationId, generation, operationId, command}`.
-Nested commands are `steps`, `snapshot`, `step` with `stepId`, `actions` with
+Nested commands use `op`: `steps`, `snapshot`, `step` with `stepId`, `actions` with
 `phase: "setup" | "test" | "teardown"`, `action` with setup/teardown `phase` and
 `actionId`, or `finish`. Use returned IDs and inspect `{reservationId, generation}`
 until each operation settles; a settled operation may contain a failed assertion.
 Use a new operation ID for each action; a lost response reuses its original ID to
 reconcile that call. Direct driver calls must retain the supplied owned context.
+For example, the inner product command is `{ "op": "step", "stepId": "saved-id" }`,
+inside `command`, not a separate CLI verb.
 
 Declare the complete flow before starting. Use computer use to discover controls,
 save each action and assertion, then execute that saved action through the same
@@ -70,6 +74,10 @@ On a settled step failure, inspect the actual error, edit that existing action a
 retry with a concrete `retryReason` from its current safe prerequisite state. Keep
 the same owner, recorder and passing prefix; do not reinstall or restart setup for
 an ordinary authoring mistake. Do not repeat an uncertain submission/firmware write.
+If returning to a prerequisite needs an already passed product action, inspect
+`{op: "actions", phase: "test"}` for eligibility and repeat that same saved action
+with an explicit `retryReason` describing the observed prerequisite. The controller
+must confirm its previous input settled; a source reload alone permits no repeat.
 The held loader preserves `createRoutine(state)` state and original lifecycle while
 reloading existing product steps. Changing step IDs/order, lifecycle callbacks or
 metadata requires finishing the session first. Shared helper/native changes require
@@ -80,6 +88,12 @@ new page appears. Home controls can remain visible behind a miniapp. Use bounded
 postcondition observation; an acknowledged click is not a completed transition.
 Static headings may appear twice on a platform: require readable content, and use
 exact IDs/counts for the actionable controls that must be unique.
+On Android, use the supplied `ui.scroll(anchor, direction)` for a bounded gesture
+inside the observed scroll view, then resnapshot. Check `checked` for toggles rather
+than assuming a click changed them; public text replacement uses `clearText` before
+`type`. Use `hideKeyboard` for the actual IME. The optional `systemUi` retains the
+same ownership and permits only the enrolled system-dialog namespaces; normal `ui`
+remains scoped to the Mentra App.
 Flag actual bugs and impossible/human-only requirements with the exact failed step.
 Routine code does not repair the harness. Finish runs the original teardown; then
 give back with `{reservationId, generation, requestId}` for ordinary boundary cleanup.
@@ -91,6 +105,11 @@ prepare applicable glasses/fixtures, record, settle resources and uninstall the 
 app. Routine setup/teardown own only product-specific effects. Backend fixtures need
 their own exact owned-ID cleanup; uninstall does not delete cloud data. Cleanup must
 not wait for a product effect that failed to be created.
+Use the supplied account context (`account` on Mac, `credentials()` on Android)
+and optional `audio` or `fixtures` when the installed platform supports them.
+Routine fixture content stays in `routines/<id>/`; reusable
+capture/connection/audio and platform delivery belong to shared providers. Do not
+copy another lane's serial, account, audio route or firmware setup into the routine.
 To try a modified miniapp, build/pack it in its source repo, then from MentraOS run
 `bun scripts/load-authoring-miniapp.mjs <packed.zip> --mac` (set `MENTRA_MAC_APP`)
 or `--android <phone-serial>`. The installed app needs existing Super Mode and miniapp
@@ -110,7 +129,9 @@ bun run mentra-test run inspect '{"id":"ACCEPTED_LOCAL_REQUEST_ID"}'
 ```
 
 Use `enrollRoutine`/platform enrollment and `localAdmissionId` helpers for source
-provenance and local admission. Ordinary replay stops at its first failed product
+provenance and local admission. Activate a changed shared framework/native revision
+only after affected held sessions and runs have finished; do not replace their pinned
+source under active owners. Ordinary replay stops at its first failed product
 step, preserves remaining steps as `not-run` and still tears down; other runs stay
 independent. Preserve the original error if cleanup/publication also fails.
 Completion needs passing assertions, teardown, acknowledged evidence and working
