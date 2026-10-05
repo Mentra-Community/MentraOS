@@ -59,16 +59,26 @@ function mergeTimedTokens(
     .trim();
   if (text === b) return right;
   if (text === a) return left;
-  // A merged window can repeat an earlier prefix. Keep only the new suffix.
-  for (let skip = 0; skip <= right.length; skip += 1) {
-    const combined = [...left, ...right.slice(skip)];
-    if (
-      combined
-        .map((t) => t.text)
-        .join("")
-        .trim() === text
-    )
-      return combined;
+  // The existing text merger can overlap inside a provider token. Remove
+  // duplicated characters without inventing a later timestamp for that token.
+  // Its retained suffix keeps the original start and crossing tokens remain
+  // excluded by the phone subscription cutoff.
+  const slice = (tokens: TranscriptionToken[], start: number, end: number) => {
+    let offset = 0;
+    return tokens.flatMap((token) => {
+      const from = Math.max(0, start - offset);
+      const to = Math.min(token.text.length, end - offset);
+      offset += token.text.length;
+      return to > from ? [{...token, text: token.text.slice(from, to)}] : [];
+    });
+  };
+  const rawLeft = left.map((token) => token.text).join("");
+  const rawRight = right.map((token) => token.text).join("");
+  const suffix = text.slice(a.length);
+  if (text.startsWith(a) && b.endsWith(suffix)) {
+    const prefixTokens = slice(left, rawLeft.indexOf(a), rawLeft.indexOf(a) + a.length);
+    const suffixStart = rawRight.indexOf(b) + b.length - suffix.length;
+    return [...prefixTokens, ...slice(right, suffixStart, suffixStart + suffix.length)];
   }
   return [];
 }

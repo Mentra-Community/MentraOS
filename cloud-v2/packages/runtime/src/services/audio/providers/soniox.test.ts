@@ -359,6 +359,21 @@ describe("SonioxProvider session configuration", () => {
 });
 
 describe("SonioxProvider utterance lifecycle", () => {
+  test("endpoint character overlap keeps token timing without losing interim/final text", async () => {
+    const {session, provider, events} = await makeProvider();
+    try {
+      provider.writeAudio(new Int16Array(480), {sessionTag: 1, offsetMs: 0});
+      session.result([{text: "Hello wonderful world", confidence: 1, is_final: false, start_ms: 0, end_ms: 10}]);
+      session.endpoint();
+      session.result([{text: "wonderful world again", confidence: 1, is_final: false, start_ms: 10, end_ms: 20}]);
+      const interim = events.at(-1)!;
+      expect(interim.text).toBe("Hello wonderful world again");
+      expect(interim.tokens?.map((t) => t.text).join("")).toBe(interim.text);
+      expect(interim.tokens?.at(-1)?.audioPosition).toEqual({sessionTag: 1, offsetMs: 10});
+      session.emit("finalized");
+      expect(events.at(-1)?.tokens?.map((t) => t.text).join("")).toBe("Hello wonderful world again");
+    } finally {await provider.close()}
+  });
   test("timing survives repeated/compacted windows, endpoint merge and mapping pruning", async () => {
     const {session, events, provider} = await makeProvider();
     const word = (text: string, start_ms: number): FakeToken => ({
