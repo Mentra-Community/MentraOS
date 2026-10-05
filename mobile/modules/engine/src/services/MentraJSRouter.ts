@@ -100,6 +100,7 @@ interface SpawnCache {
 export class MentraJSRouter {
   private subscription: EventSubscription | null = null
   private readonly registered: Set<string> = new Set()
+  private readonly replacementConnects = new Set<string>()
   /** Cached spawn arguments so the crash controller can respawn after a backoff. */
   private readonly spawnCache: Map<string, SpawnCache> = new Map()
   /** Active respawn timers (so unregister() can cancel a pending respawn). */
@@ -200,6 +201,7 @@ export class MentraJSRouter {
       installedManifest,
     )
     this.registered.add(packageName)
+    this.replacementConnects.add(packageName)
     // JSContext is the source-of-truth for "miniapp running". The
     // home tile / tray reads this registry to project the `running`
     // flag — UI WebView open/close is separate.
@@ -262,6 +264,7 @@ export class MentraJSRouter {
     // dispatch the user's code never runs — `registerMiniapp` just
     // assigns to a global and waits.
     const sessionId = `${packageName}-${Date.now().toString(36)}`
+    this.logger.log(`initializing background for ${packageName}`, {sessionId})
     void this.crust.mentraJsDispatchToJs(packageName, {kind: "init", sessionId})
 
     return true
@@ -277,6 +280,12 @@ export class MentraJSRouter {
     // its CONNECT handshake NOW so waitForConnect() blocks through the respawn
     // backoff window instead of resolving immediately against the dead context
     // (an action invoked mid-backoff would otherwise be delivered to nothing).
+    this.logger.warn(`background restart for ${packageName}`, {
+      reason,
+      uiBound: this.uiRouter?.isBound(packageName) ?? false,
+    })
+    this.replacementConnects.delete(packageName)
+    this.uiRouter?.backgroundRestarting(packageName)
     this.runtime.resetHandshake(packageName)
     const controller = this.crashController
     if (!controller) return
@@ -325,7 +334,7 @@ export class MentraJSRouter {
         // `registerMiniapp` handler runs again.
         const sessionId = `${packageName}-${Date.now().toString(36)}`
         void this.crust.mentraJsDispatchToJs(packageName, {kind: "init", sessionId})
-        this.logger.log(`respawned ${packageName} after crash`)
+        this.logger.log(`respawned ${packageName} after crash`, {sessionId})
       })()
     }, outcome.scheduleRespawnAfterMs)
     this.respawnTimers.set(packageName, timer)
@@ -352,6 +361,8 @@ export class MentraJSRouter {
       clearTimeout(pending)
       this.respawnTimers.delete(packageName)
     }
+    this.replacementConnects.delete(packageName)
+    this.uiRouter?.backgroundRestarting(packageName)
     this.spawnCache.delete(packageName)
     this.crashController?.onKill(packageName)
     this.runtime.unregisterApp(packageName)
@@ -414,6 +425,12 @@ export class MentraJSRouter {
         }
       }
       this.runtime.handleRawMessage(packageName, raw)
+      // CONNECT_ACK is sent synchronously by handleConnect. UI_OPEN now lands
+      // after the fresh SDK transport exists, without waiting for a UI timer.
+      if (this.peekBridgePayloadType(raw)?.type === "miniapp_connect") {
+        this.logger.log(`CONNECT received for ${packageName}`, {uiBound: this.uiRouter?.isBound(packageName) ?? false})
+        if (this.replacementConnects.delete(packageName)) this.uiRouter?.backgroundConnected(packageName)
+      }
       return
     }
 
@@ -431,8 +448,8 @@ export class MentraJSRouter {
         method === "warn"
           ? this.logger.warn
           : method === "error" || method === "fatal"
-            ? this.logger.error
-            : this.logger.log
+          ? this.logger.error
+          : this.logger.log
       // Emit a synthetic "[throttled N]" line in place of the next
       // would-be-allowed log to summarise drops.
       if (!decision.allowed) {
