@@ -1,7 +1,7 @@
 import {afterAll, beforeAll, describe, expect, spyOn, test} from "bun:test";
 import {randomUUID} from "node:crypto";
 import mongoose from "mongoose";
-import {TestRunModel} from "../models/test-run.model";
+import {TestRunModel, TEST_RUN_NATIVE_HISTORY_INDEX} from "../models/test-run.model";
 import {backfillTestSuiteStartedAt, TEST_SUITE_HISTORY_INDEX, TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
 import type {TestSuite} from "../types/test-suite.types";
@@ -16,6 +16,30 @@ test("history validates cursor and page limits before querying", async () => {
   for (const query of invalid)
     await expect(service.list(query)).rejects.toMatchObject({status: 400});
   expect(reads).toBe(0);
+});
+
+test("a database execution timeout is a retryable history error", async () => {
+  const service = new TestHistoryService({detail: async () => {throw new Error("not used");}}, async () => {
+    throw Object.assign(new Error("private provider details"), {code: 50});
+  });
+  await expect(service.list()).rejects.toMatchObject({status: 503, message: "Test history query timed out. Try again."});
+});
+
+test("suite backfill recomputes its budget before the second database command", async () => {
+  let elapsed = 0;
+  const budgets: number[] = [];
+  const collection = {
+    updateMany: async (_filter: unknown, _update: unknown, options: {maxTimeMS: number}) => {
+      budgets.push(options.maxTimeMS);
+      elapsed += 9000;
+    },
+    find: (_filter: unknown, options: {maxTimeMS: number}) => {
+      budgets.push(options.maxTimeMS);
+      return {project: () => ({limit: () => ({toArray: async () => []})})};
+    },
+  };
+  await backfillTestSuiteStartedAt(collection as any, () => ({maxTimeMS: 10000 - elapsed}));
+  expect(budgets).toEqual([10000, 1000]);
 });
 
 test("history suite summaries retain the reader's frozen failed outcome and declared count", async () => {
@@ -295,5 +319,49 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
         storedRuns: 5000, storedSuites: 500, runsExamined: runStats.executionStats.totalDocsExamined,
         suitesExamined: suiteStats.executionStats.totalDocsExamined}));
     }
+  });
+
+  test("raw history scans share one query deadline and never return a truncated success", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const budgets: number[] = [];
+    const originalAggregate = TestRunModel.aggregate.bind(TestRunModel);
+    const aggregate = spyOn(TestRunModel, "aggregate").mockImplementation(((...args: any[]) => {
+      const query = originalAggregate(...args as Parameters<typeof TestRunModel.aggregate>);
+      query.exec = (async () => {
+        budgets.push(query.options.maxTimeMS!);
+        now += 6000;
+        return Array.from({length: 26}, (_, index) => ({historyKind: "run", historyId: `suppressed-${index}`,
+          historyStartedAt: new Date(at), historySuppressed: true}));
+      }) as typeof query.exec;
+      return query;
+    }) as any);
+    try {
+      await expect(new TestHistoryService().list()).rejects.toMatchObject({status: 503});
+      expect(budgets).toEqual([10000, 4000]);
+    } finally {aggregate.mockRestore(); clock.mockRestore();}
+  });
+
+  test("native history exhausts a short page without scanning retained legacy results", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    const legacy = Array.from({length: 5000}, (_, index) => ({runId: `legacy-${index}`, requestId: `legacy-${index}`,
+      startedAt: new Date(Date.parse(at) - index * 1000), payload: {schemaVersion: 0, data: "legacy"}}));
+    await TestRunModel.collection.insertMany(legacy);
+    for (const id of ["native-a", "native-b"]) await saveRun(run(id));
+    const after = {kind: "run" as const, id: "native-a", startedAt: at};
+    for (const cursor of [null, after]) {
+      const explain: any = await TestRunModel.aggregate(testHistoryQueries(cursor, 25).runs)
+        .collation({locale: "simple"}).explain("executionStats");
+      const stats = explain.stages?.find((stage: any) => stage.$cursor)?.$cursor ?? explain;
+      expect(JSON.stringify(stats.queryPlanner.winningPlan)).toContain(TEST_RUN_NATIVE_HISTORY_INDEX);
+      expect(stats.executionStats.totalDocsExamined).toBeLessThan(5);
+      expect(JSON.stringify(stats.queryPlanner.winningPlan)).not.toContain('"stage":"SORT"');
+      console.log(JSON.stringify({proof: "native-history-legacy-exclusion", page: cursor ? "keyset" : "first",
+        storedLegacyRuns: legacy.length, nativeRuns: 2, runsExamined: stats.executionStats.totalDocsExamined}));
+    }
+    const page = await new TestHistoryService().list();
+    expect(page.entries.map(entry => entry.kind === "run" ? entry.runId : "unexpected")).toEqual(["native-b", "native-a"]);
+    expect(page.nextCursor).toBeNull();
   });
 });

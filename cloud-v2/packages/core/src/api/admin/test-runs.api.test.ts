@@ -22,6 +22,16 @@ test("combined history route forwards pagination outside the generic run ID path
   expect(response.headers.get("Cache-Control")).toBe("no-store");
 });
 
+test("history query timeout returns a controlled retryable response", async () => {
+  class History extends TestHistoryService {
+    override async list(): Promise<never> {throw new TestRunError(503, "Test history query timed out. Try again.");}
+  }
+  const response = await createTestRunAdminApi(undefined, new History()).request("/history/list?limit=25");
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({error: "test_run_error", message: "Test history query timed out. Try again."});
+  expect(response.headers.get("Cache-Control")).toBe("no-store");
+});
+
 test("the valid run ID history still opens its individual result", async () => {
   const detail = spyOn(FrameworkResultService.prototype, "detailByRun").mockResolvedValue({runId: "history"} as never);
   try {
