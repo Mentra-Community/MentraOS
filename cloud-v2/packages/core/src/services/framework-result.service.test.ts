@@ -244,12 +244,13 @@ test("asset reads project one immutable declaration and preserve missing and una
   const {TestAssetService} = await import("./test-asset.service");
   const declaration = {id: "report:final", kind: "report" as const, path: "setup-evidence/final.json",
     sha256: "c".repeat(64), size: 100, mimeType: "application/json" as const};
-  const calls: Array<{filter: unknown; options: any}> = [];
-  const find = spyOn(TestRunModel.collection, "findOne").mockImplementation((async (filter: {requestId?: string; runId?: string}, options: any) => {
-    calls.push({filter, options});
-    return (filter.requestId ?? filter.runId) === "missing-run" ? null
-      : {payload: {result: {runId: "frozen-run"}, assets:
-        options.projection["payload.assets"].$filter.cond.$eq[1].$literal === declaration.id ? [declaration] : []}};
+  const calls: Array<{pipeline: any[]; options: any}> = [];
+  const aggregate = spyOn(TestRunModel.collection, "aggregate").mockImplementation(((pipeline: any[], options: any) => {
+    calls.push({pipeline, options});
+    const filter = pipeline[0].$match;
+    return {async toArray() {return (filter.requestId ?? filter.runId) === "missing-run" ? []
+      : [{payload: {result: {runId: "frozen-run"}, assets:
+        pipeline[2].$project["payload.assets"].$filter.cond.$eq[1].$literal === declaration.id ? [declaration] : []}}];}};
   }) as any);
   let acknowledged = false;
   const custody = spyOn(TestAssetModel, "findOne").mockImplementation(() => ({read() {return this;}, readConcern() {return this;},
@@ -284,19 +285,20 @@ test("asset reads project one immutable declaration and preserve missing and una
     expect(custody).toHaveBeenCalledTimes(1);
     expect(custody.mock.calls[0]).toEqual([{runId: "frozen-run", assetId: declaration.id}]);
     for (const [index, call] of calls.entries()) {
-      expect(call.filter).toMatchObject({"payload.schemaVersion": 1});
-      expect(call.options.projection).toEqual({"payload.result.runId": 1,
+      expect(call.pipeline[0].$match).toMatchObject({"payload.schemaVersion": 1});
+      expect(call.pipeline[1]).toEqual({$limit: 1});
+      expect(call.pipeline[2].$project).toEqual({"payload.result.runId": 1,
         "payload.assets": {$filter: {input: "$payload.assets", as: "asset",
           cond: {$eq: ["$$asset.id", {$literal: [3, 5].includes(index) ? "undeclared" : declaration.id}]}}}, _id: 0});
       expect(call.options.readPreference.mode).toBe("primary"); expect(call.options.readConcern).toEqual({level: "majority"});
     }
-    expect(calls[0].filter).toEqual({"payload.schemaVersion": 1, requestId: "request"});
-    expect(calls[5].filter).toEqual({"payload.schemaVersion": 1, runId: "frozen-run"});
+    expect(calls[0].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, requestId: "request"});
+    expect(calls[5].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, runId: "frozen-run"});
     acknowledged = true;
     const response = await service.mediaByRun("frozen-run", declaration.id, mediaRequest);
     expect(response.status).toBe(206); expect(response.headers.get("content-length")).toBe("2");
     expect(media).toHaveBeenCalledTimes(1);
-  } finally {find.mockRestore(); custody.mockRestore(); upload.mockRestore(); media.mockRestore();}
+  } finally {aggregate.mockRestore(); custody.mockRestore(); upload.mockRestore(); media.mockRestore();}
 });
 
 

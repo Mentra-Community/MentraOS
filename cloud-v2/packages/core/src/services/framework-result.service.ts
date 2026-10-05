@@ -58,10 +58,12 @@ const mongoRepository: FrameworkResultRepository = {
   async getAsset(identity, assetId) {
     // Read the declaration from the frozen payload without transferring the
     // entire manifest and execution evidence for every upload or media request.
-    const row = await TestRunModel.findOne({...nativeRunFilter, ...identity})
-      .select({"payload.result.runId": 1, "payload.assets": {$filter: {input: "$payload.assets", as: "asset",
-        cond: {$eq: ["$$asset.id", {$literal: assetId}]}}}, _id: 0})
-      .read("primary").readConcern("majority").lean();
+    // Keep expressions in an aggregation projection for Cosmos MongoDB 4.2.
+    const [row] = await TestRunModel.aggregate([
+      {$match: {...nativeRunFilter, ...identity}}, {$limit: 1},
+      {$project: {"payload.result.runId": 1, "payload.assets": {$filter: {input: "$payload.assets", as: "asset",
+        cond: {$eq: ["$$asset.id", {$literal: assetId}]}}}, _id: 0}},
+    ]).read("primary").readConcern("majority").exec();
     return row ? {runId: row.payload.result.runId, asset: row.payload.assets?.[0] ?? null} : null;
   },
 };
