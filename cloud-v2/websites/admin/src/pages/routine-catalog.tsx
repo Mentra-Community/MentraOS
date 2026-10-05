@@ -3,6 +3,7 @@ import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query"
 import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
+import {RecordingVideo} from "../components/recording-video";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
 import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
@@ -75,7 +76,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
     <a href="/?routineCatalog=1" className="underline">All routines</a>
     {detail.error && <p role="alert">Routine could not refresh: {detail.error.message}</p>}
     <section className={PANEL}><h2 className="text-xl font-semibold">{definition.title}</h2><p className="mt-2">{definition.purpose}</p>
-      {row.example ? <div className="mt-4"><video className="w-full rounded-lg" controls preload="metadata"
+      {row.example ? <div className="mt-4"><RecordingVideo
         src={`/api/admin/routine-catalog/results/by-run/${encodeURIComponent(row.example.runId)}/assets/${encodeURIComponent(row.example.recordingAssetId)}`} />
         <p className="mt-2 text-sm">Recorded {new Date(row.example.startedAt).toLocaleString()} · {row.platform} · build <code>{row.example.build.headSha}</code></p>
         <p className="mt-1 text-sm">Example definition: <code>{row.example.definitionRevision}</code>{row.example.definitionRevision !== row.definitionRevision && " (earlier than the current definition)"}</p>
@@ -205,10 +206,10 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
       actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
-    <div className={hasRecording ? "grid gap-5 lg:h-[calc(100dvh-var(--admin-header-height,6rem)-2rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
+    <div className={hasRecording ? "grid gap-5 lg:h-[calc(var(--recording-height)+5rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
     {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <h3 className="shrink-0 font-semibold">Recording</h3>
-      <div className="mt-3 lg:min-h-0 lg:flex-1"><video ref={video} data-asset-id={recordingAsset!} className="max-h-[70dvh] w-full scroll-mt-[calc(var(--admin-header-height,6rem)+1rem)] rounded-lg bg-black object-contain lg:h-full lg:max-h-none" controls preload="metadata" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
+      <div className="mt-3 lg:min-h-0 lg:flex-1"><RecordingVideo ref={video} data-asset-id={recordingAsset!} className="scroll-mt-[calc(var(--admin-header-height,6rem)+1rem)]" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
         if (video.current && pendingOffset.current !== null) {video.current.currentTime = pendingOffset.current; pendingOffset.current = null;}
       }} /></div>
     </section>}

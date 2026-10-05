@@ -97,11 +97,12 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
   expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]");
   expect(html.indexOf('aria-label="Run recording"')).toBeLessThan(html.indexOf('aria-label="Execution steps"'));
   expect(html).toContain("order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col");
-  expect(html).toContain("lg:h-[calc(100dvh-var(--admin-header-height,6rem)-2rem)]");
+  expect(html).toContain("lg:h-[calc(var(--recording-height)+5rem)]");
   expect(html).toContain('role="region" aria-label="Execution details" tabindex="0"');
   expect(html).toContain("lg:overflow-y-auto");
   expect(html).not.toContain("lg:sticky");
-  expect(html).toContain("object-contain lg:h-full lg:max-h-none");
+  expect(html).toContain("h-[var(--recording-height)]");
+  expect(html).toContain("object-contain");
   expect(html.indexOf('aria-label="Setup details"')).toBeLessThan(html.indexOf('aria-label="Run recording"'));
   expect(html.indexOf('aria-label="Teardown details"')).toBeGreaterThan(html.indexOf('aria-label="Execution steps"'));
   expect(html.indexOf('aria-label="Teardown details"')).toBeLessThan(html.indexOf('<h3 class="font-semibold">Evidence</h3>'));
