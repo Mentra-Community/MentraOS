@@ -3,6 +3,7 @@ import {readFileSync} from "node:fs"
 import {TranscriptionSubscriptions} from "../TranscriptionSubscriptions"
 import {transcriptionDeliveryRoute} from "../TranscriptionRouting"
 import {UdpAudio} from "../../../../../../cloud-v2/packages/cloud-client/src/modules/runtime/audio-udp"
+import {createSonioxProvider} from "../../../../../../cloud-v2/packages/runtime/src/services/audio/providers/soniox"
 
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
 const start = source.indexOf("  public forwardEvent(")
@@ -103,4 +104,34 @@ test("new to legacy to new server reconnect keeps fallback and delayed positione
       ["positioned", "one"], ["legacy", undefined], ["positioned", "one"], ["positioned", "one"],
     ])
   } finally {audio.close(); cloud.getAudioPosition = () => null}
+})
+
+test("endpoint word/whitespace overlap reaches early and late subscriptions through the host", async () => {
+  const handlers = new Map<string, (data?: unknown) => void>()
+  const host = new Host(), registry = new TranscriptionSubscriptions()
+  registry.replace([{id: "early", stream: "transcription:auto"}], {sessionTag: 1, offsetMs: 0})
+  registry.replace([{id: "early", stream: "transcription:auto"}, {id: "late", stream: "transcription:auto"}], {sessionTag: 1, offsetMs: 10})
+  cloud.getAudioPosition = () => ({sessionTag: 1, offsetMs: 30})
+  host.streamSubscribers = new Map([["transcription:auto", new Set(["app"])]])
+  host.connectedApps = new Map([["app", {transcriptionListeners: registry}]])
+  host.normalizeStreamType = (stream: string) => stream
+  host.appTranscriptionRoutesForEvent = () => ({cloud: true, forceLocal: false})
+  const sent: any[] = []
+  host.sendToMiniapp = (_owner: string, event: any) => sent.push(event)
+  const session = {on: (event: string, fn: (data?: unknown) => void) => {handlers.set(event, fn)}, off() {},
+    async connect() {}, async close() {}, async finish() {}, sendAudio() {}}
+  const provider = await createSonioxProvider({scope: "host-overlap", client: {realtime: {stt: () => session}} as never,
+    onTranscript: (event) => host.forwardEvent("transcription:en", {text: event.text, isFinal: event.isFinal}, "cloud", event.tokens)})
+  const word = (text: string, start_ms: number) => ({text, start_ms, end_ms: start_ms + 5, is_final: false, confidence: 1})
+  try {
+    provider.writeAudio(new Int16Array(480), {sessionTag: 1, offsetMs: 0})
+    handlers.get("result")!({tokens: [word("hello ", 0), word("world", 5)]})
+    handlers.get("endpoint")!()
+    handlers.get("result")!({tokens: [word("world ", 10), word("again", 15)]})
+    handlers.get("finalized")!()
+    expect(sent.slice(-4).map((event) => [event.listenerId, event.data.text, event.data.isFinal])).toEqual([
+      ["early", "hello world again", false], ["late", "again", false],
+      ["early", "hello world again", true], ["late", "again", true],
+    ])
+  } finally {await provider.close(); cloud.getAudioPosition = () => null}
 })
