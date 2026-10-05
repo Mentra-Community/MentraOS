@@ -21,6 +21,7 @@ import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
 import {createCoreStop, serveCore} from "./http-server"
+import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
 
 const logger = createLogger("core")
 
@@ -57,13 +58,17 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const app = createApp({readinessChecks: [mongoReadinessCheck]})
   const server = serveCore(app.fetch, port)
   const boundPort = server.port!
+  const stopSummaryBackfill = startFrameworkRunSummaryBackfill()
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
 
   return {
     port: boundPort,
     url: `http://localhost:${boundPort}`,
-    stop: createCoreStop(server, disconnectMongo),
+    stop: createCoreStop(server, async () => {
+      await stopSummaryBackfill()
+      await disconnectMongo()
+    }),
   }
 }
 

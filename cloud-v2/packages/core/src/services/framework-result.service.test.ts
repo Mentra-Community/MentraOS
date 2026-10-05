@@ -1,6 +1,8 @@
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {expect, test, spyOn} from "bun:test";
 import {FrameworkResultService, type FrameworkResultRepository} from "./framework-result.service";
+import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {requestInputDigest} from "./test-request.service";
 import {TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
 
@@ -89,7 +91,7 @@ test("native result list scopes the archive digest and excludes retained old pay
   let filter: Record<string, unknown> | null = null;
   const find = spyOn(TestRunModel, "find").mockImplementation(((query: Record<string, unknown>) => {
     filter = query;
-    const chain = {sort() {return chain;}, limit() {return chain;}, read() {return chain;}, readConcern() {return chain;}, async lean() {return [];}};
+    const chain = {sort() {return chain;}, limit() {return chain;}, select() {return chain;}, read() {return chain;}, readConcern() {return chain;}, async lean() {return [];}};
     return chain;
   }) as any);
   try {
@@ -110,8 +112,8 @@ test("native run summaries retain build identity and distinct execution and evid
       failures: [{phase: "evidence", actionId: "capture", message: "Recording unavailable"}], evidence: [],
       timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}};
   const find = spyOn(TestRunModel, "find").mockImplementation((() => {
-    return {sort() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;},
-      lean: async () => [{payload: run, uploadsComplete: false}]};
+    return {sort() {return this;}, limit() {return this;}, select() {return this;}, read() {return this;}, readConcern() {return this;},
+      lean: async () => [{runId: run.requestId, requestId: run.requestId, payloadSha256: requestInputDigest(run), summaryProjection: createFrameworkRunSummaryProjection(run, requestInputDigest(run)), uploadsComplete: false}]};
   }) as any);
   try {
     const summary = (await new FrameworkResultService().list()).runs[0]!;

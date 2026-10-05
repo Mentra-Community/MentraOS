@@ -8,6 +8,7 @@ const schema = new Schema({
   routineId: {type: String, required: true}, definitionRevision: {type: String, required: true},
   hostId: {type: String, required: true}, platform: {type: String, required: true}, laneId: {type: String, required: true},
   startedAt: {type: Date, required: true}, completedAt: {type: Date, required: true},
+  summaryProjection: {type: Schema.Types.Mixed},
   payloadSha256: {type: String, required: true}, payload: {type: Schema.Types.Mixed, required: true},
   uploadsComplete: {type: Boolean, required: true}, outcome: {type: String, required: true},
 }, {collection: "test_runs", timestamps: true, autoIndex: false});

@@ -1,11 +1,12 @@
 import {z} from "zod";
-import {frameworkEvidenceComplete, frameworkRunSchema} from "../types/framework-run.types";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
+import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunModel} from "../models/test-run.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
-import {nativeRunFilter} from "./framework-result.service";
+import {nativeRunFilter, readFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {TestRunError} from "./test-result-error";
 import {routinePreferences, type RoutinePreferenceRepository} from "./routine-preference.service";
 
 export interface CatalogRunRepository {
@@ -23,25 +24,33 @@ const mongoRuns: CatalogRunRepository = {
       outcome: "pass", uploadsComplete: true, "payload.result.setup.status": "passed",
       "payload.result.test": "passed", "payload.result.failures.phase": {$ne: "evidence"}, "payload.result.teardown.ready": true,
       "payload.recordingAssetId": {$type: "string"},
-    }).sort({startedAt: -1, runId: -1}).read("primary").readConcern("majority").lean();
+    }).sort({startedAt: -1, runId: -1}).select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.recordingAssetId": 1, "payload.build": 1})
+      .read("primary").readConcern("majority").lean();
     if (!row) return null;
-    const run = frameworkRunSchema.parse(row.payload);
-    return {runId: run.result.runId, startedAt: run.startedAt, finishedAt: run.finishedAt,
-      recordingAssetId: run.recordingAssetId!, definitionRevision: run.definitionRevision, build: run.build};
+    const projection = await readFrameworkRunSummaryProjection(row), summary = projection.summary;
+    const payload = row.payload as {build?: unknown; recordingAssetId?: unknown};
+    const build = frameworkBuildSchema.safeParse(payload.build);
+    if (!build.success || !projection.recordingAssetId || projection.recordingAssetId !== payload.recordingAssetId
+      || build.data.repository !== summary.build.repository || build.data.channel !== summary.build.channel
+      || build.data.headSha !== summary.build.headSha || build.data.prNumber !== summary.build.prNumber)
+      throw new TestRunError(503, "Recorded example build or recording is unavailable");
+    return {runId: summary.runId, startedAt: summary.startedAt, finishedAt: summary.finishedAt,
+      recordingAssetId: projection.recordingAssetId,
+      definitionRevision: projection.definitionRevision, build: build.data};
   },
   async history(routineId, platform, after, limit) {
     const filter = {...nativeRunFilter, routineId, platform, ...(after ? {$or: [
       {startedAt: {$lt: after.startedAt}}, {startedAt: after.startedAt, runId: {$lt: after.runId}},
     ]} : {})};
     const rows = await TestRunModel.find(filter).sort({startedAt: -1, runId: -1}).limit(limit)
-      .select({runId: 1, startedAt: 1, outcome: 1, uploadsComplete: 1, definitionRevision: 1, payload: 1})
+      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1})
       .read("primary").readConcern("majority").lean();
-    return rows.map(row => {
-      const run = frameworkRunSchema.parse(row.payload);
-      return {runId: row.runId, startedAt: run.startedAt, outcome: row.outcome,
-        uploadsComplete: row.uploadsComplete, definitionRevision: run.definitionRevision,
-        evidenceStatus: frameworkEvidenceComplete(run) ? "complete" as const : "failed" as const};
-    });
+    return await Promise.all(rows.map(async row => {
+      const projection = await readFrameworkRunSummaryProjection(row), summary = projection.summary;
+      return {runId: summary.runId, startedAt: summary.startedAt, outcome: summary.outcome,
+        uploadsComplete: row.uploadsComplete === true, definitionRevision: projection.definitionRevision,
+        evidenceStatus: summary.evidenceStatus};
+    }));
   },
 };
 const cursorSchema = z.object({routineId: z.string(), platform: z.string(),

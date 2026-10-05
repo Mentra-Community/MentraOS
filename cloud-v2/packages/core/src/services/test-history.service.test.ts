@@ -7,6 +7,8 @@ import {frameworkRunSchema, type FrameworkRun} from "../types/framework-run.type
 import type {TestSuite} from "../types/test-suite.types";
 import {TestHistoryService, testHistoryQueries, type StoredHistoryRow} from "./test-history.service";
 import {TestSuiteService} from "./test-suite.service";
+import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {requestInputDigest} from "./test-request.service";
 import {TestRunError} from "./test-result-error";
 
 test("history validates cursor and page limits before querying", async () => {
@@ -100,7 +102,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
   const member = (requestId: string) => ({memberId: requestId, requestId, routineId: "notes", platform: "ios-on-mac" as const});
   const saveRun = async (payload: FrameworkRun) => TestRunModel.collection.insertOne({runId: payload.result.runId,
     requestId: payload.requestId, routineId: payload.routineId, platform: payload.platform, startedAt: new Date(payload.startedAt),
-    payload, outcome: "pass", uploadsComplete: true});
+    payload, payloadSha256: requestInputDigest(payload), summaryProjection: createFrameworkRunSummaryProjection(payload, requestInputDigest(payload)), outcome: "pass", uploadsComplete: true});
   const saveSuite = async (payload: TestSuite) => TestSuiteModel.collection.insertOne({suiteId: payload.suiteId, payload,
     startedAt: new Date(payload.startedAt)});
 
