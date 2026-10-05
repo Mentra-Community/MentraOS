@@ -470,7 +470,7 @@ describe("MentraJSRouter", () => {
     })
   })
 
-  test("recovery immediately reopens mounted UI after init", async () => {
+  test("recovery reopens mounted UI once the replacement connects, not at init", async () => {
     const {MentraJSCrashController} = await import("../MentraJSCrashController")
     router.crashController = new MentraJSCrashController({backoffMs: [1], maxRetries: 3})
     router.uiRouter = new MentraUIRouter(crust.binding)
@@ -480,7 +480,14 @@ describe("MentraJSRouter", () => {
     crust.dispatchCalls.length = 0
     ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (p: string) => void}).onLivenessTimeout("com.foo")
     await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(crust.dispatchCalls[0]?.envelope.kind).toBe("init")
+    // UI_OPEN before the fresh SDK session exists would be dropped.
+    expect(crust.dispatchCalls.map((call) => call.envelope.kind)).toEqual(["init"])
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__bridge",
+      method: "send",
+      args: [JSON.stringify({payload: {type: "miniapp_connect", packageName: "com.foo"}})],
+    })
     const reopen = crust.dispatchCalls.filter((call) => call.envelope.kind === "bridge")
     expect(reopen).toHaveLength(1)
     expect(JSON.parse(reopen[0]!.envelope.raw as string)).toMatchObject({
