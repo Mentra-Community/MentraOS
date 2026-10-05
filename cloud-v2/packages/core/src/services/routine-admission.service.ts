@@ -37,6 +37,7 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
   if (!execution) throw new TestRunError(409, "The current definition has no execution resource metadata.");
   const glassesRequirement = definition.definition.glasses;
   let software: GlassesSoftwareRef | undefined;
+  let startingSoftware: GlassesSoftwareRef | undefined;
   let glassesResourceId: string | undefined;
   if (glassesRequirement) {
     if (execution.resourceKinds.filter(kind => kind === "glasses").length !== 1)
@@ -50,6 +51,9 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     if (!manifest.success || build.manifestSha256 !== manifest.data.sha256)
       throw new TestRunError(409, "Selected build has no matching immutable glasses manifest reference.");
     software = {model: "mentra-live", manifest: manifest.data};
+    startingSoftware = glassesRequirement.startSoftware ?? software;
+    if (startingSoftware.model !== offered[0]!.model)
+      throw new TestRunError(409, "Starting software differs from the selected compatible glasses model.");
   } else if (execution.resourceKinds.includes("glasses"))
     throw new TestRunError(409, "Glasses execution requires an explicit routine model declaration.");
   const resources = execution.resourceKinds.map(kind => {
@@ -63,5 +67,5 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     definitionRevision: definition.definitionRevision, platform: definition.platform, laneId: lane.id, resources,
     ...(execution.policy ? {policy: execution.policy} : {}), build: {...selectedBuildInput(build, definition.platform),
       ...(software ? {manifest: software.manifest, manifestSha256: software.manifest.sha256} : {})},
-    ...(software ? {glassesStart: software, glassesReturn: software} : {})})));
+    ...(software ? {glassesStart: startingSoftware, glassesReturn: software} : {})})));
 }

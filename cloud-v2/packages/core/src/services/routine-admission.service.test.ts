@@ -1,7 +1,7 @@
 import {expect, test} from "bun:test";
 import {routineAdmissionInput} from "./routine-admission.service";
 import {hostStateSchema, type ReceivedTestHostState} from "./test-host-state.service";
-import type {RoutineEnrollment} from "../types/routine-definition.types";
+import {routineEnrollmentSchema, type RoutineEnrollment} from "../types/routine-definition.types";
 import {firmwareManifestSchema, type TestBuild} from "../types/test-build.types";
 import {frameworkRequestInputSchema} from "../types/framework-request.types";
 
@@ -50,7 +50,7 @@ test("phone-only request retains its previous shape and rejects injected softwar
   expect(plain.build).not.toHaveProperty("manifest"); expect(plain.build).not.toHaveProperty("manifestSha256");
   expect(() => frameworkRequestInputSchema.parse({...plain, glassesStart: {model: "mentra-live", manifest}, glassesReturn: {model: "mentra-live", manifest}})).toThrow("Selected glasses resource");
   const glass = select();
-  expect(() => frameworkRequestInputSchema.parse({...glass, glassesReturn: {model: "mentra-live", manifest: {...manifest, sha256: "c".repeat(64)}}})).toThrow("Alternate glasses software");
+  expect(() => frameworkRequestInputSchema.parse({...glass, glassesReturn: {model: "mentra-live", manifest: {...manifest, sha256: "c".repeat(64)}}})).toThrow("selected build manifest");
   expect(() => frameworkRequestInputSchema.parse({...glass, glassesStart: {model: "mentra-live", manifest: {...manifest, size: 101}}, glassesReturn: {model: "mentra-live", manifest: {...manifest, size: 101}}})).toThrow("selected build manifest");
 });
 
@@ -82,4 +82,21 @@ test("physical inventory maps one product to one resource across lanes while cap
   for (const lane of [{...first, glasses: undefined}, {...first, glasses: []}, {...first, glasses: [first.glasses![0]!, first.glasses![0]!]},
     {...first, glasses: [{...first.glasses![0]!, capabilities: ["camera", "camera"]}]}])
     expect(() => hostStateSchema.parse({...base, lanes: [lane]})).toThrow();
+});
+
+
+test("enrollment and dispatch bind routine-declared starting software while preserving the selected build return", () => {
+  const startSoftware = {model: "mentra-live" as const, manifest: {...manifest, url: "https://artifactscdn.mentraglass.com/reset/manifest.json", sha256: "c".repeat(64)}};
+  const declared = routineEnrollmentSchema.parse({...enrollment(), definition: {...enrollment().definition,
+    glasses: {models: ["mentra-live"], startSoftware}}});
+  const input = select(declared);
+  expect(input.glassesStart).toEqual(startSoftware);
+  expect(input.glassesReturn).toEqual({model: "mentra-live", manifest});
+  expect(input.build.manifest).toEqual(manifest);
+  expect(frameworkRequestInputSchema.parse(input).glassesStart).toEqual(startSoftware);
+  expect(() => frameworkRequestInputSchema.parse({...input, glassesReturn: startSoftware})).toThrow("selected build manifest");
+  expect(() => routineEnrollmentSchema.parse({...declared, definition: {...declared.definition,
+    glasses: {models: ["g2"], startSoftware}}})).toThrow("accepted glasses model");
+  expect(() => routineEnrollmentSchema.parse({...declared, definition: {...declared.definition,
+    glasses: {models: ["mentra-live"], startSoftware: {...startSoftware, manifest: {...manifest, url: "file:///private/reset.json"}}}}})).toThrow();
 });

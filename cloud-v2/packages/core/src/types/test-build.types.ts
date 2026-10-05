@@ -1,13 +1,8 @@
 import {z} from "zod";
 import {routinePlatformSchema} from "./routine-definition.types";
+import {firmwareManifestSchema} from "./glasses-software.types";
+export {firmwareManifestSchema, glassesSoftwareRefSchema, type GlassesSoftwareRef} from "./glasses-software.types";
 const positive = z.number().int().positive().safe();
-export const firmwareManifestSchema = z.object({url: z.string().url().refine(value => {
-  try {const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && !value.includes("#");}
-  catch {return false;}
-}, "Firmware manifest requires an HTTPS URL without credentials or fragment"),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/), size: positive}).strict();
-export const glassesSoftwareRefSchema = z.object({model: z.literal("mentra-live"), manifest: firmwareManifestSchema}).strict();
-export type GlassesSoftwareRef = z.infer<typeof glassesSoftwareRefSchema>;
 export const testBuildSourceSchema = z.discriminatedUnion("channel", [
   z.object({channel: z.literal("pr"), prNumber: positive, buildRunId: positive, publicationAttempt: positive}).strict(),
   z.object({channel: z.literal("dev"), buildRunId: positive, publicationAttempt: positive}).strict(),

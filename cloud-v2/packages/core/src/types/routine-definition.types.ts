@@ -1,11 +1,13 @@
 import {z} from "zod";
+import {glassesSoftwareRefSchema} from "./glasses-software.types";
 
 const text = z.string().min(1).max(2000);
 export const routineIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
 const id = routineIdentitySchema;
 export const glassesModelSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,119}$/);
-export const routineGlassesRequirementSchema = z.object({models: z.array(glassesModelSchema).min(1).max(30)}).strict()
-  .refine(value => new Set(value.models).size === value.models.length, "Acceptable glasses models must be unique");
+export const routineGlassesRequirementSchema = z.object({models: z.array(glassesModelSchema).min(1).max(30), startSoftware: glassesSoftwareRefSchema.optional()}).strict()
+  .refine(value => new Set(value.models).size === value.models.length, "Acceptable glasses models must be unique")
+  .refine(value => !value.startSoftware || value.models.includes(value.startSoftware.model), "Starting software must name an accepted glasses model");
 const action = z.object({id, instruction: text, expected: text}).strict();
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 /** Serialized source definition; executable functions remain in the harness repository. */

@@ -44,14 +44,14 @@ test("dispatch freshness uses Core receipt time rather than a skewed controller 
  }
 });
 
-function glassesFixture(capabilities = ["glasses-ble"]) {
+function glassesFixture(capabilities = ["glasses-ble"], startSoftware?: {model: "mentra-live"; manifest: {url: string; sha256: string; size: number}}) {
  const revision = "a".repeat(40), manifest = {url: "https://artifactscdn.mentraglass.com/exact/manifest.json", sha256: "f".repeat(64), size: 100};
  const selected = {...selection, routineId: "paired-controls"};
  const admitted = new Map<string, StoredTestRequest>();
  const service = {get: async (id: string) => admitted.get(id) ?? null, submit: async (requestId: string, hostId: string, input: unknown) => {
   const row: StoredTestRequest = {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}; admitted.set(requestId, row); return row;}} as unknown as TestRequestService;
  const definitions = {getCurrent: async () => ({routineId: selected.routineId, platform: selected.platform, definitionRevision: revision,
-  definition: {requires: ["glasses-ble"], glasses: {models: ["mentra-live"]}, execution: {resourceKinds: ["app", "recorder", "glasses"]}}})} as unknown as RoutineDefinitionService;
+  definition: {requires: ["glasses-ble"], glasses: {models: ["mentra-live"], ...(startSoftware ? {startSoftware} : {})}, execution: {resourceKinds: ["app", "recorder", "glasses"]}}})} as unknown as RoutineDefinitionService;
  const build = {source: selected.source, platform: "ios-on-mac", headSha: "b".repeat(40), availability: "available", manifest, manifestSha256: manifest.sha256,
   receipt: {url: "https://artifactscdn.mentraglass.com/receipt.json", sha256: "e".repeat(64), size: 100},
   archive: {name: "app.zip", url: "https://artifactscdn.mentraglass.com/app.zip", size: 100, sha256: selected.archiveSha256}};
@@ -90,4 +90,19 @@ test("direct Admin admission refuses a coherent alternate manifest that does not
  const input = {...original, build: {...original.build, manifest, manifestSha256: manifest.sha256}, glassesStart: software, glassesReturn: software};
  expect((await post(f.app, {requestId: "changed", hostId: "mini", input}, "/test-dispatches")).status).toBe(409);
  expect(f.admitted.has("changed")).toBe(false);
+});
+
+
+test("Admin paths preserve declared alternate start and refuse a forged start before storing requests", async () => {
+ const startSoftware = {model: "mentra-live" as const, manifest: {url: "https://artifactscdn.mentraglass.com/reset/manifest.json", sha256: "d".repeat(64), size: 100}};
+ const f = glassesFixture(["glasses-ble"], startSoftware);
+ expect((await post(f.app, f.selected)).status).toBe(202);
+ const input = f.admitted.get(f.selected.requestId)!.input as Record<string, any>;
+ expect(input.glassesStart).toEqual(startSoftware);
+ expect(input.glassesReturn).toEqual({model: "mentra-live", manifest: f.manifest});
+ expect((await post(f.app, {requestId: "declared", hostId: "mini", input}, "/test-dispatches")).status).toBe(202);
+ for (const glassesStart of [input.glassesReturn, {...startSoftware, manifest: {...startSoftware.manifest, sha256: "e".repeat(64)}}]) {
+  expect((await post(f.app, {requestId: "forged", hostId: "mini", input: {...input, glassesStart}}, "/test-dispatches")).status).toBe(409);
+  expect(f.admitted.has("forged")).toBe(false);
+ }
 });
