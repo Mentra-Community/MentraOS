@@ -48,7 +48,7 @@ export function verifiedFrameworkRunSummaryProjection(row: StoredSummaryRow): Fr
 }
 
 /** Missing projections during a rolling deployment read only that frozen result; corrupt projections fail closed. */
-export async function readFrameworkRunSummary(row: StoredSummaryRow): Promise<FrameworkRunSummary> {
+export async function readFrameworkRunSummaryProjection(row: StoredSummaryRow): Promise<FrameworkRunSummaryProjection> {
   let projection = row.summaryProjection;
   if (projection === undefined) {
     const stored = await TestRunModel.findOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256})
@@ -56,20 +56,24 @@ export async function readFrameworkRunSummary(row: StoredSummaryRow): Promise<Fr
     if (!stored) throw new TestRunError(503, "Frozen result summary is unavailable");
     projection = createFrameworkRunSummaryProjection(stored.payload, stored.payloadSha256);
   }
-  const verified = verifiedFrameworkRunSummaryProjection({...row, summaryProjection: projection});
-  return {...verified.summary, uploadsComplete: row.uploadsComplete === true};
+  return verifiedFrameworkRunSummaryProjection({...row, summaryProjection: projection});
+}
+
+export async function readFrameworkRunSummary(row: StoredSummaryRow): Promise<FrameworkRunSummary> {
+  const projection = await readFrameworkRunSummaryProjection(row);
+  return {...projection.summary, uploadsComplete: row.uploadsComplete === true};
 }
 
 /** Fill native rows once, using the unchanged full validator and a compare-and-set against the frozen digest. */
 export async function backfillFrameworkRunSummaries() {
   const cursor = TestRunModel.find({...nativeRunFilter, summaryProjection: {$exists: false}})
-    .select({runId: 1, payloadSha256: 1, payload: 1}).read("primary").readConcern("majority").maxTimeMS(10_000)
+    .select({runId: 1, payloadSha256: 1, payload: 1}).limit(1000).read("primary").readConcern("majority").maxTimeMS(10_000)
     .lean().cursor({batchSize: 10});
   for await (const row of cursor) {
     let projection;
     try {projection = createFrameworkRunSummaryProjection(row.payload, row.payloadSha256);}
     catch {logger.warn({runId: row.runId}, "Frozen result cannot be projected for history"); continue;}
     await TestRunModel.updateOne({runId: row.runId, payloadSha256: row.payloadSha256, summaryProjection: {$exists: false}},
-      {$set: {summaryProjection: projection}}, {writeConcern: testWriteConcern});
+      {$set: {summaryProjection: projection}}, {writeConcern: testWriteConcern, maxTimeMS: 10_000});
   }
 }

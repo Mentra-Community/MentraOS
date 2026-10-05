@@ -8,6 +8,8 @@ import {backfillFrameworkRunSummaries, createFrameworkRunSummaryProjection, read
 import {requestInputDigest} from "./test-request.service";
 import {TestHistoryService, testHistoryQueries} from "./test-history.service";
 import {FrameworkResultService} from "./framework-result.service";
+import {RoutineCatalogService} from "./routine-catalog.service";
+import type {RoutineEnrollment} from "../types/routine-definition.types";
 
 const fixture = () => frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "large-result", routineId: "notes",
   definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
@@ -75,5 +77,33 @@ describe.skipIf(!uri)("Mongo frozen summary projection", () => {
     expect((await new FrameworkResultService().list()).runs).toEqual([summarizeFrameworkRun(run, false)]);
     await TestRunModel.updateOne({runId: run.requestId}, {$set: {uploadsComplete: true}});
     expect((await new TestHistoryService().list()).entries[0]).toEqual({kind: "run", ...summarizeFrameworkRun(run, true)});
+  });
+
+  test("catalog retains frozen revision and full build metadata through rollout and rejects altered projected evidence", async () => {
+    const run = fixture();
+    run.requestId = run.result.runId = "recorded-example";
+    run.build = {...run.build, channel: "pr", prNumber: 4459, archive: {sha256: "d".repeat(64)}};
+    run.recordingAssetId = "recording";
+    run.assets = [{id: "recording", kind: "recording", path: "recording.mp4", sha256: "c".repeat(64), size: 1, mimeType: "video/mp4"}];
+    const payloadSha256 = requestInputDigest(run);
+    // Early retained rows need not have a denormalized top-level definition revision.
+    await TestRunModel.collection.insertOne({runId: run.requestId, requestId: run.requestId, payloadSha256, payload: run,
+      routineId: run.routineId, platform: run.platform, startedAt: new Date(run.startedAt), uploadsComplete: true, outcome: "pass"});
+    const definition = {routineId: run.routineId, platform: run.platform, definitionRevision: "e".repeat(40)} as RoutineEnrollment;
+    const service = new RoutineCatalogService({async current() {return [definition];}, async getCurrent() {return definition;}}, undefined,
+      {async list() {return [];}, async get() {return null;}, async set() {}});
+    const expected = {runId: run.requestId, startedAt: run.startedAt, finishedAt: run.finishedAt,
+      recordingAssetId: run.recordingAssetId, definitionRevision: run.definitionRevision, build: run.build};
+    const initial = await service.detail(run.routineId, run.platform);
+    expect(initial.example).toEqual(expected);
+    expect(initial.history.find(row => row.runId === run.requestId)?.definitionRevision).toBe(run.definitionRevision);
+    await backfillFrameworkRunSummaries();
+    expect((await service.detail(run.routineId, run.platform)).example).toEqual(expected);
+    await TestRunModel.updateOne({runId: run.requestId}, {$set: {"payload.build.headSha": "f".repeat(40)}});
+    await expect(service.detail(run.routineId, run.platform)).rejects.toMatchObject({status: 503});
+    await TestRunModel.updateOne({runId: run.requestId}, {$unset: {summaryProjection: 1}});
+    await expect(service.detail(run.routineId, run.platform)).rejects.toMatchObject({status: 503});
+    await backfillFrameworkRunSummaries();
+    expect((await TestRunModel.findOne({runId: run.requestId}).lean())!.summaryProjection).toBeUndefined();
   });
 });

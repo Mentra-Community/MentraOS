@@ -1,11 +1,12 @@
 import {z} from "zod";
-import {frameworkRunSchema} from "../types/framework-run.types";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
+import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunModel} from "../models/test-run.model";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
-import {nativeRunFilter, readFrameworkRunSummary, verifiedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {nativeRunFilter, readFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {TestRunError} from "./test-result-error";
 import {routinePreferences, type RoutinePreferenceRepository} from "./routine-preference.service";
 
 export interface CatalogRunRepository {
@@ -26,29 +27,28 @@ const mongoRuns: CatalogRunRepository = {
     }).sort({startedAt: -1, runId: -1}).select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.recordingAssetId": 1, "payload.build": 1})
       .read("primary").readConcern("majority").lean();
     if (!row) return null;
-    if (row.summaryProjection === undefined) {
-      const stored = await TestRunModel.findOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256})
-        .select({payload: 1}).read("primary").readConcern("majority").lean();
-      const run = frameworkRunSchema.parse(stored?.payload);
-      return {runId: run.result.runId, startedAt: run.startedAt, finishedAt: run.finishedAt,
-        recordingAssetId: run.recordingAssetId!, definitionRevision: run.definitionRevision, build: run.build};
-    }
-    const projection = verifiedFrameworkRunSummaryProjection(row), summary = projection.summary;
+    const projection = await readFrameworkRunSummaryProjection(row), summary = projection.summary;
+    const payload = row.payload as {build?: unknown; recordingAssetId?: unknown};
+    const build = frameworkBuildSchema.safeParse(payload.build);
+    if (!build.success || !projection.recordingAssetId || projection.recordingAssetId !== payload.recordingAssetId
+      || build.data.repository !== summary.build.repository || build.data.channel !== summary.build.channel
+      || build.data.headSha !== summary.build.headSha || build.data.prNumber !== summary.build.prNumber)
+      throw new TestRunError(503, "Recorded example build or recording is unavailable");
     return {runId: summary.runId, startedAt: summary.startedAt, finishedAt: summary.finishedAt,
-      recordingAssetId: projection.recordingAssetId!,
-      definitionRevision: projection.definitionRevision, build: (row.payload as {build: CatalogExample["build"]}).build};
+      recordingAssetId: projection.recordingAssetId,
+      definitionRevision: projection.definitionRevision, build: build.data};
   },
   async history(routineId, platform, after, limit) {
     const filter = {...nativeRunFilter, routineId, platform, ...(after ? {$or: [
       {startedAt: {$lt: after.startedAt}}, {startedAt: after.startedAt, runId: {$lt: after.runId}},
     ]} : {})};
     const rows = await TestRunModel.find(filter).sort({startedAt: -1, runId: -1}).limit(limit)
-      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, definitionRevision: 1})
+      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1})
       .read("primary").readConcern("majority").lean();
     return await Promise.all(rows.map(async row => {
-      const summary = await readFrameworkRunSummary(row);
+      const projection = await readFrameworkRunSummaryProjection(row), summary = projection.summary;
       return {runId: summary.runId, startedAt: summary.startedAt, outcome: summary.outcome,
-        uploadsComplete: summary.uploadsComplete, definitionRevision: row.definitionRevision,
+        uploadsComplete: row.uploadsComplete === true, definitionRevision: projection.definitionRevision,
         evidenceStatus: summary.evidenceStatus};
     }));
   },
