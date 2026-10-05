@@ -145,7 +145,8 @@ public class StreamCommandHandler implements ICommandHandler {
                     cancelPendingStart("Stream start superseded by a newer request");
                     return handleStartCommand(data);
                 case "stop_stream":
-                    return data != null && (data.has("streamId") || data.has("controllerId") || data.has("request_id"))
+                    return data != null && (data.has("streamId") || data.has("controllerId") || data.has("request_id")
+                            || data.has("expectedSid") || data.has("expectedRevision"))
                             ? handleConditionalStopCommand(data) : handleStopCommand();
                 case "get_stream_status":
                     Object requestId = data == null ? null : data.opt("request_id");
@@ -549,7 +550,8 @@ public class StreamCommandHandler implements ICommandHandler {
             } else if (streamId.equals(mOwnedStreamId) && controllerId.equals(mOwnedControllerId)) {
                 accepted = handleStopCommand();
                 reason = "stop_requested";
-            } else if (mOwnedStreamId == null && streamId.equals(snapshot.opt("streamId"))
+            } else if (mOwnedStreamId == null && controllerId.equals(mOwnedControllerId)
+                    && streamId.equals(snapshot.opt("streamId"))
                     && snapshot.optBoolean("terminal", false)) {
                 accepted = true;
                 reason = "already_terminal";
@@ -841,8 +843,8 @@ public class StreamCommandHandler implements ICommandHandler {
         if (mResourceRefresh != null) mLifecycleHandler.removeCallbacks(mResourceRefresh);
         mResourceRefresh = null;
         mOwnedStreamId = null;
-        mOwnedControllerId = null;
-        mOwnedStartRevision = -1;
+        // Keep the last admitted identity in terminal snapshots. It grants no active ownership;
+        // a new start overwrites it before publishing and mOwnedStreamId remains the active guard.
         WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
         mHotspotActivityTracker.onStreamStopped();
     }

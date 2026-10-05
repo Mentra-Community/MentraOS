@@ -421,8 +421,10 @@ Automated cleanup sends `request_id`, `streamId`, `controllerId`, `expectedSid`,
 hexadecimal characters and revision is a nonnegative integer. The lifecycle dispatcher
 refuses all mutation while an admission is pending. Otherwise the current snapshot SID
 and revision must still match before it stops the matching active controller. A changed
-snapshot or foreign owner is refused without mutation. Even a replacement reusing both
-public IDs changes the native revision. A terminal matching snapshot acknowledges without
+snapshot or foreign owner is refused without mutation. Any supplied guard field selects
+conditional handling; incomplete, null or malformed guards never become global Stop.
+Even a replacement reusing both public IDs changes the native revision. A terminal
+matching stream and retained controller acknowledges without
 stopping services. The caller may freshly observe a refused snapshot and decide its next
 action; refusal never causes an automatic retry or global stop.
 
@@ -449,9 +451,11 @@ that snapshot, before it enters the outbound BLE queue. For example,
 `{"type":"get_stream_status","request_id":"status-123"}` returns the existing
 snapshot with `"request_id":"status-123"`. Omitted or invalid IDs retain the
 uncorrelated response. Fresh queries include `pendingStart`; a pending admission also
-includes `pendingStreamId`/`pendingControllerId`, and an active owner includes
+includes `pendingStreamId`/`pendingControllerId`, and the last admitted owner includes
 `controllerId` plus its existing `startRevision` captured at admission. Lifecycle events
-advance `revision` while `startRevision` stays fixed until replacement. This prevents a stopped snapshot from concealing a queued admission.
+advance `revision` while `startRevision` stays fixed through terminal state until replacement.
+Retained identity grants no active ownership and lets callers distinguish a stopped
+replacement that reused public IDs. This prevents a stopped snapshot from concealing a queued admission.
 The ID is not retained on later snapshots or stream events;
 `timestamp` remains display time and can change when the phone synchronizes the clock.
 

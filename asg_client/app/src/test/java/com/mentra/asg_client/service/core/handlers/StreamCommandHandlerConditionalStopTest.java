@@ -182,13 +182,57 @@ public class StreamCommandHandlerConditionalStopTest {
     }
 
     @Test public void alreadyTerminalOriginalAcknowledgesWithoutStoppingAnything() throws Exception {
-        state.begin("one");
+        owned("one", "controller");
         state.update(new JSONObject().put("streamId", "one").put("status", "stopped"));
+        field("mOwnedStreamId", null);
         handler.handleCommand("stop_stream", stop("one", "controller"));
         shadowOf(Looper.getMainLooper()).idle();
         assertThat(responses.get(0).getBoolean("stopAccepted")).isTrue();
         assertThat(responses.get(0).getString("stopReason")).isEqualTo("already_terminal");
         verifyNoInteractions(callback);
+    }
+
+    @Test public void expectedOnlyGuardsNeverBecomeGlobalStopOrCancelPendingAdmission() throws Exception {
+        owned("one", "controller");
+        JSONObject pending = new JSONObject().put("streamId", "two").put("controllerId", "next");
+        field("mPendingStart", pending);
+        try (MockedStatic<RtmpStreamingService> rtmp = mockStatic(RtmpStreamingService.class);
+                MockedStatic<SrtStreamingService> srt = mockStatic(SrtStreamingService.class);
+                MockedStatic<WhipStreamingService> whip = mockStatic(WhipStreamingService.class)) {
+            handler.handleCommand("stop_stream", new JSONObject().put("expectedSid", "1234abcd"));
+            handler.handleCommand("stop_stream", new JSONObject().put("expectedRevision", 1));
+            handler.handleCommand("stop_stream", new JSONObject().put("expectedSid", JSONObject.NULL));
+            handler.handleCommand("stop_stream", new JSONObject().put("expectedRevision", "bad"));
+            shadowOf(Looper.getMainLooper()).idle();
+            rtmp.verifyNoInteractions(); srt.verifyNoInteractions(); whip.verifyNoInteractions();
+        }
+        assertThat(responses).hasSize(4);
+        for (JSONObject response : responses) assertThat(response.getBoolean("stopAccepted")).isFalse();
+        assertThat(field("mPendingStart")).isSameAs(pending);
+        assertThat(field("mOwnedStreamId")).isEqualTo("one");
+        verifyNoInteractions(callback);
+    }
+
+    @Test public void terminalSnapshotPreservesAdmittedIdentityWithoutActiveOwnership() throws Exception {
+        owned("one", "controller");
+        try (MockedStatic<RtmpStreamingService> rtmp = mockStatic(RtmpStreamingService.class);
+                MockedStatic<SrtStreamingService> srt = mockStatic(SrtStreamingService.class);
+                MockedStatic<WhipStreamingService> whip = mockStatic(WhipStreamingService.class)) {
+            handler.handleCommand("stop_stream", stop("one", "controller"));
+            shadowOf(Looper.getMainLooper()).idle();
+        }
+        assertThat(field("mOwnedStreamId")).isNull();
+        JSONObject terminal = responses.get(responses.size() - 1);
+        assertThat(terminal.getBoolean("terminal")).isTrue();
+        assertThat(terminal.getString("controllerId")).isEqualTo("controller");
+        assertThat(terminal.getLong("startRevision")).isEqualTo(1);
+        handler.handleCommand("stop_stream", stop("one", "foreign"));
+        shadowOf(Looper.getMainLooper()).idle();
+        assertThat(responses.get(responses.size() - 1).getBoolean("stopAccepted")).isFalse();
+        owned("one", "controller");
+        handler.handleCommand("get_stream_status", new JSONObject().put("request_id", "replacement-query"));
+        shadowOf(Looper.getMainLooper()).idle();
+        assertThat(responses.get(responses.size() - 1).getLong("startRevision")).isGreaterThan(1);
     }
 
     @Test public void queryMakesIdlePendingAdmissionAndActiveControllerExplicit() throws Exception {
