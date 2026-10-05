@@ -78,9 +78,12 @@ export type MentraUIHostReply = {ok: true; result?: unknown} | {ok: false; error
 
 export class MentraUIRouter {
   private readonly bindings: Map<string, BoundWebView> = new Map()
-  /** Spawned backgrounds whose init has not settled; nothing has reached them yet. */
-  private readonly starting = new Set<string>()
-  private readonly restarting = new Set<string>()
+  /**
+   * Spawned or restarting backgrounds whose init has not settled. WebView frames
+   * are held for them: nothing has reached the new context yet, so delivering
+   * a held frame once it is ready is its first delivery, never a replay.
+   */
+  private readonly notReady = new Set<string>()
   /** UI_OPEN requested while the background was not ready; sent once it is. */
   private readonly uiOpenOwed = new Set<string>()
   private readonly stopped = new Set<string>()
@@ -119,9 +122,9 @@ export class MentraUIRouter {
     }
   }
 
-  /** False while a spawned or restarting background has not reported ready. */
+  /** False while a spawned or restarting background has not reported ready, or after it stopped. */
   isBackgroundReady(packageName: string): boolean {
-    return !this.starting.has(packageName) && !this.restarting.has(packageName)
+    return !this.notReady.has(packageName) && !this.stopped.has(packageName)
   }
 
   /** Answer a `mentra.request` on a host channel. */
@@ -178,64 +181,64 @@ export class MentraUIRouter {
     return this.bindings.has(packageName)
   }
 
-  /** Fail calls owned by the retired context; never replay user mutations. */
+  /**
+   * A background JSContext was spawned. Hold UI_OPEN and every WebView frame
+   * until it reports ready: its `session.ui.handle` handlers may be registered
+   * after an await in the miniapp's init handler.
+   */
+  backgroundStarting(packageName: string): void {
+    this.stopped.delete(packageName)
+    this.notReady.add(packageName)
+  }
+
+  /**
+   * The context died and a replacement will be spawned. Calls it was already
+   * handling fail (their outcome is unknown and mutations are never replayed);
+   * new frames are held for the replacement, which must reopen the UI.
+   */
   backgroundRestarting(packageName: string): void {
-    this.restarting.add(packageName)
+    this.notReady.add(packageName)
     const binding = this.bindings.get(packageName)
+    if (binding) this.uiOpenOwed.add(packageName)
     const requestIds = [...(this.backgroundRequests.get(packageName) ?? [])]
     this.backgroundRequests.delete(packageName)
     if (binding) this.injectFrame(binding, {type: "background_restart", requestIds})
     console.warn(`MentraUIRouter: ${packageName} background restarting; UI bound=${!!binding}`)
   }
 
-  /** Terminal recovery/explicit teardown retires input that has no future owner. */
+  /**
+   * Terminal recovery failure or explicit teardown: no context will answer.
+   * Fail in-flight and held requests, drop held input, and clear the not-ready
+   * state so a later spawn starts clean.
+   */
   backgroundStopped(packageName: string): void {
+    // A still-mounted UI stays owed a UI_OPEN from the next context.
     this.backgroundRestarting(packageName)
+    this.notReady.delete(packageName)
     this.stopped.add(packageName)
-    this.starting.delete(packageName)
-    this.uiOpenOwed.delete(packageName)
-    // Requests held for a background that never became ready must not hang.
     for (const raw of this.pendingInput.get(packageName) ?? []) {
       const held = this.parseFrame(raw)
-      if (typeof held?.channel !== "string" || typeof held.requestId !== "string") continue
-      this.replyToWebView(packageName, held.channel, held.requestId, {
-        ok: false,
-        error: {code: "BACKGROUND_STOPPED", message: "Miniapp background stopped; request was not delivered"},
-      })
+      if (typeof held?.channel === "string" && typeof held.requestId === "string") {
+        this.rejectStopped(packageName, held.channel, held.requestId)
+      }
     }
     this.pendingInput.delete(packageName)
   }
 
   /**
-   * A background JSContext was spawned. Hold UI_OPEN and every WebView frame
-   * until it reports ready: its `session.ui.handle` handlers may be registered
-   * after an await in the miniapp's init handler. A respawn after a crash keeps
-   * the restart semantics of {@link backgroundRestarting}.
-   */
-  backgroundStarting(packageName: string): void {
-    this.stopped.delete(packageName)
-    if (!this.restarting.has(packageName)) this.starting.add(packageName)
-  }
-
-  /**
    * The background's init handler settled (READY), it predates READY, or the
-   * host stopped waiting. Open the UI, then deliver held input in order.
+   * host stopped waiting. Open the UI, then deliver held frames in order.
    */
   backgroundReady(packageName: string): void {
-    const wasRestarting = this.restarting.delete(packageName)
-    const wasStarting = this.starting.delete(packageName)
-    this.stopped.delete(packageName)
-    if (!wasRestarting && !wasStarting) return
-    const openOwed = this.uiOpenOwed.delete(packageName)
-    if (this.bindings.has(packageName) && (wasRestarting || openOwed))
+    if (!this.notReady.delete(packageName)) return
+    if (this.uiOpenOwed.delete(packageName) && this.bindings.has(packageName)) {
       this.deliverToBackground(packageName, {type: "UI_OPEN"})
+    }
     const pending = this.pendingInput.get(packageName) ?? []
     this.pendingInput.delete(packageName)
     for (const raw of pending) this.routeFromWebView(packageName, raw)
     console.log(
-      `MentraUIRouter: ${packageName} background ready (${
-        wasRestarting ? "restart" : "start"
-      }); UI bound=${this.isBound(packageName)} held=${pending.length}`,
+      `MentraUIRouter: ${packageName} background ready; UI bound=${this.isBound(packageName)} held=${pending.length}`,
     )
     for (const listener of [...this.backgroundReadyListeners]) {
       try {
@@ -300,23 +303,11 @@ export class MentraUIRouter {
         }
         return
       }
-      // Requests during backoff have no live owner. Reject instead of silently
-      // dispatching to the old context or replaying them in the replacement.
-      if (this.restarting.has(packageName)) {
-        if (typeof env.requestId === "string") {
-          this.replyToWebView(packageName, env.channel, env.requestId, {
-            ok: false,
-            error: {code: "BACKGROUND_RESTARTED", message: "Miniapp background restarting; request was not replayed"},
-          })
-        } else if (!this.stopped.has(packageName)) {
-          // This input has never been delivered; retain it until READY.
-          this.holdInput(packageName, rawJson, env)
-        }
+      if (this.stopped.has(packageName)) {
+        if (typeof env.requestId === "string") this.rejectStopped(packageName, env.channel, env.requestId)
         return
       }
-      // Nothing has reached a starting background yet, so delivering this
-      // request once it is ready is its first delivery, not a replay.
-      if (this.starting.has(packageName)) {
+      if (this.notReady.has(packageName)) {
         this.holdInput(packageName, rawJson, env)
         return
       }
@@ -356,6 +347,13 @@ export class MentraUIRouter {
     // we don't have two console-capture pipelines competing.
     //
     // Unknown envelope — drop silently.
+  }
+
+  private rejectStopped(packageName: string, channel: string, requestId: string): void {
+    this.replyToWebView(packageName, channel, requestId, {
+      ok: false,
+      error: {code: "BACKGROUND_STOPPED", message: "Miniapp background stopped; request was not delivered"},
+    })
   }
 
   private parseFrame(rawJson: string): UIFrame | null {
@@ -409,7 +407,8 @@ export class MentraUIRouter {
     },
   ): void {
     const binding = this.bindings.get(packageName)
-    if (!binding || this.restarting.has(packageName)) return
+    // A dying or not-yet-ready context has no open UI to talk to.
+    if (!binding || this.notReady.has(packageName) || this.stopped.has(packageName)) return
     // A background cannot impersonate the host on a reserved channel.
     if (typeof uiSendPayload.channel === "string" && this.hostChannels.has(uiSendPayload.channel)) return
     if (uiSendPayload.type === "UI_CANCEL" && typeof uiSendPayload.requestId === "string") {
