@@ -127,6 +127,16 @@ of resending it. For cleanup-only corrections, select the reviewed provider sour
 through the public repair API while retaining the original resource/fixture inputs;
 a new checkout alone does not change the implementation used by repair.
 
+For audio coverage, read the harness `framework/audio/witness.md` and current
+browser service reference before adding helpers. The optional native witness uses
+the existing audio grant: await actual capture readiness before the stimulus and
+evaluate completed pinned PCM. Keep challenge words/assertions in the routine;
+shared providers own exact device routes, children and guarded mute restoration.
+Browser device options require actual selected state, and RTP counters alone do
+not prove heard speech. Preserve sequential speech/mute-control coverage without
+claiming simultaneous duplex. Missing configured endpoints/tools are a precise
+prerequisite to coordinate, not reason to revive an old reservation or runner.
+
 Flag actual bugs and impossible/human-only requirements with the exact failed step.
 Routine code does not repair the harness. Finish runs the original teardown; then
 give back with `{reservationId, generation, requestId}` for ordinary boundary cleanup.
