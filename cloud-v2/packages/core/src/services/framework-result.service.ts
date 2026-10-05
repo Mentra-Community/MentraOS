@@ -18,6 +18,10 @@ export interface FrameworkResultRepository {
   getByRun(runId: string): Promise<StoredFrameworkRun | null>;
 }
 export interface StoredFrameworkRun {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean}
+export interface FrameworkUploadAcknowledgements {
+  list(runId: string): Promise<Array<{assetId: string; sha256: string; sizeBytes: number}>>;
+  complete(stored: StoredFrameworkRun): Promise<void>;
+}
 export {nativeRunFilter, summarizeFrameworkRun} from "./framework-run-summary.service";
 import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary} from "./framework-run-summary.service";
 export interface ResultRequestBinding {hostId: string; input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown}}
@@ -57,13 +61,26 @@ const projectTerminal = async (run: FrameworkRun) => {
     {$set: {state: "terminal", runId: run.result.runId, terminalStatus: frameworkRunOutcome(run)}}, {writeConcern: testWriteConcern});
   if (result.matchedCount !== 1) throw new FrameworkResultConflict("Accepted request terminal projection conflicts with its result");
 };
+const uploadAcknowledgements: FrameworkUploadAcknowledgements = {
+  async list(runId) {
+    return await TestAssetModel.find({runId}).select({assetId: 1, sha256: 1, sizeBytes: 1, _id: 0})
+      .read("primary").readConcern("majority").lean();
+  },
+  async complete(stored) {
+    const result = await TestRunModel.updateOne({runId: stored.payload.result.runId, payloadSha256: stored.payloadSha256},
+      {$set: {uploadsComplete: true, outcome: frameworkRunOutcome(stored.payload)}}, {writeConcern: testWriteConcern});
+    if (result.matchedCount !== 1) throw new FrameworkResultConflict("Frozen upload acknowledgement conflicts with its result");
+  },
+};
 
 /** One frozen terminal result per controller request; publication never rewrites verdicts. */
 export class FrameworkResultService {
   constructor(private readonly repository: FrameworkResultRepository = mongoRepository,
     private readonly request: (id: string) => Promise<ResultRequestBinding | null> = requestBinding,
     private readonly terminal: (run: FrameworkRun) => Promise<void> = projectTerminal,
-    private readonly definition: (run: FrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor) {}
+    private readonly definition: (run: FrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor,
+    private readonly assets: TestAssetService = new TestAssetService(),
+    private readonly acknowledgements: FrameworkUploadAcknowledgements = uploadAcknowledgements) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, `Invalid frozen framework result: ${parsed.error.issues.slice(0, 5)
@@ -107,21 +124,25 @@ export class FrameworkResultService {
     if (!asset) throw new FrameworkResultConflict("Asset is not declared in the frozen result");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";
-    const receipt = await new TestAssetService().uploadDeclaredAsset(stored.payload.result.runId,
+    const receipt = await this.assets.uploadDeclaredAsset(stored.payload.result.runId,
       {assetId, kind, contentType: asset.mimeType, filename: asset.path.split("/").at(-1)!, sizeBytes: asset.size, sha256: asset.sha256},
-      body, headers, async () => {
-        const uploaded = await TestAssetModel.find({runId: stored.payload.result.runId}).read("primary").readConcern("majority").lean();
-        if (stored.payload.assets.every(expected => uploaded.some(actual => actual.assetId === expected.id
-          && actual.sha256 === expected.sha256 && actual.sizeBytes === expected.size)))
-          await TestRunModel.updateOne({runId: stored.payload.result.runId, payloadSha256: stored.payloadSha256}, {$set: {uploadsComplete: true, outcome: frameworkRunOutcome(stored.payload)}}, {writeConcern: testWriteConcern});
-      });
+      body, headers, async () => {});
     return {...receipt, entityId: requestId, assetId, sha256: asset.sha256, size: asset.size};
   }
 
   async complete(requestId: string, hostId: string) {
     const stored = await this.repository.getByRequest(requestId), binding = await this.request(requestId);
-    if (!stored || binding?.hostId !== hostId || !stored.uploadsComplete)
+    if (!stored || binding?.hostId !== hostId)
       throw new FrameworkResultConflict("Required manifest uploads are not acknowledged for this host");
+    if (!stored.uploadsComplete) {
+      const uploaded = await this.acknowledgements.list(stored.payload.result.runId);
+      const byId = new Map(uploaded.map(asset => [asset.assetId, asset]));
+      if (uploaded.length !== stored.payload.assets.length || byId.size !== uploaded.length || !stored.payload.assets.every(expected => {
+        const actual = byId.get(expected.id);
+        return actual?.sha256 === expected.sha256 && actual.sizeBytes === expected.size;
+      })) throw new FrameworkResultConflict("Required manifest uploads are not acknowledged for this host");
+      await this.acknowledgements.complete(stored);
+    }
     return {entityId: stored.payload.result.runId, payloadSha256: stored.payloadSha256,
       manifestSha256: requestInputDigest(stored.payload.assets)};
   }

@@ -15,7 +15,7 @@ test("streamed assets encode IDs, release the reader, acknowledge duplicate cust
   const directory = await mkdtemp(join(tmpdir(), "test-assets-"));
   const rows: StoredTestAsset[] = [];
   const storage = new StorageService(new LocalStorageProvider({rootDir: directory}));
-  const service = new TestAssetService({async assets() {return rows;}, async insertAsset(row) {rows.push(row); return row;}}, () => storage);
+  const service = new TestAssetService({async findAsset(runId, assetId) {return rows.find(row => row.runId === runId && row.assetId === assetId) ?? null;}, async insertAsset(row) {rows.push(row); return row;}}, () => storage);
   let acknowledgements = 0;
   const headers = new Headers({"content-type": "text/plain", "content-length": String(bytes.length)});
   try {
@@ -49,7 +49,7 @@ test("maximum accepted run and asset identities upload through bounded unique st
   const rows: StoredTestAsset[] = [], runId = "r".repeat(240), assetId = "setup-evidence/" + "a".repeat(485);
   const metadata = {...asset, assetId};
   const storage = new StorageService(new LocalStorageProvider({rootDir: directory}));
-  const service = new TestAssetService({async assets() {return rows;}, async insertAsset(row) {rows.push(row); return row;}}, () => storage);
+  const service = new TestAssetService({async findAsset(runId, assetId) {return rows.find(row => row.runId === runId && row.assetId === assetId) ?? null;}, async insertAsset(row) {rows.push(row); return row;}}, () => storage);
   const headers = new Headers({"content-type": metadata.contentType, "content-length": String(bytes.length)});
   let acknowledged = 0;
   try {
