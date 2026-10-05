@@ -4,8 +4,10 @@ request ordinary replay independently.
 
 The comment must start with the marker below and contain only one JSON block.
 Replace the source revision with the exact reviewed harness commit and choose an
-enrolled host/lane. Describe product actions and complete expected results;
-environment providers must already be configured on that host.
+enrolled host/lane. Describe product actions and complete expected results.
+The current machine supervisor rejects nonempty `requirements.environment`;
+use an empty array when no generic environment provider is needed, and report
+unsupported prerequisites otherwise. Keep actual fixtures declared in the routine.
 
 ````markdown
 <!-- mentra-routine-work:v1 -->
