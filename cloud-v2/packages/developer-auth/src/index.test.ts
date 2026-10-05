@@ -2,7 +2,12 @@ import {afterEach, beforeAll, beforeEach, expect, spyOn, test} from "bun:test"
 import {WorkOS} from "@workos-inc/node"
 import {Hono} from "hono"
 import {exportJWK, generateKeyPair, SignJWT} from "jose"
-import {authenticateWorkosRequest, type DeveloperAuthOptions, type DeveloperAuthResult} from "./index"
+import {
+  authenticateWorkosAccessToken,
+  authenticateWorkosRequest,
+  type DeveloperAuthOptions,
+  type DeveloperAuthResult,
+} from "./index"
 
 const clientId = "client_developer_auth_test"
 const options: DeveloperAuthOptions = {
@@ -204,4 +209,44 @@ test("refresh path takes the user from the fresh session, not the sealed snapsho
 test("no credentials is unauthenticated", async () => {
   const {result} = await authenticate({})
   expect(result).toEqual({authenticated: false, reason: "no_session_cookie_provided"})
+})
+
+test("a raw access token authenticates with no request context, like the bearer path", async () => {
+  const bearer = await token("10m")
+
+  const result = await authenticateWorkosAccessToken(bearer, options)
+
+  expect(result).toMatchObject({
+    authenticated: true,
+    accessToken: bearer,
+    user: {id: userId, email: "dev@example.test", emailVerified: true, firstName: "Dev", lastName: "One"},
+    organizationId: "org_1",
+  })
+})
+
+test("a raw access token keeps the email unverified when the profile lookup is unavailable", async () => {
+  profileFails = true
+  const bearer = await token("10m", {email: "claim@example.test"})
+
+  const result = await authenticateWorkosAccessToken(bearer, options)
+
+  expect(result).toMatchObject({authenticated: true, user: {email: "claim@example.test", emailVerified: false}})
+})
+
+test("a raw access token the identity provider did not sign is rejected", async () => {
+  const {privateKey: stranger} = await generateKeyPair("RS256")
+  const forged = await new SignJWT({})
+    .setProtectedHeader({alg: "RS256", kid: "developer-auth-test"})
+    .setSubject(userId)
+    .setExpirationTime("10m")
+    .sign(stranger)
+
+  expect(await authenticateWorkosAccessToken(forged, options)).toEqual({
+    authenticated: false,
+    reason: "invalid_bearer_token",
+  })
+  expect(await authenticateWorkosAccessToken("not-a-jwt", options)).toEqual({
+    authenticated: false,
+    reason: "invalid_bearer_token",
+  })
 })

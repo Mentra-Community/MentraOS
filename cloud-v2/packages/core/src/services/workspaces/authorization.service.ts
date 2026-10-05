@@ -1,0 +1,187 @@
+/**
+ * @fileoverview Who is calling, and what they may do.
+ *
+ * Resolution turns a request's credentials into one `CorePrincipal`:
+ *  - a bearer that starts `msk_` / `mak_` is a Core credential and is validated
+ *    as one (`validateCredentialToken`, which decides on every call who the key
+ *    still acts for). It never falls through to WorkOS, and a credential that
+ *    does not validate is no principal at all;
+ *  - anything else is a WorkOS identity (access token or session cookie). The
+ *    WorkOS user is linked to a Mentra user (claiming any migrated memberships)
+ *    and is an Organization Admin only when the identity provider verified an
+ *    email that is on the allowlist.
+ *
+ * Authorization has two separate scopes:
+ *  - organization capabilities (`organizationCapabilities`): what the caller may
+ *    do to the deployment itself. Organization Admins have all of them, an
+ *    operator key (`mak_`) has the operator scopes it was created with and a
+ *    workspace credential (`msk_`) has none;
+ *  - workspace capabilities (`authorize`): what the caller may do inside one
+ *    workspace. A member has their role's capabilities, an Organization Admin
+ *    acts as owner anywhere (as `workspace.service` does for every mutation), a
+ *    workspace credential has its scopes in its own workspace only, and an
+ *    operator key never has workspace capabilities.
+ *
+ * `authorize` answers with a full `AuthorizeResponse` and never throws for a
+ * denial: the reason says why. Only a database failure throws.
+ */
+
+import type {DeveloperAuthResult} from "@mentra/developer-auth"
+import {
+  capabilitiesForRole,
+  OPERATOR_KEY_SCOPES,
+  ORGANIZATION_CAPABILITIES,
+  WORKSPACE_CAPABILITIES,
+  type AuthorizeResponse,
+  type CorePrincipal,
+  type DenyReason,
+  type MembershipSummary,
+  type OrganizationCapability,
+  type WorkspaceCapability,
+} from "@mentra/workspace-contract"
+import type {AppContext} from "../../types/hono.types"
+import {authenticateDeveloperAccessToken, authenticateDeveloperRequest} from "../developer-auth.service"
+import {validateCredentialToken} from "./credential.service"
+import {resolveWorkosUser} from "./identity-link.service"
+import {isOrganizationAdminEmail, organizationId} from "./organization"
+import {getActiveMembership, getWorkspace, isWorkspaceRole} from "./workspace.service"
+
+/** Core credentials: `msk_` workspace credentials and `mak_` operator keys. WorkOS access tokens are JWTs and never start like this. */
+const CREDENTIAL_TOKEN_PREFIX = /^(msk|mak)_/
+
+// --- Principals ------------------------------------------------------------
+
+/**
+ * The principal behind a request, or null: a Core credential in the bearer
+ * header, otherwise the WorkOS bearer or session cookie.
+ */
+export async function principalFromBearerOrSession(c: AppContext): Promise<CorePrincipal | null> {
+  const token = bearerToken(c.req.header("authorization"))
+  if (token && CREDENTIAL_TOKEN_PREFIX.test(token)) return validateCredentialToken(token)
+  return userPrincipal(await authenticateDeveloperRequest(c))
+}
+
+/** The principal a raw bearer token stands for, for callers with no browser request (the service API). */
+export async function principalFromToken(token: string): Promise<CorePrincipal | null> {
+  const trimmed = typeof token === "string" ? token.trim() : ""
+  if (!trimmed) return null
+  if (CREDENTIAL_TOKEN_PREFIX.test(trimmed)) return validateCredentialToken(trimmed)
+  return userPrincipal(await authenticateDeveloperAccessToken(trimmed))
+}
+
+async function userPrincipal(auth: DeveloperAuthResult): Promise<CorePrincipal | null> {
+  if (!auth.authenticated) return null
+  const {user} = auth
+  const email = user.email || null
+  const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || null
+  const {mentraUserId} = await resolveWorkosUser({
+    workosUserId: user.id,
+    email,
+    emailVerified: user.emailVerified,
+    name,
+  })
+  return {
+    kind: "user",
+    organizationId: organizationId(),
+    mentraUserId,
+    email,
+    emailVerified: user.emailVerified,
+    workosUserId: user.id,
+    isOrganizationAdmin: isOrganizationAdminEmail(email, user.emailVerified),
+  }
+}
+
+function bearerToken(header: string | undefined): string | null {
+  if (!header?.startsWith("Bearer ")) return null
+  return header.slice(7).trim() || null
+}
+
+// --- Organization capabilities ---------------------------------------------
+
+/**
+ * What the principal may do to the organization itself. Organization Admins have
+ * every organization capability. An operator key has only the operator scopes
+ * (`OPERATOR_KEY_SCOPES`) among its stored scopes: anything else a row carries is
+ * ignored, so a key can never hold workspace administration. A workspace
+ * credential has none.
+ */
+export function organizationCapabilities(p: CorePrincipal): Set<OrganizationCapability> {
+  if (p.kind === "user") return new Set(p.isOrganizationAdmin ? ORGANIZATION_CAPABILITIES : [])
+  if (p.credentialKind !== "organization") return new Set()
+  const held = p.scopes
+  return new Set(OPERATOR_KEY_SCOPES.filter(scope => held.includes(scope)))
+}
+
+// --- Workspace authorization -----------------------------------------------
+
+/**
+ * Decide what `p` may do in a workspace.
+ *
+ * Without a `workspaceId` there is nothing workspace-scoped to grant: any
+ * principal is allowed and has no capabilities, and asking for a `capability`
+ * is a denial. With one, the workspace must exist and be active, then the
+ * principal's standing decides (see the file header), then `packageName` (a
+ * workspace credential restricted to certain packages) and `capability`.
+ *
+ * A principal with no standing in the workspace (`not_a_member`,
+ * `package_out_of_scope`) gets no workspace details back.
+ */
+export async function authorize(
+  p: CorePrincipal | null,
+  req: {workspaceId?: string; capability?: WorkspaceCapability; packageName?: string},
+): Promise<AuthorizeResponse> {
+  const organization = organizationId()
+  if (!p) {
+    return {allowed: false, reason: "unauthenticated", organizationId: organization, principal: null, capabilities: []}
+  }
+  const deny = (reason: DenyReason, extra: Partial<AuthorizeResponse> = {}): AuthorizeResponse => ({
+    allowed: false,
+    reason,
+    organizationId: organization,
+    principal: p,
+    capabilities: [],
+    ...extra,
+  })
+
+  const {workspaceId, capability, packageName} = req
+  if (workspaceId === undefined || workspaceId === null) {
+    if (capability) return deny("capability_missing")
+    return {allowed: true, organizationId: organization, principal: p, capabilities: []}
+  }
+  // The id goes into a database filter, so anything but a non-empty string is not a workspace.
+  if (typeof workspaceId !== "string" || !workspaceId.trim()) return deny("workspace_not_found", {workspace: null})
+
+  const workspace = await getWorkspace(workspaceId)
+  if (!workspace) return deny("workspace_not_found", {workspace: null})
+  if (workspace.status !== "active") return deny("workspace_deleted", {workspace})
+
+  let granted: ReadonlySet<WorkspaceCapability>
+  let membership: MembershipSummary | null | undefined
+  if (p.kind === "user") {
+    const row = await getActiveMembership(workspaceId, p.mentraUserId)
+    const role = row && isWorkspaceRole(row.role) ? row.role : null
+    membership = row && role ? {membershipId: row.membershipId, role} : null
+    if (p.isOrganizationAdmin) granted = capabilitiesForRole("owner")
+    else if (role) granted = capabilitiesForRole(role)
+    else return deny("not_a_member")
+  } else if (p.credentialKind === "workspace" && p.workspaceId === workspaceId) {
+    if (packageName !== undefined && packageName !== null && p.packageNames.length > 0) {
+      if (!p.packageNames.includes(packageName)) return deny("package_out_of_scope")
+    }
+    // Scopes are already what the key may do right now (credential.service).
+    granted = new Set(p.scopes.filter(isWorkspaceCapability))
+  } else {
+    // An operator key, or a workspace credential presented for a different workspace.
+    return deny("not_a_member")
+  }
+
+  const capabilities = [...granted]
+  if (capability && !granted.has(capability)) {
+    return deny("capability_missing", {workspace, membership, capabilities})
+  }
+  return {allowed: true, organizationId: organization, principal: p, workspace, membership, capabilities}
+}
+
+function isWorkspaceCapability(value: string): value is WorkspaceCapability {
+  return (WORKSPACE_CAPABILITIES as readonly string[]).includes(value)
+}

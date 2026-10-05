@@ -36,7 +36,7 @@ export async function authenticateWorkosRequest(
   options: DeveloperAuthOptions,
 ): Promise<DeveloperAuthResult> {
   const bearer = bearerToken(c.req.header("authorization"))
-  if (bearer) return authenticateBearer(bearer, options)
+  if (bearer) return authenticateWorkosAccessToken(bearer, options)
   const cookieName = options.sessionCookieName ?? "mentra_console_session"
   const sessionData = getCookie(c, cookieName)
   if (!sessionData) return {authenticated: false, reason: "no_session_cookie_provided"}
@@ -85,7 +85,16 @@ export async function authenticateWorkosRequest(
   }
 }
 
-async function authenticateBearer(token: string, options: DeveloperAuthOptions): Promise<DeveloperAuthResult> {
+/**
+ * Authenticate a bare WorkOS access token, for callers that hold a token but no
+ * browser request (the internal service API). This is the same verification as
+ * the `Authorization: Bearer` path of {@link authenticateWorkosRequest}: signature
+ * against the client's JWKS, then a profile lookup for the verified-email flag.
+ */
+export async function authenticateWorkosAccessToken(
+  token: string,
+  options: DeveloperAuthOptions,
+): Promise<DeveloperAuthResult> {
   try {
     const verified = await jwtVerify(
       token,

@@ -10,6 +10,7 @@
 
 import type {Context} from "hono"
 import type {FederatedIdentity, Logger} from "@mentra/cloud-shared"
+import type {AuthorizeResponse, CorePrincipal} from "@mentra/workspace-contract"
 
 export interface AppVariables {
   /** Request ID for log correlation. Set by request-id middleware on every request. */
@@ -48,6 +49,20 @@ export interface AppVariables {
 
   /** Admin scope flag, set when the caller's credential carries admin perms. */
   isAdmin?: boolean
+
+  /**
+   * Who is calling, resolved once per request by `principalAuth` (or the first
+   * `requireOrganizationCapability` / `requireWorkspaceCapability` that needs
+   * it): a signed-in person (WorkOS bearer or session) or an `msk_` / `mak_`
+   * credential.
+   */
+  principal?: CorePrincipal
+
+  /** The workspace decision `requireWorkspaceCapability` made for this request; set only when it allowed it. */
+  workspaceAuthorization?: AuthorizeResponse
+
+  /** The trusted service (for example the Store) behind an internal service API call. */
+  service?: string
 }
 
 export interface AppEnv {
