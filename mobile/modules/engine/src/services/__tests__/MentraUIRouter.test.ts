@@ -255,3 +255,59 @@ describe("MentraUIRouter — host channels", () => {
     expect(crust.dispatchCalls).toHaveLength(1)
   })
 })
+
+describe("background replacement", () => {
+  test("rejects background requests during backoff, preserves new input and host RPCs", () => {
+    const crust = buildMockCrust()
+    const router = new MentraUIRouter(crust.binding)
+    const injected = bindCapture(router, "com.foo")
+    const hostCalls: unknown[] = []
+    router.setHostChannel("host", (_pkg, message) => hostCalls.push(message))
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "save", requestId: "old"}))
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "host", requestId: "host-old"}))
+    router.backgroundRestarting("com.foo")
+    expect(injected[0]).toContain("old")
+    expect(injected[0]).not.toContain("host-old")
+    const before = crust.dispatchCalls.length
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "save", requestId: "during"}))
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "typed during restart"}))
+    router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "host", requestId: "host-during"}))
+    expect(crust.dispatchCalls).toHaveLength(before)
+    expect(hostCalls).toHaveLength(2)
+    expect(injected[1]).toContain("BACKGROUND_RESTARTED")
+    router.backgroundConnected("com.foo")
+    const resumed = crust.dispatchCalls
+      .slice(before)
+      .map((call) => JSON.parse(call.envelope.raw as string).payload.data)
+    expect(resumed).toEqual([
+      {type: "UI_OPEN"},
+      {type: "UI_MESSAGE", channel: "draft", payload: "typed during restart"},
+    ])
+    router.backgroundConnected("com.foo")
+    expect(crust.dispatchCalls).toHaveLength(before + 2)
+  })
+})
+
+test("terminal background teardown clears unsent input and bounded queue cannot grow forever", () => {
+  const crust = buildMockCrust()
+  const router = new MentraUIRouter(crust.binding)
+  bindCapture(router, "com.foo")
+  router.backgroundRestarting("com.foo")
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    for (let i = 0; i < 10000; i++)
+      router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: i}))
+  } finally {
+    console.warn = warn
+  }
+  router.backgroundConnected("com.foo")
+  expect(crust.dispatchCalls).toHaveLength(129)
+  crust.dispatchCalls.length = 0
+  router.backgroundRestarting("com.foo")
+  router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "retired"}))
+  router.backgroundStopped("com.foo")
+  router.routeFromWebView("com.foo", JSON.stringify({type: "msg", channel: "draft", payload: "no future owner"}))
+  router.backgroundConnected("com.foo")
+  expect(crust.dispatchCalls).toHaveLength(1)
+})
