@@ -187,6 +187,16 @@ Camera-device loss after opening is a terminal device failure, not a network rec
 Its callback reaches the stream owner off the Camera2 callback thread, and callbacks from a
 closed or replaced camera session cannot terminate the current publisher.
 
+Conditional cleanup supplies the original `streamId`, `controllerId`, current `sid` and
+`revision`, and a fresh `request_id` to `stop_stream`. Comparison and stop happen together
+on the existing lifecycle dispatcher. A changed snapshot, foreign owner, or any pending
+admission refuses mutation. Every accepted active start increases the retained revision,
+even when public IDs are reused. The correlated `stop_ack` is followed by a fresh terminal
+query to prove settlement. Pending admission must settle normally or retain custody; no
+public-ID-only cancellation is used. Query snapshots report pending admission and active
+controller identity and the existing start revision. The caller binds that start revision
+to reject a later same-ID incarnation, then compares the latest revision atomically. Normal user stop retains its intentional current-stream behavior.
+
 The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
 cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device
 failure, or after sustained loss of the controlling phone. BES phone BLE presence is authoritative;
