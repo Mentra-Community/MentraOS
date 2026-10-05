@@ -51,7 +51,9 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
   const service = new FrameworkResultService({async insert(payload, payloadSha256) {
     if (stored) throw Object.assign(new Error("duplicate"), {code: 11000});
     stored = {payload, payloadSha256, uploadsComplete: false};
-  }, async getByRequest() {return stored;}, async getByRun() {return stored;}},
+  }, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {
+    return stored ? {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null} : null;
+  }},
   async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
     platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
   async () => ({definition: {steps: [{id: "OTA-04-requested"}]}} as unknown as RoutineEnrollment), undefined,

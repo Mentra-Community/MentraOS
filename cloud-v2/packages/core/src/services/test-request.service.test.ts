@@ -247,7 +247,7 @@ test("lost acceptance acknowledgement after cancellation retains real result cus
   await expect(service.accept({...receipt, acceptedAt: "2026-10-03T11:01:00Z"}, "mini")).rejects.toThrow("missing, changed");
   const {FrameworkResultService} = await import("./framework-result.service");
   let terminal: unknown;
-  const results = new FrameworkResultService({async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;}},
+  const results = new FrameworkResultService({async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;}, async getAsset() {return null;}},
     async id => {const request = await service.get(id); return request?.hostReceipt ? {hostId: request.hostId, input: request.input as any} : null;},
     async run => {terminal = run;}, async () => ({definition: {steps: [{id: "check"}]}} as any));
   const run = {schemaVersion: 1, requestId: row.requestId, hostId: row.hostId, routineId: "notes", definitionRevision: "a".repeat(40),
