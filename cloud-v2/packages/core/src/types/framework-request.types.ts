@@ -1,6 +1,6 @@
 import {z} from "zod";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
-import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./test-build.types";
+import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
 
 export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
 export const frameworkBuildSchema = z.object({
@@ -29,11 +29,11 @@ export const frameworkRequestInputSchema = z.object({
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
     ctx.addIssue({code: "custom", message: "Selected glasses resource requires frozen start and return software references"});
   if (input.glassesStart && input.glassesReturn) {
-    if (JSON.stringify(input.glassesStart) !== JSON.stringify(input.glassesReturn))
-      ctx.addIssue({code: "custom", message: "Alternate glasses software profiles are unsupported; normal return must equal requested start"});
+    if (input.glassesStart.model !== input.glassesReturn.model)
+      ctx.addIssue({code: "custom", message: "Starting and return software must name the same selected glasses model"});
     if (!input.build.manifest || input.build.manifestSha256 !== input.build.manifest.sha256 ||
-      JSON.stringify(input.glassesStart.manifest) !== JSON.stringify(input.build.manifest))
-      ctx.addIssue({code: "custom", message: "Requested glasses software must match the selected build manifest identity"});
+      JSON.stringify(input.glassesReturn.manifest) !== JSON.stringify(input.build.manifest))
+      ctx.addIssue({code: "custom", message: "Return glasses software must match the selected build manifest identity"});
   }
 });
 
