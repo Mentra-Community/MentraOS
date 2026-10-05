@@ -82,6 +82,7 @@ const allowed = (organizationId = ORG): AuthorizeResponse => ({
 
 const changeEvent = (organizationId = ORG): WorkspaceChangeEvent => ({
   eventId: "evt_1",
+  seq: 1,
   organizationId,
   workspaceId: "ws_1",
   action: "membership.added",
@@ -252,15 +253,15 @@ describe("operations", () => {
   })
 
   test("listChanges sends the cursor and limit only when given", async () => {
-    const page = {events: [changeEvent()], next: "cursor_2"}
+    const page = {events: [changeEvent()], next: "2"}
     const {client, calls} = clientFor(() => json(page))
     expect(await client.listChanges(null)).toEqual(page)
-    await client.listChanges("cursor_1")
+    await client.listChanges("1")
     await client.listChanges(null, 50)
     await client.listChanges("a b&c", 10)
     expect(calls.map((call) => call.url.slice(BASE.length))).toEqual([
       "/api/internal/workspaces/changes",
-      "/api/internal/workspaces/changes?after=cursor_1",
+      "/api/internal/workspaces/changes?after=1",
       "/api/internal/workspaces/changes?limit=50",
       "/api/internal/workspaces/changes?after=a+b%26c&limit=10",
     ])

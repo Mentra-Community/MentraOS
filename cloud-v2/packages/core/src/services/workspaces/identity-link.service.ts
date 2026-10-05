@@ -159,16 +159,15 @@ async function claimPendingMemberships(
     const keptRole = kept.role as WorkspaceRole
     const raised = pendingRole !== keptRole && roleAtLeast(pendingRole, keptRole)
     const resultingRole = raised ? pendingRole : keptRole
+    // Ending a row can lower the workspace's owner count, and a role change can alter what the member
+    // may do. Either way the workspace document is written, first, like every workspace mutation: that
+    // invalidates cached authorization and makes this write conflict with a concurrent leave or remove
+    // that counts owners, so the last-owner guard cannot be raced past.
+    await WorkspaceModel.updateOne({workspaceId: duplicate.workspaceId}, {$inc: {authorizationRevision: 1}}, {session})
     if (raised) {
       await WorkspaceMembershipModel.updateOne(
         {membershipId: kept.membershipId, status: "active"},
         {$set: {role: pendingRole}},
-        {session},
-      )
-      // A role change can alter what the member may do, so it invalidates cached authorization.
-      await WorkspaceModel.updateOne(
-        {workspaceId: duplicate.workspaceId},
-        {$inc: {authorizationRevision: 1}},
         {session},
       )
     }

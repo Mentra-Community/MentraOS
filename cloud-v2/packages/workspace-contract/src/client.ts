@@ -48,6 +48,11 @@ export interface CoreWorkspaceClient {
   checkMemberships(mentraUserId: string, workspaceIds: string[]): Promise<Record<string, MembershipCheckEntry | null>>
   /** Null when the workspace does not exist (HTTP 404). */
   getWorkspace(workspaceId: string): Promise<WorkspaceSummary | null>
+  /**
+   * Events after the cursor in `seq` order. `after` is the last processed event's `seq` as a decimal
+   * string (null starts from the beginning); `next` is the cursor for the following page, or null when
+   * the page was not full.
+   */
   listChanges(after: string | null, limit?: number): Promise<{events: WorkspaceChangeEvent[]; next: string | null}>
   mintServiceCredential(input: {
     workspaceId: string

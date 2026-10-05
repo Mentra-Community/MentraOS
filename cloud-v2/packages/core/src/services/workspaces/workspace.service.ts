@@ -42,6 +42,7 @@ import {WorkspaceMembershipModel, type WorkspaceMembershipRow} from "../../model
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {organizationId} from "./organization"
+import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
 
 const logger = createLogger("core").child({service: "workspace.service"})
 
@@ -54,45 +55,7 @@ export type Actor =
 
 export type MembershipRow = WorkspaceMembershipRow
 
-export type WorkspaceErrorCode =
-  | "not_found"
-  | "forbidden"
-  | "last_owner"
-  | "membership_changed"
-  | "invalid_role"
-  | "invalid_request"
-  | "workspace_deleted"
-  | "already_member"
-  | "workspace_has_packages"
-  | "store_unavailable"
-
-const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
-  not_found: 404,
-  forbidden: 403,
-  last_owner: 409,
-  membership_changed: 409,
-  invalid_role: 400,
-  invalid_request: 400,
-  workspace_deleted: 410,
-  already_member: 409,
-  workspace_has_packages: 409,
-  store_unavailable: 503,
-}
-
-export class WorkspaceError extends Error {
-  constructor(
-    public code: WorkspaceErrorCode,
-    public status: number,
-    message?: string,
-  ) {
-    super(message ?? code)
-    this.name = "WorkspaceError"
-  }
-}
-
-function fail(code: WorkspaceErrorCode, message?: string): never {
-  throw new WorkspaceError(code, STATUS_BY_CODE[code], message)
-}
+export {WorkspaceError, type WorkspaceErrorCode}
 
 // --- Reads -----------------------------------------------------------------
 
@@ -171,6 +134,8 @@ export async function countActiveOwners(workspaceId: string, session?: ClientSes
  * silently opening creation up.
  */
 export async function createWorkspace(actor: Actor & {kind: "user"}, input: {name: string}): Promise<WorkspaceSummary> {
+  // An actor with no usable id would own a workspace nobody can ever be matched to.
+  if (actor?.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "a signed-in user is required")
   const name = validateName(input?.name)
   if (creationPolicy() === "organization-admins" && !actor.isOrganizationAdmin) {
     fail("forbidden", "only organization admins can create workspaces")

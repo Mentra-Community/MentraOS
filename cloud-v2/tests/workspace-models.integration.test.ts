@@ -22,6 +22,7 @@ import {
 } from "../packages/core/src/connections/mongo.connection";
 import { AccessCredentialModel } from "../packages/core/src/models/access-credential.model";
 import { IdentityLinkModel } from "../packages/core/src/models/identity-link.model";
+import { WorkspaceAuditCounterModel } from "../packages/core/src/models/workspace-audit-counter.model";
 import { WorkspaceAuditEventModel } from "../packages/core/src/models/workspace-audit-event.model";
 import { WorkspaceInvitationModel } from "../packages/core/src/models/workspace-invitation.model";
 import { WorkspaceMembershipModel } from "../packages/core/src/models/workspace-membership.model";
@@ -34,6 +35,7 @@ const MODELS = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  WorkspaceAuditCounterModel,
   IdentityLinkModel,
 ];
 
@@ -436,6 +438,7 @@ describe("workspace models (local replica set)", () => {
       const row = await WorkspaceAuditEventModel.create({
         eventId: "01HZ0000000000000000000010",
         organizationId: "org_1",
+        seq: 1,
         workspaceId: "ws_1",
         action: "membership.role_changed",
         actor: { kind: "user", mentraUserId: "mu_1", email: "owner@example.com" },
@@ -450,19 +453,39 @@ describe("workspace models (local replica set)", () => {
       expect(stored?.before).toEqual({ role: "member" });
       expect(stored?.after).toEqual({ role: "admin" });
       expect(stored?.target).toEqual({ membershipId: "wm_a" });
-      expect((await thrown(() => WorkspaceAuditEventModel.create({ eventId: "01HZ0000000000000000000010", organizationId: "org_1", action: "workspace.created", actor: { kind: "system" }, occurredAt: new Date() }))).code).toBe(11000);
+      expect((await thrown(() => WorkspaceAuditEventModel.create({ eventId: "01HZ0000000000000000000010", organizationId: "org_1", seq: 99, action: "workspace.created", actor: { kind: "system" }, occurredAt: new Date() }))).code).toBe(11000);
+    });
+
+    test("enforces a unique seq per organization, requires it, and indexes the workspace audit page", async () => {
+      const event = { organizationId: "org_1", action: "workspace.created", actor: { kind: "system" }, occurredAt: new Date() };
+      await WorkspaceAuditEventModel.create({ ...event, eventId: "01HZ0000000000000000000020", seq: 1 });
+      // The same position in the same organization is refused, whatever the event id.
+      expect((await thrown(() => WorkspaceAuditEventModel.create({ ...event, eventId: "01HZ0000000000000000000021", seq: 1 }))).code).toBe(11000);
+      // Another organization has its own sequence.
+      await WorkspaceAuditEventModel.create({ ...event, organizationId: "org_2", eventId: "01HZ0000000000000000000022", seq: 1 });
+      expect((await thrown(() => WorkspaceAuditEventModel.create({ ...event, eventId: "01HZ0000000000000000000023" }))).name).toBe("ValidationError");
+      const indexes = await WorkspaceAuditEventModel.collection.indexes();
+      expect(indexes.find((index) => JSON.stringify(index.key) === JSON.stringify({ organizationId: 1, seq: 1 }))?.unique).toBe(true);
+      expect(indexes.some((index) => JSON.stringify(index.key) === JSON.stringify({ workspaceId: 1, eventId: -1 }))).toBe(true);
+    });
+
+    test("keeps one change-feed counter per organization, keyed by the organization id", async () => {
+      await WorkspaceAuditCounterModel.create({ _id: "org_1" });
+      expect((await WorkspaceAuditCounterModel.findById("org_1").lean())?.seq).toBe(0);
+      expect((await thrown(() => WorkspaceAuditCounterModel.create({ _id: "org_1" }))).code).toBe(11000);
     });
 
     test("allows organization-level events without a workspace and validates the actor kind", async () => {
       const row = await WorkspaceAuditEventModel.create({
         eventId: "01HZ0000000000000000000011",
         organizationId: "org_1",
+        seq: 2,
         action: "credential.revoked",
         actor: { kind: "service", service: "store" },
         occurredAt: new Date(),
       });
       expect(row.workspaceId).toBeNull();
-      expect((await thrown(() => WorkspaceAuditEventModel.create({ eventId: "01HZ0000000000000000000012", organizationId: "org_1", action: "x", actor: { kind: "robot" }, occurredAt: new Date() }))).name).toBe("ValidationError");
+      expect((await thrown(() => WorkspaceAuditEventModel.create({ eventId: "01HZ0000000000000000000012", organizationId: "org_1", seq: 3, action: "x", actor: { kind: "robot" }, occurredAt: new Date() }))).name).toBe("ValidationError");
     });
   });
 

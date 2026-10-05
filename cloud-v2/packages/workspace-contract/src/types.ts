@@ -86,8 +86,14 @@ export interface ServiceCredentialResponse {
   token: string
 }
 
+/**
+ * One entry of Core's change feed. `eventId` identifies the event; `seq` is its position in the
+ * organization's feed, assigned in commit order with no gaps, and is the only thing to page by: pass the
+ * last `seq` you processed (as a decimal string) as the next request's `after`.
+ */
 export interface WorkspaceChangeEvent {
   eventId: string
+  seq: number
   organizationId: string
   workspaceId: string | null
   action: string

@@ -22,13 +22,21 @@ import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, tes
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {IdentityLinkModel} from "../packages/core/src/models/identity-link.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {resolveWorkosUser, type WorkosIdentity} from "../packages/core/src/services/workspaces/identity-link.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 
-const MODELS = [IdentityLinkModel, UserModel, WorkspaceAuditEventModel, WorkspaceMembershipModel, WorkspaceModel]
+const MODELS = [
+  IdentityLinkModel,
+  UserModel,
+  WorkspaceAuditCounterModel,
+  WorkspaceAuditEventModel,
+  WorkspaceMembershipModel,
+  WorkspaceModel,
+]
 
 interface DirectoryUser {
   id: string
@@ -465,7 +473,8 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
       status: "active",
       role: "admin",
     })
-    expect((await WorkspaceModel.findOne({workspaceId: "ws_1"}).lean())?.authorizationRevision).toBe(0)
+    // No role changed, but a row ended, so the workspace was still written once (revision 0 -> 1).
+    expect((await WorkspaceModel.findOne({workspaceId: "ws_1"}).lean())?.authorizationRevision).toBe(1)
     // The pending duplicate is ended, not promoted.
     const ended = await WorkspaceMembershipModel.findOne({membershipId: duplicate.membershipId}).lean()
     expect(ended).toMatchObject({status: "ended", endedReason: "removed", mentraUserId: null})
@@ -608,6 +617,33 @@ describe("resolveWorkosUser: claiming on every sign-in", () => {
       workspaceId: "ws_1",
       after: {resultingRole: "admin", keptMembershipId: held.membershipId},
     })
+  })
+
+  test("ending a duplicate always bumps the workspace revision, even when no role is raised", async () => {
+    const first = await resolveWorkosUser(identity())
+    // Not raised: the pending role is lower in one workspace and equal in the other.
+    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One", authorizationRevision: 7})
+    await WorkspaceModel.create({workspaceId: "ws_2", organizationId: "acme", name: "Two", authorizationRevision: 0})
+    const heldAdmin = await seedMembership({workspaceId: "ws_1", mentraUserId: first.mentraUserId, role: "admin"})
+    await seedMembership({workspaceId: "ws_1", pendingWorkosUserId: "user_workos_1", role: "member"})
+    const heldOwner = await seedMembership({workspaceId: "ws_2", mentraUserId: first.mentraUserId, role: "owner"})
+    await seedMembership({workspaceId: "ws_2", pendingWorkosUserId: "user_workos_1", role: "owner"})
+
+    await resolveWorkosUser(identity())
+
+    // The kept memberships are untouched, but every workspace that lost a row was written once, so a
+    // concurrent leave or removal that counts owners conflicts with the merge instead of racing it.
+    expect(await WorkspaceMembershipModel.findOne({membershipId: heldAdmin.membershipId}).lean()).toMatchObject({
+      status: "active",
+      role: "admin",
+    })
+    expect(await WorkspaceMembershipModel.findOne({membershipId: heldOwner.membershipId}).lean()).toMatchObject({
+      status: "active",
+      role: "owner",
+    })
+    expect((await WorkspaceModel.findOne({workspaceId: "ws_1"}).lean())?.authorizationRevision).toBe(8)
+    expect((await WorkspaceModel.findOne({workspaceId: "ws_2"}).lean())?.authorizationRevision).toBe(1)
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "membership.merged_duplicate"})).toBe(2)
   })
 
   test("concurrent sign-ins on an existing link claim each pending row exactly once", async () => {

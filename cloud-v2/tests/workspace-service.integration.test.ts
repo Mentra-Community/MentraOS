@@ -18,6 +18,7 @@ import {afterAll, beforeAll, beforeEach, describe, expect, test} from "bun:test"
 
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -52,6 +53,7 @@ const MODELS = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  WorkspaceAuditCounterModel,
 ]
 
 let databaseUrl: string
@@ -216,6 +218,19 @@ describe("createWorkspace", () => {
     }
     expect((await createWorkspace(user("mu_a"), {name: "x".repeat(80)})).name).toHaveLength(80)
     expect(await WorkspaceModel.countDocuments({})).toBe(1)
+  })
+
+  test("an actor without a user id cannot create a workspace (403 forbidden)", async () => {
+    const actors = [
+      user(""),
+      user("   "),
+      {...user("mu_x"), mentraUserId: undefined as unknown as string},
+      {kind: "system"} as unknown as UserActor,
+      service as unknown as UserActor,
+    ]
+    for (const actor of actors) await expectError(() => createWorkspace(actor, {name: "Nobody"}), "forbidden", 403)
+    expect(await WorkspaceModel.countDocuments({})).toBe(0)
+    expect(await WorkspaceMembershipModel.countDocuments({})).toBe(0)
   })
 
   test("CLOUD_CORE_WORKSPACE_CREATION=organization-admins limits creation to organization admins", async () => {
@@ -412,6 +427,14 @@ describe("removeMember", () => {
     expect((await AccessCredentialModel.findOne({credentialId: unrelatedKey}).lean())!.revokedAt).toBeNull()
     // A credential that was already revoked keeps its original revocation time.
     expect((await AccessCredentialModel.findOne({credentialId: alreadyRevoked}).lean())!.revokedAt).toEqual(earlier)
+    const revokedAtByKey = async () =>
+      Object.fromEntries(
+        (await AccessCredentialModel.find({credentialId: {$in: [...memberKeys, alreadyRevoked]}}).lean()).map(row => [
+          row.credentialId,
+          row.revokedAt,
+        ]),
+      )
+    const revokedAtBeforeRejoin = await revokedAtByKey()
 
     const events = await listWorkspaceAudit(ws, {limit: 10})
     expect(events[0]).toMatchObject({
@@ -429,6 +452,11 @@ describe("removeMember", () => {
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ws, mentraUserId: "mu_member"})).toBe(2)
     expect((await getActiveMembership(ws, "mu_member"))!.membershipId).toBe(rejoinId)
     expect((await WorkspaceMembershipModel.findOne({membershipId: memberId}).lean())!.status).toBe("ended")
+    // Rejoining must not bring the old keys back: they stay revoked, at the same instant as before.
+    const revokedAtAfterRejoin = await revokedAtByKey()
+    expect(revokedAtAfterRejoin).toEqual(revokedAtBeforeRejoin)
+    for (const id of [...memberKeys, alreadyRevoked]) expect(revokedAtAfterRejoin[id]).toBeInstanceOf(Date)
+    expect(await AccessCredentialModel.countDocuments({workspaceId: ws, revokedAt: null})).toBe(1) // the owner's key
   })
 
   test("the last owner cannot be removed, and removing a privileged member is owner-only", async () => {
@@ -852,6 +880,8 @@ describe("audit", () => {
     const stored = await WorkspaceAuditEventModel.find({workspaceId: "ws_ids"}).sort({eventId: 1}).lean()
     expect(stored.map(row => row.eventId)).toEqual(ids)
     expect(stored[0]!.occurredAt).toBeInstanceOf(Date)
+    // Each event also took the next change-feed position, one by one with no gaps.
+    expect(stored.map(row => row.seq)).toEqual(Array.from({length: 50}, (_, i) => i + 1))
   })
 
   test("a rolled-back mutation leaves no audit event behind", async () => {
@@ -864,7 +894,7 @@ describe("audit", () => {
     expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
   })
 
-  test("listChanges pages by eventId and never includes secrets or token hashes", async () => {
+  test("listChanges pages by seq and never includes secrets or token hashes", async () => {
     const ws = await newWorkspace()
     const memberId = await addMember(ws, "mu_member", "member")
     await changeRole(user("mu_owner"), ws, memberId, "developer", 0)
@@ -908,7 +938,7 @@ describe("audit", () => {
       pages++
       expect(page.events.length).toBeLessThanOrEqual(2)
       collected.push(...page.events)
-      expect(page.next).toBe(page.events.length === 2 ? page.events[1]!.eventId : null)
+      expect(page.next).toBe(page.events.length === 2 ? String(page.events[1]!.seq) : null)
       cursor = page.next
     } while (cursor)
 
@@ -917,6 +947,8 @@ describe("audit", () => {
     const eventIds = collected.map(event => event.eventId)
     expect([...eventIds].sort()).toEqual(eventIds)
     expect(new Set(eventIds).size).toBe(total)
+    // seq is the feed position: 1..n in order, and what `next` hands back as the cursor.
+    expect(collected.map(event => event.seq)).toEqual([1, 2, 3, 4, 5, 6])
     expect(collected.map(event => event.action)).toEqual([
       "workspace.created",
       "membership.role_changed",
@@ -931,6 +963,7 @@ describe("audit", () => {
         "eventId",
         "occurredAt",
         "organizationId",
+        "seq",
         "target",
         "workspaceId",
       ])
@@ -946,12 +979,183 @@ describe("audit", () => {
     }
     expect(collected[4]!.target).toEqual({invitationId: "winv_1", nested: {note: "kept"}, list: [{id: "keep"}]})
 
-    // The cursor is exclusive: resuming after an event returns only later ones.
-    const resumed = await listChanges(eventIds[2]!, 100)
+    // The cursor is exclusive: resuming after a seq returns only later events.
+    const resumed = await listChanges("3", 100)
     expect(resumed.events.map(event => event.eventId)).toEqual(eventIds.slice(3))
     expect(resumed.next).toBeNull()
-    expect((await listChanges(eventIds.at(-1)!, 10)).events).toEqual([])
+    expect((await listChanges("6", 10)).events).toEqual([])
+    expect((await listChanges("99", 10)).events).toEqual([])
+    expect((await listChanges("0", 3)).events.map(event => event.eventId)).toEqual(eventIds.slice(0, 3))
     expect((await listChanges(null, 3)).events.map(event => event.eventId)).toEqual(eventIds.slice(0, 3))
+  })
+
+  test("listChanges rejects a cursor that is not a change sequence number (400 invalid_request)", async () => {
+    await newWorkspace()
+    for (const bad of [
+      "",
+      "abc",
+      "-1",
+      "1.5",
+      "01",
+      "1e3",
+      " 2",
+      "01JABCDEFGHJKMNPQRSTVWXYZ0",
+      "99999999999999999999",
+    ]) {
+      await expectError(() => listChanges(bad, 10), "invalid_request", 400)
+    }
+  })
+
+  test("seq is issued per organization and listChanges serves only this organization's events", async () => {
+    const record = (organization: string, n: number) =>
+      withTransaction(session =>
+        recordWorkspaceEvent(session, {
+          organizationId: organization,
+          workspaceId: null,
+          action: `test.${n}`,
+          actor: {kind: "system"},
+          target: {n},
+        }),
+      )
+    await record("local", 1)
+    await record("other-org", 2)
+    await record("other-org", 3)
+    await record("local", 4)
+
+    const seqs = async (organization: string) =>
+      (await WorkspaceAuditEventModel.find({organizationId: organization}).sort({seq: 1}).lean()).map(row => row.seq)
+    expect(await seqs("local")).toEqual([1, 2])
+    expect(await seqs("other-org")).toEqual([1, 2])
+    const feed = await listChanges(null, 10)
+    expect(feed.events.map(event => [event.action, event.seq])).toEqual([
+      ["test.1", 1],
+      ["test.4", 2],
+    ])
+  })
+
+  test("the first event of an organization retries instead of failing when its counter appears mid-transaction", async () => {
+    let attempts = 0
+    await withTransaction(async session => {
+      attempts++
+      // Take this transaction's snapshot while the counter does not exist yet.
+      await WorkspaceModel.findOne({workspaceId: "ws_none"}).session(session)
+      // Another writer creates the counter and commits during the first attempt.
+      if (attempts === 1) await WorkspaceAuditCounterModel.create({_id: "local", seq: 5})
+      await recordWorkspaceEvent(session, {
+        organizationId: "local",
+        workspaceId: null,
+        action: "test.first",
+        actor: {kind: "system"},
+        target: {},
+      })
+    })
+
+    expect(attempts).toBe(2)
+    expect((await WorkspaceAuditEventModel.find({}).lean()).map(row => row.seq)).toEqual([6])
+    expect((await WorkspaceAuditCounterModel.findById("local").lean())!.seq).toBe(6)
+  })
+
+  test("interleaved transactions: a later-committing event never gets a lower seq, so a poller cannot skip it", async () => {
+    const event = (n: number) => ({
+      organizationId: "local",
+      workspaceId: "ws_gate",
+      action: `test.${n}`,
+      actor: {kind: "system" as const},
+      target: {n},
+    })
+    const gate = () => {
+      let open!: () => void
+      const opened = new Promise<void>(resolve => (open = resolve))
+      return {open, opened}
+    }
+    const [gateA, gateB] = [gate(), gate()]
+    let aHasSeq!: () => void
+    const aRecorded = new Promise<void>(resolve => (aHasSeq = resolve))
+    let bHasSeq!: () => void
+    const bRecorded = new Promise<void>(resolve => (bHasSeq = resolve))
+    let bAttempts = 0
+    let bHoldsSeq = false
+
+    // A takes the first seq and stays uncommitted.
+    const txA = withTransaction(async session => {
+      await recordWorkspaceEvent(session, event(1))
+      aHasSeq()
+      await gateA.opened
+    })
+    await aRecorded
+    // B starts while A is open. Before the counter, B would mint a later id and could commit first.
+    const txB = withTransaction(async session => {
+      bAttempts++
+      bHoldsSeq = false
+      await recordWorkspaceEvent(session, event(2))
+      bHoldsSeq = true
+      bHasSeq()
+      await gateB.opened
+    })
+    while (bAttempts < 1) await Bun.sleep(1)
+    await Bun.sleep(100)
+
+    // While A is open B cannot hold a seq (it keeps conflicting and retrying), and a poller sees neither event.
+    expect(bAttempts).toBeGreaterThan(1)
+    expect(bHoldsSeq).toBe(false)
+    expect((await listChanges(null, 10)).events).toEqual([])
+
+    // A commits. B now gets the next seq but is still uncommitted: a poller sees only A.
+    gateA.open()
+    await txA
+    await bRecorded
+    const first = await listChanges(null, 10)
+    expect(first.events.map(e => [e.action, e.seq])).toEqual([["test.1", 1]])
+    const cursor = String(first.events.at(-1)!.seq)
+
+    // B commits. The poller resumes from its cursor and gets B: nothing was skipped.
+    gateB.open()
+    await txB
+    const second = await listChanges(cursor, 10)
+    expect(second.events.map(e => [e.action, e.seq])).toEqual([["test.2", 2]])
+    expect((await listChanges(null, 10)).events.map(e => e.seq)).toEqual([1, 2])
+  })
+
+  test("concurrent recorders: a polling consumer sees every event exactly once, in seq order, with no gaps", async () => {
+    const writers = 6
+    const perWriter = 2
+    let writing = true
+    const seen: Array<{seq: number; eventId: string}> = []
+    const poller = (async () => {
+      let cursor: string | null = null
+      for (;;) {
+        const writersFinished = !writing
+        const page = await listChanges(cursor, 3)
+        seen.push(...page.events.map(e => ({seq: e.seq, eventId: e.eventId})))
+        if (page.events.length > 0) cursor = String(page.events.at(-1)!.seq)
+        else if (writersFinished) return
+        else await Bun.sleep(2)
+      }
+    })()
+
+    await Promise.all(
+      Array.from({length: writers}, (_, writer) =>
+        withTransaction(async session => {
+          for (let i = 0; i < perWriter; i++) {
+            await recordWorkspaceEvent(session, {
+              organizationId: "local",
+              workspaceId: `ws_${writer}`,
+              action: "test.concurrent",
+              actor: {kind: "system"},
+              target: {writer, i},
+            })
+          }
+          await Bun.sleep(Math.floor(Math.random() * 8))
+        }),
+      ),
+    )
+    writing = false
+    await poller
+
+    const total = writers * perWriter
+    expect(seen.map(e => e.seq)).toEqual(Array.from({length: total}, (_, i) => i + 1))
+    expect(new Set(seen.map(e => e.eventId)).size).toBe(total)
+    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(total)
   })
 
   test("listWorkspaceAudit returns one workspace's events newest first and pages by the before cursor", async () => {
