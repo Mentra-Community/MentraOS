@@ -25,6 +25,23 @@ test("a database execution timeout is a retryable history error", async () => {
   await expect(service.list()).rejects.toMatchObject({status: 503, message: "Test history query timed out. Try again."});
 });
 
+test("suite backfill recomputes its budget before the second database command", async () => {
+  let elapsed = 0;
+  const budgets: number[] = [];
+  const collection = {
+    updateMany: async (_filter: unknown, _update: unknown, options: {maxTimeMS: number}) => {
+      budgets.push(options.maxTimeMS);
+      elapsed += 9000;
+    },
+    find: (_filter: unknown, options: {maxTimeMS: number}) => {
+      budgets.push(options.maxTimeMS);
+      return {project: () => ({limit: () => ({toArray: async () => []})})};
+    },
+  };
+  await backfillTestSuiteStartedAt(collection as any, () => ({maxTimeMS: 10000 - elapsed}));
+  expect(budgets).toEqual([10000, 1000]);
+});
+
 test("history suite summaries retain the reader's frozen failed outcome and declared count", async () => {
   const suite = {suiteId: "suite:completed.v2", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T19:00:00Z",
     finishedAt: "2026-10-03T19:01:00Z", outcome: "failed", passed: 1, build: {headSha: "a".repeat(40), release: "dev.42"},

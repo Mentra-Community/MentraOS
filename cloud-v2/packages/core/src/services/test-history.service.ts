@@ -90,7 +90,7 @@ export class TestHistoryService {
   constructor(private readonly suites: Pick<TestSuiteService, "detail"> = new TestSuiteService(),
     private readonly read: (queries: HistorySourceQueries) => Promise<StoredHistoryRow[][]> = async queries => {
       const deadline = Date.now() + HISTORY_QUERY_BUDGET_MS;
-      await backfillTestSuiteStartedAt(TestSuiteModel.collection, {maxTimeMS: remainingQueryTime(deadline)});
+      await backfillTestSuiteStartedAt(TestSuiteModel.collection, () => ({maxTimeMS: remainingQueryTime(deadline)}));
       // Older writers racing this repair become eligible on the next refresh, with their real date.
       const [runs, suites] = await Promise.all([readStandaloneRuns(queries, deadline), TestSuiteModel.aggregate<StoredHistoryRow>(queries.suites)
         .collation({locale: "simple"}).read("primary").readConcern("majority").option({maxTimeMS: remainingQueryTime(deadline)}).exec()]);
