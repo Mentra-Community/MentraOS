@@ -271,3 +271,17 @@ test("a background that has not connected by the deadline shows its UI but keeps
     router.stop()
   }
 })
+
+test("a READY that arrives before the current session's CONNECT is ignored", () => {
+  const {router, ui, emitBridge} = makeRouters({initReady: true})
+  router.timer = {setTimeout: () => 1, clearTimeout() {}}
+  router.registerApp(PKG)
+  // Queued by the previous, killed context.
+  emitBridge({type: "miniapp_ready"})
+  expect(ui.isUiHeld(PKG)).toBe(true)
+  emitBridge({type: "miniapp_connect", packageName: PKG, initReady: true})
+  expect(ui.isUiHeld(PKG)).toBe(true)
+  emitBridge({type: "miniapp_ready"})
+  expect(ui.isUiHeld(PKG)).toBe(false)
+  router.stop()
+})

@@ -476,7 +476,10 @@ export class MentraJSRouter {
           }
         }
       } else if (innerPayload?.type === "miniapp_ready") {
-        this.markBackgroundReady(packageName, "ready")
+        // Only the current session's READY counts: one queued by a killed
+        // context can arrive after its replacement spawned but before it
+        // connected.
+        if (!this.replacementConnects.has(packageName)) this.markBackgroundReady(packageName, "ready")
       }
       return
     }
