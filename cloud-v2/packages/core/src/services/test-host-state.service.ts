@@ -3,6 +3,7 @@ import {TestHostStateModel} from "../models/test-host-state.model";
 import {testWriteConcern} from "../models/test-write-concern";
 import {frameworkIdentitySchema} from "../types/framework-request.types";
 import {glassesModelSchema, routineIdentitySchema, routinePlatformSchema} from "../types/routine-definition.types";
+import {laneRestorationProjectionSchema} from "../types/lane-restoration.types";
 import {TestRunError} from "./test-result-error";
 const resource = z.object({id: frameworkIdentitySchema, kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]), laneId: frameworkIdentitySchema.optional()}).strict();
 export const glassesInventorySchema = z.object({resourceId: frameworkIdentitySchema, deviceId: frameworkIdentitySchema,
@@ -32,9 +33,11 @@ export const hostStateSchema = z.object({hostId: frameworkIdentitySchema, incarn
           lane.glasses.some(value => !lane.resources.some(ref => ref.id === value.resourceId && ref.kind === "glasses")))
           ctx.addIssue({code: "custom", message: "Glasses inventory must exactly identify declared glasses resources"});
       }
-    })).max(100)}).strict().superRefine((snapshot, ctx) => {
+    })).max(100), restoration: laneRestorationProjectionSchema.optional()}).strict().superRefine((snapshot, ctx) => {
       if (new Set(snapshot.lanes.map(lane => lane.id)).size !== snapshot.lanes.length)
         ctx.addIssue({code: "custom", message: "Duplicate host lane identity"});
+      if (snapshot.restoration?.attempts.some(attempt => !snapshot.lanes.some(lane => lane.id === attempt.laneId)))
+        ctx.addIssue({code: "custom", message: "Restoration attempt names an unknown host lane"});
       const byResource = new Map<string, string>(), byDevice = new Map<string, string>();
       for (const lane of snapshot.lanes) for (const glasses of lane.glasses ?? []) {
         const identity = JSON.stringify({deviceId: glasses.deviceId, model: glasses.model});

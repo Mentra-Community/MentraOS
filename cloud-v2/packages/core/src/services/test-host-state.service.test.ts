@@ -90,3 +90,15 @@ test("authenticated host snapshots persist physical model inventory and reject c
   expect(f.writes()).toBe(1);
  } finally {f.stop();}
 });
+
+
+test("optional restoration history survives controller restart with explicit unknown fields", async () => {
+ const f = fixture();
+ try {
+  const restoration = {schemaVersion: 1 as const, attempts: [], truncated: true};
+  await f.service.report({...snapshot(1, 1), restoration}, "mini");
+  expect((await f.service.get("mini"))!.restoration).toEqual(restoration);
+  await f.service.report({...snapshot(2, 1), restoration}, "mini");
+  expect((await f.service.get("mini"))!.restoration).toEqual(restoration);
+ } finally {f.stop();}
+});

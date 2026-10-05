@@ -1,6 +1,7 @@
 import {expect, spyOn, test} from "bun:test";
 import {createTestRunAdminApi} from "./test-runs.api";
 import {TestHistoryService} from "../../services/test-history.service";
+import {LaneRestorationService} from "../../services/lane-restoration.service";
 import {TestHostHealthService} from "../../services/test-host-health.service";
 import {FrameworkResultService, type StoredFrameworkRun} from "../../services/framework-result.service";
 import {TestRunError} from "../../services/test-result-error";
@@ -136,4 +137,14 @@ test("a cancelled request read reconciles late host custody and then its real re
   const published: any = await (await app.request(`/${requestId}`)).json();
   expect(published).toMatchObject({kind: "run", outcome: "cancelled", uploadsComplete: true, run});
   expect(published.request).toBeUndefined();
+});
+
+
+test("restoration list has a bounded uncached route outside generic run identities", async () => {
+  class Restoration extends LaneRestorationService {
+    override async list() {return {generatedAt: "2026-10-05T01:00:00Z", freshForMs: 120_000, hosts: [], truncated: false};}
+  }
+  const response = await createTestRunAdminApi(undefined, undefined, undefined, undefined, new Restoration()).request("/restoration/list");
+  expect(response.status).toBe(200); expect(response.headers.get("Cache-Control")).toBe("no-store");
+  expect(await response.json()).toMatchObject({hosts: [], truncated: false});
 });
