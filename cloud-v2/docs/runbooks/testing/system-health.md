@@ -56,3 +56,32 @@ has reported. There is no synthetic backfill. Older cleanup receipts without
 a timestamp for their after-value remain event context, not invented chart
 measurements. The monitor/cleanup installations stay under their existing
 host owners.
+
+
+## Lane restoration
+
+Open **Lane restoration attempts & resume decisions** from System health. The
+page reads the controller's durable repair records, separately from passive
+worker monitoring. An accepted scheduling resume receipt establishes success;
+a repair report saying resume, a clean agent exit, a halt or a question does not.
+Agent elapsed time starts at its actual recorded invocation. Lane handoff time
+and the ten-minute delay alert are separate. Missing historical timestamps and
+receipts are **Unknown**; stale controller observations cannot establish current
+readiness.
+
+The existing authenticated `POST /api/internal/test-host-state` accepts an
+optional strict `restoration` v1 projection. It carries at most 100 sanitized
+attempts from existing interruption, launch, report, resume and exit records,
+with explicit `truncated` and action truncation flags. No raw model output,
+command arguments, private paths or credentials belong in this projection.
+Larger diagnostics retain their existing incident/attachment custody. Core
+persists this bounded history with the existing latest host snapshot and its
+restart/sequence fence. `GET /api/admin/test-runs/restoration/list` reads at most
+32 controllers through the existing Admin session gate; it never grants a
+resource, starts an agent, submits a question or changes scheduling.
+
+Deploy Core before the updated controller producer: older controllers remain
+accepted and show restoration records unknown. The producer begins recording
+future resume refusals as scoped operation receipts; it does not manufacture
+missing past calls or freeze a failed readiness check into an accepted decision.
+This is retained controller history, not a complete lifetime audit log.

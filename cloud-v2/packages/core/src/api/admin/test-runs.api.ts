@@ -8,10 +8,11 @@ import {TestRequestModel} from "../../models/test-request.model";
 import {TestHistoryService} from "../../services/test-history.service";
 import {hostCancellationSchema, hostRejectionSchema, requestInputDigest, TestRequestService} from "../../services/test-request.service";
 import {frameworkIdentitySchema, frameworkRequestInputSchema, type FrameworkRequestDisplay} from "../../types/framework-request.types";
+import {LaneRestorationService} from "../../services/lane-restoration.service";
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
-  results = new FrameworkResultService(), requests = new TestRequestService()) {
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService()) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
@@ -31,6 +32,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     .read("primary").readConcern("majority").lean()}));
   app.get("/health", async c => c.json(await health.list()));
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
+  app.get("/restoration/list", async c => c.json(await restoration.list()));
   app.get("/:runId", async c => {
     const id = c.req.param("runId");
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid run or request identity");

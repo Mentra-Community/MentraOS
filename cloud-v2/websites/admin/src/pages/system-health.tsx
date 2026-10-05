@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { DISK_FLOOR_BYTES, HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent, type HostComponent, type HostDiskPoint,
   type HostReason, type TestHostHistory, type TestHostLatest, type TestHostList } from "../../../../packages/core/src/types/test-host-health.types";
 import { api } from "../lib/api";
+import {LaneRestorationPage} from "./lane-restoration";
 
 const elapsed = (at: string, now: number) => `${Math.max(0, Math.floor((now - Date.parse(at)) / 60000))}m`;
 const GiB = 1024 ** 3;
@@ -117,6 +118,10 @@ export function CleanupEvents({ events }: { events: CleanupHealthEvent[] }) {
 }
 
 export function SystemHealthPage() {
+  return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("restoration") === "1"
+    ? <LaneRestorationPage /> : <SystemHealthDashboard />;
+}
+function SystemHealthDashboard() {
   const query = useHostHealth(), now = useClock(), [hostId, setHostId] = useState<string | null>(null), [days, setDays] = useState<1 | 7>(1);
   const hosts = query.data?.hosts ?? [], host = hosts.find(value => value.hostId === hostId) ?? hosts[0];
   const history = useQuery({ queryKey: ["test-host-history", host?.hostId, days], enabled: Boolean(host), refetchInterval: 60_000,
@@ -126,6 +131,7 @@ export function SystemHealthPage() {
     <section className="rounded-2xl border border-[#dfe5dd] bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Workers &amp; disk space</h2><p className="mt-1 text-sm text-[#68746d]">Service status is separate from a job's progress and a device lane's availability.</p></div>
         <button className="text-sm font-medium text-[#087d50] underline" onClick={() => { void query.refetch(); if (host) void history.refetch(); }}>Refresh</button></div>
+      <a href="/?systemHealth=1&restoration=1" className="mt-3 inline-block text-sm font-medium text-[#087d50] underline">View lane restoration attempts &amp; resume decisions</a>
       {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Health could not refresh. Current service status is unknown.</p> : null}
       {!hosts.length ? <p className="mt-4 text-sm text-[#68746d]">{query.isPending ? "Loading host reports…" : "No independent host monitor has reported yet. Historical disk measurements will appear as they are collected."}</p> : <>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><select aria-label="Host" value={host?.hostId} onChange={event => setHostId(event.target.value)} className="rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{hosts.map(value => <option key={value.hostId}>{value.hostId}</option>)}</select>
