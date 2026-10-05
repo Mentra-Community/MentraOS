@@ -69,6 +69,10 @@ export type MentraUIHostReply = {ok: true; result?: unknown} | {ok: false; error
 
 export class MentraUIRouter {
   private readonly bindings: Map<string, BoundWebView> = new Map()
+  private readonly restarting = new Set<string>()
+  private readonly stopped = new Set<string>()
+  private readonly pendingInput = new Map<string, string[]>()
+  private readonly backgroundRequests = new Map<string, Set<string>>()
   private readonly crust: MentraUICrustBinding
   private readonly hostChannels: Map<string, MentraUIHostChannelHandler> = new Map()
   private readonly readyListeners = new Set<(packageName: string) => void>()
@@ -136,12 +140,42 @@ export class MentraUIRouter {
   unbindWebView(packageName: string): void {
     if (!this.bindings.has(packageName)) return
     this.bindings.delete(packageName)
+    this.backgroundRequests.delete(packageName)
+    this.pendingInput.delete(packageName)
     this.deliverToBackground(packageName, {type: "UI_CLOSE"})
   }
 
   /** True iff a WebView is currently bound to the named package. */
   isBound(packageName: string): boolean {
     return this.bindings.has(packageName)
+  }
+
+  /** Fail calls owned by the retired context; never replay user mutations. */
+  backgroundRestarting(packageName: string): void {
+    this.restarting.add(packageName)
+    const binding = this.bindings.get(packageName)
+    const requestIds = [...(this.backgroundRequests.get(packageName) ?? [])]
+    this.backgroundRequests.delete(packageName)
+    if (binding) this.injectFrame(binding, {type: "background_restart", requestIds})
+    console.warn(`MentraUIRouter: ${packageName} background restarting; UI bound=${!!binding}`)
+  }
+
+  /** Terminal recovery/explicit teardown retires input that has no future owner. */
+  backgroundStopped(packageName: string): void {
+    this.backgroundRestarting(packageName)
+    this.stopped.add(packageName)
+    this.pendingInput.delete(packageName)
+  }
+
+  /** Restore UI_OPEN only after the new SDK session has installed its transport. */
+  backgroundConnected(packageName: string): void {
+    this.stopped.delete(packageName)
+    if (!this.restarting.delete(packageName)) return
+    this.notifyReopen(packageName)
+    const pending = this.pendingInput.get(packageName) ?? []
+    this.pendingInput.delete(packageName)
+    for (const raw of pending) this.routeFromWebView(packageName, raw)
+    console.log(`MentraUIRouter: ${packageName} replacement connected; UI bound=${this.isBound(packageName)}`)
   }
 
   /**
@@ -204,17 +238,47 @@ export class MentraUIRouter {
         }
         return
       }
+      // Requests during backoff have no live owner. Reject instead of silently
+      // dispatching to the old context or replaying them in the replacement.
+      if (this.restarting.has(packageName)) {
+        if (typeof env.requestId === "string") {
+          this.replyToWebView(packageName, env.channel, env.requestId, {
+            ok: false,
+            error: {code: "BACKGROUND_RESTARTED", message: "Miniapp background restarting; request was not replayed"},
+          })
+        } else if (!this.stopped.has(packageName)) {
+          // This input has never been delivered; retain it until CONNECT.
+          let pending = this.pendingInput.get(packageName)
+          if (!pending) {
+            pending = []
+            this.pendingInput.set(packageName, pending)
+          }
+          // Bound the short backoff queue even if CONNECT never arrives.
+          if (pending.length < 128) pending.push(rawJson)
+          else console.warn(`MentraUIRouter: ${packageName} restart input queue full; draft remains in UI`)
+        }
+        return
+      }
       const out: Record<string, unknown> = {
         type: "UI_MESSAGE",
         channel: env.channel,
         payload: env.payload,
         seq: env.seq,
       }
-      if (typeof env.requestId === "string") out.requestId = env.requestId
+      if (typeof env.requestId === "string") {
+        out.requestId = env.requestId
+        let requests = this.backgroundRequests.get(packageName)
+        if (!requests) {
+          requests = new Set()
+          this.backgroundRequests.set(packageName, requests)
+        }
+        requests.add(env.requestId)
+      }
       this.deliverToBackground(packageName, out)
       return
     }
     if (env.type === "cancel" && typeof env.requestId === "string") {
+      this.backgroundRequests.get(packageName)?.delete(env.requestId)
       this.deliverToBackground(packageName, {type: "UI_CANCEL", requestId: env.requestId})
       return
     }
@@ -247,7 +311,7 @@ export class MentraUIRouter {
     },
   ): void {
     const binding = this.bindings.get(packageName)
-    if (!binding) return
+    if (!binding || this.restarting.has(packageName)) return
     // A background cannot impersonate the host on a reserved channel.
     if (typeof uiSendPayload.channel === "string" && this.hostChannels.has(uiSendPayload.channel)) return
     if (uiSendPayload.type === "UI_CANCEL" && typeof uiSendPayload.requestId === "string") {
@@ -263,7 +327,10 @@ export class MentraUIRouter {
       channel: uiSendPayload.channel,
       payload: uiSendPayload.payload,
     }
-    if (typeof uiSendPayload.requestId === "string") outbound.requestId = uiSendPayload.requestId
+    if (typeof uiSendPayload.requestId === "string") {
+      this.backgroundRequests.get(packageName)?.delete(uiSendPayload.requestId)
+      outbound.requestId = uiSendPayload.requestId
+    }
     const literal = JSON.stringify(outbound)
     const escaped = JSON.stringify(literal)
     binding.inject(`if (window.__mentra && window.__mentra.recv) window.__mentra.recv(JSON.parse(${escaped})); true;`)
