@@ -5,6 +5,14 @@ import XCTest
 import zlib
 
 final class NimoCanvasCodecTests: XCTestCase {
+    func testLatinFallbackPreservesOtherScriptsAndTheirMarks() throws {
+        let otherScripts = "ありがとう が パ カ\u{3099} 한국어 한\u{302E} Α\u{0301} مُرَحَّبًا शि ❤️"
+        let label = try NimoCanvasCodec.label("\(otherScripts) café—Æ\u{0301}", 0, 0, 500, 220)
+        let expected = Data("\(otherScripts) cafe-AE".utf8)
+        XCTAssertEqual(Data(label.payload.dropFirst(14)), expected)
+        XCTAssertEqual(label.textBytes, expected.count)
+    }
+
     private func hex(_ data: Data) -> String {
         data.map { String(format: "%02X", $0) }.joined()
     }
