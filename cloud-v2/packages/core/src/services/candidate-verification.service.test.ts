@@ -1,4 +1,5 @@
 import {expect, test} from 'bun:test'
+import {testRoutineSource} from "../testing/framework-fixtures"
 import {CandidateVerificationService, type CandidateWorkRecord} from './candidate-verification.service'
 import {authoringWorkSchema} from '../types/routine-work.types'
 import {requestInputDigest, TestRequestService, type StoredTestRequest, type TestRequestRepository} from './test-request.service'
@@ -13,8 +14,16 @@ const work = authoringWorkSchema.parse({schemaVersion: 1, workId: 'work:edit', k
     archive: {name: 'app.apk', url: 'https://example.com/app.apk', size: 10, sha256: 'd'.repeat(64)},
     receipt: {url: 'https://example.com/receipt.json', size: 10, sha256: 'e'.repeat(64)}}})
 const verification = {workId: work.workId, attemptId: 3, sourceRevision}
-const selected = {routineId: work.routineId, platform: 'android', definitionRevision: sourceRevision,
-  laneId: work.target.laneId, build: work.build, resources: [], verification}
+const selected = {
+  routineId: work.routineId,
+  platform: 'android',
+  definitionRevision: sourceRevision,
+  routineSource: testRoutineSource(sourceRevision),
+  laneId: work.target.laneId,
+  build: work.build,
+  resources: [],
+  verification,
+}
 function accepted(): CandidateWorkRecord {
   const inputSha256 = requestInputDigest(work)
   return {hostId: 'mini', inputSha256, work, acceptance: {hostId: 'mini', inputSha256},
@@ -32,10 +41,18 @@ test('candidate permits bind accepted host, current attempt, exact reviewed sour
   for (const change of [
     () => {row.acceptance = undefined},
     () => {row.hostId = 'other'},
-    () => {(row.status!.details as any).attemptId = 2},
-    () => {(row.status!.details as any).state = 'passed'},
-    () => {(row.status!.details as any).details.review.sourceRevision = 'f'.repeat(40)},
-    () => {(row.status!.details as any).details.review.reviewUrl = 'https://github.com/other/repo/pull/500#pullrequestreview-44'},
+    () => {
+      ;(row.status!.details as any).attemptId = 2
+    },
+    () => {
+      ;(row.status!.details as any).state = 'passed'
+    },
+    () => {
+      ;(row.status!.details as any).details.review.sourceRevision = 'f'.repeat(40)
+    },
+    () => {
+      ;(row.status!.details as any).details.review.reviewUrl = 'https://github.com/other/repo/pull/500#pullrequestreview-44'
+    },
   ]) {
     row = accepted(); change()
     await expect(service.authorize(verification, 'mini', selected)).rejects.toThrow('Candidate verification requires')

@@ -1,4 +1,4 @@
-import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, frameworkRunSchema} from "../types/framework-run.types";
+import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, recordedFrameworkRunSchema} from "../types/framework-run.types";
 import {z} from "zod";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
@@ -6,7 +6,7 @@ import {TestRequestModel} from "../models/test-request.model";
 import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun, type SuiteRejection} from "../types/test-suite.types";
 import {TestRunError} from "./test-result-error";
 import {hostRejectionSchema, requestInputDigest} from "./test-request.service";
-import {frameworkRequestInputSchema} from "../types/framework-request.types";
+import {recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
 import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
@@ -125,7 +125,7 @@ export class TestSuiteService {
       .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
     const runs: SuiteRun[] = rows.map(row => {
-      const framework = frameworkRunSchema.safeParse(row.payload);
+      const framework = recordedFrameworkRunSchema.safeParse(row.payload);
       if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
       const run = framework.data;
       return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
@@ -138,7 +138,7 @@ export class TestSuiteService {
       .limit(101).read("primary").readConcern("majority").lean();
     if (requests.length > 100) throw new TestRunError(503, "suite rejection history exceeds the query bound; no verdict available");
     const rejections: SuiteRejection[] = requests.map(request => {
-      const rejection = hostRejectionSchema.safeParse(request.hostRejection), input = frameworkRequestInputSchema.safeParse(request.input);
+      const rejection = hostRejectionSchema.safeParse(request.hostRejection), input = recordedFrameworkRequestInputSchema.safeParse(request.input);
       if (!rejection.success || !input.success || request.state !== "terminal" || request.terminalStatus !== "not-run"
         || rejection.data.requestId !== request.requestId || rejection.data.hostId !== request.hostId
         || rejection.data.inputSha256 !== request.inputSha256 || requestInputDigest(input.data) !== request.inputSha256)

@@ -7,7 +7,7 @@ import {TestHostHealthError, TestHostHealthService} from "../../services/test-ho
 import {TestRequestModel} from "../../models/test-request.model";
 import {TestHistoryService} from "../../services/test-history.service";
 import {hostCancellationSchema, hostRejectionSchema, requestInputDigest, TestRequestService} from "../../services/test-request.service";
-import {frameworkIdentitySchema, frameworkRequestInputSchema, type FrameworkRequestDisplay} from "../../types/framework-request.types";
+import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema, type FrameworkRequestDisplay} from "../../types/framework-request.types";
 import {createTestRerunRoutes} from "../internal/test-reruns.api";
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 
@@ -44,7 +44,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
     const row = await requests.get(id);
     if (!row) throw new TestRunError(404, "Routine run or request was not found");
-    const parsed = frameworkRequestInputSchema.safeParse(row.input);
+    const parsed = recordedFrameworkRequestInputSchema.safeParse(row.input);
     if (!parsed.success || requestInputDigest(parsed.data) !== row.inputSha256)
       throw new TestRunError(503, "Stored request identity is unavailable");
     const rejection = row.hostRejection ? hostRejectionSchema.parse(row.hostRejection) : undefined;
@@ -55,6 +55,8 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     const input = parsed.data;
     const request: FrameworkRequestDisplay = {requestId: row.requestId, hostId: row.hostId, inputSha256: row.inputSha256,
       routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision,
+      ...(input.routineSource ? {routineSource: input.routineSource} : {}),
+      ...(input.minimumFrameworkVersion !== undefined ? {minimumFrameworkVersion: input.minimumFrameworkVersion} : {}),
       laneId: input.laneId, build: input.build, state: row.state, terminalStatus: row.terminalStatus,
       createdAt: row.createdAt?.toISOString(), acceptedAt: row.hostReceipt?.acceptedAt,
       reason: rejection ? `${rejection.code}: ${rejection.reason}` : cancellation?.reason,

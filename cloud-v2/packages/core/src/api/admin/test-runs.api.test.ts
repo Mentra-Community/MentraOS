@@ -1,3 +1,4 @@
+import {testRoutineSource, testFrameworkBinding} from "../../testing/framework-fixtures"
 import {expect, spyOn, test} from "bun:test";
 import {Hono} from "hono";
 import {createTestRunAdminApi} from "./test-runs.api";
@@ -65,8 +66,15 @@ test("the valid run ID history still opens its individual result", async () => {
 
 test("the existing result route prefers actual runs and otherwise shows exact rejected request identity", async () => {
   const calls: string[] = [];
-  const input = {routineId: "new-product", definitionRevision: "a".repeat(40), platform: "android", laneId: "phone",
-    resources: [], build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const input = {
+    routineSource: testRoutineSource(),
+    routineId: "new-product",
+    definitionRevision: "a".repeat(40),
+    platform: "android",
+    laneId: "phone",
+    resources: [],
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+  }
   const inputSha256 = requestInputDigest(input);
   class Results extends FrameworkResultService {
     override async detailByRun(id: string): Promise<any> {
@@ -105,12 +113,19 @@ test("the existing result route prefers actual runs and otherwise shows exact re
   calls.length = 0;
   expect((await app.request("/outage")).status).toBe(503);
   expect(calls).toEqual(["run:outage"]);
-});
+})
 
 test("a cancelled request read reconciles late host custody and then its real recorded result through the same route", async () => {
   const requestId = "cancelled-request";
-  const input = {routineId: "new-product", definitionRevision: "a".repeat(40), platform: "android", laneId: "phone",
-    resources: [], build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const input = {
+    routineSource: testRoutineSource(),
+    routineId: "new-product",
+    definitionRevision: "a".repeat(40),
+    platform: "android",
+    laneId: "phone",
+    resources: [],
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+  }
   let row: StoredTestRequest | null = null, storedRun: StoredFrameworkRun | null = null;
   const repository = {
     async insert(value: StoredTestRequest) {row = structuredClone(value);},
@@ -127,38 +142,74 @@ test("a cancelled request read reconciles late host custody and then its real re
     async queued() {throw new Error("unused queue read");}, async cancellations() {throw new Error("unused cancellation read");},
   } satisfies TestRequestRepository;
   const requests = new TestRequestService(repository);
-  const definition = routineEnrollmentSchema.parse({routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision, definitionSha256: "d".repeat(64),
-    definition: {id: input.routineId, title: "New product", purpose: "Check", platforms: ["android"], entry: "home", account: "lane", requires: [], requirements: [], fixtures: [],
-      steps: [{id: "check", instruction: "Check", expected: "Checked"}], source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: input.definitionRevision, path: "routines/new-product/routine.ts"}}});
-  const results = new FrameworkResultService({
+  const definition = routineEnrollmentSchema.parse({
+    routineId: input.routineId,
+    platform: input.platform,
+    definitionRevision: input.definitionRevision,
+    definitionSha256: "d".repeat(64),
+    routineSource: testRoutineSource(),
+    definition: {
+      minimumRoutineApiVersion: 1,
+      id: input.routineId,
+      title: "New product",
+      purpose: "Check",
+      platforms: ["android"],
+      entry: "home",
+      account: "lane",
+      requires: [],
+      requirements: [],
+      fixtures: [],
+      steps: [{id: "check", instruction: "Check", expected: "Checked"}],
+      source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: input.definitionRevision, path: "routines/new-product/routine.ts"},
+    },
+  })
+  const results = new FrameworkResultService(
+    {
     async insert(payload, payloadSha256) {storedRun = {payload, payloadSha256, uploadsComplete: true};},
     async getByRequest() {return structuredClone(storedRun);}, async getByRun() {return structuredClone(storedRun);}, async getAsset() {return null;},
-  }, async () => row?.hostReceipt ? {hostId: row.hostId, input} : null, async run => {
+  },
+    async () => (row?.hostReceipt ? {hostId: row.hostId, input} : null),
+    async run => {
     row = {...row!, state: "terminal", terminalStatus: "cancelled", runId: run.result.runId};
-  }, async () => definition);
+  },
+    async () => definition,
+  )
   const app = createTestRunAdminApi(undefined, undefined, results, requests);
   const queued = await requests.submit(requestId, "mini", input);
   await requests.cancel(requestId, "2026-10-03T11:01:00Z", "Nightly occurrence reached its completion boundary.");
   const cancelled: any = await (await app.request(`/${requestId}`)).json();
   expect(cancelled).toMatchObject({kind: "request", request: {state: "terminal", terminalStatus: "cancelled", cancellationRequested: true,
     cancellationAcknowledged: false, reason: "Nightly occurrence reached its completion boundary."}});
-  expect(cancelled.request.acceptedAt).toBeUndefined(); expect(cancelled.run).toBeUndefined();
+  expect(cancelled.request.acceptedAt).toBeUndefined();
+  expect(cancelled.run).toBeUndefined();
   await requests.accept({requestId, hostId: "mini", inputSha256: queued.inputSha256, acceptedAt: "2026-10-03T11:00:30Z"}, "mini");
   const accepted: any = await (await app.request(`/${requestId}`)).json();
   expect(accepted).toMatchObject({kind: "request", request: {state: "terminal", terminalStatus: "cancelled", acceptedAt: "2026-10-03T11:00:30Z"}});
-  expect(accepted.run).toBeUndefined(); expect(accepted.request.steps).toBeUndefined();
-  const run = frameworkRunSchema.parse({schemaVersion: 1, requestId, hostId: "mini", routineId: input.routineId,
-    definitionRevision: input.definitionRevision, platform: input.platform, laneId: input.laneId, build: input.build,
-    startedAt: "2026-10-03T11:00:30Z", finishedAt: "2026-10-03T11:01:30Z", assets: [],
+  expect(accepted.run).toBeUndefined();
+  expect(accepted.request.steps).toBeUndefined();
+  const run = frameworkRunSchema.parse({
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    requestId,
+    hostId: "mini",
+    routineId: input.routineId,
+    definitionRevision: input.definitionRevision,
+    platform: input.platform,
+    laneId: input.laneId,
+    build: input.build,
+    startedAt: "2026-10-03T11:00:30Z",
+    finishedAt: "2026-10-03T11:01:30Z",
+    assets: [],
     result: {runId: requestId, finishedAt: "2026-10-03T11:01:30Z", setup: {status: "cancelled"}, test: "cancelled",
       steps: [{id: "check", status: "not-run", durationMs: 0}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
-      failures: [], evidence: [], timing: {startedAt: "2026-10-03T11:00:30Z", setupMs: 30000, testMs: 0, teardownMs: 30000}}});
+      failures: [], evidence: [], timing: {startedAt: "2026-10-03T11:00:30Z", setupMs: 30000, testMs: 0, teardownMs: 30000}},
+  })
   await results.ingest(run, "mini");
   const published: any = await (await app.request(`/${requestId}`)).json();
   expect(published).toMatchObject({kind: "run", outcome: "cancelled", uploadsComplete: true, run});
   expect(published.request).toBeUndefined();
-});
-
+})
 
 test("restoration list has a bounded uncached route outside generic run identities", async () => {
   class Restoration extends LaneRestorationService {
@@ -167,4 +218,25 @@ test("restoration list has a bounded uncached route outside generic run identiti
   const response = await createTestRunAdminApi(undefined, undefined, undefined, undefined, new Restoration()).request("/restoration/list");
   expect(response.status).toBe(200); expect(response.headers.get("Cache-Control")).toBe("no-store");
   expect(await response.json()).toMatchObject({hosts: [], truncated: false});
+});
+
+test('historical request detail preserves an absent routine source and original digest without enabling new admission', async () => {
+  const input = {routineId: 'old-product', definitionRevision: 'a'.repeat(40), platform: 'android', laneId: 'phone', resources: [],
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)}};
+  const inputSha256 = requestInputDigest(input), before = JSON.stringify(input);
+  const row: StoredTestRequest = {requestId: 'old-request', hostId: 'mini', input, inputSha256, state: 'terminal', terminalStatus: 'not-run',
+    hostRejection: {requestId: 'old-request', hostId: 'mini', inputSha256, rejectedAt: '2026-10-03T11:00:00Z', code: 'missing-definition', reason: 'Original source was unavailable.'}};
+  class Results extends FrameworkResultService {
+    override async detailByRun(): Promise<never> {throw new TestRunError(404, 'missing result');}
+    override async detail(): Promise<never> {throw new TestRunError(404, 'missing result');}
+  }
+  class Requests extends TestRequestService {override async get() {return row;}}
+  const response = await createTestRunAdminApi(undefined, undefined, new Results(), new Requests()).request('/old-request');
+  expect(response.status).toBe(200);
+  const body = await response.json() as {request: unknown};
+  expect(body).toMatchObject({kind: 'request', request: {requestId: row.requestId, inputSha256, definitionRevision: input.definitionRevision}});
+  expect(body.request).not.toHaveProperty('routineSource');
+  expect(JSON.stringify(input)).toBe(before);
+  expect(requestInputDigest(input)).toBe(inputSha256);
+  await expect(new Requests().submit('new-request', 'mini', input)).rejects.toMatchObject({status: 400});
 });

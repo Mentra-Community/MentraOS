@@ -4,6 +4,9 @@ import {RoutineCatalogService} from "./routine-catalog.service";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 import type {RoutinePreference, RoutinePreferenceRepository} from "./routine-preference.service";
+import {recordedFrameworkRunSchema} from '../types/framework-run.types';
+import {createRecordedFrameworkRunSummaryProjection} from './framework-run-summary.service';
+import {requestInputDigest} from './test-request.service';
 
 const preferences = {async list() {return [];}, async get() {return null;}, async set() {}};
 const example: CatalogExample = {runId: "notes-pass", startedAt: "2026-10-02T18:00:00Z",
@@ -35,6 +38,34 @@ test("a historical passing example retains catalog membership while new authorin
   expect(catalog[0]!.definitionRevision).toBe("c".repeat(40));
   expect(catalog[0]!.example).toEqual(example);
   expect((await service.detail("notes", "ios-on-mac")).example?.definitionRevision).toBe("a".repeat(40));
+});
+
+test('canonical catalog reads recorded payload and summary with genuinely absent provenance', async () => {
+  const old = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'historical-recording', hostId: 'mini', routineId: 'notes',
+    definitionRevision: 'a'.repeat(40), platform: 'ios-on-mac', laneId: 'mac', build: example.build,
+    startedAt: example.startedAt, finishedAt: example.finishedAt, recordingAssetId: 'video',
+    assets: [{id: 'video', kind: 'recording', path: 'recording.mp4', sha256: 'c'.repeat(64), size: 100, mimeType: 'video/mp4'}],
+    result: {runId: 'historical-recording', finishedAt: example.finishedAt, setup: {status: 'passed'}, test: 'passed',
+      steps: [{id: 'observe', status: 'passed', durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [], evidence: ['video'], timing: {startedAt: example.startedAt, setupMs: 0, testMs: 1, teardownMs: 0}}});
+  const payloadSha256 = requestInputDigest(old), projection = createRecordedFrameworkRunSummaryProjection(old, payloadSha256);
+  const row = {runId: old.requestId, requestId: old.requestId, payloadSha256, payload: old, summaryProjection: projection, uploadsComplete: true};
+  const before = JSON.stringify(row);
+  const find = spyOn(TestRunModel, 'findOne').mockReturnValue({sort() {return this;}, select() {return this;}, read() {return this;},
+    readConcern() {return this;}, async lean() {return row;}} as never);
+  const history = spyOn(TestRunModel, 'find').mockReturnValue({sort() {return this;}, limit() {return this;}, select() {return this;}, read() {return this;},
+    readConcern() {return this;}, async lean() {return [row];}} as never);
+  const definition = {routineId: 'notes', platform: 'ios-on-mac', definitionRevision: 'd'.repeat(40)} as RoutineEnrollment;
+  try {
+    const service = new RoutineCatalogService({async current() {return [definition];}, async getCurrent() {return definition;}}, undefined, preferences);
+    const catalog = await service.list(), detail = await service.detail('notes', 'ios-on-mac');
+    expect(catalog).toHaveLength(1);
+    expect(detail.example?.runId).toBe(old.requestId);
+    expect(detail.history[0]?.outcome).toBe('pass');
+    expect(JSON.stringify(row)).toBe(before);
+    expect(requestInputDigest(old)).toBe(payloadSha256);
+    expect(row.summaryProjection.summarySha256).toBe(projection.summarySha256);
+  } finally {find.mockRestore(); history.mockRestore();}
 });
 
 test("history pagination preserves equal-time and earlier runs and refuses foreign/malformed cursors", async () => {

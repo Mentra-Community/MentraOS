@@ -1,3 +1,4 @@
+import type {FrameworkBinding, RoutineSourceRef} from './framework-version.types';
 import type {FrameworkRun, frameworkRunOutcome} from "./framework-run.types";
 import type {TestSuite} from "./test-suite.types";
 
@@ -11,6 +12,8 @@ export interface CatalogHistoryRun {
   evidenceStatus: "complete" | "failed"; definitionRevision: string;
 }
 export interface FrameworkRunSummary {
+  /** Missing provenance belongs to an immutable historical record; never a guessed installed identity. */
+  routineSource?: RoutineSourceRef; frameworkBinding?: FrameworkBinding;
   stepCounts?: {passed: number; total: number; skipped: number};
   runId: string; requestId: string; hostId: string; routineId: string; platform: string; laneId: string;
   startedAt: string; finishedAt: string; outcome: ReturnType<typeof frameworkRunOutcome>; uploadsComplete: boolean; evidenceStatus: "complete" | "failed";

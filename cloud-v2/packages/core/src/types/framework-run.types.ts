@@ -1,3 +1,4 @@
+import {frameworkBindingSchema, routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
 import {frameworkBuildSchema, frameworkIdentitySchema} from "./framework-request.types";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
@@ -23,9 +24,10 @@ const cleanupOutcome = z.discriminatedUnion("state", [
   z.object({state: z.literal("still-active"), resourceId: id, writer: json, evidence: z.array(z.string())}).strict(),
   z.object({state: z.literal("failed"), resourceId: id, failure}).strict(),
 ]);
-export const frameworkRunSchema = z.object({
+const frozenFrameworkRunSchema = z.object({
   schemaVersion: z.literal(1), requestId: id, hostId: id, routineId: routineIdentitySchema,
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/), platform: routinePlatformSchema,
+  routineSource: routineSourceRefSchema, frameworkBinding: frameworkBindingSchema,
   laneId: id, build: frameworkBuildSchema, startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
   recordingAssetId: frameworkAssetIdSchema.optional(),
   assets: z.array(z.object({id: frameworkAssetIdSchema, kind: z.enum(["recording", "screenshot", "diagnostic", "report"]), path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -43,7 +45,9 @@ export const frameworkRunSchema = z.object({
     failures: z.array(failure), evidence: z.array(frameworkAssetIdSchema).max(FRAMEWORK_RUN_ASSET_LIMIT),
     timing: z.object({startedAt: z.string().datetime({offset: true}), setupMs: ms, testMs: ms, teardownMs: ms}).strict(),
   }).strict(),
-}).strict().superRefine((run, ctx) => {
+}).strict();
+type FrozenFrameworkRun = z.infer<typeof frozenFrameworkRunSchema>;
+function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof FrozenFrameworkRun, 'routineSource' | 'frameworkBinding'>>, ctx: z.RefinementCtx) {
   const problem = (message: string) => ctx.addIssue({code: "custom", message});
   if (run.result.runId !== run.requestId || run.startedAt !== run.result.timing.startedAt
     || run.finishedAt !== run.result.finishedAt
@@ -130,10 +134,17 @@ export const frameworkRunSchema = z.object({
   if (run.result.teardown.ready && (run.result.failures.some(failure => failure.phase === "teardown")
     || run.result.teardown.errors.some(error => error.phase !== "evidence") || run.result.teardown.unavailableResources.length
     || run.result.teardown.outcomes.some(outcome => outcome.state !== "cleaned"))) problem("Ready teardown contradicts cleanup outcomes");
-});
+}
+/** New publications always carry actual routine and installed framework provenance. */
+export const frameworkRunSchema = frozenFrameworkRunSchema.superRefine(validateFrozenFrameworkRun);
+/** Retained cloud records may predate provenance fields; absent values remain unknown without defaults. */
+export const recordedFrameworkRunSchema = frozenFrameworkRunSchema.extend({
+  routineSource: routineSourceRefSchema.optional(), frameworkBinding: frameworkBindingSchema.optional(),
+}).superRefine(validateFrozenFrameworkRun);
 export type FrameworkRun = z.infer<typeof frameworkRunSchema>;
+export type RecordedFrameworkRun = z.infer<typeof recordedFrameworkRunSchema>;
 
-export function frameworkRunOutcome(run: FrameworkRun) {
+export function frameworkRunOutcome(run: RecordedFrameworkRun) {
   if (run.result.setup.status === "failed") return "setup-failed";
   if (run.result.test === "failed") return "failed";
   if (run.result.setup.status === "cancelled" || run.result.test === "cancelled") return "cancelled";
@@ -141,6 +152,6 @@ export function frameworkRunOutcome(run: FrameworkRun) {
   return run.result.test === "passed" ? "pass" : "not-run";
 }
 
-export function frameworkEvidenceComplete(run: FrameworkRun) {
+export function frameworkEvidenceComplete(run: RecordedFrameworkRun) {
   return !run.result.failures.some(failure => failure.phase === "evidence");
 }

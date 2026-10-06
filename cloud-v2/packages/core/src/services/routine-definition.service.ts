@@ -1,5 +1,7 @@
+import {z} from 'zod';
 import {testWriteConcern} from "../models/test-write-concern";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
+import {RoutineCollectionModel} from '../models/routine-collection.model';
 import {RoutineWorkModel} from '../models/routine-work.model';
 import {authoringJobViewSchema} from '../types/routine-work.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from "../types/routine-definition.types";
@@ -12,6 +14,7 @@ export interface RoutineDefinitionRepository {
   enroll(row: RoutineEnrollment): Promise<void>;
   current(): Promise<RoutineEnrollment[]>;
   getCurrent(routineId: string, platform: string): Promise<RoutineEnrollment | null>;
+  getExact(routineId: string, platform: string, revision: string, ordinaryOnly?: boolean): Promise<RoutineEnrollment | null>;
 }
 const mongoRepository: RoutineDefinitionRepository = {
   async enroll(row) {
@@ -23,7 +26,8 @@ const mongoRepository: RoutineDefinitionRepository = {
     } catch (error) {
       if ((error as {code?: number}).code !== 11000) throw error;
       const existing = await RoutineDefinitionModel.findOne(identity).read('primary').readConcern('majority').lean();
-      if (!existing || existing.definitionSha256 !== row.definitionSha256 ||
+      if (!existing || !existing.routineSource || existing.definitionSha256 !== row.definitionSha256 ||
+          requestInputDigest(existing.routineSource) !== requestInputDigest(row.routineSource) ||
           requestInputDigest(existing.definition) !== row.definitionSha256)
         throw new RoutineDefinitionConflict("Definition revision already has different contents");
       if (verification) {
@@ -67,20 +71,34 @@ const mongoRepository: RoutineDefinitionRepository = {
     }
   },
   async current() {
-    // A candidate insertion cannot replace the latest ordinary enrollment.
-    return await RoutineDefinitionModel.aggregate<RoutineEnrollment>([
-      {$match: {ordinaryEnrolledAt: {$type: 'date'}}},
-      {$sort: {ordinaryEnrolledAt: -1, _id: -1}},
-      {$group: {_id: {routineId: "$routineId", platform: "$platform"}, row: {$first: "$$ROOT"}}},
-      {$replaceRoot: {newRoot: "$row"}},
-      {$sort: {routineId: 1, platform: 1}},
-      {$project: {_id: 0, routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1, definition: 1}},
-    ]);
+    const latest = await RoutineCollectionModel.findOne().sort({version: -1})
+      .read('primary').readConcern('majority').lean();
+    if (!latest) return [];
+    const stored = await RoutineDefinitionModel.find({definitionRevision: latest.commit,
+      $or: latest.members.map(member => ({routineId: member.routineId, platform: member.platform}))})
+      .select({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1, routineSource: 1, definition: 1, _id: 0})
+      .read('primary').readConcern('majority').lean();
+    const rows = latest.members.map(member => {
+      const row = stored.find(value => value.routineId === member.routineId && value.platform === member.platform);
+      if (!row || row.definitionSha256 !== member.definitionSha256)
+        throw new RoutineDefinitionConflict('Published collection member is unavailable');
+      return routineEnrollmentSchema.parse(row);
+    });
+    if (requestInputDigest({commit: latest.commit, version: latest.version, definitions: rows}) !== latest.manifestSha256)
+      throw new RoutineDefinitionConflict('Published collection manifest differs');
+    return rows;
   },
   async getCurrent(routineId, platform) {
-    return await RoutineDefinitionModel.findOne({routineId, platform, ordinaryEnrolledAt: {$type: 'date'}}).sort({ordinaryEnrolledAt: -1, _id: -1})
-      .select({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1, definition: 1, _id: 0})
-      .lean() as RoutineEnrollment | null;
+    return (await this.current()).find(row => row.routineId === routineId && row.platform === platform) ?? null;
+  },
+  async getExact(routineId, platform, definitionRevision, ordinaryOnly = false) {
+    const row = await RoutineDefinitionModel.findOne({routineId, platform, definitionRevision,
+      ...(ordinaryOnly ? {ordinaryEnrolledAt: {$exists: true}} : {})})
+      .read('primary').readConcern('majority').lean();
+    if (!row) return null;
+    return routineEnrollmentSchema.parse({routineId: row.routineId, platform: row.platform,
+      definitionRevision: row.definitionRevision, definitionSha256: row.definitionSha256,
+      definition: row.definition, routineSource: row.routineSource});
   },
 };
 export class RoutineDefinitionService {
@@ -102,6 +120,50 @@ export class RoutineDefinitionService {
     if (!row.verification) await this.promotion?.enroll(row);
     return row;
   }
+  /** Complete CI collection becomes visible atomically; first-parent version prevents late ancestor regression. */
+  async publishCollection(input: unknown) {
+    const parsed = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/), version: z.number().int().positive().safe(),
+      definitions: z.array(routineEnrollmentSchema).min(1).max(1000)}).strict().safeParse(input);
+    if (!parsed.success) throw new RoutineDefinitionConflict('Invalid published collection');
+    const collection = parsed.data;
+    const identities = collection.definitions.map(row => `${row.routineId}:${row.platform}`);
+    if (new Set(identities).size !== identities.length || collection.definitions.some(row => row.verification ||
+      row.definitionRevision !== collection.commit || requestInputDigest(row.definition) !== row.definitionSha256))
+      throw new RoutineDefinitionConflict('Published collection identity or exact definition differs');
+    collection.definitions.sort((left, right) =>
+      `${left.routineId}:${left.platform}`.localeCompare(`${right.routineId}:${right.platform}`));
+    const manifestSha256 = requestInputDigest(collection);
+    try {await RoutineDefinitionModel.db.transaction(async session => {
+      const publication = await RoutineCollectionModel.findOne({$or: [{commit: collection.commit}, {version: collection.version}]}).session(session).lean();
+      if (publication) {
+        if (publication.commit !== collection.commit || publication.version !== collection.version || publication.manifestSha256 !== manifestSha256)
+          throw new RoutineDefinitionConflict('Published immutable collection manifest conflicts');
+        return;
+      }
+      for (const row of collection.definitions) {
+        const identity = {routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision};
+        const existing = await RoutineDefinitionModel.findOne(identity).session(session).lean();
+        if (existing && (!existing.routineSource || existing.definitionSha256 !== row.definitionSha256 || requestInputDigest(existing.definition) !== row.definitionSha256 ||
+          requestInputDigest(existing.routineSource) !== requestInputDigest(row.routineSource)))
+          throw new RoutineDefinitionConflict('Published immutable collection bytes conflict');
+        if (existing && !existing.ordinaryEnrolledAt) await RoutineDefinitionModel.updateOne(identity,
+          {$set: {ordinaryEnrolledAt: new Date()}}, {session});
+        else if (!existing) await RoutineDefinitionModel.create([{...row, ordinaryEnrolledAt: new Date()}], {session});
+      }
+      await RoutineCollectionModel.create([{commit: collection.commit, version: collection.version, manifestSha256,
+        members: collection.definitions.map(row => ({routineId: row.routineId, platform: row.platform, definitionSha256: row.definitionSha256}))}], {session});
+    }, {writeConcern: testWriteConcern});} catch (error) {
+      if ((error as {code?: number}).code !== 11000) throw error;
+      const published = await RoutineCollectionModel.findOne({commit: collection.commit}).read('primary').readConcern('majority').lean();
+      if (!published || published.version !== collection.version || published.manifestSha256 !== manifestSha256)
+        throw new RoutineDefinitionConflict('Published immutable collection manifest conflicts');
+    }
+    for (const row of collection.definitions) await this.promotion?.enroll(row);
+    return {commit: collection.commit, version: collection.version, definitions: collection.definitions.length};
+  }
   current() {return this.repository.current();}
   getCurrent(routineId: string, platform: string) {return this.repository.getCurrent(routineId, platform);}
+  getExact(routineId: string, platform: string, revision: string, ordinaryOnly = false) {
+    return this.repository.getExact(routineId, platform, revision, ordinaryOnly);
+  }
 }

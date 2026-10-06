@@ -120,7 +120,9 @@ const enrolledRequest = async (input: z.infer<typeof frameworkRequestInputSchema
     definitionRevision: input.definitionRevision}).read('primary').readConcern('majority').lean();
   const permitted = input.verification ? (row?.candidateBindings ?? []).some(value =>
     requestInputDigest(value) === requestInputDigest(input.verification)) : !!row?.ordinaryEnrolledAt;
-  if (!permitted) throw new TestRequestConflict('Request has no matching ordinary enrollment or candidate authorization');
+  if (!row || !permitted) throw new TestRequestConflict('Request has no matching ordinary enrollment or candidate authorization');
+  if (requestInputDigest(row.routineSource) !== requestInputDigest(input.routineSource))
+    throw new TestRequestConflict('Request routine bundle differs from its enrolled immutable source');
 };
 export class TestRequestService {
   constructor(private readonly repository: TestRequestRepository = mongoRepository,

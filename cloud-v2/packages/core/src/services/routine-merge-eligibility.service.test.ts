@@ -1,3 +1,4 @@
+import {testRoutineSource} from "../testing/framework-fixtures"
 import {expect, spyOn, test} from 'bun:test'
 import {GithubRoutineMergeGateway, RoutineMergeEligibilityService, type CandidatePromotion} from './routine-merge-eligibility.service'
 import {RoutineDefinitionService, type RoutineDefinitionRepository} from './routine-definition.service'
@@ -12,13 +13,30 @@ import {authoringWorkSchema, type RoutineWorkStatus} from '../types/routine-work
 import {RoutineWorkService, type RoutineWorkRepository} from './routine-work.service'
 
 function enrollment(revision: string, verification?: RoutineEnrollment['verification']): RoutineEnrollment {
-  const definition: RoutineEnrollment['definition'] = {id: 'notes', title: 'Notes', purpose: 'Verify notes',
-    platforms: ['android'], entry: 'home', account: 'lane', requires: [], requirements: [], fixtures: [],
+  const definition: RoutineEnrollment['definition'] = {
+    id: 'notes',
+    minimumRoutineApiVersion: 1,
+    title: 'Notes',
+    purpose: 'Verify notes',
+    platforms: ['android'],
+    entry: 'home',
+    account: 'lane',
+    requires: [],
+    requirements: [],
+    fixtures: [],
     steps: [{id: 'open', instruction: 'Open notes', expected: 'Notes visible'}],
     execution: {resourceKinds: ['phone', 'app', 'recorder']},
-    source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision, path: 'routines/notes/routine.ts'}}
-  return {routineId: 'notes', platform: 'android', definitionRevision: revision,
-    definitionSha256: requestInputDigest(definition), definition, ...(verification ? {verification} : {})}
+    source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision, path: 'routines/notes/routine.ts'},
+  }
+  return {
+    routineId: 'notes',
+    platform: 'android',
+    definitionRevision: revision,
+    routineSource: testRoutineSource(revision),
+    definitionSha256: requestInputDigest(definition),
+    definition,
+    ...(verification ? {verification} : {}),
+  }
 }
 
 test('candidate edit cannot become current or public example until normal merged enrollment; squash keeps actual run SHA', async () => {
@@ -38,6 +56,9 @@ test('candidate edit cannot become current or public example until normal merged
     },
     async current() {return [...records.values()].filter(v => v.ordinary).sort((x, y) => y.order - x.order).slice(0, 1).map(v => v.row)},
     async getCurrent() {return (await this.current())[0] ?? null},
+    async getExact(_routine, _platform, revision) {
+      return records.get(revision)?.row ?? null
+    },
   }
   const promotion = new RoutineMergeEligibilityService({async candidates() {return [pending]},
     async promote() {promotionCalls++; eligible = true}}, {async merged(_url, head, installed) {
@@ -52,7 +73,8 @@ test('candidate edit cannot become current or public example until normal merged
   await service.enroll(enrollment('d'.repeat(40)))
   expect(eligible).toBe(false)
   mergedPr = true
-  const changed = enrollment('e'.repeat(40)); changed.definition.steps[0]!.expected = 'Different behavior'
+  const changed = enrollment('e'.repeat(40));
+  changed.definition.steps[0]!.expected = 'Different behavior'
   changed.definitionSha256 = requestInputDigest(changed.definition)
   await service.enroll(changed)
   expect(eligible).toBe(false)
@@ -119,7 +141,9 @@ test('promotion retries an interrupted run-first update without losing candidate
   const request = {requestId: 'local:candidate', hostId: 'mini', catalogEligible: false,
     input: {routineId: 'notes', platform: 'android', definitionRevision: sourceRevision, verification: candidate.verification}}
   const chain = (read: () => unknown) => ({read() {return this}, readConcern() {return this}, lean: async () => read()})
-  const requests = spyOn(TestRequestModel, 'find').mockImplementation(() => chain(() => request.catalogEligible ? [] : [request]) as any)
+  const requests = spyOn(TestRequestModel, 'find').mockImplementation(
+    () => chain(() => (request.catalogEligible ? [] : [request])) as any,
+  )
   const jobs = spyOn(RoutineWorkModel, 'findOne').mockReturnValue(chain(() => job) as any)
   const definitions = spyOn(RoutineDefinitionModel, 'findOne').mockReturnValue(chain(() =>
     ({...candidate, candidateBindings: [candidate.verification]})) as any)

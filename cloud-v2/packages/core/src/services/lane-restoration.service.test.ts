@@ -40,3 +40,53 @@ test("bounded restoration hosts disclose truncation and malformed stored evidenc
   expect((await service.list()).hosts).toHaveLength(32);
   await expect(new LaneRestorationService({async list() {return [{snapshot: {}, receivedAt: new Date(at)}];}}).list()).rejects.toThrow("unavailable");
 });
+
+test("updater projection wins over delayed controller clocks while accepted binding and history remain controller observations", async () => {
+  const binding = {
+    version: 40,
+    revision: "a".repeat(40),
+    installationId: "release-40",
+    configurationSha256: "b".repeat(64),
+    runtimeSha256: "c".repeat(64),
+    routineApiVersion: 7,
+    publicApiSha256: "d".repeat(64),
+  }
+  const updater = {
+    phase: "waiting" as const,
+    observedAt: at,
+    desiredTarget: {...binding, version: 41, revision: "e".repeat(40), installationId: "release-41"},
+    consumers: [{id: "executor", kind: "executor", reason: "Actual allocated execution remains active"}],
+    nextAction: "Wait for safe boundary",
+  }
+  const history = {
+    binding,
+    incarnation: "boot",
+    incarnationGeneration: 1,
+    process: {pid: 1, startedAt: "one"},
+    effectiveAt: at,
+    observedAt: at,
+  }
+  const result = await new LaneRestorationService({
+    async list() {
+      return [
+        {
+          snapshot: {
+            ...snapshot,
+            frameworkBinding: binding,
+            frameworkAcceptedAt: at,
+            frameworkProcess: history.process,
+            deployment: {phase: "idle", observedAt: "2027-01-01T00:00:00Z", consumers: [], nextAction: "Discover"},
+          },
+          receivedAt: new Date(at),
+          deploymentObservation: updater,
+          deploymentReceivedAt: new Date(at),
+          frameworkHistory: [history],
+        },
+      ]
+    },
+  }).list()
+  expect(result.hosts[0].deployment).toEqual(updater)
+  expect(result.hosts[0].frameworkBinding).toEqual(binding)
+  expect(result.hosts[0].frameworkHistory).toEqual([history])
+  expect(result.hosts[0].deploymentReceivedAt).toBe(new Date(at).toISOString())
+})

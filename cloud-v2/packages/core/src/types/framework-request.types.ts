@@ -1,3 +1,4 @@
+import {frameworkVersionSchema, routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
 import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
@@ -14,8 +15,10 @@ export const frameworkBuildSchema = z.object({
 }).passthrough().superRefine((build, ctx) => {
   if (build.channel === "pr" && !build.prNumber) ctx.addIssue({code: "custom", message: "PR build requires its PR number"});
 });
-export const frameworkRequestInputSchema = z.object({
+const frozenFrameworkRequestInputSchema = z.object({
   routineId: routineIdentitySchema,
+  routineSource: routineSourceRefSchema,
+  minimumFrameworkVersion: frameworkVersionSchema.optional(),
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),
   platform: routinePlatformSchema,
   laneId: frameworkIdentitySchema,
@@ -25,9 +28,13 @@ export const frameworkRequestInputSchema = z.object({
   glassesStart: glassesSoftwareRefSchema.optional(),
   glassesReturn: glassesSoftwareRefSchema.optional(),
   verification: candidateVerificationSchema.optional(),
-}).passthrough().superRefine((input, ctx) => {
+}).passthrough();
+const recordedInputSchema = frozenFrameworkRequestInputSchema.extend({routineSource: routineSourceRefSchema.optional()});
+function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema>, ctx: z.RefinementCtx) {
   if (input.verification && input.verification.sourceRevision !== input.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from the request'});
+  if (input.routineSource && input.routineSource.commit !== input.definitionRevision)
+    ctx.addIssue({code: 'custom', message: 'Routine source differs from its definition revision'});
   const glasses = input.resources.some(resource => resource.kind === "glasses");
   if (glasses !== (input.glassesStart !== undefined && input.glassesReturn !== undefined) ||
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
@@ -39,12 +46,17 @@ export const frameworkRequestInputSchema = z.object({
       JSON.stringify(input.glassesReturn.manifest) !== JSON.stringify(input.build.manifest))
       ctx.addIssue({code: "custom", message: "Return glasses software must match the selected build manifest identity"});
   }
-});
+}
+/** New admission always requires the exact published routine bundle. */
+export const frameworkRequestInputSchema = frozenFrameworkRequestInputSchema.superRefine(validateFrameworkRequestInput);
+/** Historical display only: preserve requests recorded before bundle provenance, without a fallback source. */
+export const recordedFrameworkRequestInputSchema = recordedInputSchema.superRefine(validateFrameworkRequestInput);
 
 /** Admin delivery projection; it describes a request without claiming execution evidence. */
 export interface FrameworkRequestDisplay {
   requestId: string; hostId: string; inputSha256: string; routineId: string; platform: string;
-  definitionRevision: string; laneId: string; build: z.infer<typeof frameworkBuildSchema>;
+  definitionRevision: string; routineSource?: z.infer<typeof routineSourceRefSchema>; minimumFrameworkVersion?: number;
+  laneId: string; build: z.infer<typeof frameworkBuildSchema>;
   state: "queued" | "accepted" | "running" | "terminal"; terminalStatus?: string;
   createdAt?: string; acceptedAt?: string; reason?: string; reasonAt?: string;
   cancellationRequested?: boolean; cancellationAcknowledged?: boolean;

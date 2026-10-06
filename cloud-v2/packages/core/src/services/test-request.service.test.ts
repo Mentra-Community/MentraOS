@@ -1,9 +1,20 @@
+import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, test} from "bun:test";
 import {createHash} from "node:crypto";
 import {requestInputDigest, TestRequestService, type HostAcceptance, type HostRejection, type StoredTestRequest, type TestRequestRepository} from "./test-request.service";
 
 const build = {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)};
-function inputFor(routineId = "notes") {return {routineId, definitionRevision: "a".repeat(40), platform: "android", laneId: "android", resources: [], build};}
+function inputFor(routineId = "notes") {
+  return {
+    routineSource: testRoutineSource(),
+    routineId,
+    definitionRevision: "a".repeat(40),
+    platform: "android",
+    laneId: "android",
+    resources: [],
+    build,
+  }
+}
 
 function store(): TestRequestRepository {
   const rows = new Map<string, StoredTestRequest>();
@@ -49,11 +60,15 @@ function store(): TestRequestRepository {
     async cancellations(hostId, after, limit) {
       return [...rows.values()].filter(row => row.hostId === hostId && row.hostCancellation && !row.cancellationAcknowledged)
         .sort((a, b) => a.hostCancellation!.requestedAt.localeCompare(b.hostCancellation!.requestedAt) || a.requestId.localeCompare(b.requestId))
-        .filter(row => !after || row.hostCancellation!.requestedAt > after.requestedAt
-          || row.hostCancellation!.requestedAt === after.requestedAt && row.requestId > after.requestId).slice(0, limit)
-        .map(row => ({...structuredClone(row), createdAt: new Date("2026-10-02T11:00:00Z")}));
+        .filter(
+          (row) =>
+            !after || row.hostCancellation!.requestedAt > after.requestedAt ||
+            (row.hostCancellation!.requestedAt === after.requestedAt && row.requestId > after.requestId),
+        )
+        .slice(0, limit)
+        .map(row => ({...structuredClone(row), createdAt: new Date("2026-10-02T11:00:00Z")}))
     },
-  };
+  }
 }
 
 test("duplicate delivery and lost acknowledgement preserve one host acceptance", async () => {
@@ -94,8 +109,8 @@ test("hash refuses non-JSON values instead of conflating inputs", () => {
 
 test("host and cloud canonical JSON agree on integer-like object keys", () => {
   const expected = createHash("sha256").update('{"2":"two","10":"ten","a":{"1":true,"b":false}}').digest("hex");
-  expect(requestInputDigest({a: {b: false, "1": true}, "10": "ten", "2": "two"})).toBe(expected);
-});
+  expect(requestInputDigest({"a": {"b": false, "1": true}, "10": "ten", "2": "two"})).toBe(expected)
+})
 
 test("queue pages preserve equal-time requests and exclude other hosts", async () => {
   const service = new TestRequestService(store());
@@ -120,7 +135,6 @@ test("local acceptance publishes atomically without creating queued delivery", a
   await expect(service.registerLocal(input, receipt, "other")).rejects.toThrow("authenticated host");
   await expect(service.registerLocal(inputFor(), receipt, "mini")).rejects.toThrow("immutable input");
 });
-
 
 test("malformed admission is rejected before persistence", async () => {
   const service = new TestRequestService(store());
@@ -231,9 +245,11 @@ test("acceptance racing cancellation retains the cancellation for local host rec
     const saved = (await service.get(row.requestId))!;
     expect(saved.hostCancellation).toBeDefined();
     expect((await service.cancellations("mini", undefined, 100)).requests[0]!.input).toEqual(row.input);
-    expect(saved.state === "accepted" || saved.state === "terminal" && saved.terminalStatus === "cancelled").toBe(true);
+    expect(saved.state === "accepted" || (saved.state === "terminal" && saved.terminalStatus === "cancelled")).toBe(
+      true,
+    )
   }
-});
+})
 
 test("lost acceptance acknowledgement after cancellation retains real result custody without resurrecting work", async () => {
   const service = new TestRequestService(store()), row = await service.submit("lost-acceptance", "mini", inputFor());
@@ -247,18 +263,34 @@ test("lost acceptance acknowledgement after cancellation retains real result cus
   await expect(service.accept({...receipt, acceptedAt: "2026-10-03T11:01:00Z"}, "mini")).rejects.toThrow("missing, changed");
   const {FrameworkResultService} = await import("./framework-result.service");
   let terminal: unknown;
-  const results = new FrameworkResultService({async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;}, async getAsset() {return null;}},
+  const results = new FrameworkResultService(
+    {async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;}, async getAsset() {return null;}},
     async id => {const request = await service.get(id); return request?.hostReceipt ? {hostId: request.hostId, input: request.input as any} : null;},
-    async run => {terminal = run;}, async () => ({definition: {steps: [{id: "check"}]}} as any));
-  const run = {schemaVersion: 1, requestId: row.requestId, hostId: row.hostId, routineId: "notes", definitionRevision: "a".repeat(40),
-    platform: "android", laneId: "android", build, startedAt: receipt.acceptedAt, finishedAt: "2026-10-03T14:00:01Z", assets: [],
+    async run => {terminal = run;},
+    async () => ({definition: {steps: [{id: "check"}]}}) as any,
+  )
+  const run = {
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    requestId: row.requestId,
+    hostId: row.hostId,
+    routineId: "notes",
+    definitionRevision: "a".repeat(40),
+    platform: "android",
+    laneId: "android",
+    build,
+    startedAt: receipt.acceptedAt,
+    finishedAt: "2026-10-03T14:00:01Z",
+    assets: [],
     result: {runId: row.requestId, finishedAt: "2026-10-03T14:00:01Z", setup: {status: "passed"}, test: "cancelled",
       steps: [{id: "check", status: "not-run", durationMs: 0}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
-      failures: [], evidence: [], timing: {startedAt: receipt.acceptedAt, setupMs: 1, testMs: 1, teardownMs: 1}}};
+      failures: [], evidence: [], timing: {startedAt: receipt.acceptedAt, setupMs: 1, testMs: 1, teardownMs: 1}},
+  }
   expect(await results.ingest(run, "mini")).toMatchObject({entityId: row.requestId, created: true});
   expect(terminal).toEqual(run);
   expect((await service.get(row.requestId))!.state).toBe("terminal");
-});
+})
 
 test("cancellation cursor uses immutable intent time, including an old request cancelled after a prior page", async () => {
   const repository = store(), service = new TestRequestService(repository);
@@ -287,13 +319,22 @@ test("Mongo cancellation pages sort and bound by intent time rather than request
   const {spyOn} = await import("bun:test"), {TestRequestModel} = await import("../models/test-request.model");
   const requestedAt = "2026-10-03T14:00:00.000Z", cursor = Buffer.from(JSON.stringify({hostId: "mini", requestId: "first", requestedAt})).toString("base64url");
   const find = spyOn(TestRequestModel, "find").mockImplementation(((filter: any) => {
-    expect(filter.$or).toEqual([{"hostCancellation.requestedAt": {$gt: requestedAt}},
-      {"hostCancellation.requestedAt": requestedAt, requestId: {$gt: "first"}}]);
+    expect(filter.$or).toEqual([
+      {"hostCancellation.requestedAt": {$gt: requestedAt}},
+      {"hostCancellation.requestedAt": requestedAt, "requestId": {$gt: "first"}},
+    ])
     expect(filter).not.toHaveProperty("createdAt");
-    return {sort(sort: any) {expect(sort).toEqual({"hostCancellation.requestedAt": 1, requestId: 1}); return this;},
-      limit(limit: number) {expect(limit).toBe(3); return this;}, read(value: string) {expect(value).toBe("primary"); return this;},
-      readConcern(value: string) {expect(value).toBe("majority"); return this;}, lean: async () => []};
-  }) as any);
+    return {
+      sort(sort: any) {
+        expect(sort).toEqual({"hostCancellation.requestedAt": 1, "requestId": 1})
+        return this;
+      },
+      limit(limit: number) {expect(limit).toBe(3); return this;},
+      read(value: string) {expect(value).toBe("primary"); return this;},
+      readConcern(value: string) {expect(value).toBe("majority"); return this;},
+      lean: async () => [],
+    }
+  }) as any)
   try {expect(await new TestRequestService().cancellations("mini", cursor, 2)).toEqual({requests: [], nextCursor: null});}
   finally {find.mockRestore();}
-});
+})

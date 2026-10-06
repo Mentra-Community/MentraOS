@@ -7,6 +7,7 @@ const schema = new Schema({
   platform: {type: String, required: true, enum: ["ios-on-mac", "android"], immutable: true},
   definitionRevision: {type: String, required: true, immutable: true},
   definitionSha256: {type: String, required: true, immutable: true},
+  routineSource: {type: Schema.Types.Mixed, required: true, immutable: true},
   definition: {type: Schema.Types.Mixed, required: true, immutable: true},
   ordinaryEnrolledAt: {type: Date},
   candidateBindings: {type: [Schema.Types.Mixed], default: undefined},
