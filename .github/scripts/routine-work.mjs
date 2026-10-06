@@ -105,13 +105,30 @@ export async function selectedRoutineWork({github, context, number}) {
     comments.length < 1000 && new Set(comments.map((value) => value.id)).size === comments.length,
     'Authoring brief history is incomplete',
   )
-  const candidates = comments.filter(
+  const marked = comments.filter(
     (value) =>
       value.body?.startsWith(briefMarker + '\n') &&
-      ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(value.author_association) &&
       positive(value.id) &&
-      value.user?.type === 'User',
+      value.user?.type === 'User' && typeof value.user.login === 'string' && value.user.login.length > 0,
   )
+  // Association labels vary with the API credential. Resolve actual repository
+  // access for each author instead of treating a comment's label as permission.
+  const authorized = new Map(), candidates = []
+  for (const comment of marked) {
+    const username = comment.user.login
+    if (!authorized.has(username)) {
+      let collaborator = false
+      try {
+        const response = await github.rest.repos.checkCollaborator({...context.repo, username})
+        ensure(response.status === 204, 'Unexpected collaborator permission response')
+        collaborator = true
+      } catch (error) {
+        if (error?.status !== 404) throw new Error('Repository collaborator access could not be verified; retry the same authoring request')
+      }
+      authorized.set(username, collaborator)
+    }
+    if (authorized.get(username)) candidates.push(comment)
+  }
   ensure(candidates.length === 1, 'Exactly one collaborator-authored request brief is required')
   const comment = candidates[0],
     brief = parseRoutineWorkBrief(comment.body, labels[0].slice('routine-work:'.length))
