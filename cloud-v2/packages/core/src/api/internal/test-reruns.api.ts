@@ -1,6 +1,7 @@
 import {Hono} from "hono";
 import type {AppEnv} from "../../types/hono.types";
 import {TestRerunService} from "../../services/test-rerun.service";
+import {TestDispatchError} from "../../services/test-builds.service";
 import {TestRunError} from "../../services/test-result-error";
 import {testRunIngestAuth} from "../middleware/test-run-ingest-auth.middleware";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
@@ -10,7 +11,7 @@ export function createTestRerunRoutes(service = new TestRerunService(), audience
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
-    if (error instanceof TestRunError) return c.json({error: "test_rerun_error", message: error.message}, error.status);
+    if (error instanceof TestRunError || error instanceof TestDispatchError) return c.json({error: "test_rerun_error", message: error.message}, error.status);
     c.var.logger?.error({errorName: error.name}, "test rerun unavailable");
     return c.json({error: "test_rerun_unavailable", message: "Rerun unavailable; reconcile the original ID before retrying"}, 503);
   });

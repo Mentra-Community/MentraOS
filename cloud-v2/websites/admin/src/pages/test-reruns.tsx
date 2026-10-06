@@ -53,7 +53,7 @@ export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {sui
       const result=await api<{admissions:{admitted:boolean}[]}>("/api/admin/test-runs/reruns/submit",{method:"POST",body:{rerunId:preview.rerunId,previewDigest:preview.previewDigest}});
       setMessage(result.admissions.every(a=>a.admitted)?"Rerun accepted. Follow its progress below.":"Some admissions are pending. Retry this same submission to reconcile them.");
       await client.invalidateQueries({queryKey:["rerun-progress",suiteId]});
-    }catch(error){setMessage(error instanceof Error?error.message:"Submission uncertain; retry this same submission.");}finally{setBusy(false);}
+    }catch(error){if(error instanceof ApiError && error.status<500){setEntered(false);setPreview(null);setPreviewEntered(false);setId(crypto.randomUUID());}setMessage(error instanceof Error?error.message:"Submission uncertain; retry this same submission.");}finally{setBusy(false);}
   }
   return <div className="my-4 rounded-xl border p-4 space-y-3"><h3 className="font-semibold">Rerun {memberIds.length} selected item{memberIds.length!==1?"s":""}</h3>
     <p className="text-sm">Reuse the original MentraOS artifact, or choose a replacement. The machine uses its installed framework and current enrolled definition.</p>
