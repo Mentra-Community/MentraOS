@@ -12,6 +12,7 @@ export const frameworkAssetIdSchema = z.string().min(1).max(500)
 const id = frameworkRunIdSchema;
 const ms = z.number().finite().nonnegative();
 const lifecycleAction = z.object({id, instruction: z.string().min(1).max(2000), expected: z.string().min(1).max(2000),
+  stage: z.enum(["validation", "before-entry", "entry", "after-entry", "recording", "teardown-actions", "resource-cleanup"]).optional(),
   scope: z.enum(["shared", "routine"]), fixtureProvider: routineIdentitySchema.optional(), status: z.enum(["passed", "failed", "cancelled", "not-run"]), durationMs: ms,
   startedAt: z.string().datetime({offset: true}).optional(), finishedAt: z.string().datetime({offset: true}).optional(),
   causedBy: id.optional()}).strict();
@@ -90,6 +91,10 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
     const actions = run.result[phase].actions ?? [];
     if (new Set(actions.map(action => action.id)).size !== actions.length) problem(`Duplicate ${phase} action identity`);
     for (const action of actions) {
+      if (action.stage && !(phase === "setup"
+        ? ["validation", "before-entry", "entry", "after-entry", "recording"]
+        : ["recording", "teardown-actions", "resource-cleanup"]).includes(action.stage))
+        problem(`Invalid ${phase} lifecycle stage`);
       if (action.status === "not-run" && (action.durationMs !== 0 || action.startedAt || action.finishedAt))
         problem(`Unexecuted ${phase} action cannot have execution timing`);
       if (action.finishedAt && (!action.startedAt || Date.parse(action.finishedAt) < Date.parse(action.startedAt)))
