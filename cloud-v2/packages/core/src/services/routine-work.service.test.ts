@@ -255,7 +255,7 @@ test('stale app head, missing host, foreign lane and malformed provider input cr
   expect(f.rows.size).toBe(0)
 })
 
-test('PR notification failure cannot roll back accepted work; exact retry notifies the same identity', async () => {
+test('PR notification failure cannot block durable acceptance or subsequent host status receipts', async () => {
   const f = fixture({notificationFailure: true}),
     row = await f.service.submit(input)
   expect(f.rows.get(row.workId)?.inputSha256).toBe(row.inputSha256)
@@ -277,10 +277,21 @@ test('PR notification failure cannot roll back accepted work; exact retry notifi
     state: 'authoring',
     details: {...receipt, sequence: 1, state: 'authoring', work: row.work, details: {}, events: []},
   }
-  await expect(f.service.status(status, row.hostId)).rejects.toMatchObject({status: 503})
+  expect(await f.service.status(status, row.hostId)).toEqual(status)
   expect(f.rows.get(row.workId)?.status?.sequence).toBe(1)
-  await expect(f.service.status(status, row.hostId)).rejects.toMatchObject({status: 503})
+  expect(await f.service.status(status, row.hostId)).toEqual(status)
   expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(1)
+  const next = {
+    ...status,
+    eventId: 'event:later-status-during-outage',
+    sequence: 2,
+    state: 'awaiting-review',
+    details: {...status.details, sequence: 2, state: 'awaiting-review'},
+  }
+  expect(await f.service.status(next, row.hostId)).toEqual(next)
+  expect(f.rows.get(row.workId)?.status?.state).toBe('awaiting-review')
+  expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(2)
+  await expect(f.service.report(f.rows.get(row.workId)!)).rejects.toMatchObject({status: 503})
 })
 
 test('terminal status requires exact reviewed source and recording links and cannot regress after restart', async () => {
