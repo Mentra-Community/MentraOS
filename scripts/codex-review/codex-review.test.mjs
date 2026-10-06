@@ -1,5 +1,5 @@
 import {afterAll, describe, expect, test} from "bun:test"
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from "fs"
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, readlinkSync, unlinkSync, writeFileSync} from "fs"
 import {tmpdir} from "os"
 import {dirname, join} from "path"
 import {spawn, spawnSync} from "child_process"
@@ -156,6 +156,70 @@ const codexCalls = (f) =>
   existsSync(join(f.state, "codex-calls")) ? Number(readFileSync(join(f.state, "codex-calls"), "utf8").trim()) : 0
 
 describe("codex-pr-review.sh lifecycle", () => {
+  test("fresh owned reviews share the two existing external dependency targets and reuse their exact links", () => {
+    const f = makeFixture()
+    const shared = join(f.root, "shared packages"), runnerShared = join(shared, "runner")
+    mkdirSync(runnerShared, {recursive: true}); writeFileSync(join(shared, "retained"), "original shared bytes")
+    mkdirSync(join(f.repo, "tools/mentra-e2e"), {recursive: true})
+    writeFileSync(join(f.repo, ".gitignore"), "node_modules\n")
+    sh(f.repo, "git add .gitignore && git commit -qm ignore && git push -q origin main")
+    sh(f.repo, "git checkout -q feature && git merge -q main && mkdir -p tools/mentra-e2e && touch tools/mentra-e2e/source && git add . && git commit -qm runner && git push -q origin feature && git checkout -q main")
+    sh(f.origin, 'git update-ref refs/pull/1/head "$(git rev-parse refs/heads/feature)"')
+    mkdirSync(join(f.repo, "tools/mentra-e2e"), {recursive: true})
+    symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
+    symlinkSync(realpathSync(runnerShared), join(f.repo, "tools/mentra-e2e/node_modules"))
+    const first = run(f, [f.repo, "1"])
+    expect(first.code, first.out).toBe(0)
+    expect(readlinkSync(join(f.worktree, "node_modules"))).toBe(realpathSync(shared))
+    expect(readlinkSync(join(f.worktree, "tools/mentra-e2e/node_modules"))).toBe(realpathSync(runnerShared))
+    const second = run(f, [f.repo, "1"])
+    expect(second.code, second.out).toBe(0)
+    expect(readFileSync(join(shared, "retained"), "utf8")).toBe("original shared bytes")
+    expect(readlinkSync(join(f.worktree, "node_modules"))).toBe(realpathSync(shared))
+    expect(sh(f.worktree, "git status --porcelain")).toBe("")
+  }, 90_000)
+
+  test("a foreign dependency occupant is refused before reset/clean and the shared target is unchanged", () => {
+    const f = makeFixture(), shared = join(f.root, "shared")
+    mkdirSync(shared);writeFileSync(join(shared, "retained"), "shared bytes")
+    symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
+    sh(f.repo, `git worktree add -q --detach "${f.worktree}" feature`)
+    writeFileSync(`${f.worktree}.codex-review-owned`, "created by codex-pr-review.sh on test")
+    mkdirSync(join(f.worktree, "node_modules"));writeFileSync(join(f.worktree, "node_modules/precious"), "foreign bytes")
+    const result = run(f, [f.repo, "1"])
+    expect(result.code).toBe(1);expect(result.out).toContain("changed or foreign occupant")
+    expect(readFileSync(join(f.worktree, "node_modules/precious"), "utf8")).toBe("foreign bytes")
+    expect(readFileSync(join(shared, "retained"), "utf8")).toBe("shared bytes")
+    expect(codexCalls(f)).toBe(0)
+  })
+
+  test("changed dependency link and missing anchor target never authorize removal or replacement", () => {
+    const f = makeFixture(), shared = join(f.root, "shared"), foreign = join(f.root, "foreign")
+    mkdirSync(shared);mkdirSync(foreign);symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
+    sh(f.repo, `git worktree add -q --detach "${f.worktree}" feature`)
+    writeFileSync(`${f.worktree}.codex-review-owned`, "created by codex-pr-review.sh on test")
+    symlinkSync(realpathSync(foreign), join(f.worktree, "node_modules"))
+    expect(run(f, [f.repo, "1"]).out).toContain("changed or foreign occupant")
+    expect(readlinkSync(join(f.worktree, "node_modules"))).toBe(realpathSync(foreign))
+    unlinkSync(join(f.repo, "node_modules"))
+    expect(run(f, [f.repo, "1"]).out).toContain("no existing anchor source")
+    expect(readlinkSync(join(f.worktree, "node_modules"))).toBe(realpathSync(foreign))
+    expect(codexCalls(f)).toBe(0)
+  })
+
+  test("a shared target inside the disposable review tree is refused before cleaning it", () => {
+    const f = makeFixture()
+    sh(f.repo, `git worktree add -q --detach "${f.worktree}" feature`)
+    writeFileSync(`${f.worktree}.codex-review-owned`, "created by codex-pr-review.sh on test")
+    const inside = join(f.worktree, "retained")
+    mkdirSync(inside);writeFileSync(join(inside, "precious"), "original bytes")
+    symlinkSync(realpathSync(inside), join(f.repo, "node_modules"))
+    const result = run(f, [f.repo, "1"])
+    expect(result.code).toBe(1);expect(result.out).toContain("inside its disposable review tree")
+    expect(readFileSync(join(inside, "precious"), "utf8")).toBe("original bytes")
+    expect(codexCalls(f)).toBe(0)
+  })
+
   test("the standalone project runner resolves a relative checkout against its caller", () => {
     const f = makeFixture()
     const project = join(f.root, "Review project with spaces")
