@@ -17,7 +17,7 @@ export function createRoutineDefinitionsApi(service = new RoutineDefinitionServi
   app.post("/", frameworkBodyLimit(), async c => {
     let input: unknown;
     input = await frameworkJson(c);
-    const row = await service.enroll(input);
+    const row = await service.enroll(input, c.var.testHostId);
     return c.json({routineId: row.routineId, platform: row.platform,
       definitionRevision: row.definitionRevision, definitionSha256: row.definitionSha256});
   });

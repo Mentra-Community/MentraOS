@@ -56,6 +56,9 @@ export async function runStartupMigrations(): Promise<void> {
   // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
   await TestHostStateModel.createIndexes();
   await TestRequestModel.createIndexes();
+  // Existing definitions were ordinary enrollments. Candidate metadata is explicit from this rollout onward.
+  await RoutineDefinitionModel.updateMany({ordinaryEnrolledAt: {$exists: false}, candidateBindings: {$exists: false}},
+    [{$set: {ordinaryEnrolledAt: '$createdAt'}}]);
   await RoutineDefinitionModel.createIndexes();
   await RoutinePreferenceModel.createIndexes();
   await reconcileTestRunIndexes();

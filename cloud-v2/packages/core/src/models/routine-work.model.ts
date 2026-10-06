@@ -13,8 +13,10 @@ const schema = new Schema(
     acceptance: {type: Schema.Types.Mixed},
     status: {type: Schema.Types.Mixed},
     statusReceipts: {type: [{_id: false, eventId: String, sequence: Number, sha256: String}], default: []},
+    reporting: {type: Schema.Types.Mixed},
   },
   {collection: 'routine_work_deliveries', timestamps: true},
 )
 schema.index({hostId: 1, createdAt: 1, workId: 1})
+schema.index({'reporting.nextProgressAt': 1})
 export const RoutineWorkModel = registerModel('RoutineWorkDelivery', schema)

@@ -29,6 +29,7 @@ export interface RoutineWorkDelivery {
   acceptance?: z.infer<typeof routineWorkAcceptanceSchema>
   status?: RoutineWorkStatus
   statusReceipts?: Array<{eventId: string; sequence: number; sha256: string}>
+  reporting?: import('./routine-work-reporting').RoutineWorkReporting
 }
 export interface RoutineWorkRepository {
   get(id: string): Promise<RoutineWorkDelivery | null>
@@ -76,6 +77,7 @@ const repository: RoutineWorkRepository = {
         'inputSha256': event.inputSha256,
         'acceptance': {$exists: true},
         'statusReceipts.eventId': {$ne: event.eventId},
+        'status.state': {$nin: ['passed', 'failed', 'cancelled']},
         '$or': [{status: {$exists: false}}, {'status.sequence': {$lt: event.sequence}}],
       },
       {
@@ -104,6 +106,16 @@ export class RoutineWorkService {
       await this.notifications.publish(row)
     } catch {
       console.error('Authoring receipt retained; PR notification unavailable', row.workId)
+    }
+  }
+  async report(row: RoutineWorkDelivery) {
+    try {
+      await this.notifications.publish(row)
+    } catch {
+      throw new TestRunError(
+        503,
+        'Authoring report is retained; verify the GitHub App source-PR comment permission and retry the same work',
+      )
     }
   }
   async submit(value: unknown) {
@@ -153,6 +165,7 @@ export class RoutineWorkService {
         requestSha256: requestInputDigest(input),
         work,
         inputSha256: requestInputDigest(work),
+        reporting: {nextProgressAt: new Date(), history: []},
       }
       await this.rows.insert(row)
       const retained = (await this.rows.get(row.workId)) ?? row
@@ -223,6 +236,7 @@ export class RoutineWorkService {
     const accepted = (await this.rows.accept(receipt)) ?? (await this.inspect(receipt.workId))
     if (requestInputDigest(accepted.acceptance) !== requestInputDigest(receipt))
       throw new TestRequestConflict('Authoring acceptance differs from its original receipt')
+    await this.notify(accepted)
     return accepted.acceptance
   }
   async status(value: unknown, hostId: string) {
@@ -237,6 +251,13 @@ export class RoutineWorkService {
       event.details.acceptedAt !== row.acceptance.acceptedAt
     )
       throw new TestRequestConflict('Authoring job projection changed its accepted work')
+    if (
+      ['passed', 'failed', 'cancelled'].includes(row.status?.state ?? '') &&
+      !row.statusReceipts?.some(
+        (receipt) => receipt.eventId === event.eventId && receipt.sha256 === requestInputDigest(event),
+      )
+    )
+      throw new TestRequestConflict('Terminal authoring work cannot be replaced by a later status')
     const updated = (await this.rows.updateStatus(event)) ?? (await this.inspect(event.workId))
     const receipt = updated.statusReceipts?.find((receipt) => receipt.eventId === event.eventId)
     if (!receipt || receipt.sequence !== event.sequence || receipt.sha256 !== requestInputDigest(event))

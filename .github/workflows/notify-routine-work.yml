@@ -8,8 +8,6 @@ on:
         required: true
 permissions:
   contents: read
-  pull-requests: write
-  issues: read
 jobs:
   comment:
     environment: routine-nightly-dev
@@ -36,8 +34,6 @@ jobs:
         with:
           retries: 0
           script: |
-            const {routineWorkApi} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/routine-work.mjs`);
-            const {renderPrRoutineWork, publishPrRoutineWork} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-routine-work.mjs`);
-            const row = await routineWorkApi({token: process.env.TEST_RUN_INGEST_TOKEN, operation: 'inspect', workId: process.env.WORK_ID});
-            const result = await publishPrRoutineWork({github, context, plan: renderPrRoutineWork(row)});
-            core.notice(`Authoring status: ${result.status} (${result.commentId})`);
+            const {publishPrRoutineWorkReport} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-routine-work.mjs`);
+            await publishPrRoutineWorkReport({token: process.env.TEST_RUN_INGEST_TOKEN, workId: process.env.WORK_ID});
+            core.notice('Core retained the same authoring report intent. Its durable reporter owns PR comments.');

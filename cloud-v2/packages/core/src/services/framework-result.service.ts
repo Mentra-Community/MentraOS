@@ -10,10 +10,11 @@ import {requestInputDigest, TestRequestConflict} from "./test-request.service";
 import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-result-error";
 import {TestAssetService, type TestAsset} from "./test-asset.service";
+import type {CandidateVerification} from '../types/candidate-verification.types';
 
 export class FrameworkResultConflict extends Error {}
 export interface FrameworkResultRepository {
-  insert(run: FrameworkRun, payloadSha256: string): Promise<void>;
+  insert(run: FrameworkRun, payloadSha256: string, metadata?: {verification: CandidateVerification; catalogEligible: boolean}): Promise<void>;
   getByRequest(requestId: string): Promise<StoredFrameworkRun | null>;
   getByRun(runId: string): Promise<StoredFrameworkRun | null>;
   getAsset(identity: {requestId: string} | {runId: string}, assetId: string): Promise<StoredFrameworkAsset | null>;
@@ -26,10 +27,12 @@ export interface FrameworkUploadAcknowledgements {
 }
 export {nativeRunFilter, summarizeFrameworkRun} from "./framework-run-summary.service";
 import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary} from "./framework-run-summary.service";
-export interface ResultRequestBinding {hostId: string; input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown}}
+export interface ResultRequestBinding {hostId: string; catalogEligible?: boolean;
+  input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown; verification?: CandidateVerification}}
 const requestBinding = async (requestId: string): Promise<ResultRequestBinding | null> => {
   const row = await TestRequestModel.findOne({requestId, hostReceipt: {$exists: true}}).read("primary").readConcern("majority").lean();
-  return row ? {hostId: row.hostId, input: row.input as ResultRequestBinding["input"]} : null;
+  return row ? {hostId: row.hostId, input: row.input as ResultRequestBinding["input"],
+    ...(typeof row.catalogEligible === 'boolean' ? {catalogEligible: row.catalogEligible} : {})} : null;
 };
 const buildDigest = (input: unknown): string | null => {
   if (!frameworkBuildSchema.safeParse(input).success) return null;
@@ -41,11 +44,12 @@ const definitionFor = async (run: FrameworkRun): Promise<RoutineEnrollment | nul
     definitionRevision: run.definitionRevision}).read("primary").readConcern("majority").lean() as RoutineEnrollment | null;
 
 const mongoRepository: FrameworkResultRepository = {
-  async insert(run, payloadSha256) {
+  async insert(run, payloadSha256, metadata) {
     await TestRunModel.create([{runId: run.result.runId, requestId: run.requestId, routineId: run.routineId,
       definitionRevision: run.definitionRevision, hostId: run.hostId, platform: run.platform, laneId: run.laneId,
       startedAt: new Date(run.startedAt), completedAt: new Date(run.finishedAt),
-      outcome: frameworkRunOutcome(run), payloadSha256, payload: run, summaryProjection: createFrameworkRunSummaryProjection(run, payloadSha256), uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
+      outcome: frameworkRunOutcome(run), payloadSha256, payload: run, summaryProjection: createFrameworkRunSummaryProjection(run, payloadSha256),
+      ...(metadata ?? {}), uploadsComplete: run.assets.length === 0}], {writeConcern: testWriteConcern});
   },
   async getByRequest(requestId) {
     const row = await TestRunModel.findOne({...nativeRunFilter, requestId}).read("primary").readConcern("majority").lean();
@@ -117,7 +121,8 @@ export class FrameworkResultService {
         throw new FrameworkResultConflict(`Result must contain the complete ordered source ${phase} action list and English descriptions`);
     }
     let created = true;
-    try {await this.repository.insert(run, payloadSha256);}
+    try {await this.repository.insert(run, payloadSha256, binding.input.verification ?
+      {verification: binding.input.verification, catalogEligible: binding.catalogEligible === true} : undefined);}
     catch (error) {
       if ((error as {code?: number}).code !== 11000) throw error;
       const existing = await this.repository.getByRequest(run.requestId);
@@ -175,6 +180,19 @@ export class FrameworkResultService {
 
   async detail(requestId: string) {
     return this.describe(await this.repository.getByRequest(requestId));
+  }
+
+  /** An assigned supervisor reads its original publication without an admin browser session. */
+  async detailForHost(requestId: string, hostId: string) {
+    const binding = await this.request(requestId);
+    if (!binding || binding.hostId !== hostId) throw new TestRunError(404, 'Framework run was not found for this host');
+    return {...await this.detail(requestId), ...(binding.input.verification ? {verification: binding.input.verification} : {})};
+  }
+
+  async mediaForHost(requestId: string, assetId: string, hostId: string, request: Request) {
+    const binding = await this.request(requestId);
+    if (!binding || binding.hostId !== hostId) throw new TestRunError(404, 'Framework run was not found for this host');
+    return this.media(requestId, assetId, request);
   }
 
   async detailByRun(runId: string) {

@@ -6,6 +6,33 @@ import {requestInputDigest} from "./test-request.service";
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
 
+test('candidate result metadata remains outside immutable result and host reader requires original accepted host', async () => {
+  const {frameworkRunSchema} = await import('../types/framework-run.types')
+  const verification = {workId: 'work:one', attemptId: 3, sourceRevision: 'a'.repeat(40)}
+  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: 'mini', requestId: 'candidate-result', routineId: 'notes',
+    definitionRevision: verification.sourceRevision, platform: 'android', laneId: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-05T10:00:00Z', finishedAt: '2026-10-05T10:01:00Z', assets: [],
+    result: {runId: 'candidate-result', finishedAt: '2026-10-05T10:01:00Z', setup: {status: 'passed'}, test: 'passed',
+      steps: [{id: 'required', status: 'passed', durationMs: 10}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [], evidence: [], timing: {startedAt: '2026-10-05T10:00:00Z', setupMs: 0, testMs: 10, teardownMs: 0}}})
+  let metadata: unknown
+  const service = new FrameworkResultService({async insert(payload, hash, selected) {
+    expect(payload).toEqual(run); expect(hash).toBe(requestInputDigest(run)); metadata = selected
+  }, async getByRequest() {return {payload: run, payloadSha256: requestInputDigest(run), uploadsComplete: true}},
+  async getByRun() {return null}, async getAsset() {return null}},
+  async () => ({hostId: 'mini', input: {routineId: run.routineId, definitionRevision: run.definitionRevision, platform: run.platform,
+    laneId: run.laneId, build: run.build, verification}}), async () => {},
+  async () => ({definition: {steps: [{id: 'required'}]}} as unknown as RoutineEnrollment))
+  await service.ingest(run, 'mini')
+  expect(metadata).toEqual({verification, catalogEligible: false})
+  expect((await service.detailForHost(run.requestId, 'mini')).verification).toEqual(verification)
+  await expect(service.detailForHost(run.requestId, 'foreign')).rejects.toThrow('not found for this host')
+  await expect(service.mediaForHost(run.requestId, 'recording', 'foreign', new Request('https://example.com')))
+    .rejects.toThrow('not found for this host')
+  expect(run).not.toHaveProperty('verification')
+})
+
 test("lost result acknowledgement returns same receipt and refuses rewritten terminal result", async () => {
   let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
   const repository: FrameworkResultRepository = {

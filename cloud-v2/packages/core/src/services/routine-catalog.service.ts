@@ -24,6 +24,7 @@ const mongoRuns: CatalogRunRepository = {
       outcome: "pass", uploadsComplete: true, "payload.result.setup.status": "passed",
       "payload.result.test": "passed", "payload.result.failures.phase": {$ne: "evidence"}, "payload.result.teardown.ready": true,
       "payload.recordingAssetId": {$type: "string"},
+      catalogEligible: {$ne: false},
     }).sort({startedAt: -1, runId: -1}).select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.recordingAssetId": 1, "payload.build": 1})
       .read("primary").readConcern("majority").lean();
     if (!row) return null;

@@ -119,6 +119,31 @@ export const routineWorkAcceptanceSchema = z
   .strict()
 const publicText = z.string().min(1).max(4000)
 const githubPr = z.string().regex(/^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/[1-9]\d*$/)
+export const routineWorkProgressSchema = z
+  .object({
+    observedAt: z.string().datetime({offset: true}),
+    completed: z.array(z.string().trim().min(1).max(500)).max(20),
+    current: z.string().trim().min(1).max(2000),
+    plan: z.array(z.string().trim().min(1).max(500)).max(20),
+    estimatedCompletionAt: z.string().datetime({offset: true}).nullable(),
+    estimateReason: z.string().trim().min(1).max(2000),
+  })
+  .strict()
+const reviewUrl = z
+  .string()
+  .regex(
+    /^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/[1-9]\d*#pullrequestreview-[1-9]\d*$/,
+  )
+const sameReviewPr = (value: {prUrl: string; reviewUrl: string}) => value.reviewUrl.split('#')[0] === value.prUrl
+export const routineWorkReviewSchema = z
+  .object({
+    prUrl: githubPr,
+    reviewUrl,
+    sourceRevision: sha,
+    verdict: z.literal('APPROVED'),
+  })
+  .strict()
+  .refine(sameReviewPr, 'Review belongs to another PR')
 const resultUrl = z
   .string()
   .url()
@@ -134,6 +159,20 @@ const resultUrl = z
       frameworkIdentitySchema.safeParse(url.searchParams.get('testRun')).success
     )
   })
+export const routineWorkCompletionSchema = z
+  .object({
+    sourceRevision: sha,
+    prUrl: githubPr,
+    reviewUrl,
+    reviewedRevision: sha,
+    resultUrl,
+    summary: publicText,
+  })
+  .strict()
+  .refine(
+    (value) => value.sourceRevision === value.reviewedRevision && sameReviewPr(value),
+    'Completion review differs from source',
+  )
 const jobDetails = z
   .object({
     questionId: frameworkIdentitySchema.optional(),
@@ -144,6 +183,9 @@ const jobDetails = z
     requestId: frameworkIdentitySchema.optional(),
     resultUrl: resultUrl.optional(),
     reason: publicText.optional(),
+    progress: routineWorkProgressSchema.optional(),
+    review: routineWorkReviewSchema.optional(),
+    completion: routineWorkCompletionSchema.optional(),
   })
   .strict()
 const jobEvent = z
@@ -194,5 +236,25 @@ export const routineWorkStatusSchema = z
       )
     )
       ctx.addIssue({code: 'custom', message: 'Job projection differs from its status event'})
+    const detail = view.details
+    if (
+      event.state === 'passed' &&
+      (!view.attemptId ||
+        !detail.review ||
+        !detail.completion ||
+        !detail.requestId ||
+        detail.review.sourceRevision !== detail.completion.reviewedRevision ||
+        detail.review.prUrl !== detail.completion.prUrl ||
+        detail.review.reviewUrl !== detail.completion.reviewUrl ||
+        detail.sourceRevision !== detail.completion.sourceRevision ||
+        detail.prUrl !== detail.completion.prUrl ||
+        detail.resultUrl !== detail.completion.resultUrl)
+    )
+      ctx.addIssue({code: 'custom', message: 'Passed work lacks its current attempt, exact formal review and recorded result links'})
+    if (detail.review && detail.sourceRevision !== detail.review.sourceRevision)
+      ctx.addIssue({code: 'custom', message: 'Current source differs from its approved review'})
+    if (['failed', 'cancelled'].includes(event.state) && !detail.reason)
+      ctx.addIssue({code: 'custom', message: 'Terminal work requires its actual cause'})
   })
 export type RoutineWorkStatus = z.infer<typeof routineWorkStatusSchema>
+export type RoutineWorkProgress = z.infer<typeof routineWorkProgressSchema>

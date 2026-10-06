@@ -6,6 +6,32 @@ import type {RoutineEnrollment} from "../../types/routine-definition.types";
 import {requestInputDigest} from "../../services/test-request.service";
 import {FRAMEWORK_JSON_BYTES} from "./framework-json";
 
+test('host recording reader preserves byte-range requests and refuses foreign accepted requests', async () => {
+  const calls: unknown[] = []
+  class Service extends FrameworkResultService {
+    override async detailForHost(requestId: string, hostId: string): Promise<any> {
+      calls.push({requestId, hostId})
+      if (requestId !== 'owned') throw new FrameworkResultConflict('foreign result')
+      return {run: {requestId, definitionRevision: 'a'.repeat(40)}, verification: {workId: 'work:one', attemptId: 1, sourceRevision: 'a'.repeat(40)}}
+    }
+    override async mediaForHost(requestId: string, assetId: string, hostId: string, request: Request) {
+      calls.push({requestId, assetId, hostId, method: request.method, range: request.headers.get('range')})
+      return new Response(null, {status: 206, headers: {'Content-Range': 'bytes 1-2/100', ETag: '"frozen-hash"'}})
+    }
+  }
+  const token = 'host-owned-reader-' + 'x'.repeat(32)
+  const api = createFrameworkResultsApi(new Service(), () => JSON.stringify({mini: token}))
+  expect((await api.request('/owned')).status).toBe(401)
+  const headers = {authorization: `Bearer ${token}`, range: 'bytes=1-2'}
+  expect((await api.request('/owned', {headers})).status).toBe(200)
+  expect((await api.request('/foreign', {headers})).status).toBe(409)
+  const response = await api.request('/owned/assets/recording', {method: 'HEAD', headers})
+  expect(response.status).toBe(206)
+  expect(response.headers.get('etag')).toBe('"frozen-hash"')
+  expect(response.headers.get('content-range')).toBe('bytes 1-2/100')
+  expect(calls.at(-1)).toEqual({requestId: 'owned', assetId: 'recording', hostId: 'mini', method: 'HEAD', range: 'bytes=1-2'})
+})
+
 test("result routes derive host identity and refuse incomplete final acknowledgement", async () => {
   const calls: unknown[] = [];
   class Service extends FrameworkResultService {

@@ -61,3 +61,32 @@ test('intake requires the existing capability and bounds a complete JSON request
     else process.env.TEST_RUN_INGEST_TOKEN = previous
   }
 })
+
+test('report wake retains existing ingest authority and never forwards credentials or caller report text', async () => {
+  const previous = process.env.TEST_RUN_INGEST_TOKEN,
+    token = 'c'.repeat(40)
+  process.env.TEST_RUN_INGEST_TOKEN = token
+  const calls: string[] = []
+  try {
+    const row = {workId: 'one', work: {origin: {prNumber: 12}}}
+    const app = createRoutineWorkIntakeApi({
+      async inspect(id: string) {
+        calls.push(id)
+        return row
+      },
+      async report(value: unknown) {
+        expect(value).toBe(row)
+        calls.push('report')
+      },
+    } as unknown as RoutineWorkService)
+    expect((await app.request('/one/report', {method: 'POST'})).status).toBe(401)
+    expect(calls).toHaveLength(0)
+    const result = await app.request('/one/report', {method: 'POST', headers: {Authorization: `Bearer ${token}`}})
+    expect(result.status).toBe(200)
+    expect(await result.json()).toEqual({workId: 'one', retained: true})
+    expect(calls).toEqual(['one', 'report'])
+  } finally {
+    if (previous === undefined) delete process.env.TEST_RUN_INGEST_TOKEN
+    else process.env.TEST_RUN_INGEST_TOKEN = previous
+  }
+})
